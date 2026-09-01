@@ -17,7 +17,8 @@ import { CaptureProvenanceSchema } from '../contract/schemas';
 import { OutlineContractError, outlineError } from '../contract/errors';
 import { porcelainContract, porcelainHelpOptions } from '../contract/porcelain';
 import { checkOutlineSchema, outlineSchemaValidationDetails } from '../contract/validation';
-import { createChangeSet, parseSelectorToken, type StructuredReader } from './arguments';
+import { createChangeSet, parseSelectorToken, splitOptionTerminator, type StructuredReader } from './arguments';
+import { canonicalJson } from '../contract/canonical';
 
 type PublicViewField = Extract<
   UpdateInstruction,
@@ -80,6 +81,13 @@ export async function buildPorcelainRequest(
     changeSet.base = { revision: plan.revision };
   } else if (structuredInput) {
     changeSet = createChangeSet(await buildChangesFromInput(command, structuredInput, context), idempotencyKey);
+    if (command === 'add' && structuredInput.kind === 'viewed-tree') {
+      changeSet.return = [{
+        kind: 'node',
+        targets: { binding: String(structuredInput.bind ?? 'created') },
+        page: { limit: 1 },
+      }];
+    }
   } else {
     changeSet = createChangeSet(await buildChanges(command, parsed, context), idempotencyKey);
   }
@@ -103,6 +111,7 @@ async function buildChangesFromInput(
   context: PorcelainBuildContext,
 ): Promise<readonly Change[]> {
   if (command === 'add') {
+    if (input.kind === 'viewed-tree') return buildViewedTreeChanges(input, context);
     return [{
       op: 'create',
       placement: input.placement as DestinationPlacement,
@@ -189,6 +198,152 @@ async function buildChangesFromInput(
     op: 'lifecycle', action: command, targets: input.target as TargetRef,
   }];
   throw usageError(`Structured input lowering is not implemented for command: ${command}`);
+}
+
+async function buildViewedTreeChanges(
+  input: Record<string, unknown>,
+  context: PorcelainBuildContext,
+): Promise<readonly Change[]> {
+  const placement = input.placement as DestinationPlacement;
+  await validateExactPlacement(placement, context);
+  const fields = (input.fields ?? []) as Array<Record<string, unknown>>;
+  const items = input.items as Array<Record<string, unknown>>;
+  const ownerBind = String(input.bind ?? 'created');
+  const usedBindings = new Set([ownerBind]);
+  const fieldRefs = new Map<string, TargetRef>();
+  const fieldIds = new Map<string, string>();
+  const changes: Change[] = [];
+
+  for (const field of fields) {
+    const key = String(field.key);
+    if (fieldRefs.has(key)) throw usageError(`add viewed-tree field key is duplicated: ${key}`);
+    if (field.field) {
+      const reference = field.field as OneTargetRef;
+      if ('binding' in reference) {
+        throw usageError(`add viewed-tree reused field ${key} must be an exact persisted target.`);
+      }
+      const node = await context.lookup(reference.target.selector);
+      if (node.type !== 'fieldDef') {
+        throw usageError(`add viewed-tree reused field ${key} does not resolve to a field definition.`);
+      }
+      fieldIds.set(key, requiredString(node.id, `reused field ${key} ID`));
+      fieldRefs.set(key, reference);
+      continue;
+    }
+    const bind = nextInternalBinding('field', usedBindings);
+    const id = `node:${crypto.randomUUID()}`;
+    changes.push({
+      op: 'create',
+      resource: 'definition',
+      definitionType: 'field',
+      name: String(field.name),
+      id,
+      config: field.config,
+      bind,
+    } as Change);
+    fieldIds.set(key, id);
+    fieldRefs.set(key, { binding: bind });
+  }
+
+  const view = input.view as Record<string, unknown>;
+  validateViewedTreeKeys(items, view, fieldRefs);
+  changes.push({
+    op: 'create',
+    placement,
+    nodes: [draft(String(input.title), {
+      ...(input.description !== undefined ? { description: String(input.description) } : {}),
+      children: items.map((item) => viewedItemDraft(item, fieldIds)),
+    })],
+    bind: ownerBind,
+  });
+  changes.push({
+    op: 'update',
+    targets: { binding: ownerBind },
+    changes: [{
+      kind: 'view',
+      property: 'configuration',
+      action: 'set',
+      view: keyedViewToSet(view, fieldRefs),
+    }],
+  });
+  return changes;
+}
+
+function viewedItemDraft(
+  item: Record<string, unknown>,
+  fieldIds: ReadonlyMap<string, string>,
+): NodeDraft {
+  const values = (item.values ?? {}) as Record<string, string | number | boolean | null>;
+  return draft(String(item.content), {
+    ...(item.description !== undefined ? { description: String(item.description) } : {}),
+    ...(Object.keys(values).length > 0 ? {
+      fields: Object.entries(values).map(([key, value]) => ({
+        fieldDefId: fieldIds.get(key)!,
+        values: [draft(typeof value === 'string' ? value : canonicalJson(value))],
+      })),
+    } : {}),
+    ...(item.children ? { children: item.children as NodeDraft[] } : {}),
+  });
+}
+
+async function validateExactPlacement(
+  placement: DestinationPlacement,
+  context: PorcelainBuildContext,
+): Promise<void> {
+  const reference = 'parent' in placement ? placement.parent : placement.sibling;
+  if ('binding' in reference) throw usageError('add viewed-tree placement must reference one persisted target.');
+  if (reference.target.cardinality !== 'one') {
+    throw usageError('add viewed-tree placement must resolve exactly one target.');
+  }
+  await context.lookup(reference.target.selector);
+}
+
+function validateViewedTreeKeys(
+  items: readonly Record<string, unknown>[],
+  view: Record<string, unknown>,
+  fields: ReadonlyMap<string, TargetRef>,
+): void {
+  const requireKey = (key: string) => {
+    if (!fields.has(key)) throw usageError(`add viewed-tree references unknown field key: ${key}`);
+  };
+  for (const item of items) {
+    for (const key of Object.keys((item.values ?? {}) as Record<string, unknown>)) requireKey(key);
+  }
+  const references = [view.group, ...((view.sort ?? []) as Record<string, unknown>[]).map((entry) => entry.field),
+    ...((view.filters ?? []) as Record<string, unknown>[]).map((entry) => entry.field),
+    ...((view.display ?? []) as Record<string, unknown>[]).map((entry) => entry.field)];
+  for (const reference of references) {
+    if (isRecord(reference) && typeof reference.fieldKey === 'string') requireKey(reference.fieldKey);
+  }
+}
+
+function keyedViewToSet(
+  view: Record<string, unknown>,
+  fields: ReadonlyMap<string, TargetRef>,
+): Extract<UpdateInstruction, { kind: 'view'; property: 'configuration' }>['view'] {
+  const resolve = (field: unknown): PublicViewField => (
+    isRecord(field) ? fields.get(String(field.fieldKey))! : field as PublicViewField
+  );
+  const mapSpecs = (value: unknown) => (value as Record<string, unknown>[] | undefined)?.map((entry) => ({
+    ...entry,
+    field: resolve(entry.field),
+  }));
+  return createViewToSet({
+    mode: view.mode,
+    ...(view.toolbar !== undefined ? { toolbar: view.toolbar } : {}),
+    ...(Object.hasOwn(view, 'group') ? { group: view.group === null ? null : resolve(view.group) } : {}),
+    ...(view.sort !== undefined ? { sort: mapSpecs(view.sort) } : {}),
+    ...(view.filters !== undefined ? { filters: mapSpecs(view.filters) } : {}),
+    ...(view.display !== undefined ? { display: mapSpecs(view.display) } : {}),
+  });
+}
+
+function nextInternalBinding(prefix: string, used: Set<string>): string {
+  let index = 0;
+  while (used.has(`${prefix}${index}`)) index += 1;
+  const binding = `${prefix}${index}`;
+  used.add(binding);
+  return binding;
 }
 
 function setChangeFromInput(input: Record<string, unknown>): Change {
@@ -1390,8 +1545,9 @@ function parseOptions(command: string, args: readonly string[]): ParsedOptions {
   const allOptions = new Map(porcelainHelpOptions(contract).map((entry) => [entry.name, entry]));
   const options = new Map<string, string | true>();
   const positional: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
+  const split = splitOptionTerminator(args);
+  for (let index = 0; index < split.options.length; index += 1) {
+    const arg = split.options[index];
     if (!arg?.startsWith('--')) {
       positional.push(arg ?? '');
       continue;
@@ -1402,11 +1558,12 @@ function parseOptions(command: string, args: readonly string[]): ParsedOptions {
     if (options.has(name)) throw usageError(`Option may be specified only once: ${arg}`);
     if (COMMON_BOOLEAN_OPTIONS.has(name) || !('value' in metadata)) options.set(name, true);
     else {
-      const value = args[++index];
+      const value = split.options[++index];
       if (value === undefined || value.startsWith('--')) throw usageError(`${arg} requires a value.`);
       options.set(name, value);
     }
   }
+  positional.push(...split.literals);
   return { options, consumed: new Set(), allowed: new Set(commandOptions.keys()), positional };
 }
 

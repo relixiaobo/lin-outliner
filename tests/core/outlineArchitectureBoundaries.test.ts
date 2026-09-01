@@ -53,6 +53,19 @@ describe('Outline process dependency boundaries', () => {
     expect(await forbiddenImports(files, ({ specifier }) => specifier === 'typebox/value')).toEqual([]);
   });
 
+  test('routes watch output through the bounded Runtime writer', async () => {
+    const source = await readFile(
+      path.join(sourceRoot, 'outline', 'runtime', 'server', 'runtimeServer.ts'),
+      'utf8',
+    );
+    const streamEvents = source.slice(
+      source.indexOf('private async streamEvents'),
+      source.indexOf('private scheduleIdle'),
+    );
+    expect(streamEvents).toContain('BoundedResponseWriter');
+    expect(streamEvents).not.toContain('response.write(');
+  });
+
   test('keeps desktop processes outside Core and Runtime storage authority', async () => {
     const files = await sourceFiles([
       path.join(sourceRoot, 'main'),

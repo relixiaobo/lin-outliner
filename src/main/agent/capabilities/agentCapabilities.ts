@@ -4,7 +4,11 @@ import {
   isReadOnlyModelToolActionKind,
   modelToolActionKinds,
 } from '../../../core/agent/tools';
-import { OUTLINE_CAPABILITIES, type OutlineCapability } from '../../../outline/contract/capabilities';
+import {
+  OUTLINE_CAPABILITIES,
+  OUTLINE_GLOBAL_OPTIONS,
+  type OutlineCapability,
+} from '../../../outline/contract/capabilities';
 import {
   matchingBlockForDescriptor,
   parseAgentCapabilitySettings,
@@ -403,13 +407,17 @@ function classifyShellSegment(
   return [unknownShellDescriptor(fullCommand, 'Unclassified shell syntax.')];
 }
 
-const OUTLINE_GLOBAL_OPTIONS_WITH_VALUE = new Set(['--protocol', '--startup-timeout', '--timeout']);
-const OUTLINE_GLOBAL_FLAGS = new Set(['--human', '--json', '--no-start']);
+const OUTLINE_GLOBAL_OPTIONS_WITH_VALUE = new Set(
+  OUTLINE_GLOBAL_OPTIONS.filter((option) => option.value).map((option) => `--${option.name}`),
+);
+const OUTLINE_GLOBAL_FLAGS = new Set(
+  OUTLINE_GLOBAL_OPTIONS.filter((option) => !option.value).map((option) => `--${option.name}`),
+);
 
 export interface DirectOutlineShellInvocation {
   readonly command: OutlineCapability['name'];
   readonly args: readonly string[];
-  readonly output: 'human' | 'json';
+  readonly output: 'summary' | 'json';
 }
 
 export function directOutlineShellInvocation(command: string): DirectOutlineShellInvocation | null {
@@ -437,16 +445,19 @@ function outlineShellInvocation(words: readonly string[]): DirectOutlineShellInv
   const executable = words[index];
   if (!executable || path.basename(executable).toLowerCase() !== 'outline') return null;
   index += 1;
-  let output: DirectOutlineShellInvocation['output'] = 'json';
+  let output: DirectOutlineShellInvocation['output'] = 'summary';
   while (index < words.length && words[index]?.startsWith('-')) {
     const option = words[index]!;
+    if (option === '--') {
+      index += 1;
+      break;
+    }
     if (OUTLINE_GLOBAL_OPTIONS_WITH_VALUE.has(option)) {
       if (words[index + 1] === undefined) return null;
       index += 2;
       continue;
     }
     if (!OUTLINE_GLOBAL_FLAGS.has(option)) return null;
-    if (option === '--human') output = 'human';
     if (option === '--json') output = 'json';
     index += 1;
   }

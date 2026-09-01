@@ -75,9 +75,12 @@ defaults, selectors, cardinality, argv versus `--input FILE|-`, output,
 create/patch/replace/ensure/destructive and idempotency semantics, plus two or
 three canonical examples. Destructive help requires `--preview`, reviewed
 `--expect-diff`, and `--yes`, and states that `--yes` alone is invalid. Help is
-plain text even with `--json` or `--human` and runs without Runtime. Unknown
+plain text even with `--json` and runs without Runtime. Unknown
 paths/options and missing arguments provide the nearest command or exact help
-next step.
+next step. The conventional `--` before a command terminates global options;
+the same token after a command terminates that command's options. Arguments
+after the command terminator are literal positionals, and `--help` or `-h`
+there is content rather than control syntax.
 
 Advanced query help and completion metadata use the same executable operator
 registry as `QueryExpressionSchema` and the generated Agent command reference.
@@ -86,11 +89,43 @@ closed operator-specific object: required field, tag, target, or value operands
 cannot be omitted, unrelated operands cannot be supplied, and an operator absent
 from that schema is not a supported CLI operator.
 
-Non-TTY stdout defaults to one versioned JSON response envelope, or JSONL for a
-stream. `--human` forces human presentation and `--json` explicitly forces the
-machine form; combining them is invalid. Output mode never changes selection,
-mutation, or error semantics. `SIGINT` and `SIGTERM` abort every command path and
-use exit codes 130 and 143 respectively.
+TTY and non-TTY stdout both default to the same deterministic summary.
+`--json` explicitly requests one versioned JSON response envelope, or JSONL for
+a stream. `schema` is the deliberate exception: its default output is the
+complete compact schema as one parseable JSON document because schema recovery
+must never omit executable grammar. TTY state affects interaction only, never
+the output data structure. Output mode never changes selection, mutation, or
+error semantics. Before the global `--` terminator, an explicit `--json`
+controls error framing even when an earlier global option is invalid. `SIGINT`
+and `SIGTERM` abort every command path and use exit codes 130 and 143
+respectively.
+
+Raw `--output -` reserves stdout exclusively for artifact or asset bytes.
+Failures before or during a raw transfer write a diagnostic to stderr and return
+a non-zero exit without appending a response envelope to stdout. CLI and Runtime
+stream writers honor downstream backpressure. Long-lived watch output is
+serialized through a record- and byte-bounded drain-aware writer; overflow drops
+the pending backlog and closes with `resync.required` so memory use cannot follow
+an unbounded producer. A downstream `EPIPE` is
+a normal early-consumer termination for success and failure output rather than
+an internal CLI failure. Common file
+errors retain their path and actionable cause in summary output while preserving
+stable public error categories.
+
+Summary success output is a deterministic, ANSI-free receipt capped at 4 KiB.
+Every dynamic scalar is encoded onto one line before budgeting: C0/C1 controls,
+DEL, CR/LF, and tabs cannot alter terminal state or forge receipt fields.
+Mutation receipts report settlement, Operation and revision identity, affected
+count/digest, recovery, and bounded returned roots; viewed-tree add also reports
+owner, item/display counts, and mode. View inspection reports complete display
+state when it fits and otherwise explicit omission evidence plus a digest. A
+`show` or `find` summary reports projection identity, counts, continuation state,
+complete-set digests, and a bounded Node sample rather than truncated JSON. A
+default `diff --output FILE` leaves the exact artifact unchanged and reports its
+path, bytes/hash, Diff/ChangeSet hashes, base revision, effect counts,
+destructive classes, bindings, and warnings. Other result families without a
+specialized summary report only type, digest, and `--json` recovery guidance;
+they never print a partial JSON document. `--json` remains complete.
 
 ### Porcelain intent routing
 
@@ -99,7 +134,9 @@ The public product rule is:
 - one complete resource intent uses one porcelain invocation;
 - complex state for that resource uses the same command with `--input FILE|-`;
 - multiple resources, dependencies, cross-date work, or bounded bulk edits use
-  one ChangeSet with bindings, one Diff, and one apply.
+  one ChangeSet with bindings; known non-destructive work uses `commit`, while
+  destructive, ambiguous, conversion, high-impact, or review-requested work uses
+  one Diff artifact and one exact apply.
 
 No complete command intent requires a shell mutation loop, intermediate
 created-ID lookup, or several mutation Operations. Create and ensure results
@@ -129,7 +166,13 @@ definitions and their type-specific configuration, templates/options, defaults,
 inheritance, and constraints. `field define` instead creates or reuses a field on
 one target and may set its initial value; an empty field name is valid only as an
 editor placeholder slot and is still recorded through the public schema rather
-than a renderer-only command. `tag add` applies an existing definition.
+than a renderer-only command. `tag add` applies an existing definition. The
+alternative discriminated `kind: viewed-tree` add input creates one view-backed
+owner below an exact persisted destination. At most 256 unique local field keys
+name new or exactly resolved reusable definitions; at most 10,000 direct
+ordinary items use those keys for typed scalar values. Keyed view configuration
+supports list, table, cards, and calendar modes. All resolution and validation
+finish before one atomic ChangeSet writes the complete resource.
 
 `search create` accepts title, canonical query or `--match` STRING_MATCH
 shorthand, and initial mode, ordered sort, filters, group, display fields, and
@@ -141,12 +184,19 @@ collections. The view leaf commands remain for small edits.
 
 A real table is represented by one owner Node with `viewMode: table`, direct
 child row Nodes, reusable field definitions, field-backed cell values, and an
-explicit display/sort/filter configuration. The built-in Skill's
-`fixtures/table-view-changeset.json` is the canonical executable example: the
-mandatory golden flow reads that fixture, creates the table below an ensured
-Daily Note through one Diff/apply, verifies its fields/view, and exactly reverts
-it. Markdown tables, aligned child text, and owner Nodes without a table
+explicit display/sort/filter configuration. The developer-only
+`fixtures/table-view-add.json` drives the mandatory golden flow: one `add`
+creates the table below an ensured Daily Note, one `view inspect` verifies its
+persisted mode and counts, and one revert restores the exact prior state. The
+fixture is not an Agent instruction. Markdown tables, aligned child text, and owner Nodes without a table
 `viewDef` do not satisfy a table request.
+
+`view inspect TARGET` is a CLI-composed read, not a Runtime command. It resolves
+one owner and composes only existing paginated `show` projections at one
+revision. It requires exactly one live `viewDef` and returns a compact
+`outline.view-summary` with exact direct ordinary-item count and ordered display
+metadata/digest. A revision race retries the whole composition once and then
+returns a retryable stale-revision conflict without mixing snapshots.
 
 `capture add` accepts exactly one parent or local date, ensures the date when
 needed, preserves capture provenance, derives a canonical HTTP(S) Source from the
@@ -373,7 +423,7 @@ on the Operation. The same key and canonical payload returns the original
 Operation even when its base is now historical; the same key with another payload
 remains an idempotency conflict.
 
-Human destructive porcelain on a TTY first prints the exact Runtime-produced
+Interactive destructive porcelain on a TTY first prints the exact Runtime-produced
 Diff and asks for confirmation. Acceptance submits that same artifact to
 `apply`; rejection writes nothing, and a revision change during review returns a
 stale conflict without recomputing or retrying. JSON and non-TTY callers must
@@ -386,7 +436,9 @@ Canonical Diff responses stream from Runtime while SHA-256 and byte count advanc
 over the same chunks. Results up to 8 MiB may be collected into the single JSON
 envelope. Larger results require an atomic `--output` file or raw `--output -`;
 the client verifies response identity, length, and digest as the stream is
-consumed and never retains the whole encoded artifact merely to hash it.
+consumed and never retains the whole encoded artifact merely to hash it. File
+output writes those verified chunks unchanged: its byte count and raw-file
+SHA-256 exactly match the returned receipt.
 
 Apply is atomic. Runtime keeps Core rollback live until one fsynced transaction
 record contains the document update, Operation, recovery patch, idempotency

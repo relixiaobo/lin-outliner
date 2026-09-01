@@ -922,6 +922,27 @@ export const OutlineBatchCountResultSchema = Type.Object({
   }, closed), { minItems: 1, maxItems: 256 }),
 }, { ...closed, $id: 'OutlineBatchCountResult' });
 
+export const ViewSummarySchema = Type.Object({
+  kind: Type.Literal('outline.view-summary'),
+  revision: Type.Integer({ minimum: 0 }),
+  ownerId: Identifier,
+  title: Type.String({ maxLength: 4_194_304 }),
+  mode: ViewModeSchema,
+  toolbarVisible: Type.Boolean(),
+  itemCount: Type.Integer({ minimum: 0 }),
+  displayFieldCount: Type.Integer({ minimum: 0 }),
+  displayDigest: Digest,
+  displayFields: Type.Array(Type.Object({
+    fieldId: Type.String({ minLength: 1, maxLength: 256 }),
+    label: Type.String({ maxLength: 4_096 }),
+    visible: Type.Boolean(),
+    order: Type.Number(),
+  }, closed), { maxItems: 1_000 }),
+  group: Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]),
+  sortCount: Type.Integer({ minimum: 0 }),
+  filterCount: Type.Integer({ minimum: 0 }),
+}, { ...closed, $id: 'ViewSummary' });
+
 export const NoChangeResultSchema = Type.Object({
   protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
   kind: Type.Literal('outline.no-change'),
@@ -1385,6 +1406,7 @@ export type DestinationPlacement = Static<typeof DestinationPlacementSchema>;
 export type Placement = Static<typeof PlacementSchema>;
 export type Projection = Static<typeof ProjectionSchema>;
 export type ProjectionResult = Static<typeof ProjectionResultSchema>;
+export type ViewSummary = Static<typeof ViewSummarySchema>;
 export type OutlineCountResult = Static<typeof OutlineCountResultSchema>;
 export type OutlineBatchCountResult = Static<typeof OutlineBatchCountResultSchema>;
 export type NodeDraft = Static<typeof NodeDraftSchema>;

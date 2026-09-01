@@ -44,30 +44,29 @@ describe('outline mandatory CLI golden flows', () => {
     });
   });
 
-  test('2. executes the documented Daily Note table ChangeSet through one Diff and one apply', async () => {
+  test('2. creates and inspects the documented Daily Note table through two compact invocations', async () => {
     await withRuntime(async ({ runtime, cli }) => {
+      await cli.json(['daily', 'ensure', '2042-03-04']);
       const before = snapshot(runtime);
       const operationsBefore = await countOperations(runtime);
-      const changeSet = JSON.parse(await readFile(path.resolve(
+      const input = JSON.parse(await readFile(path.resolve(
         import.meta.dir,
-        '../../src/main/builtInSkills/outline/fixtures/table-view-changeset.json',
+        '../../src/main/builtInSkills/outline/fixtures/table-view-add.json',
       ), 'utf8')) as unknown;
       const callsBefore = cli.calls;
-      const preview = diffResult(await cli.json(['diff', '--input', '-'], JSON.stringify(changeSet)));
-      expect(runtime.workspace.documentState()).toEqual(before);
-      const operation = operationResult(await cli.json(['apply', '--input', '-'], JSON.stringify(preview)));
+      const operation = operationResult(await cli.json(['add', '--input', '-'], JSON.stringify(input)));
+      const tableId = returnedIds(operation)[0]!;
+      const summary = await cli.json(['view', 'inspect', tableId]) as Record<string, unknown>;
       expect(cli.calls - callsBefore).toBe(2);
       expect(await countOperations(runtime)).toBe(operationsBefore + 1);
-      const tableId = preview.bindings.table![0]!;
-      const dayId = preview.bindings.day![0]!;
-      const inputPriceId = preview.bindings.inputPrice![0]!;
       const state = runtime.workspace.documentState();
       const table = state.nodes[tableId]!;
-      expect(table.parentId).toBe(dayId);
+      expect(state.nodes[table.parentId!]?.content.text).toBe('2042-03-04');
       expect(table.children.map((id) => state.nodes[id]?.content.text))
         .toEqual(expect.arrayContaining(['Model Alpha', 'Model Beta']));
       const view = table.children.map((id) => state.nodes[id]).find((node) => node?.type === 'viewDef');
       expect(view).toMatchObject({ viewMode: 'table', toolbarVisible: true });
+      const inputPriceId = Object.values(state.nodes).find((node) => node.type === 'fieldDef' && node.content.text === 'Input price')!.id;
       expect(view!.children.map((id) => state.nodes[id])).toContainEqual(expect.objectContaining({
         type: 'sortRule',
         sortField: inputPriceId,
@@ -75,7 +74,10 @@ describe('outline mandatory CLI golden flows', () => {
       }));
       expect(view!.children.map((id) => state.nodes[id]).filter((node) => node?.type === 'displayField'))
         .toHaveLength(3);
-      expect(operation.result?.[0]?.nodes.length).toBeGreaterThanOrEqual(3);
+      expect(summary).toMatchObject({
+        kind: 'outline.view-summary', ownerId: tableId, mode: 'table', itemCount: 2,
+        displayFieldCount: 3, sortCount: 1, filterCount: 0,
+      });
       await exactRevert(runtime, operation, before, cli);
     });
   });

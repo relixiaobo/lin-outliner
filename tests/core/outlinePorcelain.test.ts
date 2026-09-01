@@ -327,6 +327,61 @@ describe('outline porcelain CLI', () => {
       await runtime.stop();
     }
   });
+
+  test('rejects invalid viewed-tree keys and non-view inspection without writing', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const before = JSON.parse(JSON.stringify(runtime.workspace.documentState())) as unknown;
+      const invalid = await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
+        kind: 'viewed-tree',
+        placement: { kind: 'last', parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } } },
+        title: 'Invalid table',
+        fields: [{ key: 'known', name: 'Known', config: { fieldType: 'plain' } }],
+        items: [{ content: 'Item', values: { missing: 'value' } }],
+        view: { mode: 'table', display: [{ field: { fieldKey: 'known' } }] },
+      }));
+      expect(invalid.code).toBe(2);
+      expect(JSON.stringify(invalid.error)).toContain('unknown field key: missing');
+      expect(runtime.workspace.documentState()).toEqual(before);
+
+      const plain = await jsonCommand(root, ['add', '@library', 'Plain owner']);
+      const inspection = await jsonCommand(root, ['view', 'inspect', returnedIds(plain.data)[0]!]);
+      expect(inspection.code).toBe(3);
+      expect(JSON.stringify(inspection.error)).toContain('exactly one view definition');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('accepts a 10,000-item viewed tree through stdin beyond argv size', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const input = JSON.stringify({
+        kind: 'viewed-tree',
+        placement: { kind: 'last', parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } } },
+        title: 'Large viewed tree',
+        items: Array.from({ length: 10_000 }, (_, index) => ({ content: `Item ${index} "quoted" \\ slash` })),
+        view: { mode: 'table', display: [{ field: 'sys:name', label: 'Item' }] },
+      });
+      expect(Buffer.byteLength(input)).toBeGreaterThan(256 * 1024);
+      const operationsBefore = (await runtime.workspace.store.operations()).length;
+      const result = await jsonCommand(root, ['add', '--input', '-'], input);
+      expect(result.code).toBe(0);
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 1);
+      const ownerId = returnedIds(result.data)[0]!;
+      const state = runtime.workspace.documentState();
+      const itemCount = state.nodes[ownerId]!.children.filter((id) => state.nodes[id]?.type !== 'viewDef').length;
+      expect(itemCount).toBe(10_000);
+    } finally {
+      await runtime.stop();
+    }
+  }, 30_000);
 });
 
 function returnedIds(value: unknown): string[] {

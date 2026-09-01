@@ -1101,7 +1101,7 @@ describe('agent skills', () => {
     if (!invocation.ok) return;
     const instructions = invocation.renderedContent.replace(/\s+/gu, ' ');
     expect(instructions).toContain('| Create one complete resource | One porcelain `create` or `add` invocation |');
-    expect(instructions).toContain('| Supply complex state for that resource | The same command with `--input FILE|-` |');
+    expect(instructions).toContain('| Supply complex state for that resource | The same command with `--input -` |');
     expect(instructions).toContain('| Change multiple resources or dependencies | One ChangeSet with bindings |');
     expect(instructions).toContain('| Replace literal text across bounded Nodes | One reviewed `text replace` invocation |');
     expect(instructions).toContain('Never use a shell mutation loop, query intermediate created IDs');
@@ -1110,6 +1110,10 @@ describe('agent skills', () => {
     expect(instructions).toContain('`--yes` alone is invalid');
     expect(instructions).toContain('`@saved-searches`');
     expect(instructions).toContain('Every structured `many` mutation has an explicit `max` bound');
+    expect(instructions).toContain('Always try porcelain first');
+    expect(instructions).toContain('known non-destructive ChangeSet');
+    expect(instructions).toContain('Bash\'s separate `stdin` field');
+    expect(instructions).toContain('outline view inspect TARGET');
   });
 
   test('loads bundled built-in skills with real resource directories', async () => {
@@ -1375,14 +1379,15 @@ describe('agent skills', () => {
     expect(outline?.body).toContain('## Start Every Task');
     expect(outline?.body).toContain('## Choose One Mutation Shape');
     expect(outline?.body).toContain('## Model Common Structures');
-    expect(outline?.body).toContain('## Recover Safely');
-    expect(outline?.body).toContain('one direct child Node per row');
-    expect(outline?.body).toContain('Never substitute a Markdown table');
+    expect(outline?.body).toContain('## Verify and Recover Safely');
+    expect(outline?.body).toContain('one direct ordinary child Node per item');
+    expect(outline?.body).toContain('Markdown table or aligned text');
     expect(outline?.body).toContain('`YYYY-MM-DDTHH:mm`');
     expect(outline?.body).toContain('`[[node://UUID]]`');
     expect(outline?.body).toContain('[references/commands.md](references/commands.md)');
     expect(outline?.body).toContain('[references/changesets.md](references/changesets.md)');
     expect(outline?.body).toContain('[references/import.md](references/import.md)');
+    expect(outline?.body).not.toContain(['table-view', 'changeset.json'].join('-'));
     const toolResult = await createSkillTool(runtime).execute('outline-skill-call', {
       skill: 'outline',
       args: 'Create a native table view in today\'s note.',

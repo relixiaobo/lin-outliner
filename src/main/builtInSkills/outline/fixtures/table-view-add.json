@@ -1,0 +1,48 @@
+{
+  "kind": "viewed-tree",
+  "placement": {
+    "kind": "last",
+    "parent": {
+      "target": {
+        "selector": { "by": "date", "date": "2042-03-04" },
+        "cardinality": "one"
+      }
+    }
+  },
+  "title": "Model prices",
+  "fields": [
+    {
+      "key": "family",
+      "name": "Model family",
+      "config": { "fieldType": "plain" }
+    },
+    {
+      "key": "inputPrice",
+      "name": "Input price",
+      "config": { "fieldType": "number", "minValue": 0 }
+    }
+  ],
+  "items": [
+    {
+      "content": "Model Alpha",
+      "values": { "family": "Flagship", "inputPrice": 2.5 }
+    },
+    {
+      "content": "Model Beta",
+      "values": { "family": "Efficient", "inputPrice": 0.25 }
+    }
+  ],
+  "view": {
+    "mode": "table",
+    "toolbar": true,
+    "sort": [
+      { "field": { "fieldKey": "inputPrice" }, "direction": "asc" }
+    ],
+    "display": [
+      { "field": "sys:name", "visible": true, "label": "Model" },
+      { "field": { "fieldKey": "family" }, "visible": true, "label": "Family" },
+      { "field": { "fieldKey": "inputPrice" }, "visible": true, "label": "Input price" }
+    ]
+  },
+  "bind": "table"
+}

@@ -66,27 +66,13 @@ outline --json revert OPERATION_ID
 If settlement is uncertain, inspect `outline log` by idempotency key or known
 Operation ID before any retry.
 
-## Table View Pattern
+## View-backed Collections
 
-For a real document table, create one owner Node, reusable field definitions,
-one direct child per row, field-backed cell values, and the owner's complete
-table view configuration in the same ChangeSet. Do not create a Markdown table,
-put column labels into child text, or use a script to inspect the schema shape.
+Do not use a generic ChangeSet for a new view-backed collection below one exact
+destination. Use the `add --input -` viewed-tree form described by
+`outline schema add`, then verify the returned owner with `view inspect`.
 
-Read [the complete table ChangeSet](../fixtures/table-view-changeset.json) and
-adapt its date, labels, fields, rows, values, sort, filters, and display list to
-the user's request. The example deliberately covers the non-obvious binding
-shapes for field definitions, row updates, sort fields, and display fields. Keep
-the same operation topology, but do not reuse its example idempotency key or
-example data.
-
-The normal execution remains one preview and one exact apply:
-
-```sh
-outline --json diff --input table.changeset.json --output table.reviewed.diff.json
-outline --json apply --input table.reviewed.diff.json
-```
-
-Verify the returned table binding with an outline Projection that includes
-`children`, `fields`, and `view`. A list of row Nodes without a child `viewDef`
-whose `viewMode` is `table` is not a completed table request.
+Use a ChangeSet only when converting existing content or when the same intent
+must mutate other independently addressable resources. Preserve the ordinary
+owner/direct-item/field-value/view model, preview to an exact artifact, inspect
+the bounded receipt, and apply that artifact once.
