@@ -130,6 +130,7 @@ describe('preview source commands', () => {
       const observedPath = join(managedRoot, 'tool-output.png');
       await writeFile(observedPath, 'managed image bytes');
       const observedStats = await stat(observedPath);
+      const observedIntents: Array<'delivered' | 'source'> = [];
       const ref = {
         id: 'resource:00000000-0000-4000-8000-00000000000a',
         mimeType: 'image/png',
@@ -137,16 +138,17 @@ describe('preview source commands', () => {
         fileName: 'tool-output.png',
       };
       const context = previewContext({
-        threadResourceFile: async (threadId, candidate) => (
-          threadId === 'thread-1' && candidate.id === ref.id
+        threadResourceFile: async (threadId, candidate, intent) => {
+          observedIntents.push(intent);
+          return threadId === 'thread-1' && candidate.id === ref.id
             ? {
                 entryKind: 'file',
                 path: observedPath,
                 stats: observedStats,
                 acceptedPathHints: [ref.fileName],
               }
-            : null
-        ),
+            : null;
+        },
       });
       const target = {
         kind: 'local-file' as const,
@@ -170,6 +172,59 @@ describe('preview source commands', () => {
         target: { ...target, path: '/tmp/substituted.png' },
       }, context) as PreviewReadTextResult;
       expect(substituted.text).toBe('managed image bytes');
+
+      await handlePreviewCommand('preview_resolve_source', {
+        target: { ...target, resourceIntent: 'source' },
+      }, context);
+      expect(observedIntents).toEqual(['delivered', 'delivered', 'delivered', 'source']);
+    } finally {
+      await rm(managedRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('resolves a source-only Thread resource directory for navigation', async () => {
+    const managedRoot = await mkdtemp(join(tmpdir(), 'lin-preview-resource-directory-test-'));
+    try {
+      const directoryPath = join(managedRoot, 'outputs');
+      await mkdir(directoryPath);
+      const directoryStats = await stat(directoryPath);
+      const ref = {
+        id: 'resource:00000000-0000-4000-8000-00000000000c',
+        mimeType: 'inode/directory',
+        byteLength: 0,
+        fileName: 'outputs',
+      };
+      const intents: Array<'delivered' | 'source'> = [];
+      const context = previewContext({
+        threadResourceFile: async (_threadId, _candidate, intent) => {
+          intents.push(intent);
+          return intent === 'source'
+            ? {
+                entryKind: 'directory',
+                path: directoryPath,
+                stats: directoryStats,
+                acceptedPathHints: [ref.fileName],
+              }
+            : null;
+        },
+      });
+      const resolved = await handlePreviewCommand('preview_resolve_source', {
+        target: {
+          kind: 'local-file',
+          path: ref.fileName,
+          entryKind: 'directory',
+          threadId: 'thread-1',
+          resourceRef: ref,
+          resourceIntent: 'source',
+        },
+      }, context) as PreviewResolveSourceResult;
+
+      expect(intents).toEqual(['source']);
+      expect(resolved.source).toMatchObject({
+        kind: 'file',
+        entryKind: 'directory',
+        displayPath: directoryPath,
+      });
     } finally {
       await rm(managedRoot, { recursive: true, force: true });
     }

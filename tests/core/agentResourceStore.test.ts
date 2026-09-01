@@ -49,6 +49,26 @@ describe('AgentResourceStore', () => {
     await fixture.store.close();
   });
 
+  test('preserves existing links and bytes until startup has a complete reference snapshot', async () => {
+    const fixture = await createFixture();
+    const written = await fixture.store.writeBytes(
+      'thread-a',
+      Buffer.from('survives incomplete startup'),
+      'text/plain',
+      'survivor.txt',
+    );
+    await fixture.store.close();
+
+    const reopened = openStore(fixture.root);
+    await reopened.initialize(new Map(), { complete: false });
+    expect(await reopened.readExact(written.ref)).toEqual(Buffer.from('survives incomplete startup'));
+
+    await reopened.initialize(new Map());
+    expect(await reopened.readExact(written.ref)).toBeNull();
+    expect(await blobFiles(fixture.root)).toHaveLength(0);
+    await reopened.close();
+  });
+
   test('resolves exact and current-source intents independently', async () => {
     const fixture = await createFixture();
     const workspace = path.join(fixture.root, 'workspace');
@@ -89,16 +109,20 @@ async function createFixture(): Promise<{ root: string; store: AgentResourceStor
   roots.push(root);
   const agentRoot = path.join(root, 'agent');
   await mkdir(agentRoot);
-  const databasePath = path.join(agentRoot, 'resource_references.sqlite');
-  const store = new AgentResourceStore(
+  const store = openStore(root);
+  await store.initialize(new Map());
+  return { root, store };
+}
+
+function openStore(root: string): AgentResourceStore {
+  const databasePath = path.join(root, 'agent', 'resource_references.sqlite');
+  return new AgentResourceStore(
     databasePath,
     path.join(root, 'content'),
-    path.join(agentRoot, 'scratch'),
+    path.join(root, 'agent', 'scratch'),
     Date.now,
     new Database(databasePath, { create: true }) as unknown as SqliteDatabase,
   );
-  await store.initialize(new Map());
-  return { root, store };
 }
 
 function createSha256(bytes: Uint8Array): string {

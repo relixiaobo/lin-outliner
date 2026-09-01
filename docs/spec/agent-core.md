@@ -263,8 +263,11 @@ An ordinary renderer-created root receives a Host-managed workspace at
 `cwd`. Descendants inherit the root binding unless an explicit worktree overlay is
 active. Explicit project and automation roots remain supported and are registered as
 separate source scopes. Deleting a managed root drains descendants and pending citation
-capture before removing only that workspace container. Exact revisions retained by
-other links and user-managed external sources survive.
+capture before removing only that workspace container. An explicit-cwd root never owns
+that directory, so Thread deletion leaves it untouched. Workspace cleanup happens after
+the metadata commit; a cleanup failure is logged for maintenance and does not turn the
+already-committed deletion into a failed user action. Exact revisions retained by other
+links and user-managed external sources survive.
 
 An `AgentRole` configures a child Thread. The model-visible built-in Agent types
 are `general-purpose`, `explore`, and `plan`, backed respectively by hidden
@@ -705,7 +708,11 @@ terminal Item references. It then refreshes the canonical payload-reference snap
 once and prunes contexts and diagnostics in parallel, so canonical appends during the
 resource cleanup are visible to both payload pruners. Startup rebuilds Thread links from
 canonical history, releases orphan reference records and anchors, and reconciles anchor
-metadata with ContentStore before collection.
+metadata with ContentStore before collection. Link removal and orphan collection run
+only after every known non-quarantined Thread has produced a readable reference
+snapshot. A quarantined or unreadable Thread makes that snapshot incomplete, so startup
+only adds proven-live links and conservatively retains all existing links, records, and
+exact bytes for a later reconciliation.
 
 A history rollback reclaims contexts, Turn diagnostics, tool text outputs, and tool
 artifacts against surviving history. Managed resources referenced by removed

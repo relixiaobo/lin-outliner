@@ -211,6 +211,7 @@ export interface LinPreviewLocalFileReferenceOptions {
   threadId?: string;
   attachmentId?: string;
   resourceRef?: ThreadResourceReference;
+  resourceIntent?: 'delivered' | 'source';
 }
 
 export interface LinPreviewLocalFileReferenceResult {
@@ -222,6 +223,7 @@ export interface LinOpenLocalFileOptions {
   threadId?: string;
   attachmentId?: string;
   resourceRef?: ThreadResourceReference;
+  resourceIntent?: 'delivered' | 'source';
 }
 
 export interface LinOpenLocalFileResult {

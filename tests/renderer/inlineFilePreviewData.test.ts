@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { formatFileReferenceUri } from '../../src/core/referenceMarkup';
 import {
+  inlineFilePreviewAttrs,
   LOCAL_FILE_REFERENCE_LINK_PREFIX,
   localFileReferenceFromHref,
   localFileReferenceHref,
@@ -54,5 +55,17 @@ describe('localFileReferenceHref ⇄ localFileReferenceFromHref', () => {
 
   test('an empty decoded path is rejected', () => {
     expect(localFileReferenceFromHref(`#${LOCAL_FILE_REFERENCE_LINK_PREFIX}file:`)).toBeNull();
+  });
+
+  test('projects final-citation binding state and resource intent into DOM attributes', () => {
+    expect(inlineFilePreviewAttrs({
+      citationStatus: 'available',
+      resourceIntent: 'delivered',
+      sourceAvailable: false,
+    })).toMatchObject({
+      'data-inline-ref-citation-status': 'available',
+      'data-inline-ref-resource-intent': 'delivered',
+      'data-inline-ref-source-available': 'false',
+    });
   });
 });

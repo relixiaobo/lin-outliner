@@ -962,7 +962,10 @@ opaque ID as a filesystem location. Reveal/Edit Source resolves the current sour
 locator independently and never substitutes the exact scratch observation. A source-
 only directory exposes navigation but no delivered-revision preview. If either
 representation is unavailable, the inline reference remains readable and only the
-affected action is unavailable. Composer history and session registries compare opaque
+affected action is unavailable. Pending, unavailable, and denied bindings remain bound,
+non-actionable inline references; renderer projection never falls back to ambient access
+through the marker's raw path. An available binding without its owning Thread identity
+degrades the same way. Composer history and session registries compare opaque
 reference fields; they never derive equality or access from a digest-shaped ID.
 
 User-message rendering is a presentation projection over canonical

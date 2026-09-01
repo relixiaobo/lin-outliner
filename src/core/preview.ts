@@ -82,7 +82,7 @@ export function previewTargetKey(target: PreviewTarget): string {
       }
       if (target.threadId && target.resourceRef) {
         const ref = target.resourceRef;
-        return `local-file:thread-resource:${target.threadId}:${ref.id}:${ref.mimeType}:${ref.byteLength}:${ref.fileName}`;
+        return `local-file:thread-resource:${target.threadId}:${target.resourceIntent ?? 'delivered'}:${ref.id}:${ref.mimeType}:${ref.byteLength}:${ref.fileName}`;
       }
       if (target.threadId && target.imageArtifactRef) {
         return `local-file:thread-image-artifact:${target.threadId}:${target.imageArtifactRef.id}`;
@@ -111,6 +111,12 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
       resourceRef = threadResourceReferenceFromUnknown(value.resourceRef) ?? undefined;
       if (!resourceRef) return null;
     }
+    const resourceIntent = value.resourceIntent === 'source'
+      ? 'source'
+      : value.resourceIntent === 'delivered' || value.resourceIntent === undefined
+        ? value.resourceIntent
+        : null;
+    if (resourceIntent === null || (resourceIntent !== undefined && !resourceRef)) return null;
     let imageArtifactRef: ThreadImageArtifactReference | undefined;
     if (value.imageArtifactRef !== undefined) {
       try {
@@ -129,7 +135,11 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
       entryKind: value.entryKind === 'directory' ? 'directory' : 'file',
       ...(label ? { label } : {}),
       ...(threadId && attachmentId ? { threadId, attachmentId } : {}),
-      ...(threadId && resourceRef ? { threadId, resourceRef } : {}),
+      ...(threadId && resourceRef ? {
+        threadId,
+        resourceRef,
+        ...(resourceIntent ? { resourceIntent } : {}),
+      } : {}),
       ...(threadId && imageArtifactRef ? { threadId, imageArtifactRef } : {}),
     };
   }

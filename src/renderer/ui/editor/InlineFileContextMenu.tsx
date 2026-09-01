@@ -26,6 +26,8 @@ export interface InlineFileMenuFile {
   entryKind: 'file' | 'directory';
   threadId?: string;
   resourceRef?: ThreadResourceReference;
+  resourceIntent?: 'delivered' | 'source';
+  sourceAvailable?: boolean;
 }
 
 interface InlineFileContextMenuProps {
@@ -45,7 +47,11 @@ export function previewTargetForInlineFile(file: InlineFileMenuFile): PreviewTar
     ...(file.threadId && file.attachmentId
       ? { threadId: file.threadId, attachmentId: file.attachmentId }
       : file.threadId && file.resourceRef
-        ? { threadId: file.threadId, resourceRef: file.resourceRef }
+        ? {
+            threadId: file.threadId,
+            resourceRef: file.resourceRef,
+            ...(file.resourceIntent ? { resourceIntent: file.resourceIntent } : {}),
+          }
         : {}),
   };
 }
@@ -94,7 +100,11 @@ export function InlineFileContextMenu({
       ...(file.threadId && file.attachmentId
         ? { threadId: file.threadId, attachmentId: file.attachmentId }
         : file.threadId && file.resourceRef
-          ? { threadId: file.threadId, resourceRef: file.resourceRef }
+          ? {
+              threadId: file.threadId,
+              resourceRef: file.resourceRef,
+              ...(file.resourceIntent ? { resourceIntent: file.resourceIntent } : {}),
+            }
           : {}),
     });
   };
@@ -105,7 +115,7 @@ export function InlineFileContextMenu({
       ...(file.threadId && file.attachmentId
         ? { threadId: file.threadId, attachmentId: file.attachmentId }
         : file.threadId && file.resourceRef
-          ? { threadId: file.threadId, resourceRef: file.resourceRef }
+          ? { threadId: file.threadId, resourceRef: file.resourceRef, resourceIntent: 'source' as const }
           : {}),
     });
   };
@@ -153,13 +163,15 @@ export function InlineFileContextMenu({
         onClick={run(openExternally)}
         role="menuitem"
       />
-      <MenuItem
-        className="node-context-item"
-        icon={<FolderIcon size={ICON_SIZE.menu} />}
-        label={labels.showInFinder}
-        onClick={run(revealInFinder)}
-        role="menuitem"
-      />
+      {file.sourceAvailable !== false ? (
+        <MenuItem
+          className="node-context-item"
+          icon={<FolderIcon size={ICON_SIZE.menu} />}
+          label={labels.showInFinder}
+          onClick={run(revealInFinder)}
+          role="menuitem"
+        />
+      ) : null}
     </MenuSurface>,
     document.body,
   );

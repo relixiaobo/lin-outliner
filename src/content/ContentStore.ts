@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { constants, createReadStream, type Stats } from 'node:fs';
 import {
   chmod,
   lstat,
@@ -33,6 +33,14 @@ const DEFAULT_ADMISSION_LEASE_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_MAXIMUM_BYTES = 2 * 1024 * 1024 * 1024;
 const DEFAULT_PUBLICATION_STALE_MS = 30_000;
 const PUBLICATION_WAIT_ATTEMPTS = 3_000;
+const PATH_ADMISSION_ATTEMPTS = 2;
+
+class ContentSourceChangedError extends Error {
+  constructor(sourcePath: string) {
+    super(`Content source changed during admission: ${sourcePath}`);
+    this.name = 'ContentSourceChangedError';
+  }
+}
 
 type RevisionState = 'publishing' | 'published' | 'deleting' | 'quarantined';
 
@@ -139,9 +147,48 @@ export class ContentStore {
     sourcePath: string,
     options: { readonly leaseId?: string; readonly leaseMs?: number } = {},
   ): Promise<ContentAdmissionLease> {
-    const source = await stat(sourcePath);
-    if (!source.isFile()) throw new Error(`Content admission requires a regular file: ${sourcePath}`);
-    return this.admit(createReadStream(sourcePath), options);
+    for (let attempt = 0; attempt < PATH_ADMISSION_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.admitStablePath(sourcePath, options);
+      } catch (error) {
+        if (!(error instanceof ContentSourceChangedError) || attempt + 1 >= PATH_ADMISSION_ATTEMPTS) {
+          throw error;
+        }
+      }
+    }
+    throw new ContentSourceChangedError(sourcePath);
+  }
+
+  private async admitStablePath(
+    sourcePath: string,
+    options: { readonly leaseId?: string; readonly leaseMs?: number },
+  ): Promise<ContentAdmissionLease> {
+    const before = await lstat(sourcePath);
+    if (!before.isFile() || before.isSymbolicLink()) {
+      throw new Error(`Content admission requires a physical regular file: ${sourcePath}`);
+    }
+    const noFollow = process.platform === 'win32' ? 0 : constants.O_NOFOLLOW;
+    const handle = await open(sourcePath, constants.O_RDONLY | noFollow);
+    let admission: ContentAdmissionLease | null = null;
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile() || !sameOpenedFile(before, opened)) {
+        throw new ContentSourceChangedError(sourcePath);
+      }
+      admission = await this.admit(handle.createReadStream({ autoClose: false }), options);
+      const after = await handle.stat();
+      if (!sameOpenedFile(opened, after) || admission.byteLength !== opened.size) {
+        await this.releaseAdmissionLease(admission.leaseId).catch(() => undefined);
+        admission = null;
+        throw new ContentSourceChangedError(sourcePath);
+      }
+      return admission;
+    } catch (error) {
+      if (admission) await this.releaseAdmissionLease(admission.leaseId).catch(() => undefined);
+      throw error;
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
   }
 
   async admit(
@@ -945,6 +992,14 @@ function assertUuid(value: string, kind: string): void {
 
 function assertOpaqueId(value: string, kind: string): void {
   if (!value.trim() || value.length > 512) throw new Error(`Invalid ContentStore ${kind} id.`);
+}
+
+function sameOpenedFile(left: Stats, right: Stats): boolean {
+  const hasPhysicalIdentity = left.dev !== 0 || left.ino !== 0 || right.dev !== 0 || right.ino !== 0;
+  return (!hasPhysicalIdentity || (left.dev === right.dev && left.ino === right.ino))
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs;
 }
 
 async function fileDigest(filePath: string): Promise<{ digest: string; byteLength: number }> {

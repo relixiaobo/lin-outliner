@@ -109,7 +109,11 @@ export function InlineFilePreviewLayer() {
           ...(file.threadId && file.attachmentId
             ? { threadId: file.threadId, attachmentId: file.attachmentId }
             : file.threadId && file.resourceRef
-              ? { threadId: file.threadId, resourceRef: file.resourceRef }
+              ? {
+                  threadId: file.threadId,
+                  resourceRef: file.resourceRef,
+                  ...(file.resourceIntent ? { resourceIntent: file.resourceIntent } : {}),
+                }
               : {}),
         })
           .then((result) => {
@@ -207,7 +211,14 @@ export function InlineFilePreviewLayer() {
           entryKind: file.entryKind,
           ...(file.threadId && file.attachmentId
             ? { threadId: file.threadId, attachmentId: file.attachmentId }
-            : {}),
+            : file.threadId && file.resourceRef
+              ? {
+                  threadId: file.threadId,
+                  resourceRef: file.resourceRef,
+                  ...(file.resourceIntent ? { resourceIntent: file.resourceIntent } : {}),
+                  sourceAvailable: file.sourceAvailable,
+                }
+              : {}),
         },
         x: event.clientX,
         y: event.clientY,
@@ -392,8 +403,19 @@ function fileFromElement(element: HTMLElement): InlineFilePreviewFile | null {
     threadId: dataset.inlineRefThreadId,
     attachmentId: dataset.inlineRefAttachmentId,
     resourceRef: resourceReferenceFromDataset(dataset),
+    resourceIntent: dataset.inlineRefResourceIntent === 'source' ? 'source' : 'delivered',
+    citationStatus: citationStatusFromDataset(dataset.inlineRefCitationStatus),
+    sourceAvailable: dataset.inlineRefSourceAvailable === undefined
+      ? undefined
+      : dataset.inlineRefSourceAvailable === 'true',
     thumbnailDataUrl: dataset.inlineRefThumbnailDataUrl,
   };
+}
+
+function citationStatusFromDataset(value: string | undefined) {
+  return value === 'available' || value === 'pending' || value === 'unavailable' || value === 'denied'
+    ? value
+    : undefined;
 }
 
 function resourceReferenceFromDataset(dataset: DOMStringMap) {

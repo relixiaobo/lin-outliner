@@ -167,6 +167,11 @@ function useMarkdownComponents(
         const citation = fileRef.markerOrdinal === undefined
           ? undefined
           : finalCitations.find((candidate) => candidate.markerOrdinal === fileRef.markerOrdinal);
+        const citationActionable = citation === undefined || (
+          citation.status === 'available'
+          && Boolean(threadId)
+          && Boolean(citation.resourceRef)
+        );
         return (
           <InlineFileReference
             className="thread-message-inline-ref"
@@ -175,10 +180,16 @@ function useMarkdownComponents(
               kind: 'file',
               mimeType: fileRef.entryKind === 'directory' ? 'inode/directory' : 'application/octet-stream',
               name: label,
-              path: fileRef.path,
+              ...(citationActionable ? { path: fileRef.path } : {}),
               ref: label,
-              ...(threadId && citation?.resourceRef
-                ? { threadId, resourceRef: citation.resourceRef }
+              ...(citation
+                ? {
+                    citationStatus: citation.status,
+                    ...(threadId ? { threadId } : {}),
+                    ...(threadId && citation.resourceRef ? { resourceRef: citation.resourceRef } : {}),
+                    ...(citation.openIntent ? { resourceIntent: citation.openIntent } : {}),
+                    sourceAvailable: citation.sourceAvailable,
+                  }
                 : {}),
             }}
           />

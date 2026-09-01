@@ -11,6 +11,7 @@ export type PreviewTarget =
       threadId?: string;
       attachmentId?: string;
       resourceRef?: ThreadResourceReference;
+      resourceIntent?: 'delivered' | 'source';
       imageArtifactRef?: ThreadImageArtifactReference;
     }
   | {

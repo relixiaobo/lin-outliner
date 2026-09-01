@@ -34,8 +34,8 @@ interface AddRequest {
 
 interface LinStub {
   invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
-  openLocalFile?: (options: { path: string }) => Promise<unknown>;
-  revealLocalFile?: (options: { path: string }) => Promise<unknown>;
+  openLocalFile?: (options: Record<string, unknown> & { path: string }) => Promise<unknown>;
+  revealLocalFile?: (options: Record<string, unknown> & { path: string }) => Promise<unknown>;
 }
 
 const mounted: Rendered[] = [];
@@ -167,6 +167,52 @@ describe('InlineFileContextMenu', () => {
 
     await clickItem(rendered, labels.showInFinder);
     expect(revealed).toEqual([{ path: FILE.path }]);
+  });
+
+  test('uses the delivered revision for Open and the current source for Reveal', async () => {
+    const resourceRef = {
+      id: 'resource:33333333-3333-4333-8333-333333333333',
+      mimeType: 'text/plain',
+      byteLength: 8,
+      fileName: 'result.txt',
+    };
+    const file: InlineFileMenuFile = {
+      path: '/workspace/result.txt',
+      name: 'result.txt',
+      entryKind: 'file',
+      threadId: 'thread-1',
+      resourceRef,
+      resourceIntent: 'delivered',
+      sourceAvailable: true,
+    };
+    const opened: Array<Record<string, unknown>> = [];
+    const revealed: Array<Record<string, unknown>> = [];
+    const rendered = render(file, {
+      openLocalFile: (options) => { opened.push(options); return Promise.resolve(); },
+      revealLocalFile: (options) => { revealed.push(options); return Promise.resolve(); },
+    });
+
+    await clickItem(rendered, labels.openWithDefaultApp);
+    await clickItem(rendered, labels.showInFinder);
+
+    expect(opened).toEqual([{
+      path: file.path,
+      threadId: 'thread-1',
+      resourceRef,
+      resourceIntent: 'delivered',
+    }]);
+    expect(revealed).toEqual([{
+      path: file.path,
+      threadId: 'thread-1',
+      resourceRef,
+      resourceIntent: 'source',
+    }]);
+  });
+
+  test('hides Reveal when a final citation has no current source', () => {
+    const rendered = render({ ...FILE, sourceAvailable: false }, {});
+    expect(Array.from(rendered.document.body.querySelectorAll('.node-context-item'))
+      .map((item) => item.textContent)).not.toContain(labels.showInFinder);
   });
 });
 

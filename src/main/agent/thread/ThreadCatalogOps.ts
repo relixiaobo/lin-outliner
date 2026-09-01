@@ -76,6 +76,7 @@ export class ThreadCatalogOps {
     ) => RendererThreadStartDefaults | Promise<RendererThreadStartDefaults>,
     private readonly resolveRootWorkspace: ((threadId: ThreadId) => string | Promise<string>) | undefined,
     private readonly cleanupRootWorkspace: ((threadId: ThreadId, cwd: string) => void | Promise<void>) | undefined,
+    private readonly ownsRootWorkspace: ((threadId: ThreadId, cwd: string) => boolean) | undefined,
     private readonly validateRendererConfiguration: (configuration: ThreadConfigurationSummary) => void | Promise<void>,
     private readonly onRendererConfigurationCommitted:
       ((configuration: ThreadConfigurationSummary) => void | Promise<void>) | undefined,
@@ -738,8 +739,18 @@ export class ThreadCatalogOps {
           await this.transcripts.delete(descendantId);
         }
         for (const record of subtree.records) {
-          if (record.thread.parentThreadId === null) {
-            await this.cleanupRootWorkspace?.(record.thread.id, record.thread.cwd);
+          if (
+            record.thread.parentThreadId === null
+            && this.cleanupRootWorkspace
+            && (this.ownsRootWorkspace?.(record.thread.id, record.thread.cwd) ?? true)
+          ) {
+            try {
+              await this.cleanupRootWorkspace(record.thread.id, record.thread.cwd);
+            } catch (error) {
+              // Metadata deletion already committed. Workspace cleanup is
+              // retryable maintenance and must not report a false failed delete.
+              console.warn(`[agent] Managed workspace cleanup deferred for ${record.thread.id}`, error);
+            }
           }
         }
         await this.transcripts.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));

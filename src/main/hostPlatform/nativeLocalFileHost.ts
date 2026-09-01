@@ -43,6 +43,7 @@ export interface LocalFileOperationInput {
   readonly threadId?: unknown;
   readonly attachmentId?: unknown;
   readonly resourceRef?: unknown;
+  readonly resourceIntent?: unknown;
 }
 
 export interface NativeLocalFileHostOptions {
@@ -223,12 +224,18 @@ export function createNativeLocalFileHost(options: NativeLocalFileHostOptions): 
         return null;
       }
     }
+    const requestedResourceIntent = raw?.resourceIntent === undefined
+      ? resourceIntent
+      : raw.resourceIntent === 'delivered' || raw.resourceIntent === 'source'
+        ? raw.resourceIntent
+        : null;
+    if (!requestedResourceIntent || (raw?.resourceIntent !== undefined && !resourceRef)) return null;
     const scopedIdentityCount = Number(Boolean(attachmentId)) + Number(Boolean(resourceRef));
     if (threadId ? scopedIdentityCount !== 1 : scopedIdentityCount !== 0) return null;
     if (!threadId) {
       return resolveTrustedLocalFileReference(raw?.path, options.trustedRoots());
     }
-    if (resourceRef) return options.resolveResourceFile(threadId, resourceRef, resourceIntent);
+    if (resourceRef) return options.resolveResourceFile(threadId, resourceRef, requestedResourceIntent);
     const attachment = await options.resolveAttachmentFile(threadId, attachmentId!).catch(() => null);
     if (!attachment) return null;
     if (attachment.entryKind === 'directory') {
@@ -348,7 +355,7 @@ export function createNativeLocalFileHost(options: NativeLocalFileHostOptions): 
     },
     metadata,
     previewReference: async (rawOptions) => {
-      const file = await resolve(rawOptions, true, 'source');
+      const file = await resolve(rawOptions, true, 'delivered');
       if (!file) return { file: null };
       return { file: await metadata(file) };
     },
@@ -357,7 +364,11 @@ export function createNativeLocalFileHost(options: NativeLocalFileHostOptions): 
       return { opened: file ? await host.open(file) : false };
     },
     revealReference: async (rawOptions) => {
-      const file = await resolve(rawOptions, true);
+      const file = await resolve(
+        rawOptions ? { ...rawOptions, resourceIntent: 'source' } : rawOptions,
+        true,
+        'source',
+      );
       if (!file) return { revealed: false };
       host.reveal(file.path);
       return { revealed: true };

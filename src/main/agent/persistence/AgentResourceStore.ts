@@ -158,13 +158,16 @@ export class AgentResourceStore {
     this.content = ContentStore.open(contentRoot);
   }
 
-  async initialize(liveReferences: ReadonlyMap<ThreadId, readonly ThreadResourceReference[]>): Promise<void> {
+  async initialize(
+    liveReferences: ReadonlyMap<ThreadId, readonly ThreadResourceReference[]>,
+    options: { readonly complete?: boolean } = {},
+  ): Promise<void> {
     await this.content;
     await mkdir(path.join(this.scratchRoot, 'uploads'), { recursive: true, mode: 0o700 });
     await this.withMutation(async () => {
       this.database.exec('BEGIN IMMEDIATE');
       try {
-        this.database.prepare('DELETE FROM resource_links').run();
+        if (options.complete !== false) this.database.prepare('DELETE FROM resource_links').run();
         const insert = this.database.prepare(`
           INSERT OR IGNORE INTO resource_links(thread_id, reference_id) VALUES (?, ?)
         `);
@@ -178,7 +181,10 @@ export class AgentResourceStore {
         this.database.exec('ROLLBACK');
         throw error;
       }
-      await this.collectOrphanRecords();
+      // An incomplete snapshot can only add proven live links. Removing links or
+      // collecting records would turn one recoverable Thread read failure into
+      // permanent attachment loss.
+      if (options.complete !== false) await this.collectOrphanRecords();
       await this.reconcileAnchors();
     });
   }
@@ -344,15 +350,11 @@ export class AgentResourceStore {
     readonly fileName: string;
     readonly source?: AgentSourceLocator | null;
   }): Promise<WrittenAgentResource> {
-    const sourceStat = await lstat(input.sourcePath);
-    if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
-      throw new Error('Agent resource capture requires a physical regular file.');
-    }
-    validateMetadata(sourceStat.size, input.mimeType, input.fileName);
-    await this.assertThreadCapacity(input.threadId, sourceStat.size);
     const content = await this.content;
     const admission = await content.admitPath(input.sourcePath);
     try {
+      validateMetadata(admission.byteLength, input.mimeType, input.fileName);
+      await this.assertThreadCapacity(input.threadId, admission.byteLength);
       return await this.commitAdmission(input.threadId, admission.leaseId, {
         byteLength: admission.byteLength,
         mimeType: input.mimeType,

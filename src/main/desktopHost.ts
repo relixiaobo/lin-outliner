@@ -398,6 +398,12 @@ const agentHost = createAgentHost({
         cwd,
       });
     },
+    ownsRootWorkspace: hasExplicitAgentRoot ? undefined : (threadId, cwd) => (
+      resolve(cwd) === resolve(resolveAgentConversationWorkspace({
+        userDataPath: resolvedUserDataDir,
+        threadId,
+      }))
+    ),
     resolveConfiguration: (request) => configuration.resolveProfile(
       request.configurationProfile,
       request.cwd,
@@ -1074,9 +1080,10 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
                 };
               })
               .catch(() => null),
-          threadResourceFile: async (threadId, ref) =>
-            agentHost.threads
-              .resolveThreadResourceFile(threadId, ref)
+          threadResourceFile: async (threadId, ref, intent) =>
+            (intent === 'source'
+              ? agentHost.threads.resolveThreadResourceSource(threadId, ref)
+              : agentHost.threads.resolveThreadResourceFile(threadId, ref))
               .then((resolved) => {
                 if (!resolved) return null;
                 return {

@@ -1,5 +1,5 @@
 import { parseFileReferenceUri } from '../../../core/referenceMarkup';
-import type { ThreadResourceReference } from '../../../core/agent/protocol';
+import type { AgentFinalCitationStatus, ThreadResourceReference } from '../../../core/agent/protocol';
 
 export interface InlineFilePreviewDescriptor {
   attachmentId?: string;
@@ -11,6 +11,9 @@ export interface InlineFilePreviewDescriptor {
   path?: string;
   ref?: string;
   resourceRef?: ThreadResourceReference;
+  resourceIntent?: 'delivered' | 'source';
+  citationStatus?: AgentFinalCitationStatus;
+  sourceAvailable?: boolean;
   sizeBytes?: number;
   thumbnailDataUrl?: string;
   threadId?: string;
@@ -35,6 +38,11 @@ export function inlineFilePreviewAttrs(file: InlineFilePreviewDescriptor): Recor
   setAttr(attrs, 'data-inline-ref-resource-mime-type', file.resourceRef?.mimeType);
   setFiniteNumberAttr(attrs, 'data-inline-ref-resource-byte-length', file.resourceRef?.byteLength);
   setAttr(attrs, 'data-inline-ref-resource-file-name', file.resourceRef?.fileName);
+  setAttr(attrs, 'data-inline-ref-resource-intent', file.resourceIntent);
+  setAttr(attrs, 'data-inline-ref-citation-status', file.citationStatus);
+  if (file.sourceAvailable !== undefined) {
+    attrs['data-inline-ref-source-available'] = String(file.sourceAvailable);
+  }
   return attrs;
 }
 

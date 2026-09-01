@@ -268,6 +268,7 @@ export interface ThreadServiceOptions {
     threadId: ThreadId,
     cwd: string,
   ) => void | Promise<void>;
+  readonly ownsRootWorkspace?: (threadId: ThreadId, cwd: string) => boolean;
   /** App-owned root for Thread transcript artifacts. Never a workspace path. */
   readonly transcriptRoot: string;
   readonly nameGenerator?: ThreadNameGenerator;
@@ -759,6 +760,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.resolveRendererStartDefaults ?? missingRendererStartDefaults,
       options.resolveRootWorkspace,
       options.cleanupRootWorkspace,
+      options.ownsRootWorkspace,
       options.validateRendererConfiguration ?? (() => undefined),
       options.onRendererConfigurationCommitted,
       this.now,
@@ -888,10 +890,21 @@ export class ThreadService implements ThreadServiceExtensionHost {
       console.warn('[agent] Agent ledger orphan cleanup deferred during startup', error);
     }
     await this.rebuildRetryDeliveryAliases(reconciledThreadIds);
-    await this.core.resources.initialize(new Map(reconciledThreadIds.map((threadId) => [
-      threadId,
-      this.resourceOps.threadResourceReferences(threadId),
-    ])));
+    const liveResourceReferences = new Map<ThreadId, readonly ThreadResourceReference[]>();
+    let resourceSnapshotComplete = true;
+    for (const threadId of knownThreadIds) {
+      if (this.startupQuarantinedThreadIds.has(threadId)) {
+        resourceSnapshotComplete = false;
+        continue;
+      }
+      try {
+        liveResourceReferences.set(threadId, this.resourceOps.threadResourceReferences(threadId));
+      } catch (error) {
+        resourceSnapshotComplete = false;
+        console.warn(`[agent] Resource reference reconciliation deferred for Thread ${threadId}`, error);
+      }
+    }
+    await this.core.resources.initialize(liveResourceReferences, { complete: resourceSnapshotComplete });
     await Promise.all([
       // Transcript reclamation is the same kind of work as payload pruning, so it
       // joins the same startup batch rather than adding a serial step.

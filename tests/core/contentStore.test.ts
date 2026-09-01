@@ -18,6 +18,18 @@ afterEach(async () => {
 });
 
 describe('ContentStore', () => {
+  test('rejects a symlink source before path admission reads its target', async () => {
+    const root = await makeRoot();
+    const sourcePath = path.join(root, 'source.txt');
+    const symlinkPath = path.join(root, 'source-link.txt');
+    await writeFile(sourcePath, 'outside admission');
+    await symlink(sourcePath, symlinkPath);
+    const store = await ContentStore.open(root);
+
+    await expect(store.admitPath(symlinkPath)).rejects.toThrow('physical regular file');
+    store.close();
+  });
+
   test('coordinates concurrent process admission, anchors, cloning, release, and central GC', async () => {
     const root = await makeRoot();
     const [first, second] = await Promise.all([

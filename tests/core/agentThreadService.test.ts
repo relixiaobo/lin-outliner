@@ -1202,6 +1202,7 @@ describe('ThreadService', () => {
     const first = await openFixture(root, executor, clock);
     await first.service.initialize();
     const threadIds: string[] = [];
+    let unreadableResource: ThreadResourceReference | null = null;
     for (const [index, name] of ['Readable', 'Unreadable'].entries()) {
       const thread = (await first.service.startThread({
         source: 'app',
@@ -1211,9 +1212,26 @@ describe('ThreadService', () => {
         name,
       })).thread;
       threadIds.push(thread.id);
+      if (name === 'Unreadable') {
+        unreadableResource = await first.service.writeThreadResource(
+          thread.id,
+          Buffer.from('resource owned by unreadable history'),
+          'text/plain',
+          'unreadable-resource.txt',
+        );
+      }
       await first.service.startRendererTurn({
         threadId: thread.id,
-        input: [{ type: 'text', text: `Work on ${name}` }],
+        input: unreadableResource && name === 'Unreadable'
+          ? [{
+              type: 'attachment',
+              id: 'unreadable-resource',
+              name: unreadableResource.fileName,
+              mimeType: unreadableResource.mimeType,
+              sizeBytes: unreadableResource.byteLength,
+              source: { kind: 'resource', ref: unreadableResource },
+            }]
+          : [{ type: 'text', text: `Work on ${name}` }],
       });
       await executor.waitUntilWaiting(index);
       executor.finish(index);
@@ -1255,6 +1273,9 @@ describe('ThreadService', () => {
       .toThrow(/quarantined/);
     expect(() => reopened.service.listTurns({ threadId: unreadableId })).toThrow(/quarantined/);
     expect(() => reopened.service.listItems({ threadId: unreadableId })).toThrow(/quarantined/);
+    if (!unreadableResource) throw new Error('Unreadable resource fixture missing.');
+    expect(await reopened.stores.resources.readExact(unreadableResource))
+      .toEqual(Buffer.from('resource owned by unreadable history'));
     // Metadata-only reads never touch the codec, so the Thread stays nameable.
     expect(reopened.service.readThread({ threadId: unreadableId }).thread.name).toBe('Unreadable');
     expect(reports.filter((report) => report.code === 'thread-history-unreadable'))
@@ -3622,6 +3643,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
         if (cwd !== expected) throw new Error('Managed workspace path mismatch.');
         await rm(expected, { recursive: true, force: true });
       },
+      ownsRootWorkspace: (threadId, cwd) => cwd === join(workspaceRoot, threadId),
     });
     await opened.service.initialize();
     const thread = (await opened.service.startThread({
@@ -3635,6 +3657,52 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
 
     await expect(readFile(join(thread.cwd, 'draft.txt'), 'utf8')).rejects.toThrow();
     await opened.service.close();
+  });
+
+  test('preserves an explicit-cwd root when its Thread is deleted', async () => {
+    const cleanupCalls: string[] = [];
+    const fixture = await createFixture(undefined, {
+      resolveRootWorkspace: (threadId) => join('/managed', threadId),
+      cleanupRootWorkspace: (_threadId, cwd) => { cleanupCalls.push(cwd); },
+      ownsRootWorkspace: (threadId, cwd) => cwd === join('/managed', threadId),
+    });
+    const externalFile = join(fixture.root, 'external-project-file.txt');
+    await writeFile(externalFile, 'user-owned');
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await fixture.service.deleteThread(thread.id);
+
+    expect(cleanupCalls).toEqual([]);
+    expect(await readFile(externalFile, 'utf8')).toBe('user-owned');
+    expect(fixture.stores.metadata.read(thread.id)).toBeNull();
+    await fixture.service.close();
+  });
+
+  test('does not report a committed Thread deletion as failed when managed workspace cleanup defers', async () => {
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fixture = await createFixture(undefined, {
+      resolveRootWorkspace: (threadId) => join('/managed', threadId),
+      cleanupRootWorkspace: () => { throw new Error('simulated workspace cleanup failure'); },
+      ownsRootWorkspace: () => true,
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+    })).thread;
+
+    await expect(fixture.service.deleteThread(thread.id)).resolves.toBeUndefined();
+
+    expect(fixture.stores.metadata.read(thread.id)).toBeNull();
+    expect(warning.mock.calls.some((call) => String(call[0]).includes('workspace cleanup deferred')))
+      .toBe(true);
+    warning.mockRestore();
+    await fixture.service.close();
   });
 
   test('interrupts the exact active Turn and records a terminal history fact', async () => {
@@ -13433,6 +13501,7 @@ async function createFixture(
     | 'normalizeOutputImage'
     | 'resolveRootWorkspace'
     | 'cleanupRootWorkspace'
+    | 'ownsRootWorkspace'
     | 'beforeInitialTurnAdmission'
     | 'planAgentWorktree'
     | 'prepareAgentWorktree'
@@ -13562,6 +13631,9 @@ async function openFixture(
     | 'onRendererConfigurationCommitted'
     | 'nameGenerator'
     | 'normalizeOutputImage'
+    | 'resolveRootWorkspace'
+    | 'cleanupRootWorkspace'
+    | 'ownsRootWorkspace'
     | 'beforeInitialTurnAdmission'
     | 'planAgentWorktree'
     | 'prepareAgentWorktree'
