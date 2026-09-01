@@ -761,6 +761,7 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       'How to invoke:',
       '- Use this tool with the Skill name and follow that catalog entry\'s input contract.',
       '- Omit `args` when the catalog says `Invoke without args.` The canonical user message already carries the task.',
+      '- Under catalog pressure, an entry without an `Args:` or `Isolated;` input label is also load-only; omit `args`.',
       '- For `Args: ...`, pass only the declared variable input. For an isolated Skill, pass the exact user task and explicit constraints without adding an implementation plan.',
       '- Examples:',
       '  - `skill: "outline"` - load an inline Skill without arguments',
@@ -2191,18 +2192,24 @@ function boundedSkillCatalogDescriptions(
   if (fullLength <= DEFAULT_SKILL_LISTING_CHAR_BUDGET) return new Map(full);
   const nameOverhead = skills.reduce((total, skill) => total + skill.name.length + 4, 0);
   const contractOverhead = skills.reduce(
-    (total, skill) => total + skillInvocationContract(skill).length + 1,
+    (total, skill) => total + (skillRequiresInvocationArgs(skill)
+      ? skillInvocationContract(skill).length + 1
+      : 0),
     0,
   );
   const authoredBudget = Math.max(0, DEFAULT_SKILL_LISTING_CHAR_BUDGET - nameOverhead - contractOverhead);
   const perAuthoredDescription = Math.floor(authoredBudget / skills.length);
   return new Map(skills.map((skill) => [
     skill.name,
-    formatSkillDescription(
-      skill,
-      skillInvocationContract(skill).length
-        + (perAuthoredDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS ? 0 : 1 + perAuthoredDescription),
-    ),
+    skillRequiresInvocationArgs(skill)
+      ? formatSkillDescription(
+          skill,
+          skillInvocationContract(skill).length
+            + (perAuthoredDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS ? 0 : 1 + perAuthoredDescription),
+        )
+      : perAuthoredDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS
+        ? ''
+        : truncate(authoredSkillDescription(skill), Math.min(perAuthoredDescription, MAX_LISTING_DESCRIPTION_CHARS)),
   ]));
 }
 
@@ -2218,10 +2225,22 @@ function skillInvocationContract(skill: SkillDefinition): string {
       ? 'Isolated; args=user task; Subagents allowed; parent ceiling.'
       : 'Isolated; args=user task; no Subagents; parent fans out.';
   }
-  const argumentHint = compactInlineText(skill.argumentHint ?? skill.argumentNames.join(' '));
+  const argumentHint = inlineSkillArgumentHint(skill);
   return argumentHint
     ? `Args: ${truncate(argumentHint, MAX_LISTING_ARGUMENT_HINT_CHARS)}.`
     : 'Invoke without args.';
+}
+
+function skillRequiresInvocationArgs(skill: SkillDefinition): boolean {
+  return skill.execution === 'isolated' || inlineSkillArgumentHint(skill) !== '';
+}
+
+function inlineSkillArgumentHint(skill: SkillDefinition): string {
+  const declared = compactInlineText(skill.argumentHint ?? skill.argumentNames.join(' '));
+  if (declared) return declared;
+  return skill.body.includes('$ARGUMENTS') || /\$\d+(?!\w)/.test(skill.body)
+    ? 'input'
+    : '';
 }
 
 function codeRegisteredSkillContentHash(skill: SkillDefinition): string {

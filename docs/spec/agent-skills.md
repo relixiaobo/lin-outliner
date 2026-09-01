@@ -65,11 +65,15 @@ authority merely by appearing after the Skill body.
 
 The model-visible catalog states that distinction before invocation. An inline Skill
 without `argument-hint` or named `arguments` is load-only and tells the model to omit
-`args`. A parameterized inline Skill advertises its compact authored hint, falling back
-to its ordered argument names. An isolated Skill tells the parent that `args` carries
-the user task. These host-derived contracts are reserved ahead of authored descriptions
-inside the bounded catalog budget; Skill prose cannot omit or override them. The shared
-tool field remains optional because one `skill` tool serves all three forms.
+`args`, unless its body contains a supported argument placeholder. A parameterized
+inline Skill advertises its compact authored hint, falling back to its ordered argument
+names or a generic input hint derived from `$ARGUMENTS`, `$ARGUMENTS[n]`, or positional
+placeholders in the body. An isolated Skill tells the parent that `args` carries the
+user task. Contracts that require input are reserved ahead of authored descriptions
+inside the bounded catalog budget. Under extreme catalog pressure, repeated load-only
+contracts and authored descriptions are elided; the shared tool rule defines an entry
+without an `Args:` or `Isolated;` label as load-only. The shared tool field remains
+optional because one `skill` tool serves all three forms.
 
 ## Discovery And Invocation
 
@@ -113,9 +117,11 @@ instructions remain child-only developer instructions, while the invocation task
 child's canonical user message. Dynamic embedded-shell results are excluded from the
 instruction snapshot and admitted separately as untrusted child observations. The parent
 receives identity, constraints, and the tool result for audit. The model-facing `skill`
-tool requires the parent to preserve the user's task and
-explicit constraints in arguments without inventing an implementation plan or
-overriding the Skill workflow. There is no prompt overlay, private steering queue, or text parser. Restart
+tool follows the catalog-governed input contract: it omits arguments for load-only
+inline Skills, supplies only declared variable input for parameterized inline Skills,
+and preserves the user's exact task and explicit constraints for isolated Skills
+without inventing an implementation plan or overriding the Skill workflow. There is no
+prompt overlay, private steering queue, or text parser. Restart
 replays the same payload bytes from canonical Items. A later invocation of the same
 canonical name is authoritative from that point forward without deleting or rebinding
 older evidence.

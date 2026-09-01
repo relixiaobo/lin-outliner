@@ -24,15 +24,18 @@ The bounded Skill catalog remains the model's discovery surface. Each entry gain
 short host-derived invocation contract inside its description:
 
 - inline Skills without declared arguments are load-only and explicitly require the
-  model to omit `args`;
+  model to omit `args`, unless their body contains a supported argument placeholder;
 - inline Skills with declared arguments expose their authored `argument-hint`, or
-  their ordered argument names when no hint exists;
+  their ordered argument names when no hint exists; accepted placeholder-only Skills
+  receive a generic input hint;
 - isolated Skills state that `args` carries the exact user task because the child
   does not inherit the parent conversation.
 
 The contract is generated from parsed `SkillDefinition` state, never duplicated in
-individual Skill prose. Its budget is reserved before authored descriptions, using
-the same bounded listing mechanism as the existing isolated execution constraint.
+individual Skill prose. Contracts that require input are reserved before authored
+descriptions, using the same bounded listing mechanism as the existing isolated
+execution constraint. Under extreme catalog pressure, repeated load-only contracts
+are elided and the tool-level default treats entries without input labels as load-only.
 
 ### Conditional tool guidance
 

@@ -501,6 +501,10 @@ describe('agent skills', () => {
       ],
       body: 'Convert $target to $format.',
     });
+    await createSkillInRoot(root, 'placeholder', {
+      frontmatter: ['description: Placeholder skill'],
+      body: 'Review $ARGUMENTS and $0.',
+    });
     await createSkillInRoot(root, 'isolated', {
       frontmatter: [
         'description: Isolated skill',
@@ -516,6 +520,11 @@ describe('agent skills', () => {
     });
 
     const catalog = await runtime.buildSkillCatalogSnapshot();
+    const placeholderInvocation = await runtime.invokeSkill({
+      skill: 'placeholder',
+      args: '"pull request" extra',
+      trigger: 'agent',
+    });
 
     expect(catalog.entries.find((entry) => entry.name === 'load-only')?.description)
       .toBe('Load-only skill Invoke without args.');
@@ -523,8 +532,15 @@ describe('agent skills', () => {
       .toBe('Hinted skill Args: <PR_NUMBER> [--summary].');
     expect(catalog.entries.find((entry) => entry.name === 'named')?.description)
       .toBe('Named skill Args: target format.');
+    expect(catalog.entries.find((entry) => entry.name === 'placeholder')?.description)
+      .toBe('Placeholder skill Args: input.');
     expect(catalog.entries.find((entry) => entry.name === 'isolated')?.description)
       .toBe('Isolated skill Isolated; args=user task; no Subagents; parent fans out.');
+    expect(placeholderInvocation.ok).toBe(true);
+    if (placeholderInvocation.ok) {
+      expect(placeholderInvocation.renderedContent)
+        .toContain('Review "pull request" extra and pull request.');
+    }
   });
 
   test('keeps Skill args optional and describes their catalog-governed use', () => {
@@ -539,6 +555,7 @@ describe('agent skills', () => {
     expect(parameters.properties.args.description).toContain('parameterized inline Skills');
     expect(parameters.properties.args.description).toContain('exact user task for isolated Skills');
     expect(tool.description).toContain('The canonical user message already carries the task.');
+    expect(tool.description).toContain('an entry without an `Args:` or `Isolated;` input label');
     expect(tool.description).toContain('pass only the declared variable input');
   });
 
@@ -1554,6 +1571,27 @@ describe('agent skills', () => {
       && entry.description.includes('no Subagents')
       && entry.description.includes('parent fans out')
     ))).toBe(true);
+    expect(catalog.entries.reduce((total, entry) => (
+      total + entry.name.length + entry.description.length + 4
+    ), 0)).toBeLessThanOrEqual(8_000);
+  });
+
+  test('elides repeated load-only contracts before they exceed the catalog budget', async () => {
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkills: Array.from({ length: 300 }, (_, index) => ({
+        name: `s-${String(index).padStart(3, '0')}`,
+        description: `Load-only catalog entry ${index}`,
+        body: 'Follow the loaded workflow.',
+        modelInvocable: true,
+      })),
+    });
+
+    const catalog = await runtime.buildSkillCatalogSnapshot();
+    const pressureEntries = catalog.entries.filter((entry) => entry.name.startsWith('s-'));
+
+    expect(pressureEntries).toHaveLength(300);
+    expect(pressureEntries.every((entry) => entry.description === '')).toBe(true);
     expect(catalog.entries.reduce((total, entry) => (
       total + entry.name.length + entry.description.length + 4
     ), 0)).toBeLessThanOrEqual(8_000);
