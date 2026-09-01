@@ -30,9 +30,10 @@ exchanges, not dynamic context prose.
 - **CON-1 hard:** provider-native tool-call and tool-result roles remain intact.
 - **CON-2 hard:** durable family-owned details remain authoritative for audit,
   replay, rendering, and recovery.
-- **CON-3 dependency:** merged PR #610 owns the provider tool-call identity
-  boundary. Repeat the collision check before implementation against that final
-  contract.
+- **CON-3 dependency:** merged PR #610 owns provider tool-call identity. Open PR
+  #612 concurrently changes `PiTurnExecutor` and recovery-oriented provider
+  projection; implementation must start from its merged result or re-resolve the
+  overlap if it closes unmerged.
 - **DEC-1:** normalization applies only to the model-visible result projection.
 - **DEC-2:** `ok` is the only success/failure discriminator. The existing compact
   optional `status` distinguishes unchanged, partial, and denied outcomes when
@@ -121,8 +122,9 @@ fields and are not parsed from the visible envelope.
 
 ## Execution
 
-- Start from the merged #610 baseline and repeat the collision check at the
-  provider-result boundary.
+- Wait for PR #612 to settle, then rebase onto its merged result or re-resolve the
+  overlap if it closes unmerged. Repeat the collision check at the provider-result
+  boundary.
 - Reuse the existing built-in model-visible envelope abstraction as the normal form.
 - Add collaboration result adapters without replacing durable collaboration details.
 - Test every informative status across both families and preserve native media
