@@ -57,6 +57,13 @@ const privateItem: CommandExecutionThreadItem = {
     disposition: 'replayable',
     identity: { namespace: null, name: 'bash' },
     providerName: 'bash',
+    providerCall: {
+      id: 'call-private',
+      api: 'openai-responses',
+      provider: 'openai',
+      model: 'openai/gpt-5',
+      thoughtSignature: 'private-signature',
+    },
     arguments: {
       storage: 'payload',
       ref: argumentPayloadRef,
@@ -214,14 +221,32 @@ describe('renderer Agent Core projection', () => {
   });
 
   test('renderer codecs reject canonical argument dependencies at the model-call slot', () => {
-    expect(() => decodeRendererAgentCoreResponse('thread/read', { thread: privateThread }))
+    if (privateItem.modelCall.disposition !== 'replayable') throw new Error('expected replayable fixture');
+    const { providerCall: _providerCall, ...modelCall } = privateItem.modelCall;
+    const thread = {
+      ...privateThread,
+      turns: [{ ...privateTurn, items: [{ ...privateItem, modelCall }] }],
+    };
+
+    expect(() => decodeRendererAgentCoreResponse('thread/read', { thread }))
       .toThrow('private payload arguments cannot cross IPC');
     expect(() => decodeRendererAgentCoreNotification({
       type: 'turn/completed',
       threadId: THREAD_ID,
       turnId: TURN_ID,
-      turn: privateTurn,
+      turn: thread.turns[0],
     })).toThrow('private payload arguments cannot cross IPC');
+  });
+
+  test('renderer codecs reject private provider replay metadata at the model-call slot', () => {
+    expect(() => decodeRendererAgentCoreResponse('thread/read', { thread: privateThread }))
+      .toThrow('private provider replay metadata cannot cross IPC');
+    expect(() => decodeRendererAgentCoreNotification({
+      type: 'turn/completed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      turn: privateTurn,
+    })).toThrow('private provider replay metadata cannot cross IPC');
   });
 
   test('renderer projection preserves private-looking fields inside inline JSON arguments', () => {
@@ -286,6 +311,7 @@ function expectPrivateArgumentsAbsent(value: unknown): void {
   expect(record.storage).not.toBe('payload');
   expect(record).not.toHaveProperty('internalTextRefs');
   expect(record).not.toHaveProperty('bindings');
+  expect(record).not.toHaveProperty('providerCall');
   for (const entry of Object.values(record)) expectPrivateArgumentsAbsent(entry);
 }
 

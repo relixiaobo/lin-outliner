@@ -26,7 +26,7 @@ import { uuidV7 } from '../../src/main/agent/uuid';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import { modelToolSchemaDigest } from '../../src/main/agent/runtime/toolCallHistory';
-import { replayableModelCall } from '../fixtures/agentToolCallHistory';
+import { replayableModelCall, testProviderCall } from '../fixtures/agentToolCallHistory';
 
 const model = {
   id: 'test-model',
@@ -999,8 +999,9 @@ describe('canonical context projection', () => {
     const assistant = messages[1];
     if (assistant?.role !== 'assistant') throw new Error('Expected assistant tool history.');
     const call = assistant.content.find((part) => part.type === 'toolCall');
+    if (item.modelCall.disposition !== 'replayable') throw new Error('Expected replayable history.');
     expect(call).toMatchObject({
-      id: 'canonical-bash',
+      id: item.modelCall.providerCall.id,
       name: 'bash',
       arguments: { command: 'pwd', description: 'Print the working directory' },
     });
@@ -1407,6 +1408,9 @@ describe('canonical context projection', () => {
         disposition: 'redactedReplay' as const,
         identity: { namespace: null, name: 'bash' },
         providerName: 'bash',
+        providerCall: testProviderCall('bash', {
+          command: 'curl -H "Authorization: [redacted secret-like content]" https://example.test',
+        }),
         redactedArguments: {
           storage: 'inline' as const,
           value: { command: 'curl -H "Authorization: [redacted secret-like content]" https://example.test' },

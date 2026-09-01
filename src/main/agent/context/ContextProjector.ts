@@ -18,6 +18,7 @@ import type {
   ContextPurpose,
   ContextTextEntry,
   JsonValue,
+  ModelProviderToolCall,
   ReferencedResourcesContextPayload,
   RoleCatalogContextPayload,
   SkillCatalogContextPayload,
@@ -35,6 +36,7 @@ import type {
   UserViewContextPayload,
 } from '../../../core/agent/protocol';
 import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
+import { portableProviderToolCallId } from '../../../core/agent/providerToolCallIdentity';
 import { escapeXml } from '../../../core/reminderXml';
 import {
   formatNamedFileReference,
@@ -70,6 +72,7 @@ interface ProjectionResources {
 export interface LiveModelToolCall {
   readonly providerName: string;
   readonly arguments: JsonValue;
+  readonly providerCall: ModelProviderToolCall;
 }
 
 export interface CanonicalContextProjectorOptions {
@@ -259,6 +262,7 @@ export class CanonicalContextProjector {
     let pendingUserProvenance: TurnDiagnosticsMessagePartProvenance[] = [];
     let pendingContextBlocks: ProjectedContextBlock[] = [];
     let assistantContent: Array<TextContent | ToolCall> = [];
+    let assistantSource: ModelProviderToolCall | null = null;
     let assistantItemIds: string[] = [];
     let toolResults: ToolResultMessage[] = [];
     let toolEvidence: string[] = [];
@@ -285,7 +289,17 @@ export class CanonicalContextProjector {
         messages.push(assistantHistoryMessage(
           assistantContent,
           turn.startedAt,
-          this.model,
+          assistantSource
+            ? {
+                api: assistantSource.api,
+                provider: assistantSource.provider,
+                model: assistantSource.model,
+              }
+            : {
+                api: this.model.api,
+                provider: this.model.provider,
+                model: this.model.id,
+              },
           toolResults.length > 0 ? 'toolUse' : 'stop',
         ));
         messagePartProvenance.push(assistantContent.map(() => ({ source: 'assistantHistory' })));
@@ -300,6 +314,7 @@ export class CanonicalContextProjector {
         messagePartProvenance.push([{ source: 'unknown' }]);
       }
       assistantContent = [];
+      assistantSource = null;
       assistantItemIds = [];
       toolResults = [];
       toolEvidence = [];
@@ -425,6 +440,7 @@ export class CanonicalContextProjector {
         const tool = await historyTool(
           item,
           turn.startedAt,
+          this.model,
           this.resources,
           projection,
           projectionKey !== null && this.unavailableToolOutputProjections.has(projectionKey),
@@ -434,6 +450,14 @@ export class CanonicalContextProjector {
           toolEvidence.push(tool.text);
           continue;
         }
+        if (
+          assistantContent.length > 0
+          && assistantSource !== null
+          && !sameAssistantSource(assistantSource, tool.source)
+        ) {
+          flushAssistant();
+        }
+        assistantSource = tool.source;
         assistantItemIds.push(item.id);
         if (tool.marker) assistantContent.push(tool.marker);
         assistantContent.push(tool.call);
@@ -1259,15 +1283,15 @@ function renderRoleCatalog(payload: RoleCatalogContextPayload): string {
 function assistantHistoryMessage(
   content: AssistantMessage['content'],
   timestamp: number,
-  model: Model<Api>,
+  source: { readonly api: string; readonly provider: string; readonly model: string },
   stopReason: AssistantMessage['stopReason'],
 ): AssistantMessage {
   return {
     role: 'assistant',
     content,
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
+    api: source.api as Api,
+    provider: source.provider,
+    model: source.model,
     usage: {
       input: 0,
       output: 0,
@@ -1301,6 +1325,7 @@ function isToolItem(item: ThreadItem): item is HistoryToolItem {
 async function historyTool(
   item: HistoryToolItem,
   timestamp: number,
+  targetModel: Model<Api>,
   resources: Pick<
     ProjectionResources,
     'readContext' | 'readInternalText' | 'readOutput' | 'readResource' | 'resolveResourceObservationPath' | 'resolveImageArtifactPath'
@@ -1309,14 +1334,22 @@ async function historyTool(
   projectionUnavailable: boolean,
   liveCall: LiveModelToolCall | null,
 ): Promise<
-  | { readonly kind: 'exchange'; readonly marker: TextContent | null; readonly call: ToolCall; readonly result: ToolResultMessage }
+  | {
+      readonly kind: 'exchange';
+      readonly marker: TextContent | null;
+      readonly source: ModelProviderToolCall;
+      readonly call: ToolCall;
+      readonly result: ToolResultMessage;
+    }
   | { readonly kind: 'evidence'; readonly text: string }
 > {
   let args: JsonValue;
   let providerName: string;
+  let providerCall: ModelProviderToolCall;
   if (liveCall) {
     args = liveCall.arguments;
     providerName = liveCall.providerName;
+    providerCall = liveCall.providerCall;
   } else {
     const stored = item.modelCall;
     if (stored.disposition === 'evidenceOnly') {
@@ -1324,6 +1357,7 @@ async function historyTool(
     }
     const source = modelCallArgumentSource(stored);
     providerName = stored.providerName;
+    providerCall = stored.providerCall;
     if (source.storage === 'inline') {
       args = source.value;
     } else {
@@ -1354,19 +1388,44 @@ async function historyTool(
   const marker = !liveCall && item.modelCall.disposition === 'redactedReplay'
     ? { type: 'text' as const, text: redactedReplayMarker(item.id, item.modelCall.redactedPaths) }
     : null;
+  const sameModel = providerCall.api === targetModel.api
+    && providerCall.provider === targetModel.provider
+    && providerCall.model === targetModel.id;
+  const projectedToolCallId = sameModel
+    ? providerCall.id
+    : portableProviderToolCallId(item.id);
   return {
     kind: 'exchange',
     marker,
-    call: { type: 'toolCall', id: item.id, name: providerName, arguments: args as Record<string, any> },
+    source: providerCall,
+    call: {
+      type: 'toolCall',
+      id: projectedToolCallId,
+      name: providerName,
+      arguments: args as Record<string, any>,
+      ...(sameModel && providerCall.thoughtSignature
+        ? { thoughtSignature: providerCall.thoughtSignature }
+        : {}),
+    },
     result: {
       role: 'toolResult',
-      toolCallId: item.id,
+      toolCallId: projectedToolCallId,
       toolName: providerName,
       content: resultContent,
       isError: item.status !== 'completed',
       timestamp,
     },
   };
+}
+
+function sameAssistantSource(
+  left: ModelProviderToolCall | null,
+  right: ModelProviderToolCall,
+): boolean {
+  return left !== null
+    && left.api === right.api
+    && left.provider === right.provider
+    && left.model === right.model;
 }
 
 async function historicalToolEvidence(

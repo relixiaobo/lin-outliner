@@ -34,24 +34,35 @@ Completed Items and terminal Turns are immutable.
 Every tool Item carries one immutable `modelCall` envelope in addition to its
 type-specific audit and presentation fields. The envelope is the sole authority for
 provider tool-call history and has exactly one disposition: `replayable` stores the
-exact admitted canonical identity, provider-visible name, model arguments, and schema
-digest; `redactedReplay` freezes the same provider name and digest with a
-structure-preserving redacted value plus RFC 6901 paths; and `evidenceOnly` stores a
-bounded redacted summary, stable reason, and correction without a replayable call.
+exact admitted canonical identity, provider-visible name, model arguments, schema
+digest, and Host-private provider-call envelope; `redactedReplay` freezes the same
+provider fields and digest with a structure-preserving redacted value plus RFC 6901
+paths; and `evidenceOnly` stores a bounded redacted summary, stable reason, and
+correction without a replayable call. The provider envelope records the active
+provider-visible ID, source API/provider/model tuple, and optional opaque
+`thoughtSignature`. Each string has a strict UTF-8 admission bound, the envelope is
+required at canonical decode, and renderer projection removes it completely.
 The digest is audit evidence, not future admission authority. Historical projection
 never consults the current registry or schema to rewrite or erase an admitted exchange;
 only a missing or corrupt persisted argument/result dependency degrades the pair to
 typed evidence.
-The runtime preserves the first non-empty unused provider call ID and replaces empty or
-repeated IDs with fresh Turn-local UUIDv7 values before admission. Only the resulting
-canonical ID identifies the Item, execution causation, paired result, and replay.
+The runtime mints a fresh UUIDv7 internal `toolCallId` for every provider call before
+admission. That UUID alone identifies the Item, execution causation, mutation, event,
+and persisted relationship. Provider correlation is separate: the first non-empty ID
+unused in visible history remains exact, while an empty or repeated ID becomes
+`tc_<internal uuid hex>` in both the active assistant call and its result. The selected
+provider-visible ID is the one stored in replayable history; raw provider input never
+becomes a Core identity.
 Command text, file changes, MCP/dynamic display arguments, Agent-task summaries,
 results, and host execution metadata never reconstruct model arguments. In particular,
 `commandExecution.cwd` is the Thread's host-resolved working directory and is not part
 of the `bash` model call. During the active Turn only, a transient raw-call overlay lets
 the next provider boundary observe the exact just-executed arguments. It is not durable;
-later Turns, restart, fork, and compaction use only the frozen envelope.
-The envelope is required at the codec boundary. Pre-envelope tool Items are not
+later Turns, restart, fork, and compaction use only the frozen envelope. An admitted
+call whose live provider replay metadata exceeds its durable bound still executes and
+retains its transient call/result pair, but freezes bounded
+`providerReplayUnavailable` evidence for later Turns. The envelope is required at the
+codec boundary. Pre-envelope tool Items are not
 decoded, migrated, reconstructed, or routed through an alternate reader; pre-release
 userData is reset when this storage format lands.
 

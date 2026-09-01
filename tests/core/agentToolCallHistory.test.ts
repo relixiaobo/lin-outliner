@@ -3,6 +3,7 @@ import {
   MAX_MODEL_TOOL_CORRECTION_BYTES,
   MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
   MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+  MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES,
   type JsonValue,
   type ThreadContextPayloadReference,
 } from '../../src/core/agent/protocol';
@@ -39,6 +40,13 @@ describe('canonical model tool-call admission', () => {
         disposition: 'replayable',
         identity: { namespace: null, name: 'bash' },
         providerName: 'bash',
+        providerCall: {
+          id: 'call-1',
+          api: 'openai-responses',
+          provider: 'openai',
+          model: 'test-model',
+          thoughtSignature: null,
+        },
         arguments: { storage: 'inline', value: ordinaryArguments },
         schemaDigest: SCHEMA_DIGEST,
       },
@@ -224,6 +232,13 @@ describe('canonical model tool-call admission', () => {
     const decision = transientToolCallAdmission({
       toolCallId: 'rejected',
       providerName: '工'.repeat(2_000),
+      providerCall: {
+        id: 'rejected',
+        api: 'openai-responses',
+        provider: 'openai',
+        model: 'test-model',
+        thoughtSignature: null,
+      },
       outcome: {
         type: 'rejected',
         identity: null,
@@ -245,6 +260,53 @@ describe('canonical model tool-call admission', () => {
       MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
     );
   });
+
+  test('executes a call whose provider replay metadata exceeds the durable budget', async () => {
+    const request = await admittedRequest({ command: 'pwd' });
+    const oversizedSignature = 'x'.repeat(MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES + 1);
+    const decision = await persistToolCallAdmission({
+      ...request,
+      providerCall: { ...request.providerCall, thoughtSignature: oversizedSignature },
+    }, async () => { throw new Error('Small arguments must stay inline.'); });
+
+    expect(decision).toMatchObject({
+      execute: true,
+      modelCall: {
+        disposition: 'evidenceOnly',
+        reason: 'providerReplayUnavailable',
+      },
+    });
+    expect(JSON.stringify(decision)).not.toContain(oversizedSignature);
+  });
+
+  test('does not persist payload-sized arguments when provider replay metadata is unavailable', async () => {
+    const argumentsValue = { content: 'x'.repeat(40_000) } as const;
+    const request = await admittedRequest(argumentsValue);
+    const oversizedSignature = 'x'.repeat(MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES + 1);
+    const replayUnavailableRequest = {
+      ...request,
+      providerCall: { ...request.providerCall, thoughtSignature: oversizedSignature },
+    };
+    let persistenceAttempted = false;
+
+    const durable = await persistToolCallAdmission(replayUnavailableRequest, async () => {
+      persistenceAttempted = true;
+      throw new Error('Provider-ineligible history must not allocate an argument payload.');
+    });
+    const transient = transientToolCallAdmission(replayUnavailableRequest);
+
+    expect(persistenceAttempted).toBe(false);
+    for (const decision of [durable, transient]) {
+      expect(decision).toMatchObject({
+        execute: true,
+        modelCall: {
+          disposition: 'evidenceOnly',
+          reason: 'providerReplayUnavailable',
+        },
+      });
+      expect(JSON.stringify(decision)).not.toContain(oversizedSignature);
+    }
+  });
 });
 
 async function admittedRequest(
@@ -256,6 +318,13 @@ async function admittedRequest(
   return {
     toolCallId: 'call-1',
     providerName: 'bash',
+    providerCall: {
+      id: 'call-1',
+      api: 'openai-responses',
+      provider: 'openai',
+      model: 'test-model',
+      thoughtSignature: null,
+    },
     outcome: {
       type: 'admitted',
       identity: { namespace: null, name: 'bash' },

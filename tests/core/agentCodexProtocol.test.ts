@@ -35,6 +35,8 @@ import {
   MAX_MODEL_TOOL_CORRECTION_BYTES,
   MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
   MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+  MAX_MODEL_PROVIDER_CALL_FIELD_BYTES,
+  MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES,
   THREAD_ITEM_TYPES,
   THREAD_MESSAGE_CONTEXT_MENU_ACTIONS,
   THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS,
@@ -743,6 +745,32 @@ describe('Codex Agent Core protocol codec', () => {
 
   test('enforces canonical model-call storage, evidence, and JSON-pointer bounds', () => {
     const command = allItems.find((item) => item.type === 'commandExecution')!;
+    const replayable = replayableModelCall('bash', {});
+    const { providerCall: _providerCall, ...missingProviderCall } = replayable;
+    expect(() => decodeThreadItem({
+      ...command,
+      modelCall: missingProviderCall,
+    })).toThrow('providerCall');
+    expect(() => decodeThreadItem({
+      ...command,
+      modelCall: {
+        ...replayable,
+        providerCall: {
+          ...replayable.providerCall,
+          id: 'x'.repeat(MAX_MODEL_PROVIDER_CALL_FIELD_BYTES + 1),
+        },
+      },
+    })).toThrow('providerCall.id');
+    expect(() => decodeThreadItem({
+      ...command,
+      modelCall: {
+        ...replayable,
+        providerCall: {
+          ...replayable.providerCall,
+          thoughtSignature: 'x'.repeat(MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES + 1),
+        },
+      },
+    })).toThrow('thoughtSignature');
     expect(() => decodeThreadItem({
       ...command,
       modelCall: {
@@ -782,6 +810,7 @@ describe('Codex Agent Core protocol codec', () => {
       disposition: 'redactedReplay' as const,
       identity: { namespace: null, name: 'bash' },
       providerName: 'bash',
+      providerCall: replayableModelCall('bash', {}).providerCall,
       redactedArguments: { storage: 'inline' as const, value: { command: '[redacted]' } },
       redactedPaths: ['/command', '/nested/a~0b~1c'],
       schemaDigest: TEST_TOOL_SCHEMA_DIGEST,

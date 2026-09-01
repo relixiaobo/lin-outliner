@@ -20,6 +20,7 @@ import {
 import {
   replayableModelCall,
   TEST_TOOL_SCHEMA_DIGEST,
+  testProviderCall,
 } from '../fixtures/agentToolCallHistory';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
@@ -243,6 +244,7 @@ describe('Skill context reducer', () => {
           disposition: 'replayable',
           identity: { namespace: null, name: 'file_grep' },
           providerName: 'file_grep',
+          providerCall: testProviderCall('file_grep', { file_path: '/workspace/presentation-only.ts' }),
           arguments: { storage: 'payload', ref: payloadRef, internalTextRefs: [] },
           schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
         },
@@ -253,6 +255,7 @@ describe('Skill context reducer', () => {
           disposition: 'replayable',
           identity: { namespace: null, name: 'file_read' },
           providerName: 'file_read',
+          providerCall: testProviderCall('file_read', { file_path: '/workspace/second-presentation-only.ts' }),
           arguments: { storage: 'payload', ref: secondPayloadRef, internalTextRefs: [] },
           schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
         },

@@ -6,6 +6,8 @@ import {
   MAX_MODEL_TOOL_CORRECTION_BYTES,
   MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
   MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+  MAX_MODEL_PROVIDER_CALL_FIELD_BYTES,
+  MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES,
   MAX_TOOL_ARGUMENT_TEXT_BINDINGS,
   MAX_TOOL_ARGUMENT_TEXT_BYTES,
   MODEL_TOOL_CALL_EVIDENCE_REASONS,
@@ -42,6 +44,7 @@ import {
   type MemoryCitation,
   type ModelToolCallArguments,
   type ModelToolCallHistory,
+  type ModelProviderToolCall,
   type PrivilegedThreadInputAuthor,
   type PrivilegedTurnStartRequest,
   type PrivilegedTurnSteerRequest,
@@ -1521,14 +1524,35 @@ function inflateRendererItem(value: unknown): unknown {
 
 function inflateRendererModelCall(value: unknown): unknown {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
-  const disposition = (value as Readonly<Record<string, unknown>>).disposition;
+  const record = value as Readonly<Record<string, unknown>>;
+  const disposition = record.disposition;
   if (disposition === 'replayable') {
-    return mapRendererField(value, 'arguments', inflateRendererModelArguments);
+    return mapRendererField(inflateRendererProviderCall(record), 'arguments', inflateRendererModelArguments);
   }
   if (disposition === 'redactedReplay') {
-    return mapRendererField(value, 'redactedArguments', inflateRendererModelArguments);
+    return mapRendererField(
+      inflateRendererProviderCall(record),
+      'redactedArguments',
+      inflateRendererModelArguments,
+    );
   }
   return value;
+}
+
+function inflateRendererProviderCall(record: Readonly<Record<string, unknown>>): unknown {
+  if (Object.prototype.hasOwnProperty.call(record, 'providerCall')) {
+    fail('rendererModelToolCallHistory.providerCall', 'private provider replay metadata cannot cross IPC');
+  }
+  return {
+    ...record,
+    providerCall: {
+      id: 'renderer-private-placeholder',
+      api: 'renderer-private-placeholder',
+      provider: 'renderer-private-placeholder',
+      model: 'renderer-private-placeholder',
+      thoughtSignature: null,
+    },
+  };
 }
 
 function inflateRendererModelArguments(value: unknown): unknown {
@@ -5209,7 +5233,7 @@ function decodeModelToolCallHistory(value: unknown): ModelToolCallHistory {
   );
   if (disposition === 'replayable') {
     exactKeys(record, [
-      'disposition', 'identity', 'providerName', 'arguments', 'schemaDigest',
+      'disposition', 'identity', 'providerName', 'providerCall', 'arguments', 'schemaDigest',
     ], 'item.modelCall');
     return deepFreeze({
       disposition,
@@ -5219,13 +5243,15 @@ function decodeModelToolCallHistory(value: unknown): ModelToolCallHistory {
         'item.modelCall.providerName',
         MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
       ),
+      providerCall: decodeModelProviderToolCall(record.providerCall),
       arguments: decodeModelToolCallArguments(record.arguments, 'item.modelCall.arguments'),
       schemaDigest: sha256(record.schemaDigest, 'item.modelCall.schemaDigest'),
     });
   }
   if (disposition === 'redactedReplay') {
     exactKeys(record, [
-      'disposition', 'identity', 'providerName', 'redactedArguments', 'redactedPaths', 'schemaDigest',
+      'disposition', 'identity', 'providerName', 'providerCall',
+      'redactedArguments', 'redactedPaths', 'schemaDigest',
     ], 'item.modelCall');
     const redactedPaths = stringArray(record.redactedPaths, 'item.modelCall.redactedPaths');
     if (redactedPaths.length === 0) fail('item.modelCall.redactedPaths', 'expected at least one JSON pointer');
@@ -5243,6 +5269,7 @@ function decodeModelToolCallHistory(value: unknown): ModelToolCallHistory {
         'item.modelCall.providerName',
         MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
       ),
+      providerCall: decodeModelProviderToolCall(record.providerCall),
       redactedArguments: decodeModelToolCallArguments(
         record.redactedArguments,
         'item.modelCall.redactedArguments',
@@ -5280,6 +5307,40 @@ function decodeModelToolCallHistory(value: unknown): ModelToolCallHistory {
     redactedArgumentsSummary,
     reason: enumValue(record.reason, MODEL_TOOL_CALL_EVIDENCE_REASONS, 'item.modelCall.reason'),
     correction,
+  });
+}
+
+function decodeModelProviderToolCall(value: unknown): ModelProviderToolCall {
+  const record = recordValue(value, 'item.modelCall.providerCall');
+  exactKeys(record, ['id', 'api', 'provider', 'model', 'thoughtSignature'], 'item.modelCall.providerCall');
+  return deepFreeze({
+    id: boundedUtf8String(
+      record.id,
+      'item.modelCall.providerCall.id',
+      MAX_MODEL_PROVIDER_CALL_FIELD_BYTES,
+    ),
+    api: boundedUtf8String(
+      record.api,
+      'item.modelCall.providerCall.api',
+      MAX_MODEL_PROVIDER_CALL_FIELD_BYTES,
+    ),
+    provider: boundedUtf8String(
+      record.provider,
+      'item.modelCall.providerCall.provider',
+      MAX_MODEL_PROVIDER_CALL_FIELD_BYTES,
+    ),
+    model: boundedUtf8String(
+      record.model,
+      'item.modelCall.providerCall.model',
+      MAX_MODEL_PROVIDER_CALL_FIELD_BYTES,
+    ),
+    thoughtSignature: record.thoughtSignature === null
+      ? null
+      : boundedUtf8String(
+          record.thoughtSignature,
+          'item.modelCall.providerCall.thoughtSignature',
+          MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES,
+        ),
   });
 }
 

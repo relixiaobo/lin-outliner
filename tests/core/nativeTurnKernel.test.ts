@@ -19,6 +19,7 @@ import {
   AGENT_MESSAGE_INPUT_SCHEMA,
   normalizeAgentMessageToolInput,
 } from '../../src/core/agent/tools';
+import { MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES } from '../../src/core/agent/protocol';
 import type {
   AgentEvent,
   AgentTool,
@@ -181,11 +182,11 @@ describe('native turn kernel parity', () => {
     expect(executionOrder).toEqual(['sequential', 'parallel']);
     expect(sequentialEvents.map(eventLabel).filter((label) => label.startsWith('tool_'))).toEqual([
       'tool_call_admission:one',
-      'tool_execution_start:one',
-      'tool_execution_end:one',
+      'tool_execution_start:sequential',
+      'tool_execution_end:sequential',
       'tool_call_admission:two',
-      'tool_execution_start:two',
-      'tool_execution_end:two',
+      'tool_execution_start:parallel',
+      'tool_execution_end:parallel',
     ]);
 
     let truncatedExecuted = false;
@@ -212,9 +213,7 @@ describe('native turn kernel parity', () => {
         modelCall: { disposition: 'evidenceOnly', reason: 'truncatedArguments' },
       },
     });
-    const truncatedEnd = truncatedEvents.find((event) => (
-      event.type === 'tool_execution_end' && event.toolCallId === 'cut'
-    ));
+    const truncatedEnd = truncatedEvents.find((event) => event.type === 'tool_execution_end');
     expect(truncatedEnd).toMatchObject({
       type: 'tool_execution_end',
       isError: true,
@@ -233,15 +232,16 @@ describe('native turn kernel parity', () => {
     const events: AgentEvent[] = [];
     runtime.subscribe((event) => {
       events.push(event);
-      if (event.type === 'tool_call_admission' && event.toolCallId === 'cut-one') runtime.abort();
+      if (event.type === 'tool_call_admission' && event.providerToolCallId === 'cut-one') runtime.abort();
     });
 
     await runtime.prompt(USER);
 
-    expect(events.filter((event) => event.type === 'tool_call_admission').map((event) => event.toolCallId))
+    expect(events.filter((event) => event.type === 'tool_call_admission').map((event) => event.providerToolCallId))
       .toEqual(['cut-one']);
-    expect(events.filter((event) => event.type === 'tool_execution_end').map((event) => event.toolCallId))
-      .toEqual(['cut-one']);
+    expect(events.filter((event) => event.type === 'tool_execution_end')).toHaveLength(1);
+    expect(events.find((event) => event.type === 'tool_call_admission')?.toolCallId)
+      .toMatch(/^[0-9a-f-]{36}$/);
     expect(JSON.stringify(runtime.state.messages)).not.toContain('cut-two');
   });
 
@@ -667,7 +667,17 @@ describe('native turn kernel parity', () => {
       arguments: {},
     }], 'toolUse')));
     const gateway = new ScriptedGateway(scripts);
-    const runtime = createRuntime(gateway, { tools: [tool('available')] });
+    let executionCount = 0;
+    const runtime = createRuntime(gateway, {
+      tools: [tool('available', undefined, async () => {
+        executionCount += 1;
+        return toolResult('available');
+      })],
+    });
+    const admissions: Array<Extract<AgentEvent, { readonly type: 'tool_call_admission' }>> = [];
+    runtime.subscribe((event) => {
+      if (event.type === 'tool_call_admission') admissions.push(event);
+    });
 
     await runtime.prompt(USER);
 
@@ -683,8 +693,21 @@ describe('native turn kernel parity', () => {
     expect(finalRequest.context.messages.some((message) => (
       message.role === 'toolResult' && message.toolCallId === 'admitted-before-ceiling'
     ))).toBe(true);
-    expect(JSON.stringify(runtime.state.messages)).toContain('hallucinated-after-ceiling');
-    expect(JSON.stringify(runtime.state.messages)).toContain('unresolvedTool');
+    expect(executionCount).toBe(1);
+    const finalAdmission = admissions.at(-1);
+    expect(finalAdmission).toMatchObject({
+      providerToolCallId: 'hallucinated-after-ceiling',
+      toolName: 'available',
+      decision: {
+        execute: false,
+        modelCall: { disposition: 'evidenceOnly', reason: 'unresolvedTool' },
+      },
+    });
+    expect(finalAdmission?.toolCallId).toMatch(/^[0-9a-f-]{36}$/);
+    const history = JSON.stringify(runtime.state.messages);
+    expect(history).toContain(finalAdmission!.toolCallId);
+    expect(history).toContain('unresolvedTool');
+    expect(history).not.toContain('hallucinated-after-ceiling');
   });
 
   test('does not count admission persistence or tool execution failures as deterministic', async () => {
@@ -811,6 +834,85 @@ describe('native turn kernel parity', () => {
     expect(replayResults).toHaveLength(1);
     expect(replayResults[0]?.role === 'toolResult' ? replayResults[0].toolCallId : null)
       .toBe(replayCalls[0]?.id);
+  });
+
+  test('heals empty and repeated provider ids before the next same-model request', async () => {
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([
+        { type: 'toolCall', id: '', name: 'first', arguments: {} },
+        { type: 'toolCall', id: 'duplicate', name: 'second', arguments: {} },
+        { type: 'toolCall', id: 'duplicate', name: 'third', arguments: {} },
+      ], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, {
+      tools: [tool('first'), tool('second'), tool('third')],
+    });
+    const admissions: Array<Extract<AgentEvent, { readonly type: 'tool_call_admission' }>> = [];
+    runtime.subscribe((event) => {
+      if (event.type === 'tool_call_admission') admissions.push(event);
+    });
+
+    await runtime.prompt(USER);
+
+    const replay = gateway.requests[1]!.context.messages;
+    const calls = replay.flatMap((message) => (
+      message.role === 'assistant'
+        ? message.content.filter((part) => part.type === 'toolCall')
+        : []
+    ));
+    const results = replay.filter((message) => message.role === 'toolResult');
+    const callIds = calls.map((call) => call.id);
+    const resultIds = results.map((result) => result.role === 'toolResult' ? result.toolCallId : '');
+
+    expect(callIds).toHaveLength(3);
+    expect(new Set(callIds).size).toBe(3);
+    expect(callIds[0]).toMatch(/^tc_[0-9a-f]{32}$/);
+    expect(callIds[1]).toBe('duplicate');
+    expect(callIds[2]).toMatch(/^tc_[0-9a-f]{32}$/);
+    expect(resultIds).toEqual(callIds);
+    expect(admissions.map((event) => event.providerToolCallId)).toEqual(callIds);
+    expect(admissions.map((event) => event.toolCallId).every((id) => /^[0-9a-f-]{36}$/.test(id))).toBe(true);
+    expect(new Set(admissions.map((event) => event.toolCallId)).size).toBe(3);
+  });
+
+  test('keeps an executed replay-ineligible call result in transient provider history', async () => {
+    const signature = 'x'.repeat(MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES + 1);
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{
+        type: 'toolCall',
+        id: 'oversized-replay',
+        name: 'oversized',
+        arguments: {},
+        thoughtSignature: signature,
+      }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'observed' }])),
+    ]);
+    const runtime = createRuntime(gateway, {
+      tools: [tool('oversized')],
+      admitToolCall: (request) => persistToolCallAdmission(request, async () => {
+        throw new Error('Small arguments must stay inline.');
+      }),
+    });
+    let admission: Extract<AgentEvent, { readonly type: 'tool_call_admission' }> | null = null;
+    runtime.subscribe((event) => {
+      if (event.type === 'tool_call_admission') admission = event;
+    });
+
+    await runtime.prompt(USER);
+
+    expect(admission?.decision).toMatchObject({
+      execute: true,
+      modelCall: { disposition: 'evidenceOnly', reason: 'providerReplayUnavailable' },
+    });
+    const replay = gateway.requests[1]!.context.messages;
+    expect(replay.some((message) => (
+      message.role === 'assistant'
+      && message.content.some((part) => part.type === 'toolCall' && part.thoughtSignature === signature)
+    ))).toBe(true);
+    expect(replay.some((message) => (
+      message.role === 'toolResult' && message.toolCallId === 'oversized-replay'
+    ))).toBe(true);
   });
 
   test('executes a secret-bearing call once and keeps its raw arguments only in the live Turn exchange', async () => {
@@ -953,7 +1055,7 @@ describe('native turn kernel parity', () => {
     const events: AgentEvent[] = [];
     runtime.subscribe((event) => {
       events.push(event);
-      if (event.type === 'tool_call_admission' && event.toolCallId === 'cancel-one') runtime.abort();
+      if (event.type === 'tool_call_admission' && event.providerToolCallId === 'cancel-one') runtime.abort();
     });
 
     await runtime.prompt(USER);
@@ -961,11 +1063,14 @@ describe('native turn kernel parity', () => {
     expect(executions).toBe(0);
     expect(gateway.requests).toHaveLength(1);
     expect(events.filter((event) => event.type === 'tool_call_admission')).toMatchObject([
-      { toolCallId: 'cancel-one', decision: { execute: true, modelCall: { disposition: 'replayable' } } },
+      {
+        providerToolCallId: 'cancel-one',
+        decision: { execute: true, modelCall: { disposition: 'replayable' } },
+      },
     ]);
     expect(events.some((event) => event.type === 'tool_execution_start')).toBe(false);
     expect(events.filter((event) => event.type === 'tool_execution_end')).toMatchObject([
-      { toolCallId: 'cancel-one', isError: true, result: { content: [{ text: 'Operation aborted' }] } },
+      { isError: true, result: { content: [{ text: 'Operation aborted' }] } },
     ]);
     expect(runtime.state.messages.flatMap((message) => (
       message.role === 'assistant'
@@ -1386,12 +1491,9 @@ function eventLabel(event: AgentEvent): string {
       ? `${event.type}:${event.message.role}:${event.message.toolCallId}`
       : `${event.type}:${event.message.role}`;
   }
-  if (
-    event.type === 'tool_call_admission'
-    || event.type === 'tool_execution_start'
-    || event.type === 'tool_execution_end'
-  ) {
-    return `${event.type}:${event.toolCallId}`;
+  if (event.type === 'tool_call_admission') return `${event.type}:${event.providerToolCallId}`;
+  if (event.type === 'tool_execution_start' || event.type === 'tool_execution_end') {
+    return `${event.type}:${event.toolName}`;
   }
   return event.type;
 }
