@@ -13,20 +13,20 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-`agent-result-and-file-lifecycle` is the only open implementation PR (#607).
-`outline-cli-skill-efficiency` shipped in #606, so the public Outline CLI and
-built-in Skill lane is clear. `media-preview-polish` shipped in #605, so the
-shared preview-shell lane is also clear. Startup Window, preview readers, and
-Skill authoring remain independently eligible under their collision lanes. The
-remaining plans from #588/#589 and #591 stay active below until their
-implementation, spec fold, and archive move complete.
+No implementation PR is open. `agent-result-and-file-lifecycle` shipped in #607,
+so Cross-Thread Reference, root-Turn recovery, and the managed Computer Pilot
+Skill are now eligible under their live collision checks. The public Outline CLI,
+built-in Skill, and shared preview-shell lanes are also clear. Startup Window,
+preview readers, and Skill authoring remain independently eligible. The remaining
+plans from #588/#589 and #591 stay active below until their implementation, spec
+fold, and archive move complete.
 
 ## Primary Delivery Queue
 
 This queue is executable: **every row is one substantial, independently
 reviewable PR and one active plan**. Internal build stages stay inside that PR.
-The critical mechanism lane is linear; named consumers fan out only after their
-last predecessor merges.
+Named consumers fan out only after their last predecessor merges; collision-
+ordered pairs remain linear.
 
 Each linked active plan is the complete execution authority for its claim.
 Archived aggregate plans serve only as provenance records; an implementation
@@ -39,17 +39,11 @@ protocol, security rule, user flow, or acceptance criterion.
   the successor must target the predecessor's final shared mechanism.
 
 ```text
-Critical mechanism lane:
-  agent-result-and-file-lifecycle
-
 Parallel now eligible:
   startup-window-first
   file-preview-office
   url-static-reader
   agent-skill-authoring-foundation -> agent-skill-curation-report
-  agent-result-and-file-lifecycle (continues the critical lane)
-
-Parallel after agent-result-and-file-lifecycle:
   agent-cross-thread-reference
   agent-root-turn-recovery ~> agent-delegated-failure-truth
   computer-pilot-managed-skill
@@ -57,23 +51,22 @@ Parallel after agent-result-and-file-lifecycle:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md) | `draft`, ratified in #588/#589 | **Now; Bash stdin shipped in #604**; all three build stages stay inside this PR |
-| P1 | [agent-cross-thread-reference](plans/agent-cross-thread-reference.md) | `draft`, ratified in #589 | `agent-result-and-file-lifecycle` |
-| P1 | [agent-root-turn-recovery](plans/agent-root-turn-recovery.md) | `draft` | `agent-result-and-file-lifecycle` by A7 collision order |
+| P1 | [agent-cross-thread-reference](plans/agent-cross-thread-reference.md) | `draft`, ratified in #589 | **Now; Agent resource lifecycle shipped in #607** |
+| P1 | [agent-root-turn-recovery](plans/agent-root-turn-recovery.md) | `draft` | **Now; Agent resource lifecycle shipped in #607**; live collision check required |
 | P1 | [agent-delegated-failure-truth](plans/agent-delegated-failure-truth.md) | `draft` | `agent-root-turn-recovery` claim serialization |
 | P2 | [startup-window-first](plans/startup-window-first.md) | `draft` | **Now; Desktop Host shipped in #603** |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [agent-skill-authoring-foundation](plans/agent-skill-authoring-foundation.md) | `draft` | **Now; Desktop Host shipped in #603** |
 | P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
-| P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | `agent-result-and-file-lifecycle` |
+| P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | **Now; Agent resource lifecycle shipped in #607** |
 
-`agent-result-and-file-lifecycle` is the active primary-queue claim. Build-ready
-work outside this queue remains independently claimable under its own collision
-boundary. The Host composition, Bash stdin, and Outline CLI Skill foundations
-are complete. Agent resource references, conversation workspaces/final
-citations, and delegated handoff remain three foundation-first build stages
-inside one atomic feature PR rather than three partial releases.
+The Host composition, Bash stdin, Outline CLI Skill, and Agent resource
+foundations are complete. Cross-Thread Reference, root-Turn recovery, and the
+managed Computer Pilot Skill may now proceed in parallel, subject to their live
+collision checks; delegated failure truth remains ordered after root-Turn
+recovery. Build-ready work outside this queue remains independently claimable
+under its own collision boundary.
 
 The split also absorbs three former planless tasks without losing their intent:
 
@@ -82,9 +75,8 @@ The split also absorbs three former planless tasks without losing their intent:
   no replacement command.
 - `skill-directory-is-itself-a-skill` becomes the explicit binding identity in
   `agent-skill-authoring-foundation`, before script authoring consumes it.
-- `computer-pilot-managed-skill` now has its own complete plan and waits for the
-  final Host plus Agent resource lifecycle instead of targeting the #582 shape
-  immediately before that shape is replaced.
+- `computer-pilot-managed-skill` now has its own complete plan and consumes the
+  final Host plus Agent resource lifecycle; both foundations are complete.
 
 Collision lanes remain claim-time constraints, not hidden graph edges:
 
@@ -96,9 +88,9 @@ Collision lanes remain claim-time constraints, not hidden graph edges:
   lifecycle, canonical-to-renderer projection, preload, and Host transport.
   Internal text remains a private Item dependency and never becomes a file
   resource.
-- Cross-Thread Reference and Failure Recovery repeat the live file check after
-  Agent resource lifecycle; a collision serializes claims but does not invent a
-  semantic dependency between the two features.
+- Cross-Thread Reference and Failure Recovery repeat the live file check against
+  the #607 baseline; a collision serializes claims but does not invent a semantic
+  dependency between the two features.
 
 ## Other Active Plans
 
@@ -125,9 +117,9 @@ contract or user-visible decision.
 
 - **Agent persisted-schema cutover verification** (release gate) — before the
   next packaged train, stop every Tenon process, manually reset installed and
-  clone-scoped pre-#604 Agent stores, and verify fresh packaged/dev first launch.
-  This covers the input-author and context dependency-manifest cuts; no migration
-  or automatic deletion ships.
+  clone-scoped pre-#607 Agent stores, and verify fresh packaged/dev first launch.
+  This covers the input-author, context dependency-manifest, and unified Agent
+  resource-reference cuts; no migration or automatic deletion ships.
 - **Launcher NSPanel packaged verification** — one `.dmg` pass for Cmd+Tab,
   fullscreen floating, focus, dock icon, and light/dark behavior.
 
@@ -222,6 +214,10 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-result-and-file-lifecycle** (`done`, #607, 2026-09-01) — Agent files
+  now use unified source/exact-revision references, intent-aware final citations,
+  isolated root workspaces, and bounded delegated handoff; plan archived at
+  [agent-result-and-file-lifecycle](plans/archive/agent-result-and-file-lifecycle.md).
 - **outline-cli-skill-efficiency** (`done`, #606, 2026-09-01) — the public CLI
   gained compact complete-resource input, typed bounded receipts, exact schema
   recovery, view inspection, and bounded watch resync while the built-in Skill

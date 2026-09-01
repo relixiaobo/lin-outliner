@@ -12,6 +12,27 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Agent files now use one lifecycle from capture through final delivery (PR
+  #607, codex-3)** — canonical Agent resource references independently retain a
+  current source locator and an immutable exact revision in the shared
+  ContentStore, replacing per-Thread binary payload ownership. Ordinary root
+  conversations receive isolated managed workspaces inherited by children;
+  final `[[file:///...]]` citations preserve model-authored text while binding
+  Preview/Open to delivered bytes and Reveal to the current source. Missing or
+  denied citations remain honest neutral read-only references, and delegated
+  children keep complete answers while parent context receives a bounded text,
+  reference, coverage, and transcript-fallback projection. This is an
+  intentional strict pre-release storage cut: pre-#607 installed and
+  clone-scoped Agent stores must be reset with every Tenon process stopped
+  before packaged/development first-launch verification. Gate review found five
+  High resource-retention, authority, capture-race, intent, and cleanup defects
+  plus one Medium citation-affordance regression; all were fixed, and final
+  re-review found no reportable issue. Verified with typecheck, `docs:check`,
+  2,724 passing Core tests with 6 skipped and one isolated passing timeout,
+  1,469 renderer tests, 296 focused lifecycle tests, 19 cursor-affordance E2E
+  tests, light/dark visual QA, whitespace checks, and five successful GitHub E2E
+  samples plus baseline subtraction.
+
 - **Outline agents can now express complete resource intents through compact CLI
   workflows (PR #606, codex)** — `outline add --input -` accepts a mode-neutral
   viewed-tree request with up to 10,000 direct items and lowers it into one

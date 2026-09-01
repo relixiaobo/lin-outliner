@@ -2184,3 +2184,17 @@ drop, coalesce, or replace its pending backlog with a recoverable resync signal.
 Test the real failure shape by holding a Writable callback, publishing beyond
 both limits, and proving that retained memory stays bounded and the consumer
 receives one deterministic resync-and-end sequence.
+
+## Destructive collection requires a complete reachability snapshot
+
+PR #607 first rebuilt Agent resource links from only the Threads whose startup
+reconciliation succeeded, then collected everything absent from that partial
+set. A transient failure left the Thread readable while permanently deleting
+the exact revisions its history still referenced.
+
+**Never infer unreachability from an incomplete enumeration.** A destructive GC
+pass must prove that every authoritative root participated in one coherent live
+snapshot. If any root cannot be decoded, reconciled, or scanned, preserve its
+existing links and skip or defer collection; conservative retention is the only
+valid degraded result. Test startup with one readable-but-unreconciled root and
+prove both its canonical reference and exact bytes survive the maintenance pass.
