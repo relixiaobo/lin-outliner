@@ -47,9 +47,9 @@ and plan.
   preserves canonical content order.
 - **CON-5 hard:** context is sampled only at defined admission boundaries. UI
   changes do not asynchronously rewrite a running model generation.
-- **CON-6 dependency:** implementation follows PRs #609 and #610 because they
-  overlap Skill projection and shared Agent protocol/provider projection. Rebase
-  and repeat the collision check before implementation.
+- **CON-6 dependency:** merged PRs #609 and #610 are the Skill invocation and
+  provider-call baseline. Repeat the live collision check before implementation
+  because this feature changes adjacent Skill projection and shared Agent protocol.
 - **DEC-1:** model-visible `<context>` children have no `kind`. Host-assigned
   `authority` and `purpose` are the complete wrapper protocol.
 - **DEC-2:** canonical source kind, stable key, producer, lifecycle, hashes, and
@@ -527,8 +527,9 @@ Consistency means one grammar per semantic boundary:
 
 ## Execution
 
-- Rebase after #609 and #610, repeat the open-claim/file-scope collision check,
-  and obtain PM ratification before editing shared protocol surfaces.
+- Start from the merged #609/#610 baseline, repeat the open-claim/file-scope
+  collision check, and obtain PM ratification before editing shared protocol
+  surfaces.
 - Extend renderer-to-main canonical evidence to cover all `PanelView` variants
   while preserving Host-private Pane correlation.
 - Remove Today-based synthetic views and retain honest no-view state.
