@@ -12,6 +12,22 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Skills now advertise exact invocation input contracts (PR #609, codex-2)**
+  — the model-visible catalog distinguishes load-only inline Skills,
+  parameterized inline Skills, and isolated exact-task execution before the
+  shared `skill` tool is called. Authored hints and argument names remain the
+  primary parameter contract, while supported placeholder-only Skills retain a
+  generic input path instead of losing their values. Catalog pressure first
+  removes repeated load-only prose, then uses compact `[A]`, `[I+]`, and `[I-]`
+  labels, and finally keeps a deterministic fitting prefix, so the catalog never
+  exceeds its 8,000-character accounting budget without weakening runtime
+  admission. Gate review found two Medium argument-compatibility and hard-budget
+  defects plus one Low specification contradiction across two follow-up rounds;
+  all were fixed before the final no-findings review. Verified with typecheck,
+  `docs:check`, 86 focused Core tests, explicit long-name/load-only/parameterized/
+  isolated/mixed budget probes, whitespace checks, and five successful GitHub
+  E2E samples plus baseline subtraction.
+
 - **Agent conversations can now reference and safely inspect other Threads (PR
   #608, codex)** — typing `@` in the Composer searches same-profile root Threads
   and inserts canonical inline references that survive editing, persistence,

@@ -2218,3 +2218,22 @@ Regression coverage must place the cut before, inside, and immediately after
 each meaningful delimiter, including punctuation-bearing connection strings and
 both matched and mismatched private-key terminators. A green whole-value scanner
 test does not prove that its bounded projection is safe.
+
+## Hard budgets need a minimum-representation overflow policy
+
+PR #609 first reserved one invocation contract per Skill, then only removed the
+repeated load-only contract when the catalog exceeded its character budget.
+Parameterized and isolated contracts were individually bounded but collectively
+unbounded, so enough valid Skills still exceeded the advertised hard limit.
+
+**A bounded collection is not bounded until fixed per-entry overhead and
+unbounded cardinality have a defined failure mode.** Budget the minimum semantic
+representation before optional prose, compact repeated contracts without losing
+their distinct meanings, and define a deterministic fitting order when names plus
+minimum labels still cannot fit. Do not clamp only the discretionary remainder
+and call the aggregate bounded.
+
+Regression coverage must cross each degradation boundary with maximum-length
+identities and mixed entry classes, assert the exact aggregate accounting, and
+prove that retained entries preserve every capability distinction required for
+correct dispatch.

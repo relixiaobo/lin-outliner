@@ -13,9 +13,9 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-Two PR claims are open: ready PR #609 adds the Skill invocation input
-contract, while draft plan-only PR #610 defines provider tool-call identity and
-must rebase onto the merged #608 Agent baseline before implementation. Cross-Thread
+One PR claim is open: draft plan-only PR #610 defines provider tool-call
+identity and must rebase onto the merged #608 Agent baseline before
+implementation. Cross-Thread
 Reference shipped in #608, so root-Turn recovery and the managed Computer Pilot
 Skill remain eligible under their live collision checks. The public Outline CLI,
 built-in Skill, and shared preview-shell lanes are also clear. Startup Window,
@@ -213,6 +213,10 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **skill-invocation-input-contract** (`done`, #609, 2026-09-01) — Skill
+  catalogs now distinguish load-only, parameterized, and isolated input while
+  preserving every retained contract under a hard budget; plan archived at
+  [skill-invocation-input-contract](plans/archive/skill-invocation-input-contract.md).
 - **agent-cross-thread-reference** (`done`, #608, 2026-09-01) — composers,
   transcripts, and Agents now share canonical Thread references with bounded
   same-profile search/read, safe historical citations, and root-Thread navigation;
