@@ -555,7 +555,9 @@ describe('agent skills', () => {
     expect(parameters.properties.args.description).toContain('parameterized inline Skills');
     expect(parameters.properties.args.description).toContain('exact user task for isolated Skills');
     expect(tool.description).toContain('The canonical user message already carries the task.');
-    expect(tool.description).toContain('an entry without an `Args:` or `Isolated;` input label');
+    expect(tool.description).toContain('an entry without a full or compact input label is load-only');
+    expect(tool.description).toContain('`[A]` means parameterized inline `args`');
+    expect(tool.description).toContain('`[I+]` and `[I-]`');
     expect(tool.description).toContain('pass only the declared variable input');
   });
 
@@ -1579,6 +1581,7 @@ describe('agent skills', () => {
   test('elides repeated load-only contracts before they exceed the catalog budget', async () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
+      builtInSkillDirectories: [],
       builtInSkills: Array.from({ length: 300 }, (_, index) => ({
         name: `s-${String(index).padStart(3, '0')}`,
         description: `Load-only catalog entry ${index}`,
@@ -1595,6 +1598,73 @@ describe('agent skills', () => {
     expect(catalog.entries.reduce((total, entry) => (
       total + entry.name.length + entry.description.length + 4
     ), 0)).toBeLessThanOrEqual(8_000);
+  });
+
+  test('uses compact input labels before fixed contracts exceed the catalog budget', async () => {
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: [
+        ...Array.from({ length: 400 }, (_, index) => ({
+          name: `param-${String(index).padStart(3, '0')}`,
+          description: `Parameterized catalog entry ${index}`,
+          body: 'Process $target.',
+          argumentNames: ['target'],
+          modelInvocable: true,
+        })),
+        {
+          name: 'z-isolated-minus',
+          description: 'Isolated without Agent fan-out',
+          body: 'Complete the task.',
+          execution: 'isolated' as const,
+          allowedTools: ['file_read'],
+          modelInvocable: true,
+        },
+        {
+          name: 'z-isolated-plus',
+          description: 'Isolated with Agent fan-out',
+          body: 'Complete the task.',
+          execution: 'isolated' as const,
+          allowedTools: ['agent'],
+          modelInvocable: true,
+        },
+      ],
+    });
+
+    const catalog = await runtime.buildSkillCatalogSnapshot();
+    const parameterized = catalog.entries.filter((entry) => entry.name.startsWith('param-'));
+
+    expect(parameterized).toHaveLength(400);
+    expect(parameterized.every((entry) => entry.description === '[A]')).toBe(true);
+    expect(catalog.entries.find((entry) => entry.name === 'z-isolated-minus')?.description).toBe('[I-]');
+    expect(catalog.entries.find((entry) => entry.name === 'z-isolated-plus')?.description).toBe('[I+]');
+    expect(catalog.entries.reduce((total, entry) => (
+      total + entry.name.length + entry.description.length + 4
+    ), 0)).toBeLessThanOrEqual(8_000);
+  });
+
+  test('keeps a deterministic catalog prefix when names and compact labels exceed the budget', async () => {
+    const runtime = new AgentSkillRuntime({
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: Array.from({ length: 600 }, (_, index) => ({
+        name: `param-${String(index).padStart(3, '0')}`,
+        description: `Parameterized overflow entry ${index}`,
+        body: 'Process $target.',
+        argumentNames: ['target'],
+        modelInvocable: true,
+      })),
+    });
+
+    const catalog = await runtime.buildSkillCatalogSnapshot();
+
+    expect(catalog.entries).toHaveLength(500);
+    expect(catalog.entries[0]?.name).toBe('param-000');
+    expect(catalog.entries.at(-1)?.name).toBe('param-499');
+    expect(catalog.entries.every((entry) => entry.description === '[A]')).toBe(true);
+    expect(catalog.entries.reduce((total, entry) => (
+      total + entry.name.length + entry.description.length + 4
+    ), 0)).toBe(8_000);
   });
 
   test('disabled skill gates apply to built-in Skills', async () => {

@@ -36,6 +36,10 @@ individual Skill prose. Contracts that require input are reserved before authore
 descriptions, using the same bounded listing mechanism as the existing isolated
 execution constraint. Under extreme catalog pressure, repeated load-only contracts
 are elided and the tool-level default treats entries without input labels as load-only.
+If full input contracts still do not fit, compact labels preserve the three invocation
+classes and the isolated fan-out boundary. If names plus minimum labels exceed the
+budget, the sorted model-visible catalog retains the longest fitting prefix without
+changing the omitted Skills' existing invocation eligibility.
 
 ### Conditional tool guidance
 
@@ -64,6 +68,8 @@ tool schema/guidance keeps `args` optional while describing its conditional use.
 - A parameterized inline Skill advertises its expected variable input.
 - An isolated Skill tells the parent to pass the exact user task through `args`.
 - Catalog pressure cannot silently remove the invocation contract.
+- The catalog never exceeds its 8,000-character accounting budget; pressure first uses
+  compact contracts and then a deterministic fitting prefix.
 - Existing argument substitution, isolated execution, persistence, and raw tool-call
   rendering behavior remain unchanged.
 

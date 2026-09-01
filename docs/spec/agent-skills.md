@@ -70,10 +70,15 @@ inline Skill advertises its compact authored hint, falling back to its ordered a
 names or a generic input hint derived from `$ARGUMENTS`, `$ARGUMENTS[n]`, or positional
 placeholders in the body. An isolated Skill tells the parent that `args` carries the
 user task. Contracts that require input are reserved ahead of authored descriptions
-inside the bounded catalog budget. Under extreme catalog pressure, repeated load-only
-contracts and authored descriptions are elided; the shared tool rule defines an entry
-without an `Args:` or `Isolated;` label as load-only. The shared tool field remains
-optional because one `skill` tool serves all three forms.
+inside the bounded catalog budget. Under catalog pressure, repeated load-only contracts
+and authored descriptions are elided; the shared tool rule defines an entry without a
+full or compact input label as load-only. If full input contracts themselves do not fit,
+every retained entry uses a shared compact label: `[A]` for parameterized inline,
+`[I+]` for isolated with Agent fan-out, and `[I-]` for isolated without it. If names plus
+those minimum labels still exceed the budget, the sorted catalog retains the longest
+prefix that fits. Omission affects model discovery only and does not change any Skill's
+existing model- or user-invocation eligibility. The shared tool field remains optional
+because one `skill` tool serves all three forms.
 
 ## Discovery And Invocation
 

@@ -375,15 +375,15 @@ export class AgentSkillRuntime {
     const skills = (await this.registry.getModelInvocableSkills())
       .filter((skill) => this.isEnabledByConfiguration(skill) && !this.isDisabledByRuntimeSettings(skill))
       .sort((left, right) => compareStableText(left.name, right.name));
-    const descriptions = boundedSkillCatalogDescriptions(skills);
-    const entries = skills.map((skill) => ({
+    const boundedCatalog = boundedSkillCatalog(skills);
+    const entries = boundedCatalog.skills.map((skill) => ({
       change: 'available' as const,
       name: skill.name,
       displayName: skill.displayName?.trim() || skill.name,
       source: skill.source,
       identity: skillListingIdentity(skill),
       contentHash: skill.contentHash ?? codeRegisteredSkillContentHash(skill),
-      description: descriptions.get(skill.name) ?? '',
+      description: boundedCatalog.descriptions.get(skill.name) ?? '',
     }));
     const catalogHash = createHash('sha256').update(JSON.stringify(entries.map((entry) => ({
       name: entry.name,
@@ -761,7 +761,7 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       'How to invoke:',
       '- Use this tool with the Skill name and follow that catalog entry\'s input contract.',
       '- Omit `args` when the catalog says `Invoke without args.` The canonical user message already carries the task.',
-      '- Under catalog pressure, an entry without an `Args:` or `Isolated;` input label is also load-only; omit `args`.',
+      '- Catalog pressure labels: `[A]` means parameterized inline `args`; `[I+]` and `[I-]` mean isolated exact-task `args` with and without Subagents; an entry without a full or compact input label is load-only.',
       '- For `Args: ...`, pass only the declared variable input. For an isolated Skill, pass the exact user task and explicit constraints without adding an implementation plan.',
       '- Examples:',
       '  - `skill: "outline"` - load an inline Skill without arguments',
@@ -2180,16 +2180,21 @@ function formatSkillDescription(
   return `${truncate(authored, authoredBudget)} ${contract}`.trim();
 }
 
-function boundedSkillCatalogDescriptions(
+function boundedSkillCatalog(
   skills: readonly SkillDefinition[],
-): ReadonlyMap<string, string> {
-  if (skills.length === 0) return new Map();
+): {
+  readonly skills: readonly SkillDefinition[];
+  readonly descriptions: ReadonlyMap<string, string>;
+} {
+  if (skills.length === 0) return { skills, descriptions: new Map() };
   const full = skills.map((skill) => [
     skill.name,
     formatSkillDescription(skill, MAX_LISTING_DESCRIPTION_CHARS),
   ] as const);
   const fullLength = full.reduce((total, [name, description]) => total + name.length + description.length + 4, 0);
-  if (fullLength <= DEFAULT_SKILL_LISTING_CHAR_BUDGET) return new Map(full);
+  if (fullLength <= DEFAULT_SKILL_LISTING_CHAR_BUDGET) {
+    return { skills, descriptions: new Map(full) };
+  }
   const nameOverhead = skills.reduce((total, skill) => total + skill.name.length + 4, 0);
   const contractOverhead = skills.reduce(
     (total, skill) => total + (skillRequiresInvocationArgs(skill)
@@ -2197,20 +2202,37 @@ function boundedSkillCatalogDescriptions(
       : 0),
     0,
   );
+  if (nameOverhead + contractOverhead > DEFAULT_SKILL_LISTING_CHAR_BUDGET) {
+    const compactDescriptions = new Map<string, string>();
+    const includedSkills: SkillDefinition[] = [];
+    let usedChars = 0;
+    for (const skill of skills) {
+      const description = compactSkillInvocationContract(skill);
+      const entryChars = skill.name.length + description.length + 4;
+      if (usedChars + entryChars > DEFAULT_SKILL_LISTING_CHAR_BUDGET) break;
+      includedSkills.push(skill);
+      compactDescriptions.set(skill.name, description);
+      usedChars += entryChars;
+    }
+    return { skills: includedSkills, descriptions: compactDescriptions };
+  }
   const authoredBudget = Math.max(0, DEFAULT_SKILL_LISTING_CHAR_BUDGET - nameOverhead - contractOverhead);
   const perAuthoredDescription = Math.floor(authoredBudget / skills.length);
-  return new Map(skills.map((skill) => [
-    skill.name,
-    skillRequiresInvocationArgs(skill)
-      ? formatSkillDescription(
-          skill,
-          skillInvocationContract(skill).length
-            + (perAuthoredDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS ? 0 : 1 + perAuthoredDescription),
-        )
-      : perAuthoredDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS
-        ? ''
-        : truncate(authoredSkillDescription(skill), Math.min(perAuthoredDescription, MAX_LISTING_DESCRIPTION_CHARS)),
-  ]));
+  return {
+    skills,
+    descriptions: new Map(skills.map((skill) => [
+      skill.name,
+      skillRequiresInvocationArgs(skill)
+        ? formatSkillDescription(
+            skill,
+            skillInvocationContract(skill).length
+              + (perAuthoredDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS ? 0 : 1 + perAuthoredDescription),
+          )
+        : perAuthoredDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS
+          ? ''
+          : truncate(authoredSkillDescription(skill), Math.min(perAuthoredDescription, MAX_LISTING_DESCRIPTION_CHARS)),
+    ])),
+  };
 }
 
 function authoredSkillDescription(skill: SkillDefinition): string {
@@ -2233,6 +2255,13 @@ function skillInvocationContract(skill: SkillDefinition): string {
 
 function skillRequiresInvocationArgs(skill: SkillDefinition): boolean {
   return skill.execution === 'isolated' || inlineSkillArgumentHint(skill) !== '';
+}
+
+function compactSkillInvocationContract(skill: SkillDefinition): string {
+  if (skill.execution === 'isolated') {
+    return skill.allowedTools.includes('agent') ? '[I+]' : '[I-]';
+  }
+  return skillRequiresInvocationArgs(skill) ? '[A]' : '';
 }
 
 function inlineSkillArgumentHint(skill: SkillDefinition): string {
