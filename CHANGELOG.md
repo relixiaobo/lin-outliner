@@ -12,6 +12,25 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Agent tool execution now separates Host identity from provider replay
+  correlation (PR #610, codex-4)** — every provider call receives a fresh UUIDv7
+  for Items, events, persistence, causation, and execution, while bounded
+  provider IDs and source-model metadata remain Host-private correlation for
+  replay. Empty or repeated IDs are healed into paired portable IDs; exact
+  same-model history restores provider IDs and opaque thought signatures, while
+  cross-model projection derives collision-safe pairs and removes signatures.
+  Replay-metadata overflow still executes in the active Turn and later becomes
+  bounded evidence, corrupt persisted envelopes fail closed, and renderer DTOs
+  never expose the provider envelope. This is a strict pre-release storage cut:
+  pre-#610 installed and clone-scoped Agent stores must be reset with every Tenon
+  process stopped. Gate review fixed four plan-level identity, signature,
+  decode-boundary, and active-history contradictions plus one Medium
+  implementation ordering defect; final re-review found no reportable issue.
+  Verified with typecheck, `docs:check`, 1,472 renderer tests, 2,756 passing Core
+  tests with 6 skipped and one isolated passing high-load timeout, 48 focused
+  fix-head tests, real Anthropic/OpenAI/Google serializer probes, and whitespace
+  checks; the non-gating five-sample GitHub E2E signal remained queued at merge.
+
 - **Skills now advertise exact invocation input contracts (PR #609, codex-2)**
   — the model-visible catalog distinguishes load-only inline Skills,
   parameterized inline Skills, and isolated exact-task execution before the

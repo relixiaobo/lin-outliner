@@ -2237,3 +2237,23 @@ Regression coverage must cross each degradation boundary with maximum-length
 identities and mixed entry classes, assert the exact aggregate accounting, and
 prove that retained entries preserve every capability distinction required for
 correct dispatch.
+
+## Decide disposition before its optional persistence
+
+PR #610 made provider replay eligibility independent from whether a tool executes,
+but its first implementation tried to persist payload-sized arguments before it
+checked the provider replay envelope. A write failure therefore suppressed an
+otherwise executable call even though the selected evidence-only disposition did
+not retain that payload at all.
+
+**When admission produces independent execution and retention decisions, compute
+the controlling disposition before performing side effects used only by one
+outcome.** An irrelevant persistence failure must not override execution policy,
+and data that the chosen disposition cannot reference must not be written. Keep
+the decisions explicit rather than encoding their precedence in incidental call
+order.
+
+Regression coverage must cross the dimensions together: use payload-sized input,
+replay-ineligible metadata, and a persistence callback that fails if invoked;
+assert both that execution remains admitted and that the irrelevant write never
+starts. Single-axis boundary tests do not prove the combined admission policy.
