@@ -2170,3 +2170,17 @@ not that the change passed.** Gate on the classifier's published content, tied
 to the reviewed head SHA, and resolve every introduced failure before merging.
 When local isolation disagrees with the same-environment whole-suite signal,
 strengthen the local reproduction instead of dismissing the classifier.
+
+## Backpressure must bound the producer-side backlog
+
+PR #606 first replaced direct watch writes with a drain-aware Promise chain. The
+Node response buffer stopped growing, but every event produced while the stream
+was blocked still appended a closure carrying the complete record, so memory
+remained unbounded at the application layer.
+
+**Awaiting `drain` is transport backpressure only when the producer-side queue
+also has an explicit record and byte limit.** A producer that cannot pause must
+drop, coalesce, or replace its pending backlog with a recoverable resync signal.
+Test the real failure shape by holding a Writable callback, publishing beyond
+both limits, and proving that retained memory stays bounded and the consumer
+receives one deterministic resync-and-end sequence.

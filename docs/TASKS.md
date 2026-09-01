@@ -13,12 +13,12 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-No implementation PR is open. `agent-bash-stdin-transport` shipped in #604, so
-`outline-cli-skill-efficiency` and `agent-result-and-file-lifecycle` are now
-eligible in parallel. `media-preview-polish` shipped in #605, so the shared
-preview-shell lane is clear again. Startup Window, preview readers, and Skill
-authoring are also independently eligible under their collision lanes. The
-remaining plans from #588/#589, #591, and #595 stay active below until their
+`agent-result-and-file-lifecycle` is the only open implementation PR (#607).
+`outline-cli-skill-efficiency` shipped in #606, so the public Outline CLI and
+built-in Skill lane is clear. `media-preview-polish` shipped in #605, so the
+shared preview-shell lane is also clear. Startup Window, preview readers, and
+Skill authoring remain independently eligible under their collision lanes. The
+remaining plans from #588/#589 and #591 stay active below until their
 implementation, spec fold, and archive move complete.
 
 ## Primary Delivery Queue
@@ -47,7 +47,6 @@ Parallel now eligible:
   file-preview-office
   url-static-reader
   agent-skill-authoring-foundation -> agent-skill-curation-report
-  outline-cli-skill-efficiency
   agent-result-and-file-lifecycle (continues the critical lane)
 
 Parallel after agent-result-and-file-lifecycle:
@@ -58,7 +57,6 @@ Parallel after agent-result-and-file-lifecycle:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [outline-cli-skill-efficiency](plans/outline-cli-skill-efficiency.md) | `draft`, ratified in #595 | **Now; Bash stdin shipped in #604** |
 | P1 | [agent-result-and-file-lifecycle](plans/agent-result-and-file-lifecycle.md) | `draft`, ratified in #588/#589 | **Now; Bash stdin shipped in #604**; all three build stages stay inside this PR |
 | P1 | [agent-cross-thread-reference](plans/agent-cross-thread-reference.md) | `draft`, ratified in #589 | `agent-result-and-file-lifecycle` |
 | P1 | [agent-root-turn-recovery](plans/agent-root-turn-recovery.md) | `draft` | `agent-result-and-file-lifecycle` by A7 collision order |
@@ -70,13 +68,12 @@ Parallel after agent-result-and-file-lifecycle:
 | P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | `agent-result-and-file-lifecycle` |
 
-`outline-cli-skill-efficiency` and `agent-result-and-file-lifecycle` are the next
-primary-queue claims and may proceed in parallel. Build-ready work outside this
-queue remains independently claimable under its own collision boundary. The
-Host composition and Bash stdin foundations are complete. Agent resource
-references, conversation workspaces/final citations, and delegated handoff
-remain three foundation-first build stages inside one atomic feature PR rather
-than three partial releases.
+`agent-result-and-file-lifecycle` is the active primary-queue claim. Build-ready
+work outside this queue remains independently claimable under its own collision
+boundary. The Host composition, Bash stdin, and Outline CLI Skill foundations
+are complete. Agent resource references, conversation workspaces/final
+citations, and delegated handoff remain three foundation-first build stages
+inside one atomic feature PR rather than three partial releases.
 
 The split also absorbs three former planless tasks without losing their intent:
 
@@ -225,6 +222,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **outline-cli-skill-efficiency** (`done`, #606, 2026-09-01) — the public CLI
+  gained compact complete-resource input, typed bounded receipts, exact schema
+  recovery, view inspection, and bounded watch resync while the built-in Skill
+  moved to one porcelain-first mutation plus narrow verification; plan archived
+  at [outline-cli-skill-efficiency](plans/archive/outline-cli-skill-efficiency.md).
 - **media-preview-polish** (`done`, #605, 2026-08-31) — Source actions now
   reveal without reflow while direct audio and video share one responsive Media
   Chrome HUD, scoped shortcuts, and viewport-filling video fullscreen; plan

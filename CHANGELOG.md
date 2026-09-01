@@ -12,6 +12,28 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Outline agents can now express complete resource intents through compact CLI
+  workflows (PR #606, codex)** — `outline add --input -` accepts a mode-neutral
+  viewed-tree request with up to 10,000 direct items and lowers it into one
+  atomic Operation without caller-authored IDs or binding graphs. The new
+  `outline view inspect` command composes paginated public reads into compact
+  final-state evidence, while deterministic ANSI-free receipts keep ordinary
+  output below 4 KiB using typed counts, samples, omission evidence, and digests;
+  exact schemas, JSON envelopes, and Diff artifacts remain complete. The
+  built-in Outline Skill now routes through porcelain first, sends literal
+  structured stdin directly to Bash, selects direct commit versus reviewed
+  Diff/apply, and verifies consequential work with one narrow read. Long-lived
+  watch streams use record- and byte-bounded backpressure and terminate overflow
+  with `resync.required` instead of retaining an unbounded producer backlog.
+  Gate review found one High partial-JSON failure and four Medium terminal
+  control, error-framing, EPIPE, and backpressure defects; all were fixed, and
+  final re-review found no reportable issue. Verified with typecheck,
+  `docs:check`, 2,731 passing Core tests with 6 skipped and two known baseline
+  failures on the CLI-fix head, 12 focused tests on the final writer head,
+  whitespace checks, and five successful GitHub E2E samples on the preceding
+  CLI-fix head; the final writer-only head was queued behind another PR at
+  merge.
+
 - **Direct audio and video previews now share one polished media HUD (PR #605,
   codex-2)** — Source preview actions recede until whole-preview hover, keyboard
   focus, an open menu, or a coarse pointer needs them, while remaining mounted
