@@ -37,7 +37,7 @@ identity contract.
 
 ## Design
 
-### Two identities, one owner each
+### Canonical identity and provider correlation
 
 The native kernel mints a fresh UUIDv7 `toolCallId` for every provider tool call
 before admission, including non-empty and globally unique provider IDs. This is
@@ -45,19 +45,24 @@ the only identity used by tool execution, Item recording, pending state,
 mutation causation, diagnostics activity correlation, result settlement, and
 all persisted Thread relationships.
 
-The provider-authored ID remains an opaque bounded `providerToolCallId`. It is
-never interpreted, used as a path segment, checked for UUID syntax, or promoted
-to canonical identity. The active provider exchange pairs its assistant call
-and tool result with this wire identity while every Host event and tool handler
-uses the internal UUID. The active batch keeps an ordinal mapping rather than
-using provider-ID lookup, so empty or repeated raw IDs cannot alias Host
-execution. A provider call whose opaque replay fields exceed their admission
-budget still executes under its internal UUID, but its durable model-call
-history becomes `evidenceOnly` rather than storing a truncated value that could
-not be replayed exactly.
+The provider-authored ID remains opaque input. It is never used as a path
+segment, checked for UUID syntax, or promoted to canonical identity. For each
+active call, the kernel chooses a separate `activeProviderToolCallId`: preserve
+a non-empty batch-unique raw ID, or substitute the portable UUID-derived ID for
+an empty or repeated raw ID. The active assistant call and tool result are both
+rewritten to this correlation ID before another provider request. Every Host
+event and tool handler still uses the internal UUID.
 
-Kernel batch state carries both identities explicitly. No shared string field
-changes meaning by phase, and no lookup infers one identity from the other.
+The active batch keeps an ordinal mapping among raw provider input, active
+provider correlation, and internal identity; it never looks up a call by the
+raw ID. A provider call whose opaque replay fields exceed their admission
+budget still executes under its internal UUID and keeps its selected active
+representation untruncated; empty or repeated IDs remain healed. Its durable
+model-call history becomes `evidenceOnly` rather than storing a truncated value
+that could not be replayed exactly.
+
+Kernel batch state carries all three identities explicitly. No shared string
+field changes meaning by phase, and no lookup infers one identity from another.
 
 ### Durable provider-call envelope
 
@@ -74,18 +79,20 @@ interface ModelProviderToolCall {
 }
 ```
 
-`id` is the exact provider-visible identity used to pair the successful active
-exchange. The source fields come from the assistant response that authored the
-call, not from current Thread configuration. `thoughtSignature` is the opaque
-`pi-ai` tool-call replay field: it is preserved in place for an exact same-model
-replay and omitted when absent. It is not interpreted as Gemini-only data.
+`id` is the provider-visible identity used to pair the successful active
+exchange: either the preserved raw ID or the portable healed ID. The source
+fields come from the assistant response that authored the call, not from
+current Thread configuration. `thoughtSignature` is the opaque `pi-ai`
+tool-call replay field: it is preserved in place for an exact same-model replay
+and omitted when absent. It is not interpreted as Gemini-only data.
 Evidence-only calls are rendered as bounded evidence and do not retain a replay
 envelope.
 
 Admission limits provider call IDs and source-model strings to 4 KiB each and
 `thoughtSignature` to 64 KiB, measured as UTF-8 bytes. An over-budget live field
-selects `evidenceOnly` without failing tool execution. Once a `replayable` or
-`redactedReplay` Item is persisted, the complete envelope is required: the
+selects executed `evidenceOnly` with reason `providerReplayUnavailable` without
+failing tool execution or truncating the active exchange. Once a `replayable`
+or `redactedReplay` Item is persisted, the complete envelope is required: the
 codec rejects missing, malformed, or over-budget inline envelope data at the
 decode boundary. Renderer projection omits the whole envelope. Fork,
 persistence, rollout rebuild, and compaction copy it only as part of the
@@ -96,17 +103,36 @@ immutable model-call history already owned by the Item.
 Provider messages and Host execution events have separate projections of the
 same admitted call:
 
-- provider history keeps the provider-visible call ID and pairs the following
-  `toolResult` with it;
+- active provider history keeps the selected provider-visible correlation ID
+  and pairs the following `toolResult` with it;
 - tool admission, execution, cancellation, collaboration, artifacts, and Item
   recording use the internal UUID;
-- one explicit batch mapping links them while the provider response is active;
-- rejected/evidence-only calls contribute correction evidence without a
-  provider result, preserving current behavior.
+- one explicit ordinal batch mapping links raw, active, and internal identities
+  while the provider response is active.
 
 The mapping survives multiple calls in one response, repeated raw IDs, parallel
 execution, steering, retry, and cancellation. A provider result can never be
 matched by scanning canonical history or by assuming the two IDs are equal.
+
+Active and durable history split by outcome:
+
+- a bounded call with a non-empty batch-unique raw ID uses that ID in active
+  history and stores it in the durable replay envelope;
+- an empty or repeated raw ID uses the distinct `tc_<uuidhex>` ID for the
+  active assistant call and result, and stores that healed provider-visible ID
+  in the durable replay envelope;
+- an over-budget replay field remains untruncated in transient active history,
+  including the result of an executed tool, but persists only bounded executed
+  `evidenceOnly` history with reason `providerReplayUnavailable`;
+- a call rejected before execution rewrites the active assistant call to
+  correction evidence and emits no provider result;
+- an executed `evidenceOnly` call retains its transient active assistant call
+  and result so the current model observes the outcome, while later durable
+  projection emits bounded evidence and never reconstructs a call/result pair.
+
+Thus `evidenceOnly` describes durable replay eligibility, not whether execution
+occurred. The admission decision's independent `execute` flag remains the
+authority for active result inclusion.
 
 ### Durable history and provider switching
 
@@ -120,8 +146,8 @@ mixed provenance.
 Before handing history to `pi-ai`, the projector compares the recorded
 `api/provider/model` tuple with the target model:
 
-- an exact same-model replay restores the original provider ID and
-  `thoughtSignature` without altering those provider-authored replay fields;
+- an exact same-model replay restores the stored active provider ID and
+  `thoughtSignature` without altering those durable replay fields;
 - every other replay replaces both the call ID and its paired result ID with
   `tc_<uuidhex>`, a deterministic one-to-one encoding of the canonical UUIDv7
   `toolCallId`, and removes `thoughtSignature`.
@@ -146,7 +172,8 @@ The persisted `modelCall` shape changes atomically with the kernel and
 projector. Existing pre-release Agent userData is reset; no optional envelope,
 legacy Item-ID fallback, or dual projection path ships. Current specifications
 replace the rule that preserves ordinary provider IDs as canonical IDs with the
-two-identity contract and record `pi-ai` as transport-only adapter authority.
+separated identity contract and record `pi-ai` as transport-only adapter
+authority.
 
 ## Files
 
@@ -190,8 +217,8 @@ forecast, not a hand-maintained completion ledger.
   treat cross-provider history as same-model history.
 - Opaque provider replay fields are untrusted and may be very large. Admission
   must select `evidenceOnly` before persistence without turning an inspection
-  concern into a dead Turn; persisted envelope corruption must still fail
-  closed at decode.
+  concern into a dead Turn or dropping the transient result; persisted envelope
+  corruption must still fail closed at decode.
 - A future adapter may impose constraints outside the conservative portable ID
   alphabet. Serializer coverage must gate each newly supported adapter rather
   than weakening the Host's collision guarantee.
@@ -203,11 +230,16 @@ forecast, not a hand-maintained completion ledger.
 
 - Codec tests reject missing, malformed, and oversized provider-call envelopes
   while admission tests prove oversized live replay fields become
-  `evidenceOnly` without blocking execution and renderer projection proves the
-  envelope stays Host-private.
+  executed `evidenceOnly` without blocking execution or removing the transient
+  result, and renderer projection proves the envelope stays Host-private.
 - Kernel tests prove every provider call receives a distinct UUIDv7 internal ID
-  while exact provider IDs pair live assistant calls and results, including
-  empty IDs, duplicates, parallel batches, retry, cancellation, and steering.
+  while valid provider IDs remain exact and empty or repeated IDs receive
+  distinct paired portable IDs in live assistant calls and results. Executed
+  and rejected `evidenceOnly` cases assert opposite transient-result behavior,
+  including parallel batches, retry, cancellation, and steering.
+- Same-model serializer tests inspect empty and repeated raw-ID cases and prove
+  the materialized assistant calls and results use distinct paired portable
+  IDs rather than the ambiguous source values.
 - Real `pi-ai` serializer tests inspect OpenAI Responses -> Anthropic Messages
   and Anthropic Messages -> OpenAI Responses request bodies, including IDs with
   `|`, IDs longer than Anthropic's limit, and normalized-ID collision cases.
