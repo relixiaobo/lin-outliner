@@ -106,6 +106,14 @@ describe('Thread history references', () => {
         leakedEvidence: `MI${'B'.repeat(12)}`,
       },
       {
+        partialCredential: [
+          '-----BEGIN OPENSSH PRIVATE KEY-----',
+          `MI${'D'.repeat(40)}`,
+          '-----END OPENSSH PRIVATE KEY-----',
+        ].join('\n'),
+        leakedEvidence: `MI${'D'.repeat(12)}`,
+      },
+      {
         partialCredential: 'postgres://user:secretpass@',
         leakedEvidence: 'secretpass',
       },
