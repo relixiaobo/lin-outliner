@@ -12,6 +12,27 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Failed Agent Turns now offer distinct Continue and Rerun recovery (PR #612,
+  codex)** — Continue preserves the failed Turn and appends a linked Turn from
+  complete settled canonical evidence without redispatching historical tools;
+  Rerun deliberately replays every accepted input batch and replaces only the
+  current-history projection while rollout audit retains the source. Main owns
+  eligibility, projection validation, stale-state revalidation, and explicit
+  confirmation whenever a settled tool may run again. Provider request Retry
+  and stream Reconnecting remain transient states inside the same active Turn,
+  and host-only continuation input stays out of the visible transcript. The
+  persisted whole-Turn marker rename to `history/rerun` is a strict pre-release
+  storage cut: pre-#612 installed and clone-scoped Agent stores must be reset
+  with every Tenon process stopped. Gate review found two Medium finalization
+  probe and admission-lock ordering defects across two follow-up rounds; both
+  were fixed before the final no-findings review. Verified with typecheck,
+  `docs:check`, 1,477 renderer tests, 243 ThreadService tests, 390 focused Core
+  recovery tests, 61 focused renderer tests, two recovery Playwright flows,
+  light/dark action-row and confirmation-dialog visual QA, and whitespace
+  checks. The final-head non-gating five-sample GitHub E2E signal remained
+  running at merge; the UI-bearing implementation head reported no introduced
+  failure against the fifteen-sample `main` baseline.
+
 - **Agent tool execution now separates Host identity from provider replay
   correlation (PR #610, codex-4)** — every provider call receives a fresh UUIDv7
   for Items, events, persistence, causation, and execution, while bounded

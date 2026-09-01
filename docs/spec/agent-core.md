@@ -533,6 +533,11 @@ settled tool makes `rerunRequiresConfirmation` true; main rejects the mutation u
 is one internal `history/rerun` rollout event, so rollout audit retains the source while
 current history exposes only the replacement.
 
+No persisted decoder recognizes the superseded `history/retry` marker. This is an
+intentional strict pre-release cut: a Thread containing that old event is unreadable, and
+the installed plus clone-scoped Agent stores join the manual reset required for the other
+current schema cuts before packaged or development verification.
+
 Rollback appends a durable marker to the immutable rollout. The current history
 projection, pagination, and model context omit the marker's exact terminal Turn
 suffix, while audit reads retain every original Turn and Item fact. Extension

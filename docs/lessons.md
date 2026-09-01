@@ -2257,3 +2257,22 @@ Regression coverage must cross the dimensions together: use payload-sized input,
 replay-ineligible metadata, and a persistence callback that fails if invoked;
 assert both that execution remains admitted and that the irrelevant write never
 starts. Single-axis boundary tests do not prove the combined admission policy.
+
+## Finalizer waits must precede admission locks
+
+PR #612 first fixed a terminal-state capability race by waiting for the active
+Turn's finalizer, then reused that read inside Continue while holding the root
+admission lock. An active Goal's idle hook needed the same lock before the
+finalizer's completion promise could resolve, creating a cycle that left both the
+request and shutdown pending.
+
+**Never await a lifecycle completion while holding a lock that any remaining
+finalizer hook may acquire.** Serialize the caller first, wait outside the
+downstream admission lock, then acquire that lock and revalidate authoritative
+state with a non-waiting check. A pre-lock observation is not admission authority;
+the second check is what makes the split safe against newly admitted work.
+
+Regression coverage must drive the real tail hook, not only a mocked completion:
+hold cleanup after the terminal commit, issue the competing mutation, release
+cleanup, prove the idle hook reaches admission, and prove the stale mutation
+rejects while shutdown drains normally.

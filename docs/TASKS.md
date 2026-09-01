@@ -13,15 +13,16 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-One PR claim is open: draft plan-only PR #611 defines the model-visible Agent
-context language and is ordered after the merged #609/#610 foundations; it must
-rebase and refresh its collision check before implementation. Provider tool-call
-identity shipped in #610, so root-Turn recovery and the managed Computer Pilot
-Skill remain eligible under their live collision checks. The public Outline CLI,
-built-in Skill, and shared preview-shell lanes are also clear. Startup Window,
-preview readers, and Skill authoring remain independently eligible. The remaining
-plans from #588/#589 and #591 stay active below until their implementation, spec
-fold, and archive move complete.
+Two draft plan-only claims are open: PR #611 defines the model-visible Agent
+context language, and PR #613 defines model-visible tool-result envelopes. Both
+were scoped against the then-open #612 surfaces and must rebase onto its merged
+Agent baseline and refresh their collision checks before implementation.
+Root-Turn recovery shipped in #612, so delegated failure truth and the managed
+Computer Pilot Skill are eligible under their live collision checks. The public
+Outline CLI, built-in Skill, and shared preview-shell lanes are also clear.
+Startup Window, preview readers, and Skill authoring remain independently
+eligible. The remaining plans from #588/#589 and #591 stay active below until
+their implementation, spec fold, and archive move complete.
 
 ## Primary Delivery Queue
 
@@ -46,14 +47,13 @@ Parallel now eligible:
   file-preview-office
   url-static-reader
   agent-skill-authoring-foundation -> agent-skill-curation-report
-  agent-root-turn-recovery ~> agent-delegated-failure-truth
+  agent-delegated-failure-truth
   computer-pilot-managed-skill
 ```
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [agent-root-turn-recovery](plans/agent-root-turn-recovery.md) | `draft` | **Now; Agent resource lifecycle shipped in #607**; live collision check required |
-| P1 | [agent-delegated-failure-truth](plans/agent-delegated-failure-truth.md) | `draft` | `agent-root-turn-recovery` claim serialization |
+| P1 | [agent-delegated-failure-truth](plans/agent-delegated-failure-truth.md) | `draft` | **Now; root-Turn recovery shipped in #612**; live collision check required |
 | P2 | [startup-window-first](plans/startup-window-first.md) | `draft` | **Now; Desktop Host shipped in #603** |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
@@ -61,12 +61,11 @@ Parallel now eligible:
 | P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | **Now; Agent resource lifecycle shipped in #607** |
 
-The Host composition, Bash stdin, Outline CLI Skill, Agent resource, and
-Cross-Thread Reference foundations are complete. Root-Turn recovery and the
-managed Computer Pilot Skill may proceed in parallel, subject to their live
-collision checks; delegated failure truth remains ordered after root-Turn
-recovery. Build-ready work outside this queue remains independently claimable
-under its own collision boundary.
+The Host composition, Bash stdin, Outline CLI Skill, Agent resource,
+Cross-Thread Reference, and root-Turn recovery foundations are complete.
+Delegated failure truth and the managed Computer Pilot Skill may proceed in
+parallel, subject to their live collision checks. Build-ready work outside this
+queue remains independently claimable under its own collision boundary.
 
 The split also absorbs three former planless tasks without losing their intent:
 
@@ -88,8 +87,9 @@ Collision lanes remain claim-time constraints, not hidden graph edges:
   lifecycle, canonical-to-renderer projection, preload, and Host transport.
   Internal text remains a private Item dependency and never becomes a file
   resource.
-- Failure Recovery repeats the live file check against the merged #608 Agent
-  baseline before claiming shared protocol, projection, and Thread surfaces.
+- Delegated Failure Truth repeats the live file check against the merged #612
+  recovery baseline before claiming shared protocol, projection, and Thread
+  surfaces.
 
 ## Other Active Plans
 
@@ -117,8 +117,9 @@ contract or user-visible decision.
 - **Agent persisted-schema cutover verification** (release gate) — before the
   next packaged train, stop every Tenon process, manually reset installed and
   clone-scoped pre-#607 Agent stores, and verify fresh packaged/dev first launch.
-  This covers the input-author, context dependency-manifest, and unified Agent
-  resource-reference cuts; no migration or automatic deletion ships.
+  This covers the input-author, context dependency-manifest, unified Agent
+  resource-reference, and whole-Turn `history/rerun` event-name cuts; no
+  migration or automatic deletion ships.
 - **Launcher NSPanel packaged verification** — one `.dmg` pass for Cmd+Tab,
   fullscreen floating, focus, dock icon, and light/dark behavior.
 
@@ -213,6 +214,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-root-turn-recovery** (`done`, #612, 2026-09-01) — failed root Turns
+  now offer main-authorized Continue and Rerun paths with linked canonical
+  continuation, explicit settled-tool replay confirmation, and distinct
+  provider Retry semantics; plan archived at
+  [agent-root-turn-recovery](plans/archive/agent-root-turn-recovery.md).
 - **agent-provider-tool-call-identity** (`done`, #610, 2026-09-01) — Agent tool
   execution now uses Host UUIDv7 identity separately from bounded provider replay
   correlation, with exact same-model restoration and collision-safe cross-model
