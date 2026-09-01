@@ -53,8 +53,11 @@ import {
 import { readChangeSetUpload } from './changeSetSpool';
 import { commitOutlineChangeSetAccepted } from '../changeSet';
 import { normalizeNodeAccessStats, type NodeAccessStats } from '../../../core/nodeAccessRanking';
+import { BoundedResponseWriter, writeWithBackpressure } from './boundedResponseWriter';
 
 const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
+const MAX_WATCH_BUFFERED_RECORDS = 128;
+const MAX_WATCH_BUFFERED_BYTES = 1024 * 1024;
 
 export interface OutlineRuntimeServerOptions {
   readonly root: string;
@@ -650,25 +653,10 @@ export class OutlineRuntimeServer {
     let retainedLatestSequence = this.workspace.eventBaselineSequence;
     let ended = false;
     const pendingEvents: OutlineEvent[] = [];
+    let pendingEventBytes = 0;
     const closed = new Promise<void>((resolve) => response.once('close', resolve));
     let unsubscribe: () => void = () => undefined;
-    let writeFailed = false;
-    let writeQueue = Promise.resolve();
-    const write = (record: OutlineStreamRecord) => {
-      writeQueue = writeQueue
-        .then(async () => {
-          if (writeFailed) return;
-          await writeWithBackpressure(response, `${JSON.stringify(record)}\n`);
-        })
-        .catch((error: unknown) => {
-          writeFailed = true;
-          ended = true;
-          unsubscribe();
-          response.destroy(error instanceof Error ? error : undefined);
-        });
-    };
-    const endForResync = () => {
-      if (ended) return;
+    const resyncRecords = (): readonly string[] => {
       ended = true;
       const sequence = Math.max(latestEventSequence, retainedLatestSequence);
       const cursor = encodeEventCursor({
@@ -687,25 +675,41 @@ export class OutlineRuntimeServer {
         revision: this.workspace.revision(),
         cursor,
       };
-      write({
+      unsubscribe();
+      return [{
         protocolVersion: OUTLINE_PROTOCOL_VERSION,
         requestId,
         sequence: streamSequence++,
         type: 'event',
         event,
         cursor,
-      });
-      write({
+      }, {
         protocolVersion: OUTLINE_PROTOCOL_VERSION,
         requestId,
         sequence: streamSequence++,
         type: 'end',
         cursor,
-      });
-      unsubscribe();
-      void writeQueue.then(() => {
-        if (!writeFailed && !response.destroyed && !response.writableEnded) response.end();
-      });
+      }].map((record) => `${JSON.stringify(record)}\n`);
+    };
+    const writer = new BoundedResponseWriter(response, {
+      maxBufferedRecords: MAX_WATCH_BUFFERED_RECORDS,
+      maxBufferedBytes: MAX_WATCH_BUFFERED_BYTES,
+      onOverflow: (discardedRecords) => {
+        // Buffered records already reserved sequence numbers but never reached the response.
+        streamSequence -= discardedRecords;
+        return resyncRecords();
+      },
+      onFailure: () => {
+        ended = true;
+        unsubscribe();
+      },
+    });
+    const write = (record: OutlineStreamRecord) => {
+      writer.enqueue(`${JSON.stringify(record)}\n`);
+    };
+    const endForResync = () => {
+      if (ended) return;
+      writer.end(resyncRecords());
     };
     const writeEvent = (event: OutlineEvent) => {
       if (ended || event.sequence <= latestEventSequence) return;
@@ -725,9 +729,26 @@ export class OutlineRuntimeServer {
         cursor: projectedEvent.cursor,
       });
     };
-    let acceptEvent: (event: OutlineEvent) => void = (event) => { pendingEvents.push(event); };
+    let acceptEvent: (event: OutlineEvent) => void = (event) => {
+      if (ended) return;
+      const bytes = Buffer.byteLength(JSON.stringify(event));
+      if (
+        pendingEvents.length >= MAX_WATCH_BUFFERED_RECORDS
+        || pendingEventBytes + bytes > MAX_WATCH_BUFFERED_BYTES
+      ) {
+        latestEventSequence = Math.max(latestEventSequence, event.sequence);
+        endForResync();
+        return;
+      }
+      pendingEvents.push(event);
+      pendingEventBytes += bytes;
+    };
     unsubscribe = this.workspace.subscribe((event) => acceptEvent(event));
-    response.once('close', unsubscribe);
+    response.once('close', () => {
+      ended = true;
+      unsubscribe();
+      writer.cancel();
+    });
     write({
       protocolVersion: OUTLINE_PROTOCOL_VERSION,
       requestId,
@@ -1012,33 +1033,6 @@ function writeJson(response: http.ServerResponse, status: number, value: unknown
     connection: 'close',
   });
   response.end(body);
-}
-
-async function writeWithBackpressure(response: http.ServerResponse, chunk: string): Promise<void> {
-  if (response.destroyed || response.writableEnded) throw new Error('Outline Runtime response closed during streaming.');
-  if (response.write(chunk)) return;
-  await new Promise<void>((resolve, reject) => {
-    const cleanup = () => {
-      response.off('drain', onDrain);
-      response.off('close', onClose);
-      response.off('error', onError);
-    };
-    const onDrain = () => {
-      cleanup();
-      resolve();
-    };
-    const onClose = () => {
-      cleanup();
-      reject(new Error('Outline Runtime response closed during streaming.'));
-    };
-    const onError = (error: Error) => {
-      cleanup();
-      reject(error);
-    };
-    response.once('drain', onDrain);
-    response.once('close', onClose);
-    response.once('error', onError);
-  });
 }
 
 async function removeStaleSocket(socketPath: string): Promise<void> {

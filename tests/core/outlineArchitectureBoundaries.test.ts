@@ -53,7 +53,7 @@ describe('Outline process dependency boundaries', () => {
     expect(await forbiddenImports(files, ({ specifier }) => specifier === 'typebox/value')).toEqual([]);
   });
 
-  test('serializes watch output through the Runtime backpressure writer', async () => {
+  test('routes watch output through the bounded Runtime writer', async () => {
     const source = await readFile(
       path.join(sourceRoot, 'outline', 'runtime', 'server', 'runtimeServer.ts'),
       'utf8',
@@ -62,7 +62,7 @@ describe('Outline process dependency boundaries', () => {
       source.indexOf('private async streamEvents'),
       source.indexOf('private scheduleIdle'),
     );
-    expect(streamEvents).toContain('writeWithBackpressure');
+    expect(streamEvents).toContain('BoundedResponseWriter');
     expect(streamEvents).not.toContain('response.write(');
   });
 

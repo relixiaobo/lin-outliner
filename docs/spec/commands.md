@@ -103,8 +103,10 @@ respectively.
 Raw `--output -` reserves stdout exclusively for artifact or asset bytes.
 Failures before or during a raw transfer write a diagnostic to stderr and return
 a non-zero exit without appending a response envelope to stdout. CLI and Runtime
-stream writers honor downstream backpressure; long-lived watch output is
-serialized through the same drain-aware Runtime writer. A downstream `EPIPE` is
+stream writers honor downstream backpressure. Long-lived watch output is
+serialized through a record- and byte-bounded drain-aware writer; overflow drops
+the pending backlog and closes with `resync.required` so memory use cannot follow
+an unbounded producer. A downstream `EPIPE` is
 a normal early-consumer termination for success and failure output rather than
 an internal CLI failure. Common file
 errors retain their path and actionable cause in summary output while preserving

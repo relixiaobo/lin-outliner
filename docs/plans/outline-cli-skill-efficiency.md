@@ -441,6 +441,9 @@ to decide what happened:
   one line before budgeting. `outline schema` remains a complete parseable JSON
   document outside the receipt cap because it is the executable recovery path;
   `show` and `find` use typed bounded summaries rather than partial JSON.
+- **FR-24a:** Runtime watch output uses a record- and byte-bounded serial writer.
+  When a blocked consumer exceeds either bound, pending events are replaced by
+  `resync.required` and `end` records rather than retained in application memory.
 - **FR-25:** Failure output keeps the existing typed error code, message, and
   recovery guidance. Validation failures name the exact command schema to read;
   they do not suggest aggregate schema exploration.
