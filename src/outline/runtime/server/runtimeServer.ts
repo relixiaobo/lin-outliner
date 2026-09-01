@@ -651,8 +651,22 @@ export class OutlineRuntimeServer {
     let ended = false;
     const pendingEvents: OutlineEvent[] = [];
     const closed = new Promise<void>((resolve) => response.once('close', resolve));
-    const write = (record: OutlineStreamRecord) => response.write(`${JSON.stringify(record)}\n`);
     let unsubscribe: () => void = () => undefined;
+    let writeFailed = false;
+    let writeQueue = Promise.resolve();
+    const write = (record: OutlineStreamRecord) => {
+      writeQueue = writeQueue
+        .then(async () => {
+          if (writeFailed) return;
+          await writeWithBackpressure(response, `${JSON.stringify(record)}\n`);
+        })
+        .catch((error: unknown) => {
+          writeFailed = true;
+          ended = true;
+          unsubscribe();
+          response.destroy(error instanceof Error ? error : undefined);
+        });
+    };
     const endForResync = () => {
       if (ended) return;
       ended = true;
@@ -689,7 +703,9 @@ export class OutlineRuntimeServer {
         cursor,
       });
       unsubscribe();
-      response.end();
+      void writeQueue.then(() => {
+        if (!writeFailed && !response.destroyed && !response.writableEnded) response.end();
+      });
     };
     const writeEvent = (event: OutlineEvent) => {
       if (ended || event.sequence <= latestEventSequence) return;

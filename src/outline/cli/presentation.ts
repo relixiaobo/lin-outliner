@@ -10,6 +10,12 @@ import {
 import { checkOutlineSchema } from '../contract/validation';
 
 const MAX_SUMMARY_BYTES = 4 * 1024;
+const MAX_DIFF_BINDINGS = 8;
+const MAX_DIFF_WARNINGS = 4;
+const MAX_VIEW_FIELDS = 4;
+const MAX_RETURNED_ROOTS = 8;
+const MAX_PROJECTION_NODES = 4;
+const MAX_BATCH_COUNTS = 16;
 const NON_ITEM_NODE_TYPES = new Set([
   'queryCondition', 'viewDef', 'sortRule', 'filterRule', 'displayField',
   'defConfig', 'systemOption', 'fieldEntry',
@@ -154,16 +160,16 @@ export function renderSummaryResult(command: string, data: unknown): string {
 function summaryLines(command: string, data: unknown): string[] {
   if (command === 'capabilities' && Array.isArray(data)) {
     return data.map((entry) => isRecord(entry)
-      ? `${String(entry.name)}\t${String(entry.summary)}`
-      : String(entry));
+      ? `${summaryScalar(entry.name, 128)}\t${summaryScalar(entry.summary)}`
+      : summaryScalar(entry));
   }
   if (isRecord(data) && data.kind === 'outline.summary-viewed-tree-receipt' && isRecord(data.settlement)) {
     return [
       ...summaryLines(command, data.settlement),
-      `Owner: ${String(data.ownerId)}`,
-      `Items: ${String(data.itemCount)}`,
-      `Display fields: ${String(data.displayFieldCount)}`,
-      `Persisted view mode: ${String(data.mode)}`,
+      `Owner: ${summaryScalar(data.ownerId)}`,
+      `Items: ${summaryScalar(data.itemCount)}`,
+      `Display fields: ${summaryScalar(data.displayFieldCount)}`,
+      `Persisted view mode: ${summaryScalar(data.mode)}`,
     ];
   }
   if (isRecord(data) && data.kind === 'outline.summary-diff-receipt' && isRecord(data.diff)) {
@@ -175,9 +181,9 @@ function summaryLines(command: string, data: unknown): string[] {
       effects.set(effect, (effects.get(effect) ?? 0) + 1);
     }
     const bindings = isRecord(diff.bindings) ? Object.entries(diff.bindings) : [];
-    const shownBindings = bindings.slice(0, 16);
+    const shownBindings = bindings.slice(0, MAX_DIFF_BINDINGS);
     const warnings = Array.isArray(diff.warnings) ? diff.warnings : [];
-    const shownWarnings = warnings.slice(0, 16);
+    const shownWarnings = warnings.slice(0, MAX_DIFF_WARNINGS);
     const destructive = new Map<string, number>();
     for (const entry of Array.isArray(diff.destructive) ? diff.destructive : []) {
       if (!isRecord(entry)) continue;
@@ -185,53 +191,150 @@ function summaryLines(command: string, data: unknown): string[] {
       destructive.set(kind, (destructive.get(kind) ?? 0) + Number(entry.targetCount ?? 0));
     }
     return [
-      `Command: ${command}`,
-      `Artifact: ${String(data.path)}; bytes=${String(data.byteCount)}; sha256=${String(data.sha256)}`,
-      `Diff: ${String(diff.diffHash)}`,
-      `ChangeSet: ${String(diff.changeSetHash)}`,
-      `Base revision: ${String(diff.baseRevision)}`,
-      `Effects: ${[...effects].map(([effect, count]) => `${effect}=${count}`).join(', ') || 'none'}`,
-      `Destructive: ${[...destructive].map(([kind, count]) => `${kind}=${count}`).join(', ') || 'none'}`,
-      `Bindings: ${shownBindings.map(([name, ids]) => `${name}=${Array.isArray(ids) ? ids.length : 0}`).join(', ') || 'none'}`,
+      `Command: ${summaryScalar(command)}`,
+      `Artifact: ${summaryScalar(data.path)}; bytes=${summaryScalar(data.byteCount)}; sha256=${summaryScalar(data.sha256)}`,
+      `Diff: ${summaryScalar(diff.diffHash)}`,
+      `ChangeSet: ${summaryScalar(diff.changeSetHash)}`,
+      `Base revision: ${summaryScalar(diff.baseRevision)}`,
+      `Effects: ${[...effects].map(([effect, count]) => `${summaryScalar(effect, 128)}=${count}`).join(', ') || 'none'}`,
+      `Destructive: ${[...destructive].map(([kind, count]) => `${summaryScalar(kind, 128)}=${count}`).join(', ') || 'none'}`,
+      `Bindings: ${shownBindings.map(([name, ids]) => `${summaryScalar(name, 128)}=${Array.isArray(ids) ? ids.length : 0}`).join(', ') || 'none'}`,
       ...(bindings.length > shownBindings.length ? [`Omitted bindings: ${bindings.length - shownBindings.length}`] : []),
       ...shownWarnings.map((warning) => isRecord(warning)
-        ? `Warning: ${String(warning.code)} ${String(warning.message)}`
-        : `Warning: ${String(warning)}`),
+        ? `Warning: ${summaryScalar(warning.code, 128)} ${summaryScalar(warning.message, 256)}`
+        : `Warning: ${summaryScalar(warning)}`),
       ...(warnings.length > shownWarnings.length ? [`Omitted warnings: ${warnings.length - shownWarnings.length}`] : []),
     ];
   }
   if (isRecord(data) && data.kind === 'outline.view-summary') {
     const fields = Array.isArray(data.displayFields) ? data.displayFields : [];
-    const shownFields = fields.slice(0, 32);
+    const shownFields = fields.slice(0, MAX_VIEW_FIELDS);
     return [
-      `Command: ${command}`,
-      `Owner: ${String(data.ownerId)}`,
-      `Title: ${String(data.title)}`,
-      `View: ${String(data.mode)}; toolbar=${String(data.toolbarVisible)}`,
-      `Items: ${String(data.itemCount)}`,
-      `Display fields: ${String(data.displayFieldCount)}; digest=${String(data.displayDigest)}`,
+      `Command: ${summaryScalar(command)}`,
+      `Owner: ${summaryScalar(data.ownerId)}`,
+      `Title: ${summaryScalar(data.title)}`,
+      `View: ${summaryScalar(data.mode)}; toolbar=${summaryScalar(data.toolbarVisible)}`,
+      `Items: ${summaryScalar(data.itemCount)}`,
+      `Display fields: ${summaryScalar(data.displayFieldCount)}; digest=${summaryScalar(data.displayDigest)}`,
       ...(fields.length > shownFields.length ? [`Omitted display fields: ${fields.length - shownFields.length}`] : []),
       ...shownFields.map((field) => isRecord(field)
-        ? `  ${String(field.order)}\t${String(field.fieldId)}\t${String(field.label)}\tvisible=${String(field.visible)}`
-        : `  ${String(field)}`),
-      `Group: ${String(data.group)}`,
-      `Sort rules: ${String(data.sortCount)}; filter rules: ${String(data.filterCount)}`,
-      `Revision: ${String(data.revision)}`,
+        ? `  ${summaryScalar(field.order, 32)}\t${summaryScalar(field.fieldId, 128)}\t${summaryScalar(field.label, 256)}\tvisible=${summaryScalar(field.visible, 32)}`
+        : `  ${summaryScalar(field)}`),
+      `Group: ${summaryScalar(data.group)}`,
+      `Sort rules: ${summaryScalar(data.sortCount)}; filter rules: ${summaryScalar(data.filterCount)}`,
+      `Revision: ${summaryScalar(data.revision)}`,
     ];
   }
   if (isRecord(data) && (data.kind === 'outline.operation' || data.kind === 'outline.no-change')) {
     const operation = data.kind === 'outline.operation';
-    const resultIds = returnedRootIds(data).slice(0, 16);
+    const returnedRoots = returnedRootIds(data);
+    const shownRoots = returnedRoots.slice(0, MAX_RETURNED_ROOTS);
     return [
-      `Command: ${command}`,
+      `Command: ${summaryScalar(command)}`,
       `Status: ${operation ? 'applied' : 'no-change'}`,
-      ...(operation ? [`Operation: ${String(data.operationId)}`, `Revision: ${String(data.revisionBefore)} -> ${String(data.revisionAfter)}`] : [`Revision: ${String(data.revision)}`]),
-      `Affected: ${String(data.affectedNodeCount)}; digest=${String(data.affectedNodeIdsHash ?? data.diffHash)}`,
-      `Recovery: ${isRecord(data.recovery) ? String(data.recovery.state) : 'unknown'}`,
-      ...(resultIds.length > 0 ? [`Returned roots: ${resultIds.join(', ')}`] : []),
+      ...(operation ? [`Operation: ${summaryScalar(data.operationId)}`, `Revision: ${summaryScalar(data.revisionBefore)} -> ${summaryScalar(data.revisionAfter)}`] : [`Revision: ${summaryScalar(data.revision)}`]),
+      `Affected: ${summaryScalar(data.affectedNodeCount)}; digest=${summaryScalar(data.affectedNodeIdsHash ?? data.diffHash)}`,
+      `Recovery: ${isRecord(data.recovery) ? summaryScalar(data.recovery.state) : 'unknown'}`,
+      ...(returnedRoots.length > 0 ? [
+        `Returned roots: ${returnedRoots.length}; shown=${shownRoots.length}; omitted=${returnedRoots.length - shownRoots.length}; digest=${canonicalSha256(returnedRoots)}`,
+        `  ${shownRoots.map((id) => summaryScalar(id, 256)).join(', ')}`,
+      ] : []),
     ];
   }
-  return JSON.stringify(data, null, 2).split('\n');
+  if (isProjectionResult(data)) return projectionSummaryLines(command, data);
+  if (isRecord(data) && data.kind === 'outline.count') {
+    return [
+      `Command: ${summaryScalar(command)}`,
+      `Count: ${summaryScalar(data.count)}`,
+      `Revision: ${summaryScalar(data.revision)}`,
+      'Exact: true',
+    ];
+  }
+  if (isRecord(data) && data.kind === 'outline.batch-count' && Array.isArray(data.counts)) {
+    const shown = data.counts.slice(0, MAX_BATCH_COUNTS);
+    return [
+      `Command: ${summaryScalar(command)}`,
+      `Revision: ${summaryScalar(data.revision)}`,
+      `Counts: ${data.counts.length}; shown=${shown.length}; omitted=${data.counts.length - shown.length}; digest=${canonicalSha256(data.counts)}`,
+      ...shown.map((entry) => isRecord(entry)
+        ? `  ${summaryScalar(entry.name, 128)}\t${summaryScalar(entry.count, 64)}`
+        : `  ${summaryScalar(entry)}`),
+    ];
+  }
+  return [
+    `Command: ${summaryScalar(command)}`,
+    `Result: ${summaryResultKind(data)}`,
+    `Digest: ${canonicalSha256(data)}`,
+    'Details: rerun with --json for the complete machine result.',
+  ];
+}
+
+function projectionSummaryLines(command: string, data: Record<string, unknown>): string[] {
+  const projection = data.projection as Record<string, unknown>;
+  const nodes = data.nodes as unknown[];
+  const shownNodes = nodes.slice(0, MAX_PROJECTION_NODES);
+  const backlinks = Array.isArray(data.backlinks) ? data.backlinks : [];
+  return [
+    `Command: ${summaryScalar(command)}`,
+    `Revision: ${summaryScalar(data.revision)}`,
+    `Projection: ${summaryScalar(projection.kind)}`,
+    `Nodes: ${nodes.length}; shown=${shownNodes.length}; omitted=${nodes.length - shownNodes.length}; digest=${canonicalSha256(nodes)}`,
+    `Backlinks: ${backlinks.length}; digest=${canonicalSha256(backlinks)}`,
+    `Continuation: ${typeof data.cursor === 'string' ? 'available' : 'none'}; truncated=${data.truncated === true}`,
+    ...shownNodes.map((node, index) => nodeSummaryLine(node, index)),
+  ];
+}
+
+function nodeSummaryLine(value: unknown, index: number): string {
+  if (!isRecord(value)) {
+    return `  Item ${index + 1}: value=${summaryScalar(value)}; digest=${canonicalSha256(value)}`;
+  }
+  const text = isRecord(value.content) && typeof value.content.text === 'string'
+    ? value.content.text
+    : value.text;
+  const fields = [
+    value.id !== undefined ? `id=${summaryScalar(value.id, 128)}` : undefined,
+    value.type !== undefined ? `type=${summaryScalar(value.type, 64)}` : undefined,
+    value.parentId !== undefined ? `parent=${summaryScalar(value.parentId, 128)}` : undefined,
+    text !== undefined ? `text=${summaryScalar(text, 256)}` : undefined,
+  ].filter((field): field is string => field !== undefined);
+  return `  Node ${index + 1}: ${fields.join('; ') || 'no common fields'}; digest=${canonicalSha256(value)}`;
+}
+
+function isProjectionResult(value: unknown): value is Record<string, unknown> & {
+  projection: Record<string, unknown>;
+  nodes: unknown[];
+} {
+  return isRecord(value)
+    && isRecord(value.projection)
+    && typeof value.revision === 'number'
+    && Array.isArray(value.nodes);
+}
+
+function summaryResultKind(value: unknown): string {
+  if (isRecord(value) && typeof value.kind === 'string') return summaryScalar(value.kind, 128);
+  if (Array.isArray(value)) return 'array';
+  if (value === null) return 'null';
+  return typeof value;
+}
+
+function summaryScalar(value: unknown, maxBytes = 512): string {
+  const text = String(value);
+  const encoded = JSON.stringify(text).slice(1, -1).replace(/[\u007f-\u009f]/gu, (character) => (
+    `\\u${character.codePointAt(0)!.toString(16).padStart(4, '0')}`
+  ));
+  if (Buffer.byteLength(encoded) <= maxBytes) return encoded;
+  const suffix = `... [bytes=${Buffer.byteLength(encoded)}; sha256=${canonicalSha256(text)}]`;
+  const budget = Math.max(0, maxBytes - Buffer.byteLength(suffix));
+  let prefix = '';
+  let bytes = 0;
+  for (const character of encoded) {
+    const nextBytes = Buffer.byteLength(character);
+    if (bytes + nextBytes > budget) break;
+    prefix += character;
+    bytes += nextBytes;
+  }
+  return `${prefix}${suffix}`;
 }
 
 function returnedRootIds(data: Record<string, unknown>): string[] {

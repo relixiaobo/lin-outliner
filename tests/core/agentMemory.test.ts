@@ -282,7 +282,7 @@ describe('Codex Memory contracts', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
     const context = extension.contributeThreadContext(targetThread);
     expect(context?.additionalContext?.memory?.value).toContain('use outline find');
-    expect(context?.additionalContext?.memory?.value).toContain('outline show');
+    expect(context?.additionalContext?.memory?.value).toContain('outline --json show');
     expect(context?.additionalContext?.memory?.value).toContain('[[node://UUID]]');
     expect(context?.additionalContext?.memory?.value).not.toContain('Belief');
 
@@ -295,18 +295,18 @@ describe('Codex Memory contracts', () => {
     expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(1);
   });
 
-  test('counts an inline citation from an explicit JSON show envelope', () => {
+  test('ignores a default summary show for citation accounting', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
     extension.contributeThreadContext(targetThread);
     completeOutlineShow(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], {
-      command: `outline --json show ${MEMORY_NODE_ID}`,
+      command: `outline show ${MEMORY_NODE_ID}`,
     });
     completeMemoryTurn(
       extension,
       targetThread,
       completedResponseTurn(activeTurn, formatNodeReferenceMarker(MEMORY_NODE_ID)),
     );
-    expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(1);
+    expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(0);
   });
 
   test('does not count find results, ordinary Nodes, failed shows, or uncited Memory reads', () => {
@@ -2200,7 +2200,7 @@ function completeOutlineShow(
     nodes: nodeIds.map((nodeId) => projection.nodes.find((entry) => entry.id === nodeId))
       .filter((entry): entry is NodeProjection => entry !== undefined),
   };
-  const command = options.command ?? `outline show ${nodeIds.join(' ')}`;
+  const command = options.command ?? `outline --json show ${nodeIds.join(' ')}`;
   const stdout = command.includes('--json')
     ? JSON.stringify({
         protocolVersion: OUTLINE_PROTOCOL_VERSION,

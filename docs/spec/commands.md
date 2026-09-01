@@ -91,26 +91,39 @@ from that schema is not a supported CLI operator.
 
 TTY and non-TTY stdout both default to the same deterministic summary.
 `--json` explicitly requests one versioned JSON response envelope, or JSONL for
-a stream. TTY state affects interaction only, never the output data structure.
-Output mode never changes selection, mutation, or error semantics. `SIGINT` and
-`SIGTERM` abort every command path and use exit codes 130 and 143 respectively.
+a stream. `schema` is the deliberate exception: its default output is the
+complete compact schema as one parseable JSON document because schema recovery
+must never omit executable grammar. TTY state affects interaction only, never
+the output data structure. Output mode never changes selection, mutation, or
+error semantics. Before the global `--` terminator, an explicit `--json`
+controls error framing even when an earlier global option is invalid. `SIGINT`
+and `SIGTERM` abort every command path and use exit codes 130 and 143
+respectively.
 
 Raw `--output -` reserves stdout exclusively for artifact or asset bytes.
 Failures before or during a raw transfer write a diagnostic to stderr and return
 a non-zero exit without appending a response envelope to stdout. CLI and Runtime
-stream writers honor downstream backpressure. A downstream `EPIPE` is a normal
-early-consumer termination rather than an internal CLI failure. Common file
+stream writers honor downstream backpressure; long-lived watch output is
+serialized through the same drain-aware Runtime writer. A downstream `EPIPE` is
+a normal early-consumer termination for success and failure output rather than
+an internal CLI failure. Common file
 errors retain their path and actionable cause in summary output while preserving
 stable public error categories.
 
 Summary success output is a deterministic, ANSI-free receipt capped at 4 KiB.
+Every dynamic scalar is encoded onto one line before budgeting: C0/C1 controls,
+DEL, CR/LF, and tabs cannot alter terminal state or forge receipt fields.
 Mutation receipts report settlement, Operation and revision identity, affected
 count/digest, recovery, and bounded returned roots; viewed-tree add also reports
 owner, item/display counts, and mode. View inspection reports complete display
 state when it fits and otherwise explicit omission evidence plus a digest. A
+`show` or `find` summary reports projection identity, counts, continuation state,
+complete-set digests, and a bounded Node sample rather than truncated JSON. A
 default `diff --output FILE` leaves the exact artifact unchanged and reports its
 path, bytes/hash, Diff/ChangeSet hashes, base revision, effect counts,
-destructive classes, bindings, and warnings. `--json` remains complete.
+destructive classes, bindings, and warnings. Other result families without a
+specialized summary report only type, digest, and `--json` recovery guidance;
+they never print a partial JSON document. `--json` remains complete.
 
 ### Porcelain intent routing
 

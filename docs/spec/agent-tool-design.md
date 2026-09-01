@@ -832,6 +832,8 @@ direct Bash invocations. Structured `--input -` bytes use Bash's
 separate stdin transport; the command string contains only `outline` and its
 arguments. Complete `--json` responses and exact Diff artifacts remain
 available when machine fidelity is explicitly required.
+Memory citation accounting accepts only explicit `outline --json show` output,
+so bounded presentation changes cannot silently alter durable usage evidence.
 
 ## Execution And Audit
 

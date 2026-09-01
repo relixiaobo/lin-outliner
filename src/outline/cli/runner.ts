@@ -101,6 +101,19 @@ const defaultIo: OutlineCliIo = {
 
 export async function runOutlineCli(argv: readonly string[], options: OutlineCliRunOptions = {}): Promise<number> {
   const io = { ...defaultIo, ...options.io };
+  try {
+    return await runOutlineCliWithIo(argv, options, io);
+  } catch (error) {
+    if (isBrokenPipe(error)) return OUTLINE_EXIT_CODES.success;
+    throw error;
+  }
+}
+
+async function runOutlineCliWithIo(
+  argv: readonly string[],
+  options: OutlineCliRunOptions,
+  io: OutlineCliIo,
+): Promise<number> {
   let invocation: ParsedInvocation | undefined;
   const requestedOutput = requestedOutputMode(argv);
   try {
@@ -114,7 +127,7 @@ export async function runOutlineCli(argv: readonly string[], options: OutlineCli
     await writeSuccess(io, invocation, data);
     return OUTLINE_EXIT_CODES.success;
   } catch (error) {
-    if (isBrokenPipe(error)) return OUTLINE_EXIT_CODES.success;
+    if (isBrokenPipe(error)) throw error;
     const publicError = withUsageGuidance(toPublicError(error), invocation);
     if (!options.signal?.aborted || publicError.code === 'operation_settlement_unknown') {
       await writeFailure(io, invocation ?? failedInvocation(requestedOutput), publicError);
@@ -1005,6 +1018,10 @@ async function writeSuccess(io: OutlineCliIo, invocation: ParsedInvocation, data
     await io.stdout(`${JSON.stringify(response)}\n`);
     return;
   }
+  if (invocation.command === 'schema') {
+    await io.stdout(`${JSON.stringify(data)}\n`);
+    return;
+  }
   if (invocation.command === 'version' && isRecord(data)) {
     await io.stdout(`outline ${String(data.cliVersion)} (Tenon ${String(data.appVersion)}; protocol ${OUTLINE_PROTOCOL_VERSION})\n`);
     return;
@@ -1013,11 +1030,13 @@ async function writeSuccess(io: OutlineCliIo, invocation: ParsedInvocation, data
     await io.stdout('Outline Runtime: not running\n');
     return;
   }
+  let summary: string;
   try {
-    await io.stdout(renderSummaryResult(invocation.command, data));
+    summary = renderSummaryResult(invocation.command, data);
   } catch {
-    await io.stdout(`Command: ${invocation.command}\nStatus: succeeded\nPresentation: unavailable\n`);
+    summary = `Command: ${invocation.command}\nStatus: succeeded\nPresentation: unavailable\n`;
   }
+  await io.stdout(summary);
 }
 
 async function writeFailure(
@@ -1326,18 +1345,9 @@ function hasHelpOption(argv: readonly string[]): boolean {
 }
 
 function requestedOutputMode(argv: readonly string[]): ParsedInvocation['output'] {
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index]!;
-    if (arg === '--' || !arg.startsWith('-')) return 'summary';
-    if (arg === '--json') return 'json';
-    const metadata = GLOBAL_OPTION_BY_NAME.get(arg.slice(2));
-    if (metadata?.value) {
-      index += 1;
-      continue;
-    }
-    if (!metadata) return 'summary';
-  }
-  return 'summary';
+  const terminator = argv.indexOf('--');
+  const optionRegion = terminator < 0 ? argv : argv.slice(0, terminator);
+  return optionRegion.includes('--json') ? 'json' : 'summary';
 }
 
 function isRawStdoutInvocation(invocation: ParsedInvocation): boolean {

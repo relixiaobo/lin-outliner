@@ -437,7 +437,10 @@ to decide what happened:
   is omitted; it must not silently apply from a partial receipt.
 - **FR-24:** Every summary receipt is valid UTF-8, stable across TTY/non-TTY use,
   free of ANSI control sequences, and capped at 4 KiB. A cap is expressed with
-  counts and digests, never silent truncation.
+  counts and digests, never silent truncation. Dynamic scalars are encoded onto
+  one line before budgeting. `outline schema` remains a complete parseable JSON
+  document outside the receipt cap because it is the executable recovery path;
+  `show` and `find` use typed bounded summaries rather than partial JSON.
 - **FR-25:** Failure output keeps the existing typed error code, message, and
   recovery guidance. Validation failures name the exact command schema to read;
   they do not suggest aggregate schema exploration.
