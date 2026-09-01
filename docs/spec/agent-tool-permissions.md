@@ -93,6 +93,20 @@ to this classifier. Explore, plan, read-only, and worktree Agents reject `execut
 `unknown` before spawn; `registered-data` remains governed by the command's ordinary
 Outline read/edit descriptors, including the worktree mutation prohibition.
 
+`thread_search` and text-only `thread_read` declare the read-only local-system actions
+`thread.history.search` and `thread.history.read`, so an admitted read-only child may use
+them without file-write authority. Read-only classification never grants either tool:
+the canonical catalog, effective profile, inherited parent pool, Role, and explicit
+allowed-tool ceiling must still admit its exact name. Same-profile validation remains a
+data check inside the history service rather than an action grant.
+
+A `thread_read` call selecting one or more historical file citations derives both the
+history-read descriptor and a separate `file.read.local_path` descriptor before
+execution. Blocking either action prevents the call. The citation key, Thread URI,
+same-profile relationship, and read-only role grant no file access by themselves;
+runtime selection revalidates page ownership and the requested `reveal`, `replay`,
+`edit`, or `observe` representation before linking one canonical resource.
+
 ## Admission Is Not Permission
 
 Full Access authorizes a valid operation exposed in the Thread; it does not make an
@@ -124,7 +138,7 @@ selection and blocks govern only new execution.
 Blocks operate on normalized action descriptors such as outline read/write,
 local file read/write/delete, shell execution classes, web access, publishing,
 external messaging, Goal control, Agent orchestration, Skill invocation, image
-generation. Import is not a separate model-tool action: a directly executable
+generation, and Thread-history search/read. Import is not a separate model-tool action: a directly executable
 `outline` Bash segment is classified from the executable public capability
 registry. Local metadata, reads, observe, and `diff` are `outline.read`;
 ordinary mutation porcelain is `outline.edit`; destructive capability, `apply`,

@@ -843,6 +843,43 @@ available when machine fidelity is explicitly required.
 Memory citation accounting accepts only explicit `outline --json show` output,
 so bounded presentation changes cannot silently alter durable usage evidence.
 
+## Thread History Tools
+
+`thread_search` and `thread_read` are canonical `anyThread` Core tools. A default root
+Thread includes both; child Roles and explicit `allowedTools` still place exact-name
+ceilings on them. Search covers same-profile, non-ephemeral root user Threads, includes
+archived Threads, excludes the current Thread, and returns 8 candidates by default with
+a maximum of 20. Each result contains canonical Thread ID, current title, updated time,
+a maximum 320-character redacted snippet, and an opaque HMAC-signed match cursor when a
+visible history match exists. Searchable history includes visible user/assistant text,
+bounded activity summaries, and resolved reference display metadata. It excludes system
+content, reasoning, diagnostics, raw tool output, file locators, and secrets.
+
+`thread_read` validates a same-profile canonical target, excludes the current Thread,
+and returns the newest page or the page containing a signed search cursor. A page holds
+4 Turns by default and at most 10, uses a 24,000-character text budget, reports exact
+coverage plus previous/next cursors, and never resumes, forks, wakes, appends to, or
+changes read state on the target. Visible user/assistant text and concise activity
+summaries are always treated as untrusted quoted context. Optional tool output reads the
+real canonical `outputRef`, applies the shared secret scanner, removes bound historical
+file markers and local paths, and caps each output at 4,000 characters; reasoning,
+diagnostics, system input, provider envelopes, and raw unbounded output never enter the
+result.
+
+An ordinary page read issues at most 20 display-metadata entries plus opaque page-scoped
+citation keys; their serialized metadata shares the 24,000-character page budget. The
+read creates no current-Thread link, retention anchor, materialization, or tool
+`resourceRefs`. Keys expire after 15 minutes and are valid only for the same current
+Thread, target Thread, page coverage, and still-present canonical resource. Selecting a
+citation requires both `citation_key` and one representation: `reveal`, `replay`, `edit`,
+or `observe`. The runtime revalidates the claim, links only that resource, and returns it
+through the ordinary working-set contract. Reveal uses a validated source; replay and
+observe use the exact revision. Edit reuses a source in the current workspace or an
+admitted external scope, while a source in another managed root is copied from validated
+exact bytes into a new current-workspace source. The old managed root never becomes
+ambient access and its source is never edited. Missing canonical citations do not trigger
+filesystem or profile-wide search.
+
 ## Execution And Audit
 
 Tool exposure is computed before provider execution from the canonical catalog,

@@ -97,13 +97,23 @@ describe('Subagent tool policy', () => {
   test('fails closed on unclassified read-only actions while preserving inspection and host control', () => {
     const policy = { ...foreground, readOnly: true };
     const keys = filterSubagentToolContracts(MODEL_TOOL_CATALOG, policy).map(toolKey);
-    expect(keys).toEqual(expect.arrayContaining(['file_read', 'file_glob', 'bash', 'agent', 'skill']));
+    expect(keys).toEqual(expect.arrayContaining([
+      'file_read',
+      'file_glob',
+      'bash',
+      'agent',
+      'skill',
+      'thread_search',
+      'thread_read',
+    ]));
     expect(keys).not.toEqual(expect.arrayContaining(['file_edit', 'file_write', 'file_delete']));
     expect(subagentBashExecutionAllowed(policy, [])).toBe(false);
     expect(subagentBashExecutionAllowed(policy, ['shell.read_search'])).toBe(true);
     expect(subagentBashExecutionAllowed(policy, ['shell.unknown'])).toBe(false);
     expect(subagentToolExecutionAllowed(policy, [])).toBe(false);
     expect(subagentToolExecutionAllowed(policy, ['web.fetch'])).toBe(true);
+    expect(subagentToolExecutionAllowed(policy, ['thread.history.search'])).toBe(true);
+    expect(subagentToolExecutionAllowed(policy, ['thread.history.read'])).toBe(true);
     expect(subagentToolExecutionAllowed(policy, ['external.message.send'])).toBe(false);
   });
 

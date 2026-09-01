@@ -82,6 +82,14 @@ The initial Item uses the Turn start instant for `acceptedAt`; steering records 
 instant for both Item persistence and recorder completion. Replay and forks preserve
 that timestamp instead of substituting the current clock.
 
+`ThreadReferenceContent` is a canonical structured user-content part containing only a
+same-profile UUIDv7 Thread ID. Its textual form is `[[thread://UUIDv7]]`; the current
+Thread title is mutable resolver-owned presentation and never stored in the URI or used
+for equality. The reference is weak: archive preserves it, deletion invalidates it, and
+the containing Thread neither copies nor retains the referenced transcript. The shared
+reference-URI codec admits the `thread` scheme only for Agent consumers. Outline's
+`ReferenceTarget` and default Node/file marker parser remain unchanged.
+
 Context Items are the canonical protocol for hidden model input. `contextEvidence`
 names one semantic kind and a content-addressed payload; `contextReset` names an exact
 cleared-through cursor; and `contextCompaction` names its trigger, covered range,
@@ -204,7 +212,7 @@ provider, filesystem, Node, Skill, import, and web capabilities live under
 `src/main/agent/capabilities/`; they may contribute tools and configuration but
 may not own Thread history or lifecycle state. The Tenon-owned turn loop,
 runtime state, tool batching, retry policy, and transport gateway live under
-`src/main/agent/runtime/kernel/`. Thread coordination is split into five owned
+`src/main/agent/runtime/kernel/`. Thread coordination is split into six owned
 modules under `src/main/agent/thread/`:
 
 - `ThreadCore` owns the stores, canonical reads, notification bus, admission
@@ -213,6 +221,9 @@ modules under `src/main/agent/thread/`:
   observations, and admission content resolution.
 - `ThreadCatalogOps` owns Thread creation, resume, fork, rollback, naming,
   archival, deletion, configuration, and subtree stop.
+- `ThreadHistoryReferenceService` owns same-profile reference resolution and bounded,
+  read-only historical search/read projection. Its search data is rebuildable and has no
+  identity, authorization, retention, deletion, resume, fork, or Turn-creation authority.
 - `SubagentCollaboration` owns Agent execution identity, fresh child spawning,
   direct-parent delivery, messaging, resume, stop provenance, activity queues,
   and isolated-Skill child execution.

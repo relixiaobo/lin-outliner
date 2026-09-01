@@ -37,6 +37,14 @@ export interface AgentResourceRecord {
   readonly availability: AgentResourceAvailability;
 }
 
+export interface AgentResourceSourceScope {
+  readonly kind: AgentResourceScopeKind;
+  readonly rootPath: string;
+  readonly readable: boolean;
+  readonly editable: boolean;
+  readonly revealable: boolean;
+}
+
 export type AgentResourceResolution =
   | {
       readonly status: 'resolvedExactRevision';
@@ -529,6 +537,19 @@ export class AgentResourceStore {
     } catch {
       return { status: 'unavailable', record, reason: 'sourceMissing' };
     }
+  }
+
+  sourceScope(ref: ThreadResourceReference): AgentResourceSourceScope | null {
+    const record = this.readRecord(ref);
+    if (!record?.source) return null;
+    const scope = this.scope(record.source.scopeId);
+    return scope ? {
+      kind: scope.kind as AgentResourceScopeKind,
+      rootPath: scope.root_path,
+      readable: Boolean(scope.readable),
+      editable: Boolean(scope.editable),
+      revealable: Boolean(scope.revealable),
+    } : null;
   }
 
   async useExactPath<T>(ref: ThreadResourceReference, use: (path: string) => Promise<T>): Promise<T | null> {

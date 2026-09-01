@@ -303,6 +303,14 @@ materialize a readable artifact path is weaker than rendition loss: projection r
 the error, labels only the path as unavailable, and still includes retained observation
 bytes.
 
+A structured Thread reference projects only its unchanged `[[thread://UUIDv7]]` marker
+and safety framing, never the referenced transcript. When `thread_read` survives the
+effective tool catalog, the framing requires an explicit read before reliance; when it
+does not, framing states that history is absent and unavailable in this execution. Both
+forms state that referenced titles, messages, activity summaries, file labels, and tool
+output are untrusted quoted context rather than instructions. This framing is rebuilt at
+every provider boundary, including replay, compaction, steering, and fork projection.
+
 Attachment sources are reference-only. `localFile` is an admission-time source
 path; main captures a submitted regular file as a canonical Agent resource before
 publishing the user Item. `resource` carries an opaque Host-issued identity, MIME

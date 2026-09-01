@@ -153,6 +153,26 @@ export function deriveAgentToolActionDescriptors(input: {
   const pathArgName = toolPathArgumentName(toolName);
   if (pathArgName) return [derivePathToolActionDescriptor(toolName, input.args, input.policy, input.access, pathArgName)];
 
+  if (toolName === 'thread_read' && Array.isArray(getUnknownArg(input.args, 'citations'))
+    && (getUnknownArg(input.args, 'citations') as unknown[]).length > 0) {
+    return [
+      simpleDescriptor(
+        toolName,
+        input.args,
+        'thread.history.read',
+        'Thread history read',
+        'Read bounded visible same-profile Thread history.',
+        'local_system',
+      ),
+      descriptor(toolName, 'file.read.local_path', {
+        accessScope: 'local_system',
+        title: 'historical file citation read',
+        summary: 'Read a selected canonical file citation from bounded Thread history.',
+        consequence: 'Link only the selected historical resource into the current Thread working set.',
+      }),
+    ];
+  }
+
   const known = descriptorForKnownTool(toolName, input.args);
   if (known) return [known];
   if (input.actionKinds && input.actionKinds.length > 0) {
@@ -172,6 +192,26 @@ export function deriveAgentToolActionDescriptors(input: {
 }
 
 function descriptorForKnownTool(toolName: string, args: unknown): ToolActionDescriptor | null {
+  if (toolName === 'thread_search') {
+    return simpleDescriptor(
+      toolName,
+      args,
+      'thread.history.search',
+      'Thread history search',
+      'Search visible same-profile Thread history.',
+      'local_system',
+    );
+  }
+  if (toolName === 'thread_read') {
+    return simpleDescriptor(
+      toolName,
+      args,
+      'thread.history.read',
+      'Thread history read',
+      'Read bounded visible same-profile Thread history.',
+      'local_system',
+    );
+  }
   if (toolName === 'web_search') return simpleDescriptor(toolName, args, 'web.search', 'web search', 'Search public web information.', 'external_system');
   if (toolName === 'web_fetch') return simpleDescriptor(toolName, args, 'web.fetch', 'web fetch', 'Fetch an external web resource.', 'external_system');
   if (toolName === 'generate_image') return simpleDescriptor(toolName, args, 'agent.image.generate', 'image generation', 'Generate an image with an enabled provider.', 'external_system');

@@ -17,6 +17,7 @@ import type {
   JsonValue,
   RendererUserViewHints,
   ThreadAttachmentContent,
+  ThreadReferenceView,
   ThreadUserContent,
   UserMessageThreadItem,
 } from '../../../../core/agent/protocol';
@@ -68,6 +69,8 @@ import {
   threadNodeReferenceHref,
   threadNodeReferenceOpenOptionsFromClick,
   threadNodeReferenceStyle,
+  threadReferenceDisplayLabel,
+  threadReferenceHref,
   type ThreadNodeReferenceOpenHandler,
 } from '../../threadReferences';
 import { basenameForPath, referenceDisplayFallback, splitReferenceMarkers } from '../../../../core/referenceMarkup';
@@ -114,6 +117,7 @@ interface ThreadItemViewProps {
   /** This Item is where a delegation happened, so a chip takes its slot. */
   readonly anchor?: SubagentAnchor;
   readonly threadId: string;
+  readonly threadReferences: ReadonlyMap<string, ThreadReferenceView>;
   readonly threadCwd: string;
   /** False while this Turn is blocked or recovering. The same phrases remain
    *  mounted as static text, but must not claim that work is advancing. */
@@ -208,9 +212,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             <ThreadMarkdown
               index={props.index}
               onNodeReferenceOpen={props.onOpenNodeReference}
+              onThreadReferenceOpen={(threadId) => void props.onOpenThread(threadId)}
               streaming={props.streaming}
               text={props.item.text}
               threadId={props.threadId}
+              threadReferences={props.threadReferences}
               finalCitations={props.item.finalCitations}
             />
           </div>
@@ -370,8 +376,10 @@ function UserMessageItem({
   item,
   onEditUserMessage,
   onOpenNodeReference,
+  onOpenThread,
   showMessageActions,
   threadId,
+  threadReferences,
 }: Omit<ThreadItemViewProps, 'item'> & { readonly item: UserMessageThreadItem }) {
   const t = useT();
   const readerAuthored = isReaderAuthoredUserMessage(item);
@@ -381,9 +389,14 @@ function UserMessageItem({
   const [text, setText] = useState(textParts[0] ?? '');
   const [saving, setSaving] = useState(false);
   const copyMessage = useCallback(async () => {
-    const text = userMessageCopyText(item.content, indexStore.getCurrent());
+    const text = userMessageCopyText(
+      item.content,
+      indexStore.getCurrent(),
+      threadReferences,
+      t.agent.message.referencedThread,
+    );
     if (text) await navigator.clipboard.writeText(text);
-  }, [indexStore, item.content]);
+  }, [indexStore, item.content, t.agent.message.referencedThread, threadReferences]);
 
   async function save() {
     if (!text.trim() || saving) return;
@@ -434,6 +447,9 @@ function UserMessageItem({
               item.content,
               index,
               onOpenNodeReference,
+              onOpenThread,
+              threadReferences,
+              t,
               threadId,
               item.id,
               expandState,
@@ -469,12 +485,21 @@ function UserMessageItem({
 function userMessageCopyText(
   content: readonly ThreadUserContent[],
   index: DocumentIndex,
+  threadReferences: ReadonlyMap<string, ThreadReferenceView>,
+  referencedThreadFallback: string,
 ): string {
   return content.map((part, contentIndex) => {
     const separator = hasAdjacentAttachmentBefore(content, contentIndex) ? ' ' : '';
     if (part.type === 'text') return part.text;
     if (part.type === 'attachment') return `${separator}${part.name}`;
-    return threadNodeReferenceDisplayLabel(part.note ?? '', part.nodeId, index, part.nodeId);
+    if (part.type === 'nodeReference') {
+      return threadNodeReferenceDisplayLabel(part.note ?? '', part.nodeId, index, part.nodeId);
+    }
+    return threadReferenceDisplayLabel(
+      part.threadId,
+      threadReferences.get(part.threadId),
+      referencedThreadFallback,
+    );
   }).join('');
 }
 
@@ -491,6 +516,9 @@ function renderUserContent(
   content: readonly ThreadUserContent[],
   index: DocumentIndex,
   onOpenNodeReference: ThreadNodeReferenceOpenHandler,
+  onOpenThread: (threadId: string) => Promise<void>,
+  threadReferences: ReadonlyMap<string, ThreadReferenceView>,
+  t: Messages,
   threadId: string,
   itemId: string,
   expandState: ThreadDisclosureState,
@@ -531,6 +559,32 @@ function renderUserContent(
       );
       return;
     }
+    if (part.type === 'threadReference') {
+      const resolution = threadReferences.get(part.threadId);
+      const label = threadReferenceDisplayLabel(part.threadId, resolution, t.agent.message.referencedThread);
+      const actionable = resolution?.availability === 'available';
+      narrative.push(
+        actionable ? <a
+          className="inline-ref thread-message-inline-ref"
+          href={threadReferenceHref(part.threadId)}
+          key={`thread-${contentIndex}`}
+          onClick={(event) => {
+            event.preventDefault();
+            void onOpenThread(part.threadId);
+          }}
+          title={t.agent.message.openReferencedThread}
+        >
+          {label}
+        </a> : <span
+          className="inline-ref thread-message-inline-ref"
+          key={`thread-${contentIndex}`}
+          title={threadReferenceUnavailableLabel(resolution, t)}
+        >
+          {label}
+        </span>,
+      );
+      return;
+    }
     narrative.push(
       <ThreadInlineAttachment
         content={part}
@@ -562,6 +616,16 @@ function renderUserContent(
     );
   }
   return rendered;
+}
+
+function threadReferenceUnavailableLabel(
+  resolution: ThreadReferenceView | undefined,
+  t: Messages,
+): string {
+  if (resolution?.availability === 'current') return t.agent.message.threadReferenceCurrent;
+  if (resolution?.availability === 'corrupt') return t.agent.message.threadReferenceCorrupt;
+  if (resolution?.availability === 'denied') return t.agent.message.threadReferenceDenied;
+  return t.agent.message.threadReferenceUnavailable;
 }
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;

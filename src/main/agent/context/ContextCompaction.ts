@@ -706,7 +706,9 @@ async function summaryLine(
     case 'userMessage':
       return `User: ${item.content.map((part) => part.type === 'text' ? part.text : part.type === 'attachment'
         ? `[Attachment: ${part.name}]`
-        : `[Outliner Node: ${part.nodeId}]`).join('\n')}`;
+        : part.type === 'nodeReference'
+          ? `[Outliner Node: ${part.nodeId}]`
+          : `[Thread: ${part.threadId}]`).join('\n')}`;
     case 'agentMessage': return item.text ? `Assistant: ${item.text}` : null;
     case 'reasoning': return item.summary.length > 0 ? `Reasoning summary: ${item.summary.join(' ')}` : null;
     case 'commandExecution':

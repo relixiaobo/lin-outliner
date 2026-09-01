@@ -1,6 +1,8 @@
 import {
   parseReferenceMarkers,
+  parseThreadReferenceMarkers,
   type ParsedReferenceMarker,
+  type ParsedThreadReferenceMarker,
   type ReferenceUriScheme,
 } from './referenceMarkup';
 
@@ -34,6 +36,17 @@ export interface MarkdownReferenceOccurrence {
 export interface MarkdownReferenceOccurrenceResult {
   readonly indeterminate: boolean;
   readonly occurrences: readonly MarkdownReferenceOccurrence[];
+}
+
+export interface MarkdownThreadReferenceOccurrence {
+  readonly escaped: boolean;
+  readonly marker: ParsedThreadReferenceMarker;
+  readonly sourceStart: number | null;
+}
+
+export interface MarkdownThreadReferenceOccurrenceResult {
+  readonly indeterminate: boolean;
+  readonly occurrences: readonly MarkdownThreadReferenceOccurrence[];
 }
 
 interface MarkdownSourceAlignmentStep {
@@ -76,6 +89,31 @@ export function markdownReferenceOccurrences(
   admittedSchemes?: readonly ReferenceUriScheme[],
 ): MarkdownReferenceOccurrenceResult {
   const markers = parseReferenceMarkers(value, admittedSchemes, { includeEscaped: true });
+  return markdownOccurrences(markdown, value, node, markers);
+}
+
+export function markdownThreadReferenceOccurrences(
+  markdown: string,
+  value: string,
+  node: MarkdownReferenceAstNode,
+): MarkdownThreadReferenceOccurrenceResult {
+  const markers = parseThreadReferenceMarkers(value);
+  return markdownOccurrences(markdown, value, node, markers);
+}
+
+function markdownOccurrences<T extends { readonly start: number }>(
+  markdown: string,
+  value: string,
+  node: MarkdownReferenceAstNode,
+  markers: readonly T[],
+): {
+  readonly indeterminate: boolean;
+  readonly occurrences: readonly {
+    readonly escaped: boolean;
+    readonly marker: T;
+    readonly sourceStart: number | null;
+  }[];
+} {
   if (markers.length === 0) return { occurrences: [], indeterminate: false };
   const start = node.position?.start?.offset;
   const end = node.position?.end?.offset;

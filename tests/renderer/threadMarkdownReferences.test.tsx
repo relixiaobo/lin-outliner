@@ -3,18 +3,54 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { renderedMarkdownNodeReferenceIds } from '../../src/core/markdownNodeReferences';
-import type { AgentFinalCitationBinding } from '../../src/core/agent/protocol';
+import type { AgentFinalCitationBinding, ThreadReferenceView } from '../../src/core/agent/protocol';
 import { ThreadMarkdown } from '../../src/renderer/agent/components/ThreadMarkdown';
 
 const cleanups: Array<() => void> = [];
 const NODE_ID = 'node:11111111-1111-4111-8111-111111111111';
 const NODE_MARKER = '[[node://11111111-1111-4111-8111-111111111111]]';
+const THREAD_ID = '01951d6e-7c25-7c31-8d62-313038616239';
+const THREAD_MARKER = `[[thread://${THREAD_ID}]]`;
 
 afterEach(() => {
   while (cleanups.length > 0) cleanups.pop()?.();
 });
 
 describe('Thread Markdown references', () => {
+  test('renders model-authored Thread markers with current resolver presentation', () => {
+    let opened = '';
+    const threadReferences = new Map<string, ThreadReferenceView>([[THREAD_ID, {
+      threadId: THREAD_ID,
+      title: 'Renamed chat',
+      updatedAt: 200,
+      availability: 'available',
+    }]]);
+    const document = renderThreadMarkdown(`Use ${THREAD_MARKER}`, {
+      threadReferences,
+      onThreadReferenceOpen: (threadId) => { opened = threadId; },
+    });
+    const reference = document.querySelector<HTMLElement>('[data-thread-ref]');
+    expect(reference?.textContent).toBe('Renamed chat');
+    reference?.click();
+    expect(opened).toBe(THREAD_ID);
+  });
+
+  test('keeps escaped, code, current, and unavailable Thread markers non-fatal', () => {
+    const threadReferences = new Map<string, ThreadReferenceView>([[THREAD_ID, {
+      threadId: THREAD_ID,
+      title: null,
+      updatedAt: 200,
+      availability: 'current',
+    }]]);
+    const document = renderThreadMarkdown([
+      `\\${THREAD_MARKER}`,
+      `\`${THREAD_MARKER}\``,
+      THREAD_MARKER,
+    ].join('\n\n'), { threadReferences });
+    expect(document.querySelector('[data-thread-ref]')).toBeNull();
+    expect(document.body.textContent).toContain('01951d6e...6239');
+  });
+
   test('renders escaped and entity-normalized markers through the shared AST transform', () => {
     const document = renderThreadMarkdown([
       `\\${NODE_MARKER}`,
@@ -152,7 +188,9 @@ function renderThreadMarkdown(
   text: string,
   options: {
     readonly finalCitations?: readonly AgentFinalCitationBinding[];
+    readonly onThreadReferenceOpen?: (threadId: string) => void;
     readonly threadId?: string;
+    readonly threadReferences?: ReadonlyMap<string, ThreadReferenceView>;
   } = {},
 ): Document {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
@@ -165,8 +203,10 @@ function renderThreadMarkdown(
       <ThreadMarkdown
         finalCitations={options.finalCitations}
         onNodeReferenceOpen={() => undefined}
+        onThreadReferenceOpen={options.onThreadReferenceOpen}
         text={text}
         threadId={options.threadId}
+        threadReferences={options.threadReferences}
       />,
     );
   });

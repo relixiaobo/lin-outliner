@@ -100,6 +100,8 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
       });
     }
     case 'thread/subagents/list':
+    case 'thread/references/search':
+    case 'thread/references/resolve':
     case 'thread/name/set':
     case 'thread/archive':
     case 'thread/unarchive':

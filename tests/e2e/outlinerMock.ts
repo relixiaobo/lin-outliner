@@ -4059,6 +4059,43 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             .sort((left, right) => right.updatedAt - left.updatedAt);
           return clone({ data, nextCursor: null }) as T;
         }
+        if (method === 'thread/references/search') {
+          const currentThreadId = String(input.currentThreadId);
+          threadById(currentThreadId);
+          const query = typeof input.query === 'string' ? input.query.trim().toLocaleLowerCase() : '';
+          const limit = typeof input.limit === 'number' ? Math.max(1, Math.min(20, input.limit)) : 8;
+          const data = mockThreads
+            .filter((thread) => thread.parentThreadId === null && thread.id !== currentThreadId)
+            .filter((thread) => !query || `${thread.name ?? ''}\n${thread.preview}`.toLocaleLowerCase().includes(query))
+            .sort((left, right) => right.updatedAt - left.updatedAt)
+            .slice(0, limit)
+            .map((thread) => ({
+              threadId: thread.id,
+              title: thread.name?.trim() || thread.preview.trim() || null,
+              updatedAt: thread.updatedAt,
+              availability: 'available',
+              snippet: thread.preview,
+              archived: false,
+            }));
+          return clone({ data }) as T;
+        }
+        if (method === 'thread/references/resolve') {
+          const currentThreadId = String(input.currentThreadId);
+          threadById(currentThreadId);
+          const data = (Array.isArray(input.threadIds) ? input.threadIds : []).map((value) => {
+            const threadId = String(value);
+            const thread = mockThreads.find((candidate) => candidate.id === threadId);
+            return thread
+              ? {
+                  threadId,
+                  title: thread.name?.trim() || thread.preview.trim() || null,
+                  updatedAt: thread.updatedAt,
+                  availability: threadId === currentThreadId ? 'current' : 'available',
+                }
+              : { threadId, title: null, updatedAt: null, availability: 'missing' };
+          });
+          return clone({ data }) as T;
+        }
         if (method === 'thread/descendants') {
           const rootId = String(input.threadId);
           const data: MockThread[] = [];

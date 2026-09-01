@@ -947,6 +947,14 @@ Details, preceded by Retry on a last Turn the user did not end. User messages th
 measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 
+Canonical Thread markers use `[[thread://UUIDv7]]`. Structured user references and
+model-authored markers resolve the current canonical title at render time, so rename
+changes presentation without rewriting stored content or identity. An available target
+opens the referenced Thread; current, missing, deleted, corrupt, or denied targets remain
+visible typed non-actionable references with a shortened UUID fallback when metadata is
+unavailable. Escaped markers, code spans/blocks, markers already owned by a Markdown
+link, malformed IDs, and unknown schemes remain ordinary text.
+
 A terminal Agent answer remains the model-authored Markdown byte sequence; Host
 binding never rewrites its file markers. At finalization, main parses only unescaped
 `[[file:///...]]` markers and records ordinal-aligned `finalCitations` on the final
@@ -977,7 +985,7 @@ gallery. Every attachment, including each gallery image, also retains its inline
 file reference in the following narrative at its canonical position. The reference
 is not duplicate decoration: it exposes the same attachment identity and readable
 path represented by the provider-facing canonical file-URI marker, while the gallery is
-only a visual preview. Text, Node references, directories, and file references form
+only a visual preview. Text, Node references, Thread references, directories, and file references form
 one narrative bubble in their original relative order. Structured user messages use
 the same block inline flow, whitespace preservation, and overflow wrapping as the
 composer within the established user-bubble measure, so references and adjacent text
@@ -1005,7 +1013,7 @@ collapse mask never crops gallery content.
 Copy on a user message serializes that complete visible narrative in canonical
 order: authored text remains unchanged, attachments contribute their stable file
 names, directly adjacent attachments receive one presentation space for readability,
-and Node references contribute their current display names. The visible narrative
+and Node or Thread references contribute their current display names. The visible narrative
 uses the same adjacent-attachment separator, without changing canonical content. Copy
 does not include the presentation-only gallery or claim to reproduce the provider
 request. Execution-lifetime managed-resource paths are never invented in renderer
@@ -1586,11 +1594,17 @@ The composer submits `ThreadUserContent[]` directly together with one bounded
 structural user-view hint snapshot. The hint contains panel, root, focused, selected,
 visible Node identities, depth, and expansion state, but never renderer-authored Node
 titles or content. It is globally capped at 80 visible Nodes, depth 5, 50 selected
-Nodes, and 64 KiB; main resolves current authoritative Node data. Text, attachments, and
-Outliner Node references remain distinct structured parts in the same order the
+Nodes, and 64 KiB; main resolves current authoritative Node data. Text, attachments,
+Outliner Node references, and Thread references remain distinct structured parts in the same order the
 user placed them in the ProseMirror document. Sending a Node from its context
 menu adds a removable Node-reference part to the composer; it never inserts
-reference markup into text. Edit replaces only the message text while preserving
+reference markup into text. The `@` menu's Chats section queries bounded recent root
+user Threads for an empty query and matching title, preview, or visible history for text
+queries, always excluding the current Thread and retaining archived results. Keyboard or
+pointer selection inserts one `threadReference` atom. Draft snapshots, exact input
+history, resend, and transcript reload preserve its structured ID while refreshing its
+title from current metadata. Search loading, empty, failure, and stale-result states do
+not discard the draft or selection. Edit replaces only the message text while preserving
 the complete original structured input. An attachment-only or Node-reference-only
 Turn can add text through Edit without losing its structured content.
 

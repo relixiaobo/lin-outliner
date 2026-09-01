@@ -598,7 +598,49 @@ export interface ThreadNodeReferenceContent {
   readonly note?: string;
 }
 
-export type ThreadUserContent = ThreadTextContent | ThreadAttachmentContent | ThreadNodeReferenceContent;
+export interface ThreadReferenceContent {
+  readonly type: 'threadReference';
+  readonly threadId: ThreadId;
+}
+
+export type ThreadUserContent =
+  | ThreadTextContent
+  | ThreadAttachmentContent
+  | ThreadNodeReferenceContent
+  | ThreadReferenceContent;
+
+export type ThreadReferenceAvailability = 'available' | 'current' | 'missing' | 'corrupt' | 'denied';
+
+export interface ThreadReferenceView {
+  readonly threadId: ThreadId;
+  readonly title: string | null;
+  readonly updatedAt: number | null;
+  readonly availability: ThreadReferenceAvailability;
+}
+
+export interface ThreadReferenceSearchRequest {
+  readonly currentThreadId: ThreadId;
+  readonly query?: string;
+  readonly limit?: number;
+}
+
+export interface ThreadReferenceSearchResult extends ThreadReferenceView {
+  readonly snippet: string;
+  readonly archived: boolean;
+}
+
+export interface ThreadReferenceSearchResponse {
+  readonly data: readonly ThreadReferenceSearchResult[];
+}
+
+export interface ThreadReferenceResolveRequest {
+  readonly currentThreadId: ThreadId;
+  readonly threadIds: readonly ThreadId[];
+}
+
+export interface ThreadReferenceResolveResponse {
+  readonly data: readonly ThreadReferenceView[];
+}
 
 export interface RendererUserViewVisibleNodeHint {
   readonly nodeId: string;
@@ -2176,6 +2218,8 @@ export interface AgentIdentityCatalogResponse {
 
 export const AGENT_CORE_METHODS = [
   'thread/list',
+  'thread/references/search',
+  'thread/references/resolve',
   'thread/descendants',
   'thread/subagents/list',
   'thread/read',
@@ -2216,6 +2260,8 @@ export type AgentCoreMethod = typeof AGENT_CORE_METHODS[number];
 
 export interface AgentCoreRequestByMethod {
   readonly 'thread/list': ThreadListRequest;
+  readonly 'thread/references/search': ThreadReferenceSearchRequest;
+  readonly 'thread/references/resolve': ThreadReferenceResolveRequest;
   readonly 'thread/descendants': ThreadDescendantsRequest;
   readonly 'thread/subagents/list': ThreadSubagentsRequest;
   readonly 'thread/read': ThreadReadRequest;
@@ -2254,6 +2300,8 @@ export interface AgentCoreRequestByMethod {
 
 export interface AgentCoreResponseByMethod {
   readonly 'thread/list': ThreadListResponse;
+  readonly 'thread/references/search': ThreadReferenceSearchResponse;
+  readonly 'thread/references/resolve': ThreadReferenceResolveResponse;
   readonly 'thread/descendants': ThreadDescendantsResponse;
   readonly 'thread/subagents/list': ThreadSubagentsResponse;
   readonly 'thread/read': ThreadReadResponse;

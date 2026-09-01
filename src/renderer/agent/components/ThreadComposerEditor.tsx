@@ -13,6 +13,7 @@ import { Fragment, Schema, Slice, type Node as PMNode } from 'prosemirror-model'
 import { EditorState, NodeSelection, Selection, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import type { AgentSlashCommandView, NodeId } from '../../api/types';
+import type { ThreadReferenceSearchResult } from '../../../core/agent/protocol';
 import type { DocumentIndex } from '../../state/document';
 import {
   type DocumentIndexStore,
@@ -38,6 +39,7 @@ import {
   FolderIcon,
   ICON_SIZE,
   PresentationIcon,
+  RecentsIcon,
   type AppIcon,
 } from '../../ui/icons';
 import { textOf } from '../../ui/shared';
@@ -61,6 +63,11 @@ import {
 
 export interface ThreadComposerNodeReference {
   nodeId: NodeId;
+  title: string;
+}
+
+export interface ThreadComposerThreadReference {
+  threadId: string;
   title: string;
 }
 
@@ -105,6 +112,7 @@ export interface ThreadComposerDraft {
 export type ThreadComposerDraftContent =
   | { type: 'text'; text: string }
   | { type: 'nodeReference'; reference: ThreadComposerNodeReference }
+  | { type: 'threadReference'; reference: ThreadComposerThreadReference }
   | { type: 'fileReference'; reference: ThreadComposerFileReference }
   | { type: 'pendingFileReference'; reference: ThreadComposerPendingFileReference };
 
@@ -129,6 +137,7 @@ export interface ThreadComposerEditorHandle {
   hasPendingFileReference: (requestId: string) => boolean;
   insertFileReferences: (refs: ThreadComposerFileReference[]) => void;
   insertNodeReference: (ref: ThreadComposerNodeReference) => void;
+  insertThreadReference: (ref: ThreadComposerThreadReference) => void;
   removeFileReferences: (attachmentIds: readonly string[]) => void;
   removePendingFileReferences: (requestIds: readonly string[]) => void;
   restorePendingFileReference: (requestId: string) => boolean;
@@ -147,6 +156,7 @@ interface ThreadComposerEditorProps {
   allowFileReferences?: boolean;
   allowNodeReferences?: boolean;
   allowSlashCommands?: boolean;
+  allowThreadReferences?: boolean;
   currentNodeId: NodeId | null;
   disabled?: boolean;
   indexStore: DocumentIndexStore;
@@ -165,6 +175,8 @@ interface ThreadComposerEditorProps {
   onLocalFileSearch: (query: string) => Promise<ThreadComposerLocalFileCandidate[]>;
   onLocalFileSelect: (file: ThreadComposerLocalFileCandidate) => Promise<ThreadComposerFileReference | null>;
   onNodeReferenceClick: ThreadNodeReferenceOpenHandler;
+  onThreadReferenceClick: (threadId: string) => void;
+  onThreadReferenceSearch: (query: string) => Promise<ThreadReferenceSearchResult[]>;
   onTextPasteRejected: (reason: 'ceiling' | 'draft-budget' | 'pending-replacement') => void;
   recentLocalFiles: readonly ThreadComposerLocalFileCandidate[];
   onStop: () => void;
@@ -223,6 +235,12 @@ type MentionMenuItem =
     section: 'Recent' | 'Files';
     key: string;
     file: ThreadComposerLocalFileCandidate;
+  }
+  | {
+    kind: 'thread';
+    section: 'chats';
+    key: string;
+    thread: ThreadReferenceSearchResult;
   };
 
 const threadComposerSchema = new Schema({
@@ -272,6 +290,30 @@ const threadComposerSchema = new Schema({
           'span',
           attrs,
           displayTitle,
+        ];
+      },
+    },
+    threadReference: {
+      group: 'inline',
+      inline: true,
+      atom: true,
+      selectable: true,
+      attrs: {
+        targetThreadId: { default: '' },
+        title: { default: '' },
+      },
+      toDOM(node) {
+        const threadId = String(node.attrs.targetThreadId ?? '');
+        const title = String(node.attrs.title ?? '').trim() || shortThreadReferenceLabel(threadId);
+        return [
+          'span',
+          {
+            class: 'inline-ref thread-composer-inline-ref',
+            contenteditable: 'false',
+            'data-thread-thread-ref': threadId,
+            title,
+          },
+          title,
         ];
       },
     },
@@ -381,6 +423,12 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
       results: ThreadComposerLocalFileCandidate[];
       status: 'idle' | 'loading' | 'ready' | 'error';
     }>({ error: null, query: '', results: [], status: 'idle' });
+    const [threadSearch, setThreadSearch] = useState<{
+      error: string | null;
+      query: string;
+      results: ThreadReferenceSearchResult[];
+      status: 'idle' | 'loading' | 'ready' | 'error';
+    }>({ error: null, query: '', results: [], status: 'idle' });
     const [filePreviewAnchor, setFilePreviewAnchor] = useState<FilePreviewAnchorRect | null>(null);
     const mentionIndex = useDocumentIndexSnapshot(
       props.indexStore,
@@ -399,25 +447,30 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
     const allowFileReferences = props.allowFileReferences ?? true;
     const allowNodeReferences = props.allowNodeReferences ?? true;
     const allowSlashCommands = props.allowSlashCommands ?? true;
+    const allowThreadReferences = props.allowThreadReferences ?? true;
 
     const rawMentionItems = useMemo(() => trigger?.mode === 'mention'
       ? mentionMenuItems({
           allowFileReferences,
           allowNodeReferences,
+          allowThreadReferences,
           currentNodeId: props.currentNodeId,
           index: mentionIndex,
           localFileSearch,
           query: trigger.query,
           recentLocalFiles: props.recentLocalFiles,
+          threadSearch,
           labels: referenceCandidateLabels(t),
         })
       : [], [
         allowFileReferences,
         allowNodeReferences,
+        allowThreadReferences,
         localFileSearch,
         props.currentNodeId,
         mentionIndex,
         props.recentLocalFiles,
+        threadSearch,
         trigger?.mode,
         trigger?.query,
         t,
@@ -489,6 +542,18 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
           ...ref,
           color: inlineReferenceTextColor(ref.nodeId, propsRef.current.indexStore.getCurrent()) ?? '',
         });
+        syncDraft(view);
+        updateTrigger(view);
+        view.focus();
+      },
+      insertThreadReference(ref) {
+        const view = viewRef.current;
+        if (!view) return;
+        replaceWithThreadReference(
+          view,
+          { from: view.state.selection.from, to: view.state.selection.to },
+          ref,
+        );
         syncDraft(view);
         updateTrigger(view);
         view.focus();
@@ -676,6 +741,37 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
     }, [trigger?.mode, trigger?.query]);
 
     useEffect(() => {
+      if (!trigger || trigger.mode !== 'mention' || propsRef.current.allowThreadReferences === false) {
+        setThreadSearch((current) => current.status === 'idle'
+          ? current
+          : { error: null, query: '', results: [], status: 'idle' });
+        return;
+      }
+      const query = trigger.query.trim();
+      let canceled = false;
+      setThreadSearch({ error: null, query: trigger.query, results: [], status: 'loading' });
+      const timer = window.setTimeout(() => {
+        propsRef.current.onThreadReferenceSearch(query)
+          .then((results) => {
+            if (!canceled) setThreadSearch({ error: null, query: trigger.query, results, status: 'ready' });
+          })
+          .catch((error) => {
+            if (canceled) return;
+            setThreadSearch({
+              error: error instanceof Error ? error.message : String(error),
+              query: trigger.query,
+              results: [],
+              status: 'error',
+            });
+          });
+      }, 120);
+      return () => {
+        canceled = true;
+        window.clearTimeout(timer);
+      };
+    }, [trigger?.mode, trigger?.query]);
+
+    useEffect(() => {
       triggerRef.current = trigger;
     }, [trigger]);
 
@@ -709,13 +805,18 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
         handleDOMEvents: {
           click(_view, event) {
             const target = event.target instanceof HTMLElement
-              ? event.target.closest<HTMLElement>('[data-thread-node-ref]')
+              ? event.target.closest<HTMLElement>('[data-thread-node-ref], [data-thread-thread-ref]')
               : null;
             const nodeId = target?.dataset.threadNodeRef;
-            if (!nodeId) return false;
+            const targetThreadId = target?.dataset.threadThreadRef;
+            if (!nodeId && !targetThreadId) return false;
             event.preventDefault();
             event.stopPropagation();
-            propsRef.current.onNodeReferenceClick(nodeId, threadNodeReferenceOpenOptionsFromClick(event));
+            if (nodeId) {
+              propsRef.current.onNodeReferenceClick(nodeId, threadNodeReferenceOpenOptionsFromClick(event));
+            } else if (targetThreadId) {
+              propsRef.current.onThreadReferenceClick(targetThreadId);
+            }
             return true;
           },
           focus(viewInstance) {
@@ -942,12 +1043,16 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
                   items={mentionItems}
                   labels={{
                     couldNotSearchFiles: t.agent.composer.couldNotSearchFiles,
+                    couldNotSearchThreads: t.agent.composer.couldNotSearchThreads,
                     noMentions: t.agent.composer.noMentions,
                     noRecentMentions: t.agent.composer.noRecentMentions,
+                    sectionChats: t.agent.composer.referenceSectionChats,
                     searchingFiles: t.agent.composer.searchingFiles,
+                    searchingThreads: t.agent.composer.searchingThreads,
                   }}
                   query={trigger.query}
                   search={localFileSearch}
+                  threadSearch={threadSearch}
                   selectedIndex={selectedIndex}
                   setSelectedIndex={setSelectedIndex}
                   onSelect={async (item) => {
@@ -960,10 +1065,15 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
                         title: item.label,
                         color: inlineReferenceTextColor(item.id, currentIndex) ?? '',
                       });
-                    } else {
+                    } else if (item.kind === 'file') {
                       const ref = await propsRef.current.onLocalFileSelect(item.file);
                       if (!ref) return;
                       insertFileReferenceNodes(view, trigger, [ref]);
+                    } else {
+                      replaceWithThreadReference(view, trigger, {
+                        threadId: item.thread.threadId,
+                        title: item.thread.title || shortThreadReferenceLabel(item.thread.threadId),
+                      });
                     }
                     syncDraft(view);
                     triggerRef.current = null;
@@ -1021,6 +1131,7 @@ function filterComposerTrigger(
     trigger.mode === 'mention'
     && props.allowNodeReferences === false
     && props.allowFileReferences === false
+    && props.allowThreadReferences === false
   ) {
     return null;
   }
@@ -1084,6 +1195,12 @@ function editorStateFromContent(
         targetNodeId: part.reference.nodeId,
         title: part.reference.title,
         color: inlineReferenceTextColor(part.reference.nodeId, index) ?? '',
+      })];
+    }
+    if (part.type === 'threadReference') {
+      return [threadComposerSchema.nodes.threadReference.create({
+        targetThreadId: part.reference.threadId,
+        title: part.reference.title,
       })];
     }
     if (part.type === 'fileReference') return [fileReferenceNode(part.reference)];
@@ -1189,6 +1306,12 @@ function docToDraft(doc: PMNode): ThreadComposerDraft {
       if (nodeId) content.push({ type: 'nodeReference', reference: { nodeId, title } });
       return;
     }
+    if (child.type.name === 'threadReference') {
+      const threadId = String(child.attrs.targetThreadId ?? '');
+      const title = String(child.attrs.title ?? '');
+      if (threadId) content.push({ type: 'threadReference', reference: { threadId, title } });
+      return;
+    }
     if (child.type.name === 'fileReference') {
       const attachmentId = String(child.attrs.attachmentId ?? '');
       const name = String(child.attrs.name ?? '') || 'file';
@@ -1285,6 +1408,27 @@ function replaceWithNodeReference(
   const insertedSize = nodes.reduce((sum, child) => sum + child.nodeSize, 0);
   const pos = Math.min(range.from + insertedSize, tr.doc.content.size - 1);
   tr = tr.setSelection(TextSelection.create(tr.doc, pos));
+  view.dispatch(tr);
+}
+
+function replaceWithThreadReference(
+  view: EditorView,
+  range: Pick<ComposerTrigger, 'from' | 'to'>,
+  ref: ThreadComposerThreadReference,
+) {
+  const node = threadComposerSchema.nodes.threadReference.create({
+    targetThreadId: ref.threadId,
+    title: ref.title,
+  });
+  const nodes = shouldInsertTrailingSpace(view.state.doc, range.to)
+    ? [node, threadComposerSchema.text(' ')]
+    : [node];
+  let tr = view.state.tr.replaceWith(range.from, range.to, nodes);
+  const insertedSize = nodes.reduce((sum, child) => sum + child.nodeSize, 0);
+  tr = tr.setSelection(TextSelection.create(
+    tr.doc,
+    Math.min(range.from + insertedSize, tr.doc.content.size - 1),
+  ));
   view.dispatch(tr);
 }
 
@@ -1420,6 +1564,7 @@ function composerRangeMetrics(doc: PMNode, from: number, to: number): ComposerCo
       metrics.utf16Units += 1;
     } else if (
       node.type.name === 'nodeReference'
+      || node.type.name === 'threadReference'
       || node.type.name === 'fileReference'
       || node.type.name === 'pendingFileReference'
     ) {
@@ -1452,6 +1597,7 @@ function deleteAdjacentAtom(view: EditorView, key: string): boolean {
 
 function isComposerAtom(node: PMNode | null | undefined): node is PMNode {
   return node?.type.name === 'nodeReference'
+    || node?.type.name === 'threadReference'
     || node?.type.name === 'fileReference'
     || node?.type.name === 'pendingFileReference';
 }
@@ -1515,6 +1661,7 @@ function MentionMenu({
   onSelect,
   query,
   search,
+  threadSearch,
   selectedIndex,
   setSelectedIndex,
 }: {
@@ -1522,9 +1669,12 @@ function MentionMenu({
   items: MentionMenuItem[];
   labels: {
     couldNotSearchFiles: string;
+    couldNotSearchThreads: string;
     noMentions: string;
     noRecentMentions: string;
+    sectionChats: string;
     searchingFiles: string;
+    searchingThreads: string;
   };
   onSelect: (item: MentionMenuItem) => void;
   query: string;
@@ -1534,13 +1684,23 @@ function MentionMenu({
     results: ThreadComposerLocalFileCandidate[];
     status: 'idle' | 'loading' | 'ready' | 'error';
   };
+  threadSearch: {
+    error: string | null;
+    query: string;
+    results: ThreadReferenceSearchResult[];
+    status: 'idle' | 'loading' | 'ready' | 'error';
+  };
   selectedIndex: number;
   setSelectedIndex: (index: number | ((current: number) => number)) => void;
 }) {
   const trimmedQuery = query.trim();
   if (items.length === 0) {
-    if (trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'loading') {
-      return <PopoverEmpty>{labels.searchingFiles}</PopoverEmpty>;
+    if (threadSearch.status === 'loading'
+      || (trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'loading')) {
+      return <PopoverEmpty>{threadSearch.status === 'loading' ? labels.searchingThreads : labels.searchingFiles}</PopoverEmpty>;
+    }
+    if (threadSearch.status === 'error') {
+      return <PopoverEmpty>{labels.couldNotSearchThreads}</PopoverEmpty>;
     }
     if (trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'error') {
       return <PopoverEmpty>{search.error ?? labels.couldNotSearchFiles}</PopoverEmpty>;
@@ -1552,7 +1712,11 @@ function MentionMenu({
     <>
       {items.flatMap((item, itemIndex) => {
         const sectionHeader = item.section !== previousSection
-          ? <div className="thread-composer-mention-section" key={`section-${item.section}`}>{item.section}</div>
+          ? (
+              <div className="thread-composer-mention-section" key={`section-${item.section}`}>
+                {item.section === 'chats' ? labels.sectionChats : item.section}
+              </div>
+            )
           : null;
         previousSection = item.section;
         const option = (
@@ -1561,7 +1725,9 @@ function MentionMenu({
             active={itemIndex === selectedIndex}
             icon={item.kind === 'node'
               ? <NodeReferenceMenuIcon index={index} node={item.node} />
-              : <MentionFileIcon file={item.file} />}
+              : item.kind === 'file'
+                ? <MentionFileIcon file={item.file} />
+                : <RecentsIcon size={ICON_SIZE.menu} />}
             iconClassName="popover-item-icon"
             label={item.kind === 'node'
               ? (
@@ -1570,10 +1736,17 @@ function MentionMenu({
                     {item.breadcrumb ? <span className="popover-item-meta">{item.breadcrumb}</span> : null}
                   </>
                 )
-              : (
+              : item.kind === 'file'
+                ? (
                     <>
                       <MiddleTruncatedFilename name={item.file.name} />
                       <span className="popover-item-meta">{item.file.parentPath}</span>
+                    </>
+                  )
+                : (
+                    <>
+                      <span>{item.thread.title || shortThreadReferenceLabel(item.thread.threadId)}</span>
+                      {item.thread.snippet ? <span className="popover-item-meta">{item.thread.snippet}</span> : null}
                     </>
                   )}
             {...(item.kind === 'file' ? { 'data-entry-kind': item.file.entryKind } : {})}
@@ -1588,6 +1761,9 @@ function MentionMenu({
       ) : null}
       {trimmedQuery.length >= LOCAL_FILE_MIN_QUERY_LENGTH && search.status === 'error' ? (
         <div className="thread-composer-mention-status">{search.error ?? labels.couldNotSearchFiles}</div>
+      ) : null}
+      {threadSearch.status === 'error' ? (
+        <div className="thread-composer-mention-status">{labels.couldNotSearchThreads}</div>
       ) : null}
     </>
   );
@@ -1728,15 +1904,18 @@ function iconForLocalFileKind(kind: InlineFileIconKind): AppIcon {
 function mentionMenuItems({
   allowFileReferences,
   allowNodeReferences,
+  allowThreadReferences,
   currentNodeId,
   index,
   localFileSearch,
   query,
   recentLocalFiles,
+  threadSearch,
   labels,
 }: {
   allowFileReferences: boolean;
   allowNodeReferences: boolean;
+  allowThreadReferences: boolean;
   currentNodeId: NodeId | null;
   index: DocumentIndex;
   localFileSearch: {
@@ -1746,11 +1925,27 @@ function mentionMenuItems({
   };
   query: string;
   recentLocalFiles: readonly ThreadComposerLocalFileCandidate[];
+  threadSearch: {
+    query: string;
+    results: ThreadReferenceSearchResult[];
+    status: 'idle' | 'loading' | 'ready' | 'error';
+  };
   labels: ReferenceCandidateLabels;
 }): MentionMenuItem[] {
   const trimmedQuery = query.trim();
+  const threadItems = allowThreadReferences
+    && threadSearch.query === query
+    && threadSearch.status === 'ready'
+    ? threadSearch.results.map((thread): MentionMenuItem => ({
+        kind: 'thread',
+        section: 'chats',
+        key: `thread:${thread.threadId}`,
+        thread,
+      }))
+    : [];
   if (!trimmedQuery) {
     return [
+      ...threadItems,
       ...(allowNodeReferences
         ? recentNodeMenuItems(index, currentNodeId, MAX_MENTION_NODES, labels).map((item): MentionMenuItem => ({
             ...item,
@@ -1783,7 +1978,11 @@ function mentionMenuItems({
         file,
       }))
     : [];
-  return [...nodeItems, ...fileItems];
+  return [...threadItems, ...nodeItems, ...fileItems];
+}
+
+function shortThreadReferenceLabel(threadId: string): string {
+  return `Thread ${threadId.slice(0, 8)}...${threadId.slice(-4)}`;
 }
 
 function recentNodeMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, limit: number, labels: ReferenceCandidateLabels) {

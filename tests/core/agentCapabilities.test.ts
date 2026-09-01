@@ -137,6 +137,33 @@ describe('agent capabilities', () => {
     }
   });
 
+  test('checks selected historical citations independently from Thread history access', async () => {
+    const { workspace } = await workspaceFixture();
+    const textOnly = evaluateAgentToolCapability({
+      toolName: 'thread_read',
+      args: { thread_id: '01951d6e-7c25-7c31-8d62-313038616239' },
+      policy: { workspaceRoot: workspace },
+    });
+    expect(textOnly.descriptors.map((descriptor) => descriptor.actionKind)).toEqual(['thread.history.read']);
+
+    const selected = evaluateAgentToolCapability({
+      toolName: 'thread_read',
+      args: {
+        thread_id: '01951d6e-7c25-7c31-8d62-313038616239',
+        citations: [{ citation_key: 'citation:key' }],
+      },
+      policy: {
+        workspaceRoot: workspace,
+        capabilityConfig: { blocks: ['Action(file.read.local_path)'] },
+      },
+    });
+    expect(selected.descriptors.map((descriptor) => descriptor.actionKind)).toEqual([
+      'thread.history.read',
+      'file.read.local_path',
+    ]);
+    expect(selected).toMatchObject({ behavior: 'unavailable', descriptor: { actionKind: 'file.read.local_path' } });
+  });
+
   test('classifies outline shell commands from the public capability registry', async () => {
     const { workspace } = await workspaceFixture();
     const cases = [

@@ -1,5 +1,6 @@
-import { lstat,realpath,stat } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { constants } from 'node:fs';
+import { copyFile,lstat,realpath,rm,stat } from 'node:fs/promises';
+import { basename, extname, join } from 'node:path';
 import { decodeTurn } from '../../../core/agent/codec';
 import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import type {
@@ -26,6 +27,7 @@ TurnDiagnosticsPayloadReference,
 } from '../../../core/agent/protocol';
 import {
 createManagedAttachmentObservation,
+isPathInside,
 type ManagedAttachmentObservation,
 } from '../capabilities/agentAttachmentMaterialization';
 import {
@@ -54,6 +56,12 @@ export interface ThreadStorageReferences {
   readonly internalTexts: readonly ThreadInternalTextPayloadReference[];
   readonly diagnostics: readonly TurnDiagnosticsPayloadReference[];
   readonly textOutputs: readonly ThreadItemOutputReference[];
+}
+
+export interface HistoricalResourceSelection {
+  readonly ref: ThreadResourceReference;
+  readonly path: string | null;
+  readonly entryKind: 'file' | 'directory';
 }
 
 export class ThreadResourceOps {
@@ -232,6 +240,78 @@ export class ThreadResourceOps {
       return null;
     }
     return this.resources.readExact(ref);
+  }
+  linkHistoricalResource(
+    currentThreadId: ThreadId,
+    historicalThreadId: ThreadId,
+    ref: ThreadResourceReference,
+  ): boolean {
+    this.core.requireThread(currentThreadId);
+    this.core.requireThread(historicalThreadId);
+    if (!this.threadResourceReferences(historicalThreadId).some((candidate) => (
+      resourceReferenceKey(candidate) === resourceReferenceKey(ref)
+    ))) return false;
+    return this.resources.linkReference(currentThreadId, ref);
+  }
+  async selectHistoricalResource(
+    currentThreadId: ThreadId,
+    historicalThreadId: ThreadId,
+    ref: ThreadResourceReference,
+    representation: 'reveal' | 'replay' | 'edit' | 'observe',
+  ): Promise<HistoricalResourceSelection | null> {
+    const current = this.core.requireThread(currentThreadId).thread;
+    this.core.requireThread(historicalThreadId);
+    if (!this.threadResourceReferences(historicalThreadId).some((candidate) => (
+      resourceReferenceKey(candidate) === resourceReferenceKey(ref)
+    ))) return null;
+
+    if (representation === 'reveal') {
+      const source = await this.resources.resolve(ref, 'revealSource');
+      if (source.status !== 'resolvedSource' || !this.resources.linkReference(currentThreadId, ref)) return null;
+      return { ref, path: source.path, entryKind: source.entryKind };
+    }
+    if (representation !== 'edit') {
+      const exact = await this.resources.resolve(ref, 'observeExactRevision');
+      if (exact.status !== 'resolvedExactRevision' || !this.resources.linkReference(currentThreadId, ref)) return null;
+      return { ref, path: null, entryKind: 'file' };
+    }
+
+    const source = await this.resources.resolve(ref, 'editSource');
+    const scope = this.resources.sourceScope(ref);
+    if (
+      source.status === 'resolvedSource'
+      && scope
+      && (scope.kind === 'external' || isPathInside(current.cwd, source.path))
+      && this.resources.linkReference(currentThreadId, ref)
+    ) {
+      return { ref, path: source.path, entryKind: source.entryKind };
+    }
+
+    const exact = await this.resources.resolve(ref, 'observeExactRevision');
+    if (exact.status !== 'resolvedExactRevision') return null;
+    const destination = await availableHistoricalCopyPath(current.cwd, ref.fileName);
+    await copyFile(exact.path, destination, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+    const scopeId = `execution:${currentThreadId}`;
+    this.resources.registerScope({
+      scopeId,
+      kind: current.parentThreadId ? 'managedWorktree' : 'managedWorkspace',
+      rootPath: current.cwd,
+      editable: true,
+    });
+    try {
+      const sourceLocator = await this.resources.sourceLocator(scopeId, destination, 'file');
+      const copied = await this.resources.capturePath({
+        threadId: currentThreadId,
+        sourcePath: destination,
+        mimeType: ref.mimeType,
+        fileName: basename(destination),
+        source: sourceLocator,
+      });
+      return { ref: copied.ref, path: destination, entryKind: 'file' };
+    } catch (error) {
+      await rm(destination, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
   async discardUnreferencedThreadResource(
     threadId: ThreadId,
@@ -626,6 +706,17 @@ export class ThreadResourceOps {
       (ref) => this.core.payloads.readContext(threadId, ref),
     );
   }
+}
+
+async function availableHistoricalCopyPath(root: string, fileName: string): Promise<string> {
+  const extension = extname(fileName);
+  const stem = extension ? fileName.slice(0, -extension.length) : fileName;
+  for (let index = 0; index < 10_000; index += 1) {
+    const candidateName = index === 0 ? fileName : `${stem}-${index + 1}${extension}`;
+    const candidate = join(root, candidateName);
+    if (!await lstat(candidate).catch(() => null)) return candidate;
+  }
+  throw new Error('Could not allocate a current-workspace historical file copy');
 }
 
 function resourceReferencesFromTurns(turns: readonly Turn[]): ThreadResourceReference[] {

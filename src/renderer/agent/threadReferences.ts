@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import type { ThreadReferenceView } from '../../core/agent/protocol';
 import { isContentBearingNode, type NodeId } from '../api/types';
 import type { DocumentIndex } from '../state/document';
 import { wantsNewPaneFromClick } from '../ui/shared';
@@ -14,6 +15,7 @@ export type ThreadNodeReferenceOpenHandler = (
 ) => void;
 
 export const THREAD_NODE_REFERENCE_LINK_PREFIX = 'lin-node:';
+export const THREAD_THREAD_REFERENCE_LINK_PREFIX = 'lin-thread:';
 
 export function threadNodeReferenceHref(nodeId: NodeId): string {
   return `#${THREAD_NODE_REFERENCE_LINK_PREFIX}${encodeURIComponent(nodeId)}`;
@@ -28,6 +30,33 @@ export function threadNodeIdFromReferenceHref(href: string | undefined): NodeId 
   } catch {
     return encodedNodeId;
   }
+}
+
+export function threadReferenceHref(threadId: string): string {
+  return `#${THREAD_THREAD_REFERENCE_LINK_PREFIX}${encodeURIComponent(threadId)}`;
+}
+
+export function threadIdFromReferenceHref(href: string | undefined): string | null {
+  const normalizedHref = href?.startsWith('#') ? href.slice(1) : href;
+  if (!normalizedHref?.startsWith(THREAD_THREAD_REFERENCE_LINK_PREFIX)) return null;
+  const encodedThreadId = normalizedHref.slice(THREAD_THREAD_REFERENCE_LINK_PREFIX.length);
+  try {
+    return decodeURIComponent(encodedThreadId);
+  } catch {
+    return encodedThreadId;
+  }
+}
+
+export function shortThreadReferenceId(threadId: string): string {
+  return `${threadId.slice(0, 8)}...${threadId.slice(-4)}`;
+}
+
+export function threadReferenceDisplayLabel(
+  threadId: string,
+  resolution: ThreadReferenceView | undefined,
+  fallback: string,
+): string {
+  return resolution?.title?.trim() || `${fallback} ${shortThreadReferenceId(threadId)}`;
 }
 
 export function threadNodeReferenceOpenOptionsFromClick(

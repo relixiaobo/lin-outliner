@@ -653,6 +653,48 @@ test.describe('canonical agent Thread surface', () => {
     ]));
   });
 
+  test('submits and recalls a structured Thread reference selected by keyboard or pointer', async ({ page }) => {
+    await renameSelectedThread(page, 'Launch archive');
+    const sourceThreadId = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Source Thread not found');
+      return threadId;
+    });
+    await createNewThread(page);
+
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('@Launch');
+    const keyboardOption = page.getByRole('option', { name: /Launch archive/i });
+    await expect(keyboardOption).toBeVisible();
+    await expect(page.getByText('Chats', { exact: true })).toBeVisible();
+    await composer.press('Enter');
+    const reference = composer.locator(`[data-thread-thread-ref="${sourceThreadId}"]`);
+    await expect(reference).toContainText('Launch archive');
+
+    await page.getByRole('button', { name: 'Send' }).click();
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([{
+      type: 'threadReference',
+      threadId: sourceThreadId,
+    }]);
+    await expect(page.locator('.thread-user-message').last()).toContainText('Launch archive');
+
+    await composer.press('ArrowUp');
+    await expect(composer.locator(`[data-thread-thread-ref="${sourceThreadId}"]`))
+      .toContainText('Launch archive');
+
+    await composer.fill('@Launch');
+    const pointerOption = page.getByRole('option', { name: /Launch archive/i });
+    await expect(pointerOption).toBeVisible();
+    await pointerOption.click();
+    await expect(composer.locator(`[data-thread-thread-ref="${sourceThreadId}"]`))
+      .toContainText('Launch archive');
+  });
+
   test('renders used Memory as an inline Node reference while keeping supporting work in the process', async ({ page }) => {
     const fixture = await page.evaluate(async ({ memoryNodeId }) => {
       const target = window as Window & {

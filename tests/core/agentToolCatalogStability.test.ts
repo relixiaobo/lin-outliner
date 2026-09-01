@@ -9,7 +9,10 @@ import {
 } from '../../src/core/agent/tools';
 import type { ThreadService } from '../../src/main/agent/ThreadService';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
-import { compileToolParameters } from '../../src/main/agent/runtime/kernel/exactToolArguments';
+import {
+  compileToolParameters,
+  validateExactToolArguments,
+} from '../../src/main/agent/runtime/kernel/exactToolArguments';
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 
@@ -53,6 +56,32 @@ describe('canonical provider tool catalog', () => {
       .map((contract) => `${canonicalModelToolKey(contract.identity)}: ${providerToolSchemaFailure(contract.inputSchema)}`)
       .filter((entry) => !entry.endsWith(': null'));
     expect(unsendable).toEqual([]);
+  });
+
+  test('requires a valid representation for every selected historical citation', () => {
+    const contract = MODEL_TOOL_CATALOG.find((candidate) => canonicalModelToolKey(candidate.identity) === 'thread_read');
+    if (!contract?.inputSchema) throw new Error('Missing thread_read contract');
+    const tool = {
+      name: 'thread_read',
+      label: 'Thread Read',
+      description: contract.description,
+      parameters: contract.inputSchema as never,
+      executionMode: 'sequential' as const,
+      execute: async () => ({ content: [], details: {} }),
+    } satisfies AgentTool;
+
+    expect(() => validateExactToolArguments(tool, {
+      thread_id: '01951d6e-7c25-7c31-8d62-313038616239',
+      citations: [{ citation_key: 'citation:key' }],
+    })).toThrow('Invalid arguments for tool "thread_read"');
+    expect(() => validateExactToolArguments(tool, {
+      thread_id: '01951d6e-7c25-7c31-8d62-313038616239',
+      citations: [{ citation_key: 'citation:key', representation: 'overwrite' }],
+    })).toThrow('Invalid arguments for tool "thread_read"');
+    expect(() => validateExactToolArguments(tool, {
+      thread_id: '01951d6e-7c25-7c31-8d62-313038616239',
+      citations: [{ citation_key: 'citation:key', representation: 'edit' }],
+    })).not.toThrow();
   });
 
   test('names every root shape a provider answers with HTTP 400', () => {
