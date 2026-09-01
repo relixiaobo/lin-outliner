@@ -504,7 +504,10 @@ re-evaluates authoritative state instead of caching a transient unavailable resu
 Projection or dependency failure degrades to `canContinue: false` and writes nothing.
 
 `turn/continue` revalidates the same boundary under renderer-submission and root-host
-admission locks. It preserves the failed source and appends an ordinary Turn whose
+admission locks. Any matching finalizer wait occurs under renderer-submission
+serialization before the root-host lock is acquired; the lock-protected capability check
+never waits for idle hooks that may themselves admit root work. Continue preserves the
+failed source and appends an ordinary Turn whose
 `continuation` trigger names the source Turn ID. The admitted host input is content-free
 and renderer-hidden; a bounded application instruction says settled history is evidence,
 not work to replay. Ordinary Turn admission resolves current configuration, permissions,

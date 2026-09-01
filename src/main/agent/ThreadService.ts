@@ -2105,6 +2105,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async readTurnRecovery(request: TurnRecoveryReadRequest): Promise<TurnRecoveryReadResponse> {
     this.assertStartupThreadAvailable(request.threadId);
+    await this.waitForTurnRecoveryFinalization(request);
+    return this.readTurnRecoveryNow(request);
+  }
+  private async waitForTurnRecoveryFinalization(request: TurnRecoveryReadRequest): Promise<void> {
     const observedTarget = this.core.allTurns(request.threadId).at(-1);
     if (
       observedTarget?.id === request.turnId
@@ -2112,8 +2116,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
       && this.turnLifecycle.activeTurnId(request.threadId) === request.turnId
     ) {
       await this.turnLifecycle.waitForTurnCompletion(request.threadId, request.turnId);
-      this.assertStartupThreadAvailable(request.threadId);
     }
+  }
+  private async readTurnRecoveryNow(request: TurnRecoveryReadRequest): Promise<TurnRecoveryReadResponse> {
+    this.assertStartupThreadAvailable(request.threadId);
     const record = this.core.requireThread(request.threadId);
     const target = this.core.allTurns(request.threadId).at(-1);
     const available = target?.id === request.turnId
@@ -2143,10 +2149,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async continueTurn(request: TurnContinueRequest): Promise<TurnContinueResponse> {
     this.assertStartupThreadAvailable(request.threadId);
-    const continuation = this.rendererSubmissionMutex.run(request.threadId, async () => (
-      this.core.hostRootMutex.run(async () => {
+    const continuation = this.rendererSubmissionMutex.run(request.threadId, async () => {
+      this.assertRendererSubmissionOpen();
+      await this.waitForTurnRecoveryFinalization(request);
+      this.assertRendererSubmissionOpen();
+      return this.core.hostRootMutex.run(async () => {
         this.assertRendererSubmissionOpen();
-        const recovery = await this.readTurnRecovery(request);
+        const recovery = await this.readTurnRecoveryNow(request);
         if (!recovery.canContinue) throw new Error('This Turn cannot continue from failure');
         const target = this.core.allTurns(request.threadId).at(-1);
         if (!target || target.id !== request.turnId) throw new Error('Only the latest failed Turn can be continued');
@@ -2160,8 +2169,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
           turn: started.turn,
           sourceTurnId: target.id,
         };
-      })
-    ));
+      });
+    });
     this.pendingRendererSubmissions.add(continuation);
     try {
       return await continuation;

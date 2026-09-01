@@ -5310,6 +5310,78 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     }
   });
 
+  test('waits for recovery finalization before taking the root admission lock', async () => {
+    const executor = new RecoveryExecutor();
+    const fixture = await createFixture(undefined, {}, executor);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.request('goal/create', {
+      threadId: thread.id,
+      objective: 'Continue after each incomplete Turn',
+    });
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Fail before the Goal continues' }],
+    });
+    await executor.waitUntilWaiting();
+
+    const prune = fixture.stores.payloads.pruneUnreferencedContexts.bind(fixture.stores.payloads);
+    let markCleanupStarted!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => { markCleanupStarted = resolve; });
+    const cleanupRelease = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    fixture.stores.payloads.pruneUnreferencedContexts = async (...args) => {
+      markCleanupStarted();
+      await cleanupRelease;
+      return prune(...args);
+    };
+    let goalCompleted = false;
+    let goalFinished = false;
+
+    try {
+      executor.finishWithText(0, 'Settled partial result', {
+        status: 'failed',
+        error: { message: 'Provider unavailable' },
+      });
+      await cleanupStarted;
+      const continuation = fixture.service.request('turn/continue', {
+        threadId: thread.id,
+        turnId: accepted.turn.id,
+      }).then(
+        (value) => ({ status: 'resolved' as const, value }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      );
+
+      releaseCleanup();
+      await withTimeout(executor.waitUntilWaiting(1), 1_000);
+      expect(await withTimeout(continuation, 1_000)).toEqual({
+        status: 'rejected',
+        error: expect.objectContaining({ message: 'This Turn cannot continue from failure' }),
+      });
+      expect(executor.contexts[1]?.turn.provenance.trigger).toMatchObject({
+        kind: 'feature',
+        feature: 'goal_continuation',
+      });
+      await fixture.service.request('goal/update', { threadId: thread.id, status: 'complete' });
+      goalCompleted = true;
+      executor.finish(1);
+      goalFinished = true;
+    } finally {
+      releaseCleanup();
+      fixture.stores.payloads.pruneUnreferencedContexts = prune;
+      if (!goalCompleted) {
+        await fixture.service.request('goal/update', { threadId: thread.id, status: 'complete' }).catch(() => undefined);
+      }
+      if (!goalFinished && executor.contexts[1]) executor.finish(1);
+      await fixture.service.waitForIdle(thread.id);
+      await fixture.service.close();
+    }
+  });
+
   test('degrades an unavailable continuation probe without changing canonical history', async () => {
     const executor = new RecoveryExecutor();
     executor.recoveryError = new Error('projection unavailable');
