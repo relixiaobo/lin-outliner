@@ -39,6 +39,15 @@ exchanges, not dynamic context prose.
   needed.
 - **DEC-3:** empty fields and synonymous status/message fields are omitted.
 
+### Evidence
+
+- Built-in tools already separate complete durable `ToolEnvelope` details from a
+  smaller model-visible envelope.
+- Collaboration tools currently return raw family-specific JSON such as
+  `success`, `message`, `pin`, and `resumedAgentId` directly to the model.
+- Provider tool results already support ordered text and native media parts, so
+  normalization requires an adapter rather than a new transport.
+
 ### Visible envelope
 
 The shared contract is equivalent to:
