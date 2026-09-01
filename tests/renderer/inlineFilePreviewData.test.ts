@@ -60,10 +60,12 @@ describe('localFileReferenceHref ⇄ localFileReferenceFromHref', () => {
   test('projects final-citation binding state and resource intent into DOM attributes', () => {
     expect(inlineFilePreviewAttrs({
       citationStatus: 'available',
+      readOnly: true,
       resourceIntent: 'delivered',
       sourceAvailable: false,
     })).toMatchObject({
       'data-inline-ref-citation-status': 'available',
+      'data-inline-ref-readonly': 'true',
       'data-inline-ref-resource-intent': 'delivered',
       'data-inline-ref-source-available': 'false',
     });

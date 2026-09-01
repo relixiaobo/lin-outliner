@@ -92,6 +92,7 @@ describe('Thread Markdown references', () => {
     expect(reference?.dataset.inlineRefResourceIntent).toBe('delivered');
     expect(reference?.dataset.inlineRefCitationStatus).toBe('available');
     expect(reference?.dataset.inlineRefSourceAvailable).toBe('true');
+    expect(reference?.dataset.inlineRefReadonly).toBeUndefined();
   });
 
   test.each(['unavailable', 'denied'] as const)(
@@ -117,6 +118,7 @@ describe('Thread Markdown references', () => {
       expect(reference?.dataset.inlineRefThreadId).toBe('thread-1');
       expect(reference?.dataset.inlineRefPath).toBeUndefined();
       expect(reference?.dataset.inlineRefResourceId).toBeUndefined();
+      expect(reference?.dataset.inlineRefReadonly).toBe('true');
       expect(document.querySelector('a')).toBeNull();
     },
   );
@@ -142,6 +144,7 @@ describe('Thread Markdown references', () => {
     expect(reference?.tagName).toBe('SPAN');
     expect(reference?.dataset.inlineRefCitationStatus).toBe('available');
     expect(reference?.dataset.inlineRefPath).toBeUndefined();
+    expect(reference?.dataset.inlineRefReadonly).toBe('true');
   });
 });
 

@@ -181,6 +181,7 @@ function useMarkdownComponents(
               mimeType: fileRef.entryKind === 'directory' ? 'inode/directory' : 'application/octet-stream',
               name: label,
               ...(citationActionable ? { path: fileRef.path } : {}),
+              readOnly: !citationActionable,
               ref: label,
               ...(citation
                 ? {

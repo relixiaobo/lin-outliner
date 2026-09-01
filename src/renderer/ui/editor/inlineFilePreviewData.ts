@@ -9,6 +9,7 @@ export interface InlineFilePreviewDescriptor {
   mimeType?: string;
   name?: string;
   path?: string;
+  readOnly?: boolean;
   ref?: string;
   resourceRef?: ThreadResourceReference;
   resourceIntent?: 'delivered' | 'source';
@@ -24,6 +25,7 @@ export function inlineFilePreviewAttrs(file: InlineFilePreviewDescriptor): Recor
     'data-inline-ref-kind': 'local-file',
   };
   setAttr(attrs, 'data-inline-ref-path', file.path);
+  if (file.readOnly === true) attrs['data-inline-ref-readonly'] = 'true';
   setAttr(attrs, 'data-inline-ref-entry-kind', file.entryKind);
   setAttr(attrs, 'data-inline-ref-name', file.name);
   setAttr(attrs, 'data-inline-ref-ref', file.ref);

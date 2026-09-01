@@ -25,7 +25,7 @@ const inlineNativeAffordanceCssProperties = new Set([
   'user-select',
 ]);
 const pointerCursorSelectors = new Set([
-  '.inline-ref:hover',
+  '.inline-ref:not([data-inline-ref-readonly="true"]):hover',
   '.row-editor .inline-ref:hover',
   // Tool paths become genuine content links only while the primary modifier is held.
   ':root.is-primary-modifier-pressed .thread-tool-path-reference:hover',
@@ -1112,5 +1112,52 @@ test.describe('cursor affordances', () => {
     const hoverCursor = await probe.evaluate((element) => getComputedStyle(element).cursor);
 
     expect(hoverCursor).toBe('pointer');
+  });
+
+  test('bound read-only references stay neutral and non-interactive in both themes', async ({ page }) => {
+    await openMockedApp(page);
+    await page.evaluate(() => {
+      const link = document.createElement('a');
+      link.className = 'inline-ref';
+      link.id = 'available-reference-probe';
+      link.textContent = 'available';
+      const readOnly = document.createElement('span');
+      readOnly.className = 'inline-ref';
+      readOnly.id = 'readonly-reference-probe';
+      readOnly.dataset.inlineRefKind = 'local-file';
+      readOnly.dataset.inlineRefReadonly = 'true';
+      readOnly.textContent = 'unavailable';
+      const neutral = document.createElement('span');
+      neutral.id = 'neutral-reference-probe';
+      neutral.style.color = 'var(--text-secondary)';
+      document.body.append(link, readOnly, neutral);
+    });
+
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme });
+      const readOnly = page.locator('#readonly-reference-probe');
+      await readOnly.hover();
+      const styles = await page.evaluate(() => {
+        const style = (id: string) => getComputedStyle(document.getElementById(id)!);
+        const available = style('available-reference-probe');
+        const readOnlyStyle = style('readonly-reference-probe');
+        const neutral = style('neutral-reference-probe');
+        return {
+          availableColor: available.color,
+          backgroundColor: readOnlyStyle.backgroundColor,
+          boxShadow: readOnlyStyle.boxShadow,
+          cursor: readOnlyStyle.cursor,
+          neutralColor: neutral.color,
+          readOnlyColor: readOnlyStyle.color,
+          textDecorationLine: readOnlyStyle.textDecorationLine,
+        };
+      });
+      expect(styles.readOnlyColor).toBe(styles.neutralColor);
+      expect(styles.readOnlyColor).not.toBe(styles.availableColor);
+      expect(styles.cursor).toBe('default');
+      expect(styles.textDecorationLine).toBe('none');
+      expect(styles.backgroundColor).toBe('rgba(0, 0, 0, 0)');
+      expect(styles.boxShadow).toBe('none');
+    }
   });
 });
