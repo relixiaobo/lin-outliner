@@ -231,7 +231,7 @@ describe('Turn provider recovery', () => {
       <ThreadTurnView
         {...turnProps()}
         {...turnAnchors(value)}
-        delivery={{ agentId: 'missing-agent', fromLatest: 0, generationIndex: 0 }}
+        delivery={{ agentId: 'missing-agent', generation: 1 }}
       />
     ));
 

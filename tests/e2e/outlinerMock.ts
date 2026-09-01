@@ -1059,6 +1059,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           omittedBytes: 0,
         }
         : null;
+      const patch = mockSubagentExecutionPatches.get(agentId) ?? {};
+      const projectedTerminalStatus = (patch.terminalStatus ?? terminalStatus) as string | null;
+      const projectedTerminalError = patch.terminalError ?? terminalError;
+      const projectedNotificationState = String(patch.notificationState ?? 'none');
+      const projectedDeliveryTurnId = typeof patch.deliveryTurnId === 'string' ? patch.deliveryTurnId : null;
+      const generationReceipts = projectedTerminalStatus === null
+        ? []
+        : [{
+            generation: Number(patch.generation ?? 1),
+            turnId: String(patch.currentTurnId ?? latestTurn?.id ?? `${thread.id}-generation-1`),
+            terminalStatus: projectedTerminalStatus,
+            durationMs: latestTurn?.durationMs ?? null,
+            error: projectedTerminalError,
+            partialOutputAvailable: latestTurn?.items.some((item) => (
+              item.type === 'agentMessage' && typeof item.text === 'string' && item.text.trim().length > 0
+            )) ?? false,
+            parentThreadId: thread.parentThreadId,
+            notificationState: projectedNotificationState,
+            deliveryTurnId: projectedDeliveryTurnId,
+          }];
       return {
         agentId: thread.id,
         parentThreadId: thread.parentThreadId,
@@ -1070,23 +1090,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           ?? latestTurn?.id
           ?? `${thread.id}-generation-1`,
         stopProvenance: 'none',
-        terminalStatus,
+        terminalStatus: projectedTerminalStatus,
         notificationState: 'none',
-        terminalError,
+        terminalError: projectedTerminalError,
         deliveryTurnId: null,
         deliveryClass: null,
         eligibleAfterGeneration: null,
         coverageDisposition: null,
         omittedOutputBytes: 0,
         omittedOutputTokens: 0,
-        deliveredNotifications: [],
+        generationReceipts,
         notificationCutoff: 'open',
         executionMode: 'ordinary',
         settlementCoverage: null,
         worktree: null,
         createdAt: thread.createdAt,
         updatedAt: latestTurn?.completedAt ?? thread.updatedAt,
-        ...mockSubagentExecutionPatches.get(agentId) ?? {},
+        ...patch,
       };
     };
     const createMockThread = (input: Record<string, unknown>, forkedFromId: string | null = null) => {

@@ -2174,7 +2174,7 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
     'agentId', 'parentThreadId', 'description', 'agentType', 'runMode', 'generation',
     'currentTurnId', 'stopProvenance', 'terminalStatus', 'notificationState', 'worktree',
     'terminalError', 'deliveryTurnId', 'deliveryClass', 'eligibleAfterGeneration',
-    'coverageDisposition', 'omittedOutputBytes', 'omittedOutputTokens', 'deliveredNotifications',
+    'coverageDisposition', 'omittedOutputBytes', 'omittedOutputTokens', 'generationReceipts',
     'notificationCutoff', 'executionMode', 'settlementCoverage', 'createdAt', 'updatedAt',
   ], path);
   return {
@@ -2215,10 +2215,10 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
       : enumValue(record.coverageDisposition, ['full', 'excerpted', 'omitted'], `${path}.coverageDisposition`),
     omittedOutputBytes: nonNegativeInteger(record.omittedOutputBytes, `${path}.omittedOutputBytes`),
     omittedOutputTokens: nonNegativeInteger(record.omittedOutputTokens, `${path}.omittedOutputTokens`),
-    deliveredNotifications: arrayValue(record.deliveredNotifications, `${path}.deliveredNotifications`)
-      .map((delivery, index) => decodeSubagentDeliveredNotification(
-        delivery,
-        `${path}.deliveredNotifications[${index}]`,
+    generationReceipts: arrayValue(record.generationReceipts, `${path}.generationReceipts`)
+      .map((receipt, index) => decodeSubagentGenerationReceipt(
+        receipt,
+        `${path}.generationReceipts[${index}]`,
       )),
     notificationCutoff: enumValue(
       record.notificationCutoff,
@@ -2240,15 +2240,37 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
   };
 }
 
-function decodeSubagentDeliveredNotification(
+function decodeSubagentGenerationReceipt(
   value: unknown,
   path: string,
-): SubagentExecutionProjection['deliveredNotifications'][number] {
+): SubagentExecutionProjection['generationReceipts'][number] {
   const record = recordValue(value, path);
-  exactKeys(record, ['generation', 'deliveryTurnId'], path);
+  exactKeys(record, [
+    'generation', 'turnId', 'terminalStatus', 'durationMs', 'error',
+    'partialOutputAvailable', 'parentThreadId', 'notificationState', 'deliveryTurnId',
+  ], path);
   return deepFreeze({
     generation: positiveInteger(record.generation, `${path}.generation`),
-    deliveryTurnId: uuidV7(record.deliveryTurnId, `${path}.deliveryTurnId`),
+    turnId: uuidV7(record.turnId, `${path}.turnId`),
+    terminalStatus: enumValue(
+      record.terminalStatus,
+      ['finished', 'failed', 'interrupted', 'killed'],
+      `${path}.terminalStatus`,
+    ),
+    durationMs: record.durationMs === null
+      ? null
+      : nonNegativeInteger(record.durationMs, `${path}.durationMs`),
+    error: decodeSubagentTerminalError(record.error, `${path}.error`),
+    partialOutputAvailable: booleanValue(record.partialOutputAvailable, `${path}.partialOutputAvailable`),
+    parentThreadId: uuidV7(record.parentThreadId, `${path}.parentThreadId`),
+    notificationState: enumValue(
+      record.notificationState,
+      ['none', 'pending', 'delivering', 'delivered'],
+      `${path}.notificationState`,
+    ),
+    deliveryTurnId: record.deliveryTurnId === null
+      ? null
+      : uuidV7(record.deliveryTurnId, `${path}.deliveryTurnId`),
   });
 }
 

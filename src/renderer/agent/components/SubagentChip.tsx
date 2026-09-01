@@ -1,4 +1,8 @@
-import type { ThreadId } from '../../../core/agent/protocol';
+import {
+  normalizeTurnErrorCode,
+  type SubagentGenerationReceipt,
+  type ThreadId,
+} from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 import {
@@ -22,10 +26,9 @@ import { formatSubagentDuration, useSubagentElapsedMs } from './subagentElapsed'
  *
  * The chip is an anchor, not a status board: it names the Agent, says how it is
  * doing in one trailing segment, and opens the one surface that holds the whole
- * story. It reads its subject from the registry rather than from the Item that
- * placed it, so the same chip keeps speaking for that Agent across every later
- * generation — a resume six Turns later updates this chip too, because there is
- * only ever one Agent behind it.
+ * story. Stable Agent identity supplies its name and destination; an immutable
+ * generation receipt supplies a settled historical outcome, so a later resume
+ * cannot rewrite what happened at this anchor.
  *
  * Like every delegation surface it speaks time and status only: no token
  * quantity reaches its text, its title, or its accessible name.
@@ -33,27 +36,49 @@ import { formatSubagentDuration, useSubagentElapsedMs } from './subagentElapsed'
 export function SubagentChip({
   agentId,
   fallbackName,
+  generation,
   kind,
 }: {
   readonly agentId: ThreadId;
   /** Named from the canonical Item when the Agent's record is gone. */
   readonly fallbackName: string;
+  readonly generation: number | null;
   readonly kind: SubagentAnchorKind;
 }) {
   const t = useT();
   const entry = useSubagentEntry(agentId);
   const actions = useSubagentActions();
-  const elapsedMs = useSubagentElapsedMs(entry ?? { status: 'notFound', startedAt: null });
+  const receipt = entry === null
+    ? null
+    : entry.generationReceipts.get(generation ?? -1) ?? null;
+  const parentEntry = useSubagentEntry(receipt?.parentThreadId ?? null);
+  const elapsedMs = useSubagentElapsedMs(receipt === null
+    ? entry ?? { status: 'notFound', startedAt: null }
+    : { status: 'finished', startedAt: null });
   const name = entry?.displayName ?? fallbackName;
   // Foreground work shares the parent Turn's lifetime by contract, so a live
   // foreground chip is not a background task the reader may ignore — it is what
   // the conversation is currently blocked on, and it says so.
-  const waiting = entry?.runMode === 'foreground' && entry.status === 'running';
-  const status = subagentChipStatus(entry, elapsedMs, waiting, t, true);
-  const error = entry?.status === 'errored' && entry.error
-    ? userFacingAgentError(entry.error, t.agent.thread.resourceLimitReached)
+  const waiting = receipt === null && entry?.runMode === 'foreground' && entry.status === 'running';
+  const parentName = parentEntry?.displayName ?? t.agent.thread.agent.main;
+  const status = receipt
+    ? generationReceiptStatus(receipt, t)
+    : subagentChipStatus(entry, elapsedMs, waiting, t, true);
+  const delivery = receipt ? generationReceiptDelivery(receipt, parentName, t) : null;
+  const partial = receipt?.partialOutputAvailable && receipt.terminalStatus !== 'finished'
+    ? t.agent.thread.agent.partialOutputAvailable
     : null;
-  const running = entry?.status === 'running' || entry?.status === 'pendingInit';
+  const errorRecord = receipt?.error
+    ? {
+        message: receipt.error.messagePreview,
+        code: normalizeTurnErrorCode(receipt.error.code),
+      }
+    : entry?.status === 'errored' ? entry.error : null;
+  const error = errorRecord
+    ? userFacingAgentError(errorRecord, t.agent.thread.resourceLimitReached)
+    : null;
+  const running = receipt === null && (entry?.status === 'running' || entry?.status === 'pendingInit');
+  const visibleStatus = [status, delivery, partial].filter(Boolean).join(' · ');
   const KindIcon = kind === 'resume'
     ? RefreshIcon
     : entry?.form === 'isolatedSkill'
@@ -71,16 +96,16 @@ export function SubagentChip({
 
   return (
     <div
-      className={`thread-item thread-agent-chip-block thread-subagent-${entry?.status ?? 'notFound'}`}
+      className={`thread-item thread-agent-chip-block thread-subagent-${receiptStatusClass(receipt, entry)}`}
       data-agent-waiting={waiting ? 'true' : undefined}
     >
       <div className="thread-agent-chip-line">
       <button
-        aria-label={[openLabel, entry?.agentType, status, error]
+        aria-label={[openLabel, entry?.agentType, visibleStatus, error]
           .filter(Boolean).join('. ')}
         className="thread-agent-chip"
         onClick={() => actions.openAgent(agentId)}
-        title={error ?? [name, entry?.agentType, status].filter(Boolean).join(' · ')}
+        title={error ?? [name, entry?.agentType, visibleStatus].filter(Boolean).join(' · ')}
         type="button"
       >
         <KindIcon aria-hidden size={ICON_SIZE.rowGlyph} />
@@ -96,8 +121,8 @@ export function SubagentChip({
           </span>
         ) : null}
         {running
-          ? <WorkingText className="thread-agent-chip-meta" text={status} />
-          : <span className="thread-agent-chip-meta">{status}</span>}
+          ? <WorkingText className="thread-agent-chip-meta" text={visibleStatus} />
+          : <span className="thread-agent-chip-meta">{visibleStatus}</span>}
         {/* Says where the click goes. The tool rows beside this one carry a
             disclosure chevron at their LEFT edge that rotates open in place;
             a trailing `›` is the ordinary mark for a control that opens
@@ -121,12 +146,56 @@ export function SubagentChip({
   );
 }
 
+export function generationReceiptStatus(
+  receipt: SubagentGenerationReceipt,
+  t: Messages,
+  includeDuration = true,
+): string {
+  const label = receipt.terminalStatus === 'finished'
+    ? t.agent.thread.agent.runFinished
+    : receipt.terminalStatus === 'failed'
+      ? t.agent.thread.agent.runFailed
+      : receipt.terminalStatus === 'interrupted'
+        ? t.agent.thread.agent.runInterrupted
+        : t.agent.thread.agent.runStopped;
+  return includeDuration && receipt.durationMs !== null && receipt.durationMs >= 1_000
+    ? `${label} · ${formatSubagentDuration(receipt.durationMs)}`
+    : label;
+}
+
+export function generationReceiptDelivery(
+  receipt: SubagentGenerationReceipt,
+  parentName: string,
+  t: Messages,
+): string | null {
+  if (receipt.notificationState === 'pending') {
+    return t.agent.thread.agent.waitingToNotify({ parent: parentName });
+  }
+  if (receipt.notificationState === 'delivering') {
+    return t.agent.thread.agent.notifying({ parent: parentName });
+  }
+  if (receipt.notificationState === 'delivered') {
+    return t.agent.thread.agent.parentNotified({ parent: parentName });
+  }
+  return null;
+}
+
+function receiptStatusClass(
+  receipt: SubagentGenerationReceipt | null,
+  entry: SubagentRegistryEntry | null,
+): SubagentRegistryEntry['status'] {
+  if (!receipt) return entry?.status ?? 'notFound';
+  if (receipt.terminalStatus === 'failed') return 'errored';
+  if (receipt.terminalStatus === 'interrupted' || receipt.terminalStatus === 'killed') return 'interrupted';
+  return 'finished';
+}
+
 /**
  * Time and state, in that order of usefulness.
  *
  * A running Agent's clock IS its status, so the compact form drops the word:
  * a chip in a 344px deck has one line for a name, a type, and a state, and
- * `Running · 1m 36s` spends half of it saying what the moving text already
+ * `Working · 1m 36s` spends half of it saying what the moving text already
  * says. A settled Agent has no clock left, so it states the outcome and the
  * span its generation recorded.
  */

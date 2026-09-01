@@ -903,7 +903,7 @@ describe('ThreadItemView Agent chips', () => {
   test('names the Agent from the registry and marks only its live status as working', async () => {
     const rendered = renderItem(spawnActivity('chip-running'), {
       onInterruptThread: async () => undefined,
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-running' },
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-running', generation: null },
       registry: registryOf({ startedAt: Date.now() - 5_000, status: 'running' }),
     });
     await flush();
@@ -917,7 +917,7 @@ describe('ThreadItemView Agent chips', () => {
     expect(chip?.title).toMatch(/^survey the runtime · general-purpose · [4-6]s$/u);
     expect(chip?.getAttribute('aria-label')).toContain('Open survey the runtime. general-purpose');
     expect(chip?.textContent).not.toContain('general-purpose');
-    // A running Agent's clock IS its status: the word `Running` would spend
+    // A running Agent's clock IS its status: the word `Working` would spend
     // half the chip's one line saying what the moving text already says.
     expect(chip?.querySelector('.thread-agent-chip-meta .working-text-base')?.textContent)
       .toMatch(/^[4-6]s$/u);
@@ -927,7 +927,7 @@ describe('ThreadItemView Agent chips', () => {
   test('states the settled span from the generation, and keeps the chip in its slot', async () => {
     const rendered = renderItem(spawnActivity('chip-settled'), {
       onInterruptThread: async () => undefined,
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-settled' },
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-settled', generation: null },
       registry: registryOf({ durationMs: 192_000, status: 'finished' }),
     });
     await flush();
@@ -943,7 +943,7 @@ describe('ThreadItemView Agent chips', () => {
   test('opens the Agent rather than expanding anything in place', async () => {
     const opened: string[] = [];
     const rendered = renderItem(spawnActivity('chip-open'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-open' },
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-open', generation: null },
       onOpenAgent: (agentId) => opened.push(agentId),
       registry: registryOf({ status: 'finished' }),
     });
@@ -962,7 +962,7 @@ describe('ThreadItemView Agent chips', () => {
 
   test('says a user stop outranks the model, without inventing a status for it', async () => {
     const rendered = renderItem(spawnActivity('chip-stopped'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-stopped' },
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-stopped', generation: null },
       registry: registryOf({ status: 'interrupted', stoppedByUser: true }),
     });
     await flush();
@@ -972,7 +972,7 @@ describe('ThreadItemView Agent chips', () => {
 
   test('marks a worktree-isolated Agent and counts its live descendants', async () => {
     const rendered = renderItem(spawnActivity('chip-worktree'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-worktree' },
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-worktree', generation: null },
       registry: registryOf({
         liveDescendantCount: 2,
         status: 'running',
@@ -988,7 +988,7 @@ describe('ThreadItemView Agent chips', () => {
 
   test('reports a budget failure in product copy, with no token quantity anywhere it can be read', async () => {
     const rendered = renderItem(spawnActivity('chip-failed'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-failed' },
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-failed', generation: null },
       registry: registryOf({
         error: {
           message: 'Token budget exhausted (1234 of 1000 tokens)',
@@ -1006,6 +1006,97 @@ describe('ThreadItemView Agent chips', () => {
     expect(rendered.document.querySelector('.thread-agent-chip-error')?.textContent)
       .toBe('Task reached the system resource limit. Results have been preserved.');
     expect(`${line?.textContent} ${chip?.ariaLabel} ${chip?.title}`).not.toMatch(/token|\d/u);
+  });
+
+  test('keeps a failed historical run factual while the stable Agent works again', async () => {
+    const receipt = {
+      generation: 1,
+      turnId: 'child-turn-1',
+      terminalStatus: 'failed' as const,
+      durationMs: 2_000,
+      error: { code: 'provider_failure', messagePreview: 'Provider unavailable', omittedBytes: 0 },
+      partialOutputAvailable: true,
+      parentThreadId: 'thread-1',
+      notificationState: 'delivered' as const,
+      deliveryTurnId: 'delivery-turn-1',
+    };
+    const rendered = renderItem(spawnActivity('chip-historical-failure'), {
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-historical-failure', generation: 1 },
+      registry: registryOf({
+        generation: 2,
+        generationReceipts: new Map([[1, receipt]]),
+        status: 'running',
+        startedAt: Date.now() - 500,
+      }),
+    });
+    await flush();
+
+    const chip = rendered.document.querySelector('.thread-agent-chip');
+    expect(chip?.textContent).toContain('This run failed · 2s');
+    expect(chip?.textContent).toContain('main notified');
+    expect(chip?.textContent).toContain('Partial output available');
+    expect(chip?.textContent).not.toContain('Working');
+    expect(rendered.document.querySelector('.thread-agent-chip-error')?.textContent)
+      .toBe('Provider unavailable');
+  });
+
+  test('keeps historical budget failures on bounded product copy', async () => {
+    const receipt = {
+      generation: 1,
+      turnId: 'child-turn-1',
+      terminalStatus: 'failed' as const,
+      durationMs: 2_000,
+      error: {
+        code: 'subagent_budget_exhausted',
+        messagePreview: 'Token budget exhausted (1234 of 1000 tokens)',
+        omittedBytes: 0,
+      },
+      partialOutputAvailable: false,
+      parentThreadId: 'thread-1',
+      notificationState: 'delivered' as const,
+      deliveryTurnId: 'delivery-turn-1',
+    };
+    const rendered = renderItem(spawnActivity('chip-historical-budget'), {
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-historical-budget', generation: 1 },
+      registry: registryOf({ generationReceipts: new Map([[1, receipt]]), status: 'errored' }),
+    });
+    await flush();
+
+    const line = rendered.document.querySelector<HTMLElement>('.thread-agent-chip-block');
+    const chip = line?.querySelector<HTMLButtonElement>('.thread-agent-chip');
+    expect(rendered.document.querySelector('.thread-agent-chip-error')?.textContent)
+      .toBe('Task reached the system resource limit. Results have been preserved.');
+    expect(`${line?.textContent} ${chip?.ariaLabel} ${chip?.title}`).not.toMatch(/token|1234|1000/iu);
+  });
+
+  test('keeps a historical foreground run scoped to its receipt after a background resume', async () => {
+    const receipt = {
+      generation: 1,
+      turnId: 'child-turn-1',
+      terminalStatus: 'finished' as const,
+      durationMs: 2_000,
+      error: null,
+      partialOutputAvailable: true,
+      parentThreadId: 'thread-1',
+      notificationState: 'none' as const,
+      deliveryTurnId: null,
+    };
+    const rendered = renderItem(spawnActivity('chip-historical-foreground'), {
+      anchor: { kind: 'foreground', agentId: 'thread-child', itemId: 'chip-historical-foreground', generation: 1 },
+      registry: registryOf({
+        generation: 2,
+        generationReceipts: new Map([[1, receipt]]),
+        runMode: 'background',
+        status: 'running',
+        startedAt: Date.now() - 500,
+      }),
+    });
+    await flush();
+
+    const chip = rendered.document.querySelector('.thread-agent-chip');
+    expect(chip?.textContent).toContain('This run finished · 2s');
+    expect(chip?.textContent).not.toContain('Working');
+    expect(chip?.textContent).not.toContain('notified');
   });
 
   test('renders nothing for a terminal activity: the chip already speaks for that Agent', async () => {
@@ -1027,7 +1118,7 @@ describe('ThreadItemView Agent chips', () => {
 
   test('falls back to the canonical Item when the Agent record is gone', async () => {
     const rendered = renderItem(spawnActivity('chip-orphan'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-orphan' },
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-orphan', generation: null },
     });
     await flush();
 
@@ -1105,6 +1196,7 @@ function registryOf(
     form: 'agent' as const,
     runMode: 'background' as const,
     generation: 1,
+    generationReceipts: new Map(),
     status: 'running' as const,
     stoppedByUser: false,
     startedAt: null,

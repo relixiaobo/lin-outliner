@@ -1,7 +1,9 @@
 import type {
-  SubagentDeliveredNotificationProjection,
   SubagentExecutionProjection,
+  SubagentGenerationReceipt,
+  Turn,
 } from '../../../core/agent/protocol';
+import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
 import type { SubagentExecutionRecord } from '../persistence/SubagentExecutionLedger';
 import type { SubagentPendingNotification } from '../persistence/SubagentExecutionLedger';
 
@@ -28,8 +30,11 @@ export function projectSubagentExecution(
     | 'omittedBytes'
     | 'omittedTokens'
   > | null,
-  deliveredNotifications: readonly SubagentDeliveredNotificationProjection[] = [],
+  generationReceipts: readonly SubagentGenerationReceipt[] = [],
 ): SubagentExecutionProjection {
+  const notificationState = terminal === null
+    ? 'none'
+    : presentationNotificationState(terminal.state, terminal.deliveryTurnId);
   return {
     agentId: record.agentId,
     parentThreadId: record.parentThreadId,
@@ -40,7 +45,7 @@ export function projectSubagentExecution(
     currentTurnId: record.currentTurnId,
     stopProvenance: record.stopProvenance,
     terminalStatus: terminal?.status ?? null,
-    notificationState: terminal?.state ?? 'none',
+    notificationState,
     terminalError: terminal?.error ?? null,
     deliveryTurnId: terminal?.deliveryTurnId ?? null,
     deliveryClass: terminal?.deliveryClass ?? null,
@@ -48,7 +53,7 @@ export function projectSubagentExecution(
     coverageDisposition: terminal?.coverageDisposition ?? null,
     omittedOutputBytes: terminal?.omittedBytes ?? 0,
     omittedOutputTokens: terminal?.omittedTokens ?? 0,
-    deliveredNotifications,
+    generationReceipts,
     notificationCutoff: record.notificationCutoff,
     executionMode: record.executionMode,
     settlementCoverage: record.settlementCoverage,
@@ -61,4 +66,32 @@ export function projectSubagentExecution(
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
+}
+
+export function projectSubagentGenerationReceipt(
+  notification: SubagentPendingNotification,
+  turn: Turn | null,
+  deliveryTurnId: string | null,
+): SubagentGenerationReceipt {
+  return {
+    generation: notification.generation,
+    turnId: notification.turnId,
+    terminalStatus: notification.status,
+    durationMs: turn?.durationMs ?? null,
+    error: notification.error,
+    partialOutputAvailable: turn !== null && turnTerminalAnswer(turn.items).trim().length > 0,
+    parentThreadId: notification.parentThreadId,
+    notificationState: presentationNotificationState(notification.state, notification.deliveryTurnId),
+    deliveryTurnId,
+  };
+}
+
+function presentationNotificationState(
+  state: SubagentPendingNotification['state'],
+  deliveryTurnId: string | null,
+): SubagentGenerationReceipt['notificationState'] {
+  // The ledger marks foreground settlement delivered so it is terminal and
+  // never enters the queue. Presentation must not turn that storage state into
+  // a claim that a parent notification existed.
+  return state === 'delivered' && deliveryTurnId === null ? 'none' : state;
 }

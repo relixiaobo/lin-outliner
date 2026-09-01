@@ -1830,6 +1830,23 @@
   white-space: nowrap;
 }
 
+.thread-agent-report-status {
+  max-width: 100%;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.thread-agent-report-status-failed {
+  color: var(--status-danger);
+}
+
+.thread-agent-report-status-interrupted,
+.thread-agent-report-status-killed {
+  color: var(--text-tertiary);
+}
+
 /* Says what the card does, in the slot the message actions hold everywhere
    else — the same height and the same row, so revealing it on hover moves
    nothing (B7) and a report ends exactly where any other message ends. */

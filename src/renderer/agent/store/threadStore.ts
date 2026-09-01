@@ -1310,8 +1310,8 @@ function subagentExecutionEqual(
       if (left.worktree?.path !== right.worktree?.path) return false;
       continue;
     }
-    if (key === 'deliveredNotifications') {
-      if (!deliveredNotificationsEqual(left.deliveredNotifications, right.deliveredNotifications)) return false;
+    if (key === 'generationReceipts') {
+      if (!generationReceiptsEqual(left.generationReceipts, right.generationReceipts)) return false;
       continue;
     }
     const field = key as keyof SubagentExecutionProjection;
@@ -1320,14 +1320,23 @@ function subagentExecutionEqual(
   return true;
 }
 
-function deliveredNotificationsEqual(
-  left: SubagentExecutionProjection['deliveredNotifications'],
-  right: SubagentExecutionProjection['deliveredNotifications'],
+function generationReceiptsEqual(
+  left: SubagentExecutionProjection['generationReceipts'],
+  right: SubagentExecutionProjection['generationReceipts'],
 ): boolean {
   if (left.length !== right.length) return false;
-  return left.every((delivery, index) => (
-    delivery.generation === right[index]?.generation
-    && delivery.deliveryTurnId === right[index]?.deliveryTurnId
+  return left.every((receipt, index) => (
+    receipt.generation === right[index]?.generation
+    && receipt.turnId === right[index]?.turnId
+    && receipt.terminalStatus === right[index]?.terminalStatus
+    && receipt.durationMs === right[index]?.durationMs
+    && receipt.error?.code === right[index]?.error?.code
+    && receipt.error?.messagePreview === right[index]?.error?.messagePreview
+    && receipt.error?.omittedBytes === right[index]?.error?.omittedBytes
+    && receipt.partialOutputAvailable === right[index]?.partialOutputAvailable
+    && receipt.parentThreadId === right[index]?.parentThreadId
+    && receipt.notificationState === right[index]?.notificationState
+    && receipt.deliveryTurnId === right[index]?.deliveryTurnId
   ));
 }
 

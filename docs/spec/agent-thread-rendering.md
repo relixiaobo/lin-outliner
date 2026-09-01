@@ -688,20 +688,20 @@ ANCHOR in it at the point where it happened:
   call the notification answers, so the conversation's anchors are the index
   that resolves it across Turns. Only the Turn's FIRST user-role Item is that
   notification: a steering message typed while the continuation is still running
-  is admitted into the same Turn and belongs to the reader. A delivery reads the
-  Agent's SETTLED Turns counted back from the newest, never forward from the
-  first — forwards, the two sequences line up only while nothing is missing from
-  either, and a notification the host never materialized slid every earlier card
-  silently onto a different run of the same Agent. History is fetched once per
-  Agent when the first report renders, since a message with nothing in it is not
-  a message;
+  is admitted into the same Turn and belongs to the reader. The delivery receipt
+  names the exact generation and canonical child Turn, so a missing or
+  non-materialized notification cannot shift an older card onto another run.
+  History is fetched once per Agent when the first report renders, since a
+  message with nothing in it is not a message;
 - a **stopped note** in place of the completion narration for an Agent the user
   stopped, naming the resume path.
 
-Terminal activity Items render nothing. The chip re-reads its Agent from the
-registry for that Agent's whole life, so the settled chip IS the live chip; a
-second row announcing the same settlement in a later Turn would be state the
-chip already shows, in a place the reader never asked about.
+Terminal activity Items render nothing. Every spawn and resume chip carries the
+generation identified by child Turn provenance. While that generation is live,
+the chip reads stable-Agent liveness; after it settles, the chip reads its
+immutable receipt. A historical failed or interrupted chip therefore stays
+factual while the same Agent works in a later generation. A second terminal row
+would duplicate the receipt in a place the reader never asked about.
 
 A chip carries the delegated form's glyph, the Agent's name, a worktree mark
 when it is isolated, and one trailing status segment; it shares the type ramp
@@ -721,6 +721,11 @@ delegation surface a chip speaks time and status only: no token quantity reaches
 its text, its title, or its accessible labels, and a failure carries the same
 bounded, code-classified copy the tool rows use, on its own wrapping line — a
 failure the chip had to truncate is a failure the reader cannot act on.
+Terminal chips and report cards state the run-scoped outcome, notification
+progress, and partial-output availability from the receipt. Report speaker
+metadata owns duration, so the card does not repeat it. Stable-Agent status such
+as `Working` remains ambient liveness in the work strip and never recolors or
+renames a historical outcome.
 
 The WORK STRIP is the only ambient status: one pill in the deck header, present
 only while this conversation has live or just-finished BACKGROUND Agents, that

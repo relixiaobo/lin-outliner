@@ -126,7 +126,10 @@ import {
   type SubagentExecutionRecord,
   type SubagentRecordedToolPolicy,
 } from './persistence/SubagentExecutionLedger';
-import { projectSubagentExecution } from './thread/subagentExecutionProjection';
+import {
+  projectSubagentExecution,
+  projectSubagentGenerationReceipt,
+} from './thread/subagentExecutionProjection';
 import type {
 AgentWorktreeMetadata,
 AgentWorktreeIntentInput,
@@ -1887,18 +1890,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
       // conversation for a delegation that never happened.
       .filter((record) => record.initialAdmissionState === 'committed')
       .sort((left, right) => left.createdAt - right.createdAt || left.agentId.localeCompare(right.agentId));
-    const deliveredByAgent = this.subagentExecutions.deliveredTerminalNotificationsForAgents(
+    const notificationsByAgent = this.subagentExecutions.terminalNotificationsForAgents(
       records.map((record) => record.agentId),
     );
     const data = records.map((record) => this.projectExecution(
       record,
-      deliveredByAgent.get(record.agentId) ?? [],
+      notificationsByAgent.get(record.agentId) ?? [],
     ));
     return { data };
   }
   private projectExecution(
     record: SubagentExecutionRecord,
-    deliveredNotifications = this.subagentExecutions.deliveredTerminalNotificationsForAgents([record.agentId])
+    notifications = this.subagentExecutions.terminalNotificationsForAgents([record.agentId])
       .get(record.agentId) ?? [],
   ): SubagentExecutionProjection {
     const terminal = this.subagentExecutions.terminalNotification(record.agentId, record.generation);
@@ -1911,21 +1914,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
           ),
       }
       : terminal;
-    const delivered = deliveredNotifications
-      .map((notification) => ({
-        generation: notification.generation,
-        deliveryTurnId: this.resolveDeliveryTurnId(
-          notification.parentThreadId,
-          notification.deliveryTurnId!,
-        ),
-      }))
-      .filter((notification): notification is { readonly generation: number; readonly deliveryTurnId: TurnId } => (
-        notification.deliveryTurnId !== null
-      ));
+    const receipts = notifications.map((notification) => projectSubagentGenerationReceipt(
+      notification,
+      this.core.readTurn(notification.agentId, notification.turnId),
+      notification.deliveryTurnId === null
+        ? null
+        : this.resolveDeliveryTurnId(notification.parentThreadId, notification.deliveryTurnId),
+    ));
     return projectSubagentExecution(
       record,
       resolvedTerminal,
-      delivered,
+      receipts,
     );
   }
 

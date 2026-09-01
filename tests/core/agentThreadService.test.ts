@@ -8822,6 +8822,19 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     fixture.executor.finish(2);
     await fixture.service.waitForIdle(isolated.thread.id);
 
+    expect(fixture.service.listThreadSubagents({ threadId: root.id }).data)
+      .toContainEqual(expect.objectContaining({
+        agentId: isolated.thread.id,
+        terminalStatus: 'finished',
+        notificationState: 'none',
+        generationReceipts: [expect.objectContaining({
+          generation: 1,
+          terminalStatus: 'finished',
+          notificationState: 'none',
+          deliveryTurnId: null,
+        })],
+      }));
+
     expect((await fixture.service.request('thread/descendants', { threadId: root.id })).data)
       .toEqual(expect.arrayContaining([expect.objectContaining({ id: child.thread.id })]));
     expect(fixture.service.subagentExecution(child.thread.id)).toMatchObject({
@@ -9731,7 +9744,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       coverageDisposition: null,
       omittedOutputBytes: 0,
       omittedOutputTokens: 0,
-      deliveredNotifications: [],
+      generationReceipts: [],
       notificationCutoff: 'open',
       notificationState: 'none',
       worktree: null,
@@ -9740,8 +9753,9 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     // policy or startup snapshot the renderer cannot render must not be
     // rendered by accident.
     expect(Object.keys(running[0]!).sort()).toEqual([
-      'agentId', 'agentType', 'coverageDisposition', 'createdAt', 'currentTurnId', 'deliveredNotifications',
+      'agentId', 'agentType', 'coverageDisposition', 'createdAt', 'currentTurnId',
       'deliveryClass', 'deliveryTurnId', 'description', 'eligibleAfterGeneration', 'executionMode', 'generation',
+      'generationReceipts',
       'notificationCutoff', 'notificationState', 'omittedOutputBytes', 'omittedOutputTokens',
       'parentThreadId', 'runMode', 'settlementCoverage', 'stopProvenance', 'terminalError',
       'terminalStatus', 'updatedAt', 'worktree',
@@ -9760,8 +9774,21 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     await waitUntil(() => (
       fixture.service.listThreadSubagents({ threadId: root.id }).data[0]?.notificationState === 'pending'
     ));
-    expect(fixture.service.listThreadSubagents({ threadId: root.id }).data[0]?.terminalStatus)
-      .toBe('finished');
+    const settled = fixture.service.listThreadSubagents({ threadId: root.id }).data[0];
+    expect(settled?.terminalStatus).toBe('finished');
+    expect(settled?.generationReceipts).toEqual([
+      expect.objectContaining({
+        generation: 1,
+        turnId: settled?.currentTurnId,
+        terminalStatus: 'finished',
+        durationMs: expect.any(Number),
+        error: null,
+        partialOutputAvailable: true,
+        parentThreadId: root.id,
+        notificationState: 'pending',
+        deliveryTurnId: null,
+      }),
+    ]);
 
     await fixture.service.interruptUserWork(root.id, rootTurn.turn.id);
     await fixture.service.waitForIdle(root.id);
@@ -9798,7 +9825,10 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     );
     await fixture.executor.waitUntilWaiting(1);
 
-    fixture.executor.finish(1, completedExecutionResult(1));
+    fixture.executor.finishWithText(1, 'Useful partial result', {
+      status: 'failed',
+      error: { message: 'Provider unavailable' },
+    });
     await fixture.service.waitForIdle(child.thread.id);
     fixture.executor.finish(0, completedExecutionResult(0));
     await fixture.service.waitForIdle(root.id);
@@ -9812,9 +9842,13 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     const firstDeliveryTurnId = fixture.stores.subagentExecutions
       .terminalNotification(child.thread.id, 1)?.deliveryTurnId;
     expect(firstDeliveryTurnId).toBeTruthy();
+    await fixture.service.close();
 
-    const firstGeneration = fixture.stores.subagentExecutions.generationSnapshot(child.thread.id);
-    expect(fixture.stores.subagentExecutions.beginNextGenerationIfCurrent({
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+
+    const firstGeneration = reopened.stores.subagentExecutions.generationSnapshot(child.thread.id);
+    expect(reopened.stores.subagentExecutions.beginNextGenerationIfCurrent({
       agentId: child.thread.id,
       expectedGeneration: firstGeneration.generation,
       expectedTurnId: firstGeneration.currentTurnId,
@@ -9826,16 +9860,23 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       updatedAt: fixture.clock(),
     })?.generation).toBe(2);
 
-    expect(fixture.service.listThreadSubagents({ threadId: root.id }).data[0]).toMatchObject({
+    expect(reopened.service.listThreadSubagents({ threadId: root.id }).data[0]).toMatchObject({
       agentId: child.thread.id,
       generation: 2,
       terminalStatus: null,
       deliveryTurnId: null,
-      deliveredNotifications: [
-        { generation: 1, deliveryTurnId: firstDeliveryTurnId },
+      generationReceipts: [
+        expect.objectContaining({
+          generation: 1,
+          deliveryTurnId: firstDeliveryTurnId,
+          terminalStatus: 'failed',
+          error: expect.objectContaining({ messagePreview: 'Provider unavailable' }),
+          partialOutputAvailable: true,
+          notificationState: 'delivered',
+        }),
       ],
     });
-    await fixture.service.close();
+    await reopened.service.close();
   });
 
   test('treats foreground Explore and Plan raw IDs as missing Agent targets', async () => {

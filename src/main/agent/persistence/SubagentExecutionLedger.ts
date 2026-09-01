@@ -2270,8 +2270,9 @@ export class SubagentExecutionLedger {
   /**
    * How one generation ended, and where its result stands with the parent.
    *
-   * Recorded for background generations only — a foreground result travels
-   * back through the `agent` call itself and never becomes a queued envelope.
+   * Every terminal generation has a row. A foreground result travels back
+   * through the `agent` call itself, so its row is settled immediately and
+   * never becomes a queued envelope.
    */
   terminalNotification(agentId: ThreadId, generation: number): SubagentPendingNotification | null {
     if (this.deletedAgentIds.has(agentId)) return null;
@@ -2282,16 +2283,14 @@ export class SubagentExecutionLedger {
     return row ? notificationFromRow(row) : null;
   }
 
-  deliveredTerminalNotificationsForAgents(
+  terminalNotificationsForAgents(
     agentIds: readonly ThreadId[],
   ): ReadonlyMap<ThreadId, readonly SubagentPendingNotification[]> {
     const liveAgentIds = [...new Set(agentIds)].filter((agentId) => !this.deletedAgentIds.has(agentId));
     if (liveAgentIds.length === 0) return new Map();
     const rows = this.db.prepare(`
       SELECT * FROM subagent_generation_notifications
-      WHERE state = 'delivered'
-        AND delivery_turn_id IS NOT NULL
-        AND agent_id IN (${liveAgentIds.map(() => '?').join(', ')})
+      WHERE agent_id IN (${liveAgentIds.map(() => '?').join(', ')})
       ORDER BY agent_id, generation
     `).all(...liveAgentIds) as unknown as NotificationRow[];
     const grouped = new Map<ThreadId, SubagentPendingNotification[]>();

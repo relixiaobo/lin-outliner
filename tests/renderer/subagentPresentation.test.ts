@@ -3,6 +3,7 @@ import type {
   AgentTaskToolName,
   SubAgentActivityThreadItem,
   SubagentExecutionProjection,
+  SubagentGenerationReceipt,
   Thread,
   ThreadItem,
   Turn,
@@ -39,8 +40,12 @@ describe('Agent registry projection', () => {
     });
     // Both Turns anchor the SAME Agent: the spawn where it was delegated, the
     // resume where it was steered again.
-    expect(anchorList(projection, 'turn-1')).toEqual([{ kind: 'spawn', agentId: CHILD_ID, itemId: 'spawn' }]);
-    expect(anchorList(projection, 'turn-2')).toEqual([{ kind: 'resume', agentId: CHILD_ID, itemId: 'resume-call' }]);
+    expect(anchorList(projection, 'turn-1')).toEqual([{
+      kind: 'spawn', agentId: CHILD_ID, itemId: 'spawn', generation: 2,
+    }]);
+    expect(anchorList(projection, 'turn-2')).toEqual([{
+      kind: 'resume', agentId: CHILD_ID, itemId: 'resume-call', generation: null,
+    }]);
   });
 
   test('collapses the delegating call into its chip and drops terminal activity entirely', () => {
@@ -66,7 +71,9 @@ describe('Agent registry projection', () => {
     const projection = projectSubagentConversation(input({ turnsByThread: new Map([[PARENT_ID, [turn]]]) }));
 
     expect(projection.anchorsByTurnId.get('turn-1')?.items.map((item) => item.id)).toEqual(['spawn']);
-    expect(anchorList(projection, 'turn-1')).toEqual([{ kind: 'spawn', agentId: CHILD_ID, itemId: 'spawn' }]);
+    expect(anchorList(projection, 'turn-1')).toEqual([{
+      kind: 'spawn', agentId: CHILD_ID, itemId: 'spawn', generation: 1,
+    }]);
   });
 
   test('leaves a message to the conversation itself unanchored', () => {
@@ -101,13 +108,13 @@ describe('Agent registry projection', () => {
           terminalStatus: 'finished',
           notificationState: 'delivered',
           deliveryTurnId: 'turn-2',
-          deliveredNotifications: [{ generation: 1, deliveryTurnId: 'turn-2' }],
+          generationReceipts: [receipt({ deliveryTurnId: 'turn-2' })],
         }),
       ]),
     }));
 
     expect(projection.deliveryByTurnId.get('turn-2'))
-      .toEqual({ agentId: CHILD_ID, generationIndex: 0, fromLatest: 0 });
+      .toEqual({ agentId: CHILD_ID, generation: 1 });
     expect(projection.deliveryByTurnId.get('turn-1')).toBeUndefined();
   });
 
@@ -127,9 +134,9 @@ describe('Agent registry projection', () => {
           terminalStatus: 'finished',
           notificationState: 'delivered',
           deliveryTurnId: 'turn-4',
-          deliveredNotifications: [
-            { generation: 1, deliveryTurnId: 'turn-2' },
-            { generation: 2, deliveryTurnId: 'turn-4' },
+          generationReceipts: [
+            receipt({ generation: 1, turnId: 'child-turn-1', deliveryTurnId: 'turn-2' }),
+            receipt({ generation: 2, turnId: 'child-turn-2', deliveryTurnId: 'turn-4' }),
           ],
         }),
       ]),
@@ -138,9 +145,46 @@ describe('Agent registry projection', () => {
     // The ledger owns delivery identity for every delivered generation, not
     // only for the stable Agent record's current generation.
     expect(projection.deliveryByTurnId.get('turn-2'))
-      .toEqual({ agentId: CHILD_ID, generationIndex: 0, fromLatest: 1 });
+      .toEqual({ agentId: CHILD_ID, generation: 1 });
     expect(projection.deliveryByTurnId.get('turn-4'))
-      .toEqual({ agentId: CHILD_ID, generationIndex: 1, fromLatest: 0 });
+      .toEqual({ agentId: CHILD_ID, generation: 2 });
+  });
+
+  test('anchors each historical event to its immutable generation receipt after resume', () => {
+    const spawn = activity('spawn', 'started', null, 'agent-call', 'child-turn-1');
+    const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
+    const resumeTurn = parentTurn('turn-3', [collaborationItem('resume-call', 'agent_message', 'completed', CHILD_ID)]);
+    const firstChildTurn = childTurn('child-turn-1', 'failed', 100);
+    const secondChildTurn: Turn = {
+      ...childTurn('child-turn-2', 'inProgress', 200),
+      provenance: {
+        originThreadId: CHILD_ID,
+        originTurnId: 'child-turn-2',
+        trigger: { kind: 'subagent', parentThreadId: PARENT_ID, parentItemId: 'resume-call' },
+      },
+    };
+    const projection = projectSubagentConversation(input({
+      turnsByThread: new Map([
+        [PARENT_ID, [spawnTurn, resumeTurn]],
+        [CHILD_ID, [firstChildTurn, secondChildTurn]],
+      ]),
+      latestTurnByThread: new Map([[CHILD_ID, secondChildTurn]]),
+      executions: executionMap([execution({
+        generation: 2,
+        currentTurnId: secondChildTurn.id,
+        generationReceipts: [receipt({
+          generation: 1,
+          turnId: firstChildTurn.id,
+          terminalStatus: 'failed',
+        })],
+      })]),
+    }));
+
+    expect(anchorList(projection, spawnTurn.id)[0]).toMatchObject({ generation: 1 });
+    expect(anchorList(projection, resumeTurn.id)[0]).toMatchObject({ generation: 2 });
+    expect(projection.byAgentId.get(CHILD_ID)).toMatchObject({ generation: 2, status: 'running' });
+    expect(projection.byAgentId.get(CHILD_ID)?.generationReceipts.get(1))
+      .toMatchObject({ terminalStatus: 'failed', turnId: firstChildTurn.id });
   });
 
   test('never reads an Agent\'s own delegated Turn as its own result arriving', () => {
@@ -427,6 +471,21 @@ function executionMap(
   return new Map(executions.map((execution) => [execution.agentId, execution]));
 }
 
+function receipt(overrides: Partial<SubagentGenerationReceipt> = {}): SubagentGenerationReceipt {
+  return {
+    generation: 1,
+    turnId: 'child-turn',
+    terminalStatus: 'finished',
+    durationMs: 10,
+    error: null,
+    partialOutputAvailable: true,
+    parentThreadId: PARENT_ID,
+    notificationState: 'delivered',
+    deliveryTurnId: 'turn-2',
+    ...overrides,
+  };
+}
+
 function execution(overrides: Partial<SubagentExecutionProjection> = {}): SubagentExecutionProjection {
   return {
     agentId: CHILD_ID,
@@ -446,7 +505,7 @@ function execution(overrides: Partial<SubagentExecutionProjection> = {}): Subage
     coverageDisposition: null,
     omittedOutputBytes: 0,
     omittedOutputTokens: 0,
-    deliveredNotifications: [],
+    generationReceipts: [],
     notificationCutoff: 'open',
     executionMode: 'ordinary',
     settlementCoverage: null,

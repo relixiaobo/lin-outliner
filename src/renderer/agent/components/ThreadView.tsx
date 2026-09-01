@@ -3565,6 +3565,9 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     && isStandaloneContextBoundaryTurn(turn);
   // The child that delivered into this Turn, if any: it speaks its own report.
   const reportEntry = useSubagentEntry(delivery?.agentId ?? null);
+  const reportReceipt = delivery === null
+    ? null
+    : reportEntry?.generationReceipts.get(delivery.generation) ?? null;
   const deliveryNoticeItemId = delivery === null
     ? null
     : turn.items.find((item) => (
@@ -3580,17 +3583,17 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       // The delegate signs its report with how the run ended: a smile for a
       // result, drooped eyes for an error, closed ones when the reader stopped
       // it. The card states the same facts in words; the face only restates.
-      mood: reportEntry.error !== null ? 'failed'
-        : reportEntry.stoppedByUser ? 'stopped'
+      mood: reportReceipt?.terminalStatus === 'failed' ? 'failed'
+        : reportReceipt?.terminalStatus === 'interrupted' || reportReceipt?.terminalStatus === 'killed' ? 'stopped'
           : 'done',
     }
     : null;
   // A delivering child's header states ITS OWN span, not this conversation's:
   // the Turn around it is the parent reading the result, which took no time at
   // all next to the work being reported.
-  const reportMeta: ReactNode = reportEntry?.durationMs == null ? null : (
+  const reportMeta: ReactNode = reportReceipt?.durationMs == null ? null : (
     <span className="thread-speaker-meta">
-      {t.agent.thread.workedFor({ duration: formatProcessDuration(reportEntry.durationMs) })}
+      {t.agent.thread.workedFor({ duration: formatProcessDuration(reportReceipt.durationMs) })}
     </span>
   );
   const workingAgentIds = useWorkingAgentIds();

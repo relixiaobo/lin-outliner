@@ -36,7 +36,7 @@ describe('Agent chip elapsed ticking', () => {
         actions={{ openAgent: () => undefined, stopAgent: null }}
         byAgentId={new Map<ThreadId, SubagentRegistryEntry>([[entry.agentId, entry]])}
       >
-        <SubagentChip agentId={entry.agentId} fallbackName="survey" kind="spawn" />
+        <SubagentChip agentId={entry.agentId} fallbackName="survey" generation={null} kind="spawn" />
         <TranscriptFixture onRender={() => { transcriptRenders += 1; }} />
       </SubagentRegistryProvider>
     ));
@@ -71,7 +71,7 @@ describe('Agent chip elapsed ticking', () => {
         actions={{ openAgent: () => undefined, stopAgent: null }}
         byAgentId={new Map<ThreadId, SubagentRegistryEntry>([[entry.agentId, entry]])}
       >
-        <SubagentChip agentId={entry.agentId} fallbackName="survey" kind="spawn" />
+        <SubagentChip agentId={entry.agentId} fallbackName="survey" generation={null} kind="spawn" />
       </SubagentRegistryProvider>
     ));
     const settled = document.querySelector('.thread-agent-chip-meta')?.textContent;
@@ -100,6 +100,7 @@ function runningEntry(startedAt: number): SubagentRegistryEntry {
     form: 'agent',
     runMode: 'background',
     generation: 1,
+    generationReceipts: new Map(),
     status: 'running',
     stoppedByUser: false,
     startedAt,

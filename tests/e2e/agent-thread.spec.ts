@@ -3561,7 +3561,7 @@ test.describe('canonical agent Thread surface', () => {
     await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Thread Details' }).click();
     const details = page.getByRole('dialog', { name: 'Thread Details' });
     await expect(details.locator('.thread-details-subagent')).toHaveCount(3);
-    await expect(details.getByRole('button', { name: 'Open live worker' })).toContainText('Running');
+    await expect(details.getByRole('button', { name: 'Open live worker' })).toContainText('Working');
     await expect(details.getByRole('button', { name: 'Open finished worker' })).toContainText('Idle');
     // Idle is not finished: this child is holding work the parent handed over.
     await expect(details.getByRole('button', { name: 'Open queued worker' })).toContainText('Work queued');
@@ -3583,7 +3583,7 @@ test.describe('canonical agent Thread surface', () => {
     await confirm.getByRole('button', { name: 'Delete Thread' }).click();
     // Nothing was deleted: every child was busy by the time it was confirmed.
     await expect(details.locator('.thread-details-subagent')).toHaveCount(3);
-    await expect(details.getByRole('button', { name: 'Open finished worker' })).toContainText('Running');
+    await expect(details.getByRole('button', { name: 'Open finished worker' })).toContainText('Working');
 
     // Now let it settle and sweep for real.
     await page.evaluate(() => {
@@ -4240,8 +4240,8 @@ test.describe('canonical agent Thread surface', () => {
         }],
         itemsView: 'full',
         provenance: childProvenance,
-        status: 'completed',
-        error: null,
+        status: 'failed',
+        error: { message: 'Provider unavailable', code: 'runtime_failure' },
         startedAt,
         completedAt: startedAt + 2_000,
         durationMs: 2_000,
@@ -4321,11 +4321,11 @@ test.describe('canonical agent Thread surface', () => {
               originTurnId: deliveryTurnId,
               originItemId: settledActivityId,
             },
-            kind: 'completed',
+            kind: 'errored',
             agentThreadId: childId,
             agentTurnId: childTurnId,
             agentPath: '/root/research',
-            error: null,
+            error: { message: 'Provider unavailable', code: 'runtime_failure' },
             spawnItemId: null,
           },
           {
@@ -4403,13 +4403,18 @@ test.describe('canonical agent Thread surface', () => {
         turn: deliveryTurn,
       });
       target.__LIN_E2E__?.setMockSubagentExecution(childId, {
-        terminalStatus: 'finished',
+        terminalStatus: 'failed',
         notificationState: 'delivered',
+        terminalError: {
+          code: 'provider_failure',
+          messagePreview: 'Provider unavailable',
+          omittedBytes: 0,
+        },
         deliveryTurnId,
         deliveryClass: 'ordinary',
         coverageDisposition: 'full',
       });
-      return { childId, deliveryTurnId, parentThreadId };
+      return { childId, childTurnId, deliveryTurnId, parentThreadId, startedAt };
     });
 
     // The conversation is still the narrative: the main agent's prose is the
@@ -4426,6 +4431,11 @@ test.describe('canonical agent Thread surface', () => {
     // agent that read the result and answered — and says so.
     const report = deliveryTurn.locator('.thread-agent-report');
     await expect(report).toContainText('The rollout order is safe.');
+    await expect(report.locator('.thread-agent-report-status')).toContainText('This run failed');
+    await expect(report.locator('.thread-agent-report-status')).toContainText('main notified');
+    await expect(report.locator('.thread-agent-report-status')).toContainText('Partial output available');
+    await expect(report.locator('.thread-agent-report-status')).not.toContainText('2s');
+    await expect(page.locator('.thread-turn-failed')).toHaveCount(0);
     // Exactly two speakers, in order. The Turn opens with Items that draw
     // nothing — the settled activity row, the context evidence — and a named
     // `main` standing over that empty box, before the child that actually
@@ -4582,6 +4592,71 @@ test.describe('canonical agent Thread surface', () => {
     }, fixture);
     await expect(deliveryTurn.locator('.thread-agent-report')).toHaveCount(1);
     await expect(deliveryTurn.locator('.thread-user-message')).toContainText('Also check the changelog.');
+
+    // The stable Agent starts another generation, but the historical report
+    // remains a receipt for generation one rather than adopting live state.
+    await page.evaluate((ids) => {
+      const target = window as Window & {
+        __LIN_E2E__?: {
+          emitAgentCoreNotification: (n: unknown) => void;
+          setMockSubagentExecution: (agentId: string, patch: Record<string, unknown>) => void;
+          setMockThreadActive: (threadId: string, active: boolean) => void;
+        };
+      };
+      const secondTurnId = '01910000-0000-7000-8000-000000004a13';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: ids.childId,
+        turnId: secondTurnId,
+        turn: {
+          id: secondTurnId,
+          items: [],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: ids.childId,
+            originTurnId: secondTurnId,
+            trigger: {
+              kind: 'subagent',
+              parentThreadId: ids.parentThreadId,
+              parentItemId: '01910000-0000-7000-8000-000000004a14',
+            },
+          },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      target.__LIN_E2E__?.setMockThreadActive(ids.childId, true);
+      target.__LIN_E2E__?.setMockSubagentExecution(ids.childId, {
+        generation: 2,
+        currentTurnId: secondTurnId,
+        terminalStatus: null,
+        notificationState: 'none',
+        terminalError: null,
+        deliveryTurnId: null,
+        generationReceipts: [{
+          generation: 1,
+          turnId: ids.childTurnId,
+          terminalStatus: 'failed',
+          durationMs: 2_000,
+          error: {
+            code: 'provider_failure',
+            messagePreview: 'Provider unavailable',
+            omittedBytes: 0,
+          },
+          partialOutputAvailable: true,
+          parentThreadId: ids.parentThreadId,
+          notificationState: 'delivered',
+          deliveryTurnId: ids.deliveryTurnId,
+        }],
+      });
+    }, fixture);
+    await expect(report.locator('.thread-agent-report-status')).toContainText('This run failed');
+    await expect(report.locator('.thread-agent-report-status')).not.toContainText('Working');
+    await page.locator('.thread-work-strip-pill').click();
+    await expect(page.locator('.thread-work-strip-row')).toContainText('Working');
 
     // Depth beyond the report is the detail view, one push away — the whole
     // card is the control that gets there.

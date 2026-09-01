@@ -1211,10 +1211,17 @@ export interface SubagentWorktreeSummary {
   readonly path: string;
 }
 
-/** One background generation whose result has reached its parent Turn. */
-export interface SubagentDeliveredNotificationProjection {
+/** Immutable presentation receipt for one terminal delegated generation. */
+export interface SubagentGenerationReceipt {
   readonly generation: number;
-  readonly deliveryTurnId: TurnId;
+  readonly turnId: TurnId;
+  readonly terminalStatus: SubagentTerminalStatus;
+  readonly durationMs: number | null;
+  readonly error: SubagentTerminalError | null;
+  readonly partialOutputAvailable: boolean;
+  readonly parentThreadId: ThreadId;
+  readonly notificationState: SubagentNotificationState;
+  readonly deliveryTurnId: TurnId | null;
 }
 
 /**
@@ -1238,10 +1245,9 @@ export interface SubagentExecutionProjection {
   readonly currentTurnId: TurnId;
   readonly stopProvenance: SubagentStopProvenance;
   /**
-   * How this generation ended, recorded when its result was queued for the
-   * parent. Durable, so a conversation reopened later states the outcome
-   * without reloading every child's Turns; `null` while the generation runs,
-   * and for foreground work, whose result travels back through its own call.
+   * How this generation ended, recorded at terminal settlement. Durable, so a
+   * conversation reopened later states the outcome without first loading the
+   * child's Turns; `null` only while the generation runs.
    */
   readonly terminalStatus: SubagentTerminalStatus | null;
   readonly notificationState: SubagentNotificationState;
@@ -1253,11 +1259,8 @@ export interface SubagentExecutionProjection {
   readonly coverageDisposition: SubagentCoverageDisposition | null;
   readonly omittedOutputBytes: number;
   readonly omittedOutputTokens: number;
-  /**
-   * Delivered background generations for this stable Agent, including earlier
-   * generations after a later resume advances the execution record.
-   */
-  readonly deliveredNotifications: readonly SubagentDeliveredNotificationProjection[];
+  /** Terminal facts for every recorded generation, immutable across resume. */
+  readonly generationReceipts: readonly SubagentGenerationReceipt[];
   readonly notificationCutoff: SubagentNotificationCutoff;
   readonly executionMode: SubagentExecutionMode;
   readonly settlementCoverage: SubagentSettlementCoverage | null;
