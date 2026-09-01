@@ -11,10 +11,10 @@ const SELF = 'tests/core/agentCodexLegacyResidue.test.ts';
 // plans under `plans/archive/` are covered by the prefix rule below. Active
 // code, tests, and specs have no such exception.
 const PLANS_WITH_SCOPED_LEGACY_ASSERTIONS = new Set([
-  'docs/plans/reference/agent-conversation-model.md',
-  'docs/plans/reference/agent-data-model.md',
+  'docs/plans/archive/agent-conversation-model.md',
+  'docs/plans/archive/agent-data-model.md',
   'docs/plans/reference/agent-memory-foundations.md',
-  'docs/plans/reference/agent-program.md',
+  'docs/plans/archive/agent-program.md',
 ]);
 
 const LEGACY_PATTERNS: ReadonlyArray<{ readonly label: string; readonly pattern: RegExp }> = [

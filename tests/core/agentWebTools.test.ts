@@ -284,7 +284,6 @@ describe('agent web tools', () => {
         },
         mimeType: 'application/pdf',
         byteLength: 1234,
-        sha256: 'a'.repeat(64),
       },
     };
 
@@ -294,7 +293,7 @@ describe('agent web tools', () => {
     expect(envelope.data).toMatchObject({
       mode: 'read',
       format: 'markdown',
-      content: `Binary content stored as resource ${'a'.repeat(64)}. The current readable path is /tmp/thread-observations/webfetch-test.pdf. Use file_read on this path when you need to inspect supported files such as PDFs or images.`,
+      content: 'Binary content stored as webfetch-test.pdf. The current readable path is /tmp/thread-observations/webfetch-test.pdf. Use file_read on this path when you need to inspect supported files such as PDFs or images.',
       binaryFile: {
         filePath: '/tmp/thread-observations/webfetch-test.pdf',
         resourceRef: {
@@ -309,6 +308,7 @@ describe('agent web tools', () => {
       truncated: false,
     });
     expect(envelope.instructions).toContain('file_read');
+    expect(envelope.data!.content).not.toContain('a'.repeat(64));
   });
 });
 
@@ -462,7 +462,7 @@ describe('web tool model-visible projections', () => {
     });
   });
 
-  test('web_fetch binary exposes durable identity, metadata, and the current readable handle', () => {
+  test('web_fetch binary exposes display metadata and the current readable handle without Host identity', () => {
     const resourceRef = {
       id: 'b'.repeat(64),
       mimeType: 'application/pdf',
@@ -481,7 +481,6 @@ describe('web tool model-visible projections', () => {
         resourceRef,
         mimeType: 'application/pdf',
         byteLength: 1234,
-        sha256: 'abc',
       },
       truncated: false,
     };
@@ -489,11 +488,11 @@ describe('web tool model-visible projections', () => {
     expect(webFetchModelData(data)).toEqual({
       binaryFile: {
         filePath: '/tmp/x.pdf',
-        resourceRef,
+        fileName: 'x.pdf',
         mimeType: 'application/pdf',
         byteLength: 1234,
-        sha256: 'abc',
       },
     });
+    expect(JSON.stringify(webFetchModelData(data))).not.toContain(resourceRef.id);
   });
 });

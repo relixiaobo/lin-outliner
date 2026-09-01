@@ -125,7 +125,7 @@ describe('agent tool result persistence', () => {
     const filePath = '/scratch/current-turn/report.pdf';
     const temporaryOutputPath = '/scratch/current-turn/task.log';
     const resourceRef = {
-      id: 'c'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000c',
       mimeType: 'application/pdf',
       byteLength: 123,
       fileName: 'report.pdf',
@@ -233,16 +233,16 @@ function generatedArtifact() {
     createdAt: 1,
     retention: 'tiered',
     original: {
-      kind: 'threadPayload',
+      kind: 'resource',
       ref: {
-        id: 'a'.repeat(64),
+        id: 'resource:00000000-0000-4000-8000-00000000000a',
         mimeType: 'image/png',
         byteLength: 123,
         fileName: 'original.png',
       },
     },
     observation: {
-      id: 'b'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000b',
       mimeType: 'image/png',
       byteLength: 100,
       fileName: 'prompt.png',

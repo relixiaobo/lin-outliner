@@ -140,7 +140,11 @@ including `internalTextRefs: []`; the codec rejects pre-manifest Items instead o
 the field. This pre-release storage-format change requires a clean userData reset and has no
 compatibility reader.
 Lifecycle operations use that canonical dependency graph instead of parsing
-payload-private JSON. A tool Item whose canonical
+payload-private JSON. Context, internal-text, diagnostics, and complete-output
+dependencies remain Thread-owned payloads. Resource dependencies instead link an
+opaque Agent reference into the Thread working set; fork, rollback, deletion, and
+startup reconciliation add or remove links and ContentStore retention anchors without
+copying exact bytes. A tool Item whose canonical
 arguments exceed the 32 KiB inline bound owns its `toolCallArguments` reference and
 deduplicated `internalTextRefs` directly; those references participate in the same
 reachability, fork-copy, rollback, quota, deletion, and startup reconciliation graph.
@@ -150,13 +154,14 @@ content-addressed, strict UTF-8 internal-text dependency. Binding references mus
 the Item-declared dependency set exactly. Missing, corrupt, extra, duplicate, or
 mismatched dependencies make the complete argument value unavailable rather than
 yielding a partial reconstruction.
-Tool Item `resourceRefs` enter that same generic managed-resource graph directly,
-including when nested inside inherited-context payloads. Tool-owned `image/*` files are
-ordinary resources rather than image-artifact renditions, so pressure retention cannot
-reclaim them while their Item remains reachable.
+Tool Item `resourceRefs` enter the canonical Agent reference graph directly, including
+when nested inside inherited-context payloads. A public reference contains only an
+opaque `resource:<uuid>` identity plus MIME type, byte length, and safe display name.
+Digest, anchor, source scope, source locator, and ContentStore paths remain Host-private.
+Tool-owned `image/*` files are ordinary references rather than a distinct file class.
 Every admitted image has one immutable `ThreadImageArtifactReference`. The reference
 contains a stable artifact id, creation time, retention class, optional original source,
-mandatory Thread-owned observation, and geometry mapping observation pixels to the
+mandatory exact observation reference, and geometry mapping observation pixels to the
 admitted source plane. Image attachments keep their ordinary file source for file
 semantics and add an `artifactRef`; dynamic-tool image content stores only its
 `artifactRef` and optional alt text. Paths are access handles, never image identity.
@@ -168,19 +173,15 @@ at ingress to at most 2,000 px per edge and 4.5 MiB, then content-addressed befo
 image enters canonical history. Provider projection always reads that observation.
 Missing original bytes fall back to the observation; missing observation bytes produce
 an unavailable-image identity and do not invalidate the surrounding Item, Turn, fork,
-or inherited-context copy. Available image renditions are copied into a fork without
-rewriting the immutable artifact reference; absent renditions are skipped. Ordinary
-managed dependencies not used exclusively as artifact renditions remain protected from
-image-retention reclamation, including referenced Outliner resources whose MIME type is
-`image/*`. Resource-role classification recursively reads inherited-context payloads and
-treats a missing or corrupt payload's declared resources as protected. Unavailable bytes
-degrade at runtime through the same inspection-payload policy above.
+or inherited context. A fork links the same canonical references and exact ContentStore
+revisions; it never copies a rendition or rewrites the immutable artifact reference.
+Unavailable bytes degrade at runtime through the same inspection-payload policy above.
 
 Generic tool-output images are admitted as bounded provider-visible snapshots: at most
 16 images, 10 MiB of source data per image, and 20 MiB of source data per call, with
 strict base64 and image-MIME validation at the tool-result boundary. Each accepted image
-then passes through the common 2,000 px / 4.5 MiB observation normalizer and is
-content-addressed in the Thread resource store. The persistence boundary verifies that
+then passes through the common 2,000 px / 4.5 MiB observation normalizer and is admitted
+as an exact revision in the shared ContentStore. The persistence boundary verifies that
 the returned MIME type and geometry match the normalized bytes.
 Typed Thread quota and filesystem-capacity errors degrade to `quotaExceeded`; unrelated
 storage failures retain their identity. Generated-image originals are not tool-output
@@ -257,6 +258,17 @@ developer instructions, and capability ceilings remain host-private. Feature
 and child Threads have no renderer-editable configuration. A fork inherits the
 source Thread's effective execution selection.
 
+An ordinary renderer-created root receives a Host-managed workspace at
+`<userData>/agent/workspaces/<root-thread-id>`; the renderer does not submit a
+`cwd`. Descendants inherit the root binding unless an explicit worktree overlay is
+active. Explicit project and automation roots remain supported and are registered as
+separate source scopes. Deleting a managed root drains descendants and pending citation
+capture before removing only that workspace container. An explicit-cwd root never owns
+that directory, so Thread deletion leaves it untouched. Workspace cleanup happens after
+the metadata commit; a cleanup failure is logged for maintenance and does not turn the
+already-committed deletion into a failed user action. Exact revisions retained by other
+links and user-managed external sources survive.
+
 An `AgentRole` configures a child Thread. The model-visible built-in Agent types
 are `general-purpose`, `explore`, and `plan`, backed respectively by hidden
 `default`, `explorer`, and `plan` Roles. User and project Roles extend the Agent
@@ -310,7 +322,8 @@ Starting a Turn follows this order:
    when it is still empty, and allocate the Turn and initial user Item identities.
 3. Commit extension admission snapshots under the relevant barriers.
 4. Resolve main-owned environment, user view, Skill discovery, additional context,
-   and explicitly referenced Node resources into Thread-owned payloads.
+   and explicitly referenced Node resources into canonical payloads and Agent resource
+   links.
 5. Persist one `turn/started` event containing every already-complete evidence Item
    followed by the user Item in canonical order.
 6. Return acceptance before starting model side effects.
@@ -492,12 +505,13 @@ separate explicit capability with preview, conflict detection, and its own audit
 record.
 
 Forked user Items retain `author` and `acceptedAt`. Context cursors are rewritten to the copied
-Turn/Item identities. Every context payload and every dependency listed by the owning
-Item's `contextRefs`, `internalTextRefs`, `resourceRefs`, and `outputRefs` is copied into the fork before
-publication, including a tool Item's canonical argument payload; failure deletes the
-staged fork. The copied Thread therefore remains
-readable after its source is deleted. Content-addressed resource references do not
-contain a Thread path and remain unchanged in the copied Items and payloads. Every
+Turn/Item identities. Every Thread-owned payload listed by the owning Item's
+`contextRefs`, `internalTextRefs`, and `outputRefs` is copied into the fork before
+publication, including a tool Item's canonical argument payload. Each `resourceRef` is
+linked to the fork without copying its exact bytes. Failure deletes the staged fork.
+The copied Thread therefore remains readable after its source is deleted. Opaque
+resource references contain no Thread path and remain unchanged in copied Items and
+payloads. Every
 terminal Turn's diagnostics payload is copied under the fork's ownership with the same
 content-addressed reference before publication, so Trajectory and audited diagnostics remain readable
 after source deletion.
@@ -511,6 +525,7 @@ agent/
   state.sqlite
   thread_history.sqlite
   goals.sqlite
+  resource_references.sqlite
   rollouts/
     <thread-id>.jsonl
   payloads/
@@ -520,18 +535,26 @@ agent/
         <content-hash>.json
       turn-diagnostics/
         <content-hash>.json
-      resources/
-        <content-hash>/
-          <safe-display-name>
+  workspaces/
+    <root-thread-id>/
+  scratch/
+    uploads/
+content/
+thread-transcripts/
+  <thread-id>.md
 ```
 
 `state.sqlite` is the Thread catalog and configuration snapshot.
 `thread_history.sqlite` is a rebuildable pagination projection. `goals.sqlite`
-owns Goal state. Each persistent Thread owns one append-only rollout JSONL as
-the history source of truth. Complete textual tool outputs, managed attachment inputs,
-image-artifact renditions, semantic context payloads, and immutable Turn diagnostics live in
-the Thread-owned payload directory; canonical Items and terminal Turn execution retain
-typed content-addressed references.
+owns Goal state. `resource_references.sqlite` owns Agent reference records, source
+scopes, Thread links, and final-citation bindings. Each persistent Thread owns one
+append-only rollout JSONL as the history source of truth. Complete textual tool outputs,
+semantic context payloads, private internal text, and immutable Turn diagnostics remain
+in the Thread-owned payload directory. Exact file revisions live once under the neutral
+app-level `content/` store and are retained by Host-private anchors. Ordinary root
+conversations use `agent/workspaces/<root-thread-id>`; children inherit that binding.
+Uploads and disposable observations use `agent/scratch`; readable transcripts remain
+independent rebuildable artifacts under `thread-transcripts/`.
 Decoded Thread catalog records use a 256-entry in-process LRU shared by single,
 batch, and list reads, so repeated notification admission does not decode or
 select unchanged metadata. Every `threads` row write invalidates through one
@@ -626,9 +649,9 @@ process at launch even though reconciliation had already caught the same failure
 Context writes
 canonicalize through the Core codec before hashing. Context and text reads/copies
 verify digest and byte length, while text also selects storage by the referenced
-MIME type. Managed input admission reserves quota before
-writing, stages chunks under a non-canonical `.staging` directory, and publishes
-only a complete digest-verified resource. Failed content admission immediately
+MIME type. Managed input admission reserves quota before writing, stages chunks under
+`agent/scratch/uploads`, and publishes only a complete exact revision plus opaque Agent
+reference. Failed content admission immediately
 removes image observations created by that attempt unless canonical history already
 references them. Execution-time context publication writes the payload and its Item
 under the Thread mutex; failed publication and Turn terminalization prune any context
@@ -678,71 +701,61 @@ against the admission schema: a compatible copy becomes `redactedReplay`; an
 incompatible copy becomes executed `evidenceOnly`, while the validated transient source
 call may still run. Evidence provider names, corrections, and argument summaries have
 independent UTF-8 bounds, and malformed redaction pointers fail at the
-codec boundary. Cleanup boundaries decode canonical Turns once into shared resource,
+codec boundary. Cleanup boundaries decode canonical Turns once into resource,
 context-payload, diagnostics, and text-output reference sets. Turn finalization first
-takes the resource-reference snapshot and reclaims newly written tool images that no
+takes the resource-reference snapshot and unlinks newly written resources that no
 terminal Item references. It then refreshes the canonical payload-reference snapshot
 once and prunes contexts and diagnostics in parallel, so canonical appends during the
-resource cleanup are visible to both payload pruners. Startup reconciliation handles
-crash leftovers.
+resource cleanup are visible to both payload pruners. Startup rebuilds Thread links from
+canonical history, releases orphan reference records and anchors, and reconciles anchor
+metadata with ContentStore before collection. Link removal and orphan collection run
+only after every known non-quarantined Thread has produced a readable reference
+snapshot. A quarantined or unreadable Thread makes that snapshot incomplete, so startup
+only adds proven-live links and conservatively retains all existing links, records, and
+exact bytes for a later reconciliation.
 
 A history rollback reclaims contexts, Turn diagnostics, tool text outputs, and tool
 artifacts against surviving history. Managed resources referenced by removed
 `userMessage` Items are the exception: Edit and Retry re-send that exact user content,
 so its attachments remain temporarily reachable through the admission that follows.
 Tool output and generated context are not re-sent; once their Item owner is removed,
-their resources are reclaimed immediately. What neither surviving history nor removed
-user content references is garbage no re-send can reach. Every
-resource operation requires each managed path component to be a physical directory;
-symbolic-link substitution
-fails closed, including during quota scans, startup cleanup, and garbage
-collection. Successful writes cache file identity and digest in memory. A cold
-read or any inode, size, ctime, or mtime change streams SHA-256 again before the
-resource is returned, so same-length replacement cannot bypass integrity checks.
-Canonical managed-resource paths stay private to the payload store. Consumers
-that need a filesystem path receive an independent scratch materialization: model
-execution owns a Turn-scoped workspace, while Preview/Open/Reveal share a stable
-detached copy per attachment, resource, or image-artifact identity. An image artifact
-materializes the best available rendition in original-then-observation order at one
-stable extensionless path, so reclaiming a WebP original and falling back to a PNG
-observation does not change the access handle or misstate the bytes. Preview and
-`file_read` determine image MIME from the rendition bytes. These reproducible copies
-follow the seven-day scratch TTL; canonical originals and observations do not. A
-materialization error during provider projection is recorded and degrades only the
-readable-path hint; available observation bytes and the surrounding Turn still project.
+their links are removed immediately. A reference with no surviving Thread link is
+garbage no canonical history can reach: its record is deleted, its anchor is released,
+and ContentStore collection may reclaim the physical revision. External sources are
+never deleted. Source resolution revalidates the registered scope, canonical root,
+relative path, symlinks, entry kind, and requested read/edit/reveal capability at each
+use. Exact resolution validates the private anchor and revision metadata in
+ContentStore. A failure marks only the representation unavailable.
+
+Canonical ContentStore and source paths remain private to main. Consumers that need a
+filesystem path receive a disposable scratch observation. Provider execution owns a
+Turn-scoped observation directory; Preview/Open uses an exact-revision observation,
+while Reveal/Edit Source resolves the current source locator and never substitutes the
+exact observation. A materialization error during provider projection is recorded and
+degrades only the readable-path hint; available image bytes and the surrounding Turn
+still project.
 
 First-party tools persist ordinary artifacts through one `ToolArtifactSink`. It admits
 canonical MIME/file-name metadata and at most 64 MiB per file, rejects symlinks and a
-source whose opened identity or metadata changes during the read, verifies the resource
-store's returned digest and metadata, and then requests a Turn-scoped readable
-materialization. A successful canonical write with failed materialization returns the
-stable reference and a null path; admission or storage failure omits the artifact from
-the owning manifest without killing an otherwise useful tool operation. Storage errors
-are logged with their live cause but cross the tool boundary as stable quota-or-storage
-messages, so canonical payload-store paths cannot enter model-visible or retained text.
+source whose opened identity or metadata changes during the read, verifies the returned
+opaque reference metadata, and then requests a Turn-scoped readable materialization. A
+successful canonical write with failed materialization returns the stable reference and
+a null path; admission or storage failure omits the artifact from the owning manifest
+without killing an otherwise useful tool operation. Storage errors are logged with their
+live cause but cross the tool boundary as stable quota-or-storage messages, so private
+ContentStore paths cannot enter model-visible or retained text.
 
-Per Thread, canonical image retention has a 5 GiB target, 6 GiB soft watermark, and
-8 GiB hard resource budget. Crossing the soft watermark reclaims least-recently-used,
-then largest, `tiered` originals older than 30 days until the target is reached. A write
-that would cross the hard budget first reclaims any remaining `tiered` originals and
-then least-recently-used observations until the write fits. External originals and
-`durable` originals are never automatically deleted. Resource access updates durable
-atime metadata for this ordering without making a valid read fail. Canonical artifact
-references remain unchanged through `FULL -> OBSERVATION_ONLY -> UNAVAILABLE`.
-Retention inventory recursively includes artifacts nested in inherited-context payloads,
-while generic resources and durable originals remain protected. Missing or corrupt
-payloads protect their complete declared resource manifest.
-Resource garbage collection uses the physical key (content hash plus safe filename),
-independently of logical MIME metadata.
-Ephemeral Threads remain memory-only except for temporary payload files, which
-follow the same Thread deletion lifecycle and are removed when the service
-closes. Startup and rollback remove stale staging data plus managed resources, context
-payloads, Turn diagnostics, and complete text outputs absent from reconciled canonical
-history. Forks copy only payloads referenced by inherited Items and Turn execution into
-their own directory with a distinct inode, so provenance remains shared while mutation
-and deletion remain Thread-local. Fork and child inheritance attempt every referenced
-semantic context, compaction, managed-resource, tool-argument, and complete-output copy.
-Missing copies are recoverable: canonical references remain on the copied Items, tool
+Exact Agent resources have an 8 GiB per-Thread linked-byte hard budget; browser uploads
+also retain the 2 GiB per-resource admission ceiling. Admission reserves capacity before
+publishing a reference. ContentStore deduplicates physical revisions by digest, while
+logical quota and reachability operate on opaque references and Thread links rather than
+digest equality. There is no image-specific soft-watermark or age-based Agent resource
+collector. Ephemeral Threads keep history in memory but use the same canonical resource
+records while alive; close/delete removes their links. Startup and rollback remove stale
+uploads plus resource links, context payloads, Turn diagnostics, and complete text
+outputs absent from reconciled canonical history. Forks copy only Thread-owned payloads
+referenced by inherited Items and Turn execution; resources are shared by link. Missing
+payload copies are recoverable: canonical references remain on copied Items, tool
 dependencies become typed call/result evidence, and semantic dependencies become bounded
 context-degradation markers rather than aborting the user operation.
 If fork preparation fails after a transient `thread/started` notification, the

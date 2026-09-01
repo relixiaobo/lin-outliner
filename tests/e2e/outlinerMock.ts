@@ -819,7 +819,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           source:
             | { kind: 'localFile'; path: string }
             | {
-                kind: 'threadPayload';
+                kind: 'resource';
                 ref: { id: string; mimeType: string; byteLength: number; fileName: string };
               };
         }

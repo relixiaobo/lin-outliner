@@ -25,6 +25,7 @@ import { RolloutStore } from '../persistence/RolloutStore';
 import { ThreadHistoryProjectionStore } from '../persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore,type ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import { ToolPayloadStore } from '../persistence/ToolPayloadStore';
+import { AgentResourceStore } from '../persistence/AgentResourceStore';
 import { RollbackHookRecoveryQueue } from '../RollbackHookRecoveryQueue';
 export interface EphemeralThreadState {
   record: ThreadCatalogRecord;
@@ -88,6 +89,7 @@ export class ThreadCore {
     readonly history: ThreadHistoryProjectionStore,
     readonly rollout: RolloutStore,
     readonly payloads: ToolPayloadStore,
+    readonly resources: AgentResourceStore,
     readonly extensions: ExtensionRegistry,
     options: ThreadCoreOptions = {},
   ) {

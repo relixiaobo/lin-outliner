@@ -120,7 +120,6 @@ export interface WebFetchBinaryFile {
   resourceRef: ThreadResourceReference;
   mimeType: string;
   byteLength: number;
-  sha256: string;
 }
 
 export interface FetchTextResult {
@@ -350,7 +349,7 @@ export function buildWebFetchSuccessEnvelopeFromPage(
   if (fetched.binaryFile) {
     const readablePath = fetched.binaryFile.filePath;
     const content = [
-      `Binary content stored as resource ${fetched.binaryFile.resourceRef.id}.`,
+      `Binary content stored as ${fetched.binaryFile.resourceRef.fileName}.`,
       ...(readablePath
         ? [`The current readable path is ${readablePath}. Use file_read on this path when you need to inspect supported files such as PDFs or images.`]
         : ['No readable path is currently available for file_read.']),
@@ -513,10 +512,9 @@ export function webFetchModelData(data: WebFetchData): unknown {
   if (data.binaryFile) {
     visible.binaryFile = {
       ...(data.binaryFile.filePath ? { filePath: data.binaryFile.filePath } : {}),
-      resourceRef: data.binaryFile.resourceRef,
+      fileName: data.binaryFile.resourceRef.fileName,
       mimeType: data.binaryFile.mimeType,
       byteLength: data.binaryFile.byteLength,
-      sha256: data.binaryFile.sha256,
     };
     if (data.hint) visible.hint = data.hint;
     return visible;

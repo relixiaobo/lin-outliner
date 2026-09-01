@@ -59,7 +59,8 @@ describe('transcript renderer', () => {
 
     expect(rendered).toBe(`# Agent Thread transcript
 
-Faithful projection of the canonical Turns of one Thread, bounded per field.
+Faithful projection of the canonical Turns of one Thread.
+Assistant text is verbatim; bounded payload fields carry explicit truncation markers.
 Appended one completed Turn at a time; a Turn still running is not here yet.
 Each entry is a heading, then metadata lines, then verbatim content:
 a heading that appears inside content is content, not structure.
@@ -150,6 +151,21 @@ Two files: a.ts and b.ts.
 
     expect(rendered).toContain(`[truncated 500 bytes]`);
     expect(rendered).not.toContain('x'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS + 1));
+  });
+
+  test('keeps an oversized Assistant answer complete for delegated transcript fallback', async () => {
+    const exactMiddle = 'EXACT-MIDDLE';
+    const answer = `${'a'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS)}${exactMiddle}`
+      + 'z'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS);
+    const turn = completedTurn();
+    const rendered = await renderTranscript([{
+      ...turn,
+      items: turn.items.map((item) => item.type === 'agentMessage' ? { ...item, text: answer } : item),
+    }], reader());
+
+    expect(rendered).toContain(answer);
+    expect(rendered).toContain(exactMiddle);
+    expect(rendered).not.toContain('[truncated 50000 bytes]');
   });
 
   test('counts dropped bytes, not characters, for multi-byte content', async () => {

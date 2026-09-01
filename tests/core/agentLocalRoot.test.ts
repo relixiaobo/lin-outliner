@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import path from 'node:path';
 import {
   AGENT_SCRATCH_DIR,
-  AGENT_WORKDIR_DIR,
+  AGENT_WORKSPACES_DIR,
   hasExplicitAgentLocalRoot,
   resolveAgentScratchRoot,
   resolveAgentWorkdir,
@@ -11,12 +11,12 @@ import {
 const FS_ROOT = path.parse(process.cwd()).root;
 
 describe('agent workdir resolution', () => {
-  test('default workdir is a dedicated userData directory in both dev and packaged', () => {
+  test('default workdir is the managed workspace container in both dev and packaged', () => {
     const userDataPath = path.join(FS_ROOT, 'Users', 'tester', 'Library', 'Application Support', 'Tenon');
 
     const resolved = resolveAgentWorkdir({ envLocalRoot: undefined, userDataPath });
 
-    expect(resolved).toBe(path.join(userDataPath, AGENT_WORKDIR_DIR));
+    expect(resolved).toBe(path.join(userDataPath, 'agent', AGENT_WORKSPACES_DIR));
     // Never the process cwd — that is the source of stray agent files in dev clones.
     expect(resolved).not.toBe(path.resolve(process.cwd()));
   });
@@ -33,7 +33,8 @@ describe('agent workdir resolution', () => {
     expect(hasExplicitAgentLocalRoot('   ')).toBe(false);
 
     const userDataPath = path.join(FS_ROOT, 'userdata');
-    expect(resolveAgentWorkdir({ envLocalRoot: '   ', userDataPath })).toBe(path.join(userDataPath, AGENT_WORKDIR_DIR));
+    expect(resolveAgentWorkdir({ envLocalRoot: '   ', userDataPath }))
+      .toBe(path.join(userDataPath, 'agent', AGENT_WORKSPACES_DIR));
   });
 });
 
@@ -42,7 +43,7 @@ describe('agent scratch resolution', () => {
     const userDataPath = path.join(FS_ROOT, 'userdata');
     const scratch = resolveAgentScratchRoot({ userDataPath });
 
-    expect(scratch).toBe(path.join(userDataPath, AGENT_SCRATCH_DIR));
+    expect(scratch).toBe(path.join(userDataPath, 'agent', AGENT_SCRATCH_DIR));
     // Even when the workdir is an env-pointed repo, scratch stays under userData so the repo
     // never accumulates ephemeral files.
     const workdir = resolveAgentWorkdir({ envLocalRoot: path.join(FS_ROOT, 'repo'), userDataPath });

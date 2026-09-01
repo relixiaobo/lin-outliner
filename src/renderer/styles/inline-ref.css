@@ -10,7 +10,7 @@
   text-decoration: none;
 }
 
-.inline-ref:hover {
+.inline-ref:not([data-inline-ref-readonly="true"]):hover {
   color: var(--inline-ref-hover-accent, var(--inline-ref-accent, var(--inline-ref-hover)));
   cursor: pointer;
   text-decoration-line: underline;
@@ -18,18 +18,23 @@
   text-underline-offset: 0.12em;
 }
 
-.inline-ref[data-inline-ref-kind="local-file"]:hover,
-.inline-ref[data-inline-ref-kind="local-file"]:focus-visible {
+.inline-ref[data-inline-ref-kind="local-file"]:not([data-inline-ref-readonly="true"]):hover,
+.inline-ref[data-inline-ref-kind="local-file"]:not([data-inline-ref-readonly="true"]):focus-visible {
   background: var(--fill-1);
   color: var(--text-strong);
 }
 
-.inline-ref[data-inline-ref-kind="local-file"]:hover {
+.inline-ref[data-inline-ref-kind="local-file"]:not([data-inline-ref-readonly="true"]):hover {
   box-shadow: var(--inline-ref-hover-shadow);
 }
 
-.inline-ref[data-inline-ref-kind="local-file"]:focus-visible {
+.inline-ref[data-inline-ref-kind="local-file"]:not([data-inline-ref-readonly="true"]):focus-visible {
   box-shadow: var(--inline-ref-focus-shadow);
+}
+
+.inline-ref[data-inline-ref-readonly="true"] {
+  color: var(--text-secondary);
+  cursor: default;
 }
 
 .inline-ref.ProseMirror-selectednode {

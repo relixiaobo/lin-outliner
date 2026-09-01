@@ -1,6 +1,7 @@
 import { useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { PreviewTarget } from '../../../core/preview';
+import type { ThreadResourceReference } from '../../../core/agent/protocol';
 import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { useT } from '../../i18n/I18nProvider';
 import {
@@ -24,6 +25,9 @@ export interface InlineFileMenuFile {
   name: string;
   entryKind: 'file' | 'directory';
   threadId?: string;
+  resourceRef?: ThreadResourceReference;
+  resourceIntent?: 'delivered' | 'source';
+  sourceAvailable?: boolean;
 }
 
 interface InlineFileContextMenuProps {
@@ -42,7 +46,13 @@ export function previewTargetForInlineFile(file: InlineFileMenuFile): PreviewTar
     label: file.name,
     ...(file.threadId && file.attachmentId
       ? { threadId: file.threadId, attachmentId: file.attachmentId }
-      : {}),
+      : file.threadId && file.resourceRef
+        ? {
+            threadId: file.threadId,
+            resourceRef: file.resourceRef,
+            ...(file.resourceIntent ? { resourceIntent: file.resourceIntent } : {}),
+          }
+        : {}),
   };
 }
 
@@ -89,7 +99,13 @@ export function InlineFileContextMenu({
       path: file.path,
       ...(file.threadId && file.attachmentId
         ? { threadId: file.threadId, attachmentId: file.attachmentId }
-        : {}),
+        : file.threadId && file.resourceRef
+          ? {
+              threadId: file.threadId,
+              resourceRef: file.resourceRef,
+              ...(file.resourceIntent ? { resourceIntent: file.resourceIntent } : {}),
+            }
+          : {}),
     });
   };
 
@@ -98,7 +114,9 @@ export function InlineFileContextMenu({
       path: file.path,
       ...(file.threadId && file.attachmentId
         ? { threadId: file.threadId, attachmentId: file.attachmentId }
-        : {}),
+        : file.threadId && file.resourceRef
+          ? { threadId: file.threadId, resourceRef: file.resourceRef, resourceIntent: 'source' as const }
+          : {}),
     });
   };
 
@@ -145,13 +163,15 @@ export function InlineFileContextMenu({
         onClick={run(openExternally)}
         role="menuitem"
       />
-      <MenuItem
-        className="node-context-item"
-        icon={<FolderIcon size={ICON_SIZE.menu} />}
-        label={labels.showInFinder}
-        onClick={run(revealInFinder)}
-        role="menuitem"
-      />
+      {file.sourceAvailable !== false ? (
+        <MenuItem
+          className="node-context-item"
+          icon={<FolderIcon size={ICON_SIZE.menu} />}
+          label={labels.showInFinder}
+          onClick={run(revealInFinder)}
+          role="menuitem"
+        />
+      ) : null}
     </MenuSurface>,
     document.body,
   );

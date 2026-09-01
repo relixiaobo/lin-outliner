@@ -729,8 +729,8 @@ describe('agent skills', () => {
       localRoot: root,
       includeUserSkills: false,
       executeSkillShell: async () => ({
-        output: `resource=${resourceRef.id}\nCurrent readable path: ${readablePath}`,
-        persistedOutput: `resource=${resourceRef.id}`,
+        output: `file=${resourceRef.fileName}, bytes=${resourceRef.byteLength}\nCurrent readable path: ${readablePath}`,
+        persistedOutput: `file=${resourceRef.fileName}, bytes=${resourceRef.byteLength}`,
         resourceRefs: [resourceRef],
         artifacts: [{ ref: resourceRef, readablePath, label: 'Generated report' }],
       }),
@@ -754,7 +754,8 @@ describe('agent skills', () => {
     expect(isolatedInstructions).toContain('skill_shell_output_1');
     expect(isolatedShellOutput).toContain(readablePath);
     expect(persistedShellOutput).not.toContain(readablePath);
-    expect(persistedShellOutput).toContain(resourceRef.id);
+    expect(persistedShellOutput).toContain('file=report.pdf, bytes=120');
+    expect(persistedShellOutput).not.toContain(resourceRef.id);
     expect(invocation.renderedContent).not.toContain(readablePath);
     expect(invocation.evidence.instructions).not.toContain(readablePath);
     expect(invocation.evidence.instructions).not.toContain(resourceRef.id);
@@ -766,9 +767,12 @@ describe('agent skills', () => {
     const visible = JSON.parse(result.content[0]!.text);
     expect(visible.data.artifacts).toEqual([{
       label: 'Generated report',
-      resourceRef,
+      fileName: 'report.pdf',
+      mimeType: 'application/pdf',
+      byteLength: 120,
       filePath: readablePath,
     }]);
+    expect(JSON.stringify(visible)).not.toContain(resourceRef.id);
     expect(result.resourceRefs).toEqual([resourceRef]);
     expect(JSON.stringify(result.details)).not.toContain(readablePath);
   });
@@ -793,8 +797,8 @@ describe('agent skills', () => {
       localRoot: root,
       includeUserSkills: false,
       executeSkillShell: async () => ({
-        output: `resource=${resourceRef.id}\nCurrent readable path: ${readablePath}`,
-        persistedOutput: `resource=${resourceRef.id}`,
+        output: `file=${resourceRef.fileName}, bytes=${resourceRef.byteLength}\nCurrent readable path: ${readablePath}`,
+        persistedOutput: `file=${resourceRef.fileName}, bytes=${resourceRef.byteLength}`,
         resourceRefs: [resourceRef],
         artifacts: [{ ref: resourceRef, readablePath, label: 'Generated report' }],
       }),
@@ -819,9 +823,17 @@ describe('agent skills', () => {
     });
     expect(JSON.parse(result.content[0]!.text)).toMatchObject({
       ok: false,
-      data: { artifacts: [{ filePath: readablePath, resourceRef }] },
+      data: {
+        artifacts: [{
+          filePath: readablePath,
+          fileName: 'failed-report.pdf',
+          mimeType: 'application/pdf',
+          byteLength: 120,
+        }],
+      },
       error: { code: 'isolated_execution_failed', message: 'Child execution failed' },
     });
+    expect(result.content[0]!.text).not.toContain(resourceRef.id);
     expect(result.resourceRefs).toEqual([resourceRef]);
     expect(JSON.stringify(result.details)).not.toContain(readablePath);
   });
@@ -847,7 +859,7 @@ describe('agent skills', () => {
       includeUserSkills: false,
       executeSkillShell: async () => {
         throw Object.assign(new Error(`Command failed; readable path: ${readablePath}`), {
-          persistedMessage: `Command failed; resource=${resourceRef.id}`,
+          persistedMessage: `Command failed; file=${resourceRef.fileName}`,
           resourceRefs: [resourceRef],
           artifacts: [{ ref: resourceRef, readablePath, label: 'Partial output' }],
         });
@@ -858,7 +870,7 @@ describe('agent skills', () => {
     expect(invocation).toMatchObject({
       ok: false,
       code: 'skill_shell_failed',
-      persistedMessage: `Command failed; resource=${resourceRef.id}`,
+      persistedMessage: 'Command failed; file=partial.txt',
       resourceRefs: [resourceRef],
     });
     const result = await createSkillTool(runtime).execute('failing-artifact-skill-call', {
@@ -866,9 +878,17 @@ describe('agent skills', () => {
     });
     expect(JSON.parse(result.content[0]!.text)).toMatchObject({
       ok: false,
-      data: { artifacts: [{ filePath: readablePath, resourceRef }] },
-      error: { code: 'skill_shell_failed', message: `Command failed; resource=${resourceRef.id}` },
+      data: {
+        artifacts: [{
+          filePath: readablePath,
+          fileName: 'partial.txt',
+          mimeType: 'text/plain',
+          byteLength: 7,
+        }],
+      },
+      error: { code: 'skill_shell_failed', message: 'Command failed; file=partial.txt' },
     });
+    expect(result.content[0]!.text).not.toContain(resourceRef.id);
     expect(JSON.stringify(result.details)).not.toContain(readablePath);
     expect(result.resourceRefs).toEqual([resourceRef]);
   });

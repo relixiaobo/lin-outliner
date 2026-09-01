@@ -30,6 +30,12 @@ export interface AttachmentResolverOptions {
     readonly artifactRef: ThreadImageArtifactReference;
     readonly createdResources: readonly ThreadResourceReference[];
   }>;
+  readonly captureLocalFile: (
+    threadId: string,
+    sourcePath: string,
+    mimeType: string,
+    fileName: string,
+  ) => Promise<ThreadResourceReference>;
 }
 
 export class AttachmentResolver {
@@ -73,10 +79,10 @@ export class AttachmentResolver {
     const sourceMimeType = attachmentSourceMimeType(attachment);
     if (
       sourceMimeType.startsWith('image/')
-      && attachment.source.kind === 'threadPayload'
+      && attachment.source.kind === 'resource'
       && attachment.source.ref.byteLength > MAX_IMAGE_ATTACHMENT_SOURCE_BYTES
     ) throw new Error('Image attachment exceeds the image decode budget.');
-    if (attachment.source.kind === 'threadPayload') {
+    if (attachment.source.kind === 'resource') {
       const resolved = await this.options.useResourcePath(
         context.threadId,
         attachment.source.ref,
@@ -88,7 +94,19 @@ export class AttachmentResolver {
       return resolved;
     }
     const sourcePath = await canonicalAttachmentPath(context.cwd, attachment.source.path);
-    return this.resolveFromPath(attachment, sourcePath, context);
+    const sourceStat = await stat(sourcePath);
+    if (sourceStat.isDirectory()) return this.resolveFromPath(attachment, sourcePath, context);
+    const captured = await this.options.captureLocalFile(
+      context.threadId,
+      sourcePath,
+      attachment.mimeType,
+      attachment.name,
+    );
+    context.recordCreatedResource(captured);
+    return this.resolveFromPath({
+      ...attachment,
+      source: { kind: 'resource', ref: captured },
+    }, sourcePath, context);
   }
 
   private async resolveFromPath(
@@ -96,7 +114,7 @@ export class AttachmentResolver {
     sourcePath: string,
     context: ThreadUserContentResolutionContext,
   ): Promise<ThreadAttachmentContent> {
-    const sourceMimeType = attachment.source.kind === 'threadPayload'
+    const sourceMimeType = attachment.source.kind === 'resource'
       ? attachment.source.ref.mimeType
       : attachment.mimeType;
     const sourceStat = await stat(sourcePath);
@@ -141,7 +159,7 @@ export class AttachmentResolver {
 }
 
 function attachmentSourceMimeType(attachment: ThreadAttachmentContent): string {
-  return (attachment.source.kind === 'threadPayload'
+  return (attachment.source.kind === 'resource'
     ? attachment.source.ref.mimeType
     : attachment.mimeType).trim().toLowerCase();
 }

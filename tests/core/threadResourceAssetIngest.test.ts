@@ -6,7 +6,7 @@ import {
 } from '../../src/main/threadResourceAssetIngest';
 
 const resourceRef = {
-  id: 'a'.repeat(64),
+  id: 'resource:00000000-0000-4000-8000-00000000000a',
   mimeType: 'image/png',
   byteLength: 19,
   fileName: 'tool-output.png',
@@ -17,7 +17,7 @@ const asset: AssetMetadata = {
   id: 'asset-1',
   mimeType: 'image/png',
   byteSize: resourceRef.byteLength,
-  sha256: resourceRef.id,
+  sha256: 'a'.repeat(64),
   originalFilename: resourceRef.fileName,
   createdAt: 1,
 };

@@ -3478,10 +3478,21 @@ function shellArtifactResourceRefs(
   return [...new Map(refs.map((ref) => [`${ref.id}\0${ref.fileName}`, ref])).values()];
 }
 
+function visiblePersistedToolOutput(output: PersistedToolOutput) {
+  return {
+    ...(output.filePath ? { filePath: output.filePath } : {}),
+    fileName: output.resourceRef.fileName,
+    mimeType: output.resourceRef.mimeType,
+    byteLength: output.byteLength,
+  };
+}
+
 function visibleShellArtifacts(artifacts: readonly AgentShellArtifactObservation[]) {
   return artifacts.map((artifact) => ({
     label: artifact.label,
-    resourceRef: artifact.ref,
+    fileName: artifact.ref.fileName,
+    mimeType: artifact.ref.mimeType,
+    byteLength: artifact.ref.byteLength,
     ...(artifact.readablePath ? { filePath: artifact.readablePath } : {}),
   }));
 }
@@ -3865,7 +3876,7 @@ export function visibleBash(data: BashData): unknown {
   if (data.isImage) visible.isImage = true;
   if (data.backgroundTaskId) visible.backgroundTaskId = data.backgroundTaskId;
   if (data.taskStatus) visible.taskStatus = data.taskStatus;
-  if (data.persistedOutput) visible.persistedOutput = data.persistedOutput;
+  if (data.persistedOutput) visible.persistedOutput = visiblePersistedToolOutput(data.persistedOutput);
   if (data.artifacts?.length) visible.artifacts = visibleShellArtifacts(data.artifacts);
   if (data.temporaryOutputPath) visible.temporaryOutputPath = data.temporaryOutputPath;
   if (data.outputLimitExceeded) visible.outputLimitExceeded = true;
@@ -3881,7 +3892,7 @@ export function visibleFileDelete(data: FileDeleteData): unknown {
 
 export function visibleBackgroundShellStop(data: BackgroundShellStopToolData) {
   return {
-    ...(data.persistedOutput ? { persistedOutput: data.persistedOutput } : {}),
+    ...(data.persistedOutput ? { persistedOutput: visiblePersistedToolOutput(data.persistedOutput) } : {}),
     ...(data.artifacts?.length ? { artifacts: visibleShellArtifacts(data.artifacts) } : {}),
     ...(data.outputLimitExceeded ? { outputLimitExceeded: true } : {}),
   };

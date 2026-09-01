@@ -76,9 +76,9 @@ import { readAgentImageDimensions } from '../capabilities/agentLocalTools';
 import { createImageArtifactReference, ImageObservationNormalizationError } from '../imageArtifacts';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BYTES,
-  ThreadResourceQuotaError,
   measureToolPayloadImage,
 } from '../persistence/ToolPayloadStore';
+import { ThreadResourceQuotaError } from '../persistence/AgentResourceStore';
 import {
   piExternalProviderId,
   piCompleteSimple,

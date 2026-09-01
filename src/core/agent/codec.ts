@@ -255,13 +255,20 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       };
       break;
     case 'agentMessage':
-      exactKeys(record, ['type', 'id', 'provenance', 'text', 'phase', 'memoryCitation'], 'item');
+      exactKeys(record, ['type', 'id', 'provenance', 'text', 'phase', 'memoryCitation', 'finalCitations'], 'item');
       result = {
         ...base,
         type,
         text: stringValue(record.text, 'item.text', true),
         phase: nullableEnum(record.phase, ['commentary', 'final_answer', 'interrupted'], 'item.phase'),
         memoryCitation: decodeMemoryCitation(record.memoryCitation),
+        ...(record.finalCitations === undefined ? {} : {
+          finalCitations: arrayValue(record.finalCitations, 'item.finalCitations')
+            .map((citation, index) => decodeAgentFinalCitationBinding(
+              citation,
+              `item.finalCitations[${index}]`,
+            )),
+        }),
       };
       break;
     default:
@@ -628,6 +635,7 @@ export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurn
   const record = recordValue(value, 'privilegedTurnStart');
   exactKeys(record, [
     'threadId', 'turnId', 'input', 'clientUserMessageId', 'additionalContext', 'additionalContextSource',
+    'additionalContextResourceRefs',
     'userView', 'author', 'trigger',
   ], 'privilegedTurnStart');
   return deepFreeze({
@@ -643,6 +651,15 @@ export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurn
     ...(record.additionalContextSource === undefined
       ? {}
       : { additionalContextSource: stringValue(record.additionalContextSource, 'privilegedTurnStart.additionalContextSource', true) }),
+    ...(record.additionalContextResourceRefs === undefined ? {} : {
+      additionalContextResourceRefs: arrayValue(
+        record.additionalContextResourceRefs,
+        'privilegedTurnStart.additionalContextResourceRefs',
+      ).map((ref, index) => decodeThreadResourceReference(
+        ref,
+        `privilegedTurnStart.additionalContextResourceRefs[${index}]`,
+      )),
+    }),
     ...(record.userView === undefined ? {} : { userView: decodeRendererUserViewHints(record.userView) }),
     author: decodePrivilegedThreadInputAuthor(record.author, 'privilegedTurnStart.author'),
     trigger: decodeTurnTrigger(record.trigger),
@@ -3400,7 +3417,9 @@ export function decodeThreadResourceReference(
   const record = recordValue(value, field);
   exactKeys(record, ['id', 'mimeType', 'byteLength', 'fileName'], field);
   const id = stringValue(record.id, `${field}.id`);
-  if (!/^[a-f0-9]{64}$/u.test(id)) fail(`${field}.id`, 'expected a lowercase SHA-256 digest');
+  if (!/^resource:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(id)) {
+    fail(`${field}.id`, 'expected an opaque canonical resource id');
+  }
   const byteLength = nonNegativeInteger(record.byteLength, `${field}.byteLength`);
   if (byteLength > MAX_MANAGED_ATTACHMENT_BYTES) fail(`${field}.byteLength`, 'exceeds the managed resource budget');
   const fileName = stringValue(record.fileName, `${field}.fileName`);
@@ -3413,9 +3432,33 @@ export function decodeThreadResourceReference(
   });
 }
 
+function decodeAgentFinalCitationBinding(value: unknown, field: string) {
+  const record = recordValue(value, field);
+  exactKeys(record, [
+    'markerOrdinal',
+    'status',
+    'entryKind',
+    'resourceRef',
+    'openIntent',
+    'sourceAvailable',
+    'reason',
+  ], field);
+  return deepFreeze({
+    markerOrdinal: nonNegativeInteger(record.markerOrdinal, `${field}.markerOrdinal`),
+    status: enumValue(record.status, ['available', 'pending', 'unavailable', 'denied'], `${field}.status`),
+    entryKind: nullableEnum(record.entryKind, ['file', 'directory'], `${field}.entryKind`),
+    resourceRef: record.resourceRef === null
+      ? null
+      : decodeThreadResourceReference(record.resourceRef, `${field}.resourceRef`),
+    openIntent: nullableEnum(record.openIntent, ['delivered', 'source'], `${field}.openIntent`),
+    sourceAvailable: booleanValue(record.sourceAvailable, `${field}.sourceAvailable`),
+    reason: nullableString(record.reason, `${field}.reason`),
+  });
+}
+
 function decodeThreadFileSource(value: unknown, field: string): ThreadFileSource {
   const source = recordValue(value, field);
-  const kind = enumValue(source.kind, ['localFile', 'threadPayload'], `${field}.kind`);
+  const kind = enumValue(source.kind, ['localFile', 'resource'], `${field}.kind`);
   if (kind === 'localFile') {
     exactKeys(source, ['kind', 'path'], field);
     return deepFreeze({ kind, path: stringValue(source.path, `${field}.path`) });
@@ -3438,13 +3481,13 @@ export function decodeThreadImageArtifactReference(
   if (retention === 'external' && original?.kind !== 'localFile') {
     fail(`${field}.original`, 'external artifacts require a local-file original');
   }
-  if ((retention === 'durable' || retention === 'tiered') && original?.kind !== 'threadPayload') {
+  if ((retention === 'durable' || retention === 'tiered') && original?.kind !== 'resource') {
     fail(`${field}.original`, `${retention} artifacts require a Thread-owned original`);
   }
   if (retention === 'observationOnly' && original !== null) {
     fail(`${field}.original`, 'observation-only artifacts cannot carry an original');
   }
-  if (original?.kind === 'threadPayload') {
+  if (original?.kind === 'resource') {
     assertImageResourceReference(original.ref, `${field}.original.ref`);
   }
   const createdAt = finiteNumber(record.createdAt, `${field}.createdAt`);

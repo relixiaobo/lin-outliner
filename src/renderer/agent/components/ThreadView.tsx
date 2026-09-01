@@ -4871,7 +4871,7 @@ async function attachmentFromBrowserFile(
       name,
       mimeType,
       sizeBytes: file.size,
-      source: { kind: 'threadPayload', ref },
+      source: { kind: 'resource', ref },
     };
   }
   throwIfAttachmentUploadAborted(signal);
@@ -4884,7 +4884,7 @@ async function attachmentFromBrowserFile(
       ...(nativePath ? { path: nativePath } : {}),
       ...(previewUrl ? { thumbnailDataUrl: previewUrl } : {}),
     }),
-    sourceKey: nativePath ? `path:${nativePath}` : `payload:${content.source.kind === 'threadPayload' ? content.source.ref.id : id}`,
+    sourceKey: nativePath ? `path:${nativePath}` : `payload:${content.source.kind === 'resource' ? content.source.ref.id : id}`,
   };
 }
 
@@ -4982,14 +4982,14 @@ function sameManagedResource(
   left: ThreadAttachmentContent,
   right: ThreadAttachmentContent,
 ): boolean {
-  return left.source.kind === 'threadPayload'
-    && right.source.kind === 'threadPayload'
+  return left.source.kind === 'resource'
+    && right.source.kind === 'resource'
     && left.source.ref.id === right.source.ref.id
     && left.source.ref.fileName === right.source.ref.fileName;
 }
 
 function discardManagedAttachment(threadId: string, attachment: ThreadAttachmentContent): void {
-  if (attachment.source.kind !== 'threadPayload') return;
+  if (attachment.source.kind !== 'resource') return;
   discardManagedResourceHandle(threadId, attachment.source.ref);
 }
 

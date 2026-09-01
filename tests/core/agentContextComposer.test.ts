@@ -518,7 +518,7 @@ describe('canonical context projection', () => {
   test('projects a marker when payload dependencies are omitted from the canonical Item graph', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const resourceRef = {
-      id: 'f'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000f',
       mimeType: 'image/png',
       byteLength: 4,
       fileName: 'node.png',
@@ -549,7 +549,7 @@ describe('canonical context projection', () => {
   test('projects referenced Node resources through the same file marker contract', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const resourceRef = {
-      id: '9'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-000000000009',
       mimeType: 'application/pdf',
       byteLength: 10,
       fileName: 'report.pdf',
@@ -584,7 +584,7 @@ describe('canonical context projection', () => {
 
   test('rematerializes tool artifacts for replay and degrades an unavailable current path', async () => {
     const resourceRef: ThreadResourceReference = {
-      id: '7'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-000000000007',
       mimeType: 'application/pdf',
       byteLength: 42,
       fileName: 'analysis.pdf',
@@ -595,8 +595,9 @@ describe('canonical context projection', () => {
       resolveResourceObservationPath: async () => '/scratch/current-thread/analysis.pdf',
     }).projectTurns([turn(1, [userItem('artifact-user', 1, 'Fetch it.'), tool], true)]);
     const readableResult = readableMessages.find((message) => message.role === 'toolResult');
-    expect(messageText(readableResult!)).toContain(`resource=${resourceRef.id}`);
+    expect(messageText(readableResult!)).toContain('file=analysis.pdf, mime=application/pdf, bytes=42');
     expect(messageText(readableResult!)).toContain('Readable path: /scratch/current-thread/analysis.pdf');
+    expect(messageText(readableResult!)).not.toContain(resourceRef.id);
     expect(JSON.stringify(tool)).not.toContain('/scratch/current-thread/analysis.pdf');
 
     const unavailableMessages = await new CanonicalContextProjector(model, {
@@ -610,7 +611,7 @@ describe('canonical context projection', () => {
   test('bundles contiguous context while preserving referenced image order', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const resourceRef: ThreadResourceReference = {
-      id: '8'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-000000000008',
       mimeType: 'image/png',
       byteLength: 5,
       fileName: 'diagram.png',
@@ -830,13 +831,13 @@ describe('canonical context projection', () => {
   test('projects image observations with stable identity, best-rendition paths, and coordinate geometry', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const managedRef: ThreadResourceReference = {
-      id: 'd'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000d',
       mimeType: 'image/png',
       byteLength: 5,
       fileName: 'chart.png',
     };
     const localSnapshotRef: ThreadResourceReference = {
-      id: 'e'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000e',
       mimeType: 'image/jpeg',
       byteLength: 3,
       fileName: 'local-snapshot.jpg',
@@ -845,8 +846,13 @@ describe('canonical context projection', () => {
       createdAt: 1,
       retention: 'tiered',
       original: {
-        kind: 'threadPayload',
-        ref: { ...managedRef, id: 'c'.repeat(64), byteLength: 20, fileName: 'chart-original.webp' },
+        kind: 'resource',
+        ref: {
+          ...managedRef,
+          id: 'resource:00000000-0000-4000-8000-00000000000c',
+          byteLength: 20,
+          fileName: 'chart-original.webp',
+        },
       },
       observation: managedRef,
       sourceDimensions: { width: 4_000, height: 2_000 },
@@ -1193,7 +1199,7 @@ describe('canonical context projection', () => {
       summary: 'Missing full output',
     };
     const missingImageRef: ThreadResourceReference = {
-      id: '5'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-000000000005',
       mimeType: 'image/png',
       byteLength: 10,
       fileName: 'missing.png',
@@ -1250,7 +1256,7 @@ describe('canonical context projection', () => {
           arguments: {},
           status: 'completed',
           outputRef: null,
-          contentItems: [{ type: 'image', source: { kind: 'threadPayload', ref: missingImageRef } }],
+          contentItems: [{ type: 'image', source: { kind: 'resource', ref: missingImageRef } }],
           success: true,
           durationMs: 1,
           modelCall: projectionModelCall('visual__render', {}),

@@ -16,6 +16,8 @@ import {
   type MarkdownReferenceAstNode,
 } from '../../../core/markdownReferenceAst';
 import { basenameForPath, referenceDisplayFallback } from '../../../core/referenceMarkup';
+import { parseReferenceMarkers } from '../../../core/referenceMarkup';
+import type { AgentFinalCitationBinding } from '../../../core/agent/protocol';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
 import { InlineFileReference } from '../../ui/editor/InlineFileReference';
@@ -42,6 +44,8 @@ interface ThreadMarkdownProps {
   readonly onNodeReferenceOpen?: ThreadNodeReferenceOpenHandler;
   readonly streaming?: boolean;
   readonly text: string;
+  readonly threadId?: string;
+  readonly finalCitations?: readonly AgentFinalCitationBinding[];
 }
 
 const REMARK_PLUGINS = [remarkGfm, remarkThreadReferences];
@@ -52,6 +56,8 @@ export function ThreadMarkdown({
   onNodeReferenceOpen,
   streaming = false,
   text,
+  threadId,
+  finalCitations = [],
 }: ThreadMarkdownProps) {
   const visibleText = useStreamingMarkdownText(text, streaming);
   const blockParserRef = useRef<StreamingMarkdownBlockParser | null>(null);
@@ -61,16 +67,32 @@ export function ThreadMarkdown({
     blockParserRef.current!.reset();
     return splitMarkdownBlocks(visibleText);
   }, [streaming, visibleText]);
+  const projectedBlocks = useMemo(() => {
+    let markerBase = 0;
+    return blocks.map((markdown) => {
+      const markerCount = parseReferenceMarkers(markdown, ['file']).length;
+      const citations = finalCitations
+        .filter((citation) => (
+          citation.markerOrdinal >= markerBase
+          && citation.markerOrdinal < markerBase + markerCount
+        ))
+        .map((citation) => ({ ...citation, markerOrdinal: citation.markerOrdinal - markerBase }));
+      markerBase += markerCount;
+      return { citations, markdown };
+    });
+  }, [blocks, finalCitations]);
   return (
     <div className={`thread-markdown${streaming ? ' is-streaming' : ''}`}>
-      {blocks.map((block, indexValue) => {
+      {projectedBlocks.map((block, indexValue) => {
         const key = `markdown-block-${indexValue}`;
         return (
           <MemoizedMarkdownBlock
             index={index}
+            finalCitations={block.citations}
             key={key}
-            markdown={block}
+            markdown={block.markdown}
             onNodeReferenceOpen={onNodeReferenceOpen}
+            threadId={threadId}
           />
         );
       })}
@@ -93,20 +115,28 @@ function referenceMarkdownNodes(
   const result = markdownReferenceOccurrences(markdown, text, node);
   if (result.indeterminate) return [{ type: 'text', value: text }];
   const { occurrences } = result;
+  const fileMarkers = parseReferenceMarkers(markdown, ['file']);
   if (occurrences.length === 0) return [{ type: 'text', value: text }];
   const nodes: MarkdownReferenceAstNode[] = [];
   let cursor = 0;
-  for (const { escaped, marker } of occurrences) {
+  for (const { escaped, marker, sourceStart } of occurrences) {
     if (marker.start > cursor) nodes.push({ type: 'text', value: text.slice(cursor, marker.start) });
     if (escaped) {
       nodes.push({ type: 'text', value: marker.raw });
     } else if (marker.target.kind === 'local-file') {
       const label = basenameForPath(marker.target.path) || marker.target.path;
+      const markerOrdinal = sourceStart === null
+        ? undefined
+        : fileMarkers.findIndex((candidate) => candidate.start === sourceStart);
       nodes.push({
         children: [{ type: 'text', value: label }],
         title: marker.target.entryKind,
         type: 'link',
-        url: localFileReferenceHref(marker.target.path, marker.target.entryKind),
+        url: localFileReferenceHref(
+          marker.target.path,
+          marker.target.entryKind,
+          markerOrdinal === -1 ? undefined : markerOrdinal,
+        ),
       });
     } else {
       nodes.push({
@@ -125,6 +155,8 @@ function referenceMarkdownNodes(
 function useMarkdownComponents(
   index: DocumentIndex | undefined,
   onNodeReferenceOpen: ThreadNodeReferenceOpenHandler | undefined,
+  threadId: string | undefined,
+  finalCitations: readonly AgentFinalCitationBinding[],
 ) {
   const t = useT();
   return useMemo(() => ({
@@ -132,6 +164,14 @@ function useMarkdownComponents(
       const fileRef = localFileReferenceFromHref(href);
       if (fileRef) {
         const label = reactNodeText(children) || basenameForPath(fileRef.path) || fileRef.path;
+        const citation = fileRef.markerOrdinal === undefined
+          ? undefined
+          : finalCitations.find((candidate) => candidate.markerOrdinal === fileRef.markerOrdinal);
+        const citationActionable = citation === undefined || (
+          citation.status === 'available'
+          && Boolean(threadId)
+          && Boolean(citation.resourceRef)
+        );
         return (
           <InlineFileReference
             className="thread-message-inline-ref"
@@ -140,8 +180,18 @@ function useMarkdownComponents(
               kind: 'file',
               mimeType: fileRef.entryKind === 'directory' ? 'inode/directory' : 'application/octet-stream',
               name: label,
-              path: fileRef.path,
+              ...(citationActionable ? { path: fileRef.path } : {}),
+              readOnly: !citationActionable,
               ref: label,
+              ...(citation
+                ? {
+                    citationStatus: citation.status,
+                    ...(threadId ? { threadId } : {}),
+                    ...(threadId && citation.resourceRef ? { resourceRef: citation.resourceRef } : {}),
+                    ...(citation.openIntent ? { resourceIntent: citation.openIntent } : {}),
+                    sourceAvailable: citation.sourceAvailable,
+                  }
+                : {}),
             }}
           />
         );
@@ -212,7 +262,7 @@ function useMarkdownComponents(
     table({ children, ...rest }: ComponentPropsWithoutRef<'table'>) {
       return <div className="thread-markdown-table-wrap"><table {...rest}>{children}</table></div>;
     },
-  }), [index, onNodeReferenceOpen, t.agent.message.referencedNode]);
+  }), [finalCitations, index, onNodeReferenceOpen, t.agent.message.referencedNode, threadId]);
 }
 
 function ThreadMarkdownImage({ alt, src, title }: ComponentPropsWithoutRef<'img'>) {
@@ -267,14 +317,18 @@ function ThreadMarkdownImage({ alt, src, title }: ComponentPropsWithoutRef<'img'
 
 const MemoizedMarkdownBlock = memo(function MemoizedMarkdownBlock({
   index,
+  finalCitations,
   markdown,
   onNodeReferenceOpen,
+  threadId,
 }: {
   readonly index: DocumentIndex | undefined;
+  readonly finalCitations: readonly AgentFinalCitationBinding[];
   readonly markdown: string;
   readonly onNodeReferenceOpen: ThreadNodeReferenceOpenHandler | undefined;
+  readonly threadId: string | undefined;
 }) {
-  const components = useMarkdownComponents(index, onNodeReferenceOpen);
+  const components = useMarkdownComponents(index, onNodeReferenceOpen, threadId, finalCitations);
   return (
     <Markdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={threadMarkdownUrlTransform}>
       {markdown}

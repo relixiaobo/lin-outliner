@@ -529,16 +529,28 @@ export interface ThreadTextContent {
 }
 
 export interface ThreadResourceReference {
-  /** Content-addressed lowercase SHA-256 digest. */
+  /** Opaque Host-issued canonical resource identity. */
   readonly id: string;
   readonly mimeType: string;
   readonly byteLength: number;
   readonly fileName: string;
 }
 
+export type AgentFinalCitationStatus = 'available' | 'pending' | 'unavailable' | 'denied';
+
+export interface AgentFinalCitationBinding {
+  readonly markerOrdinal: number;
+  readonly status: AgentFinalCitationStatus;
+  readonly entryKind: 'file' | 'directory' | null;
+  readonly resourceRef: ThreadResourceReference | null;
+  readonly openIntent: 'delivered' | 'source' | null;
+  readonly sourceAvailable: boolean;
+  readonly reason: string | null;
+}
+
 export type ThreadFileSource =
   | { readonly kind: 'localFile'; readonly path: string }
-  | { readonly kind: 'threadPayload'; readonly ref: ThreadResourceReference };
+  | { readonly kind: 'resource'; readonly ref: ThreadResourceReference };
 
 export const IMAGE_ARTIFACT_RETENTIONS = [
   'external',
@@ -1007,6 +1019,7 @@ export interface AgentMessageThreadItem extends ThreadItemBase {
   readonly text: string;
   readonly phase: MessagePhase | null;
   readonly memoryCitation: MemoryCitation | null;
+  readonly finalCitations?: readonly AgentFinalCitationBinding[];
 }
 
 export interface ReasoningThreadItem extends ThreadItemBase {
@@ -2034,6 +2047,7 @@ export interface PrivilegedTurnStartRequest extends TurnInputRequest {
   readonly author: PrivilegedThreadInputAuthor;
   readonly turnId?: TurnId;
   readonly additionalContextSource?: string;
+  readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
   readonly trigger: TurnTrigger;
 }
 

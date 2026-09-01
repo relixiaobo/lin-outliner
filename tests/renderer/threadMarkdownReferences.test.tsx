@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { renderedMarkdownNodeReferenceIds } from '../../src/core/markdownNodeReferences';
+import type { AgentFinalCitationBinding } from '../../src/core/agent/protocol';
 import { ThreadMarkdown } from '../../src/renderer/agent/components/ThreadMarkdown';
 
 const cleanups: Array<() => void> = [];
@@ -61,16 +62,113 @@ describe('Thread Markdown references', () => {
     expect(document.querySelector(`[data-inline-ref="${NODE_ID}"]`)).toBeNull();
     expect(document.querySelector('a')?.getAttribute('href')).toBe('https://example.test');
   });
+
+  test('projects an opaque final citation without treating the marker path as authority', () => {
+    const resourceRef = {
+      id: 'resource:11111111-1111-4111-8111-111111111111',
+      mimeType: 'text/plain',
+      byteLength: 12,
+      fileName: 'report.txt',
+    } as const;
+    const finalCitations: readonly AgentFinalCitationBinding[] = [{
+      markerOrdinal: 0,
+      status: 'available',
+      entryKind: 'file',
+      resourceRef,
+      openIntent: 'delivered',
+      sourceAvailable: true,
+      reason: null,
+    }];
+    const document = renderThreadMarkdown(
+      'Delivered: [[file:///workspace/report.txt]]',
+      { finalCitations, threadId: 'thread-1' },
+    );
+    const reference = document.querySelector<HTMLElement>('[data-inline-ref-kind="local-file"]');
+
+    expect(reference?.dataset.inlineRefPath).toBe('/workspace/report.txt');
+    expect(reference?.dataset.inlineRefThreadId).toBe('thread-1');
+    expect(reference?.dataset.inlineRefResourceId).toBe(resourceRef.id);
+    expect(reference?.dataset.inlineRefResourceFileName).toBe(resourceRef.fileName);
+    expect(reference?.dataset.inlineRefResourceIntent).toBe('delivered');
+    expect(reference?.dataset.inlineRefCitationStatus).toBe('available');
+    expect(reference?.dataset.inlineRefSourceAvailable).toBe('true');
+    expect(reference?.dataset.inlineRefReadonly).toBeUndefined();
+  });
+
+  test.each(['unavailable', 'denied'] as const)(
+    'keeps a final citation in %s state bound and non-actionable instead of trusting its marker path',
+    (status) => {
+      const finalCitations: readonly AgentFinalCitationBinding[] = [{
+        markerOrdinal: 0,
+        status,
+        entryKind: 'file',
+        resourceRef: null,
+        openIntent: null,
+        sourceAvailable: false,
+        reason: `${status} test`,
+      }];
+      const document = renderThreadMarkdown(
+        'Missing: [[file:///workspace/private.txt]]',
+        { finalCitations, threadId: 'thread-1' },
+      );
+      const reference = document.querySelector<HTMLElement>('[data-inline-ref-kind="local-file"]');
+
+      expect(reference?.tagName).toBe('SPAN');
+      expect(reference?.dataset.inlineRefCitationStatus).toBe(status);
+      expect(reference?.dataset.inlineRefThreadId).toBe('thread-1');
+      expect(reference?.dataset.inlineRefPath).toBeUndefined();
+      expect(reference?.dataset.inlineRefResourceId).toBeUndefined();
+      expect(reference?.dataset.inlineRefReadonly).toBe('true');
+      expect(document.querySelector('a')).toBeNull();
+    },
+  );
+
+  test('does not expose a bound citation path when its owning Thread identity is absent', () => {
+    const finalCitations: readonly AgentFinalCitationBinding[] = [{
+      markerOrdinal: 0,
+      status: 'available',
+      entryKind: 'file',
+      resourceRef: {
+        id: 'resource:22222222-2222-4222-8222-222222222222',
+        mimeType: 'text/plain',
+        byteLength: 4,
+        fileName: 'bound.txt',
+      },
+      openIntent: 'delivered',
+      sourceAvailable: true,
+      reason: null,
+    }];
+    const document = renderThreadMarkdown('Bound: [[file:///workspace/bound.txt]]', { finalCitations });
+    const reference = document.querySelector<HTMLElement>('[data-inline-ref-kind="local-file"]');
+
+    expect(reference?.tagName).toBe('SPAN');
+    expect(reference?.dataset.inlineRefCitationStatus).toBe('available');
+    expect(reference?.dataset.inlineRefPath).toBeUndefined();
+    expect(reference?.dataset.inlineRefReadonly).toBe('true');
+  });
 });
 
-function renderThreadMarkdown(text: string): Document {
+function renderThreadMarkdown(
+  text: string,
+  options: {
+    readonly finalCitations?: readonly AgentFinalCitationBinding[];
+    readonly threadId?: string;
+  } = {},
+): Document {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
   const root = createRoot(container);
   act(() => {
-    root.render(<ThreadMarkdown onNodeReferenceOpen={() => undefined} text={text} />);
+    root.render(
+      <ThreadMarkdown
+        finalCitations={options.finalCitations}
+        onNodeReferenceOpen={() => undefined}
+        text={text}
+        threadId={options.threadId}
+      />,
+    );
   });
   cleanups.push(() => act(() => root.unmount()));
   return document;

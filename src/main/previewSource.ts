@@ -63,6 +63,7 @@ export interface PreviewCommandContext {
   threadResourceFile?: (
     threadId: string,
     ref: ThreadResourceReference,
+    intent: 'delivered' | 'source',
   ) => Promise<ThreadAttachmentPreviewFile | null>;
   threadImageArtifactFile?: (
     threadId: string,
@@ -434,11 +435,13 @@ async function resolveLocalFileTarget(
       : null;
   }
   if (target.resourceRef) {
-    const resource = await context.threadResourceFile?.(target.threadId, target.resourceRef);
-    if (!resource || resource.entryKind !== 'file') return null;
-    return target.path === resource.path || resource.acceptedPathHints.includes(target.path)
-      ? resource
-      : null;
+    const resource = await context.threadResourceFile?.(
+      target.threadId,
+      target.resourceRef,
+      target.resourceIntent ?? 'delivered',
+    );
+    if (!resource) return null;
+    return resource;
   }
   if (!target.attachmentId) return null;
   const attachment = await context.threadAttachmentFile?.(target.threadId, target.attachmentId);

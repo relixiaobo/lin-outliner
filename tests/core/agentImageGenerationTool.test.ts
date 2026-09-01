@@ -16,16 +16,16 @@ const GENERATED_IMAGE_ARTIFACT = createImageArtifactReference({
   createdAt: 1,
   retention: 'tiered',
   original: {
-    kind: 'threadPayload',
+    kind: 'resource',
     ref: {
-      id: 'a'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000a',
       mimeType: 'image/png',
       byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
       fileName: 'original.png',
     },
   },
   observation: {
-    id: 'b'.repeat(64),
+    id: 'resource:00000000-0000-4000-8000-00000000000b',
     mimeType: 'image/png',
     byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
     fileName: 'prompt.png',

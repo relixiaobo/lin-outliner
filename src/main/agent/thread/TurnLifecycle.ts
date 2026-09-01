@@ -60,6 +60,7 @@ interface AcceptedTurn { readonly response: TurnStartResponse; readonly thread: 
 export interface ExplicitSubagentAdmissionPreparation {
   readonly admission: SubagentTurnAdmission & { readonly kind: 'explicitAdmission' };
   readonly sidecarText: string;
+  readonly resourceRefs: readonly ThreadResourceReference[];
 }
 export type ExplicitSubagentAdmissionPreparer = (input: {
   readonly maxSidecarTokens: number;
@@ -514,6 +515,7 @@ export class TurnLifecycle {
         turn.id,
         turn.items,
         (notification) => this.core.recordNotification(notification),
+        (item) => this.bindFinalCitations(record.thread, item),
       );
       let resolveCompletion!: () => void;
       const completion = new Promise<void>((resolve) => {
@@ -691,11 +693,8 @@ export class TurnLifecycle {
             createItemId: () => uuidV7(),
             writeContext: (payload) => this.core.payloads.writeContext(thread.id, payload),
             resolveAsset: this.resolveReferencedAsset,
-            writeResource: (bytes, mimeType, fileName) => this.core.payloads.writeResourceWithStatus(
-              thread.id,
-              bytes,
-              mimeType,
-              fileName,
+            writeResource: (bytes, mimeType, fileName) => (
+              this.core.resources.writeBytes(thread.id, bytes, mimeType, fileName)
             ),
             onResourceCreated: (ref) => createdEvidenceResources.push(ref),
           });
@@ -1153,11 +1152,8 @@ export class TurnLifecycle {
         createItemId: () => uuidV7(),
         writeContext: (payload) => this.core.payloads.writeContext(record.thread.id, payload),
         resolveAsset: this.resolveReferencedAsset,
-        writeResource: (bytes, mimeType, fileName) => this.core.payloads.writeResourceWithStatus(
-          record.thread.id,
-          bytes,
-          mimeType,
-          fileName,
+        writeResource: (bytes, mimeType, fileName) => (
+          this.core.resources.writeBytes(record.thread.id, bytes, mimeType, fileName)
         ),
         onResourceCreated: recordCreatedEvidenceResource,
       });
@@ -1182,6 +1178,7 @@ export class TurnLifecycle {
         turnId,
         initialItems,
         (notification) => this.core.recordNotification(notification),
+        (item) => this.bindFinalCitations(record.thread, item),
       );
       let subagentAdmission = request.subagentAdmission;
       if (request.prepareExplicitSubagentAdmission) {
@@ -1231,7 +1228,7 @@ export class TurnLifecycle {
             'additionalContext',
             sidecarRef,
             'Subagent settlement observation',
-            [],
+            prepared.resourceRefs,
           );
           initialItems = [...initialItems, sidecarItem];
           turn = decodeTurn({ ...provisionalTurn, items: initialItems });
@@ -1240,6 +1237,7 @@ export class TurnLifecycle {
             turnId,
             initialItems,
             (notification) => this.core.recordNotification(notification),
+            (item) => this.bindFinalCitations(record.thread, item),
           );
         }
       }
@@ -1423,7 +1421,7 @@ export class TurnLifecycle {
       readOutput: (ref) => this.core.payloads.readTextReference(thread.id, ref),
       resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
       resolveImageArtifactPath: (artifact) => resourceObservation.resolveArtifactPath(artifact),
-      readResource: (ref) => this.core.payloads.readResource(thread.id, ref),
+      readResource: (ref) => this.core.resources.readExact(ref),
       persistOutputImage: unsupported,
       persistOutputResource: unsupported,
       persistOutputText: unsupported,
@@ -1501,7 +1499,7 @@ export class TurnLifecycle {
           readOutput: (ref) => this.core.payloads.readTextReference(active.threadId, ref),
           resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
           resolveImageArtifactPath: (artifact) => resourceObservation.resolveArtifactPath(artifact),
-          readResource: (ref) => this.core.payloads.readResource(active.threadId, ref),
+          readResource: (ref) => this.core.resources.readExact(ref),
           persistOutputImage: async (bytes, mimeType) => {
             const sourceBytes = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
             const prepared = this.normalizeOutputImage
@@ -1517,10 +1515,11 @@ export class TurnLifecycle {
               prepared.bytes.byteOffset,
               prepared.bytes.byteLength,
             );
-            const written = await this.core.payloads.writeImageWithStatus(
+            const written = await this.core.resources.writeBytes(
               active.threadId,
-              observationBytes.toString('base64'),
+              observationBytes,
               prepared.mimeType,
+              'tool-output-image',
             );
             if (written.created) createdOutputResources.push(written.ref);
             return {
@@ -1531,7 +1530,7 @@ export class TurnLifecycle {
             };
           },
           persistOutputResource: async (bytes, mimeType, fileName) => {
-            const written = await this.core.payloads.writeResourceWithStatus(
+            const written = await this.core.resources.writeBytes(
               active.threadId,
               bytes,
               mimeType,
@@ -1781,6 +1780,15 @@ export class TurnLifecycle {
         if (!hidden) await this.extensions.threadIdle(this.core.requireThread(active.threadId).thread);
       }
     }
+  private async bindFinalCitations(thread: Thread, item: ThreadItem): Promise<ThreadItem> {
+    try {
+      return await this.resourceOps.bindFinalCitations(thread, item);
+    } catch (error) {
+      console.warn(`[agent] Final citation binding degraded for ${thread.id}`, error);
+      return item;
+    }
+  }
+
   private accrueSubagentBudgetUsage(
       active: ActiveTurn,
       thread: Thread,

@@ -28,6 +28,7 @@ export interface MarkdownReferenceAstNode {
 export interface MarkdownReferenceOccurrence {
   readonly escaped: boolean;
   readonly marker: ParsedReferenceMarker;
+  readonly sourceStart: number | null;
 }
 
 export interface MarkdownReferenceOccurrenceResult {
@@ -92,6 +93,7 @@ export function markdownReferenceOccurrences(
         return {
           marker,
           escaped: sourceOffset === undefined || isEscapedAt(source, sourceOffset),
+          sourceStart: sourceOffset === undefined ? null : start + sourceOffset,
         };
       }),
     };

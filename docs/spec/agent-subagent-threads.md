@@ -494,26 +494,36 @@ Async agent launched successfully. (This tool result is internal metadata — ne
 agentId: {agentId} (internal ID - do not mention to user. Use agent_message with to: '{agentId}', summary: '<5-10 word recap>' to continue this agent.)
 The agent is working in the background. You will be notified automatically when it completes. You know nothing about its results until that notification arrives — do not report, assume, or predict them; continue other work or respond to the user in the meantime.
 Do not duplicate this agent's work — avoid working with the same files or topics it is using.
-output_file: {outputFile}
-Do NOT Read or tail this file via the shell tool — it is the full subagent transcript and reading it will overflow your context. If the user asks for progress, say the agent is still running; you'll get a completion notification.
+If the user asks for progress, say the agent is still running; you'll get a completion notification.
 ```
 
-An addressable foreground `general-purpose` or configured Role returns two
-ephemeral text content blocks. The first is the scanned report unchanged. The
-second is exactly:
+Every foreground type returns one bounded host-authored settlement envelope in
+the original `agent` tool result. Background notifications, explicit-generation
+carry-forward, and exhausted-settlement continuations use the same
+`SubagentHandoffProjector`. It preserves the complete child answer in the child
+Thread and transcript, then fairly allocates the parent envelope across child
+generations. Each member records `full`, `excerpted`, or `omitted` coverage plus
+omitted byte/token counts; the aggregate coverage is retained in settlement
+metadata. The ordinary ceiling is 16,384 estimated tokens and 65,536 UTF-8
+bytes. Explicit carry-forward receives the smaller capacity actually available
+after canonical input planning and stays pending when even its control frame
+cannot fit.
 
-```text
-agentId: {agentId} (use agent_message with to: '{agentId}', summary: '<5-10 word recap>' to continue this agent)
-<usage>subagent_tokens: {subagentTokens}
-tool_uses: {toolUses}
-duration_ms: {durationMs}</usage>
-```
+Only citation references whose markers remain in the selected text are linked
+into the parent context. When any member is excerpted or omitted, the Host also
+captures the flushed child transcript as an exact Markdown resource, links the
+same opaque reference into the parent working set, and emits a path-free
+`<transcript-fallback>` marker naming that resource. The provider may inspect the
+disposable readable observation; it never receives the constant transcript
+path, ContentStore path, digest, anchor, or private resource ID in prose.
+Fallback capture failure emits an explicitly unavailable marker, leaves truthful
+incomplete coverage, and does not fail the parent Turn.
 
-Foreground `explore` and `plan` return only the report block and do not expose a
-model-visible address or usage block. Background executions of every type use
-the launch template, expose the stable ID, and may later be resumed. Provider
-fixtures also preserve ephemeral cache-control metadata where the adapter emits
-it; that metadata does not change these text bytes.
+Agent ID needed for later collaboration remains tool-result metadata. Token
+usage, duration, tool counts, worktree paths, and transcript paths remain in
+runtime diagnostics and child inspection surfaces; they are not routine handoff
+text. Background executions of every type use the launch template, expose the
+stable ID, and may later be resumed.
 
 Before any Agent report enters a foreground result or background notification,
 the host scans it once. Harness-shaped markers and lines that imitate user or
@@ -532,13 +542,14 @@ canonical user input and typed additional context sourced from
 `userMessage` Item.
 
 Host-authored handling rules are `application/instruction`. Agent identity,
-tool-use identity, output path, terminal status, summary, usage, worktree data,
-and host error are `application/observation`. The scanned Agent report is a
-separate `untrusted/observation`. Provider projection therefore records the
-entire delivery as `systemContext` provenance while keeping dynamic Agent output
-below application authority. Failure, model-stop, empty-result,
-retained-worktree, and partial-output paths use the same typed shape with their
-appropriate status, optional result/error, usage, and worktree observations.
+tool-use identity, terminal status, summary, and host error are
+`application/observation`. The bounded settlement envelope is a separate
+`untrusted/observation`, with selected exact resource references attached to the
+owning context Item. Provider projection therefore records the entire delivery
+as `systemContext` provenance while keeping dynamic Agent output below
+application authority. Failure, model-stop, empty-result, and partial-output
+paths use the same typed shape with their appropriate status, optional
+result/error, and coverage.
 
 The child Turn and transcript append settle before the notification becomes
 deliverable. The direct parent's next idle admission boundary materializes it as
@@ -621,7 +632,7 @@ There are two recipient forms:
   Running steering returns exactly
   `{"success":true,"message":"Message queued for delivery to {agentId} at its next tool round.","pin":{"id":"{agentId}","name":"{agentId}","ref":"{shortRef}"}}`.
   Resume returns exactly
-  `{"success":true,"message":"Agent \"{agentId}\" was stopped ({terminalStatus}); resumed it in the background with your message. You'll be notified when it finishes. Output: {outputFile}","resumedAgentId":"{agentId}","pin":{"id":"{agentId}","name":"{agentId}","ref":"{shortRef}"}}`.
+  `{"success":true,"message":"Agent \"{agentId}\" was stopped ({terminalStatus}); resumed it in the background with your message. You'll be notified when it finishes.","resumedAgentId":"{agentId}","pin":{"id":"{agentId}","name":"{agentId}","ref":"{shortRef}"}}`.
   `shortRef` is opaque, and both `pin.id` and `pin.name` equal the stable Agent
   ID.
 - The reserved `main` recipient queues a non-user message for the main
@@ -861,8 +872,11 @@ Turns into readable text. `renderTurn` reads one Turn and its payloads;
 renders. Brief output contains Turn status, duration, model, usage, canonical
 Items, tool exchanges, and explicit evidence/reset/compaction markers. Full
 output additionally contains IDs, payload digests, per-call usage, and retained
-reasoning for forensics. Persisted size bounds produce explicit truncation
-markers rather than silent cuts.
+reasoning for forensics. Canonical Assistant text is written verbatim so an
+incomplete delegated handoff can recover the complete child answer from the
+transcript. Existing persisted bounds still apply to tool output, reasoning,
+errors, and other bounded payload fields and produce explicit truncation markers
+rather than silent cuts.
 
 The transcript is `<userData>/thread-transcripts/<threadId>.md`. It is app-owned,
 never placed in the workspace, and readable through existing `file_read` and

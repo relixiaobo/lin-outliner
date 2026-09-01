@@ -85,7 +85,7 @@ export function currentThreadResourceAdapter(input: {
   readonly requestDiscardIfUnlinked: (handle: ThreadResourceReference) => void;
 }): OpaqueCurrentResourceAdapter<ThreadAttachmentContent, ThreadResourceReference> {
   return {
-    handleOf: (attachment) => attachment.source.kind === 'threadPayload'
+    handleOf: (attachment) => attachment.source.kind === 'resource'
       ? attachment.source.ref
       : null,
     sameHandle: sameOpaqueValue,

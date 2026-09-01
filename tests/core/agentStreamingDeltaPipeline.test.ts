@@ -11,6 +11,7 @@ import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/T
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
+import { AgentResourceStore } from '../../src/main/agent/persistence/AgentResourceStore';
 import { ThreadCore, type ThreadCoreOptions } from '../../src/main/agent/thread/ThreadCore';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
@@ -28,6 +29,7 @@ interface StreamingFixture {
   readonly rollout: RolloutStore;
   readonly history: ThreadHistoryProjectionStore;
   readonly metadata: ThreadMetadataStore;
+  readonly resources: AgentResourceStore;
   readonly metadataSelects: { count: number };
 }
 
@@ -46,6 +48,7 @@ afterEach(async () => {
     await fixture.core.flush();
     fixture.history.close();
     fixture.metadata.close();
+    await fixture.resources.close();
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
@@ -351,11 +354,20 @@ async function createFixture(
     cancelScheduled: rolloutClock.cancel,
   });
   const coreClock = manualScheduler();
+  const resourceDatabasePath = join(root, 'resource-references.sqlite');
+  const resources = new AgentResourceStore(
+    resourceDatabasePath,
+    join(root, 'content'),
+    join(root, 'scratch'),
+    Date.now,
+    testDatabase(resourceDatabasePath),
+  );
   const core = new ThreadCore(
     metadata,
     history,
     rollout,
     new ToolPayloadStore(join(root, 'payloads')),
+    resources,
     new ExtensionRegistry(),
     {
       schedule: coreClock.schedule,
@@ -458,6 +470,7 @@ async function createFixture(
     rollout,
     history,
     metadata,
+    resources,
     metadataSelects,
   };
   fixtures.push(fixture);

@@ -233,8 +233,9 @@ byte, and settles writer failure, early close, abort, timeout, and process termi
 through the same foreground lifecycle. A stdin-bearing call never auto-backgrounds.
 
 Final shell logs use the Thread artifact sink. A foreground saved log and the final log
-returned by `task_stop` expose `persistedOutput` with a stable `resourceRef`, byte length,
-and current readable `filePath` when available. A running background task exposes only
+returned by `task_stop` retain `persistedOutput` with a stable `resourceRef` in Host-only
+result state. Their model-visible projection contains safe file name, MIME, byte length,
+and current readable `filePath` when available, never the opaque reference ID. A running background task exposes only
 `temporaryOutputPath`; it becomes durable when it completes and `task_stop` observes it,
 or when it is stopped. Capture is bounded by the same maximum 64 MiB artifact ceiling.
 Crossing it kills the command and returns `output_limit_exceeded` without claiming a
@@ -334,15 +335,18 @@ and the run fails unless every expected probe name is recorded exactly once
 before the flushed summary and explicit exit.
 
 A successful binary response is written directly through the Thread artifact sink; no
-flat `agent-web-fetch` file is authoritative. `binaryFile` contains `resourceRef`, MIME,
-byte length, SHA-256, and a current `filePath` only when materialization succeeds.
-Persisted result text retains the stable metadata and removes the path. Artifact
+flat `agent-web-fetch` file is authoritative. Host-only result state retains the opaque
+resource reference; model-visible `binaryFile` contains safe file name, MIME, byte
+length, and a current `filePath` only when materialization succeeds. Digest and opaque
+reference ID never enter model prose. Persisted result text retains stable display
+metadata and removes the path. Artifact
 admission failure reports partial success and a warning without reclassifying the
 completed HTTP request as a network failure.
 
 `generate_image` separates the provider's original artifact from the bounded image shown
 to the model. It validates provider MIME/base64 against the 256 MiB source-image safety
-boundary and writes the original directly into the Thread resource store. That original
+boundary and admits the original into the shared ContentStore through an opaque Agent
+reference. That original
 is the `tiered` rendition of one immutable image artifact; it is not subject to the
 generic 10 MiB per-image and 20 MiB per-call inline tool-output limits, so detailed 4K
 originals remain intact until storage pressure makes them reclaimable.
@@ -662,7 +666,10 @@ use its Thread ID as a collaboration address.
 
 Embedded shell output has separate live and persisted renderings. The isolated child
 may use current readable paths, while durable Skill invocation evidence contains only
-stable resource references; occurrences of a typed output-root path in captured stdout
+stable file display metadata and Host-only links retain the opaque resource references.
+The Skill tool's model-visible artifact list likewise contains label, safe file name,
+MIME, byte length, and an available current path, never the private reference ID.
+Occurrences of a typed output-root path in captured stdout
 or stderr and artifact warnings are replaced by its stable root id. Typed managed output
 roots are collected after the command even on a non-zero exit; every successfully
 admitted file remains owned by the `skill` tool Item, and skipped or unavailable
@@ -733,9 +740,10 @@ complete output, or image dependency is unavailable. Item-specific fields are
 presentation and audit projections only; no reverse mapper may recreate model
 arguments from them. Payload shape and dependency checks are strict at publication and
 decode. Fork and child inheritance then treat missing semantic context, compaction,
-managed-resource, tool-argument, and complete-output copies as recoverable: they retain
-each canonical reference and the later projector emits typed call evidence or a bounded
-context-degradation marker instead of aborting the user operation.
+tool-argument, and complete-output payload copies plus unavailable linked resources as
+recoverable: they retain each canonical reference and the later projector emits typed
+call evidence or a bounded context-degradation marker instead of aborting the user
+operation.
 The codec requires the envelope on every tool Item. Pre-envelope Items have no migration,
 fallback decoder, inspection helper, or replay path; pre-release userData is reset when
 the format changes. Canonical replay rehydrates the exact durable value. Payload-backed

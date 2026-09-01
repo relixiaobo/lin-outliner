@@ -34,29 +34,13 @@ export function subagentTurnResult(turn: Turn): string {
 
 export function backgroundLaunchText(input: {
   readonly agentId: string;
-  readonly outputFile: string | null;
 }): string {
   return [
     'Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)',
     `agentId: ${input.agentId} (internal ID - do not mention to user. Use agent_message with to: '${input.agentId}', summary: '<5-10 word recap>' to continue this agent.)`,
     'The agent is working in the background. You will be notified automatically when its run settles. You know nothing about its results until that notification arrives - do not report, assume, or predict them; continue other work or respond to the user in the meantime.',
     "Do not duplicate this agent's work — avoid working with the same files or topics it is using.",
-    `output_file: ${input.outputFile ?? '(unavailable)'}`,
-    "Do NOT Read or tail this file via the shell tool — it is the full subagent transcript and reading it will overflow your context. If the user asks for progress, say the agent is still running; you'll get a completion notification.",
-  ].join('\n');
-}
-
-export function foregroundUsageText(input: {
-  readonly agentId: string;
-  readonly turn: Turn;
-  readonly worktree: SubagentExecutionRecord['worktree'];
-}): string {
-  return [
-    `agentId: ${input.agentId} (use agent_message with to: '${input.agentId}', summary: '<5-10 word recap>' to continue this agent)`,
-    ...worktreeResultLines(input.worktree),
-    `<usage>subagent_tokens: ${input.turn.execution.usage.totalTokens}`,
-    `tool_uses: ${toolUseCount(input.turn)}`,
-    `duration_ms: ${input.turn.durationMs ?? 0}</usage>`,
+    "If the user asks for progress, say the agent is still running; you'll get a completion notification.",
   ].join('\n');
 }
 
@@ -64,9 +48,9 @@ export function taskNotificationContext(input: {
   readonly execution: SubagentExecutionRecord;
   readonly notification: SubagentPendingNotification;
   readonly turn: Turn;
-  readonly outputFile: string | null;
+  readonly projectedOutput?: string;
 }): AdditionalContext {
-  const result = subagentTurnResult(input.turn);
+  const result = input.projectedOutput ?? subagentTurnResult(input.turn);
   const status = notificationStatus(input.execution, input.notification);
   const summary = notificationSummary(input.execution, status);
   const error = input.notification.error?.messagePreview ?? input.turn.error?.message;
@@ -77,14 +61,9 @@ export function taskNotificationContext(input: {
       value: [
         `agent_id=${input.execution.agentId}`,
         `tool_use_id=${input.notification.toolUseId}`,
-        `output_file=${input.outputFile ?? '(unavailable)'}`,
         `status=${status}`,
         `summary=${summary}`,
         REPEATED_GENERATION_NOTE,
-        `subagent_tokens=${input.turn.execution.usage.totalTokens}`,
-        `tool_uses=${toolUseCount(input.turn)}`,
-        `duration_ms=${input.turn.durationMs ?? 0}`,
-        ...worktreeResultLines(input.execution.worktree),
       ].join('\n'),
     },
     'subagent.notification-handling': {
@@ -107,12 +86,6 @@ export function taskNotificationContext(input: {
       },
     } : {}),
   };
-}
-
-function worktreeResultLines(worktree: SubagentExecutionRecord['worktree']): string[] {
-  return worktree?.removedAt === null
-    ? [`worktreePath: ${worktree.path}`, `worktreeBranch: ${worktree.branch}`]
-    : [];
 }
 
 export function agentMessageContext(
@@ -162,8 +135,4 @@ function notificationSummary(execution: SubagentExecutionRecord, status: string)
   if (status === 'finished') return `Agent "${execution.description}" run finished`;
   if (status === 'killed') return `Agent "${execution.description}" was stopped by Tenon`;
   return `Agent "${execution.description}" ${status}`;
-}
-
-function toolUseCount(turn: Turn): number {
-  return turn.items.filter((item) => 'modelCall' in item).length;
 }

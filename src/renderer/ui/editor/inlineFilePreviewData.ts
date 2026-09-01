@@ -1,4 +1,5 @@
 import { parseFileReferenceUri } from '../../../core/referenceMarkup';
+import type { AgentFinalCitationStatus, ThreadResourceReference } from '../../../core/agent/protocol';
 
 export interface InlineFilePreviewDescriptor {
   attachmentId?: string;
@@ -8,7 +9,12 @@ export interface InlineFilePreviewDescriptor {
   mimeType?: string;
   name?: string;
   path?: string;
+  readOnly?: boolean;
   ref?: string;
+  resourceRef?: ThreadResourceReference;
+  resourceIntent?: 'delivered' | 'source';
+  citationStatus?: AgentFinalCitationStatus;
+  sourceAvailable?: boolean;
   sizeBytes?: number;
   thumbnailDataUrl?: string;
   threadId?: string;
@@ -19,6 +25,7 @@ export function inlineFilePreviewAttrs(file: InlineFilePreviewDescriptor): Recor
     'data-inline-ref-kind': 'local-file',
   };
   setAttr(attrs, 'data-inline-ref-path', file.path);
+  if (file.readOnly === true) attrs['data-inline-ref-readonly'] = 'true';
   setAttr(attrs, 'data-inline-ref-entry-kind', file.entryKind);
   setAttr(attrs, 'data-inline-ref-name', file.name);
   setAttr(attrs, 'data-inline-ref-ref', file.ref);
@@ -29,18 +36,32 @@ export function inlineFilePreviewAttrs(file: InlineFilePreviewDescriptor): Recor
   setAttr(attrs, 'data-inline-ref-thumbnail-data-url', file.thumbnailDataUrl);
   setAttr(attrs, 'data-inline-ref-thread-id', file.threadId);
   setAttr(attrs, 'data-inline-ref-attachment-id', file.attachmentId);
+  setAttr(attrs, 'data-inline-ref-resource-id', file.resourceRef?.id);
+  setAttr(attrs, 'data-inline-ref-resource-mime-type', file.resourceRef?.mimeType);
+  setFiniteNumberAttr(attrs, 'data-inline-ref-resource-byte-length', file.resourceRef?.byteLength);
+  setAttr(attrs, 'data-inline-ref-resource-file-name', file.resourceRef?.fileName);
+  setAttr(attrs, 'data-inline-ref-resource-intent', file.resourceIntent);
+  setAttr(attrs, 'data-inline-ref-citation-status', file.citationStatus);
+  if (file.sourceAvailable !== undefined) {
+    attrs['data-inline-ref-source-available'] = String(file.sourceAvailable);
+  }
   return attrs;
 }
 
 export const LOCAL_FILE_REFERENCE_LINK_PREFIX = 'lin-file:';
 
-export function localFileReferenceHref(path: string, entryKind: 'file' | 'directory' = 'file'): string {
-  return `#${LOCAL_FILE_REFERENCE_LINK_PREFIX}${encodeURIComponent(entryKind)}:${encodeURIComponent(path)}`;
+export function localFileReferenceHref(
+  path: string,
+  entryKind: 'file' | 'directory' = 'file',
+  markerOrdinal?: number,
+): string {
+  const suffix = markerOrdinal === undefined ? '' : `:${markerOrdinal}`;
+  return `#${LOCAL_FILE_REFERENCE_LINK_PREFIX}${encodeURIComponent(entryKind)}:${encodeURIComponent(path)}${suffix}`;
 }
 
 export function localFileReferenceFromHref(
   href: string | undefined,
-): { entryKind: 'file' | 'directory'; path: string } | null {
+): { entryKind: 'file' | 'directory'; path: string; markerOrdinal?: number } | null {
   const normalizedHref = href?.startsWith('#') ? href.slice(1) : href;
   const fileReferenceUrl = parseFileReferenceUri(normalizedHref);
   if (fileReferenceUrl) {
@@ -51,11 +72,19 @@ export function localFileReferenceFromHref(
   const separator = body.indexOf(':');
   if (separator < 0) return null;
   const rawEntryKind = body.slice(0, separator);
-  const rawPath = body.slice(separator + 1);
+  const rawBody = body.slice(separator + 1);
+  const ordinalSeparator = rawBody.lastIndexOf(':');
+  const rawOrdinal = ordinalSeparator >= 0 ? rawBody.slice(ordinalSeparator + 1) : '';
+  const hasOrdinal = /^\d+$/u.test(rawOrdinal);
+  const rawPath = hasOrdinal ? rawBody.slice(0, ordinalSeparator) : rawBody;
   try {
     const entryKind = decodeURIComponent(rawEntryKind) === 'directory' ? 'directory' : 'file';
     const path = decodeURIComponent(rawPath);
-    return path ? { entryKind, path } : null;
+    return path ? {
+      entryKind,
+      path,
+      ...(hasOrdinal ? { markerOrdinal: Number(rawOrdinal) } : {}),
+    } : null;
   } catch {
     return null;
   }

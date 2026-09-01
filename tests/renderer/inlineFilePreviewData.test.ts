@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { formatFileReferenceUri } from '../../src/core/referenceMarkup';
 import {
+  inlineFilePreviewAttrs,
   LOCAL_FILE_REFERENCE_LINK_PREFIX,
   localFileReferenceFromHref,
   localFileReferenceHref,
@@ -25,6 +26,15 @@ describe('localFileReferenceHref ⇄ localFileReferenceFromHref', () => {
     expect(localFileReferenceFromHref(href)).toEqual({ entryKind: 'directory', path: '/work/outputs' });
   });
 
+  test('an optional final-citation marker ordinal round-trips', () => {
+    const href = localFileReferenceHref('/work/report.txt', 'file', 3);
+    expect(localFileReferenceFromHref(href)).toEqual({
+      entryKind: 'file',
+      markerOrdinal: 3,
+      path: '/work/report.txt',
+    });
+  });
+
   test('a path with a colon, spaces, and unicode round-trips (percent-encoded before the separator scan)', () => {
     // The decode finds the entryKind/path separator via the FIRST ':' in the body;
     // it survives a ':' inside the path only because the path is percent-encoded.
@@ -45,5 +55,19 @@ describe('localFileReferenceHref ⇄ localFileReferenceFromHref', () => {
 
   test('an empty decoded path is rejected', () => {
     expect(localFileReferenceFromHref(`#${LOCAL_FILE_REFERENCE_LINK_PREFIX}file:`)).toBeNull();
+  });
+
+  test('projects final-citation binding state and resource intent into DOM attributes', () => {
+    expect(inlineFilePreviewAttrs({
+      citationStatus: 'available',
+      readOnly: true,
+      resourceIntent: 'delivered',
+      sourceAvailable: false,
+    })).toMatchObject({
+      'data-inline-ref-citation-status': 'available',
+      'data-inline-ref-readonly': 'true',
+      'data-inline-ref-resource-intent': 'delivered',
+      'data-inline-ref-source-available': 'false',
+    });
   });
 });

@@ -3085,8 +3085,15 @@ describe('agent local tools', () => {
       });
       expect(JSON.parse(result!.content[0]!.text)).toMatchObject({
         ok: true,
-        data: { persistedOutput: { resourceRef: { id: expect.any(String) } } },
+        data: {
+          persistedOutput: {
+            fileName: expect.any(String),
+            mimeType: 'text/plain',
+            byteLength: expect.any(Number),
+          },
+        },
       });
+      expect(result!.content[0]!.text).not.toContain('resourceRef');
     });
   });
 
@@ -3286,6 +3293,38 @@ describe('local tool model-visible projections', () => {
       taskStatus: 'running',
       temporaryOutputPath: '/tmp/task_1.log',
     });
+
+    const resourceRef = {
+      id: 'resource:00000000-0000-4000-8000-000000000010',
+      fileName: 'task-output.log',
+      mimeType: 'text/plain',
+      byteLength: 42,
+    };
+    const visible = visibleBash({
+      ...background,
+      persistedOutput: {
+        filePath: '/tmp/task-output.log',
+        resourceRef,
+        byteLength: 42,
+      },
+      artifacts: [{ ref: resourceRef, readablePath: '/tmp/task-output.log', label: 'Task output' }],
+    });
+    expect(visible).toMatchObject({
+      persistedOutput: {
+        filePath: '/tmp/task-output.log',
+        fileName: 'task-output.log',
+        mimeType: 'text/plain',
+        byteLength: 42,
+      },
+      artifacts: [{
+        label: 'Task output',
+        fileName: 'task-output.log',
+        mimeType: 'text/plain',
+        byteLength: 42,
+        filePath: '/tmp/task-output.log',
+      }],
+    });
+    expect(JSON.stringify(visible)).not.toContain(resourceRef.id);
   });
 
   test('file_glob keeps filenames and only includes truncated when true', () => {
@@ -3330,7 +3369,15 @@ describe('local tool model-visible projections', () => {
       },
     };
     const visible = visibleBackgroundShellStop(data);
-    expect(visible).toEqual({ persistedOutput: data.persistedOutput });
+    expect(visible).toEqual({
+      persistedOutput: {
+        filePath: '/tmp/materialized/task_1.log',
+        fileName: 'task_1.log',
+        mimeType: 'text/plain',
+        byteLength: 123,
+      },
+    });
+    expect(JSON.stringify(visible)).not.toContain(data.persistedOutput!.resourceRef.id);
     expect(visible).not.toHaveProperty('task_id');
     expect(visible).not.toHaveProperty('status');
     expect(visible).not.toHaveProperty('message');

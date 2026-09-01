@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, p
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { open, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, join, resolve } from 'node:path';
 import { registerDesktopOutlineIpc } from './outlineClient';
 import { runOutlineActionCommand } from './outlineActionCommands';
@@ -193,6 +193,8 @@ import type {
 import type { LauncherInitialState } from '../core/launcher/commands';
 import {
   hasExplicitAgentLocalRoot,
+  removeAgentConversationWorkspace,
+  resolveAgentConversationWorkspace,
   resolveAgentScratchRoot,
   resolveAgentWorkdir,
 } from './agent/capabilities/agentLocalRoot';
@@ -271,11 +273,9 @@ const agentLocalFileRoot = resolveAgentWorkdir({
   userDataPath: app.getPath('userData'),
 });
 const agentScratchRoot = resolveAgentScratchRoot({ userDataPath: app.getPath('userData') });
-// The default workdir is app-owned (`<userData>/agent-workdir`), so create it; an explicit
-// `LIN_AGENT_LOCAL_ROOT` is the user's own directory and must already exist. Scratch is always
-// app-owned, so always create it. Both are best-effort: the agent tools mkdir lazily before each
-// write, so a startup failure (e.g. an unwritable userData) degrades the agent workdir rather
-// than aborting the whole app at module load.
+const hasExplicitAgentRoot = hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT);
+// The workspace collection and scratch roots are app-owned. An explicit
+// `LIN_AGENT_LOCAL_ROOT` is user-owned and must already exist.
 function ensureAgentDir(dir: string): void {
   try {
     mkdirSync(dir, { recursive: true });
@@ -283,7 +283,7 @@ function ensureAgentDir(dir: string): void {
     console.error(`[agent] failed to create directory ${dir} at startup`, error);
   }
 }
-if (!hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT)) {
+if (!hasExplicitAgentRoot) {
   ensureAgentDir(agentLocalFileRoot);
 }
 ensureAgentDir(agentScratchRoot);
@@ -293,6 +293,11 @@ const resourcePreviewHost = createResourcePreviewHost({
   previewRoots: () => [agentLocalFileRoot, agentScratchRoot, outlineAssetExportRoot],
   localFileRoots: () => [agentLocalFileRoot, agentScratchRoot],
   resolveAttachmentFile: (threadId, attachmentId) => agentHost.threads.resolveAttachmentFile(threadId, attachmentId),
+  resolveResourceFile: (threadId, ref, intent) => (
+    intent === 'source'
+      ? agentHost.threads.resolveThreadResourceSource(threadId, ref)
+      : agentHost.threads.resolveThreadResourceFile(threadId, ref)
+  ),
   reportError,
 });
 // An available Skill update should be visible without going looking for it, but
@@ -377,6 +382,28 @@ const agentHost = createAgentHost({
     resolvePersona: (thread) => configuration.resolveThreadPersona(thread, reportError),
   }),
   createThreadOptions: ({ configuration, worktrees }) => ({
+    resolveRootWorkspace: async (threadId) => {
+      if (hasExplicitAgentRoot) return agentLocalFileRoot;
+      const workspace = resolveAgentConversationWorkspace({
+        userDataPath: resolvedUserDataDir,
+        threadId,
+      });
+      await mkdir(workspace, { recursive: true, mode: 0o700 });
+      return workspace;
+    },
+    cleanupRootWorkspace: hasExplicitAgentRoot ? undefined : async (threadId, cwd) => {
+      await removeAgentConversationWorkspace({
+        userDataPath: resolvedUserDataDir,
+        threadId,
+        cwd,
+      });
+    },
+    ownsRootWorkspace: hasExplicitAgentRoot ? undefined : (threadId, cwd) => (
+      resolve(cwd) === resolve(resolveAgentConversationWorkspace({
+        userDataPath: resolvedUserDataDir,
+        threadId,
+      }))
+    ),
     resolveConfiguration: (request) => configuration.resolveProfile(
       request.configurationProfile,
       request.cwd,
@@ -755,7 +782,7 @@ function createThreadImageGenerationRuntime(
       signal?.throwIfAborted();
       const artifactRef = createImageArtifactReference({
         retention: 'tiered',
-        original: { kind: 'threadPayload', ref: original },
+        original: { kind: 'resource', ref: original },
         observation: persistedObservation.observation,
         sourceDimensions: persistedObservation.sourceDimensions,
         observationDimensions: persistedObservation.observationDimensions,
@@ -1053,9 +1080,10 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
                 };
               })
               .catch(() => null),
-          threadResourceFile: async (threadId, ref) =>
-            agentHost.threads
-              .resolveThreadResourceFile(threadId, ref)
+          threadResourceFile: async (threadId, ref, intent) =>
+            (intent === 'source'
+              ? agentHost.threads.resolveThreadResourceSource(threadId, ref)
+              : agentHost.threads.resolveThreadResourceFile(threadId, ref))
               .then((resolved) => {
                 if (!resolved) return null;
                 return {
@@ -1075,7 +1103,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
                   acceptedPathHints: [
                     resolved.artifact.id,
                     resolved.artifact.observation.fileName,
-                    ...(resolved.artifact.original?.kind === 'threadPayload'
+                    ...(resolved.artifact.original?.kind === 'resource'
                       ? [resolved.artifact.original.ref.fileName]
                       : []),
                   ],
@@ -1555,7 +1583,11 @@ function assertAttachmentFileOperationRenderer(
   input: LocalFileOperationInput | undefined,
   capability: string,
 ): void {
-  if (input?.threadId !== undefined || input?.attachmentId !== undefined) {
+  if (
+    input?.threadId !== undefined
+    || input?.attachmentId !== undefined
+    || input?.resourceRef !== undefined
+  ) {
     assertMainRenderer(event, capability);
   }
 }

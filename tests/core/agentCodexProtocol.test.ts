@@ -59,7 +59,7 @@ const CHILD_THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abf';
 const CHILD_TURN_ID = '018f0f24-7b2e-7a3f-8a4b-123456789ac0';
 const OUTPUT_ID = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const imageResourceRef = {
-  id: '9'.repeat(64),
+  id: 'resource:00000000-0000-4000-8000-000000000009',
   mimeType: 'image/png',
   byteLength: 12,
   fileName: 'tool-output.png',
@@ -577,7 +577,7 @@ describe('Codex Agent Core protocol codec', () => {
     expect(decodeThreadItem(historical)).toMatchObject({ resourceRefs: [] });
 
     const resourceRef = {
-      id: 'd'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000d',
       mimeType: 'application/pdf',
       byteLength: 321,
       fileName: 'report.pdf',
@@ -862,7 +862,7 @@ describe('Codex Agent Core protocol codec', () => {
       ...dynamic,
       contentItems: [{
         type: 'image',
-        source: { kind: 'threadPayload', ref: imageResourceRef },
+        source: { kind: 'resource', ref: imageResourceRef },
         artifactRef: imageArtifactRef,
       }],
     })).toThrow('unknown fields');
@@ -976,7 +976,12 @@ describe('Codex Agent Core protocol codec', () => {
           breadcrumb: [],
           content: 'Report node',
           contentTruncated: false,
-          resourceRef: { id: '1'.repeat(64), mimeType: 'text/plain', byteLength: 10, fileName: 'report.txt' },
+          resourceRef: {
+            id: 'resource:00000000-0000-4000-8000-000000000001',
+            mimeType: 'text/plain',
+            byteLength: 10,
+            fileName: 'report.txt',
+          },
           inlineImage: false,
           unavailableReason: null,
         }],
@@ -1169,17 +1174,22 @@ describe('Codex Agent Core protocol codec', () => {
 
   test('keeps attachments reference-only and rejects legacy inline bytes', () => {
     const ref = {
-      id: 'b'.repeat(64),
+      id: 'resource:00000000-0000-4000-8000-00000000000b',
       mimeType: 'image/png',
       byteLength: 128,
       fileName: 'prompt.png',
     };
-    const originalRef = { ...ref, id: 'c'.repeat(64), fileName: 'image.png', byteLength: 1024 };
+    const originalRef = {
+      ...ref,
+      id: 'resource:00000000-0000-4000-8000-00000000000c',
+      fileName: 'image.png',
+      byteLength: 1024,
+    };
     const artifactRef = {
       ...imageArtifactRef,
       id: 'd'.repeat(64),
       retention: 'durable' as const,
-      original: { kind: 'threadPayload' as const, ref: originalRef },
+      original: { kind: 'resource' as const, ref: originalRef },
       observation: ref,
     };
     const managed = decodeThreadItem({
@@ -1195,12 +1205,12 @@ describe('Codex Agent Core protocol codec', () => {
         name: 'image.png',
         mimeType: 'image/png',
         sizeBytes: 1024,
-        source: { kind: 'threadPayload', ref: originalRef },
+        source: { kind: 'resource', ref: originalRef },
         artifactRef,
       }],
     });
     expect(managed).toMatchObject({
-      content: [{ source: { kind: 'threadPayload' }, artifactRef }],
+      content: [{ source: { kind: 'resource' }, artifactRef }],
     });
     expect(() => decodeThreadItem({
       type: 'userMessage',
@@ -1217,26 +1227,26 @@ describe('Codex Agent Core protocol codec', () => {
         sizeBytes: 3,
         source: { kind: 'inline', dataBase64: 'YWJj' },
       }],
-    })).toThrow('expected one of: localFile, threadPayload');
+    })).toThrow('expected one of: localFile, resource');
     expect(() => decodeThreadItem({
       ...(managed as ThreadItem),
       content: [{
         ...(managed as Extract<ThreadItem, { type: 'userMessage' }>).content[0],
-        source: { kind: 'threadPayload', ref: { ...ref, fileName: '../prompt.png' } },
+        source: { kind: 'resource', ref: { ...ref, fileName: '../prompt.png' } },
       }],
     })).toThrow('expected a safe base name');
     expect(() => decodeThreadItem({
       ...(managed as ThreadItem),
       content: [{
         ...(managed as Extract<ThreadItem, { type: 'userMessage' }>).content[0],
-        source: { kind: 'threadPayload', ref: { ...ref, fileName: '..' } },
+        source: { kind: 'resource', ref: { ...ref, fileName: '..' } },
       }],
     })).toThrow('expected a safe base name');
     expect(() => decodeThreadItem({
       ...(managed as ThreadItem),
       content: [{
         ...(managed as Extract<ThreadItem, { type: 'userMessage' }>).content[0],
-        source: { kind: 'threadPayload', ref: { ...ref, byteLength: 2 * 1024 * 1024 * 1024 + 1 } },
+        source: { kind: 'resource', ref: { ...ref, byteLength: 2 * 1024 * 1024 * 1024 + 1 } },
       }],
     })).toThrow('managed resource budget');
   });

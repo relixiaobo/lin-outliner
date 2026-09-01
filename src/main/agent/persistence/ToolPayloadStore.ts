@@ -1,14 +1,8 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { constants, type Stats } from 'node:fs';
-import type { FileHandle } from 'node:fs/promises';
-import { copyFile, link, lstat, mkdir, open, readFile, readdir, realpath, rm, rmdir, utimes, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
-import { isPathInside } from '../capabilities/agentAttachmentMaterialization';
-import {
-  MAX_MANAGED_ATTACHMENT_BYTES,
-  MAX_THREAD_MANAGED_ATTACHMENT_BYTES,
-} from '../../../core/agentAttachmentLimits';
-import { safeAttachmentFileName } from '../../../core/agentAttachmentPaths';
+import { copyFile, lstat, mkdir, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { MAX_THREAD_MANAGED_ATTACHMENT_BYTES } from '../../../core/agentAttachmentLimits';
 import {
   CONTEXT_PAYLOAD_KINDS,
   MAX_TOOL_ARGUMENT_TEXT_BYTES,
@@ -21,8 +15,6 @@ import {
   type ThreadId,
   type ThreadInternalTextPayloadReference,
   type ThreadItemOutputReference,
-  type ThreadImageArtifactReference,
-  type ThreadResourceReference,
   type TurnDiagnosticsPayload,
   type TurnDiagnosticsPayloadReference,
 } from '../../../core/agent/protocol';
@@ -34,13 +26,6 @@ import {
   encodeTurnDiagnosticsPayload,
   encodeThreadContextPayload,
 } from '../../../core/agent/codec';
-
-const MIME_EXTENSIONS: Readonly<Record<string, string>> = {
-  'image/gif': '.gif',
-  'image/jpeg': '.jpg',
-  'image/png': '.png',
-  'image/webp': '.webp',
-};
 
 const TEXT_MIME_EXTENSIONS = {
   'text/plain': '.txt',
@@ -54,13 +39,6 @@ const CONTEXT_DIR = 'context';
 const INTERNAL_TEXT_DIR = 'internal-text';
 const INTERNAL_TEXT_FILENAME_PATTERN = /^[a-f0-9]{64}\.txt$/;
 const TURN_DIAGNOSTICS_DIR = 'turn-diagnostics';
-const RESOURCE_DIR = 'resources';
-const STAGING_DIR = '.staging';
-
-export const THREAD_IMAGE_RETENTION_TARGET_BYTES = 5 * 1024 * 1024 * 1024;
-export const THREAD_IMAGE_RETENTION_SOFT_BYTES = 6 * 1024 * 1024 * 1024;
-export const THREAD_IMAGE_RETENTION_MIN_ORIGINAL_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const RESOURCE_ACCESS_TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 
 export const MAX_TOOL_PAYLOAD_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS = Math.ceil(MAX_TOOL_PAYLOAD_IMAGE_BYTES / 3) * 4;
@@ -69,20 +47,7 @@ export type ToolPayloadImageMeasurement =
   | { readonly ok: true; readonly byteLength: number }
   | { readonly ok: false; readonly reason: 'invalidBase64' | 'imageByteLimit' };
 
-interface PendingResourceUpload {
-  readonly id: string;
-  readonly threadId: ThreadId;
-  readonly attachmentId: string;
-  readonly expectedBytes: number;
-  readonly mimeType: string;
-  readonly fileName: string;
-  readonly path: string;
-  readonly handle: FileHandle;
-  readonly hash: ReturnType<typeof createHash>;
-  byteLength: number;
-}
-
-interface ResourceFileIdentity {
+interface StoredFileIdentity {
   readonly ctimeMs: number;
   readonly dev: number;
   readonly ino: number;
@@ -90,49 +55,8 @@ interface ResourceFileIdentity {
   readonly size: number;
 }
 
-export interface BeginResourceUploadInput {
-  readonly threadId: ThreadId;
-  readonly attachmentId: string;
-  readonly expectedBytes: number;
-  readonly mimeType: string;
-  readonly fileName: string;
-}
-
-export interface WrittenThreadResource {
-  readonly ref: ThreadResourceReference;
-  readonly created: boolean;
-}
-
-export interface ThreadImageRetentionInventory {
-  readonly artifacts: readonly ThreadImageArtifactReference[];
-  readonly protectedResources: readonly ThreadResourceReference[];
-}
-
 export interface ToolPayloadStoreOptions {
-  readonly now?: () => number;
-  readonly imageRetention?: {
-    readonly targetBytes: number;
-    readonly softBytes: number;
-    readonly hardBytes: number;
-    readonly minOriginalAgeMs: number;
-  };
-  readonly resourceAccessTouchIntervalMs?: number;
-}
-
-interface ImageRetentionRole {
-  readonly ref: ThreadResourceReference;
-  protected: boolean;
-  observation: boolean;
-  tieredOriginalCreatedAt: number | null;
-}
-
-interface ImageRetentionCandidate {
-  readonly ref: ThreadResourceReference;
-  readonly path: string;
-  readonly byteLength: number;
-  readonly lastAccessedAt: number;
-  readonly createdAt: number;
-  readonly identity: ResourceFileIdentity;
+  readonly maxThreadBytes?: number;
 }
 
 export class ThreadResourceQuotaError extends Error {
@@ -143,375 +67,14 @@ export class ThreadResourceQuotaError extends Error {
 }
 
 export class ToolPayloadStore {
-  private readonly pendingUploads = new Map<string, PendingResourceUpload>();
   private readonly resourceOperationTails = new Map<ThreadId, Promise<void>>();
-  private readonly verifiedResourceFiles = new Map<string, ResourceFileIdentity>();
-  private readonly now: () => number;
-  private readonly imageRetention: NonNullable<ToolPayloadStoreOptions['imageRetention']>;
-  private readonly resourceAccessTouchIntervalMs: number;
-  private imageRetentionInventory: ((
-    threadId: ThreadId,
-  ) => ThreadImageRetentionInventory | Promise<ThreadImageRetentionInventory>) | null = null;
+  private readonly maxThreadBytes: number;
 
   constructor(private readonly rootPath: string, options: ToolPayloadStoreOptions = {}) {
-    this.now = options.now ?? Date.now;
-    this.imageRetention = options.imageRetention ?? {
-      targetBytes: THREAD_IMAGE_RETENTION_TARGET_BYTES,
-      softBytes: THREAD_IMAGE_RETENTION_SOFT_BYTES,
-      hardBytes: MAX_THREAD_MANAGED_ATTACHMENT_BYTES,
-      minOriginalAgeMs: THREAD_IMAGE_RETENTION_MIN_ORIGINAL_AGE_MS,
-    };
-    this.resourceAccessTouchIntervalMs = options.resourceAccessTouchIntervalMs
-      ?? RESOURCE_ACCESS_TOUCH_INTERVAL_MS;
-    validateImageRetentionPolicy(this.imageRetention, this.resourceAccessTouchIntervalMs);
-  }
-
-  setImageRetentionInventoryProvider(
-    provider: (
-      threadId: ThreadId,
-    ) => ThreadImageRetentionInventory | Promise<ThreadImageRetentionInventory>,
-  ): void {
-    this.imageRetentionInventory = provider;
-  }
-
-  async initialize(): Promise<void> {
-    const root = await this.existingManagedDirectory(null);
-    if (!root) return;
-    const threadIds = await readdir(root);
-    await Promise.all(threadIds.map(async (threadId) => {
-      const threadRoot = await this.existingManagedDirectory(threadId);
-      if (!threadRoot) return;
-      await rm(join(threadRoot, STAGING_DIR), { recursive: true, force: true });
-    }));
-  }
-
-  async beginResourceUpload(input: BeginResourceUploadInput): Promise<string> {
-    validateResourceMetadata(input.expectedBytes, input.mimeType, input.fileName);
-    if (!input.attachmentId.trim()) throw new Error('Attachment id is required');
-    return this.withResourceLock(input.threadId, async () => {
-      await this.assertResourceCapacity(input.threadId, input.expectedBytes);
-      const id = randomUUID();
-      const directory = await this.ensureManagedDirectory(input.threadId, STAGING_DIR);
-      const path = join(directory, id);
-      const handle = await open(path, 'wx');
-      this.pendingUploads.set(id, {
-        ...input,
-        id,
-        fileName: safeAttachmentFileName(input.fileName),
-        path,
-        handle,
-        hash: createHash('sha256'),
-        byteLength: 0,
-      });
-      return id;
-    });
-  }
-
-  async appendResourceUpload(
-    threadId: ThreadId,
-    attachmentId: string,
-    uploadId: string,
-    bytes: Uint8Array,
-  ): Promise<void> {
-    await this.withResourceLock(threadId, async () => {
-      const upload = this.requireUpload(threadId, attachmentId, uploadId);
-      if (bytes.byteLength === 0) return;
-      if (upload.byteLength + bytes.byteLength > upload.expectedBytes) {
-        await this.abortResourceUploadUnlocked(upload);
-        throw new Error('Managed attachment upload exceeded its declared byte length.');
-      }
-      const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      let offset = 0;
-      while (offset < buffer.byteLength) {
-        const { bytesWritten } = await upload.handle.write(buffer, offset, buffer.byteLength - offset);
-        if (bytesWritten <= 0) throw new Error('Managed attachment upload made no write progress.');
-        offset += bytesWritten;
-      }
-      upload.hash.update(buffer);
-      upload.byteLength += buffer.byteLength;
-    });
-  }
-
-  async finishResourceUpload(
-    threadId: ThreadId,
-    attachmentId: string,
-    uploadId: string,
-  ): Promise<ThreadResourceReference> {
-    return this.withResourceLock(threadId, async () => {
-      const upload = this.requireUpload(threadId, attachmentId, uploadId);
-      try {
-        await upload.handle.close();
-        if (upload.byteLength !== upload.expectedBytes) {
-          throw new Error('Managed attachment upload did not match its declared byte length.');
-        }
-        const ref: ThreadResourceReference = {
-          id: upload.hash.digest('hex'),
-          mimeType: upload.mimeType,
-          byteLength: upload.byteLength,
-          fileName: upload.fileName,
-        };
-        const directory = await this.ensureManagedDirectory(threadId, RESOURCE_DIR, ref.id);
-        const target = join(directory, ref.fileName);
-        try {
-          await link(upload.path, target);
-          try {
-            await this.rememberVerifiedResource(threadId, ref, target);
-          } catch (error) {
-            await this.rollbackPublishedResource(threadId, ref, target, error);
-            throw error;
-          }
-        } catch (error) {
-          if (!isAlreadyExists(error)) throw error;
-          await this.verifyAndRememberResource(threadId, ref, target);
-        }
-        this.pendingUploads.delete(uploadId);
-        await rm(upload.path, { force: true }).catch(() => undefined);
-        return ref;
-      } catch (error) {
-        this.pendingUploads.delete(uploadId);
-        await upload.handle.close().catch(() => undefined);
-        await rm(upload.path, { force: true });
-        throw error;
-      }
-    });
-  }
-
-  async abortResourceUpload(threadId: ThreadId, attachmentId: string, uploadId: string): Promise<void> {
-    await this.withResourceLock(threadId, async () => {
-      const upload = this.requireUpload(threadId, attachmentId, uploadId);
-      await this.abortResourceUploadUnlocked(upload);
-    });
-  }
-
-  async writeResource(
-    threadId: ThreadId,
-    bytes: Uint8Array,
-    mimeType: string,
-    fileName: string,
-  ): Promise<ThreadResourceReference> {
-    return (await this.writeResourceWithStatus(threadId, bytes, mimeType, fileName)).ref;
-  }
-
-  async writeResourceWithStatus(
-    threadId: ThreadId,
-    bytes: Uint8Array,
-    mimeType: string,
-    fileName: string,
-  ): Promise<WrittenThreadResource> {
-    validateResourceMetadata(bytes.byteLength, mimeType, fileName);
-    const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const ref: ThreadResourceReference = {
-      id: createHash('sha256').update(buffer).digest('hex'),
-      mimeType,
-      byteLength: buffer.byteLength,
-      fileName: safeAttachmentFileName(fileName),
-    };
-    try {
-      return await this.withResourceLock(threadId, async () => {
-        const directory = await this.ensureManagedDirectory(threadId, RESOURCE_DIR, ref.id);
-        const target = join(directory, ref.fileName);
-        const existing = await lstat(target).catch((error: unknown) => {
-          if (isNotFound(error)) return null;
-          throw error;
-        });
-        if (existing) {
-          await this.verifyAndRememberResource(threadId, ref, target);
-          return { ref, created: false };
-        }
-        await this.assertResourceCapacity(threadId, buffer.byteLength);
-        let created = false;
-        try {
-          try {
-            await writeFile(target, buffer, { flag: 'wx' });
-            created = true;
-          } catch (error) {
-            if (!isAlreadyExists(error)) throw error;
-            await this.verifyAndRememberResource(threadId, ref, target);
-            return { ref, created: false };
-          }
-          await this.rememberVerifiedResource(threadId, ref, target);
-          return { ref, created: true };
-        } catch (error) {
-          if (created) await this.rollbackPublishedResource(threadId, ref, target, error);
-          throw error;
-        }
-      });
-    } catch (error) {
-      if (isFileSystemCapacityError(error)) {
-        throw new ThreadResourceQuotaError('Managed attachment storage has no remaining capacity.');
-      }
-      throw error;
+    this.maxThreadBytes = options.maxThreadBytes ?? MAX_THREAD_MANAGED_ATTACHMENT_BYTES;
+    if (!Number.isSafeInteger(this.maxThreadBytes) || this.maxThreadBytes < 0) {
+      throw new Error('Tool payload Thread quota must be a non-negative safe integer.');
     }
-  }
-
-  async useResourcePath<T>(
-    threadId: ThreadId,
-    ref: ThreadResourceReference,
-    use: (path: string) => Promise<T>,
-  ): Promise<T | null> {
-    const path = await this.resourcePath(threadId, ref);
-    return path ? use(path) : null;
-  }
-
-  async copyResourceForObservation(
-    threadId: ThreadId,
-    ref: ThreadResourceReference,
-    targetDirectory: string,
-  ): Promise<string | null> {
-    const sourcePath = await this.resourcePath(threadId, ref);
-    if (!sourcePath) return null;
-    const directoryStat = await lstat(targetDirectory);
-    if (!isPlainDirectory(directoryStat)) {
-      throw new Error('Managed attachment observation target is not a safe directory.');
-    }
-    const targetPath = join(targetDirectory, ref.fileName);
-    await copyFile(
-      sourcePath,
-      targetPath,
-      constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
-    );
-    const targetStat = await lstat(targetPath);
-    if (!isStoredResourceFile(targetStat, ref.byteLength)) {
-      await rm(targetPath, { force: true });
-      throw new Error('Managed attachment observation copy is invalid.');
-    }
-    return targetPath;
-  }
-
-  private async resourcePath(threadId: ThreadId, ref: ThreadResourceReference): Promise<string | null> {
-    validateResourceReference(ref);
-    const directory = await this.existingManagedDirectory(threadId, RESOURCE_DIR, ref.id);
-    if (!directory) return null;
-    const path = join(directory, ref.fileName);
-    const fileStat = await lstat(path).catch((error: unknown) => {
-      if (isNotFound(error)) return null;
-      throw error;
-    });
-    if (!fileStat?.isFile() || fileStat.isSymbolicLink() || fileStat.size !== ref.byteLength) return null;
-    const [canonicalPath, canonicalRoot] = await Promise.all([
-      realpath(path).catch(() => null),
-      realpath(join(this.rootPath, threadId, RESOURCE_DIR)).catch(() => null),
-    ]);
-    if (!canonicalPath || !canonicalRoot || !isPathInside(canonicalRoot, canonicalPath)) return null;
-    const key = resourceFileKey(threadId, ref);
-    const identity = resourceFileIdentity(fileStat);
-    if (!sameResourceFileIdentity(this.verifiedResourceFiles.get(key), identity)) {
-      const verified = await verifyStoredResource(canonicalPath, ref);
-      if (!verified) {
-        this.verifiedResourceFiles.delete(key);
-        return null;
-      }
-      this.verifiedResourceFiles.set(key, verified);
-    }
-    await this.touchResourceAccess(threadId, ref, canonicalPath, fileStat);
-    return canonicalPath;
-  }
-
-  async readResource(threadId: ThreadId, ref: ThreadResourceReference): Promise<Buffer | null> {
-    const path = await this.resourcePath(threadId, ref);
-    if (!path) return null;
-    const bytes = await readFile(path);
-    if (createHash('sha256').update(bytes).digest('hex') !== ref.id) return null;
-    return bytes;
-  }
-
-  async copyResourceToThread(
-    sourceThreadId: ThreadId,
-    targetThreadId: ThreadId,
-    ref: ThreadResourceReference,
-  ): Promise<boolean> {
-    const sourcePath = await this.resourcePath(sourceThreadId, ref);
-    if (!sourcePath) return false;
-    return this.withResourceLock(targetThreadId, async () => {
-      const targetDirectory = await this.ensureManagedDirectory(targetThreadId, RESOURCE_DIR, ref.id);
-      const targetPath = join(targetDirectory, ref.fileName);
-      const existing = await lstat(targetPath).catch((error: unknown) => {
-        if (isNotFound(error)) return null;
-        throw error;
-      });
-      if (existing) {
-        await this.verifyAndRememberResource(targetThreadId, ref, targetPath);
-        return true;
-      }
-      await this.assertResourceCapacity(targetThreadId, ref.byteLength);
-      try {
-        await copyFile(
-          sourcePath,
-          targetPath,
-          constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
-        );
-        await this.rememberVerifiedResource(targetThreadId, ref, targetPath);
-      } catch (error) {
-        if (isAlreadyExists(error)) {
-          await this.verifyAndRememberResource(targetThreadId, ref, targetPath);
-          return true;
-        }
-        if (isNotFound(error)) return false;
-        throw error;
-      }
-      return true;
-    });
-  }
-
-  async deleteResource(threadId: ThreadId, ref: ThreadResourceReference): Promise<boolean> {
-    validateResourceReference(ref);
-    return this.withResourceLock(threadId, async () => {
-      const directory = await this.existingManagedDirectory(threadId, RESOURCE_DIR, ref.id);
-      if (!directory) return false;
-      const target = join(directory, ref.fileName);
-      const existing = await lstat(target).catch((error: unknown) => {
-        if (isNotFound(error)) return null;
-        throw error;
-      });
-      if (!existing) return false;
-      await rm(target, { force: true });
-      this.verifiedResourceFiles.delete(resourceFileKey(threadId, ref));
-      await rmdir(dirname(target)).catch((error: unknown) => {
-        if (!isNotFound(error) && !isDirectoryNotEmpty(error)) throw error;
-      });
-      return true;
-    });
-  }
-
-  async pruneUnreferencedResources(
-    threadId: ThreadId,
-    references: readonly ThreadResourceReference[],
-  ): Promise<void> {
-    const retained = new Set(references.map((ref) => {
-      validateResourceReference(ref);
-      return resourceStorageKey(ref);
-    }));
-    await this.withResourceLock(threadId, async () => {
-      this.clearVerifiedResources(threadId);
-      const root = await this.existingManagedDirectory(threadId, RESOURCE_DIR);
-      if (!root) return;
-      const digests = await readdir(root);
-      for (const digest of digests) {
-        const digestPath = join(root, digest);
-        const digestStat = await lstat(digestPath).catch((error: unknown) => {
-          if (isNotFound(error)) return null;
-          throw error;
-        });
-        if (!digestStat) continue;
-        if (!SHA_256_PATTERN.test(digest) || !isPlainDirectory(digestStat)) {
-          await rm(digestPath, { recursive: true, force: true });
-          continue;
-        }
-        const files = await readdir(digestPath).catch((error: unknown) => {
-          if (isNotFound(error)) return [];
-          throw error;
-        });
-        for (const fileName of files) {
-          if (!retained.has(resourceStorageKey({ id: digest, fileName }))) {
-            await rm(join(digestPath, fileName), { recursive: true, force: true });
-          }
-        }
-        await rmdir(digestPath).catch((error: unknown) => {
-          if (!isNotFound(error) && !isDirectoryNotEmpty(error)) throw error;
-        });
-      }
-      await this.applyImageRetentionUnlocked(threadId, 0);
-    });
   }
 
   async writeContext(
@@ -542,21 +105,14 @@ export class ToolPayloadStore {
       }
 
       await this.assertResourceCapacity(threadId, bytes.byteLength);
-      const stagingDirectory = await this.ensureManagedDirectory(threadId, STAGING_DIR);
-      const stagingPath = join(stagingDirectory, randomUUID());
-      try {
-        await writeFile(stagingPath, bytes, { flag: 'wx' });
-        await link(stagingPath, target).catch(async (error: unknown) => {
-          if (!isAlreadyExists(error)) throw error;
-          if (!await verifyStoredPayload(target, ref)) {
-            throw new Error('Context payload conflicts with existing bytes.');
-          }
-        });
-        if (!await verifyStoredPayload(target, ref)) throw new Error('Published context payload is invalid.');
-        return ref;
-      } finally {
-        await rm(stagingPath, { force: true });
-      }
+      await writeFile(target, bytes, { flag: 'wx' }).catch(async (error: unknown) => {
+        if (!isAlreadyExists(error)) throw error;
+        if (!await verifyStoredPayload(target, ref)) {
+          throw new Error('Context payload conflicts with existing bytes.');
+        }
+      });
+      if (!await verifyStoredPayload(target, ref)) throw new Error('Published context payload is invalid.');
+      return ref;
     });
   }
 
@@ -584,19 +140,12 @@ export class ToolPayloadStore {
         return ref;
       }
       await this.assertResourceCapacity(threadId, bytes.byteLength);
-      const stagingDirectory = await this.ensureManagedDirectory(threadId, STAGING_DIR);
-      const stagingPath = join(stagingDirectory, randomUUID());
-      try {
-        await writeFile(stagingPath, bytes, { flag: 'wx' });
-        await link(stagingPath, target).catch(async (error: unknown) => {
-          if (!isAlreadyExists(error)) throw error;
-          if (!await verifyStoredPayload(target, ref)) throw new Error('Internal text conflicts with existing bytes.');
-        });
-        if (!await verifyStoredPayload(target, ref)) throw new Error('Published internal text is invalid.');
-        return ref;
-      } finally {
-        await rm(stagingPath, { force: true });
-      }
+      await writeFile(target, bytes, { flag: 'wx' }).catch(async (error: unknown) => {
+        if (!isAlreadyExists(error)) throw error;
+        if (!await verifyStoredPayload(target, ref)) throw new Error('Internal text conflicts with existing bytes.');
+      });
+      if (!await verifyStoredPayload(target, ref)) throw new Error('Published internal text is invalid.');
+      return ref;
     });
   }
 
@@ -802,21 +351,14 @@ export class ToolPayloadStore {
         return ref;
       }
       await this.assertResourceCapacity(threadId, bytes.byteLength);
-      const stagingDirectory = await this.ensureManagedDirectory(threadId, STAGING_DIR);
-      const stagingPath = join(stagingDirectory, randomUUID());
-      try {
-        await writeFile(stagingPath, bytes, { flag: 'wx' });
-        await link(stagingPath, target).catch(async (error: unknown) => {
-          if (!isAlreadyExists(error)) throw error;
-          if (!await verifyStoredPayload(target, ref)) {
-            throw new Error('Turn diagnostics conflict with existing bytes.');
-          }
-        });
-        if (!await verifyStoredPayload(target, ref)) throw new Error('Published Turn diagnostics are invalid.');
-        return ref;
-      } finally {
-        await rm(stagingPath, { force: true });
-      }
+      await writeFile(target, bytes, { flag: 'wx' }).catch(async (error: unknown) => {
+        if (!isAlreadyExists(error)) throw error;
+        if (!await verifyStoredPayload(target, ref)) {
+          throw new Error('Turn diagnostics conflict with existing bytes.');
+        }
+      });
+      if (!await verifyStoredPayload(target, ref)) throw new Error('Published Turn diagnostics are invalid.');
+      return ref;
     });
   }
 
@@ -981,79 +523,10 @@ export class ToolPayloadStore {
     });
   }
 
-  async writeImage(
-    threadId: ThreadId,
-    dataBase64: string,
-    mimeType: string,
-  ): Promise<ThreadResourceReference> {
-    return (await this.writeImageWithStatus(threadId, dataBase64, mimeType)).ref;
-  }
-
-  async writeImageWithStatus(
-    threadId: ThreadId,
-    dataBase64: string,
-    mimeType: string,
-  ): Promise<WrittenThreadResource> {
-    const normalizedMimeType = mimeType.trim().toLowerCase();
-    if (!/^image\/[a-z0-9][a-z0-9.+-]*$/u.test(normalizedMimeType)) {
-      throw new Error('Tool image payload MIME type must be an image.');
-    }
-    const measurement = measureToolPayloadImage(dataBase64);
-    if (!measurement.ok) throw new Error(`Tool image payload rejected: ${measurement.reason}`);
-    const bytes = Buffer.from(dataBase64, 'base64');
-    if (bytes.length !== measurement.byteLength) throw new Error('Tool image payload decoded to an unexpected size');
-    const extension = MIME_EXTENSIONS[normalizedMimeType] ?? '.bin';
-    return this.writeResourceWithStatus(threadId, bytes, normalizedMimeType, `tool-output${extension}`);
-  }
-
   async deleteThread(threadId: ThreadId): Promise<void> {
     await this.withResourceLock(threadId, async () => {
-      await Promise.all([...this.pendingUploads.values()]
-        .filter((upload) => upload.threadId === threadId)
-        .map((upload) => this.abortResourceUploadUnlocked(upload)));
       await rm(join(this.rootPath, threadId), { recursive: true, force: true });
-      this.clearVerifiedResources(threadId);
     });
-  }
-
-  async abortAllResourceUploads(): Promise<void> {
-    await Promise.all([...this.pendingUploads.values()].map((upload) => (
-      this.abortResourceUpload(upload.threadId, upload.attachmentId, upload.id)
-    )));
-  }
-
-  private requireUpload(threadId: ThreadId, attachmentId: string, uploadId: string): PendingResourceUpload {
-    const upload = this.pendingUploads.get(uploadId);
-    if (!upload || upload.threadId !== threadId || upload.attachmentId !== attachmentId) {
-      throw new Error('Managed attachment upload was not found.');
-    }
-    return upload;
-  }
-
-  private async rollbackPublishedResource(
-    threadId: ThreadId,
-    ref: ThreadResourceReference,
-    target: string,
-    originalError: unknown,
-  ): Promise<void> {
-    try {
-      await rm(target, { force: true });
-      this.verifiedResourceFiles.delete(resourceFileKey(threadId, ref));
-      await rmdir(dirname(target)).catch((error: unknown) => {
-        if (!isNotFound(error) && !isDirectoryNotEmpty(error)) throw error;
-      });
-    } catch (rollbackError) {
-      throw new AggregateError(
-        [originalError, rollbackError],
-        'Managed attachment publication failed and could not be rolled back.',
-      );
-    }
-  }
-
-  private async abortResourceUploadUnlocked(upload: PendingResourceUpload): Promise<void> {
-    this.pendingUploads.delete(upload.id);
-    await upload.handle.close().catch(() => undefined);
-    await rm(upload.path, { force: true });
   }
 
   private async withResourceLock<T>(threadId: ThreadId, operation: () => Promise<T>): Promise<T> {
@@ -1075,23 +548,8 @@ export class ToolPayloadStore {
     }
   }
 
-  private async managedResourceBytes(threadId: ThreadId): Promise<number> {
-    const directory = await this.existingManagedDirectory(threadId, RESOURCE_DIR);
+  private async managedPayloadBytes(threadId: ThreadId): Promise<number> {
     let total = 0;
-    if (directory) {
-      const digests = await readdir(directory);
-      for (const digest of digests) {
-        if (!SHA_256_PATTERN.test(digest)) continue;
-        const digestPath = join(directory, digest);
-        const digestStat = await lstat(digestPath).catch(() => null);
-        if (!digestStat || !isPlainDirectory(digestStat)) continue;
-        const files = await readdir(digestPath).catch(() => []);
-        for (const file of files) {
-          const fileStat = await lstat(join(digestPath, file)).catch(() => null);
-          if (fileStat?.isFile() && !fileStat.isSymbolicLink()) total += fileStat.size;
-        }
-      }
-    }
     const contextDirectory = await this.existingManagedDirectory(threadId, CONTEXT_DIR);
     if (contextDirectory) {
       const files = await readdir(contextDirectory);
@@ -1111,35 +569,6 @@ export class ToolPayloadStore {
       }
     }
     return total;
-  }
-
-  private async rememberVerifiedResource(
-    threadId: ThreadId,
-    ref: ThreadResourceReference,
-    path: string,
-  ): Promise<void> {
-    const fileStat = await lstat(path);
-    if (!isStoredResourceFile(fileStat, ref.byteLength)) {
-      throw new Error('Managed attachment payload conflicts with an existing resource.');
-    }
-    this.verifiedResourceFiles.set(resourceFileKey(threadId, ref), resourceFileIdentity(fileStat));
-  }
-
-  private async verifyAndRememberResource(
-    threadId: ThreadId,
-    ref: ThreadResourceReference,
-    path: string,
-  ): Promise<void> {
-    const identity = await verifyStoredResource(path, ref);
-    if (!identity) throw new Error('Managed attachment payload conflicts with an existing resource.');
-    this.verifiedResourceFiles.set(resourceFileKey(threadId, ref), identity);
-  }
-
-  private clearVerifiedResources(threadId: ThreadId): void {
-    const prefix = `${threadId}\0`;
-    for (const key of this.verifiedResourceFiles.keys()) {
-      if (key.startsWith(prefix)) this.verifiedResourceFiles.delete(key);
-    }
   }
 
   private async ensureManagedDirectory(threadId: ThreadId, ...segments: string[]): Promise<string> {
@@ -1171,146 +600,9 @@ export class ToolPayloadStore {
   }
 
   private async assertResourceCapacity(threadId: ThreadId, additionalBytes: number): Promise<void> {
-    const activeBytes = [...this.pendingUploads.values()]
-      .filter((upload) => upload.threadId === threadId)
-      .reduce((total, upload) => total + upload.expectedBytes, 0);
-    const storedBytes = await this.applyImageRetentionUnlocked(
-      threadId,
-      activeBytes + additionalBytes,
-    );
-    if (storedBytes + activeBytes + additionalBytes > this.imageRetention.hardBytes) {
+    const storedBytes = await this.managedPayloadBytes(threadId);
+    if (storedBytes + additionalBytes > this.maxThreadBytes) {
       throw new ThreadResourceQuotaError();
-    }
-  }
-
-  private async applyImageRetentionUnlocked(
-    threadId: ThreadId,
-    reservedBytes: number,
-  ): Promise<number> {
-    let storedBytes = await this.managedResourceBytes(threadId);
-    if (!this.imageRetentionInventory) return storedBytes;
-    let inventory: ThreadImageRetentionInventory;
-    try {
-      inventory = await this.imageRetentionInventory(threadId);
-    } catch {
-      return storedBytes;
-    }
-    const candidates = await this.imageRetentionCandidates(threadId, inventory);
-    const projectedBytes = () => storedBytes + reservedBytes;
-    if (projectedBytes() > this.imageRetention.softBytes) {
-      const oldestAllowed = this.now() - this.imageRetention.minOriginalAgeMs;
-      storedBytes = await this.reclaimImageCandidatesUntil(
-        threadId,
-        candidates.tieredOriginals.filter((candidate) => candidate.createdAt <= oldestAllowed),
-        storedBytes,
-        Math.max(0, this.imageRetention.targetBytes - reservedBytes),
-      );
-    }
-    if (projectedBytes() > this.imageRetention.hardBytes) {
-      storedBytes = await this.reclaimImageCandidatesUntil(
-        threadId,
-        candidates.tieredOriginals,
-        storedBytes,
-        Math.max(0, this.imageRetention.hardBytes - reservedBytes),
-      );
-    }
-    if (projectedBytes() > this.imageRetention.hardBytes) {
-      storedBytes = await this.reclaimImageCandidatesUntil(
-        threadId,
-        candidates.observations,
-        storedBytes,
-        Math.max(0, this.imageRetention.hardBytes - reservedBytes),
-      );
-    }
-    return storedBytes;
-  }
-
-  private async imageRetentionCandidates(
-    threadId: ThreadId,
-    inventory: ThreadImageRetentionInventory,
-  ): Promise<{
-    readonly tieredOriginals: ImageRetentionCandidate[];
-    readonly observations: ImageRetentionCandidate[];
-  }> {
-    const roles = imageRetentionRoles(inventory);
-    const tieredOriginals: ImageRetentionCandidate[] = [];
-    const observations: ImageRetentionCandidate[] = [];
-    for (const role of roles.values()) {
-      if (role.protected) continue;
-      const candidate = await this.imageRetentionCandidate(threadId, role);
-      if (!candidate) continue;
-      if (role.observation) observations.push(candidate);
-      else if (role.tieredOriginalCreatedAt !== null) tieredOriginals.push(candidate);
-    }
-    tieredOriginals.sort(compareImageRetentionCandidates);
-    observations.sort(compareImageRetentionCandidates);
-    return { tieredOriginals, observations };
-  }
-
-  private async imageRetentionCandidate(
-    threadId: ThreadId,
-    role: ImageRetentionRole,
-  ): Promise<ImageRetentionCandidate | null> {
-    const directory = await this.existingManagedDirectory(threadId, RESOURCE_DIR, role.ref.id);
-    if (!directory) return null;
-    const path = join(directory, role.ref.fileName);
-    const fileStat = await lstat(path).catch(() => null);
-    if (!fileStat || !isStoredResourceFile(fileStat, role.ref.byteLength)) return null;
-    return {
-      ref: role.ref,
-      path,
-      byteLength: fileStat.size,
-      lastAccessedAt: Number.isFinite(fileStat.atimeMs) && fileStat.atimeMs > 0
-        ? fileStat.atimeMs
-        : fileStat.mtimeMs,
-      createdAt: role.tieredOriginalCreatedAt ?? 0,
-      identity: resourceFileIdentity(fileStat),
-    };
-  }
-
-  private async reclaimImageCandidatesUntil(
-    threadId: ThreadId,
-    candidates: readonly ImageRetentionCandidate[],
-    storedBytes: number,
-    targetStoredBytes: number,
-  ): Promise<number> {
-    let remainingBytes = storedBytes;
-    for (const candidate of candidates) {
-      if (remainingBytes <= targetStoredBytes) break;
-      const current = await lstat(candidate.path).catch(() => null);
-      if (!current
-        || !isStoredResourceFile(current, candidate.byteLength)
-        || !sameResourceFileIdentity(candidate.identity, resourceFileIdentity(current))) continue;
-      try {
-        await rm(candidate.path, { force: true });
-        this.verifiedResourceFiles.delete(resourceFileKey(threadId, candidate.ref));
-        await rmdir(dirname(candidate.path)).catch((error: unknown) => {
-          if (!isNotFound(error) && !isDirectoryNotEmpty(error)) throw error;
-        });
-        remainingBytes -= candidate.byteLength;
-      } catch {
-        // Reclamation is best-effort. Capacity admission still fails closed below.
-      }
-    }
-    return remainingBytes;
-  }
-
-  private async touchResourceAccess(
-    threadId: ThreadId,
-    ref: ThreadResourceReference,
-    path: string,
-    fileStat: Stats,
-  ): Promise<void> {
-    const now = this.now();
-    if (now - fileStat.atimeMs < this.resourceAccessTouchIntervalMs) return;
-    try {
-      await utimes(path, new Date(now), fileStat.mtime);
-      const touched = await lstat(path);
-      if (isStoredResourceFile(touched, ref.byteLength)) {
-        this.verifiedResourceFiles.set(resourceFileKey(threadId, ref), resourceFileIdentity(touched));
-      }
-    } catch {
-      // Access accounting must not make a valid rendition unreadable.
     }
   }
 }
@@ -1338,76 +630,6 @@ export function measureToolPayloadImage(
     : { ok: false, reason: 'imageByteLimit' };
 }
 
-function imageRetentionRoles(inventory: ThreadImageRetentionInventory): Map<string, ImageRetentionRole> {
-  const roles = new Map<string, ImageRetentionRole>();
-  const roleFor = (ref: ThreadResourceReference): ImageRetentionRole => {
-    validateResourceReference(ref);
-    const key = resourceStorageKey(ref);
-    const existing = roles.get(key);
-    if (existing) {
-      if (existing.ref.mimeType !== ref.mimeType || existing.ref.byteLength !== ref.byteLength) {
-        existing.protected = true;
-      }
-      return existing;
-    }
-    const role: ImageRetentionRole = {
-      ref,
-      protected: false,
-      observation: false,
-      tieredOriginalCreatedAt: null,
-    };
-    roles.set(key, role);
-    return role;
-  };
-  for (const ref of inventory.protectedResources) roleFor(ref).protected = true;
-  for (const artifact of inventory.artifacts) {
-    roleFor(artifact.observation).observation = true;
-    if (artifact.original?.kind !== 'threadPayload') continue;
-    const original = roleFor(artifact.original.ref);
-    if (artifact.retention === 'durable') {
-      original.protected = true;
-    } else if (artifact.retention === 'tiered') {
-      original.tieredOriginalCreatedAt = Math.max(
-        original.tieredOriginalCreatedAt ?? 0,
-        artifact.createdAt,
-      );
-    }
-  }
-  return roles;
-}
-
-function compareImageRetentionCandidates(
-  left: ImageRetentionCandidate,
-  right: ImageRetentionCandidate,
-): number {
-  return left.lastAccessedAt - right.lastAccessedAt
-    || right.byteLength - left.byteLength
-    || left.createdAt - right.createdAt
-    || resourceStorageKey(left.ref).localeCompare(resourceStorageKey(right.ref));
-}
-
-function validateImageRetentionPolicy(
-  policy: NonNullable<ToolPayloadStoreOptions['imageRetention']>,
-  accessTouchIntervalMs: number,
-): void {
-  const values = [
-    policy.targetBytes,
-    policy.softBytes,
-    policy.hardBytes,
-    policy.minOriginalAgeMs,
-    accessTouchIntervalMs,
-  ];
-  if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) {
-    throw new Error('Image retention policy values must be non-negative safe integers.');
-  }
-  if (!(policy.targetBytes < policy.softBytes && policy.softBytes < policy.hardBytes)) {
-    throw new Error('Image retention watermarks must satisfy target < soft < hard.');
-  }
-  if (policy.hardBytes > MAX_THREAD_MANAGED_ATTACHMENT_BYTES) {
-    throw new Error('Image retention hard watermark exceeds the Thread storage quota.');
-  }
-}
-
 function isAlreadyExists(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error
     && (error as { code?: unknown }).code === 'EEXIST';
@@ -1416,61 +638,6 @@ function isAlreadyExists(error: unknown): boolean {
 function isNotFound(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error
     && (error as { code?: unknown }).code === 'ENOENT';
-}
-
-function isFileSystemCapacityError(error: unknown): boolean {
-  if (error instanceof ThreadResourceQuotaError) return false;
-  return typeof error === 'object' && error !== null && 'code' in error
-    && ((error as { code?: unknown }).code === 'ENOSPC' || (error as { code?: unknown }).code === 'EDQUOT');
-}
-
-function isDirectoryNotEmpty(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error
-    && (error as { code?: unknown }).code === 'ENOTEMPTY';
-}
-
-function validateResourceMetadata(byteLength: number, mimeType: string, fileName: string): void {
-  if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
-    throw new Error('Managed attachment byte length must be a non-negative safe integer.');
-  }
-  if (byteLength > MAX_MANAGED_ATTACHMENT_BYTES) {
-    throw new Error('Managed attachment exceeds the pathless input storage budget.');
-  }
-  if (!mimeType.trim()) throw new Error('Managed attachment MIME type is required.');
-  if (!fileName.trim()) throw new Error('Managed attachment file name is required.');
-}
-
-async function verifyStoredResource(
-  path: string,
-  ref: ThreadResourceReference,
-): Promise<ResourceFileIdentity | null> {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => null);
-  if (!handle) return null;
-  try {
-    const before = await handle.stat();
-    if (!isStoredResourceFile(before, ref.byteLength)) return null;
-    const hash = createHash('sha256');
-    const buffer = Buffer.alloc(1024 * 1024);
-    let position = 0;
-    for (;;) {
-      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, position);
-      if (bytesRead === 0) break;
-      hash.update(buffer.subarray(0, bytesRead));
-      position += bytesRead;
-    }
-    const after = await handle.stat();
-    const current = await lstat(path).catch(() => null);
-    if (
-      position !== ref.byteLength
-      || hash.digest('hex') !== ref.id
-      || !current
-      || !sameResourceFileIdentity(resourceFileIdentity(before), resourceFileIdentity(after))
-      || !sameResourceFileIdentity(resourceFileIdentity(after), resourceFileIdentity(current))
-    ) return null;
-    return resourceFileIdentity(after);
-  } finally {
-    await handle.close();
-  }
 }
 
 async function verifyStoredPayload(
@@ -1622,7 +789,7 @@ function isStoredResourceFile(fileStat: Stats, byteLength: number): boolean {
   return fileStat.isFile() && !fileStat.isSymbolicLink() && fileStat.size === byteLength;
 }
 
-function resourceFileIdentity(fileStat: Stats): ResourceFileIdentity {
+function resourceFileIdentity(fileStat: Stats): StoredFileIdentity {
   return {
     ctimeMs: fileStat.ctimeMs,
     dev: fileStat.dev,
@@ -1633,8 +800,8 @@ function resourceFileIdentity(fileStat: Stats): ResourceFileIdentity {
 }
 
 function sameResourceFileIdentity(
-  left: ResourceFileIdentity | undefined,
-  right: ResourceFileIdentity,
+  left: StoredFileIdentity | undefined,
+  right: StoredFileIdentity,
 ): boolean {
   if (!left) return false;
   return left.ctimeMs === right.ctimeMs
@@ -1642,29 +809,6 @@ function sameResourceFileIdentity(
     && left.ino === right.ino
     && left.mtimeMs === right.mtimeMs
     && left.size === right.size;
-}
-
-function resourceFileKey(threadId: ThreadId, ref: ThreadResourceReference): string {
-  return `${threadId}\0${resourceStorageKey(ref)}`;
-}
-
-function resourceStorageKey(ref: Pick<ThreadResourceReference, 'id' | 'fileName'>): string {
-  return `${ref.id}\0${ref.fileName}`;
-}
-
-export function referencesSameResourceFile(
-  left: ThreadResourceReference,
-  right: ThreadResourceReference,
-): boolean {
-  return resourceStorageKey(left) === resourceStorageKey(right);
-}
-
-function validateResourceReference(ref: ThreadResourceReference): void {
-  if (!SHA_256_PATTERN.test(ref.id)) throw new Error('Invalid managed attachment digest');
-  validateResourceMetadata(ref.byteLength, ref.mimeType, ref.fileName);
-  if (safeAttachmentFileName(ref.fileName) !== ref.fileName) {
-    throw new Error('Invalid managed attachment file name');
-  }
 }
 
 function contextPayloadFileName(ref: ThreadContextPayloadReference): string {

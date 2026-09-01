@@ -35,10 +35,14 @@ export function itemResourceReferences(item: ThreadItem): ThreadResourceReferenc
   if (item.type === 'userMessage') {
     references.push(...item.content.flatMap((content) => content.type === 'attachment'
       ? [
-          ...(content.source.kind === 'threadPayload' ? [content.source.ref] : []),
+          ...(content.source.kind === 'resource' ? [content.source.ref] : []),
           ...(content.artifactRef ? imageArtifactResourceReferences(content.artifactRef) : []),
         ]
       : []));
+  } else if (item.type === 'agentMessage') {
+    references.push(...(item.finalCitations ?? []).flatMap((citation) => (
+      citation.resourceRef ? [citation.resourceRef] : []
+    )));
   } else if (item.type === 'dynamicToolCall') {
     references.push(...(item.contentItems ?? []).flatMap((content) => (
       content.type !== 'image'

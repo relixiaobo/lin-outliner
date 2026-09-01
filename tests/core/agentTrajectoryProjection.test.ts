@@ -579,7 +579,7 @@ describe('ThreadTrajectoryProjection', () => {
               retention: 'external',
               original: { kind: 'localFile', path: '/workspace/diagram.png' },
               observation: {
-                id: imageDigest,
+                id: 'resource:00000000-0000-4000-8000-000000000009',
                 mimeType: 'image/png',
                 byteLength: 8,
                 fileName: 'diagram.png',

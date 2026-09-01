@@ -1,7 +1,5 @@
-import { decodeThreadImageArtifactReference } from './agent/codec';
+import { decodeThreadImageArtifactReference, decodeThreadResourceReference } from './agent/codec';
 import type { ThreadImageArtifactReference, ThreadResourceReference } from './agent/protocol';
-import { MAX_MANAGED_ATTACHMENT_BYTES } from './agentAttachmentLimits';
-import { safeAttachmentFileName } from './agentAttachmentPaths';
 import type { PreviewEntryKind, PreviewTarget } from './previewTarget';
 
 export type { PreviewEntryKind, PreviewTarget } from './previewTarget';
@@ -84,7 +82,7 @@ export function previewTargetKey(target: PreviewTarget): string {
       }
       if (target.threadId && target.resourceRef) {
         const ref = target.resourceRef;
-        return `local-file:thread-resource:${target.threadId}:${ref.id}:${ref.mimeType}:${ref.byteLength}:${ref.fileName}`;
+        return `local-file:thread-resource:${target.threadId}:${target.resourceIntent ?? 'delivered'}:${ref.id}:${ref.mimeType}:${ref.byteLength}:${ref.fileName}`;
       }
       if (target.threadId && target.imageArtifactRef) {
         return `local-file:thread-image-artifact:${target.threadId}:${target.imageArtifactRef.id}`;
@@ -113,6 +111,12 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
       resourceRef = threadResourceReferenceFromUnknown(value.resourceRef) ?? undefined;
       if (!resourceRef) return null;
     }
+    const resourceIntent = value.resourceIntent === 'source'
+      ? 'source'
+      : value.resourceIntent === 'delivered' || value.resourceIntent === undefined
+        ? value.resourceIntent
+        : null;
+    if (resourceIntent === null || (resourceIntent !== undefined && !resourceRef)) return null;
     let imageArtifactRef: ThreadImageArtifactReference | undefined;
     if (value.imageArtifactRef !== undefined) {
       try {
@@ -131,7 +135,11 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
       entryKind: value.entryKind === 'directory' ? 'directory' : 'file',
       ...(label ? { label } : {}),
       ...(threadId && attachmentId ? { threadId, attachmentId } : {}),
-      ...(threadId && resourceRef ? { threadId, resourceRef } : {}),
+      ...(threadId && resourceRef ? {
+        threadId,
+        resourceRef,
+        ...(resourceIntent ? { resourceIntent } : {}),
+      } : {}),
       ...(threadId && imageArtifactRef ? { threadId, imageArtifactRef } : {}),
     };
   }
@@ -157,23 +165,11 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
 }
 
 function threadResourceReferenceFromUnknown(value: unknown): ThreadResourceReference | null {
-  if (!isRecord(value)) return null;
-  const keys = Object.keys(value);
-  if (keys.length !== 4 || keys.some((key) => !['id', 'mimeType', 'byteLength', 'fileName'].includes(key))) {
+  try {
+    return decodeThreadResourceReference(value, 'previewTarget.resourceRef');
+  } catch {
     return null;
   }
-  if (typeof value.id !== 'string' || !/^[a-f0-9]{64}$/u.test(value.id)) return null;
-  if (typeof value.mimeType !== 'string' || !value.mimeType.trim()) return null;
-  if (!Number.isSafeInteger(value.byteLength)
-    || (value.byteLength as number) < 0
-    || (value.byteLength as number) > MAX_MANAGED_ATTACHMENT_BYTES) return null;
-  if (typeof value.fileName !== 'string' || safeAttachmentFileName(value.fileName) !== value.fileName) return null;
-  return {
-    id: value.id,
-    mimeType: value.mimeType,
-    byteLength: value.byteLength as number,
-    fileName: value.fileName,
-  };
 }
 
 export function normalizePreviewHttpUrl(value: string): string | null {

@@ -152,7 +152,7 @@ describe('ToolArtifactSink', () => {
     expect(persistCalls).toBe(0);
   });
 
-  test('stabilizes store rejection and rejects a mismatched durable digest', async () => {
+  test('stabilizes store rejection and accepts an opaque durable identity', async () => {
     const bytes = Buffer.from('canonical bytes');
     const rejected = createToolArtifactSink(sinkContext({
       persist: async () => {
@@ -173,7 +173,7 @@ describe('ToolArtifactSink', () => {
     let materializeCalls = 0;
     const mismatched = createToolArtifactSink(sinkContext({
       persist: async (_bytes, mimeType, fileName) => ({
-        id: '0'.repeat(64),
+        id: 'resource:11111111-1111-4111-8111-111111111111',
         mimeType,
         byteLength: bytes.byteLength,
         fileName,
@@ -187,10 +187,10 @@ describe('ToolArtifactSink', () => {
       bytes,
       mimeType: 'text/plain',
       fileName: 'canonical.txt',
-    })).rejects.toEqual(new ToolArtifactAdmissionError(
-      'artifact_store_invalid',
-      'Tool artifact storage returned metadata that does not match the admitted bytes.',
-    ));
-    expect(materializeCalls).toBe(0);
+    })).resolves.toMatchObject({
+      readablePath: '/should-not-materialize',
+      ref: { id: 'resource:11111111-1111-4111-8111-111111111111' },
+    });
+    expect(materializeCalls).toBe(1);
   });
 });
