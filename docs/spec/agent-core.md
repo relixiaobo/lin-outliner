@@ -498,8 +498,10 @@ from visible Items.
 source Turn. Continue is available only when that Turn is still the latest failed Turn,
 the root user Thread is persistent, idle, unarchived, and not stopping, and the runtime's
 canonical projector plus protocol-unit validator proves at least one complete settled
-assistant/tool unit beyond accepted input. Projection or dependency failure degrades to
-`canContinue: false` and writes nothing.
+assistant/tool unit beyond accepted input. If the terminal Turn is committed while its
+matching active finalizer still owns cleanup, the read waits for that completion and then
+re-evaluates authoritative state instead of caching a transient unavailable result.
+Projection or dependency failure degrades to `canContinue: false` and writes nothing.
 
 `turn/continue` revalidates the same boundary under renderer-submission and root-host
 admission locks. It preserves the failed source and appends an ordinary Turn whose

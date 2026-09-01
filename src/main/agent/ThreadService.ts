@@ -2105,6 +2105,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async readTurnRecovery(request: TurnRecoveryReadRequest): Promise<TurnRecoveryReadResponse> {
     this.assertStartupThreadAvailable(request.threadId);
+    const observedTarget = this.core.allTurns(request.threadId).at(-1);
+    if (
+      observedTarget?.id === request.turnId
+      && observedTarget.status !== 'inProgress'
+      && this.turnLifecycle.activeTurnId(request.threadId) === request.turnId
+    ) {
+      await this.turnLifecycle.waitForTurnCompletion(request.threadId, request.turnId);
+      this.assertStartupThreadAvailable(request.threadId);
+    }
     const record = this.core.requireThread(request.threadId);
     const target = this.core.allTurns(request.threadId).at(-1);
     const available = target?.id === request.turnId

@@ -5254,6 +5254,62 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     await fixture.service.close();
   });
 
+  test('waits through terminal cleanup before answering a recovery probe', async () => {
+    const executor = new RecoveryExecutor();
+    const fixture = await createFixture(undefined, {}, executor);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Expose recovery only after cleanup' }],
+    });
+    await executor.waitUntilWaiting();
+
+    const prune = fixture.stores.payloads.pruneUnreferencedContexts.bind(fixture.stores.payloads);
+    let markCleanupStarted!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => { markCleanupStarted = resolve; });
+    const cleanupRelease = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    fixture.stores.payloads.pruneUnreferencedContexts = async (...args) => {
+      markCleanupStarted();
+      await cleanupRelease;
+      return prune(...args);
+    };
+
+    try {
+      executor.finishWithText(0, 'Settled partial result', {
+        status: 'failed',
+        error: { message: 'Provider unavailable' },
+      });
+      await cleanupStarted;
+
+      let readSettled = false;
+      const recovery = fixture.service.request('turn/recovery/read', {
+        threadId: thread.id,
+        turnId: accepted.turn.id,
+      }).finally(() => { readSettled = true; });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(readSettled).toBe(false);
+
+      releaseCleanup();
+      expect(await recovery).toEqual({
+        canContinue: true,
+        canRerun: true,
+        rerunRequiresConfirmation: false,
+      });
+      expect(executor.recoveryContexts).toHaveLength(1);
+    } finally {
+      releaseCleanup();
+      fixture.stores.payloads.pruneUnreferencedContexts = prune;
+      await fixture.service.waitForIdle(thread.id);
+      await fixture.service.close();
+    }
+  });
+
   test('degrades an unavailable continuation probe without changing canonical history', async () => {
     const executor = new RecoveryExecutor();
     executor.recoveryError = new Error('projection unavailable');
