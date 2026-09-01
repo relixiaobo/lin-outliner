@@ -1722,6 +1722,8 @@ describe('Codex Agent Core protocol codec', () => {
     } as const;
     const requests: Record<string, unknown> = {
       'thread/list': {},
+      'thread/references/search': { currentThreadId: THREAD_ID, query: 'presentation', limit: 8 },
+      'thread/references/resolve': { currentThreadId: THREAD_ID, threadIds: [CHILD_THREAD_ID] },
       'thread/descendants': { threadId: THREAD_ID },
       'thread/subagents/list': { threadId: THREAD_ID },
       'thread/read': { threadId: THREAD_ID, includeTurns: true },
@@ -1796,6 +1798,24 @@ describe('Codex Agent Core protocol codec', () => {
     };
     const responses: Record<string, unknown> = {
       'thread/list': { data: [thread], nextCursor: null },
+      'thread/references/search': {
+        data: [{
+          threadId: CHILD_THREAD_ID,
+          title: 'Presentation work',
+          updatedAt: 200,
+          availability: 'available',
+          snippet: 'Created the presentation',
+          archived: false,
+        }],
+      },
+      'thread/references/resolve': {
+        data: [{
+          threadId: CHILD_THREAD_ID,
+          title: 'Presentation work',
+          updatedAt: 200,
+          availability: 'available',
+        }],
+      },
       'thread/descendants': { data: [thread], queuedWorkThreadIds: [] },
       'thread/subagents/list': { data: [subagentExecution] },
       'thread/read': { thread },

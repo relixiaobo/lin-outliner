@@ -623,6 +623,55 @@ describe('Agent Core persistence', () => {
     rebuilt.close();
   });
 
+  test('shares bounded visible-history search rows fairly across candidate Threads', async () => {
+    const root = await tempRoot();
+    const rollout = trackedRolloutStore(join(root, 'fair-history-rollouts'));
+    const longThreadId = uuidV7(2_010);
+    const shortThreadId = uuidV7(2_020);
+    for (const seed of [2_011, 2_012, 2_013]) {
+      for (const notification of lifecycle(longThreadId, seed)) {
+        await rollout.append(longThreadId, notification);
+      }
+    }
+    for (const notification of lifecycle(shortThreadId, 2_021)) {
+      await rollout.append(shortThreadId, notification);
+    }
+    const path = join(root, 'fair-history.sqlite');
+    const database = testDatabase(path);
+    const preparedSql: string[] = [];
+    const observedDatabase: SqliteDatabase = {
+      exec: (sql) => database.exec(sql),
+      prepare: (sql) => {
+        preparedSql.push(sql);
+        return database.prepare(sql);
+      },
+      close: () => database.close(),
+    };
+    const store = new ThreadHistoryProjectionStore(path, observedDatabase);
+    store.applyMany(await rollout.read(longThreadId));
+    store.applyMany(await rollout.read(shortThreadId));
+
+    preparedSql.length = 0;
+    const entries = store.visibleHistoryEntries([longThreadId, shortThreadId], {
+      maximum: 3,
+      newestFirst: true,
+    });
+    expect(entries.map((entry) => entry.threadId)).toEqual([longThreadId, shortThreadId]);
+    expect(entries.find((entry) => entry.threadId === shortThreadId)?.item).toMatchObject({
+      type: 'agentMessage',
+      text: 'Done',
+    });
+    const historyQuery = preparedSql.find((sql) => sql.includes('SELECT * FROM thread_items'));
+    expect(historyQuery).toBeDefined();
+    expect(historyQuery).not.toContain('ROW_NUMBER');
+    const plan = database.prepare(`EXPLAIN QUERY PLAN ${historyQuery!}`)
+      .all(longThreadId, 1) as Array<{ readonly detail: string }>;
+    const planDetails = plan.map((row) => row.detail).join('\n');
+    expect(planDetails).toContain('thread_items_visible_history_idx');
+    expect(planDetails).not.toContain('USE TEMP B-TREE');
+    store.close();
+  });
+
   test('keeps streamed Item rows unchanged while read surfaces use the in-memory overlay', async () => {
     const root = await tempRoot();
     const threadId = uuidV7(2_050);

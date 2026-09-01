@@ -10,11 +10,15 @@ import {
   formatNamedNodeReference,
   formatNodeReferenceMarker,
   formatNodeReferenceUri,
+  formatThreadReferenceMarker,
+  formatThreadReferenceUri,
   nodeReferenceMarkersToText,
   parseFileReferenceUri,
   parseNodeReferenceMarkers,
   parseReferenceMarkers,
   parseReferenceUri,
+  parseThreadReferenceMarkers,
+  parseThreadReferenceUri,
   referenceMarkupToRichText,
   rewriteFileReferenceMarkerPaths,
   richTextToReferenceMarkup,
@@ -26,8 +30,29 @@ const NODE_UUID = '550e8400-e29b-41d4-a716-446655440000';
 const NODE_ID = `node:${NODE_UUID}`;
 const SECOND_UUID = '6ba7b810-9dad-4d80-b4f0-21cf460d5c2f';
 const SECOND_NODE_ID = `node:${SECOND_UUID}`;
+const THREAD_ID = '01951d6e-7c25-7c31-8d62-313038616239';
 
 describe('reference URI markup', () => {
+  test('keeps canonical Thread references outside the default Outline consumer', () => {
+    const marker = `[[thread://${THREAD_ID}]]`;
+    expect(formatThreadReferenceUri(THREAD_ID.toUpperCase())).toBe(`thread://${THREAD_ID}`);
+    expect(formatThreadReferenceMarker(THREAD_ID)).toBe(marker);
+    expect(parseThreadReferenceUri(`thread://${THREAD_ID}`)).toEqual({ scheme: 'thread', threadId: THREAD_ID });
+    expect(parseThreadReferenceMarkers(`before ${marker} after`)).toEqual([{
+      start: 7,
+      end: 7 + marker.length,
+      raw: marker,
+      uri: `thread://${THREAD_ID}`,
+      threadId: THREAD_ID,
+    }]);
+    expect(parseReferenceUri(`thread://${THREAD_ID}`)).toBeNull();
+    expect(parseReferenceMarkers(marker)).toEqual([]);
+    expect(parseReferenceMarkers(marker, ['node', 'file', 'thread'])).toEqual([]);
+    expect(parseThreadReferenceUri(`thread://${THREAD_ID}/`)).toBeNull();
+    expect(parseThreadReferenceUri(`thread://${THREAD_ID}?title=old`)).toBeNull();
+    expect(parseThreadReferenceUri('thread://not-a-uuid')).toBeNull();
+  });
+
   test('formats canonical Node UUID and public system Node markers without labels', () => {
     expect(formatNodeReferenceUri(NODE_ID)).toBe(`node://${NODE_UUID}`);
     expect(formatNodeReferenceMarker(NODE_ID)).toBe(`[[node://${NODE_UUID}]]`);

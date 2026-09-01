@@ -9305,6 +9305,8 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     const tools = await runtime.createTools(context);
     expect(tools.map((tool) => tool.name)).toEqual([
       'request_user_input',
+      'thread_search',
+      'thread_read',
       'update_plan',
       'get_goal',
       'create_goal',

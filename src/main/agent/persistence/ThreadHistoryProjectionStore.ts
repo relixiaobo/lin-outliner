@@ -68,6 +68,22 @@ export interface ProjectionWatermark {
   readonly byteOffset: number;
 }
 
+export interface ThreadHistoryVisibleEntry {
+  readonly threadId: ThreadId;
+  readonly turnId: string;
+  readonly turnPosition: number;
+  readonly itemIndex: number;
+  readonly item: ThreadItem;
+}
+
+export interface ThreadHistoryTurnPage {
+  readonly turns: readonly Turn[];
+  readonly oldestPosition: number | null;
+  readonly newestPosition: number | null;
+  readonly hasOlder: boolean;
+  readonly hasNewer: boolean;
+}
+
 type StreamingItemsByTurn = Map<string, Map<string, ThreadItem>>;
 
 export type ThreadProjectionReconcileResult = 'reconciled' | 'rolloutMissing';
@@ -114,6 +130,12 @@ export class ThreadHistoryProjectionStore {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS thread_items_page_idx
         ON thread_items(thread_id, turn_position, item_index, item_id);
+      CREATE INDEX IF NOT EXISTS thread_items_visible_history_idx
+        ON thread_items(thread_id, turn_position, item_index, item_id)
+        WHERE item_type IN (
+          'userMessage', 'agentMessage', 'commandExecution', 'fileChange',
+          'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch'
+        );
       CREATE TABLE IF NOT EXISTS rollout_watermarks (
         thread_id TEXT PRIMARY KEY,
         ordinal INTEGER NOT NULL,
@@ -391,6 +413,89 @@ export class ThreadHistoryProjectionStore {
       SELECT * FROM thread_turns WHERE thread_id = ? AND turn_id = ?
     `).get(threadId, turnId) as TurnRow | undefined;
     return row ? this.turnFromRow(row, itemsView) : null;
+  }
+
+  visibleHistoryEntries(
+    threadIds: readonly ThreadId[],
+    options: { readonly maximum?: number; readonly newestFirst?: boolean } = {},
+  ): ThreadHistoryVisibleEntry[] {
+    const maximum = Math.max(1, Math.min(options.maximum ?? 2_000, 5_000));
+    const ordering = options.newestFirst === false ? 'ASC' : 'DESC';
+    const entries: ThreadHistoryVisibleEntry[] = [];
+    const admittedThreadIds = [...new Set(threadIds)].slice(0, maximum);
+    if (admittedThreadIds.length === 0) return entries;
+    const perThreadMaximum = Math.max(1, Math.floor(maximum / Math.max(1, admittedThreadIds.length)));
+    const statement = this.db.prepare(`
+      SELECT * FROM thread_items
+      WHERE thread_id = ?
+        AND item_type IN (
+          'userMessage', 'agentMessage', 'commandExecution', 'fileChange',
+          'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch'
+        )
+      ORDER BY turn_position ${ordering}, item_index ${ordering}, item_id ${ordering}
+      LIMIT ?
+    `);
+    const rowsByThread = admittedThreadIds.map((threadId) => (
+      statement.all(threadId, perThreadMaximum) as unknown as ItemRow[]
+    ));
+    for (let rank = 0; rank < perThreadMaximum && entries.length < maximum; rank += 1) {
+      for (const rows of rowsByThread) {
+        const row = rows[rank];
+        if (!row) continue;
+        entries.push({
+          threadId: row.thread_id,
+          turnId: row.turn_id,
+          turnPosition: row.turn_position,
+          itemIndex: row.item_index,
+          item: this.itemFromRow(row),
+        });
+      }
+    }
+    return entries;
+  }
+
+  turnAtPosition(threadId: ThreadId, position: number): Turn | null {
+    const row = this.db.prepare(`
+      SELECT * FROM thread_turns WHERE thread_id = ? AND position = ?
+    `).get(threadId, position) as unknown as TurnRow | undefined;
+    return row ? this.turnFromRow(row, 'full') : null;
+  }
+
+  turnPosition(threadId: ThreadId, turnId: string): number | null {
+    const row = this.db.prepare(`
+      SELECT position FROM thread_turns WHERE thread_id = ? AND turn_id = ?
+    `).get(threadId, turnId) as { position: number } | undefined;
+    return row?.position ?? null;
+  }
+
+  historyTurnPage(
+    threadId: ThreadId,
+    anchorPosition: number | null,
+    limit: number,
+  ): ThreadHistoryTurnPage {
+    const boundedLimit = Math.max(1, Math.min(limit, 10));
+    const rows = this.db.prepare(`
+      SELECT * FROM thread_turns
+      WHERE thread_id = ? AND (? IS NULL OR position <= ?)
+      ORDER BY position DESC, turn_id DESC
+      LIMIT ?
+    `).all(threadId, anchorPosition, anchorPosition, boundedLimit) as unknown as TurnRow[];
+    const chronological = [...rows].reverse();
+    const oldestPosition = chronological[0]?.position ?? null;
+    const newestPosition = chronological.at(-1)?.position ?? null;
+    const hasOlder = oldestPosition !== null && Boolean(this.db.prepare(`
+      SELECT 1 FROM thread_turns WHERE thread_id = ? AND position < ? LIMIT 1
+    `).get(threadId, oldestPosition));
+    const hasNewer = newestPosition !== null && Boolean(this.db.prepare(`
+      SELECT 1 FROM thread_turns WHERE thread_id = ? AND position > ? LIMIT 1
+    `).get(threadId, newestPosition));
+    return {
+      turns: chronological.map((row) => this.turnFromRow(row, 'full')),
+      oldestPosition,
+      newestPosition,
+      hasOlder,
+      hasNewer,
+    };
   }
 
   unfinishedItems(threadId: ThreadId, turnId: string): readonly ThreadItem[] {

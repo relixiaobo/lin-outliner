@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentResourceStore } from '../../src/main/agent/persistence/AgentResourceStore';
+import type { ThreadResourceReference, Turn } from '../../src/core/agent/protocol';
+import type { ThreadCore } from '../../src/main/agent/thread/ThreadCore';
+import { ThreadResourceOps } from '../../src/main/agent/thread/ThreadResourceOps';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 
 const roots: string[] = [];
@@ -102,7 +105,122 @@ describe('AgentResourceStore', () => {
 
     await fixture.store.close();
   });
+
+  test('copies cross-managed-root edits while preserving admitted external sources', async () => {
+    const fixture = await createFixture();
+    const oldWorkspace = path.join(fixture.root, 'old-workspace');
+    const secondOldWorkspace = path.join(fixture.root, 'second-old-workspace');
+    const currentWorkspace = path.join(fixture.root, 'current-workspace');
+    const externalRoot = path.join(fixture.root, 'external');
+    await Promise.all([mkdir(oldWorkspace), mkdir(secondOldWorkspace), mkdir(currentWorkspace), mkdir(externalRoot)]);
+    const oldPath = path.join(oldWorkspace, 'report.txt');
+    const secondOldPath = path.join(secondOldWorkspace, 'report.txt');
+    const externalPath = path.join(externalRoot, 'shared.txt');
+    await writeFile(oldPath, 'historical exact bytes');
+    await writeFile(secondOldPath, 'second historical exact bytes');
+    await writeFile(externalPath, 'external bytes');
+    fixture.store.registerScope({ scopeId: 'managed:old', kind: 'managedWorkspace', rootPath: oldWorkspace });
+    fixture.store.registerScope({
+      scopeId: 'managed:old-second',
+      kind: 'managedWorkspace',
+      rootPath: secondOldWorkspace,
+    });
+    fixture.store.registerScope({ scopeId: 'external:user', kind: 'external', rootPath: externalRoot });
+    const oldRef = (await fixture.store.capturePath({
+      threadId: '01951d6e-7c25-7c31-8d62-313038616240',
+      sourcePath: oldPath,
+      mimeType: 'text/plain',
+      fileName: 'report.txt',
+      source: await fixture.store.sourceLocator('managed:old', oldPath, 'file'),
+    })).ref;
+    const secondOldRef = (await fixture.store.capturePath({
+      threadId: '01951d6e-7c25-7c31-8d62-313038616240',
+      sourcePath: secondOldPath,
+      mimeType: 'text/plain',
+      fileName: 'report.txt',
+      source: await fixture.store.sourceLocator('managed:old-second', secondOldPath, 'file'),
+    })).ref;
+    const externalRef = (await fixture.store.capturePath({
+      threadId: '01951d6e-7c25-7c31-8d62-313038616240',
+      sourcePath: externalPath,
+      mimeType: 'text/plain',
+      fileName: 'shared.txt',
+      source: await fixture.store.sourceLocator('external:user', externalPath, 'file'),
+    })).ref;
+    await writeFile(oldPath, 'newer old-workspace bytes');
+
+    const historicalRefs: ThreadResourceReference[] = [oldRef, secondOldRef, externalRef];
+    const core = historicalResourceCore(currentWorkspace, historicalRefs);
+    const ops = new ThreadResourceOps(
+      core,
+      fixture.store,
+      path.join(fixture.root, 'observations'),
+      (content) => content,
+    );
+    const copied = await ops.selectHistoricalResource(
+      '01951d6e-7c25-7c31-8d62-313038616239',
+      '01951d6e-7c25-7c31-8d62-313038616240',
+      oldRef,
+      'edit',
+    );
+    expect(copied?.ref.id).not.toBe(oldRef.id);
+    expect(copied?.path?.startsWith(`${currentWorkspace}${path.sep}`)).toBe(true);
+    expect(await readFile(copied!.path!, 'utf8')).toBe('historical exact bytes');
+    expect(await readFile(oldPath, 'utf8')).toBe('newer old-workspace bytes');
+
+    const concurrentCopies = await Promise.all([oldRef, secondOldRef].map((ref) => (
+      ops.selectHistoricalResource(
+        '01951d6e-7c25-7c31-8d62-313038616239',
+        '01951d6e-7c25-7c31-8d62-313038616240',
+        ref,
+        'edit',
+      )
+    )));
+    expect(new Set(concurrentCopies.map((entry) => entry?.path)).size).toBe(2);
+    expect(await Promise.all(concurrentCopies.map((entry) => readFile(entry!.path!, 'utf8'))))
+      .toEqual(['historical exact bytes', 'second historical exact bytes']);
+
+    const external = await ops.selectHistoricalResource(
+      '01951d6e-7c25-7c31-8d62-313038616239',
+      '01951d6e-7c25-7c31-8d62-313038616240',
+      externalRef,
+      'edit',
+    );
+    expect(external).toMatchObject({ ref: externalRef, path: await realpath(externalPath) });
+    await fixture.store.close();
+  });
 });
+
+function historicalResourceCore(
+  currentWorkspace: string,
+  refs: readonly ThreadResourceReference[],
+): ThreadCore {
+  const currentId = '01951d6e-7c25-7c31-8d62-313038616239';
+  const historicalId = '01951d6e-7c25-7c31-8d62-313038616240';
+  const threads = new Map([
+    [currentId, { id: currentId, cwd: currentWorkspace, parentThreadId: null }],
+    [historicalId, { id: historicalId, cwd: '/old', parentThreadId: null }],
+  ]);
+  const turns = [{
+    id: 'turn-history',
+    items: [{
+      type: 'userMessage',
+      content: refs.map((ref, index) => ({
+        type: 'attachment',
+        id: `attachment-${index}`,
+        name: ref.fileName,
+        mimeType: ref.mimeType,
+        sizeBytes: ref.byteLength,
+        source: { kind: 'resource', ref },
+      })),
+    }],
+    execution: { diagnosticsRef: null },
+  }] as unknown as Turn[];
+  return {
+    requireThread: (threadId: string) => ({ thread: threads.get(threadId)! }),
+    allTurns: (threadId: string) => threadId === historicalId ? turns : [],
+  } as unknown as ThreadCore;
+}
 
 async function createFixture(): Promise<{ root: string; store: AgentResourceStore }> {
   const root = await mkdtemp(path.join(tmpdir(), 'tenon-agent-resource-store-'));

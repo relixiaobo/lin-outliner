@@ -12,12 +12,13 @@ import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   markdownReferenceOccurrences,
+  markdownThreadReferenceOccurrences,
   transformMarkdownReferenceTextNodes,
   type MarkdownReferenceAstNode,
 } from '../../../core/markdownReferenceAst';
 import { basenameForPath, referenceDisplayFallback } from '../../../core/referenceMarkup';
 import { parseReferenceMarkers } from '../../../core/referenceMarkup';
-import type { AgentFinalCitationBinding } from '../../../core/agent/protocol';
+import type { AgentFinalCitationBinding, ThreadReferenceView } from '../../../core/agent/protocol';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
 import { InlineFileReference } from '../../ui/editor/InlineFileReference';
@@ -35,6 +36,9 @@ import {
   threadNodeReferenceHref,
   threadNodeReferenceOpenOptionsFromClick,
   threadNodeReferenceStyle,
+  threadIdFromReferenceHref,
+  threadReferenceDisplayLabel,
+  threadReferenceHref,
   type ThreadNodeReferenceOpenHandler,
 } from '../threadReferences';
 import { repairStreamingMarkdown } from '../streamingMarkdownRepair';
@@ -42,6 +46,8 @@ import { repairStreamingMarkdown } from '../streamingMarkdownRepair';
 interface ThreadMarkdownProps {
   readonly index?: DocumentIndex;
   readonly onNodeReferenceOpen?: ThreadNodeReferenceOpenHandler;
+  readonly onThreadReferenceOpen?: (threadId: string) => void;
+  readonly threadReferences?: ReadonlyMap<string, ThreadReferenceView>;
   readonly streaming?: boolean;
   readonly text: string;
   readonly threadId?: string;
@@ -54,9 +60,11 @@ const STREAMING_MARKDOWN_THROTTLE_MS = 80;
 export function ThreadMarkdown({
   index,
   onNodeReferenceOpen,
+  onThreadReferenceOpen,
   streaming = false,
   text,
   threadId,
+  threadReferences,
   finalCitations = [],
 }: ThreadMarkdownProps) {
   const visibleText = useStreamingMarkdownText(text, streaming);
@@ -92,7 +100,9 @@ export function ThreadMarkdown({
             key={key}
             markdown={block.markdown}
             onNodeReferenceOpen={onNodeReferenceOpen}
+            onThreadReferenceOpen={onThreadReferenceOpen}
             threadId={threadId}
+            threadReferences={threadReferences}
           />
         );
       })}
@@ -112,17 +122,28 @@ function referenceMarkdownNodes(
   node: MarkdownReferenceAstNode,
   markdown: string,
 ): MarkdownReferenceAstNode[] {
-  const result = markdownReferenceOccurrences(markdown, text, node);
-  if (result.indeterminate) return [{ type: 'text', value: text }];
-  const { occurrences } = result;
+  const referenceResult = markdownReferenceOccurrences(markdown, text, node);
+  const threadResult = markdownThreadReferenceOccurrences(markdown, text, node);
+  if (referenceResult.indeterminate || threadResult.indeterminate) return [{ type: 'text', value: text }];
+  const occurrences = [
+    ...referenceResult.occurrences.map((occurrence) => ({ ...occurrence, kind: 'outline' as const })),
+    ...threadResult.occurrences.map((occurrence) => ({ ...occurrence, kind: 'thread' as const })),
+  ].sort((left, right) => left.marker.start - right.marker.start);
   const fileMarkers = parseReferenceMarkers(markdown, ['file']);
   if (occurrences.length === 0) return [{ type: 'text', value: text }];
   const nodes: MarkdownReferenceAstNode[] = [];
   let cursor = 0;
-  for (const { escaped, marker, sourceStart } of occurrences) {
+  for (const { escaped, kind, marker, sourceStart } of occurrences) {
     if (marker.start > cursor) nodes.push({ type: 'text', value: text.slice(cursor, marker.start) });
     if (escaped) {
       nodes.push({ type: 'text', value: marker.raw });
+    } else if (kind === 'thread') {
+      nodes.push({
+        children: [{ type: 'text', value: marker.threadId }],
+        title: null,
+        type: 'link',
+        url: threadReferenceHref(marker.threadId),
+      });
     } else if (marker.target.kind === 'local-file') {
       const label = basenameForPath(marker.target.path) || marker.target.path;
       const markerOrdinal = sourceStart === null
@@ -155,7 +176,9 @@ function referenceMarkdownNodes(
 function useMarkdownComponents(
   index: DocumentIndex | undefined,
   onNodeReferenceOpen: ThreadNodeReferenceOpenHandler | undefined,
+  onThreadReferenceOpen: ((threadId: string) => void) | undefined,
   threadId: string | undefined,
+  threadReferences: ReadonlyMap<string, ThreadReferenceView> | undefined,
   finalCitations: readonly AgentFinalCitationBinding[],
 ) {
   const t = useT();
@@ -226,6 +249,36 @@ function useMarkdownComponents(
         );
       }
 
+      const referencedThreadId = threadIdFromReferenceHref(href);
+      if (referencedThreadId) {
+        const resolution = threadReferences?.get(referencedThreadId);
+        const label = threadReferenceDisplayLabel(
+          referencedThreadId,
+          resolution,
+          t.agent.message.referencedThread,
+        );
+        const actionable = resolution?.availability === 'available' && Boolean(onThreadReferenceOpen);
+        const title = threadReferenceAvailabilityLabel(resolution, t);
+        if (!actionable) {
+          return <span className="inline-ref thread-message-inline-ref" title={title}>{label}</span>;
+        }
+        return (
+          <a
+            className="inline-ref thread-message-inline-ref"
+            data-thread-ref={referencedThreadId}
+            href={href}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onThreadReferenceOpen?.(referencedThreadId);
+            }}
+            title={title}
+          >
+            {label}
+          </a>
+        );
+      }
+
       return (
         <a
           href={href}
@@ -262,7 +315,27 @@ function useMarkdownComponents(
     table({ children, ...rest }: ComponentPropsWithoutRef<'table'>) {
       return <div className="thread-markdown-table-wrap"><table {...rest}>{children}</table></div>;
     },
-  }), [finalCitations, index, onNodeReferenceOpen, t.agent.message.referencedNode, threadId]);
+  }), [
+    finalCitations,
+    index,
+    onNodeReferenceOpen,
+    onThreadReferenceOpen,
+    t,
+    threadId,
+    threadReferences,
+  ]);
+}
+
+function threadReferenceAvailabilityLabel(
+  resolution: ThreadReferenceView | undefined,
+  t: ReturnType<typeof useT>,
+): string {
+  if (!resolution) return t.agent.message.threadReferenceUnavailable;
+  if (resolution.availability === 'available') return t.agent.message.openReferencedThread;
+  if (resolution.availability === 'current') return t.agent.message.threadReferenceCurrent;
+  if (resolution.availability === 'corrupt') return t.agent.message.threadReferenceCorrupt;
+  if (resolution.availability === 'denied') return t.agent.message.threadReferenceDenied;
+  return t.agent.message.threadReferenceUnavailable;
 }
 
 function ThreadMarkdownImage({ alt, src, title }: ComponentPropsWithoutRef<'img'>) {
@@ -320,15 +393,26 @@ const MemoizedMarkdownBlock = memo(function MemoizedMarkdownBlock({
   finalCitations,
   markdown,
   onNodeReferenceOpen,
+  onThreadReferenceOpen,
   threadId,
+  threadReferences,
 }: {
   readonly index: DocumentIndex | undefined;
   readonly finalCitations: readonly AgentFinalCitationBinding[];
   readonly markdown: string;
   readonly onNodeReferenceOpen: ThreadNodeReferenceOpenHandler | undefined;
+  readonly onThreadReferenceOpen: ((threadId: string) => void) | undefined;
   readonly threadId: string | undefined;
+  readonly threadReferences: ReadonlyMap<string, ThreadReferenceView> | undefined;
 }) {
-  const components = useMarkdownComponents(index, onNodeReferenceOpen, threadId, finalCitations);
+  const components = useMarkdownComponents(
+    index,
+    onNodeReferenceOpen,
+    onThreadReferenceOpen,
+    threadId,
+    threadReferences,
+    finalCitations,
+  );
   return (
     <Markdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={threadMarkdownUrlTransform}>
       {markdown}
@@ -347,7 +431,7 @@ function markdownLocalImageFromSrc(src: string | undefined): { path: string; lab
 }
 
 function threadMarkdownUrlTransform(value: string): string {
-  return localFileReferenceFromHref(value) || threadNodeIdFromReferenceHref(value)
+  return localFileReferenceFromHref(value) || threadNodeIdFromReferenceHref(value) || threadIdFromReferenceHref(value)
     ? value
     : defaultUrlTransform(value);
 }

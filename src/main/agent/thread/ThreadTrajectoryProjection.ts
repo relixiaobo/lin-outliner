@@ -2389,6 +2389,7 @@ function userContentEvidence(content: ThreadUserContent, budget?: DetailEvidence
       ...(content.note === undefined ? {} : { note: sanitizeTextEvidence(content.note, budget) }),
     };
   }
+  if (content.type === 'threadReference') return content;
   return {
     ...content,
     name: sanitizeTextEvidence(content.name, budget),
@@ -2640,7 +2641,8 @@ function itemSummary(item: ThreadItem | null | undefined): string | null {
       return item.content.map((content) => {
         if (content.type === 'text') return content.text;
         if (content.type === 'attachment') return content.name;
-        return content.note ?? content.nodeId;
+        if (content.type === 'nodeReference') return content.note ?? content.nodeId;
+        return content.threadId;
       }).join(' ');
     case 'agentMessage': return item.text;
     case 'reasoning': return [...item.summary, ...item.content].find(Boolean) ?? null;

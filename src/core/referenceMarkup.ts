@@ -4,10 +4,11 @@ import {
 } from './nodeId';
 import type { ReferenceTarget, RichText } from './types';
 
-export type ReferenceUriScheme = 'file' | 'node';
+export type ReferenceUriScheme = 'file' | 'node' | 'thread';
 
 export type ReferenceUri =
   | { readonly scheme: 'node'; readonly nodeId: string }
+  | { readonly scheme: 'thread'; readonly threadId: string }
   | {
     readonly scheme: 'file';
     readonly path: string;
@@ -36,6 +37,14 @@ export interface ParsedNodeReferenceMarker {
   nodeId: string;
   raw: string;
   start: number;
+  uri: string;
+}
+
+export interface ParsedThreadReferenceMarker {
+  end: number;
+  raw: string;
+  start: number;
+  threadId: string;
   uri: string;
 }
 
@@ -70,8 +79,9 @@ export type FileReferenceTextSegment =
   | FileReferenceSegment;
 
 const REFERENCE_PATTERN = /\[\[([^\[\]\r\n]*?)\]\]/gu;
-const ALL_REFERENCE_SCHEMES: readonly ReferenceUriScheme[] = ['node', 'file'];
+const OUTLINE_REFERENCE_SCHEMES: readonly ReferenceUriScheme[] = ['node', 'file'];
 const ENCODED_PATH_SEPARATOR_PATTERN = /%2f/iu;
+const UUID_V7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 export function formatNodeReferenceUri(nodeId: string): string | null {
   const key = publicReferenceNodeKey(nodeId);
@@ -81,6 +91,16 @@ export function formatNodeReferenceUri(nodeId: string): string | null {
 export function formatNodeReferenceMarker(nodeId: string): string {
   const uri = formatNodeReferenceUri(nodeId);
   return uri ? `[[${uri}]]` : nodeId.trim();
+}
+
+export function formatThreadReferenceUri(threadId: string): string | null {
+  const normalized = threadId.trim().toLowerCase();
+  return UUID_V7_PATTERN.test(normalized) ? `thread://${normalized}` : null;
+}
+
+export function formatThreadReferenceMarker(threadId: string): string {
+  const uri = formatThreadReferenceUri(threadId);
+  return uri ? `[[${uri}]]` : threadId.trim();
 }
 
 export function formatNamedNodeReference(
@@ -136,7 +156,7 @@ export function formatReferenceMarker(target: ReferenceTarget): string {
 
 export function parseReferenceUri(
   value: string,
-  admittedSchemes: readonly ReferenceUriScheme[] = ALL_REFERENCE_SCHEMES,
+  admittedSchemes: readonly ReferenceUriScheme[] = OUTLINE_REFERENCE_SCHEMES,
 ): ReferenceUri | null {
   const admitted = new Set(admittedSchemes);
   if (/^node:\/\//iu.test(value)) {
@@ -147,7 +167,35 @@ export function parseReferenceUri(
     if (!admitted.has('file')) return null;
     return parseFileReferenceUri(value);
   }
+  if (/^thread:\/\//iu.test(value)) {
+    if (!admitted.has('thread')) return null;
+    return parseThreadReferenceUri(value);
+  }
   return null;
+}
+
+export function parseThreadReferenceUri(
+  value: string | undefined,
+): Extract<ReferenceUri, { scheme: 'thread' }> | null {
+  if (!value || !/^thread:\/\//iu.test(value)) return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  const threadId = url.hostname.toLowerCase();
+  if (
+    url.protocol !== 'thread:'
+    || url.username !== ''
+    || url.password !== ''
+    || url.port !== ''
+    || url.pathname !== ''
+    || url.search !== ''
+    || url.hash !== ''
+    || !UUID_V7_PATTERN.test(threadId)
+  ) return null;
+  return { scheme: 'thread', threadId };
 }
 
 export function parseFileReferenceUri(
@@ -187,7 +235,7 @@ export function parseFileReferenceUri(
 
 export function parseReferenceMarkers(
   text: string,
-  admittedSchemes: readonly ReferenceUriScheme[] = ALL_REFERENCE_SCHEMES,
+  admittedSchemes: readonly ReferenceUriScheme[] = OUTLINE_REFERENCE_SCHEMES,
   options: ParseReferenceMarkerOptions = {},
 ): ParsedReferenceMarker[] {
   const markers: ParsedReferenceMarker[] = [];
@@ -198,6 +246,7 @@ export function parseReferenceMarkers(
     if (!raw || (!options.includeEscaped && isEscapedAt(text, start))) continue;
     const parsed = parseReferenceUri(inner, admittedSchemes);
     if (!parsed) continue;
+    if (parsed.scheme === 'thread') continue;
     const target = referenceTargetFromUri(parsed);
     const uri = formatReferenceUri(parsed);
     if (!uri) continue;
@@ -214,7 +263,7 @@ export function parseReferenceMarkers(
 
 export function splitReferenceMarkers(
   text: string,
-  admittedSchemes: readonly ReferenceUriScheme[] = ALL_REFERENCE_SCHEMES,
+  admittedSchemes: readonly ReferenceUriScheme[] = OUTLINE_REFERENCE_SCHEMES,
 ): ReferenceTextSegment[] {
   const markers = parseReferenceMarkers(text, admittedSchemes);
   if (markers.length === 0) return [{ text, type: 'text' }];
@@ -237,6 +286,27 @@ export function splitReferenceMarkers(
     segments.push({ text: text.slice(cursor), type: 'text' });
   }
   return segments;
+}
+
+export function parseThreadReferenceMarkers(text: string): ParsedThreadReferenceMarker[] {
+  const markers: ParsedThreadReferenceMarker[] = [];
+  for (const match of text.matchAll(REFERENCE_PATTERN)) {
+    const raw = match[0] ?? '';
+    const start = match.index ?? 0;
+    if (!raw || isEscapedAt(text, start)) continue;
+    const parsed = parseReferenceUri(match[1] ?? '', ['thread']);
+    if (!parsed || parsed.scheme !== 'thread') continue;
+    const uri = formatThreadReferenceUri(parsed.threadId);
+    if (!uri) continue;
+    markers.push({
+      end: start + raw.length,
+      raw,
+      start,
+      threadId: parsed.threadId,
+      uri,
+    });
+  }
+  return markers;
 }
 
 export function parseNodeReferenceMarkers(text: string): ParsedNodeReferenceMarker[] {
@@ -366,6 +436,7 @@ function parseNodeReferenceUri(value: string): Extract<ReferenceUri, { scheme: '
 }
 
 function referenceTargetFromUri(uri: ReferenceUri): ReferenceTarget {
+  if (uri.scheme === 'thread') throw new Error('Thread references are not Outline reference targets');
   if (uri.scheme === 'node') return { kind: 'node', nodeId: uri.nodeId };
   return { kind: 'local-file', path: uri.path, entryKind: uri.entryKind };
 }
@@ -379,6 +450,7 @@ function referenceMarker(target: ReferenceTarget): string | null {
 
 function formatReferenceUri(uri: ReferenceUri): string | null {
   if (uri.scheme === 'node') return formatNodeReferenceUri(uri.nodeId);
+  if (uri.scheme === 'thread') return formatThreadReferenceUri(uri.threadId);
   return formatFileReferenceUri(uri.path, uri.entryKind);
 }
 

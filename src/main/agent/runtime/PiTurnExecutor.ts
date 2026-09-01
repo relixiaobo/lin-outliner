@@ -179,7 +179,9 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         });
     const systemPrompt = stablePrompt?.text
       ?? context.configuration.developerInstructions.join('\n\n');
-    const projector = new CanonicalContextProjector(runtime.model, context);
+    const projector = new CanonicalContextProjector(runtime.model, context, {
+      threadHistoryReadAvailable: context.configuration.tools.includes('thread_read'),
+    });
     const projection = await projector.projectTurnsWithBoundaries([
       ...context.historyBeforeTurn,
       context.turn,
@@ -246,7 +248,9 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         ?? context.configuration.developerInstructions.join('\n\n');
       const turnScopedReads = withTurnScopedContextReads(context);
       const projectionContext = turnScopedReads.context;
-      const projector = new CanonicalContextProjector(runtime.model, projectionContext);
+      const projector = new CanonicalContextProjector(runtime.model, projectionContext, {
+        threadHistoryReadAvailable: context.configuration.tools.includes('thread_read'),
+      });
       const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
       const currentMessages = await projector.projectTurns([context.turn]);
       const initialPrompt = currentMessages.at(-1);
@@ -580,6 +584,7 @@ async function projectCanonicalProviderContext(
         turnId === context.turn.id ? liveModelToolCalls.get(itemId) ?? null : null
       ),
       ...(options?.omitUserItemIds ? { omitUserItemIds: options.omitUserItemIds } : {}),
+      threadHistoryReadAvailable: context.configuration.tools.includes('thread_read'),
     });
     const canonicalProjection = await projector.projectTurnsWithBoundaries(sourceTurns);
     const projection = reasoningReplay?.reattach(canonicalProjection, model) ?? canonicalProjection;
@@ -823,6 +828,7 @@ function threadNamePrompt(context: ThreadNameGenerationContext): string | null {
     .flatMap((item) => item.content.map((part) => {
       if (part.type === 'text') return part.text;
       if (part.type === 'attachment') return `[Attachment: ${part.name}]`;
+      if (part.type === 'threadReference') return `[Thread: ${part.threadId}]`;
       return `[Node: ${part.note?.trim() || part.nodeId}]`;
     }))
     .join('\n')

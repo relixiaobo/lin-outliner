@@ -34,8 +34,11 @@ import type {
   ThreadConfigurationSummary,
   ThreadId,
   ThreadResourceReference,
+  ThreadReferenceSearchResult,
+  ThreadReferenceView,
   ThreadUserContent,
 } from '../../../core/agent/protocol';
+import { api } from '../../api/client';
 import type { Thread, ThreadItem, Turn, TurnSubmitResponse } from '../projectionTypes';
 import { isReaderAuthoredUserMessage } from '../../../core/agent/protocol';
 import type { ThreadGoal } from '../../../core/agent/goal';
@@ -184,7 +187,7 @@ import {
 const UNATTRIBUTED_PARTICIPANT_ID = 'unattributed';
 import { useSubagentEntry, useWorkingAgentIds } from './SubagentRegistryContext';
 import { classifyNewThreadCommand } from '../threadComposerCommands';
-import { parseNodeReferenceMarkers } from '../../../core/referenceMarkup';
+import { parseNodeReferenceMarkers, parseThreadReferenceMarkers } from '../../../core/referenceMarkup';
 
 interface ThreadViewProps {
   readonly active: boolean;
@@ -238,6 +241,7 @@ interface ThreadViewProps {
   readonly onConfigurationChange: (configuration: ThreadConfigurationSummary) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onOpenThreadReference: (threadId: string) => Promise<void>;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   /** Turn Details for a delegated child, read inside its own run detail. */
   readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
@@ -714,6 +718,7 @@ export function ThreadView({
   onConfigurationChange,
   onOpenNodeReference,
   onOpenThread,
+  onOpenThreadReference,
   onOpenSubagentTurnDetails,
   onOpenTurnDetails,
   onReadToolArguments,
@@ -742,6 +747,35 @@ export function ThreadView({
   const [attachments, setAttachments] = useState<ThreadAttachmentContent[]>([]);
   const [pendingPastes, setPendingPastes] = useState<PendingComposerPaste[]>([]);
   const [recentLocalFiles, setRecentLocalFiles] = useState<ThreadComposerLocalFileCandidate[]>([]);
+  const transcriptThreadReferenceKey = useMemo(
+    () => threadReferenceIdsFromTurns(turns).join('\0'),
+    [turns],
+  );
+  const transcriptThreadReferenceIds = useMemo(
+    () => transcriptThreadReferenceKey ? transcriptThreadReferenceKey.split('\0') : [],
+    [transcriptThreadReferenceKey],
+  );
+  const loadedThreadReferences = useMemo(() => {
+    const references = new Map<string, ThreadReferenceView>();
+    for (const referencedThreadId of transcriptThreadReferenceIds) {
+      const referenced = threadsById.get(referencedThreadId);
+      if (!referenced) continue;
+      references.set(referencedThreadId, {
+        threadId: referencedThreadId,
+        title: referenced.name?.trim() || referenced.preview.trim() || null,
+        updatedAt: referenced.updatedAt,
+        availability: referencedThreadId === threadId ? 'current' : 'available',
+      });
+    }
+    return references;
+  }, [threadId, threadsById, transcriptThreadReferenceIds]);
+  const [resolvedThreadReferences, setResolvedThreadReferences] = useState<ReadonlyMap<string, ThreadReferenceView>>(
+    () => new Map(),
+  );
+  const threadReferences = useMemo(() => new Map([
+    ...resolvedThreadReferences,
+    ...loadedThreadReferences,
+  ]), [loadedThreadReferences, resolvedThreadReferences]);
   const [follow, setFollow] = useState(initialScrollSnapshot?.follow ?? true);
   const [sendAnchorSpacer, setSendAnchorSpacer] = useState<SendAnchorSpacer | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -874,6 +908,39 @@ export function ThreadView({
     setPendingEcho(null);
   }, [echoTurn, measuredTurnHeights, pendingEcho]);
   useEffect(() => () => setPendingEcho(null), [threadId]);
+  useEffect(() => {
+    const unresolved = transcriptThreadReferenceIds.filter((referencedThreadId) => (
+      !loadedThreadReferences.has(referencedThreadId)
+      && !resolvedThreadReferences.has(referencedThreadId)
+    ));
+    if (unresolved.length === 0) return;
+    let canceled = false;
+    const requests = chunked(unresolved, 50).map((threadIds) => api.agentCoreRequest(
+      'thread/references/resolve',
+      { currentThreadId: threadId, threadIds },
+    ));
+    void Promise.all(requests).then((responses) => {
+      if (canceled) return;
+      setResolvedThreadReferences((current) => {
+        const next = new Map(current);
+        for (const response of responses) {
+          for (const reference of response.data) next.set(reference.threadId, reference);
+        }
+        return next;
+      });
+    }).catch(() => undefined);
+    return () => {
+      canceled = true;
+    };
+  }, [loadedThreadReferences, resolvedThreadReferences, threadId, transcriptThreadReferenceIds]);
+  const searchThreadReferences = useCallback(async (query: string): Promise<ThreadReferenceSearchResult[]> => {
+    const response = await api.agentCoreRequest('thread/references/search', {
+      currentThreadId: threadId,
+      query,
+      limit: 8,
+    });
+    return [...response.data];
+  }, [threadId]);
   const activePlan = activeTurn && plan?.turnId === activeTurn.id ? plan : null;
   const activeWorkingTextEnabled = !waitingOnUserInput && providerRetry === null;
   const editableTurnId = useMemo(() => latestUserMessageTurnId(turns), [turns]);
@@ -2312,6 +2379,7 @@ export function ThreadView({
         transition.entry.content,
         indexStore.getCurrent(),
         (attachmentId) => attachmentUiState.canonicalPreviewFor(attachmentId),
+        threadReferences,
       );
     const mounted = mountComposerBundle(target);
     if (!mounted) {
@@ -3110,6 +3178,7 @@ export function ThreadView({
                         selfSpeaker={selfSpeaker}
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
+                        onOpenThreadReference={onOpenThreadReference}
                         onOpenTurnDetails={onOpenTurnDetails}
                         onReadToolArguments={onReadToolArguments}
                         onReadToolOutput={onReadToolOutput}
@@ -3117,6 +3186,7 @@ export function ThreadView({
                         liveReasoningSeen={liveReasoningSeen}
                         providerRetry={providerRetry?.turnId === turn.id ? providerRetry.status : null}
                         threadId={threadId}
+                        threadReferences={threadReferences}
                         threadCwd={threadCwd}
                         threadsById={threadsById}
                         latestTurnByThread={latestTurnByThread}
@@ -3246,6 +3316,8 @@ export function ThreadView({
                 onLocalFileSearch={searchLocalFiles}
                 onLocalFileSelect={selectLocalFile}
                 onNodeReferenceClick={onOpenNodeReference}
+                onThreadReferenceClick={(referencedThreadId) => void onOpenThreadReference(referencedThreadId)}
+                onThreadReferenceSearch={searchThreadReferences}
                 onTextPasteRejected={rejectTextPaste}
                 onStop={() => void onInterrupt()}
                 onSubmit={() => void submit()}
@@ -3386,6 +3458,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   onInterruptThread,
   onOpenNodeReference,
   onOpenThread,
+  onOpenThreadReference,
   onOpenSubagentTurnDetails,
   agentTranscript,
   selfSpeaker,
@@ -3396,6 +3469,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   rootSpeaker,
   rootThreadId,
   threadId,
+  threadReferences,
   threadCwd,
   threadsById,
   latestTurnByThread,
@@ -3422,6 +3496,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly onInterruptThread: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onOpenThreadReference: (threadId: string) => Promise<void>;
   readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
   /**
    * This transcript belongs to one Agent, read inside its pushed view. It is
@@ -3440,6 +3515,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly rootSpeaker: ThreadSpeaker;
   readonly rootThreadId: ThreadId;
   readonly threadId: string;
+  readonly threadReferences: ReadonlyMap<string, ThreadReferenceView>;
   readonly threadCwd: string;
   readonly threadsById: ReadonlyMap<ThreadId, Thread>;
   readonly latestTurnByThread: ReadonlyMap<ThreadId, Turn>;
@@ -3656,6 +3732,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         onOpenNodeReference={onOpenNodeReference}
         onOpenTurnDetails={standaloneContextBoundary ? openTurnDetails : undefined}
         onOpenThread={onOpenThread}
+        onOpenThreadReference={onOpenThreadReference}
         onReadToolArguments={readToolArguments}
         onReadToolOutput={readToolOutput}
         showMessageActions={showMessageActions}
@@ -3664,6 +3741,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
           ? { anchor: anchors.anchorByItemId.get(item.id)! }
           : {})}
         threadId={threadId}
+        threadReferences={threadReferences}
         threadCwd={threadCwd}
         active={active}
         workingTextEnabled={workingTextEnabled}
@@ -5067,6 +5145,7 @@ function composerHistoryBundleFromContent(
   content: readonly ThreadUserContent[],
   index: DocumentIndex,
   canonicalPreviewFor: (attachmentId: string) => string | undefined,
+  threadReferences: ReadonlyMap<string, ThreadReferenceView>,
 ): ComposerHistoryBundle {
   const attachments: ThreadAttachmentContent[] = [];
   const uiState: ComposerAttachmentUiState[] = [];
@@ -5079,6 +5158,15 @@ function composerHistoryBundleFromContent(
         reference: {
           nodeId: part.nodeId,
           title: currentLabel || part.note || 'Referenced node',
+        },
+      };
+    }
+    if (part.type === 'threadReference') {
+      return {
+        type: 'threadReference',
+        reference: {
+          threadId: part.threadId,
+          title: threadReferences.get(part.threadId)?.title ?? '',
         },
       };
     }
@@ -5096,6 +5184,32 @@ function composerHistoryBundleFromContent(
     };
   });
   return { attachments, content: draftContent, snapshot: null, uiState };
+}
+
+function threadReferenceIdsFromTurns(turns: readonly Turn[]): string[] {
+  const threadIds = new Set<string>();
+  for (const turn of turns) {
+    for (const item of turn.items) {
+      if (item.type === 'userMessage') {
+        for (const content of item.content) {
+          if (content.type === 'threadReference') threadIds.add(content.threadId);
+          if (content.type === 'text' && content.text.includes('[[thread://')) {
+            for (const marker of parseThreadReferenceMarkers(content.text)) threadIds.add(marker.threadId);
+          }
+        }
+      }
+      if (item.type === 'agentMessage' && item.text.includes('[[thread://')) {
+        for (const marker of parseThreadReferenceMarkers(item.text)) threadIds.add(marker.threadId);
+      }
+    }
+  }
+  return [...threadIds];
+}
+
+function chunked<T>(values: readonly T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
+  return chunks;
 }
 
 function canonicalThreadAttachmentIds(turns: readonly Turn[]): Set<string> {
@@ -5128,6 +5242,9 @@ function threadContentFromDraft(
         nodeId: part.reference.nodeId,
         note: part.reference.title,
       }];
+    }
+    if (part.type === 'threadReference') {
+      return [{ type: 'threadReference', threadId: part.reference.threadId }];
     }
     if (part.type === 'pendingFileReference') return [];
     const attachment = byId.get(part.reference.attachmentId);

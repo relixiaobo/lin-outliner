@@ -355,6 +355,7 @@ function userContentText(content: readonly ThreadUserContent[]): string {
     if (part.type === 'attachment') {
       return `[Attachment: ${part.name} (${part.mimeType}, ${part.sizeBytes} bytes)]`;
     }
+    if (part.type === 'threadReference') return `[[thread://${part.threadId}]]`;
     return part.note
       ? `[Outliner Node: ${part.nodeId} — ${part.note}]`
       : `[Outliner Node: ${part.nodeId}]`;

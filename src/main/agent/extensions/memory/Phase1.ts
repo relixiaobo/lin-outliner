@@ -513,7 +513,9 @@ function evidenceContent(item: ThreadItem): string | null {
         ? part.text
         : part.type === 'nodeReference'
           ? `[Node ${part.nodeId}] ${part.note ?? ''}`
-          : `[Attachment ${part.name}] ${part.extractedText ?? ''}`).join('\n').trim() || null;
+          : part.type === 'threadReference'
+            ? `[Thread ${part.threadId}]`
+            : `[Attachment ${part.name}] ${part.extractedText ?? ''}`).join('\n').trim() || null;
     case 'agentMessage':
       return item.phase === 'final_answer' || item.phase === null ? item.text.trim() || null : null;
     case 'commandExecution':

@@ -63,6 +63,7 @@ import {
   type ThreadImageArtifactReference,
   type ThreadInputAuthor,
   type ThreadNodeReferenceContent,
+  type ThreadReferenceContent,
   type ThreadSource,
   type ThreadStatus,
   type ThreadTextContent,
@@ -1206,6 +1207,12 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/list':
       decoded = decodeThreadListRequest(value);
       break;
+    case 'thread/references/search':
+      decoded = decodeThreadReferenceSearchRequest(value);
+      break;
+    case 'thread/references/resolve':
+      decoded = decodeThreadReferenceResolveRequest(value);
+      break;
     case 'thread/descendants':
       decoded = decodeThreadDescendantsRequest(value);
       break;
@@ -1319,6 +1326,12 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
   switch (method) {
     case 'thread/list':
       decoded = decodeThreadListResponse(value);
+      break;
+    case 'thread/references/search':
+      decoded = decodeThreadReferenceSearchResponse(value);
+      break;
+    case 'thread/references/resolve':
+      decoded = decodeThreadReferenceResolveResponse(value);
       break;
     case 'thread/descendants':
       decoded = decodeThreadDescendantsResponse(value);
@@ -1602,6 +1615,40 @@ function decodeThreadListRequest(value: unknown): AgentCoreRequestByMethod['thre
           threadSources: arrayValue(record.threadSources, 'thread/list.threadSources')
             .map((source, index) => decodeThreadSource(source, `thread/list.threadSources[${index}]`)),
         }),
+  });
+}
+
+function decodeThreadReferenceSearchRequest(
+  value: unknown,
+): AgentCoreRequestByMethod['thread/references/search'] {
+  const record = recordValue(value, 'thread/references/search');
+  exactKeys(record, ['currentThreadId', 'query', 'limit'], 'thread/references/search');
+  const query = record.query === undefined
+    ? undefined
+    : boundedUtf8String(record.query, 'thread/references/search.query', 512).trim();
+  const limit = record.limit === undefined
+    ? undefined
+    : positiveInteger(record.limit, 'thread/references/search.limit');
+  if (limit !== undefined && limit > 20) fail('thread/references/search.limit', 'must be at most 20');
+  return deepFreeze({
+    currentThreadId: uuidV7(record.currentThreadId, 'thread/references/search.currentThreadId'),
+    ...(query ? { query } : {}),
+    ...(limit === undefined ? {} : { limit }),
+  });
+}
+
+function decodeThreadReferenceResolveRequest(
+  value: unknown,
+): AgentCoreRequestByMethod['thread/references/resolve'] {
+  const record = recordValue(value, 'thread/references/resolve');
+  exactKeys(record, ['currentThreadId', 'threadIds'], 'thread/references/resolve');
+  const threadIds = arrayValue(record.threadIds, 'thread/references/resolve.threadIds')
+    .map((entry, index) => uuidV7(entry, `thread/references/resolve.threadIds[${index}]`));
+  if (threadIds.length > 50) fail('thread/references/resolve.threadIds', 'must contain at most 50 ids');
+  requireUnique(threadIds, 'thread/references/resolve.threadIds', 'Thread ids');
+  return deepFreeze({
+    currentThreadId: uuidV7(record.currentThreadId, 'thread/references/resolve.currentThreadId'),
+    threadIds,
   });
 }
 
@@ -2001,6 +2048,55 @@ function decodeThreadListResponse(value: unknown): AgentCoreResponseByMethod['th
     data: arrayValue(record.data, 'thread/list response.data').map(decodeThread),
     nextCursor: nullableString(record.nextCursor, 'thread/list response.nextCursor'),
   });
+}
+
+function decodeThreadReferenceView(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, `${path}.threadId`),
+    title: nullableString(record.title, `${path}.title`),
+    updatedAt: nullableNumber(record.updatedAt, `${path}.updatedAt`),
+    availability: enumValue(
+      record.availability,
+      ['available', 'current', 'missing', 'corrupt', 'denied'],
+      `${path}.availability`,
+    ),
+  });
+}
+
+function decodeThreadReferenceSearchResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['thread/references/search'] {
+  const record = recordValue(value, 'thread/references/search response');
+  exactKeys(record, ['data'], 'thread/references/search response');
+  const data = arrayValue(record.data, 'thread/references/search response.data').map((entry, index) => {
+    const path = `thread/references/search response.data[${index}]`;
+    const candidate = recordValue(entry, path);
+    exactKeys(candidate, ['threadId', 'title', 'updatedAt', 'availability', 'snippet', 'archived'], path);
+    return deepFreeze({
+      ...decodeThreadReferenceView(candidate, path),
+      snippet: boundedUtf8String(candidate.snippet, `${path}.snippet`, 4 * 1024),
+      archived: booleanValue(candidate.archived, `${path}.archived`),
+    });
+  });
+  if (data.length > 20) fail('thread/references/search response.data', 'must contain at most 20 results');
+  return deepFreeze({ data });
+}
+
+function decodeThreadReferenceResolveResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['thread/references/resolve'] {
+  const record = recordValue(value, 'thread/references/resolve response');
+  exactKeys(record, ['data'], 'thread/references/resolve response');
+  const data = arrayValue(record.data, 'thread/references/resolve response.data')
+    .map((entry, index) => {
+      const path = `thread/references/resolve response.data[${index}]`;
+      const candidate = recordValue(entry, path);
+      exactKeys(candidate, ['threadId', 'title', 'updatedAt', 'availability'], path);
+      return decodeThreadReferenceView(candidate, path);
+    });
+  if (data.length > 50) fail('thread/references/resolve response.data', 'must contain at most 50 results');
+  return deepFreeze({ data });
 }
 
 function decodeThreadDescendantsResponse(value: unknown): AgentCoreResponseByMethod['thread/descendants'] {
@@ -3379,7 +3475,7 @@ function decodeItemProvenance(value: unknown): ItemProvenance {
 function decodeUserContent(value: unknown, pathOrIndex: string | number = 'userContent'): ThreadUserContent {
   const path = typeof pathOrIndex === 'string' ? pathOrIndex : 'userContent';
   const record = recordValue(value, path);
-  const type = enumValue(record.type, ['text', 'attachment', 'nodeReference'], `${path}.type`);
+  const type = enumValue(record.type, ['text', 'attachment', 'nodeReference', 'threadReference'], `${path}.type`);
   if (type === 'text') {
     exactKeys(record, ['type', 'text'], path);
     return deepFreeze<ThreadTextContent>({ type, text: stringValue(record.text, `${path}.text`, true) });
@@ -3390,6 +3486,13 @@ function decodeUserContent(value: unknown, pathOrIndex: string | number = 'userC
       type,
       nodeId: stringValue(record.nodeId, `${path}.nodeId`),
       ...(record.note === undefined ? {} : { note: stringValue(record.note, `${path}.note`, true) }),
+    });
+  }
+  if (type === 'threadReference') {
+    exactKeys(record, ['type', 'threadId'], path);
+    return deepFreeze<ThreadReferenceContent>({
+      type,
+      threadId: uuidV7(record.threadId, `${path}.threadId`),
     });
   }
   exactKeys(record, ['type', 'id', 'name', 'mimeType', 'sizeBytes', 'source', 'artifactRef', 'extractedText'], path);

@@ -48,6 +48,13 @@ Agent Core. It is a contract checklist, not project status.
   permissions, and reject background input before spawn.
 - Start every new Agent from fresh context; reuse its own history only when the
   same stable ID is resumed.
+- For historical context, expose bounded lazy `thread_search` / `thread_read`
+  facades rather than renderer history IPC or eager transcript injection. Keep
+  same-profile validation, current-Thread exclusion, tool ceilings, action blocks,
+  and selected-file read descriptors independent.
+- Treat historical titles, snippets, messages, activity summaries, file labels,
+  and bounded tool output as untrusted quoted context. A Thread marker, cursor, or
+  citation key is identity or lookup state, never authority.
 
 ## Extension Contract
 
@@ -70,6 +77,9 @@ Agent Core. It is a contract checklist, not project status.
 - Store identity and pagination state in `threadStore`.
 - Decode notifications before state mutation.
 - Use shared dialogs, menus, icons, tokens, and i18n.
+- Store Composer Thread mentions as structured UUIDv7 content; resolve current titles
+  for menu, transcript, copy, and history presentation without putting titles in the
+  canonical URI. Keep missing/current/corrupt/denied targets non-fatal.
 - Cover empty, idle, active, failed, interrupted, and input-request states.
 - Derive Agent rows from canonical lineage, execution generation, child Turn,
   and pending-notification state, never a model wait Item.
@@ -82,9 +92,9 @@ Agent Core. It is a contract checklist, not project status.
   the standalone Runtime; Agent stores retain only feature control state.
 - Keep immutable exact revisions, admission leases, opaque retention anchors,
   integrity quarantine, and physical GC in neutral `src/content/`. Outline
-  AssetRecords retain those revisions through Host-private coordinates; Agent
-  resource-reference records and resolution remain future work rather than an
-  alternate store in this feature.
+  AssetRecords and Agent resource-reference records retain those revisions through
+  Host-private coordinates. A selected historical citation reuses that Agent resolver
+  and working-set contract; it does not create an alternate file or retention store.
 - Keep rollout JSONL append-only and projections rebuildable.
 - Account content-addressed internal text in the owning Thread quota and carry
   its reachability through fork, child inheritance, rollback, prune, startup
@@ -104,6 +114,10 @@ Agent Core. It is a contract checklist, not project status.
 - Add lifecycle and restart tests for persistent behavior.
 - Add renderer tests for each visible canonical state.
 - Add E2E coverage for the user workflow.
+- Verify Thread-reference URI parsing does not expand Outline `ReferenceTarget`,
+  and cover Composer keyboard/pointer selection, exact history restore, current-title
+  rendering, unavailable targets, bounded history cursors, untrusted framing, and
+  page-scoped historical citations.
 - Keep the active repository residue guard clean.
 - Verify every Core document command has exactly one public capability owner and
   no retired document/import authority remains live.

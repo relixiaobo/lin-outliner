@@ -54,6 +54,10 @@ ThreadDescendantsResponse,
 ThreadListResponse,
 ThreadReadRequest,
 ThreadReadResponse,
+ThreadReferenceResolveRequest,
+ThreadReferenceResolveResponse,
+ThreadReferenceSearchRequest,
+ThreadReferenceSearchResponse,
 ThreadSubagentsRequest,
 ThreadSubagentsResponse,
 SubagentExecutionProjection,
@@ -142,6 +146,13 @@ import { SubagentCollaboration,type StagedContextEvidence } from './thread/Subag
 import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
+import {
+  ThreadHistoryReferenceService,
+  type AgentThreadReadInput,
+  type AgentThreadReadResult,
+  type AgentThreadSearchInput,
+  type AgentThreadSearchResult,
+} from './thread/ThreadHistoryReference';
 import { ThreadTrajectoryProjection,type ThreadTrajectoryExportBundle } from './thread/ThreadTrajectoryProjection';
 import { threadTranscriptRoot } from './thread/ThreadTranscriptArtifact';
 import { ThreadTranscriptExclusions } from './thread/ThreadTranscriptExclusions';
@@ -535,6 +546,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
    */
   private readonly unreadableThreadIds = new Set<ThreadId>();
   private readonly resourceOps: ThreadResourceOps;
+  private readonly historyReferences: ThreadHistoryReferenceService;
   private readonly catalogOps: ThreadCatalogOps;
   private readonly trajectory: ThreadTrajectoryProjection;
   private readonly collaboration: SubagentCollaboration;
@@ -641,6 +653,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.stores.resources,
       options.attachmentScratchRoot,
       options.resolveUserContent ?? ((content) => content),
+    );
+    this.historyReferences = new ThreadHistoryReferenceService(
+      this.core,
+      this.resourceOps,
+      (threadId) => !this.unreadableThreadIds.has(threadId),
+      this.now,
     );
     this.transcriptExclusions = new ThreadTranscriptExclusions(options.transcriptRoot);
     this.transcriptIndex = new ThreadTranscriptIndex({
@@ -1572,6 +1590,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
     switch (method) {
       case 'thread/list':
         return this.listThreads(decoded as AgentCoreRequestByMethod['thread/list']) as AgentCoreResponseByMethod[Method];
+      case 'thread/references/search':
+        return this.searchThreadReferences(
+          decoded as AgentCoreRequestByMethod['thread/references/search'],
+        ) as AgentCoreResponseByMethod[Method];
+      case 'thread/references/resolve':
+        return this.resolveThreadReferences(
+          decoded as AgentCoreRequestByMethod['thread/references/resolve'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'thread/descendants':
         return this.listThreadDescendants(
           decoded as AgentCoreRequestByMethod['thread/descendants'],
@@ -1699,6 +1725,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
   listTurns(request: ThreadTurnsListRequest): ThreadTurnsListResponse {
     this.assertThreadHistoryReadable(request.threadId);
     return this.catalogOps.listTurns(request);
+  }
+  searchThreadReferences(request: ThreadReferenceSearchRequest): ThreadReferenceSearchResponse {
+    return this.historyReferences.searchReferences(request);
+  }
+  resolveThreadReferences(request: ThreadReferenceResolveRequest): ThreadReferenceResolveResponse {
+    return this.historyReferences.resolveReferences(request);
+  }
+  searchThreadHistoryForAgent(input: AgentThreadSearchInput): readonly AgentThreadSearchResult[] {
+    return this.historyReferences.searchForAgent(input);
+  }
+  async readThreadHistoryForAgent(input: AgentThreadReadInput): Promise<AgentThreadReadResult> {
+    return this.historyReferences.readForAgent(input);
   }
   async readItemOutput(request: ThreadItemOutputReadRequest): Promise<ThreadItemOutputReadResponse> { return this.resourceOps.readItemOutput(request); }
   async readContextPayload(request: ThreadContextReadRequest): Promise<ThreadContextReadResponse> { return this.resourceOps.readContextPayload(request); }
