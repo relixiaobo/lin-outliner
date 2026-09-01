@@ -5,6 +5,7 @@ import type {
   ModelToolCallEvidenceReason,
   ModelToolCallHistory,
   ModelToolIdentity,
+  ModelProviderToolCall,
   ThreadContextPayloadReference,
 } from '../../../core/agent/protocol';
 import {
@@ -12,6 +13,8 @@ import {
   MAX_MODEL_TOOL_CORRECTION_BYTES,
   MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
   MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+  MAX_MODEL_PROVIDER_CALL_FIELD_BYTES,
+  MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES,
 } from '../../../core/agent/protocol';
 import {
   redactSecretLikeContent,
@@ -28,6 +31,7 @@ import {
 export interface ToolCallAdmissionRequest {
   readonly toolCallId: string;
   readonly providerName: string;
+  readonly providerCall: ModelProviderToolCall;
   readonly outcome:
     | {
       readonly type: 'admitted';
@@ -63,6 +67,7 @@ export interface ToolCallAdmissionDecision {
 
 export interface AssistantToolCallAdmission {
   readonly toolCallId: string;
+  readonly providerToolCallId: string;
   readonly decision: ToolCallAdmissionDecision;
 }
 
@@ -90,7 +95,7 @@ export function rewriteAssistantToolCallHistory(
       });
       continue;
     }
-    content.push({ ...part, id: admission.toolCallId });
+    content.push({ ...part, id: admission.providerToolCallId });
   }
   return { ...message, content };
 }
@@ -117,12 +122,16 @@ export async function persistToolCallAdmission(
   } catch {
     return persistenceRejectedAdmission(request, durableValue);
   }
+  if (!providerCallIsReplayable(request.providerCall)) {
+    return providerReplayUnavailableAdmission(request, durableValue);
+  }
   if (request.outcome.redactedPaths.length > 0) {
     return {
       modelCall: {
         disposition: 'redactedReplay',
         identity: request.outcome.identity,
         providerName: request.providerName,
+        providerCall: request.providerCall,
         redactedArguments: source,
         redactedPaths: request.outcome.redactedPaths,
         schemaDigest: request.outcome.schemaDigest,
@@ -136,6 +145,7 @@ export async function persistToolCallAdmission(
       disposition: 'replayable',
       identity: request.outcome.identity,
       providerName: request.providerName,
+      providerCall: request.providerCall,
       arguments: source,
       schemaDigest: request.outcome.schemaDigest,
     },
@@ -152,11 +162,15 @@ export function transientToolCallAdmission(request: ToolCallAdmissionRequest): T
   }
   const source = inlineModelToolCallArguments(durableValue);
   if (!source) return persistenceRejectedAdmission(request, durableValue);
+  if (!providerCallIsReplayable(request.providerCall)) {
+    return providerReplayUnavailableAdmission(request, durableValue);
+  }
   const modelCall = request.outcome.redactedPaths.length > 0
     ? {
         disposition: 'redactedReplay' as const,
         identity: request.outcome.identity,
         providerName: request.providerName,
+        providerCall: request.providerCall,
         redactedArguments: source,
         redactedPaths: request.outcome.redactedPaths,
         schemaDigest: request.outcome.schemaDigest,
@@ -165,6 +179,7 @@ export function transientToolCallAdmission(request: ToolCallAdmissionRequest): T
         disposition: 'replayable' as const,
         identity: request.outcome.identity,
         providerName: request.providerName,
+        providerCall: request.providerCall,
         arguments: source,
         schemaDigest: request.outcome.schemaDigest,
       };
@@ -278,6 +293,8 @@ export function evidenceCorrection(reason: ModelToolCallEvidenceReason): string 
     case 'argumentPersistenceUnavailable':
     case 'argumentPayloadUnavailable':
       return 'Do not retry from this record; re-derive any later call from an authorized source.';
+    case 'providerReplayUnavailable':
+      return 'The call executed, but its provider replay metadata was not retained. Inspect current state before acting.';
     case 'resultPayloadUnavailable':
       return 'Treat the historical outcome as incomplete and inspect current state before acting.';
   }
@@ -357,6 +374,43 @@ function incompatibleRedactedAdmission(
     displayArguments: request.outcome.displayArguments,
     execute: true,
   };
+}
+
+function providerReplayUnavailableAdmission(
+  request: ToolCallAdmissionRequest,
+  redactedArguments: JsonValue,
+): ToolCallAdmissionDecision {
+  if (request.outcome.type !== 'admitted') throw new Error('Expected an admitted tool-call request.');
+  return {
+    modelCall: {
+      disposition: 'evidenceOnly',
+      identity: request.outcome.identity,
+      providerName: boundedEvidenceText(request.providerName, MAX_MODEL_TOOL_PROVIDER_NAME_BYTES),
+      redactedArgumentsSummary: boundedRedactedJsonSummary(redactedArguments),
+      reason: 'providerReplayUnavailable',
+      correction: evidenceCorrection('providerReplayUnavailable'),
+    },
+    displayArguments: boundedRedactedJsonSummary(request.outcome.displayArguments),
+    execute: true,
+  };
+}
+
+function providerCallIsReplayable(providerCall: ModelProviderToolCall): boolean {
+  return providerCall.id.length > 0
+    && providerCall.api.length > 0
+    && providerCall.provider.length > 0
+    && providerCall.model.length > 0
+    && utf8Bytes(providerCall.id) <= MAX_MODEL_PROVIDER_CALL_FIELD_BYTES
+    && utf8Bytes(providerCall.api) <= MAX_MODEL_PROVIDER_CALL_FIELD_BYTES
+    && utf8Bytes(providerCall.provider) <= MAX_MODEL_PROVIDER_CALL_FIELD_BYTES
+    && utf8Bytes(providerCall.model) <= MAX_MODEL_PROVIDER_CALL_FIELD_BYTES
+    && (
+      providerCall.thoughtSignature === null
+      || (
+        providerCall.thoughtSignature.length > 0
+        && utf8Bytes(providerCall.thoughtSignature) <= MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES
+      )
+    );
 }
 
 async function modelToolCallArguments(

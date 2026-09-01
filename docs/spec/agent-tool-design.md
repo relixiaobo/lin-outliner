@@ -709,10 +709,10 @@ therefore records its exact admitted `command` and optional model fields while
 The immutable envelope has three dispositions:
 
 - `replayable` stores canonical identity, exact provider-visible name, exact arguments,
-  and schema digest.
+  schema digest, and the Host-private provider-call envelope.
 - `redactedReplay` stores canonical identity, the same frozen provider name,
-  structure-preserving redacted arguments, RFC 6901 redaction paths, and schema digest;
-  execution receives the transient validated source value.
+  provider-call envelope, structure-preserving redacted arguments, RFC 6901 redaction
+  paths, and schema digest; execution receives the transient validated source value.
 - `evidenceOnly` stores no replayable call, only identity when resolved, a bounded
   secret-redacted provider name and argument summary, a stable reason, and correction.
 
@@ -779,10 +779,21 @@ copies use one 64,000-character scan budget and typed omission markers without c
 live provider bytes or fingerprints. Redaction paths list only values that actually
 changed, and diagnostic decoding is never a replay authority.
 
-Provider call IDs are canonicalized before admission. The first non-empty unused ID is
-preserved; an empty or repeated ID receives a fresh Turn-local UUIDv7. That canonical ID
-is the only ID used by execution, Item causation, result pairing, and replay. The original
-provider ID is retained only transiently to correlate the provider response part.
+Every provider call receives a fresh UUIDv7 internal `toolCallId` before admission. It is
+the only identity used by execution, Item causation, mutation, diagnostics, and durable
+relationships. Provider correlation is independent: the first non-empty ID unused in
+visible history remains exact, while an empty or repeated ID becomes
+`tc_<internal uuid hex>` in both the active assistant call and result. Replayable and
+redacted history store that selected provider-visible ID plus the source
+API/provider/model and optional opaque `thoughtSignature`; their field bounds are 4 KiB
+for IDs/source strings and 64 KiB for the signature. Over-budget live replay metadata
+does not block execution: the active pair remains exact, while durable history becomes
+executed `providerReplayUnavailable` evidence. Rejected evidence omits the active result.
+
+Same-model projection restores the stored provider ID and signature. Cross-model
+projection replaces the paired call/result IDs with the portable internal UUID encoding
+and removes the signature before `pi-ai` serializes the target request. This mapping is
+one-to-one and provider-neutral; Tenon does not copy provider-specific ID grammars.
 
 Deterministic admission rejection has a Turn-local containment guard. Its in-memory
 fingerprint combines canonical identity (or the unresolved provider name), schema digest

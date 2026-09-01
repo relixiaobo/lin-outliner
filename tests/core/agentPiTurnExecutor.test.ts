@@ -65,6 +65,7 @@ import {
 import {
   replayableModelCall,
   TEST_TOOL_SCHEMA_DIGEST,
+  testProviderCall,
   toolAdmissionEvent,
 } from '../fixtures/agentToolCallHistory';
 
@@ -385,6 +386,7 @@ describe('PiTurnExecutor event normalization', () => {
     const decision = transientToolCallAdmission({
       toolCallId: 'unknown-call',
       providerName: rawProviderName,
+      providerCall: testProviderCall(rawProviderName, { authorization: '[redacted]' }),
       outcome: {
         type: 'rejected',
         identity: null,
@@ -2095,7 +2097,13 @@ describe('PiTurnExecutor event normalization', () => {
             processId: null,
             status: 'completed',
             outputRef: null,
-            modelCall: replayableModelCall('bash', { command: 'pwd' }),
+            modelCall: replayableModelCall('bash', { command: 'pwd' }, {
+              id: 'call-1',
+              api: testModel.api,
+              provider: testModel.provider,
+              model: testModel.id,
+              thoughtSignature: null,
+            }),
             commandActions: [],
             aggregatedOutput: '/workspace',
             exitCode: 0,
@@ -3569,7 +3577,13 @@ describe('PiTurnExecutor event normalization', () => {
             processId: null,
             status: 'completed',
             outputRef: null,
-            modelCall: replayableModelCall('bash', { command: 'pwd' }),
+            modelCall: replayableModelCall('bash', { command: 'pwd' }, {
+              id: 'call-1',
+              api: testModel.api,
+              provider: testModel.provider,
+              model: testModel.id,
+              thoughtSignature: null,
+            }),
             commandActions: [],
             aggregatedOutput: '/workspace',
             exitCode: 0,
@@ -3585,7 +3599,13 @@ describe('PiTurnExecutor event normalization', () => {
             tool: 'search',
             status: 'completed',
             outputRef: null,
-            modelCall: replayableModelCall('docs__search', { query: 'Thread' }),
+            modelCall: replayableModelCall('docs__search', { query: 'Thread' }, {
+              id: 'call-2',
+              api: testModel.api,
+              provider: testModel.provider,
+              model: testModel.id,
+              thoughtSignature: null,
+            }),
             arguments: { query: 'Thread' },
             pluginId: null,
             result: { matches: 2 },
@@ -3638,6 +3658,7 @@ describe('PiTurnExecutor event normalization', () => {
       decision: await persistToolCallAdmission({
         toolCallId: 'call-file-1',
         providerName: 'file_read',
+        providerCall: testProviderCall('file_read', largeArguments),
         outcome: {
           type: 'admitted',
           identity: { namespace: null, name: 'file_read' },
@@ -3773,6 +3794,7 @@ describe('PiTurnExecutor event normalization', () => {
     const decision = await persistToolCallAdmission({
       toolCallId: 'large-file-write',
       providerName: 'file_write',
+      providerCall: testProviderCall('file_write', argumentsValue),
       outcome: {
         type: 'admitted',
         identity: { namespace: null, name: 'file_write' },
@@ -4014,10 +4036,16 @@ describe('PiTurnExecutor provider payload', () => {
     expect(outboundReasoningItemIds(outgoingPayloads[0]!.input)).toEqual([]);
     expect(outboundReasoningItemIds(outgoingPayloads[1]!.input)).toEqual(['rs_first']);
     expect(outboundReasoningItemIds(outgoingPayloads[2]!.input)).toEqual(['rs_first', 'rs_second']);
-    expect(fixture.recorder.orderedItems()).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'dynamicToolCall', id: 'replay-call-1', status: 'failed' }),
-      expect.objectContaining({ type: 'dynamicToolCall', id: 'replay-call-2', status: 'completed' }),
+    const replayItems = fixture.recorder.orderedItems().filter((item) => item.type === 'dynamicToolCall');
+    expect(replayItems).toHaveLength(2);
+    expect(replayItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'failed' }),
+      expect.objectContaining({ status: 'completed' }),
     ]));
+    expect(replayItems.every((item) => /^[0-9a-f-]{36}$/.test(item.id))).toBe(true);
+    expect(replayItems.map((item) => item.modelCall.disposition === 'replayable'
+      ? item.modelCall.providerCall.id
+      : null)).toEqual(['replay-call-1', 'replay-call-2']);
     expect(fixture.diagnosticsPayloads[0]?.providerCalls.map((call) => call.response?.usage.reasoning))
       .toEqual(reasoningTokens);
   });
@@ -4072,7 +4100,8 @@ describe('PiTurnExecutor provider payload', () => {
     expect(providerCalls).toBe(2);
     expect(outboundThinkingSignatures(providerContexts[1] ?? [])).toEqual([]);
     expect(JSON.stringify(providerContexts[1])).toContain('Foreign commentary');
-    expect(JSON.stringify(providerContexts[1])).toContain('mismatch-call');
+    expect(JSON.stringify(providerContexts[1])).toContain('tc_');
+    expect(JSON.stringify(providerContexts[1])).not.toContain('mismatch-call');
     expect(JSON.stringify(providerContexts[1])).not.toContain('[Reasoning]');
   });
 
@@ -4535,8 +4564,10 @@ describe('PiTurnExecutor provider payload', () => {
     expect(new Set(items.map((item) => item.id)).size).toBe(2);
     const rejected = items.find((item) => item.modelCall.disposition === 'evidenceOnly');
     const admitted = items.find((item) => item.modelCall.disposition === 'replayable');
-    expect(rejected).toMatchObject({ id: duplicatedId, status: 'failed', success: false });
+    expect(rejected).toMatchObject({ status: 'failed', success: false });
     expect(admitted).toMatchObject({ status: 'completed', success: true });
+    expect(rejected?.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(admitted?.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(admitted?.id).not.toBe(duplicatedId);
     expect(executions).toEqual([{ callId: admitted?.id, args: { value: 'valid' } }]);
 
@@ -4550,9 +4581,13 @@ describe('PiTurnExecutor provider payload', () => {
     expect(JSON.stringify(replay)).toContain('invalidArguments');
     expect(replayCalls).toHaveLength(1);
     expect(replayResults).toHaveLength(1);
-    expect(replayCalls[0]?.id).toBe(admitted?.id);
+    const admittedProviderId = admitted?.modelCall.disposition === 'replayable'
+      ? admitted.modelCall.providerCall.id
+      : null;
+    expect(admittedProviderId).toBe(`tc_${admitted?.id.replaceAll('-', '')}`);
+    expect(replayCalls[0]?.id).toBe(admittedProviderId);
     expect(replayResults[0]?.role === 'toolResult' ? replayResults[0].toolCallId : null)
-      .toBe(admitted?.id);
+      .toBe(admittedProviderId);
 
     const executionBatch = fixture.diagnosticsPayloads[0]?.activities.find((activity) => (
       activity.type === 'toolExecutionBatch'

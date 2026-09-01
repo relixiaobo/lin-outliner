@@ -14,6 +14,7 @@ import type {
 } from '../../src/core/agent/protocol';
 import { ThreadCore } from '../../src/main/agent/thread/ThreadCore';
 import { ThreadTrajectoryProjection } from '../../src/main/agent/thread/ThreadTrajectoryProjection';
+import { testProviderCall } from '../fixtures/agentToolCallHistory';
 
 const THREAD_ID = '01910000-0000-7000-8000-000000000011';
 const TURN_ID = '01910000-0000-7000-8000-000000000012';
@@ -104,6 +105,9 @@ describe('ThreadTrajectoryProjection', () => {
           disposition: 'replayable',
           identity: { namespace: null, name: 'first_tool' },
           providerName: 'first_tool',
+          providerCall: testProviderCall('first_tool', {
+            command: 'printf model', timeout: 5_000, run_in_background: true,
+          }),
           arguments: {
             storage: 'inline',
             value: { command: 'printf model', timeout: 5_000, run_in_background: true },
@@ -114,6 +118,7 @@ describe('ThreadTrajectoryProjection', () => {
           disposition: 'replayable',
           identity: { namespace: null, name: 'second_tool' },
           providerName: 'second_tool',
+          providerCall: testProviderCall('second_tool', { file_path: '/workspace/second-payload.ts' }),
           arguments: { storage: 'payload', ref: argumentsRef, internalTextRefs: [] },
           schemaDigest: '9'.repeat(64),
         }, outputRef),
@@ -777,6 +782,7 @@ describe('ThreadTrajectoryProjection', () => {
           disposition: 'replayable',
           identity: { namespace: 'server', name: 'secret_tool' },
           providerName: 'secret_tool',
+          providerCall: testProviderCall('secret_tool', { token: 'secret' }),
           arguments: {
             storage: 'inline',
             value: {
@@ -952,6 +958,7 @@ describe('ThreadTrajectoryProjection', () => {
           disposition: 'replayable',
           identity: { namespace: null, name: 'first_tool' },
           providerName: 'first_tool',
+          providerCall: testProviderCall('first_tool', { first: large, second: large, third: large }),
           arguments: { storage: 'inline', value: { first: large, second: large, third: large } },
           schemaDigest: '8'.repeat(64),
         }, null)],

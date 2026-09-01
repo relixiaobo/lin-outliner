@@ -453,6 +453,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
             liveModelToolCalls.set(request.toolCallId, {
               providerName: request.providerName,
               arguments: request.outcome.arguments,
+              providerCall: request.providerCall,
             });
           }
           return decision;

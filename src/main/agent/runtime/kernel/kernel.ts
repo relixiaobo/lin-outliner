@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import {
   SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
+  type ModelProviderToolCall,
   type TurnError,
 } from '../../../../core/agent/protocol';
+import { portableProviderToolCallId } from '../../../../core/agent/providerToolCallIdentity';
 import { streamWithPolicy } from './retryPolicy';
 import {
   redactSecretLikeContent,
@@ -120,7 +122,7 @@ export async function runKernel(
     ...initialContext,
     messages: [...initialContext.messages, ...prompts],
   };
-  const usedToolCallIds = historicalToolCallIds(context.messages);
+  const usedProviderToolCallIds = historicalToolCallIds(context.messages);
   const admissionFailureGuard = new TurnAdmissionFailureGuard();
 
   await emit({ type: 'agent_start' });
@@ -192,7 +194,7 @@ export async function runKernel(
     }
 
     const providerToolCalls = message.content.filter((part): part is AgentToolCall => part.type === 'toolCall');
-    const toolCalls = canonicalizeToolCallIds(providerToolCalls, usedToolCallIds);
+    const toolCalls = canonicalizeToolCalls(message, providerToolCalls, usedProviderToolCallIds);
     const toolResults: ToolResultMessage[] = [];
     hasMoreToolCalls = false;
     if (toolCalls.length > 0) {
@@ -330,7 +332,8 @@ interface ExecutedToolBatch {
 }
 
 interface CanonicalizedToolCall {
-  readonly providerToolCallId: string;
+  readonly activeProviderToolCallId: string;
+  readonly providerCall: ModelProviderToolCall;
   readonly toolCall: AgentToolCall;
 }
 
@@ -364,6 +367,7 @@ interface ExecutedToolCall {
 
 interface FinalizedToolCall extends ExecutedToolCall {
   toolCall: AgentToolCall;
+  providerToolCallId: string;
 }
 
 type FinalizedToolEntry = FinalizedToolCall | (() => Promise<FinalizedToolCall>);
@@ -378,16 +382,18 @@ async function failTruncatedToolCalls(
 ): Promise<ExecutedToolBatch> {
   const messages: ToolResultMessage[] = [];
   const admissions: ToolCallAdmissionRecord[] = [];
-  for (const { providerToolCallId, toolCall } of toolCalls) {
+  for (const call of toolCalls) {
+    const { toolCall } = call;
     if (signal.aborted) break;
     const tool = context.tools.find((candidate) => candidate.name === toolCall.name);
     const request = await rejectedToolCallAdmissionRequest(
       toolCall,
+      call.providerCall,
       tool ? canonicalToolIdentity(tool) : null,
       'truncatedArguments',
     );
     if (signal.aborted) break;
-    const admission = await admitAndEmit(request, providerToolCallId, admit, emit);
+    const admission = await admitAndEmit(request, admit, emit);
     admissions.push(admission);
     recordDeterministicAdmissionFailure(
       admissionFailureGuard,
@@ -398,6 +404,7 @@ async function failTruncatedToolCalls(
     );
     const finalized: FinalizedToolCall = {
       toolCall,
+      providerToolCallId: call.activeProviderToolCallId,
       result: errorToolResult(
         `Tool call "${toolCall.name}" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
       ),
@@ -439,11 +446,12 @@ async function executeToolCallsSequential(
   const messages: ToolResultMessage[] = [];
   const historyMessages: ToolResultMessage[] = [];
   const admissions: ToolCallAdmissionRecord[] = [];
-  for (const { providerToolCallId, toolCall } of toolCalls) {
+  for (const call of toolCalls) {
+    const { toolCall } = call;
     if (signal.aborted) break;
-    const preparation = await prepareToolCall(context, toolCall);
+    const preparation = await prepareToolCall(context, call);
     if (signal.aborted) break;
-    const admission = await admitAndEmit(preparation.admission, providerToolCallId, admit, emit);
+    const admission = await admitAndEmit(preparation.admission, admit, emit);
     admissions.push(admission);
     recordDeterministicAdmissionFailure(
       admissionFailureGuard,
@@ -458,10 +466,15 @@ async function executeToolCallsSequential(
       if (!signal.aborted) await emitToolExecutionStart(preparation.toolCall, emit);
       finalized = signal.aborted
         ? abortedPreparedToolCall(preparation)
-        : { toolCall: preparation.toolCall, ...await executePreparedToolCall(preparation, signal, emit) };
+        : {
+            toolCall: preparation.toolCall,
+            providerToolCallId: call.activeProviderToolCallId,
+            ...await executePreparedToolCall(preparation, signal, emit),
+          };
     } else {
       finalized = {
         toolCall: preparation.kind === 'prepared' ? preparation.toolCall : toolCall,
+        providerToolCallId: call.activeProviderToolCallId,
         result: preparation.kind === 'immediate'
           ? preparation.result
           : errorToolResult('Tool call was not executed because its canonical arguments could not be persisted.'),
@@ -488,11 +501,12 @@ async function executeToolCallsParallel(
 ): Promise<ExecutedToolBatch> {
   const entries: Array<{ readonly entry: FinalizedToolEntry; readonly includeInHistory: boolean }> = [];
   const admissions: ToolCallAdmissionRecord[] = [];
-  for (const { providerToolCallId, toolCall } of toolCalls) {
+  for (const call of toolCalls) {
+    const { toolCall } = call;
     if (signal.aborted) break;
-    const preparation = await prepareToolCall(context, toolCall);
+    const preparation = await prepareToolCall(context, call);
     if (signal.aborted) break;
-    const admission = await admitAndEmit(preparation.admission, providerToolCallId, admit, emit);
+    const admission = await admitAndEmit(preparation.admission, admit, emit);
     admissions.push(admission);
     recordDeterministicAdmissionFailure(
       admissionFailureGuard,
@@ -505,6 +519,7 @@ async function executeToolCallsParallel(
     if (!admitted) {
       const finalized = {
         toolCall: preparation.kind === 'prepared' ? preparation.toolCall : toolCall,
+        providerToolCallId: call.activeProviderToolCallId,
         result: preparation.kind === 'immediate'
           ? preparation.result
           : errorToolResult('Tool call was not executed because its canonical arguments could not be persisted.'),
@@ -521,7 +536,11 @@ async function executeToolCallsParallel(
       entries.push({ includeInHistory: true, entry: async () => {
         const finalized = signal.aborted
           ? abortedPreparedToolCall(preparation)
-          : { toolCall: preparation.toolCall, ...await executePreparedToolCall(preparation, signal, emit) };
+          : {
+              toolCall: preparation.toolCall,
+              providerToolCallId: call.activeProviderToolCallId,
+              ...await executePreparedToolCall(preparation, signal, emit),
+            };
         await emitToolExecutionEnd(finalized, emit);
         return finalized;
       } });
@@ -544,8 +563,9 @@ async function executeToolCallsParallel(
 
 async function prepareToolCall(
   context: KernelContext,
-  toolCall: AgentToolCall,
+  call: CanonicalizedToolCall,
 ): Promise<PreparedToolCall | ImmediateToolCall> {
+  const { toolCall, providerCall } = call;
   const tool = context.tools.find((candidate) => candidate.name === toolCall.name);
   if (!tool) {
     return {
@@ -553,7 +573,7 @@ async function prepareToolCall(
       tool: null,
       result: errorToolResult('Tool is not exposed by the active registry.'),
       isError: true,
-      admission: await rejectedToolCallAdmissionRequest(toolCall, null, 'unresolvedTool'),
+      admission: await rejectedToolCallAdmissionRequest(toolCall, providerCall, null, 'unresolvedTool'),
     };
   }
   const identity = canonicalToolIdentity(tool);
@@ -583,6 +603,7 @@ async function prepareToolCall(
       admission: {
         toolCallId: toolCall.id,
         providerName: toolCall.name,
+        providerCall,
         outcome: {
           type: 'admitted',
           identity,
@@ -602,13 +623,14 @@ async function prepareToolCall(
       tool,
       result: errorToolResult(errorMessage(error)),
       isError: true,
-      admission: await rejectedToolCallAdmissionRequest(toolCall, identity, 'invalidArguments'),
+      admission: await rejectedToolCallAdmissionRequest(toolCall, providerCall, identity, 'invalidArguments'),
     };
   }
 }
 
 async function rejectedToolCallAdmissionRequest(
   toolCall: AgentToolCall,
+  providerCall: ModelProviderToolCall,
   identity: import('../../../../core/agent/protocol').ModelToolIdentity | null,
   reason: Extract<ToolCallAdmissionRequest['outcome'], { readonly type: 'rejected' }>['reason'],
 ): Promise<ToolCallAdmissionRequest> {
@@ -616,6 +638,7 @@ async function rejectedToolCallAdmissionRequest(
   return {
     toolCallId: toolCall.id,
     providerName: toolCall.name,
+    providerCall,
     outcome: {
       type: 'rejected',
       identity,
@@ -629,6 +652,7 @@ async function rejectedToolCallAdmissionRequest(
 function abortedPreparedToolCall(prepared: PreparedToolCall): FinalizedToolCall {
   return {
     toolCall: prepared.toolCall,
+    providerToolCallId: prepared.admission.providerCall.id,
     result: errorToolResult('Operation aborted'),
     isError: true,
   };
@@ -682,7 +706,6 @@ async function emitToolExecutionStart(toolCall: AgentToolCall, emit: KernelEvent
 
 async function admitAndEmit(
   request: ToolCallAdmissionRequest,
-  providerToolCallId: string,
   admit: KernelAgentOptions['admitToolCall'],
   emit: KernelEventSink,
 ): Promise<ToolCallAdmissionRecord> {
@@ -697,12 +720,12 @@ async function admitAndEmit(
   await emit({
     type: 'tool_call_admission',
     toolCallId: request.toolCallId,
-    providerToolCallId,
+    providerToolCallId: request.providerCall.id,
     toolName: request.providerName,
     decision,
   });
   return {
-    providerToolCallId,
+    providerToolCallId: request.providerCall.id,
     toolCallId: request.toolCallId,
     decision,
     completed,
@@ -762,19 +785,32 @@ function historicalToolCallIds(messages: readonly Message[]): Set<string> {
   return ids;
 }
 
-function canonicalizeToolCallIds(
+function canonicalizeToolCalls(
+  message: AssistantMessage,
   toolCalls: readonly AgentToolCall[],
   usedIds: Set<string>,
 ): CanonicalizedToolCall[] {
   return toolCalls.map((toolCall) => {
-    let canonicalId = toolCall.id;
-    if (!canonicalId.trim() || usedIds.has(canonicalId)) {
-      do canonicalId = uuidV7(); while (usedIds.has(canonicalId));
-    }
-    usedIds.add(canonicalId);
+    let toolCallId: string;
+    let portableId: string;
+    do {
+      toolCallId = uuidV7();
+      portableId = portableProviderToolCallId(toolCallId);
+    } while (usedIds.has(portableId));
+    const activeProviderToolCallId = toolCall.id.trim() && !usedIds.has(toolCall.id)
+      ? toolCall.id
+      : portableId;
+    usedIds.add(activeProviderToolCallId);
     return {
-      providerToolCallId: toolCall.id,
-      toolCall: canonicalId === toolCall.id ? toolCall : { ...toolCall, id: canonicalId },
+      activeProviderToolCallId,
+      providerCall: {
+        id: activeProviderToolCallId,
+        api: message.api,
+        provider: message.provider,
+        model: message.model,
+        thoughtSignature: toolCall.thoughtSignature?.length ? toolCall.thoughtSignature : null,
+      },
+      toolCall: { ...toolCall, id: toolCallId },
     };
   });
 }
@@ -792,7 +828,7 @@ async function emitToolExecutionEnd(finalized: FinalizedToolCall, emit: KernelEv
 function createToolResultMessage(finalized: FinalizedToolCall): ToolResultMessage {
   return {
     role: 'toolResult',
-    toolCallId: finalized.toolCall.id,
+    toolCallId: finalized.providerToolCallId,
     toolName: finalized.toolCall.name,
     content: finalized.result.content ?? [],
     details: finalized.result.details,

@@ -96,7 +96,10 @@ snapshot of their raw in-memory transcript, which already preserves
 same-execution provider parts without canonical re-projection.
 
 Tool history is projected only from each Item's `modelCall` envelope. Admission freezes
-the canonical identity, exact provider-visible name, arguments, and schema digest.
+the canonical identity, exact provider-visible name, arguments, schema digest, and
+Host-private provider-call envelope. The latter contains the selected active call ID,
+source API/provider/model tuple, and optional opaque `thoughtSignature`; renderer DTOs
+never expose it.
 Projection loads that frozen inline or Thread-owned value and preflights its complete
 argument/result dependencies before emitting the call/result pair. It never resolves
 the call through the current registry or validates it against a later schema; tool
@@ -123,6 +126,14 @@ batch remain in one assistant message, their results follow in call order, and a
 evidence from rejected members is appended after that complete batch. Projection never
 splits the assistant message around evidence, so the batch's unmodified signed-thinking
 blocks are attached exactly once.
+
+Projection restores the stored provider-visible ID and `thoughtSignature` only when the
+target API/provider/model tuple exactly matches the recorded source. For any model
+change, it replaces both call and result IDs with `tc_<internal uuid hex>`, removes the
+signature, and lets the target `pi-ai` adapter perform its normal wire validation. The
+portable ID is a deterministic one-to-one encoding of the internal UUID, so lossy
+adapter normalization cannot alias distinct historical calls. Synthetic assistant
+messages flush when consecutive exchanges have different recorded source tuples.
 
 The active Turn alone keeps a transient raw-call overlay for admitted executable calls,
 so an immediate follow-up provider request observes the exact value that executed. The
@@ -455,11 +466,15 @@ The transcript therefore shows an interrupted segment, the existing reconnect in
 and a fresh segment; retry deltas never concatenate onto the interrupted Item.
 `message_restart` is not a Core command, persisted notification, or renderer protocol
 variant; `interrupted` is a durable Core `MessagePhase`.
-Before admission, the kernel preserves the first non-empty provider call ID that is
-unused in provider-visible history and the current run. An empty ID or any same-batch
-or later collision is remapped to a fresh Turn-local UUIDv7. Admission, execution,
-mutation causation, Item identity, result pairing, and subsequent history use only that
-canonical ID; the original provider ID is transient stream-correlation data.
+Before admission, the kernel gives every provider call a fresh UUIDv7 internal identity.
+Admission, execution, mutation causation, Item identity, diagnostics, and events use
+only that UUID. Separately, a non-empty provider ID unused in visible history remains
+the active correlation; an empty or colliding ID is healed to
+`tc_<internal uuid hex>` in the active assistant call and paired result. Raw provider
+input, selected provider correlation, and internal identity remain distinct batch
+fields. An executed call with over-budget provider replay metadata keeps its transient
+active result but persists as `providerReplayUnavailable` evidence; a rejected call
+does not contribute a provider result.
 
 Every textual tool completion also writes its complete normalized result to the
 Thread-owned content-addressed payload store. The Item keeps only a bounded
@@ -799,7 +814,8 @@ failures cross that port as complete terminal assistant messages, while
 `ModelError` is only a derived classification used for policy decisions.
 Tenon consumes `pi-ai` directly and does not use `pi-agent-core`: the native
 kernel remains the sole owner of Turns, tools, projection, retries, and durable
-history.
+history. Host-issued portable tool correlations are established before this boundary;
+correctness does not depend on an adapter's lossy provider-ID normalizer.
 
 `piModels` owns one provider collection. Authentication capability comes from
 each provider's `auth` definition rather than a parallel OAuth registry. OAuth

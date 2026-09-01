@@ -16,6 +16,8 @@ export const MAX_INLINE_MODEL_TOOL_ARGUMENT_BYTES = 32 * 1024;
 export const MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES = 32 * 1024;
 export const MAX_MODEL_TOOL_PROVIDER_NAME_BYTES = 1024;
 export const MAX_MODEL_TOOL_CORRECTION_BYTES = 4 * 1024;
+export const MAX_MODEL_PROVIDER_CALL_FIELD_BYTES = 4 * 1024;
+export const MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES = 64 * 1024;
 export const MAX_TOOL_ARGUMENT_TEXT_BINDINGS = 256;
 export const MAX_TOOL_ARGUMENT_TEXT_BYTES = 64 * 1024 * 1024;
 
@@ -30,6 +32,7 @@ export const MODEL_TOOL_CALL_EVIDENCE_REASONS = Object.freeze([
   'truncatedArguments',
   'argumentPersistenceUnavailable',
   'schemaIncompatible',
+  'providerReplayUnavailable',
   'argumentPayloadUnavailable',
   'resultPayloadUnavailable',
 ] as const);
@@ -43,11 +46,20 @@ export type ModelToolCallArguments =
       readonly internalTextRefs: readonly ThreadInternalTextPayloadReference[];
     };
 
+export interface ModelProviderToolCall {
+  readonly id: string;
+  readonly api: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly thoughtSignature: string | null;
+}
+
 export type ModelToolCallHistory =
   | {
       readonly disposition: 'replayable';
       readonly identity: ModelToolIdentity;
       readonly providerName: string;
+      readonly providerCall: ModelProviderToolCall;
       readonly arguments: ModelToolCallArguments;
       readonly schemaDigest: string;
     }
@@ -55,6 +67,7 @@ export type ModelToolCallHistory =
       readonly disposition: 'redactedReplay';
       readonly identity: ModelToolIdentity;
       readonly providerName: string;
+      readonly providerCall: ModelProviderToolCall;
       readonly redactedArguments: ModelToolCallArguments;
       readonly redactedPaths: readonly string[];
       readonly schemaDigest: string;
@@ -1355,9 +1368,11 @@ export type RendererModelToolCallArguments =
 
 type RendererModelToolCallHistoryProjection<History> = History extends infer Entry
   ? Entry extends { readonly disposition: 'replayable' }
-    ? Omit<Entry, 'arguments'> & { readonly arguments: RendererModelToolCallArguments }
+    ? Omit<Entry, 'arguments' | 'providerCall'> & { readonly arguments: RendererModelToolCallArguments }
     : Entry extends { readonly disposition: 'redactedReplay' }
-      ? Omit<Entry, 'redactedArguments'> & { readonly redactedArguments: RendererModelToolCallArguments }
+      ? Omit<Entry, 'redactedArguments' | 'providerCall'> & {
+          readonly redactedArguments: RendererModelToolCallArguments;
+        }
       : Entry
   : never;
 export type RendererModelToolCallHistory = RendererModelToolCallHistoryProjection<ModelToolCallHistory>;

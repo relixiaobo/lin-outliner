@@ -144,7 +144,7 @@ export class NativeAgentRuntime {
         break;
       case 'tool_call_admission':
         this.recordToolResultHistoryDecision(
-          event.toolCallId,
+          event.providerToolCallId,
           event.decision.execute,
         );
         this.pendingAssistantAdmissions.push(event);

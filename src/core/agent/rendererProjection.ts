@@ -182,13 +182,20 @@ function projectThreadItem(item: ThreadItem): RendererThreadItem {
 
 function projectModelToolCallHistory(history: ModelToolCallHistory): RendererModelToolCallHistory {
   switch (history.disposition) {
-    case 'replayable':
-      return Object.freeze({ ...history, arguments: projectModelToolCallArguments(history.arguments) });
-    case 'redactedReplay':
+    case 'replayable': {
+      const { providerCall: _providerCall, ...rendererHistory } = history;
       return Object.freeze({
-        ...history,
+        ...rendererHistory,
+        arguments: projectModelToolCallArguments(history.arguments),
+      });
+    }
+    case 'redactedReplay': {
+      const { providerCall: _providerCall, ...rendererHistory } = history;
+      return Object.freeze({
+        ...rendererHistory,
         redactedArguments: projectModelToolCallArguments(history.redactedArguments),
       });
+    }
     case 'evidenceOnly':
       return history;
     default:

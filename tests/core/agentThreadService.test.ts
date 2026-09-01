@@ -81,6 +81,7 @@ import {
 } from '../../src/main/agent/runtime/PiTurnExecutor';
 import { modelToolSchemaDigest } from '../../src/main/agent/runtime/toolCallHistory';
 import { turnTerminalAnswer } from '../../src/core/agent/turnAnswer';
+import { portableProviderToolCallId } from '../../src/core/agent/providerToolCallIdentity';
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import { CanonicalContextProjector } from '../../src/main/agent/context/ContextProjector';
@@ -4199,6 +4200,10 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
     if (forkItem.modelCall.disposition !== 'replayable' || forkItem.modelCall.arguments.storage !== 'payload') {
       throw new Error('Fork model-call argument payload missing');
     }
+    if (sourceItem.modelCall.disposition !== 'replayable') {
+      throw new Error('Source model-call provider envelope missing');
+    }
+    expect(forkItem.modelCall.providerCall).toEqual(sourceItem.modelCall.providerCall);
     const forkArgumentRef = forkItem.modelCall.arguments.ref;
     const forkImage = forkItem.contentItems?.find((content) => content.type === 'image');
     if (!forkImage || forkImage.type !== 'image') throw new Error('Fork image payload missing');
@@ -4305,7 +4310,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
         : message.content.filter((part) => part.type === 'toolCall')
     ))[0];
     expect(replayedCall).toMatchObject({
-      id: forkItem.id,
+      id: portableProviderToolCallId(forkItem.id),
       name: 'test__payload',
       arguments: FORK_MODEL_ARGUMENTS,
     });

@@ -37,6 +37,12 @@ Agent Core. It is a contract checklist, not project status.
 - Apply effective configuration and parent capability ceilings.
 - Return native structured unavailable or failure results.
 - Emit one started and one terminal Item.
+- Mint a fresh UUIDv7 internal identity for every provider tool call. Keep raw provider
+  input and active provider correlation separate; heal empty or repeated correlations
+  to the portable internal UUID form in both the active call and result.
+- Persist bounded source provider replay metadata only in replayable model-call history.
+  Restore it only for an exact same-model projection; derive paired portable IDs and
+  remove opaque signatures after any model change.
 - Attach Thread/Turn/Item causation to the Runtime Operation, not to a parallel
   Agent document schema.
 - Keep visible output bounded without discarding durable details.
@@ -71,7 +77,8 @@ Agent Core. It is a contract checklist, not project status.
 
 - Keep canonical Thread, Turn, and Item authority in main. Render only the
   exhaustively projected renderer DTOs; payload-backed model arguments cross IPC
-  as `{ storage: 'itemBound' }`, never as context or internal-text references.
+  as `{ storage: 'itemBound' }`, never as context or internal-text references, and
+  provider replay envelopes never cross IPC.
 - Resolve payload-backed tool arguments through the enclosing
   `thread/item/arguments/read` identity and accept only main's bounded value.
 - Store identity and pagination state in `threadStore`.
