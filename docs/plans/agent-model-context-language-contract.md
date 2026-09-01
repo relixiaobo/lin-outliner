@@ -29,6 +29,10 @@ and plan.
 - Do not make projection depend on an LLM classification pass.
 - Do not redesign provider-native tool roles, tool-result envelopes, Skill
   discovery, or canonical compaction state.
+- Do not change Continue-from-failure or Rerun eligibility, locking, confirmation,
+  history replacement, or tool-effect semantics.
+- Do not redesign delegated generation receipts, notification truth, transcript
+  renderability, or Agent status presentation.
 
 ## Design
 
@@ -45,13 +49,15 @@ and plan.
   User-authored lookalikes remain ordinary untrusted user text.
 - **CON-4 hard:** projection is deterministic, provider-neutral, bounded, and
   preserves canonical content order.
-- **CON-5 hard:** input-scoped environment and renderer state are sampled only at
-  Turn-start or steering admission. Host runtime evidence may be published during
-  provider preparation; UI changes never asynchronously rewrite a generation.
-- **CON-6 dependency:** merged PRs #609 and #610 are the Skill invocation and
-  provider-call baseline. Open PR #612 concurrently changes Agent protocol,
-  `PiTurnExecutor`, `TurnLifecycle`, and owning specifications; implementation must
-  start from its merged result or re-resolve the overlap if it closes unmerged.
+- **CON-5 hard:** input-scoped environment and renderer state are sampled only
+  when a new Turn-start or steering input is admitted. Host runtime evidence may
+  be published during provider preparation; UI changes never asynchronously
+  rewrite a generation.
+- **CON-6 dependency:** merged PRs #609, #610, and #612 are the Skill invocation,
+  provider-call identity, and Turn recovery baseline. Open PR #614 owns delegated
+  generation receipts, notification truth, and transcript presentation. It is an
+  adjacent consumer rather than a context-language owner; preserve its canonical
+  renderability boundary and repeat the live file-scope check before implementation.
 - **DEC-1:** model-visible `<context>` children have no `kind`. Host-assigned
   `authority` and `purpose` are the complete wrapper protocol.
 - **DEC-2:** canonical source kind, stable key, producer, lifecycle, hashes, and
@@ -59,7 +65,8 @@ and plan.
 - **DEC-3:** viewed identity and supplied content have separate model-visible
   owners. Opening a view never promotes its bytes into context.
 - **DEC-4:** local time is an input-admission fact, not durable Thread state. One
-  compact local timestamp appears with every admitted Turn-start or steering input.
+  compact local timestamp appears with every newly admitted Turn-start or steering
+  input. Rerun is not an input admission and does not resample it.
 - **DEC-5:** the working directory is Host-owned, Thread-scoped state. It appears
   in the first baseline and when a later admission observes a Host change.
 
@@ -81,8 +88,13 @@ and replay without making historical wire fields part of the model language.
 - **Evidence:** current environment projection emits UTC acceptance time, local
   date/time, zone, offset, locale, cwd, execution enums, identity, and Today data
   as separate fields.
-- **Evidence:** Turn start and steering use the same atomic evidence-before-user
-  admission path; ordinary renderer changes have no independent admission path.
+- **Evidence:** ordinary Turn start and steering use the same atomic
+  evidence-before-input admission path; ordinary renderer changes have no
+  independent admission path.
+- **Evidence:** Continue from failure uses ordinary admission with a content-free,
+  renderer-hidden Host input and a bounded application instruction. Rerun instead
+  reconstructs the source Turn's accepted evidence/input batches without sampling
+  new environment or renderer state.
 - **Evidence:** provider calls rebuild effective context from canonical history;
   runtime Skill catalog and invocation evidence can join between provider calls.
 - **Evidence:** reset starts the context epoch, compaction replaces a covered range,
@@ -99,7 +111,7 @@ The contract uses these terms consistently:
 | --- | --- | --- |
 | Thread | Durable conversation and its Host-owned working directory | A filesystem workspace or UI Pane |
 | Turn | One execution lifecycle; steering may add user input inside it | One provider call |
-| Input admission | Atomic capture and persistence of input-scoped evidence plus one Turn-start or steering input | Projection or UI observation |
+| Input admission | Atomic capture and persistence of input-scoped evidence plus one new Turn-start or steering input | Rerun reconstruction, projection, or UI observation |
 | Runtime publication | Host-owned evidence persisted during execution, such as a Skill invocation or catalog refresh | Input admission |
 | Provider boundary | Runtime preparation followed by projection of effective canonical history for one model call | A new Turn |
 | Context epoch | Effective history after the latest explicit reset | Restart, fork, or compaction |
@@ -212,7 +224,7 @@ Each semantic fact has one visible owner:
 
 | Fact | Owner | Lifecycle |
 | --- | --- | --- |
-| Local time | Admission statement preceding its input | Every Turn-start/steering admission |
+| Local time | Admission statement preceding its input | Every input admission |
 | Working directory | Thread execution observation | Baseline and changed value |
 | Non-default execution behavior | Thread execution observation | Baseline and changed value |
 | Open and active views | Complete current-view statement | Baseline and complete replacement |
@@ -222,6 +234,7 @@ Each semantic fact has one visible owner:
 | User task text | Native user message | Never repeated in context |
 | Capability availability | Skill/Role catalog observation | Baseline, then readable additions/updates/removals |
 | Skill instructions | Scoped application instruction | Set, replace, or explicit revoke |
+| Failure-continuation directive | Scoped application instruction | The Host continuation admission only |
 | Tool arguments/results | Provider-native tool roles | Never reminder prose |
 | Earlier conversation | Compaction summary observation | Compaction position only |
 
@@ -232,9 +245,13 @@ runtime-derived evidence have separate publication paths.
 
 #### Admission boundary
 
-A new Turn start and a steering message are input-admission boundaries. The Host
-samples one coherent instant and atomically persists eligible context evidence
-immediately before the associated input Item.
+A newly admitted Turn-start input, including a Host failure continuation, and a
+steering input are input-admission boundaries. The Host samples one coherent instant
+and atomically persists eligible context evidence immediately before the associated
+input Item.
+That Item may be an ordinary user message, a steering message, or a content-free
+Host input. Rerun is not a fresh admission: it reconstructs the source Turn's
+accepted evidence/input batches exactly and performs no environment or view sample.
 
 At admission:
 
@@ -243,7 +260,7 @@ At admission:
 3. Resolve current Skill/Role availability and admitted invocation instructions.
 4. Admit registered additional context and explicitly referenced resources.
 5. Compare stateful semantic facts with the model's effective prior state.
-6. Persist the resulting canonical evidence followed by the user Item.
+6. Persist the resulting canonical evidence followed by the input Item.
 
 Document-drift notices remain between-Turn only. Steering does not add one while the
 model may be composing the mutation that caused the drift.
@@ -266,7 +283,7 @@ blocks.
 - When effective history contains no prior semantic state, the first admission
   emits a complete baseline. This includes a fresh Thread and the first admission
   after reset, but not a fork that inherited context.
-- A later admission emits the local timestamp plus only changed stateful facts.
+- A later input admission emits the local timestamp plus only changed stateful facts.
 - A complete view statement replaces the previous view state; no close tombstone is
   needed.
 - Optional facts such as focus, selection, and instructions use explicit clearing or
@@ -275,18 +292,21 @@ blocks.
 - Projected text never exposes `snapshot`, `delta`, `set`, `clear`, tombstones, or
   reducer keys.
 
-#### Reset, compaction, restart, and fork
+#### Reset, compaction, restart, fork, and recovery
 
 | Event | Context meaning | Verification standard |
 | --- | --- | --- |
-| Replay | Same canonical history projected again | Byte-identical output |
+| Projection replay | Same canonical history projected again | Byte-identical output |
 | Process restart | No new epoch; reload and project the same canonical history | Byte-identical output until a new admission adds facts |
 | Explicit reset | Starts a new context epoch after the reset Item | Next admitted input emits a fresh baseline |
 | Compaction | Same epoch; covered history is replaced by summary plus validated current-state checkpoint | Current effective facts and instruction scopes are semantically equivalent; summary bytes intentionally differ |
 | Fork | Copied terminal history starts a new Thread without creating an implicit reset | Inherited history remains equivalent; the first new admission emits differences owned by the new Thread, including cwd |
+| Continue from failure | Append a Host-triggered Turn through ordinary input admission; preserve settled prior assistant/tool history as evidence | New admission facts plus one bounded application instruction; no repeated user task or historical tool dispatch |
+| Rerun | Replace the latest failed suffix Turn from its sealed evidence/input batches | Source admission facts retain their original bytes and ordering; no fresh time/view sample; later runtime publications may still differ |
 
 `deterministic` therefore means identical canonical input produces identical bytes.
-It does not mean reset, compaction, steering, and fork produce the same transcript.
+It does not mean reset, compaction, steering, fork, Continue, and Rerun produce the
+same transcript. Projection replay and user-triggered Rerun are distinct terms.
 
 #### Failure and recovery
 
@@ -304,9 +324,10 @@ It does not mean reset, compaction, steering, and fork produce the same transcri
 
 Time and cwd have different semantics:
 
-- Local time belongs to one input admission. Emit exactly one compact line with local
-  date, time, numeric offset, and IANA zone. Do not emit UTC acceptance time,
-  locale, or separate date/time/offset fields.
+- Local time belongs to one input admission. Emit exactly one compact line
+  with local date, time, numeric offset, and IANA zone. Do not emit UTC acceptance
+  time, locale, or separate date/time/offset fields. Rerun retains the source
+  admission timestamp instead of creating a new one.
 - Cwd is sticky Thread execution state. Sample it at every admission, emit it in a
   baseline, and emit it again only if it changed.
 - Ordinary interactive root execution is the default and emits no `Execution:`
@@ -323,7 +344,7 @@ Representative baseline:
 ```xml
 <system-reminder>
 <context authority="application" purpose="observation">
-Local time at this message: 2026-09-01T11:14:11+08:00 [Asia/Shanghai].
+Local time at this input: 2026-09-01T11:14:11+08:00 [Asia/Shanghai].
 Working directory: /Users/lixiaobo/Coding/lin-outliner-codex-3.
 </context>
 <context authority="untrusted" purpose="observation">
@@ -340,7 +361,7 @@ nothing is injected. When the user later sends a message from a file view:
 ```xml
 <system-reminder>
 <context authority="application" purpose="observation">
-Local time at this message: 2026-09-01T11:18:42+08:00 [Asia/Shanghai].
+Local time at this input: 2026-09-01T11:18:42+08:00 [Asia/Shanghai].
 </context>
 <context authority="untrusted" purpose="observation">
 Now viewing file "requirements.md" [[file:///Users/lixiaobo/Coding/lin-outliner-codex-3/requirements.md]].
@@ -351,6 +372,23 @@ Now viewing file "requirements.md" [[file:///Users/lixiaobo/Coding/lin-outliner-
 If that message is steering an active Turn, the same evidence and user input are
 persisted as one ordered admission group and delivered to the active executor. A view
 change with no steering message remains unobserved until a later admission.
+
+Continue from failure is also an input admission, but it has no user-authored message:
+
+```xml
+<system-reminder>
+<context authority="application" purpose="observation">
+Local time at this input: 2026-09-01T11:21:05+08:00 [Asia/Shanghai].
+</context>
+<context authority="application" purpose="instruction">
+Continue from the latest failed Turn. Treat its settled assistant and tool history as completed evidence. Do not repeat those tool calls unless the user explicitly asks you to.
+</context>
+</system-reminder>
+```
+
+The Host input Item is content-free and remains renderer-hidden. Rerun emits no such
+new block: it reuses the source Turn's accepted evidence/input groups and can append
+only later runtime publications that independently changed before a provider boundary.
 
 If a previously non-empty selection becomes empty:
 
@@ -394,7 +432,7 @@ are dispositions, not generated output.
 | --- | --- | --- | --- |
 | Reminder child | `<context-evidence kind="turnEnvironment" authority="application" purpose="observation">` | `<context authority="application" purpose="observation">` | Preserve authority and purpose; remove canonical source classification from model syntax. |
 | Reducer mode | `projection_mode={{projectionMode}}` | Removed; Host-private | Baseline/change mechanics are inferred from history and expressed as resulting state. |
-| Local time | `accepted_at={{utcInstant}}`<br>`local_date={{localDate}}`<br>`local_time={{localTime}}`<br>`timezone={{timeZone}}`<br>`utc_offset_minutes={{utcOffsetMinutes}}`<br>`locale={{locale}}` | `Local time at this message: {{localDate}}T{{localTime}}{{utcOffset}} [{{timeZone}}].` | One input-admission line replaces six transport fields. |
+| Local time | `accepted_at={{utcInstant}}`<br>`local_date={{localDate}}`<br>`local_time={{localTime}}`<br>`timezone={{timeZone}}`<br>`utc_offset_minutes={{utcOffsetMinutes}}`<br>`locale={{locale}}` | `Local time at this input: {{localDate}}T{{localTime}}{{utcOffset}} [{{timeZone}}].` | One admission line replaces six transport fields and remains accurate for user, steering, and Host inputs. |
 | Working directory | `working_directory={{workingDirectory}}` | `Working directory: {{workingDirectory}}.` | A sticky Thread execution fact, emitted at baseline and after a Host change. |
 | Execution enums | `conversation_mode={{conversationMode}}`<br>`execution_mode={{executionMode}}` | `Execution: {{nonDefaultExecutionDescription}}.` or Host-private | Omit the interactive-root default; describe only behavior-changing modes. |
 | Today metadata | `today_node_id={{todayNodeId}}`<br>`today_node_title={{todayNodeTitle}}` | Host-private | Local time explains today; `@today` and ordinary Node references are the action surface. |
@@ -426,6 +464,8 @@ are dispositions, not generated output.
 | Compaction | `lossy_derived_context`, `restored_after_compaction`, checkpoint hashes | `Earlier conversation:` plus ordinary current facts and scoped instructions | Preserve meaning, not restoration mechanics. |
 | Degradation fact | `degraded_context=true code={{code}} source={{source}}` | `{{affectedContext}} could not be restored.` | Observation states impact; diagnostics retain cause. |
 | Required recovery behavior | Appended inside a degradation observation | Separate application instruction such as `Read {{resource}} again before relying on it.` | Commands must not hide inside observation text. |
+| Continue from failure | `kind="additionalContext"`, `key=continuation`, `source=turn-continuation:{{turnId}}`, plus a content-free Host Item | New ordinary facts plus one readable application instruction | Preserve the recovery directive without exposing reducer/source metadata or inventing a user message. |
+| Rerun | Recreated Turn with source evidence/input batches | No newly generated admission context | Rerun preserves source admission bytes and does not claim a new time or view observation. |
 | Tool input/result | Provider-native definition, JSON arguments, and result role | Unchanged | Tool exchanges are not reminder prose. |
 
 Derived presentation variables are deterministic:
@@ -482,16 +522,17 @@ Consistency means one grammar per semantic boundary:
   supported semantic view target, distinct focus, selection, and supplied content.
 - **FR-5:** view changes emit complete resulting state without Pane IDs, reducer
   fields, or close tombstones.
-- **FR-6:** local time emits once per Turn-start/steering admission; cwd emits at
-  baseline and after a settled Host change; default execution enums emit nothing.
+- **FR-6:** local time emits once per input admission; cwd emits
+  at baseline and after a settled Host change; default execution enums emit
+  nothing; Rerun resamples none of them.
 - **FR-7:** a viewed identity never implies content availability. Supplied text and
   native media retain their own ordered content position.
 - **FR-8:** Skill/Role discovery, Skill instructions, user task text, and tool
   exchanges each retain one owner.
 - **FR-9:** optional state and instructions use explicit semantic clearing or
   revocation.
-- **FR-10:** reset, compaction, restart, fork, steering, and replay follow their
-  distinct lifecycle and verification rules.
+- **FR-10:** reset, compaction, restart, fork, steering, projection replay,
+  Continue, and Rerun follow their distinct lifecycle and verification rules.
 - **NFR-1:** identical canonical input projects to byte-identical output.
 - **NFR-2:** every projected statement has a fixture-recorded inclusion rationale;
   the representative multi-Turn fixture is smaller than the current projection.
@@ -507,21 +548,23 @@ Consistency means one grammar per semantic boundary:
 - **AC-3 (FR-4, FR-5):** fixtures cover Outliner Node, local file with and without
   owner, asset, linked file, URL, Thread trajectory, mixed multiple views, complete
   view replacement, missing renderer state, distinct focus, and selection clearing.
-- **AC-4 (FR-6):** each Turn-start and steering admission emits one compact
-  local-time line. A fresh Thread and a fork's first new admission emit the correct cwd; an
-  unchanged cwd does not repeat; headless Automation receives a readable execution
-  description while an interactive root does not.
+- **AC-4 (FR-6):** each Turn-start and steering input admission emits one compact
+  local-time line. A Host failure continuation receives a fresh line; Rerun retains
+  the source admission line. A fresh Thread and a fork's first new admission emit
+  the correct cwd; an unchanged cwd does not repeat; headless Automation receives
+  a readable execution description while an interactive root does not.
 - **AC-5 (FR-7):** current-view fixtures contain no resource body. Supplied text
   appears only in an adjacent untrusted observation and images retain native media
   order. Private asset/source IDs never appear.
 - **AC-6 (FR-8, FR-9):** catalog output contains discovery only, invocation output
   omits task arguments already in history, and instruction revoke fixtures use an
   application instruction rather than an observation.
-- **AC-7 (FR-10):** replay and restart fixtures are byte-identical; reset produces
-  a fresh baseline; compaction preserves current semantic facts and instruction
-  scopes while changing historical summary bytes; fork preserves inherited history
-  and emits new Thread-owned differences; steering preserves atomic evidence-before-
-  user order.
+- **AC-7 (FR-10):** projection replay and restart fixtures are byte-identical;
+  reset produces a fresh baseline; compaction preserves current semantic facts and
+  instruction scopes while changing historical summary bytes; fork preserves
+  inherited history and emits new Thread-owned differences; steering preserves
+  atomic evidence-before-input order; Continue adds one fresh Host admission; Rerun
+  preserves source evidence/input ordering without resampling.
 - **AC-8:** UI-only changes during a running Turn produce no injected message; the
   same state carried by a later steering or Turn admission produces the expected
   semantic update.
@@ -533,9 +576,9 @@ Consistency means one grammar per semantic boundary:
 
 ## Execution
 
-- Wait for PR #612 to settle, then rebase onto its merged result or re-resolve the
-  overlap if it closes unmerged. Repeat the open-claim/file-scope collision check
-  and obtain PM ratification before editing shared protocol surfaces.
+- Start from the merged #609/#610/#612 baseline. Keep #614's delegated receipt and
+  transcript-presentation ownership outside this PR, repeat the open-claim/file-scope
+  collision check, and obtain PM ratification before editing shared protocol surfaces.
 - Extend renderer-to-main canonical evidence to cover all `PanelView` variants
   while preserving Host-private Pane correlation.
 - Remove Today-based synthetic views and retain honest no-view state.
@@ -543,9 +586,10 @@ Consistency means one grammar per semantic boundary:
 - Route every canonical context payload through the ownership and admission rules.
 - Add explicit instruction-capability admission for eligible Host producers and
   downgrade or reject invalid additional-context entries without failing a Turn.
-- Preserve atomic start/steering evidence admission and provider-native tool roles.
+- Preserve atomic Turn-start/steering evidence admission, #612's content-free Host
+  continuation, exact Rerun evidence reuse, and provider-native tool roles.
 - Add whole-message, multi-Turn, same-Turn steering, runtime Skill update, reset,
-  compaction, restart, and fork fixtures plus density measurements.
+  compaction, restart, fork, Continue, and Rerun fixtures plus density measurements.
 - Update `agent-model-runtime.md`, `agent-core.md`, `agent-skills.md`,
   `workspace-layout.md`, and context diagnostics specifications in the same PR.
 - Use one clean pre-release protocol cut with no compatibility reader or migrated
