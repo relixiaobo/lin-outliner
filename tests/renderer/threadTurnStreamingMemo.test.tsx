@@ -266,11 +266,11 @@ describe('Turn provider recovery', () => {
     await act(async () => root.unmount());
   });
 
-  test('routes a host-authored failed Turn Retry through onRetryTurn only', async () => {
+  test('routes a host-authored failed Turn Rerun through onRerunTurn only', async () => {
     const { document, root } = installDom();
     const ThreadTurnView = await loadThreadTurnView();
     const failed = failedHostTurn();
-    const retried: Turn[] = [];
+    const rerunTurns: Turn[] = [];
     let editCalls = 0;
 
     await render(root, (
@@ -278,18 +278,157 @@ describe('Turn provider recovery', () => {
         {...turnProps()}
         {...turnAnchors(failed)}
         onEditUserMessage={async () => { editCalls += 1; }}
-        onRetryTurn={async (candidate) => { retried.push(candidate); }}
+        onReadTurnRecovery={async () => ({
+          canContinue: false,
+          canRerun: true,
+          rerunRequiresConfirmation: false,
+        })}
+        onRerunTurn={async (candidate) => { rerunTurns.push(candidate); }}
       />
     ));
-    const retry = document.querySelector<HTMLButtonElement>('button[aria-label="Retry"]');
-    expect(retry).not.toBeNull();
     await act(async () => {
-      retry?.click();
+      await Promise.resolve();
+    });
+    const rerun = document.querySelector<HTMLButtonElement>('button[aria-label="Rerun turn"]');
+    expect(rerun).not.toBeNull();
+    await act(async () => {
+      rerun?.click();
       await Promise.resolve();
     });
 
-    expect(retried).toEqual([failed]);
+    expect(rerunTurns).toEqual([failed]);
     expect(editCalls).toBe(0);
+    await act(async () => root.unmount());
+  });
+
+  test('orders Continue and Rerun before the ordinary response actions', async () => {
+    const { document, root } = installDom();
+    const ThreadTurnView = await loadThreadTurnView();
+    const base = failedHostTurn();
+    const failed = { ...base, items: [...base.items, agentResponse('Settled partial result')] };
+    const continued: Turn[] = [];
+    const rerun: Array<{ turn: Turn; confirmed: boolean }> = [];
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(failed)}
+        onContinueTurn={async (candidate) => { continued.push(candidate); }}
+        onReadTurnRecovery={async () => ({
+          canContinue: true,
+          canRerun: true,
+          rerunRequiresConfirmation: false,
+        })}
+        onRerunTurn={async (candidate, confirmed) => { rerun.push({ turn: candidate, confirmed }); }}
+      />
+    ));
+    await act(async () => { await Promise.resolve(); });
+
+    expect([...document.querySelectorAll<HTMLButtonElement>('.thread-response-actions button')]
+      .map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Continue from failure',
+      'Rerun turn',
+      'Copy message',
+      'Continue in new chat',
+      'Open Trajectory',
+    ]);
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Continue from failure"]')?.click();
+      await Promise.resolve();
+    });
+    expect(continued).toEqual([failed]);
+    expect(rerun).toEqual([]);
+    await act(async () => root.unmount());
+  });
+
+  test('does not repeat a recovery probe when only its callback identity changes', async () => {
+    const { root } = installDom();
+    const ThreadTurnView = await loadThreadTurnView();
+    const failed = { ...failedHostTurn(), items: [agentResponse('Settled partial result')] };
+    let reads = 0;
+    const recovery = async () => {
+      reads += 1;
+      return { canContinue: true, canRerun: true, rerunRequiresConfirmation: false };
+    };
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(failed)}
+        onReadTurnRecovery={() => recovery()}
+      />
+    ));
+    await act(async () => { await Promise.resolve(); });
+    expect(reads).toBe(1);
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(failed)}
+        onReadTurnRecovery={() => recovery()}
+      />
+    ));
+    await act(async () => { await Promise.resolve(); });
+    expect(reads).toBe(1);
+    await act(async () => root.unmount());
+  });
+
+  test('confirms a settled-tool Rerun and sends no mutation when canceled', async () => {
+    const { document, root } = installDom();
+    const ThreadTurnView = await loadThreadTurnView();
+    const base = failedHostTurn();
+    const failed = { ...base, items: [...base.items, command('settled-tool', () => undefined)] };
+    const rerunConfirmations: boolean[] = [];
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(failed)}
+        onReadTurnRecovery={async () => ({
+          canContinue: true,
+          canRerun: true,
+          rerunRequiresConfirmation: true,
+        })}
+        onRerunTurn={async (_candidate, confirmed) => { rerunConfirmations.push(confirmed); }}
+      />
+    ));
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Rerun turn"]')?.click();
+    });
+    expect(document.querySelector('.confirm-dialog')?.textContent).toContain('may repeat them');
+    const dialogButtons = () => [...document.querySelectorAll<HTMLButtonElement>('.confirm-dialog button')];
+    await act(async () => { dialogButtons().find((button) => button.textContent === 'Cancel')?.click(); });
+    expect(rerunConfirmations).toEqual([]);
+    expect(document.querySelector('.confirm-dialog')).toBeNull();
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Rerun turn"]')?.click();
+    });
+    await act(async () => {
+      dialogButtons().find((button) => button.textContent === 'Rerun turn')?.click();
+      await Promise.resolve();
+    });
+    expect(rerunConfirmations).toEqual([true]);
+    await act(async () => root.unmount());
+  });
+
+  test('hides recovery actions when the capability read fails', async () => {
+    const { document, root } = installDom();
+    const ThreadTurnView = await loadThreadTurnView();
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(failedHostTurn())}
+        onReadTurnRecovery={async () => { throw new Error('read failed'); }}
+      />
+    ));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(document.querySelector('button[aria-label="Continue from failure"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="Rerun turn"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="Copy message"]')).not.toBeNull();
     await act(async () => root.unmount());
   });
 });
@@ -328,6 +467,7 @@ function turnProps() {
     latchedReasoning: new Set<string>(),
     latestTurnByThread: new Map(),
     liveReasoningSeen: new Set<string>(),
+    onContinueTurn: async () => undefined,
     onContinueInNewChat: async () => undefined,
     onEditUserMessage: async () => undefined,
     onInterruptThread: async () => undefined,
@@ -336,7 +476,12 @@ function turnProps() {
     onOpenTurnDetails: () => undefined,
     onReadToolArguments: async () => null,
     onReadToolOutput: async () => null,
-    onRetryTurn: async () => undefined,
+    onReadTurnRecovery: async () => ({
+      canContinue: false,
+      canRerun: false,
+      rerunRequiresConfirmation: false,
+    }),
+    onRerunTurn: async () => undefined,
     providerRetry: null,
     rootSpeaker: { participantId: 'main', avatarKey: 'main', name: 'Main Agent' },
     rootThreadId: 'thread',

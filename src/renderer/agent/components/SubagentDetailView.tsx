@@ -147,9 +147,15 @@ export function SubagentDetailView({
             latestTurnByThread={snapshot.latestTurnByThread}
             onConfigurationChange={noop}
             onContinueInNewChat={noop}
+            onContinueTurn={noop}
             onCreateThread={noFallback}
             onEditUserMessage={noop}
-            onRetryTurn={noop}
+            onReadTurnRecovery={async () => ({
+              canContinue: false,
+              canRerun: false,
+              rerunRequiresConfirmation: false,
+            })}
+            onRerunTurn={noop}
             onInterrupt={interrupt}
             onInterruptThread={(target) => threadStore.interruptThread(target)}
             onOpenNodeReference={onOpenNodeReference}

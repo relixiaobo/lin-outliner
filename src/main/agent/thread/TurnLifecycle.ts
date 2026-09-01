@@ -73,8 +73,8 @@ type InternalTurnStartRequest = Omit<PrivilegedTurnStartRequest, 'author'> & {
   readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
   readonly additionalContextSource?: string;
   readonly reuseStagedContextEvidenceOnly?: boolean;
-  readonly retryReplacementTarget?: Turn;
-  readonly retryInputBatches?: readonly CanonicalTurnRetryInputBatch[];
+  readonly rerunReplacementTarget?: Turn;
+  readonly rerunInputBatches?: readonly CanonicalTurnRerunInputBatch[];
   readonly subagentAdmission?: SubagentTurnAdmission;
   readonly prepareExplicitSubagentAdmission?: ExplicitSubagentAdmissionPreparer;
   readonly bypassSubagentBudget?: boolean;
@@ -82,23 +82,29 @@ type InternalTurnStartRequest = Omit<PrivilegedTurnStartRequest, 'author'> & {
 type InternalTurnSteerRequest = Omit<PrivilegedTurnSteerRequest, 'author'> & {
   readonly author: ThreadInputAuthor;
 };
-export interface CanonicalTurnRetryInputBatch {
+export interface CanonicalTurnRerunInputBatch {
   readonly author: ThreadInputAuthor;
   readonly input: readonly ThreadUserContent[];
   readonly clientUserMessageId: string | null;
   readonly acceptedAt: number;
   readonly stagedContextEvidence: readonly StagedContextEvidence[];
 }
-export type CanonicalTurnRetryAdmission = Pick<PrivilegedTurnStartRequest, 'threadId' | 'trigger'> & {
-  readonly inputBatches: readonly CanonicalTurnRetryInputBatch[];
+export type CanonicalTurnRerunAdmission = Pick<PrivilegedTurnStartRequest, 'threadId' | 'trigger'> & {
+  readonly inputBatches: readonly CanonicalTurnRerunInputBatch[];
   readonly replacedTurn: Turn;
 };
+
+const FAILURE_CONTINUATION_DIRECTIVE = [
+  'Continue from the latest failed Turn.',
+  'Treat its settled assistant and tool history as completed evidence.',
+  'Do not repeat those tool calls unless the user explicitly asks you to.',
+].join(' ');
 interface TurnLifecycleCatalog {
   createThread: import('./ThreadCatalogOps').ThreadCatalogOps['createThread']; deleteThread: import('./ThreadCatalogOps').ThreadCatalogOps['deleteThread'];
   setInitialPreview: import('./ThreadCatalogOps').ThreadCatalogOps['setInitialPreview']; scheduleAutomaticThreadName: import('./ThreadCatalogOps').ThreadCatalogOps['scheduleAutomaticThreadName'];
   hasPendingDelegatedThreadStart: import('./ThreadCatalogOps').ThreadCatalogOps['hasPendingDelegatedThreadStart'];
   publishDelegatedThreadStart: import('./ThreadCatalogOps').ThreadCatalogOps['publishDelegatedThreadStart'];
-  replaceLatestTurnForRetryWithLocksHeld: import('./ThreadCatalogOps').ThreadCatalogOps['replaceLatestTurnForRetryWithLocksHeld'];
+  replaceLatestTurnForRerunWithLocksHeld: import('./ThreadCatalogOps').ThreadCatalogOps['replaceLatestTurnForRerunWithLocksHeld'];
 }
 interface TurnLifecycleCollaboration {
   pendingActivities(threadId: ThreadId): readonly PendingSubagentActivity[]; hasPendingActivities(threadId: ThreadId): boolean;
@@ -563,12 +569,12 @@ export class TurnLifecycle {
           }
         : null;
     }
-  async startRetriedRootTurnWithHostLock(
-      request: CanonicalTurnRetryAdmission,
+  async startRerunRootTurnWithHostLock(
+      request: CanonicalTurnRerunAdmission,
       admissionGuard?: () => void,
     ): Promise<TurnStartResponse> {
       const initialInput = request.inputBatches[0];
-      if (!initialInput) throw new Error('Retry input is missing from the canonical Turn');
+      if (!initialInput) throw new Error('Rerun input is missing from the canonical Turn');
       for (const batch of request.inputBatches) assertCanonicalUserContent(batch.input);
       const canonicalRequest: InternalTurnStartRequest = {
         threadId: request.threadId,
@@ -581,8 +587,77 @@ export class TurnLifecycle {
         ...canonicalRequest,
         stagedContextEvidence: initialInput.stagedContextEvidence,
         reuseStagedContextEvidenceOnly: true,
-        retryReplacementTarget: request.replacedTurn,
-        retryInputBatches: request.inputBatches,
+        rerunReplacementTarget: request.replacedTurn,
+        rerunInputBatches: request.inputBatches,
+      }, true, admissionGuard));
+      this.scheduleAcceptedTurn(accepted);
+      return accepted.response;
+    }
+  async canContinueFromFailure(threadId: ThreadId, turn: Turn): Promise<boolean> {
+      if (!this.executor.planFailureContinuation) return false;
+      const record = this.core.requireThread(threadId);
+      const resourceObservation = this.resourceOps.createResourceObservation(record.thread.id, true);
+      const unsupported = async (): Promise<never> => {
+        throw new Error('Failure continuation planning is read-only');
+      };
+      const recorder = new ItemRecorder(
+        record.thread.id,
+        turn.id,
+        turn.items,
+        unsupported,
+      );
+      const context: TurnExecutionContext = {
+        thread: record.thread,
+        turn,
+        startupContext: this.collaboration.startupContextForTurn(record.thread.id, turn.id),
+        historyBeforeTurn: this.core.allTurns(record.thread.id).filter((candidate) => candidate.id !== turn.id),
+        configuration: record.configuration,
+        signal: new AbortController().signal,
+        recorder,
+        readContext: (ref) => this.core.payloads.readContext(record.thread.id, ref),
+        readInternalText: (ref) => this.core.payloads.readInternalText(record.thread.id, ref),
+        readOutput: (ref) => this.core.payloads.readTextReference(record.thread.id, ref),
+        resolveResourceObservationPath: (ref) => resourceObservation.resolvePath(ref),
+        resolveImageArtifactPath: (artifact) => resourceObservation.resolveArtifactPath(artifact),
+        readResource: (ref) => this.core.resources.readExact(ref),
+        persistOutputImage: unsupported,
+        persistOutputResource: unsupported,
+        persistOutputText: unsupported,
+        persistToolCallArguments: unsupported,
+        persistContextEvidence: unsupported,
+        persistTurnDiagnostics: unsupported,
+        onTurnDiagnosticsError: () => undefined,
+        persistSkillCatalog: async () => null,
+        compactContext: async () => null,
+        stageContextCompaction: async () => null,
+        onProviderRetry: () => undefined,
+        onSteer: () => undefined,
+      };
+      try {
+        return await this.executor.planFailureContinuation(context);
+      } finally {
+        await resourceObservation.dispose().catch(() => undefined);
+      }
+    }
+  async startContinuedRootTurnWithHostLock(
+      threadId: ThreadId,
+      sourceTurnId: TurnId,
+      admissionGuard?: () => void,
+    ): Promise<TurnStartResponse> {
+      const accepted = await this.core.threadMutex.run(threadId, () => this.acceptTurn({
+        threadId,
+        input: [],
+        author: { kind: 'host' },
+        trigger: { kind: 'continuation', sourceTurnId },
+        additionalContext: {
+          continuation: {
+            value: FAILURE_CONTINUATION_DIRECTIVE,
+            kind: 'application',
+            purpose: 'instruction',
+          },
+        },
+        additionalContextSource: `turn-continuation:${sourceTurnId}`,
+        bypassSubagentBudget: true,
       }, true, admissionGuard));
       this.scheduleAcceptedTurn(accepted);
       return accepted.response;
@@ -943,16 +1018,16 @@ export class TurnLifecycle {
     ): Promise<AcceptedTurn> {
       admissionGuard?.();
       const record = this.core.requireThread(request.threadId);
-      if (request.retryReplacementTarget) {
-        const clientIds = (request.retryInputBatches ?? [])
+      if (request.rerunReplacementTarget) {
+        const clientIds = (request.rerunInputBatches ?? [])
           .flatMap((batch) => batch.clientUserMessageId ? [batch.clientUserMessageId] : []);
         if (new Set(clientIds).size !== clientIds.length) {
-          throw new Error('Retry input contains duplicate client ids');
+          throw new Error('Rerun input contains duplicate client ids');
         }
         for (const clientId of clientIds) {
-          const retryBinding = this.readCanonicalClientBinding(request.threadId, clientId);
-          if (retryBinding && retryBinding.turn.id !== request.retryReplacementTarget.id) {
-            throw new Error('Retry client id is already bound to another Turn');
+          const rerunBinding = this.readCanonicalClientBinding(request.threadId, clientId);
+          if (rerunBinding && rerunBinding.turn.id !== request.rerunReplacementTarget.id) {
+            throw new Error('Rerun client id is already bound to another Turn');
           }
         }
       } else if (request.clientUserMessageId) {
@@ -976,7 +1051,7 @@ export class TurnLifecycle {
       if (onlyIfIdle && record.thread.status.type !== 'idle') throw this.createThreadBusyError('Thread is not idle');
       const startedAt = this.now();
       const turnId = request.turnId ?? uuidV7(startedAt);
-      const admission = request.retryInputBatches
+      const admission = request.rerunInputBatches
         ? { content: request.input, createdResources: [] }
         : await this.resourceOps.resolveAdmissionContent(request.input, record.thread);
       const createdEvidenceResources: ThreadResourceReference[] = [];
@@ -1015,15 +1090,15 @@ export class TurnLifecycle {
       admissionGuard?: () => void,
     ): Promise<AcceptedTurn> {
       const preview = threadPreviewFromContent(input);
-      const retryInputBatches = request.retryInputBatches ?? [];
-      const initialRetryInput = retryInputBatches[0];
+      const rerunInputBatches = request.rerunInputBatches ?? [];
+      const initialRerunInput = rerunInputBatches[0];
       const item = userMessage(
         request.threadId,
         turnId,
-        initialRetryInput?.author ?? request.author,
+        initialRerunInput?.author ?? request.author,
         input,
         request.clientUserMessageId ?? null,
-        initialRetryInput?.acceptedAt ?? startedAt,
+        initialRerunInput?.acceptedAt ?? startedAt,
       );
       const provenance = {
         originThreadId: request.threadId,
@@ -1061,7 +1136,7 @@ export class TurnLifecycle {
         })
       );
       const stagedItems = materializeStagedEvidence(request.stagedContextEvidence ?? []);
-      const replayedInputs = retryInputBatches.slice(1).map((batch) => {
+      const replayedInputs = rerunInputBatches.slice(1).map((batch) => {
         const replayedUser = userMessage(
           request.threadId,
           turnId,
@@ -1282,10 +1357,10 @@ export class TurnLifecycle {
       let durableProjectionError: RecordedNotificationProjectionError | null = null;
       try {
         admissionGuard?.();
-        if (request.retryReplacementTarget) {
-          await this.catalog.replaceLatestTurnForRetryWithLocksHeld(
+        if (request.rerunReplacementTarget) {
+          await this.catalog.replaceLatestTurnForRerunWithLocksHeld(
             request.threadId,
-            request.retryReplacementTarget,
+            request.rerunReplacementTarget,
             startedNotification,
           );
         } else {
@@ -1371,15 +1446,15 @@ export class TurnLifecycle {
       } catch (error) {
         this.failCommittedActiveTurn(active, error);
       }
-      const retryUserItems = retryInputBatches.length > 0
+      const rerunUserItems = rerunInputBatches.length > 0
         ? [item, ...replayedInputs.map((batch) => batch.user)]
         : [item];
-      const clientUserItems = retryUserItems.filter((candidate): candidate is typeof candidate & {
+      const clientUserItems = rerunUserItems.filter((candidate): candidate is typeof candidate & {
         readonly clientId: string;
       } => candidate.clientId !== null);
       if (clientUserItems.length > 0) {
         try {
-          if (request.retryReplacementTarget && !this.core.ephemeral.has(request.threadId)) {
+          if (request.rerunReplacementTarget && !this.core.ephemeral.has(request.threadId)) {
             for (const clientItem of clientUserItems) {
               this.core.metadata.deleteClientInput(request.threadId, clientItem.clientId);
             }

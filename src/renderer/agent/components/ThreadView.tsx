@@ -36,6 +36,7 @@ import type {
   ThreadResourceReference,
   ThreadReferenceSearchResult,
   ThreadReferenceView,
+  TurnRecoveryReadResponse,
   ThreadUserContent,
 } from '../../../core/agent/protocol';
 import { api } from '../../api/client';
@@ -72,6 +73,7 @@ import {
   InfoIcon,
   LoaderIcon,
   PlanToolIcon,
+  PlayIcon,
   RefreshIcon,
   SendIcon,
   StopIcon,
@@ -79,6 +81,7 @@ import {
 } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { ButtonControl } from '../../ui/primitives/ButtonControl';
+import { ConfirmDialog } from '../../ui/primitives/ConfirmDialog';
 import { WorkingText } from '../../ui/primitives/WorkingText';
 import { ThreadGoalView } from './ThreadGoalView';
 import { ThreadComposerModelControl } from './ThreadComposerModelControl';
@@ -108,7 +111,7 @@ import {
   type ThreadDisclosureState,
   type ThreadToolItem,
 } from './items/ThreadItemView';
-import { isRetryableTurn, userFacingAgentError } from '../threadErrorMessage';
+import { userFacingAgentError } from '../threadErrorMessage';
 import {
   clickInstalledFocusTarget,
   composerFocusRequestIsCurrent,
@@ -232,7 +235,9 @@ interface ThreadViewProps {
   readonly threadCreationBlocked: boolean;
   readonly threadCreationPending: boolean;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
-  readonly onRetryTurn: (turn: Turn) => Promise<void>;
+  readonly onReadTurnRecovery: (turn: Turn) => Promise<TurnRecoveryReadResponse>;
+  readonly onContinueTurn: (turn: Turn) => Promise<void>;
+  readonly onRerunTurn: (turn: Turn, confirmToolReplay: boolean) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
   readonly onCreateThread: () => Promise<boolean>;
   readonly onInterrupt: () => Promise<void>;
@@ -710,7 +715,9 @@ export function ThreadView({
   threadCreationBlocked,
   threadCreationPending,
   onEditUserMessage,
-  onRetryTurn,
+  onReadTurnRecovery,
+  onContinueTurn,
+  onRerunTurn,
   onContinueInNewChat,
   onCreateThread,
   onInterrupt,
@@ -3168,7 +3175,9 @@ export function ThreadView({
                         getUserView={getUserView}
                         indexStore={indexStore}
                         onEditUserMessage={onEditUserMessage}
-                        onRetryTurn={onRetryTurn}
+                        onReadTurnRecovery={onReadTurnRecovery}
+                        onContinueTurn={onContinueTurn}
+                        onRerunTurn={onRerunTurn}
                         onContinueInNewChat={onContinueInNewChat}
                         onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
                         agentTranscript={agentTranscript}
@@ -3453,7 +3462,9 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   latchedReasoning,
   liveReasoningSeen,
   onEditUserMessage,
-  onRetryTurn,
+  onReadTurnRecovery,
+  onContinueTurn,
+  onRerunTurn,
   onContinueInNewChat,
   onInterruptThread,
   onOpenNodeReference,
@@ -3491,7 +3502,9 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   /** Reasoning Item ids first observed while their Turn was live. */
   readonly liveReasoningSeen: Set<string>;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
-  readonly onRetryTurn: (turn: Turn) => Promise<void>;
+  readonly onReadTurnRecovery: (turn: Turn) => Promise<TurnRecoveryReadResponse>;
+  readonly onContinueTurn: (turn: Turn) => Promise<void>;
+  readonly onRerunTurn: (turn: Turn, confirmToolReplay: boolean) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
   readonly onInterruptThread: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
@@ -3652,16 +3665,32 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     else if (action === 'continueInNewChat') await continueInNewChat();
     else if (action === 'details') openTurnDetails();
   }, [agentTranscript, continueInNewChat, copyTurn, openTurnDetails, turn.id]);
-  const retryEligible = useMemo(() => {
-    if (agentTranscript
-      || !composerEnabled
-      || !isLastTurn
-      || !isRetryableTurn(turn)) return false;
-    return turn.items.some((item) => item.type === 'userMessage');
-  }, [agentTranscript, composerEnabled, isLastTurn, turn]);
-  const retryTurn = useCallback(
-    () => onRetryTurn(turnRef.current),
-    [onRetryTurn, turn.id],
+  const recoveryCandidate = !agentTranscript
+    && composerEnabled
+    && isLastTurn
+    && (turn.status === 'failed' || turn.status === 'interrupted');
+  const [recovery, setRecovery] = useState<TurnRecoveryReadResponse | null>(null);
+  const readTurnRecoveryRef = useRef(onReadTurnRecovery);
+  readTurnRecoveryRef.current = onReadTurnRecovery;
+  useEffect(() => {
+    if (!recoveryCandidate) {
+      setRecovery(null);
+      return;
+    }
+    let current = true;
+    setRecovery(null);
+    void readTurnRecoveryRef.current(turnRef.current)
+      .then((value) => { if (current) setRecovery(value); })
+      .catch(() => { if (current) setRecovery({ canContinue: false, canRerun: false, rerunRequiresConfirmation: false }); });
+    return () => { current = false; };
+  }, [recoveryCandidate, turn.id, turn.status]);
+  const continueTurn = useCallback(
+    () => onContinueTurn(turnRef.current),
+    [onContinueTurn, turn.id],
+  );
+  const rerunTurn = useCallback(
+    (confirmToolReplay: boolean) => onRerunTurn(turnRef.current, confirmToolReplay),
+    [onRerunTurn, turn.id],
   );
   const responseTail = useMemo(
     () => standaloneContextBoundary ? null : (
@@ -3669,8 +3698,10 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         canContinueInNewChat={!agentTranscript}
         onCopy={copyTurn}
         onContinueInNewChat={continueInNewChat}
+        onContinue={recovery?.canContinue ? continueTurn : null}
         onOpenDetails={openTurnDetails}
-        onRetry={retryEligible ? retryTurn : null}
+        onRerun={recovery?.canRerun ? rerunTurn : null}
+        rerunRequiresConfirmation={recovery?.rerunRequiresConfirmation ?? false}
         providerRetry={providerRetry}
         shapeMotionSuppressed={shapeMotionSuppressed}
         workingTextOwnsMotion={workingTextOwnsMotion}
@@ -3683,12 +3714,13 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     ),
     [
       continueInNewChat,
+      continueTurn,
       copyTurn,
       openTurnDetails,
       providerRetry,
       responseTailTurn,
-      retryEligible,
-      retryTurn,
+      recovery,
+      rerunTurn,
       shapeMotionSuppressed,
       standaloneContextBoundary,
       statusOwnedElsewhere,
@@ -3925,10 +3957,12 @@ function isStandaloneContextBoundaryTurn(turn: Turn): boolean {
 function ThreadResponseTail({
   canContinueInNewChat,
   onCopy,
+  onContinue,
   onContinueInNewChat,
   onOpenDetails,
-  onRetry,
+  onRerun,
   providerRetry,
+  rerunRequiresConfirmation,
   shapeMotionSuppressed,
   statusOwnedElsewhere,
   turn,
@@ -3941,11 +3975,12 @@ function ThreadResponseTail({
    */
   readonly canContinueInNewChat: boolean;
   readonly onCopy: () => Promise<void>;
+  readonly onContinue: (() => Promise<void>) | null;
   readonly onContinueInNewChat: () => Promise<void>;
   readonly onOpenDetails: () => void;
-  /** Present only where running the same request again could go differently. */
-  readonly onRetry: (() => Promise<void>) | null;
+  readonly onRerun: ((confirmToolReplay: boolean) => Promise<void>) | null;
   readonly providerRetry: ProviderRetryStatus | null;
+  readonly rerunRequiresConfirmation: boolean;
   readonly shapeMotionSuppressed: boolean;
   readonly statusOwnedElsewhere: boolean;
   readonly turn: Turn;
@@ -3953,14 +3988,23 @@ function ThreadResponseTail({
 }) {
   const t = useT();
   const [trajectoryHoverOpen, setTrajectoryHoverOpen] = useState(false);
-  const [retrying, setRetrying] = useState(false);
-  const [retryError, setRetryError] = useState<string | null>(null);
+  const [recoveryPending, setRecoveryPending] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [confirmingRerun, setConfirmingRerun] = useState(false);
   const trajectoryButtonRef = useRef<HTMLButtonElement | null>(null);
   const streaming = turn.status === 'inProgress';
   const interrupted = turn.status === 'interrupted' && !statusOwnedElsewhere;
   const errorText = turn.error
     ? userFacingAgentError(turn.error, t.agent.thread.resourceLimitReached)
     : '';
+  const runRecovery = (action: () => Promise<void>) => {
+    if (recoveryPending) return;
+    setRecoveryPending(true);
+    setRecoveryError(null);
+    void action()
+      .catch((error: unknown) => setRecoveryError(errorMessage(error)))
+      .finally(() => setRecoveryPending(false));
+  };
   return (
     <>
       {!streaming && errorText ? (
@@ -3969,10 +4013,10 @@ function ThreadResponseTail({
           <span>{errorText}</span>
         </div>
       ) : null}
-      {retryError ? (
+      {recoveryError ? (
         <div className="thread-response-error" role="alert">
           <WarningIcon size={ICON_SIZE.menu} />
-          <span>{retryError}</span>
+          <span>{recoveryError}</span>
         </div>
       ) : null}
       {!streaming && interrupted ? (
@@ -3993,24 +4037,28 @@ function ThreadResponseTail({
             )
         ) : (
           <div className="thread-message-actions thread-response-actions">
-            {onRetry ? (
+            {onContinue ? (
               <IconButton
-                disabled={retrying}
+                disabled={recoveryPending}
+                icon={PlayIcon}
+                iconSize={ICON_SIZE.menu}
+                label={t.agent.thread.continueFromFailure}
+                onClick={() => runRecovery(onContinue)}
+                variant="message"
+              />
+            ) : null}
+            {onRerun ? (
+              <IconButton
+                disabled={recoveryPending}
                 icon={RefreshIcon}
                 iconSize={ICON_SIZE.menu}
-                label={t.agent.thread.retryTurn}
+                label={t.agent.thread.rerunTurn}
                 // Latched while main admits and atomically replaces this latest
                 // Turn. A second request in that window can only race the same
                 // identity and return a stale-target failure.
                 onClick={() => {
-                  if (retrying) return;
-                  setRetrying(true);
-                  setRetryError(null);
-                  void onRetry()
-                    // Reported, never swallowed: a stale or busy retry that
-                    // silently does nothing is worse than one that says why.
-                    .catch((error: unknown) => setRetryError(errorMessage(error)))
-                    .finally(() => setRetrying(false));
+                  if (rerunRequiresConfirmation) setConfirmingRerun(true);
+                  else runRecovery(() => onRerun(false));
                 }}
                 variant="message"
               />
@@ -4055,6 +4103,18 @@ function ThreadResponseTail({
           </div>
         )}
       </div>
+      {confirmingRerun && onRerun ? (
+        <ConfirmDialog
+          confirmLabel={t.agent.thread.rerunTurn}
+          message={t.agent.thread.rerunConfirmMessage}
+          onCancel={() => setConfirmingRerun(false)}
+          onConfirm={() => {
+            setConfirmingRerun(false);
+            runRecovery(() => onRerun(true));
+          }}
+          title={t.agent.thread.rerunConfirmTitle}
+        />
+      ) : null}
     </>
   );
 }

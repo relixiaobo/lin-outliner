@@ -82,10 +82,14 @@ TurnId,
 TurnStartResponse,
 TurnSubmitResponse,
 TurnSteerResponse,
-TurnRetryRequest,
-TurnRetryResponse
+TurnContinueRequest,
+TurnContinueResponse,
+TurnRecoveryReadRequest,
+TurnRecoveryReadResponse,
+TurnRerunRequest,
+TurnRerunResponse
 } from '../../core/agent/protocol';
-import { isRetryableTurn } from '../../core/agent/turnRetry';
+import { isRerunnableTurn } from '../../core/agent/turnRerun';
 import {
 normalizeUpdatePlanToolInput,
 type ModelToolIdentity,
@@ -159,49 +163,49 @@ import { ThreadTranscriptExclusions } from './thread/ThreadTranscriptExclusions'
 import { ThreadTranscriptIndex } from './thread/ThreadTranscriptIndex';
 import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
 import type { TranscriptSubject } from './thread/TranscriptRenderer';
-import { TurnLifecycle,type CanonicalTurnRetryInputBatch } from './thread/TurnLifecycle';
+import { TurnLifecycle,type CanonicalTurnRerunInputBatch } from './thread/TurnLifecycle';
 
 const THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS = 2_000;
 
 /** Shared empty result, so "no drift" allocates nothing on the common path. */
 const NO_DOCUMENT_DRIFT = Object.freeze({ context: null, settle: () => undefined });
 
-interface RetryDeliveryAliasIndex {
+interface RerunDeliveryAliasIndex {
   readonly currentTurnIds: ReadonlySet<TurnId>;
   readonly directAliases: ReadonlyMap<TurnId, TurnId | null>;
-  readonly nonRetryRemovedTurnIds: ReadonlySet<TurnId>;
+  readonly nonRerunRemovedTurnIds: ReadonlySet<TurnId>;
 }
 
-function buildRetryDeliveryAliasIndex(entries: readonly RolloutEntry[]): RetryDeliveryAliasIndex {
+function buildRerunDeliveryAliasIndex(entries: readonly RolloutEntry[]): RerunDeliveryAliasIndex {
   const currentTurnIds = new Set<TurnId>();
   const directAliases = new Map<TurnId, TurnId | null>();
   const targetOwners = new Map<TurnId, TurnId | null>();
-  const nonRetryRemovedTurnIds = new Set<TurnId>();
+  const nonRerunRemovedTurnIds = new Set<TurnId>();
   for (const entry of entries) {
     const event = entry.event;
     if (event.type === 'turn/started') {
       currentTurnIds.add(event.turnId);
       continue;
     }
-    if (event.type === 'history/retry') {
+    if (event.type === 'history/rerun') {
       const source = event.omittedTurnIds[0]!;
       const target = event.replacement.turnId;
       currentTurnIds.delete(source);
       currentTurnIds.add(target);
-      addRetryDeliveryAlias(directAliases, targetOwners, source, target);
+      addRerunDeliveryAlias(directAliases, targetOwners, source, target);
       continue;
     }
     if (event.type === 'history/rollback') {
       for (const omittedTurnId of event.omittedTurnIds) {
         currentTurnIds.delete(omittedTurnId);
-        if (!directAliases.has(omittedTurnId)) nonRetryRemovedTurnIds.add(omittedTurnId);
+        if (!directAliases.has(omittedTurnId)) nonRerunRemovedTurnIds.add(omittedTurnId);
       }
     }
   }
-  return { currentTurnIds, directAliases, nonRetryRemovedTurnIds };
+  return { currentTurnIds, directAliases, nonRerunRemovedTurnIds };
 }
 
-function addRetryDeliveryAlias(
+function addRerunDeliveryAlias(
   directAliases: Map<TurnId, TurnId | null>,
   targetOwners: Map<TurnId, TurnId | null>,
   source: TurnId,
@@ -226,7 +230,7 @@ function addRetryDeliveryAlias(
   directAliases.set(source, target);
 }
 
-function resolveRetryDeliveryAlias(index: RetryDeliveryAliasIndex, deliveryRootId: TurnId): TurnId | null {
+function resolveRerunDeliveryAlias(index: RerunDeliveryAliasIndex, deliveryRootId: TurnId): TurnId | null {
   const visited = new Set<TurnId>();
   let current = deliveryRootId;
   while (true) {
@@ -239,7 +243,7 @@ function resolveRetryDeliveryAlias(index: RetryDeliveryAliasIndex, deliveryRootI
       continue;
     }
     if (index.currentTurnIds.has(current)) return current;
-    if (index.nonRetryRemovedTurnIds.has(current)) return null;
+    if (index.nonRerunRemovedTurnIds.has(current)) return null;
     return null;
   }
 }
@@ -537,7 +541,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly reportError: (report: ErrorReport) => Promise<void>;
   private readonly writeTrajectoryExport: ThreadServiceOptions['writeTrajectoryExport'];
   private readonly startupQuarantinedThreadIds = new Set<ThreadId>();
-  private readonly retryDeliveryAliases = new Map<ThreadId, RetryDeliveryAliasIndex>();
+  private readonly rerunDeliveryAliases = new Map<ThreadId, RerunDeliveryAliasIndex>();
   /**
    * The subset quarantined because their recorded history does not decode. Kept
    * apart from the admission-recovery quarantine above: those Threads read fine
@@ -695,8 +699,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
         scheduleAutomaticThreadName: (...args) => this.catalogOps.scheduleAutomaticThreadName(...args),
         hasPendingDelegatedThreadStart: (threadId) => this.catalogOps.hasPendingDelegatedThreadStart(threadId),
         publishDelegatedThreadStart: (threadId) => this.catalogOps.publishDelegatedThreadStart(threadId),
-        replaceLatestTurnForRetryWithLocksHeld: (...args) => (
-          this.catalogOps.replaceLatestTurnForRetryWithLocksHeld(...args)
+        replaceLatestTurnForRerunWithLocksHeld: (...args) => (
+          this.catalogOps.replaceLatestTurnForRerunWithLocksHeld(...args)
         ),
       },
       {
@@ -907,7 +911,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       // identities stay inert in this process and the next launch retries.
       console.warn('[agent] Agent ledger orphan cleanup deferred during startup', error);
     }
-    await this.rebuildRetryDeliveryAliases(reconciledThreadIds);
+    await this.rebuildRerunDeliveryAliases(reconciledThreadIds);
     const liveResourceReferences = new Map<ThreadId, readonly ThreadResourceReference[]>();
     let resourceSnapshotComplete = true;
     for (const threadId of knownThreadIds) {
@@ -1707,9 +1711,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
         await this.interruptUserWork(request.threadId, request.turnId);
         return { turnId: request.turnId } as AgentCoreResponseByMethod[Method];
       }
-      case 'turn/retry':
-        return await this.retryTurn(
-          decoded as AgentCoreRequestByMethod['turn/retry'],
+      case 'turn/recovery/read':
+        return await this.readTurnRecovery(
+          decoded as AgentCoreRequestByMethod['turn/recovery/read'],
+        ) as AgentCoreResponseByMethod[Method];
+      case 'turn/continue':
+        return await this.continueTurn(
+          decoded as AgentCoreRequestByMethod['turn/continue'],
+        ) as AgentCoreResponseByMethod[Method];
+      case 'turn/rerun':
+        return await this.rerunTurn(
+          decoded as AgentCoreRequestByMethod['turn/rerun'],
         ) as AgentCoreResponseByMethod[Method];
       case 'goal/get':
         return this.goals.get(decoded as AgentCoreRequestByMethod['goal/get']) as AgentCoreResponseByMethod[Method];
@@ -1917,11 +1929,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     );
   }
 
-  private async rebuildRetryDeliveryAliases(threadIds: readonly ThreadId[]): Promise<void> {
-    await Promise.all(threadIds.map((threadId) => this.refreshRetryDeliveryAliases(threadId)));
+  private async rebuildRerunDeliveryAliases(threadIds: readonly ThreadId[]): Promise<void> {
+    await Promise.all(threadIds.map((threadId) => this.refreshRerunDeliveryAliases(threadId)));
   }
 
-  private async refreshRetryDeliveryAliases(threadId: ThreadId): Promise<void> {
+  private async refreshRerunDeliveryAliases(threadId: ThreadId): Promise<void> {
     const record = this.core.metadata.read(threadId);
     if (
       !record
@@ -1929,23 +1941,23 @@ export class ThreadService implements ThreadServiceExtensionHost {
       || record.thread.parentThreadId !== null
       || record.thread.threadSource !== 'user'
     ) {
-      this.retryDeliveryAliases.delete(threadId);
+      this.rerunDeliveryAliases.delete(threadId);
       return;
     }
     try {
-      this.retryDeliveryAliases.set(
+      this.rerunDeliveryAliases.set(
         threadId,
-        buildRetryDeliveryAliasIndex(await this.core.rollout.read(threadId)),
+        buildRerunDeliveryAliasIndex(await this.core.rollout.read(threadId)),
       );
     } catch (error) {
-      this.retryDeliveryAliases.delete(threadId);
-      console.warn(`[agent] Retry delivery alias rebuild deferred for ${threadId}`, error);
+      this.rerunDeliveryAliases.delete(threadId);
+      console.warn(`[agent] Rerun delivery alias rebuild deferred for ${threadId}`, error);
     }
   }
 
   private resolveDeliveryTurnId(parentThreadId: ThreadId, deliveryRootId: TurnId): TurnId | null {
-    const index = this.retryDeliveryAliases.get(parentThreadId);
-    const resolved = index ? resolveRetryDeliveryAlias(index, deliveryRootId) : deliveryRootId;
+    const index = this.rerunDeliveryAliases.get(parentThreadId);
+    const resolved = index ? resolveRerunDeliveryAlias(index, deliveryRootId) : deliveryRootId;
     return resolved && this.core.readTurn(parentThreadId, resolved) ? resolved : null;
   }
 
@@ -2091,22 +2103,88 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.assertStartupThreadAvailable(request.threadId);
     return this.turnLifecycle.startPrivilegedTurn(request);
   }
-  async retryTurn(request: TurnRetryRequest): Promise<TurnRetryResponse> {
+  async readTurnRecovery(request: TurnRecoveryReadRequest): Promise<TurnRecoveryReadResponse> {
     this.assertStartupThreadAvailable(request.threadId);
-    const retry = this.rendererSubmissionMutex.run(request.threadId, async () => (
+    const record = this.core.requireThread(request.threadId);
+    const target = this.core.allTurns(request.threadId).at(-1);
+    const available = target?.id === request.turnId
+      && record.thread.parentThreadId === null
+      && record.thread.threadSource === 'user'
+      && !record.thread.ephemeral
+      && !record.archived
+      && !this.core.stoppingThreads.has(request.threadId)
+      && !this.turnLifecycle.hasActiveTurn(request.threadId)
+      && record.thread.status.type === 'idle';
+    if (!available || !target) {
+      return { canContinue: false, canRerun: false, rerunRequiresConfirmation: false };
+    }
+    const canRerun = isRerunnableTurn(target)
+      && target.items.some((item) => item.type === 'userMessage');
+    const rerunRequiresConfirmation = canRerun && turnHasSettledTool(target);
+    if (target.status !== 'failed') {
+      return { canContinue: false, canRerun, rerunRequiresConfirmation };
+    }
+    let canContinue = false;
+    try {
+      canContinue = await this.turnLifecycle.canContinueFromFailure(request.threadId, target);
+    } catch (error) {
+      console.warn(`[agent] Continue-from-failure projection unavailable for ${target.id}`, error);
+    }
+    return { canContinue, canRerun, rerunRequiresConfirmation };
+  }
+  async continueTurn(request: TurnContinueRequest): Promise<TurnContinueResponse> {
+    this.assertStartupThreadAvailable(request.threadId);
+    const continuation = this.rendererSubmissionMutex.run(request.threadId, async () => (
+      this.core.hostRootMutex.run(async () => {
+        this.assertRendererSubmissionOpen();
+        const recovery = await this.readTurnRecovery(request);
+        if (!recovery.canContinue) throw new Error('This Turn cannot continue from failure');
+        const target = this.core.allTurns(request.threadId).at(-1);
+        if (!target || target.id !== request.turnId) throw new Error('Only the latest failed Turn can be continued');
+        const started = await this.turnLifecycle.startContinuedRootTurnWithHostLock(
+          request.threadId,
+          target.id,
+          () => this.assertRendererSubmissionOpen(),
+        );
+        return {
+          thread: this.core.requireThread(request.threadId).thread,
+          turn: started.turn,
+          sourceTurnId: target.id,
+        };
+      })
+    ));
+    this.pendingRendererSubmissions.add(continuation);
+    try {
+      return await continuation;
+    } finally {
+      this.pendingRendererSubmissions.delete(continuation);
+    }
+  }
+  async rerunTurn(request: TurnRerunRequest): Promise<TurnRerunResponse> {
+    this.assertStartupThreadAvailable(request.threadId);
+    const rerun = this.rendererSubmissionMutex.run(request.threadId, async () => (
       this.core.hostRootMutex.run(async () => {
         this.assertRendererSubmissionOpen();
         const record = this.core.requireThread(request.threadId);
+        if (record.thread.parentThreadId !== null
+          || record.thread.threadSource !== 'user'
+          || record.thread.ephemeral
+          || record.archived) {
+          throw new Error('Only a persistent root user Thread can rerun a Turn');
+        }
         const turns = this.core.allTurns(request.threadId);
         const target = turns.at(-1);
         if (!target || target.id !== request.turnId) {
-          throw new Error('Only the latest Turn can be retried');
+          throw new Error('Only the latest Turn can be rerun');
         }
         if (this.turnLifecycle.hasActiveTurn(request.threadId) || record.thread.status.type !== 'idle') {
-          throw new ThreadBusyError('Cannot retry a Thread with active work');
+          throw new ThreadBusyError('Cannot rerun a Thread with active work');
         }
-        if (!isRetryableTurn(target)) throw new Error('This Turn is not retryable');
-        const inputBatches: CanonicalTurnRetryInputBatch[] = [];
+        if (!isRerunnableTurn(target)) throw new Error('This Turn cannot be rerun');
+        if (turnHasSettledTool(target) && !request.confirmToolReplay) {
+          throw new Error('Rerun confirmation is required because actions may repeat');
+        }
+        const inputBatches: CanonicalTurnRerunInputBatch[] = [];
         let pendingEvidence: Array<Extract<ThreadItem, { readonly type: 'contextEvidence' }>> = [];
         for (const item of target.items) {
           if (item.type === 'contextEvidence') {
@@ -2125,7 +2203,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           for (const evidence of pendingEvidence) {
             const payload = await this.core.payloads.readContext(request.threadId, evidence.payloadRef);
             if (!payload || payload.kind !== evidence.kind) {
-              throw new Error(`Retry context evidence is unavailable: ${evidence.id}`);
+              throw new Error(`Rerun context evidence is unavailable: ${evidence.id}`);
             }
             stagedContextEvidence.push({
               payload: payload as StagedContextEvidence['payload'],
@@ -2146,15 +2224,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
           });
           pendingEvidence = [];
         }
-        if (inputBatches.length === 0) throw new Error('Retry input is missing from the canonical Turn');
+        if (inputBatches.length === 0) throw new Error('Rerun input is missing from the canonical Turn');
 
-        const started = await this.turnLifecycle.startRetriedRootTurnWithHostLock({
+        const started = await this.turnLifecycle.startRerunRootTurnWithHostLock({
           threadId: request.threadId,
           trigger: target.provenance.trigger,
           inputBatches,
           replacedTurn: target,
         }, () => this.assertRendererSubmissionOpen());
-        await this.refreshRetryDeliveryAliases(request.threadId);
+        await this.refreshRerunDeliveryAliases(request.threadId);
         this.publishSubagentExecutionsForParent(request.threadId);
         return {
           thread: this.core.requireThread(request.threadId).thread,
@@ -2163,11 +2241,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
         };
       })
     ));
-    this.pendingRendererSubmissions.add(retry);
+    this.pendingRendererSubmissions.add(rerun);
     try {
-      return await retry;
+      return await rerun;
     } finally {
-      this.pendingRendererSubmissions.delete(retry);
+      this.pendingRendererSubmissions.delete(rerun);
     }
   }
   async tryStartTurnIfIdle(request: PrivilegedTurnStartRequest): Promise<Turn | null> {
@@ -2465,6 +2543,18 @@ export class ThreadBusyError extends Error {
     super(message);
     this.name = 'ThreadBusyError';
   }
+}
+
+function turnHasSettledTool(turn: Turn): boolean {
+  return turn.items.some((item) => (
+    (item.type === 'commandExecution'
+      || item.type === 'fileChange'
+      || item.type === 'mcpToolCall'
+      || item.type === 'dynamicToolCall'
+      || item.type === 'collabAgentToolCall'
+      || item.type === 'webSearch')
+    && item.status !== 'inProgress'
+  ));
 }
 
 export function agentCorePaths(userDataPath: string): AgentCorePaths {

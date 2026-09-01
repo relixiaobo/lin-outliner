@@ -3,7 +3,7 @@ import {
   normalizeTurnErrorCode,
   type TurnError,
 } from '../../core/agent/protocol';
-export { isRetryableTurn } from '../../core/agent/turnRetry';
+export { isRerunnableTurn } from '../../core/agent/turnRerun';
 
 const ERROR_PREVIEW_MAX = 280;
 

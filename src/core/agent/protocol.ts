@@ -136,6 +136,10 @@ export function normalizeTurnErrorCode(value: unknown): TurnErrorCode {
 export type TurnTrigger =
   | { readonly kind: 'user' }
   | {
+      readonly kind: 'continuation';
+      readonly sourceTurnId: TurnId;
+    }
+  | {
       readonly kind: 'subagent';
       readonly parentThreadId: ThreadId;
       readonly parentItemId: ThreadItemId;
@@ -1229,7 +1233,7 @@ export interface SubagentExecutionProjection {
   readonly terminalStatus: SubagentTerminalStatus | null;
   readonly notificationState: SubagentNotificationState;
   readonly terminalError: SubagentTerminalError | null;
-  /** First committed delivery Turn, resolved through canonical Retry aliases. */
+  /** First committed delivery Turn, resolved through canonical Rerun aliases. */
   readonly deliveryTurnId: TurnId | null;
   readonly deliveryClass: SubagentDeliveryClass | null;
   readonly eligibleAfterGeneration: number | null;
@@ -2138,12 +2142,35 @@ export interface TurnInterruptResponse {
   readonly turnId: TurnId;
 }
 
-export interface TurnRetryRequest {
+export interface TurnRecoveryReadRequest {
   readonly threadId: ThreadId;
   readonly turnId: TurnId;
 }
 
-export interface TurnRetryResponse {
+export interface TurnRecoveryReadResponse {
+  readonly canContinue: boolean;
+  readonly canRerun: boolean;
+  readonly rerunRequiresConfirmation: boolean;
+}
+
+export interface TurnContinueRequest {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+}
+
+export interface TurnContinueResponse {
+  readonly thread: Thread;
+  readonly turn: Turn;
+  readonly sourceTurnId: TurnId;
+}
+
+export interface TurnRerunRequest {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly confirmToolReplay: boolean;
+}
+
+export interface TurnRerunResponse {
   readonly thread: Thread;
   readonly turn: Turn;
   readonly replacedTurnId: TurnId;
@@ -2248,7 +2275,9 @@ export const AGENT_CORE_METHODS = [
   'turn/start',
   'turn/steer',
   'turn/interrupt',
-  'turn/retry',
+  'turn/recovery/read',
+  'turn/continue',
+  'turn/rerun',
   'goal/get',
   'goal/create',
   'goal/update',
@@ -2290,7 +2319,9 @@ export interface AgentCoreRequestByMethod {
   readonly 'turn/start': RendererTurnStartRequest;
   readonly 'turn/steer': RendererTurnSteerRequest;
   readonly 'turn/interrupt': TurnInterruptRequest;
-  readonly 'turn/retry': TurnRetryRequest;
+  readonly 'turn/recovery/read': TurnRecoveryReadRequest;
+  readonly 'turn/continue': TurnContinueRequest;
+  readonly 'turn/rerun': TurnRerunRequest;
   readonly 'goal/get': GetGoalInput;
   readonly 'goal/create': CreateGoalInput;
   readonly 'goal/update': UpdateGoalInput;
@@ -2330,7 +2361,9 @@ export interface AgentCoreResponseByMethod {
   readonly 'turn/start': TurnStartResponse;
   readonly 'turn/steer': TurnSteerResponse;
   readonly 'turn/interrupt': TurnInterruptResponse;
-  readonly 'turn/retry': TurnRetryResponse;
+  readonly 'turn/recovery/read': TurnRecoveryReadResponse;
+  readonly 'turn/continue': TurnContinueResponse;
+  readonly 'turn/rerun': TurnRerunResponse;
   readonly 'goal/get': GetGoalResponse;
   readonly 'goal/create': CreateGoalResponse;
   readonly 'goal/update': UpdateGoalResponse;
@@ -2472,7 +2505,8 @@ type RendererProjectedResponseMethod =
   | 'thread/turn/details/read'
   | 'turn/submit'
   | 'turn/start'
-  | 'turn/retry';
+  | 'turn/continue'
+  | 'turn/rerun';
 
 export type RendererAgentCoreResponseByMethod = {
   readonly [Method in AgentCoreMethod]: Method extends RendererProjectedResponseMethod

@@ -142,6 +142,8 @@ export interface TurnExecutionResult {
 
 export interface TurnExecutor {
   execute(context: TurnExecutionContext): Promise<TurnExecutionResult>;
+  /** Read-only proof that a failed Turn has settled history worth continuing. */
+  planFailureContinuation?(context: TurnExecutionContext): Promise<boolean>;
   /** Read-only admission probe used before optional carry-forward is attached. */
   planInputCapacity?(context: TurnExecutionContext): Promise<{
     readonly remainingInputTokens: number;

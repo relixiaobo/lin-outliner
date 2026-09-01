@@ -6,7 +6,7 @@ import {
 } from './protocol';
 
 /** Whether replaying the same canonical Turn input could produce a new result. */
-export function isRetryableTurn(turn: {
+export function isRerunnableTurn(turn: {
   readonly status: TurnStatus;
   readonly error: TurnError | null;
 }): boolean {

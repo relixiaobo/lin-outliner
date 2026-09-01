@@ -760,7 +760,7 @@ describe('renderer Thread store', () => {
     expect(store.getSnapshot().turnsByThread.get(owner.id)).toEqual([]);
   });
 
-  test('retries by Turn identity and replaces the failed Turn with the admitted retry', async () => {
+  test('reruns by Turn identity and replaces the failed Turn with the admitted rerun', async () => {
     const owner = thread('thread-1', 1);
     const failed = turn('turn-failed', 'failed', 'failed response');
     const replacement = turn('turn-replacement', 'inProgress', '');
@@ -773,7 +773,7 @@ describe('renderer Thread store', () => {
         if (method === 'thread/turns/list') return { data: [failed], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'turn/retry') {
+        if (method === 'turn/rerun') {
           return {
             thread: { ...owner, status: { type: 'active', activeFlags: [] }, updatedAt: 2 },
             turn: replacement,
@@ -786,18 +786,18 @@ describe('renderer Thread store', () => {
     const store = new ThreadStore(client);
     await store.initialize();
 
-    await store.retryTurn(owner.id, failed.id);
+    await store.rerunTurn(owner.id, failed.id, false);
 
-    expect(calls.filter((call) => call.method === 'turn/retry')).toEqual([{
-      method: 'turn/retry',
-      input: { threadId: owner.id, turnId: failed.id },
+    expect(calls.filter((call) => call.method === 'turn/rerun')).toEqual([{
+      method: 'turn/rerun',
+      input: { threadId: owner.id, turnId: failed.id, confirmToolReplay: false },
     }]);
     expect(calls.some((call) => call.method === 'thread/rollback' || call.method === 'turn/submit')).toBe(false);
     expect(store.getSnapshot().turnsByThread.get(owner.id)).toEqual([replacement]);
     expect(store.getSnapshot().latestTurnByThread.get(owner.id)).toEqual(replacement);
   });
 
-  test('does not regress a retry that completes before its command response arrives', async () => {
+  test('does not regress a rerun that completes before its command response arrives', async () => {
     const owner = thread('thread-1', 1);
     const failed = turn('turn-failed', 'failed', 'failed response');
     const replacement = turn('turn-replacement', 'inProgress', '');
@@ -819,7 +819,7 @@ describe('renderer Thread store', () => {
         if (method === 'thread/turns/list') return { data: [failed], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'turn/retry') {
+        if (method === 'turn/rerun') {
           notify({
             type: 'turn/started',
             threadId: owner.id,
@@ -845,11 +845,55 @@ describe('renderer Thread store', () => {
     const store = new ThreadStore(client);
     await store.initialize();
 
-    await store.retryTurn(owner.id, failed.id);
+    await store.rerunTurn(owner.id, failed.id, false);
 
     expect(store.getSnapshot().turnsByThread.get(owner.id)).toEqual([completed]);
     expect(store.getSnapshot().latestTurnByThread.get(owner.id)).toEqual(completed);
     expect(store.getSnapshot().threads.find((thread) => thread.id === owner.id)?.status).toEqual({ type: 'idle' });
+  });
+
+  test('appends a continued Turn while preserving its failed source', async () => {
+    const owner = thread('thread-1', 1);
+    const failed = turn('turn-failed', 'failed', 'settled partial response');
+    const continuation = {
+      ...turn('turn-continuation', 'inProgress', ''),
+      startedAt: 3,
+      provenance: {
+        originThreadId: owner.id,
+        originTurnId: 'turn-continuation',
+        trigger: { kind: 'continuation' as const, sourceTurnId: failed.id },
+      },
+    };
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input: Record<string, unknown>) => {
+        calls.push({ method, input });
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [failed], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'turn/continue') {
+          return {
+            thread: { ...owner, status: { type: 'active', activeFlags: [] }, updatedAt: 2 },
+            turn: continuation,
+            sourceTurnId: failed.id,
+          };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+
+    await store.continueTurn(owner.id, failed.id);
+
+    expect(calls.filter((call) => call.method === 'turn/continue')).toEqual([{
+      method: 'turn/continue',
+      input: { threadId: owner.id, turnId: failed.id },
+    }]);
+    expect(store.getSnapshot().turnsByThread.get(owner.id)).toEqual([failed, continuation]);
+    expect(store.getSnapshot().latestTurnByThread.get(owner.id)).toEqual(continuation);
   });
 
   test('updates catalog metadata without manufacturing history for an unloaded Thread', async () => {

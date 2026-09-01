@@ -3854,6 +3854,74 @@ describe('PiTurnExecutor event normalization', () => {
   });
 });
 
+describe('PiTurnExecutor failure continuation planning', () => {
+  test('requires a complete projectable assistant or tool protocol unit', async () => {
+    const fixture = createContext();
+    const executor = new PiTurnExecutor({ resolveRuntime: async () => runtimeSelection() });
+    const turnWith = (item: ThreadItem) => decodeTurn({
+      ...fixture.context.turn,
+      items: [...fixture.context.turn.items, item],
+      status: 'failed',
+      error: { message: 'Provider unavailable' },
+      completedAt: 1_720_000_000_200,
+      durationMs: 100,
+    });
+    const itemId = uuidV7(1_720_000_000_150);
+    const provenance = {
+      originThreadId: fixture.context.thread.id,
+      originTurnId: fixture.context.turn.id,
+      originItemId: itemId,
+    };
+
+    const inputOnlyFailure = decodeTurn({
+      ...fixture.context.turn,
+      status: 'failed',
+      error: { message: 'Provider unavailable' },
+      completedAt: 1_720_000_000_200,
+      durationMs: 100,
+    });
+    expect(await executor.planFailureContinuation({ ...fixture.context, turn: inputOnlyFailure })).toBe(false);
+
+    const settledAssistant = turnWith({
+      type: 'agentMessage',
+      id: itemId,
+      provenance,
+      text: 'A settled partial answer',
+      phase: 'final_answer',
+      memoryCitation: null,
+    });
+    expect(await executor.planFailureContinuation({ ...fixture.context, turn: settledAssistant })).toBe(true);
+
+    const settledTool = turnWith({
+      type: 'commandExecution',
+      id: itemId,
+      provenance,
+      command: 'pwd',
+      description: 'Inspect the working directory',
+      cwd: '/workspace',
+      processId: null,
+      status: 'completed',
+      outputRef: null,
+      commandActions: [],
+      aggregatedOutput: '/workspace',
+      exitCode: 0,
+      durationMs: 1,
+      modelCall: replayableModelCall('bash', { command: 'pwd' }),
+    });
+    expect(await executor.planFailureContinuation({ ...fixture.context, turn: settledTool })).toBe(true);
+
+    const interruptedTail = turnWith({
+      type: 'agentMessage',
+      id: itemId,
+      provenance,
+      text: 'An interrupted partial answer',
+      phase: 'interrupted',
+      memoryCitation: null,
+    });
+    expect(await executor.planFailureContinuation({ ...fixture.context, turn: interruptedTail })).toBe(false);
+  });
+});
+
 describe('PiTurnExecutor provider payload', () => {
   test('requests detailed reasoning summaries from Responses APIs', () => {
     expect(agentProviderPayload({

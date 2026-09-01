@@ -1290,8 +1290,14 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'turn/interrupt':
       decoded = decodeTurnInterruptRequest(value);
       break;
-    case 'turn/retry':
-      decoded = decodeTurnRetryRequest(value);
+    case 'turn/recovery/read':
+      decoded = decodeTurnIdentityRequest(value, 'turn/recovery/read');
+      break;
+    case 'turn/continue':
+      decoded = decodeTurnIdentityRequest(value, 'turn/continue');
+      break;
+    case 'turn/rerun':
+      decoded = decodeTurnRerunRequest(value);
       break;
     case 'goal/get':
       decoded = decodeGoalGetInput(value);
@@ -1397,8 +1403,14 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
     case 'turn/start':
       decoded = decodeTurnStartResponse(value);
       break;
-    case 'turn/retry':
-      decoded = decodeTurnRetryResponse(value);
+    case 'turn/recovery/read':
+      decoded = decodeTurnRecoveryReadResponse(value);
+      break;
+    case 'turn/continue':
+      decoded = decodeTurnContinueResponse(value);
+      break;
+    case 'turn/rerun':
+      decoded = decodeTurnRerunResponse(value);
       break;
     case 'turn/steer':
       decoded = decodeTurnSteerResponse(value);
@@ -1466,7 +1478,8 @@ function inflateRendererResponse(method: AgentCoreMethod, value: unknown): unkno
     case 'thread/items/list':
       return mapRendererField(value, 'data', (data) => mapRendererArray(data, inflateRendererItemEntry));
     case 'thread/turn/details/read':
-    case 'turn/retry':
+    case 'turn/continue':
+    case 'turn/rerun':
       return mapRendererFields(value, {
         thread: inflateRendererThread,
         turn: inflateRendererTurn,
@@ -2005,12 +2018,25 @@ function decodeTurnInterruptRequest(value: unknown): AgentCoreRequestByMethod['t
   });
 }
 
-function decodeTurnRetryRequest(value: unknown): AgentCoreRequestByMethod['turn/retry'] {
-  const record = recordValue(value, 'turn/retry');
-  exactKeys(record, ['threadId', 'turnId'], 'turn/retry');
+function decodeTurnRerunRequest(value: unknown): AgentCoreRequestByMethod['turn/rerun'] {
+  const record = recordValue(value, 'turn/rerun');
+  exactKeys(record, ['threadId', 'turnId', 'confirmToolReplay'], 'turn/rerun');
   return deepFreeze({
-    threadId: uuidV7(record.threadId, 'turn/retry.threadId'),
-    turnId: uuidV7(record.turnId, 'turn/retry.turnId'),
+    threadId: uuidV7(record.threadId, 'turn/rerun.threadId'),
+    turnId: uuidV7(record.turnId, 'turn/rerun.turnId'),
+    confirmToolReplay: booleanValue(record.confirmToolReplay, 'turn/rerun.confirmToolReplay'),
+  });
+}
+
+function decodeTurnIdentityRequest(
+  value: unknown,
+  path: 'turn/recovery/read' | 'turn/continue',
+): AgentCoreRequestByMethod['turn/recovery/read'] {
+  const record = recordValue(value, path);
+  exactKeys(record, ['threadId', 'turnId'], path);
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, `${path}.threadId`),
+    turnId: uuidV7(record.turnId, `${path}.turnId`),
   });
 }
 
@@ -3211,13 +3237,36 @@ function decodeTurnStartResponse(value: unknown): AgentCoreResponseByMethod['tur
   });
 }
 
-function decodeTurnRetryResponse(value: unknown): AgentCoreResponseByMethod['turn/retry'] {
-  const record = recordValue(value, 'turn/retry response');
-  exactKeys(record, ['thread', 'turn', 'replacedTurnId'], 'turn/retry response');
+function decodeTurnRerunResponse(value: unknown): AgentCoreResponseByMethod['turn/rerun'] {
+  const record = recordValue(value, 'turn/rerun response');
+  exactKeys(record, ['thread', 'turn', 'replacedTurnId'], 'turn/rerun response');
   return deepFreeze({
     thread: decodeThread(record.thread),
     turn: decodeTurn(record.turn),
-    replacedTurnId: uuidV7(record.replacedTurnId, 'turn/retry response.replacedTurnId'),
+    replacedTurnId: uuidV7(record.replacedTurnId, 'turn/rerun response.replacedTurnId'),
+  });
+}
+
+function decodeTurnRecoveryReadResponse(value: unknown): AgentCoreResponseByMethod['turn/recovery/read'] {
+  const record = recordValue(value, 'turn/recovery/read response');
+  exactKeys(record, ['canContinue', 'canRerun', 'rerunRequiresConfirmation'], 'turn/recovery/read response');
+  return deepFreeze({
+    canContinue: booleanValue(record.canContinue, 'turn/recovery/read response.canContinue'),
+    canRerun: booleanValue(record.canRerun, 'turn/recovery/read response.canRerun'),
+    rerunRequiresConfirmation: booleanValue(
+      record.rerunRequiresConfirmation,
+      'turn/recovery/read response.rerunRequiresConfirmation',
+    ),
+  });
+}
+
+function decodeTurnContinueResponse(value: unknown): AgentCoreResponseByMethod['turn/continue'] {
+  const record = recordValue(value, 'turn/continue response');
+  exactKeys(record, ['thread', 'turn', 'sourceTurnId'], 'turn/continue response');
+  return deepFreeze({
+    thread: decodeThread(record.thread),
+    turn: decodeTurn(record.turn),
+    sourceTurnId: uuidV7(record.sourceTurnId, 'turn/continue response.sourceTurnId'),
   });
 }
 
@@ -3440,11 +3489,17 @@ function decodeTurnProvenance(value: unknown): TurnProvenance {
 
 function decodeTurnTrigger(value: unknown): TurnTrigger {
   const record = recordValue(value, 'turn.trigger');
-  const kind = enumValue(record.kind, ['user', 'subagent', 'feature'], 'turn.trigger.kind');
+  const kind = enumValue(record.kind, ['user', 'continuation', 'subagent', 'feature'], 'turn.trigger.kind');
   switch (kind) {
     case 'user':
       exactKeys(record, ['kind'], 'turn.trigger');
       return deepFreeze({ kind });
+    case 'continuation':
+      exactKeys(record, ['kind', 'sourceTurnId'], 'turn.trigger');
+      return deepFreeze({
+        kind,
+        sourceTurnId: uuidV7(record.sourceTurnId, 'turn.trigger.sourceTurnId'),
+      });
     case 'subagent':
       exactKeys(record, ['kind', 'parentThreadId', 'parentItemId'], 'turn.trigger');
       return deepFreeze({

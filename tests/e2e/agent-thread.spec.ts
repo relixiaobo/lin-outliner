@@ -9185,7 +9185,7 @@ test.describe('terminal Thread history actions', () => {
       buttons.map((button) => button.getAttribute('aria-label'))
     ))).toEqual([
       // A failure the user did not cause leads with the way out of it.
-      'Retry',
+      'Rerun turn',
       'Copy message',
       'Continue in new chat',
       'Open Trajectory',
@@ -9219,11 +9219,11 @@ test.describe('terminal Thread history actions', () => {
     expect(calls.filter((call) => call.cmd === 'thread/fork')).toHaveLength(0);
   });
 
-  test('retries a failed Turn through turn/retry without renderer rollback or resubmission', async ({ page }) => {
+  test('reruns a failed Turn without renderer rollback or resubmission', async ({ page }) => {
     await openMockedApp(page, { agentTurnFailure: 'Mock provider failure' });
     await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
-    await composer.fill('Retry this canonical request');
+    await composer.fill('Rerun this canonical request');
     await page.getByRole('button', { name: 'Send' }).click();
 
     const response = page.locator('.thread-agent-message-response').last();
@@ -9232,23 +9232,50 @@ test.describe('terminal Thread history actions', () => {
     const failedTurnId = await failedRow.getAttribute('data-thread-turn-row');
     expect(failedTurnId).toBeTruthy();
     await response.hover();
-    await response.getByRole('button', { name: 'Retry' }).click();
+    await response.getByRole('button', { name: 'Rerun turn' }).click();
 
     await expect.poll(async () => (
-      (await commandCalls(page)).filter((call) => call.cmd === 'turn/retry').length
+      (await commandCalls(page)).filter((call) => call.cmd === 'turn/rerun').length
     )).toBe(1);
     await expect(page.locator(`[data-thread-turn-row="${failedTurnId}"]`)).toHaveCount(0);
     await expect(page.getByLabel('Assistant is responding')).toBeVisible();
     const calls = await commandCalls(page);
-    expect(calls.filter((call) => call.cmd === 'turn/retry')).toEqual([{
-      cmd: 'turn/retry',
-      args: { threadId: expect.any(String), turnId: failedTurnId },
+    expect(calls.filter((call) => call.cmd === 'turn/rerun')).toEqual([{
+      cmd: 'turn/rerun',
+      args: { threadId: expect.any(String), turnId: failedTurnId, confirmToolReplay: false },
     }]);
     expect(calls.filter((call) => call.cmd === 'thread/rollback')).toHaveLength(0);
     expect(calls.filter((call) => call.cmd === 'turn/submit')).toHaveLength(1);
   });
 
-  test('keeps an interrupted partial response without Retry or Regenerate', async ({ page }) => {
+  test('continues from settled failed evidence by appending a linked Turn', async ({ page }) => {
+    await openMockedApp(page, {
+      agentTurnFailure: 'Mock provider failure',
+      agentTurnFailureHasResponse: true,
+    });
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Preserve the settled result');
+    await composer.press('Enter');
+    const failedRow = page.locator('[data-thread-turn-row]').last();
+    await expect(failedRow).toContainText('Mock provider failure');
+    const failedTurnId = await failedRow.getAttribute('data-thread-turn-row');
+    expect(failedTurnId).not.toBeNull();
+
+    await failedRow.getByRole('button', { name: 'Continue from failure' }).click();
+
+    await expect.poll(async () => (
+      (await commandCalls(page)).filter((call) => call.cmd === 'turn/continue').length
+    )).toBe(1);
+    await expect(page.locator(`[data-thread-turn-row="${failedTurnId}"]`)).toBeVisible();
+    await expect(page.getByLabel('Assistant is responding')).toBeVisible();
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/continue')).toEqual([{
+      cmd: 'turn/continue',
+      args: { threadId: expect.any(String), turnId: failedTurnId },
+    }]);
+  });
+
+  test('keeps an interrupted partial response without recovery or Regenerate', async ({ page }) => {
     await openMockedApp(page);
     await createNewThread(page);
     await page.evaluate(async () => {
@@ -9302,7 +9329,7 @@ test.describe('terminal Thread history actions', () => {
     await expect(response).toContainText('This partial answer remains visible.');
     await expect(response.locator('.thread-response-stopped')).toHaveText('Turn interrupted');
     await response.hover();
-    await expect(response.getByRole('button', { name: 'Retry response' })).toHaveCount(0);
+    await expect(response.getByRole('button', { name: 'Rerun turn' })).toHaveCount(0);
     await expect(response.getByRole('button', { name: 'Regenerate response' })).toHaveCount(0);
     await expect(response.getByRole('button', { name: 'Continue in new chat' })).toBeVisible();
   });

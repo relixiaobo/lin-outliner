@@ -75,7 +75,7 @@ their dedicated lifecycle paths mint `reader`. Privileged start and steer reques
 must supply an explicit non-reader author: Agent messages name the source Thread,
 host framing uses `host`, and Automation, Goal, Memory, and other generated prompts
 name their feature and an existing stable reference when available. The common Item
-constructor has no default. Retry replays each source Item's exact author, and fork
+constructor has no default. Rerun replays each source Item's exact author, and fork
 copies it with the rest of the canonical Item.
 
 The initial Item uses the Turn start instant for `acceptedAt`; steering records one
@@ -490,7 +490,32 @@ fail closed. Archived or stopping Threads cannot admit a Turn.
 Only the latest terminal user Turn can be edited. Edit calls
 `thread/rollback { threadId, numTurns: 1 }`, then starts a replacement Turn with
 fresh Turn and Item identities in the same Thread. Earlier and active Turns are
-not editable. Assistant responses do not expose Retry or Regenerate.
+not editable. A latest failed persistent root user Turn may instead expose
+main-authorized Continue and Rerun actions; renderer never derives their eligibility
+from visible Items.
+
+`turn/recovery/read` is read-only and returns the current capabilities for one exact
+source Turn. Continue is available only when that Turn is still the latest failed Turn,
+the root user Thread is persistent, idle, unarchived, and not stopping, and the runtime's
+canonical projector plus protocol-unit validator proves at least one complete settled
+assistant/tool unit beyond accepted input. Projection or dependency failure degrades to
+`canContinue: false` and writes nothing.
+
+`turn/continue` revalidates the same boundary under renderer-submission and root-host
+admission locks. It preserves the failed source and appends an ordinary Turn whose
+`continuation` trigger names the source Turn ID. The admitted host input is content-free
+and renderer-hidden; a bounded application instruction says settled history is evidence,
+not work to replay. Ordinary Turn admission resolves current configuration, permissions,
+resources, and context, so restart observes either no continuation or one complete
+`turn/started` fact. No checkpoint, Item cursor, or historical tool dispatch exists.
+
+`turn/rerun` is the distinct whole-Turn replay operation. It reconstructs all accepted
+initial and steering batches with their exact author, evidence, timestamps, client IDs,
+and original trigger, then replaces the failed suffix Turn in current projection. A
+settled tool makes `rerunRequiresConfirmation` true; main rejects the mutation unless
+`confirmToolReplay` is explicitly true because replay may repeat effects. The replacement
+is one internal `history/rerun` rollout event, so rollout audit retains the source while
+current history exposes only the replacement.
 
 Rollback appends a durable marker to the immutable rollout. The current history
 projection, pagination, and model context omit the marker's exact terminal Turn
@@ -604,7 +629,7 @@ rollout snapshot is what `restoreMissing` writes back before `rebuildThread` cas
 the old rows away, so omitting a row there destroys its last copy.
 
 Admission, rollout append/read, projection apply/read/rebuild, rollout restoration,
-Retry, and fork all use the same strict Item decoder. A missing or invalid
+Rerun, and fork all use the same strict Item decoder. A missing or invalid
 `userMessage.author` is therefore unreadable new-format history and follows the Thread
 quarantine below; no persisted decoder recognizes the superseded authorless shape,
 infers an author, or rewrites rollout or projection data. Before this pre-release
@@ -727,7 +752,7 @@ exact bytes for a later reconciliation.
 
 A history rollback reclaims contexts, Turn diagnostics, tool text outputs, and tool
 artifacts against surviving history. Managed resources referenced by removed
-`userMessage` Items are the exception: Edit and Retry re-send that exact user content,
+`userMessage` Items are the exception: Edit and Rerun re-send that exact user content,
 so its attachments remain temporarily reachable through the admission that follows.
 Tool output and generated context are not re-sent; once their Item owner is removed,
 their links are removed immediately. A reference with no surviving Thread link is

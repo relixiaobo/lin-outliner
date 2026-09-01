@@ -561,7 +561,11 @@ export const ThreadDock = memo(function ThreadDock({
               onEditUserMessage={(_turn, content: readonly ThreadUserContent[]) => (
                 threadStore.rollbackAndSend(thread.id, content, getUserView())
               )}
-              onRetryTurn={(turn) => threadStore.retryTurn(thread.id, turn.id)}
+              onReadTurnRecovery={(turn) => threadStore.readTurnRecovery(thread.id, turn.id)}
+              onContinueTurn={(turn) => threadStore.continueTurn(thread.id, turn.id)}
+              onRerunTurn={(turn, confirmToolReplay) => (
+                threadStore.rerunTurn(thread.id, turn.id, confirmToolReplay)
+              )}
               onContinueInNewChat={(turn) => threadStore.continueInNewChat(thread.id, turn.id).then(() => undefined)}
               onInterrupt={() => threadStore.interrupt(thread.id)}
               onInterruptThread={interruptThread}

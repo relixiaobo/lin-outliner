@@ -156,7 +156,7 @@ describe('renderer Agent Core projection', () => {
         turn: privateTurn, turnId: TURN_ID, acceptedItemId: ITEM_ID, deduplicated: false,
       }],
       ['turn/start', { turn: privateTurn, acceptedItemId: ITEM_ID, deduplicated: false }],
-      ['turn/retry', { thread: privateThread, turn: privateTurn, replacedTurnId: TURN_ID }],
+      ['turn/rerun', { thread: privateThread, turn: privateTurn, replacedTurnId: TURN_ID }],
     ];
 
     for (const [method, response] of cases) {
