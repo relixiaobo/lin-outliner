@@ -10,7 +10,8 @@ Separate Tenon's canonical tool-execution identity from provider-authored wire
 identity so a provider-controlled string never becomes a Thread Item ID,
 execution identity, mutation cause, or persistence key. Preserve enough exact
 provider history to replay a settled tool exchange through the same adapter and
-to let a different adapter perform its normal cross-provider conversion.
+to reconstruct a collision-safe exchange before a different adapter performs
+its target-provider conversion.
 
 After the cutover, a Thread may switch among OpenAI Responses, Anthropic
 Messages, and other supported providers after any number of tool calls without
@@ -21,7 +22,9 @@ identity contract.
 ## Non-goals
 
 - No provider-specific ID regex, truncation rule, or request-body patch in
-  Tenon. Provider wire constraints remain owned by `pi-ai` adapters.
+  Tenon. The Host owns a provider-neutral cross-model correlation ID; final
+  wire validation and provider-specific constraints remain owned by `pi-ai`
+  adapters.
 - No `pi-ai` dependency upgrade in this PR. The identity fix is verified against
   the pinned transport before a separate package upgrade changes auth, catalog,
   or serializer behavior.
@@ -46,9 +49,12 @@ The provider-authored ID remains an opaque bounded `providerToolCallId`. It is
 never interpreted, used as a path segment, checked for UUID syntax, or promoted
 to canonical identity. The active provider exchange pairs its assistant call
 and tool result with this wire identity while every Host event and tool handler
-uses the internal UUID. Empty, duplicate, or over-budget provider IDs receive a
-bounded provider-history replacement without changing the internal identity or
-aborting the user's Turn.
+uses the internal UUID. The active batch keeps an ordinal mapping rather than
+using provider-ID lookup, so empty or repeated raw IDs cannot alias Host
+execution. A provider call whose opaque replay fields exceed their admission
+budget still executes under its internal UUID, but its durable model-call
+history becomes `evidenceOnly` rather than storing a truncated value that could
+not be replayed exactly.
 
 Kernel batch state carries both identities explicitly. No shared string field
 changes meaning by phase, and no lookup infers one identity from the other.
@@ -64,19 +70,26 @@ interface ModelProviderToolCall {
   readonly api: string;
   readonly provider: string;
   readonly model: string;
+  readonly thoughtSignature: string | null;
 }
 ```
 
 `id` is the exact provider-visible identity used to pair the successful active
-exchange after empty, collision, and size healing. The source fields come from
-the assistant response that authored the call, not from current Thread
-configuration. Evidence-only calls are rendered as bounded evidence and do not
-retain a replay envelope.
+exchange. The source fields come from the assistant response that authored the
+call, not from current Thread configuration. `thoughtSignature` is the opaque
+`pi-ai` tool-call replay field: it is preserved in place for an exact same-model
+replay and omitted when absent. It is not interpreted as Gemini-only data.
+Evidence-only calls are rendered as bounded evidence and do not retain a replay
+envelope.
 
-The codec bounds every untrusted string and requires the envelope at the write
-boundary. Renderer projection omits the whole envelope. Fork, persistence,
-rollout rebuild, and compaction copy it only as part of the immutable model-call
-history already owned by the Item.
+Admission limits provider call IDs and source-model strings to 4 KiB each and
+`thoughtSignature` to 64 KiB, measured as UTF-8 bytes. An over-budget live field
+selects `evidenceOnly` without failing tool execution. Once a `replayable` or
+`redactedReplay` Item is persisted, the complete envelope is required: the
+codec rejects missing, malformed, or over-budget inline envelope data at the
+decode boundary. Renderer projection omits the whole envelope. Fork,
+persistence, rollout rebuild, and compaction copy it only as part of the
+immutable model-call history already owned by the Item.
 
 ### Active-Turn correlation
 
@@ -104,14 +117,28 @@ paired result uses that same ID. Projection flushes before combining calls from
 different source envelopes, so one synthetic assistant message never claims
 mixed provenance.
 
-`pi-ai` remains the only target-provider codec. A same-provider replay preserves
-the source wire identity. A cross-provider replay is recognized from truthful
-source metadata, allowing the target adapter to normalize the call/result pair
-for its own length and character constraints. Tenon does not post-process the
-materialized provider payload.
+Before handing history to `pi-ai`, the projector compares the recorded
+`api/provider/model` tuple with the target model:
 
-Unavailable or corrupt provider-call history degrades that exchange to the
-existing bounded historical evidence path rather than killing the Turn.
+- an exact same-model replay restores the original provider ID and
+  `thoughtSignature` without altering those provider-authored replay fields;
+- every other replay replaces both the call ID and its paired result ID with
+  `tc_<uuidhex>`, a deterministic one-to-one encoding of the canonical UUIDv7
+  `toolCallId`, and removes `thoughtSignature`.
+
+The portable ID uses only ASCII letters, digits, and underscore, is 35
+characters long, and cannot collide for distinct admitted internal UUIDs. It is
+stable across restart, fork, compaction, retry, and repeated projection. This
+prevents lossy adapter normalization from mapping distinct source IDs such as
+`abc|def` and `abc/def` to the same target ID. `pi-ai` remains the final
+target-provider codec and may enforce stricter provider rules; Tenon neither
+copies provider regexes nor post-processes a materialized request body.
+
+The A12 boundary is explicit. Missing, malformed, or over-budget required
+inline envelopes fail closed during persisted Thread decode, before projection.
+Unavailable or corrupt external argument/result payloads remain runtime
+conditions and degrade only that exchange to the existing bounded historical
+evidence path rather than killing the Turn.
 
 ### Clean cut and specifications
 
@@ -157,28 +184,40 @@ forecast, not a hand-maintained completion ledger.
   internal UUID to a provider result. Tests must assert both sides in the same
   multi-call execution.
 - Simple replacement and truncation can collide. Provider-history healing must
-  remain unique within visible history and must not rely on a provider-specific
-  character allowlist.
+  derive cross-model IDs one-to-one from canonical UUIDs and must not rely on a
+  provider-specific character allowlist.
 - Incorrect source metadata recreates the current failure by causing `pi-ai` to
   treat cross-provider history as same-model history.
-- Raw provider IDs are untrusted and may be very large. Admission must bound
-  durable wire evidence without turning an inspection concern into a dead Turn.
-- The protocol, projector, and runtime files overlap other active Agent work;
-  implementation starts only from the final merged shared-interface baseline.
+- Opaque provider replay fields are untrusted and may be very large. Admission
+  must select `evidenceOnly` before persistence without turning an inspection
+  concern into a dead Turn; persisted envelope corruption must still fail
+  closed at decode.
+- A future adapter may impose constraints outside the conservative portable ID
+  alphabet. Serializer coverage must gate each newly supported adapter rather
+  than weakening the Host's collision guarantee.
+- The protocol, projector, and runtime files are high-collision ownership
+  surfaces. Re-run the open-claim check immediately before implementation and
+  stop on any new shared-interface overlap.
 
 ## Verification
 
 - Codec tests reject missing, malformed, and oversized provider-call envelopes
-  while renderer projection proves the envelope stays Host-private.
+  while admission tests prove oversized live replay fields become
+  `evidenceOnly` without blocking execution and renderer projection proves the
+  envelope stays Host-private.
 - Kernel tests prove every provider call receives a distinct UUIDv7 internal ID
   while exact provider IDs pair live assistant calls and results, including
   empty IDs, duplicates, parallel batches, retry, cancellation, and steering.
 - Real `pi-ai` serializer tests inspect OpenAI Responses -> Anthropic Messages
   and Anthropic Messages -> OpenAI Responses request bodies, including IDs with
   `|`, IDs longer than Anthropic's limit, and normalized-ID collision cases.
+  The request body must contain distinct `tc_<uuidhex>` call/result pairs.
 - Context projection tests preserve recorded source metadata and exact pairing
   across restart, fork, compaction, redacted replay, unavailable payloads, and
   mixed-provider Thread history.
+- Google serializer tests preserve a tool call's `thoughtSignature` in place
+  across same-model restart, fork, and compaction, and omit it after any target
+  model change.
 - Thread-service tests prove historical calls are never re-executed and new
   tools execute exactly once after a provider switch.
 - Run `bun run typecheck`, `bun run test:core`, `bun run test:renderer`,
@@ -186,17 +225,20 @@ forecast, not a hand-maintained completion ledger.
 
 ## Open questions
 
-None. Provider-specific wire validation remains an adapter responsibility; the
-Host contract is fixed to bounded opaque correlation plus internal UUID
-authority.
+None. The Host owns internal UUID identity, exact bounded same-model replay, and
+portable collision-safe cross-model correlation. Provider-specific wire
+validation remains an adapter responsibility. A `pi-ai` upgrade and any
+upstream collision-normalization improvement are separate dependency work; this
+fix does not depend on an unreleased transport change.
 
 ## Implementation checklist
 
-- [ ] Rebase after the overlapping shared Agent protocol claim merges, then
-      regenerate the implementation queue from current search hits.
+- [ ] Regenerate the implementation queue from current search hits on the
+      merged shared Agent protocol baseline.
 - [ ] Cut the persisted model-call envelope and codec in one change.
 - [ ] Separate active provider correlation from Host execution identity.
-- [ ] Rebuild durable history with truthful source metadata and paired wire IDs.
+- [ ] Rebuild same-model history exactly and cross-model history with paired
+      portable IDs.
 - [ ] Reset isolated pre-release Agent userData and verify clean startup.
 - [ ] Add provider-switch, lifecycle, serializer, and non-reexecution coverage.
 - [ ] Fold the design into current specifications and archive this plan at the
