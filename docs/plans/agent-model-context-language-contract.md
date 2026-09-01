@@ -14,7 +14,7 @@ and UI reconstruction. Its model projection is a separate product surface.
 This plan is a set of two independently complete features:
 
 1. A Turn-brief compiler, including a canonical attention contract that
-   covers every current workspace view.
+   covers every supported pane view.
 2. One JSON result envelope for built-in and collaboration tools.
 
 Each feature ships in one complete PR with its own fixtures, measurements,
@@ -46,7 +46,7 @@ specification updates, and verification. Feature 1 is ordered after PRs #609 and
   context.
 - **Minimum acceptable outcome:** a representative multi-Turn conversation is
   understandable without renderer IDs or wire-format reduction; every supported
-  workspace view can become an honest attention target; and every projected fact
+  pane view can become an honest attention target; and every projected fact
   has one clear reason to exist and one model-visible owner.
 - **CON-1 hard:** canonical evidence, not projected prose, remains the state and
   replay authority.
@@ -81,7 +81,7 @@ The clean-slate design would admit decision-relevant context facts directly and
 never persist UI-shaped evidence. The selected brownfield target instead adds a
 Turn-brief compiler over complete canonical evidence and broadens the canonical
 user-view contract only where the evidence currently cannot represent a real
-workspace view. This preserves audit and replay without making historical wire
+pane view. This preserves audit and replay without making historical wire
 fields or a second semantic type system part of the model language.
 
 Two narrower options are rejected:
@@ -99,9 +99,9 @@ boundary remains the constrained target.
 
 ### Evidence and assumptions
 
-- **Evidence:** the workspace supports `outliner`, `file-preview`, and
-  `thread-trajectory` views. File preview independently supports local files,
-  assets, linked files, and URLs.
+- **Evidence:** a pane can show `outliner`, `file-preview`, or
+  `thread-trajectory`. File preview independently supports local files, assets,
+  linked files, and URLs.
 - **Evidence:** current renderer capture includes Outliner roots, reduces a
   Node-bound file preview to that Node, drops file previews without a `nodeId`,
   and drops Thread trajectory views entirely. The Agent therefore cannot reliably
@@ -198,10 +198,10 @@ identity unless an Agent tool explicitly accepts them.
 
 Attention projection follows these rules:
 
-1. The active workspace view is the primary target. When more than one real view
+1. The active pane view is the primary target. When more than one real view
    exists, the other targets also appear so "left", "right", "other", and
-   cross-view requests are unambiguous. The existing four-panel workspace limit
-   bounds the list; display order becomes natural language, never panel IDs.
+   cross-view requests are unambiguous. The existing four-pane limit bounds the
+   list; display order becomes natural language, never panel IDs.
 2. A Node target uses its title and public `[[node://UUID]]` reference. The grammar
    does not branch on date, Daily Note, system, or ordinary Node classes.
 3. A local file uses a readable label and canonical `[[file:///absolute/path]]`
@@ -459,7 +459,7 @@ remain host-private and are not required to parse the model-visible result.
   attention target: Outliner Node, local file, asset, linked file, URL, and Thread
   trajectory.
 - **FR-4:** current-view text names the primary real target and up to the other
-  three current workspace targets using readable, actionable identities without
+  three open pane views using readable, actionable identities without
   panel IDs or detached title maps.
 - **FR-5:** distinct focus, non-empty selection, selection clearing, and bounded
   excerpts appear only when they change interpretation or action. Empty defaults
