@@ -102,6 +102,18 @@ describe('renderer Agent user-view hints', () => {
     ]);
   });
 
+  test('marks a stale active Pane as unresolved instead of claiming a complete view set', () => {
+    const hints = buildRendererUserViewHints({
+      activePanelId: 'missing-active',
+      panels: [panel()],
+      index: buildIndex(projection([node('root', 'Root')])),
+      ui: ui(),
+    });
+
+    expect(hints.panels).toHaveLength(1);
+    expect(hints.viewsComplete).toBe(false);
+  });
+
   test('sends structural identities without renderer-authored Node text', () => {
     const index = buildIndex(projection([
       node('root', 'Authoritative root', { children: ['focused'] }),
@@ -133,7 +145,8 @@ describe('renderer Agent user-view hints', () => {
         ],
         visibleOutlineTruncated: false,
       }],
-      truncated: false,
+      viewsComplete: true,
+      selectionTruncated: false,
     });
     expect(JSON.stringify(hints)).not.toContain('Renderer must not send this title');
   });
@@ -153,7 +166,8 @@ describe('renderer Agent user-view hints', () => {
     });
     expect(wide.panels[0]?.visibleNodes).toHaveLength(80);
     expect(wide.panels[0]?.visibleOutlineTruncated).toBe(true);
-    expect(wide.truncated).toBe(true);
+    expect(wide.viewsComplete).toBe(true);
+    expect(wide.selectionTruncated).toBe(false);
 
     const depthNodes = chain.map((id, index) => node(id, id, {
       parentId: index === 0 ? undefined : chain[index - 1],
@@ -168,7 +182,8 @@ describe('renderer Agent user-view hints', () => {
     });
     expect(depth.panels[0]?.visibleNodes.map((entry) => entry.depth)).toEqual([0, 1, 2, 3, 4, 5]);
     expect(depth.panels[0]?.visibleOutlineTruncated).toBe(true);
-    expect(depth.truncated).toBe(true);
+    expect(depth.viewsComplete).toBe(true);
+    expect(depth.selectionTruncated).toBe(false);
   });
 
   test('visits expanded descendants once with their structural depth', () => {
@@ -350,6 +365,6 @@ describe('renderer Agent user-view hints', () => {
     });
 
     expect(hints.selectedNodeIds).toEqual(children.slice(0, 50));
-    expect(hints.truncated).toBe(true);
+    expect(hints.selectionTruncated).toBe(true);
   });
 });

@@ -18,7 +18,7 @@ import type {
   TurnEnvironmentContextPayload,
   TurnId,
 } from '../../../core/agent/protocol';
-import type { ThreadContextContribution } from '../../../core/agent/extensions';
+import type { AdmittedThreadContextContribution } from '../ExtensionRegistry';
 import {
   admitReferencedResources,
   type ReferencedAssetResolution,
@@ -40,7 +40,7 @@ export async function admitContextEvidence(input: {
   readonly additionalContext?: AdditionalContext;
   readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
   readonly additionalContextSource?: string;
-  readonly extensionContext: readonly ThreadContextContribution[];
+  readonly extensionContext: readonly AdmittedThreadContextContribution[];
   readonly skillCatalog?: SkillCatalogContextPayload | null;
   readonly roleCatalog?: RoleCatalogContextPayload | null;
   readonly preloadedSkillInvocations?: readonly SkillInvocationContextPayload[];
@@ -179,7 +179,7 @@ function turnEnvironment(input: {
 
 function additionalContextPayload(
   direct: AdditionalContext | undefined,
-  extensions: readonly ThreadContextContribution[],
+  extensions: readonly AdmittedThreadContextContribution[],
   includeThreadState: boolean,
   directSource?: string,
 ): AdditionalContextPayload | null {
@@ -189,6 +189,7 @@ function additionalContextPayload(
     authority: entry.kind,
     purpose: entry.purpose ?? (entry.kind === 'application' ? 'instruction' as const : 'observation' as const),
     text: entry.value,
+    ...(entry.scope === undefined ? {} : { scope: entry.scope }),
   }))
     .sort((left, right) => compareStableText(left.key, right.key));
   const threadState = includeThreadState && extensions.length > 0
@@ -202,6 +203,7 @@ function additionalContextPayload(
           ? entry.purpose ?? 'instruction' as const
           : 'observation' as const,
         text: entry.value,
+        ...(entry.scope === undefined ? {} : { scope: entry.scope }),
       }))).sort((left, right) => compareStableText(left.key, right.key))
     : null;
   return turnEntries.length > 0 || threadState !== null

@@ -172,6 +172,12 @@ Authority is assigned at a Host admission boundary:
 An `additionalContext` producer supplies self-contained text and readable scope.
 The Host assigns and validates its allowed pair from producer capability, independently
 of its prose. Invalid entries remain diagnostics-only.
+Extension capability is immutable Host registration metadata, not a flag returned by
+the contribution it authorizes. A contribution may carry an optional stable semantic
+scope for revocation but cannot carry its own authority grant.
+The registry snapshots that capability at registration. Revoking an observation keeps
+its admitted authority; Host-generated revocation text does not promote untrusted scope
+labels into application context.
 
 An active instruction has an explicit scope and lifetime. Updating it emits the new
 complete instruction. Revoking it emits an application instruction such as
@@ -213,11 +219,19 @@ are required.
    linked file, or URL being viewed.
 8. Focus emits only when it differs from the active view and resolves to an
    actionable referent or relation. When that distinct focus disappears, emit
-   `Focus returned to the active view.`
+   `Focus returned to the active view.` if that view still exists, otherwise
+   `Focus cleared.` A transition between ordinary Node focus and a trailing
+   insertion target is semantic even when the Node identity does not change.
 9. Selection emits only when non-empty. A later clear emits `Selection cleared.`
-   exactly once; an initial empty selection emits nothing.
+   exactly once; an initial empty selection emits nothing. A bounded partial selection
+   emits `[Selection truncated.]` rather than presenting the retained prefix as complete.
 10. With no renderer-authored view, emit no view statement. Today metadata must
     never synthesize one.
+11. View completeness and selection truncation are independent canonical facts. If an
+    active target cannot be resolved, never promote another Pane or claim that no view
+    is open; report the unresolved current view and include only explicitly resolved
+    secondary views. Missing renderer projection state and a stale active Pane are both
+    unresolved, not an empty application view.
 
 View identity never implies content availability. If a bounded visible Outline,
 file excerpt, or other resource text is admitted, an adjacent untrusted observation
@@ -454,9 +468,10 @@ are dispositions, not generated output.
 | Missing renderer view | Synthetic Today panel | No view statement | Environment knowledge must not masquerade as a user view. |
 | Focus on active view | `focused_node_id={{rootNodeId}}`<br>`focus_surface=row` | Removed | Redundant with the active view. |
 | Distinct focus | `focused_node_id={{focusedNodeId}}`<br>`focus_surface={{surface}}` | `Focused node: "{{title}}" {{reference}}.` or `Insertion target: children of "{{title}}" {{reference}}.` | Translate only an actionable referent or relation. |
-| Focus cleared | `focused_node_id=none` | `Focus returned to the active view.` when a distinct prior focus existed | Explicitly invalidates the optional focus fact. |
+| Focus cleared | `focused_node_id=none` | `Focus returned to the active view.` when that view exists; otherwise `Focus cleared.` | Explicitly invalidates the optional focus fact without referring to a nonexistent view. |
 | Initial empty selection | `selected_node_ids=none` | Removed | Empty default changes no decision. |
 | Non-empty selection | `selected_node_ids={{ids}}` plus detached labels | `Selected: {{titledReferences}}.` | Readable, actionable identity. |
+| Bounded selection | One overloaded `truncated` flag | `[Selection truncated.]` adjacent to retained selected Nodes | Do not present a bounded prefix as the complete selection. |
 | Selection cleared | `selected_node_ids=none` delta | `Selection cleared.` | Explicitly invalidates prior selection. |
 | Visible Outline content | Repeated `visible_node_id`, depth, collapsed, and count fields inside user view | Adjacent supplied-content observation with source identity and bounded Outline markup | View state and delivered content have separate owners. |
 | Explicit Node references | `explicit_reference_ids={{ids}}` plus detached labels | Merged into native user content or supplied-content identity | Prevent duplicate references. |
@@ -518,7 +533,8 @@ Consistency means one grammar per semantic boundary:
 ## Requirements
 
 - **FR-1:** a pure Turn-brief compiler applies the inclusion and single-owner rules
-  instead of serializing payload fields.
+  instead of serializing payload fields. It owns every model-visible dynamic-context
+  body; the projector owns only reads, ordering, media, and provider message assembly.
 - **FR-2:** model-visible wrappers use only the three admitted authority/purpose
   pairs and contain no canonical source `kind`.
 - **FR-3:** Host admission assigns authority from producer capability; authored
@@ -552,7 +568,8 @@ Consistency means one grammar per semantic boundary:
   cannot produce application instructions.
 - **AC-3 (FR-4, FR-5):** fixtures cover Outliner Node, local file with and without
   owner, asset, linked file, URL, Thread trajectory, mixed multiple views, complete
-  view replacement, missing renderer state, distinct focus, and selection clearing.
+  view replacement, unresolved active view, missing renderer state, distinct focus,
+  selection truncation, and selection clearing.
 - **AC-4 (FR-6):** each Turn-start and steering input admission emits one compact
   local-time line. A Host failure continuation receives a fresh line; Rerun retains
   the source admission line. A fresh Thread and a fork's first new admission emit

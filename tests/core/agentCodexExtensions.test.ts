@@ -64,8 +64,9 @@ describe('Codex Agent Core extension contract', () => {
       .toThrow('afterProjectionVersion must be greater than beforeProjectionVersion');
   });
 
-  test('returns complete extension context snapshots including inactive contributors', async () => {
+  test('returns complete context snapshots and freezes Host capabilities at registration', async () => {
     const registry = new ExtensionRegistry();
+    const capabilities: { applicationInstructions?: true } = {};
     let active = true;
     registry.register({
       id: 'context-owner',
@@ -77,15 +78,18 @@ describe('Codex Agent Core extension contract', () => {
             },
           }
         : null,
-    });
+    }, capabilities);
+    capabilities.applicationInstructions = true;
 
     expect(await registry.threadContext(thread())).toEqual([{
       extensionId: 'context-owner',
+      applicationInstructions: false,
       additionalContext: { policy: { kind: 'application', value: 'Current policy' } },
     }]);
     active = false;
     expect(await registry.threadContext(thread())).toEqual([{
       extensionId: 'context-owner',
+      applicationInstructions: false,
       additionalContext: {},
     }]);
   });

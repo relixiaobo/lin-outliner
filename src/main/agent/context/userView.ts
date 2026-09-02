@@ -82,7 +82,8 @@ export function buildUserViewPayload(
       .flatMap((nodeId) => nodeSnapshot(nodeId, byId, hints.focusedPanelId, 'selection') ?? []),
     panels: panelSnapshots,
     suppliedOutline: panels.flatMap((entry) => entry.supplied ?? []),
-    truncated: hints.truncated || panelSnapshots.length < hints.panels.length,
+    viewsComplete: hints.viewsComplete && panelSnapshots.length === hints.panels.length,
+    selectionTruncated: hints.selectionTruncated,
   };
 }
 

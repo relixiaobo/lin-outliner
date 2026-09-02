@@ -10,6 +10,45 @@ describe('main-owned Agent user view', () => {
     expect(buildUserViewPayload(undefined, document)).toBeNull();
   });
 
+  test('preserves unresolved active-view state instead of promoting a fallback Pane', () => {
+    const hints: RendererUserViewHints = {
+      activePanelId: 'missing-active',
+      focusedPanelId: null,
+      focusSurface: null,
+      focusedNodeId: null,
+      selectedNodeIds: [],
+      panels: [
+        {
+          panelId: 'missing-active',
+          order: 0,
+          active: true,
+          focused: false,
+          target: { kind: 'node', nodeId: 'missing' },
+          visibleNodes: [],
+          visibleOutlineTruncated: false,
+        },
+        {
+          panelId: 'secondary',
+          order: 1,
+          active: false,
+          focused: false,
+          target: { kind: 'node', nodeId: 'root' },
+          visibleNodes: [],
+          visibleOutlineTruncated: false,
+        },
+      ],
+      viewsComplete: true,
+      selectionTruncated: false,
+    };
+
+    const payload = buildUserViewPayload(hints, projection([node('root', 'Root')]));
+    expect(payload).toMatchObject({
+      activePanelId: null,
+      viewsComplete: false,
+      panels: [{ panelId: 'secondary' }],
+    });
+  });
+
   test('derives reference child counts from the resolved displayed parent', () => {
     const hints: RendererUserViewHints = {
       activePanelId: 'panel-1',
@@ -30,7 +69,8 @@ describe('main-owned Agent user view', () => {
         ],
         visibleOutlineTruncated: false,
       }],
-      truncated: false,
+      viewsComplete: true,
+      selectionTruncated: false,
     };
     const payload = buildUserViewPayload(hints, projection([
       node('root', 'Root', { children: ['ref'] }),
@@ -86,7 +126,8 @@ describe('main-owned Agent user view', () => {
         visibleNodes: [{ nodeId: referenceId, depth: 1, expanded: false }],
         visibleOutlineTruncated: false,
       }],
-      truncated: false,
+      viewsComplete: true,
+      selectionTruncated: false,
     };
 
     const payload = buildUserViewPayload(hints, current);

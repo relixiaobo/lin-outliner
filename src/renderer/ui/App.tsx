@@ -68,7 +68,8 @@ const EMPTY_AGENT_USER_VIEW: RendererUserViewHints = {
   focusedNodeId: null,
   selectedNodeIds: [],
   panels: [],
-  truncated: false,
+  viewsComplete: false,
+  selectionTruncated: false,
 };
 
 export function App() {

@@ -5,7 +5,17 @@ import type {
   UserViewTargetSnapshot,
 } from '../../src/core/agent/protocol';
 import {
+  compactionSummaryBrief,
+  contextEntryBrief,
+  contextRevocationBrief,
+  degradationBrief,
   environmentBrief,
+  historicalToolOutputBrief,
+  referencedResourceBrief,
+  roleCatalogBrief,
+  skillCatalogBrief,
+  skillInvocationBrief,
+  suppliedFileBrief,
   userViewBrief,
 } from '../../src/main/agent/context/TurnBrief';
 
@@ -92,6 +102,81 @@ describe('Agent Turn brief language', () => {
     expect(userViewBrief(baseline, layoutOnly)).toEqual([]);
   });
 
+  test('does not invent an active or empty view when renderer targets are unresolved', () => {
+    const partial = {
+      ...view([panel('secondary', 1, false, nodeTarget('Resolved secondary'))], 'missing-active'),
+      viewsComplete: false,
+    };
+    const partialText = userViewBrief(null, partial)[0]?.body ?? '';
+    expect(partialText).toContain('Open views, left to right:');
+    expect(partialText).toContain('Some open views could not be resolved.');
+    expect(partialText).not.toContain('Viewing');
+
+    const unresolved = { ...view([], null), viewsComplete: false };
+    expect(userViewBrief(null, unresolved)[0]?.body).toBe(
+      'The current application view could not be resolved.',
+    );
+  });
+
+  test('clears focus honestly without an active view and marks bounded selection', () => {
+    const prior = {
+      ...view([panel('active', 0, true, nodeTarget('Active'))]),
+      focusedNode: {
+        nodeId: 'node:00000000-0000-4000-8000-000000000002',
+        title: 'Distinct focus',
+        panelId: null,
+        surface: 'row',
+      },
+    };
+    const cleared = view([], null);
+    const clearedText = userViewBrief(prior, cleared).map((block) => block.body).join('\n');
+    expect(clearedText).toContain('Focus cleared.');
+    expect(clearedText).not.toContain('returned to the active view');
+
+    const bounded = {
+      ...view([panel('active', 0, true, nodeTarget('Active'))]),
+      selectedNodes: [ownerNode(null)],
+      selectionTruncated: true,
+    };
+    const boundedText = userViewBrief(null, bounded).map((block) => block.body).join('\n');
+    expect(boundedText).toContain('Selected:');
+    expect(boundedText).toContain('[Selection truncated.]');
+  });
+
+  test('emits a changed insertion relation when focus stays on the same Node', () => {
+    const focusedNode = {
+      nodeId: 'node:00000000-0000-4000-8000-000000000002',
+      title: 'Child',
+      panelId: null,
+      surface: 'row',
+    };
+    const focused = {
+      ...view([panel('active', 0, true, nodeTarget('Active'))]),
+      focusedNode,
+      focusSurface: 'row',
+    };
+    const insertion = { ...focused, focusSurface: 'trailing' };
+
+    expect(userViewBrief(focused, insertion).map((block) => block.body)).toContain(
+      'Insertion target: children of "Child" [[node://00000000-0000-4000-8000-000000000002]].',
+    );
+  });
+
+  test('preserves observation authority when prior context is revoked', () => {
+    expect(contextRevocationBrief({
+      key: 'renderer:selection',
+      source: 'renderer',
+      authority: 'untrusted',
+      purpose: 'observation',
+      text: 'Quoted external state.',
+      scope: 'external selection',
+    })).toEqual({
+      authority: 'untrusted',
+      purpose: 'observation',
+      body: 'The "external selection" context is no longer active.',
+    });
+  });
+
   test('omits invalid local references and non-HTTP URLs from model text', () => {
     const targets: UserViewTargetSnapshot[] = [
       { kind: 'local-file', path: 'relative/private.md', entryKind: 'file', label: 'private.md', ownerNode: null },
@@ -134,6 +219,122 @@ describe('Agent Turn brief language', () => {
     expect(brief.length).toBeLessThan(legacy.length * 0.7);
     expect(brief).not.toContain('projection_mode');
   });
+
+  test('records density budgets for every brief family and a representative multi-Turn projection', () => {
+    const instructionEntry = {
+      key: 'memory:policy',
+      source: 'extension:memory',
+      authority: 'application' as const,
+      purpose: 'instruction' as const,
+      text: 'Use Memory only when the user explicitly requests it.',
+      scope: 'Memory',
+    };
+    const catalogEntry = {
+      change: 'available' as const,
+      name: 'outline',
+      displayName: 'Outline',
+      description: 'Read and update Outliner Nodes.',
+      identity: 'built-in:outline',
+      contentHash: 'a'.repeat(64),
+    };
+    const skillCatalog = {
+      schemaVersion: 1 as const,
+      kind: 'skillCatalog' as const,
+      mode: 'baseline' as const,
+      previousCatalogHash: null,
+      catalogHash: 'b'.repeat(64),
+      entries: [catalogEntry],
+    };
+    const blocks = {
+      environment: environmentBrief(null, environment()).body,
+      view: userViewBrief(null, view([panel('active', 0, true, nodeTarget('Plan'))]))
+        .map((block) => block.body).join('\n'),
+      additionalContext: contextEntryBrief(instructionEntry).body,
+      revocation: contextRevocationBrief(instructionEntry).body,
+      suppliedFile: suppliedFileBrief({
+        fileName: 'brief.md',
+        mimeType: 'text/markdown',
+        byteLength: 420,
+        readablePath: '/workspace/brief.md',
+      }).body,
+      referencedResource: referencedResourceBrief({
+        nodeId: NODE_ID,
+        nodeType: 'outline',
+        title: 'Plan',
+        breadcrumb: [{ nodeId: 'workspace', title: 'Tenon', panelId: null, surface: null }],
+        content: 'Implement the reviewed context contract.',
+        contentTruncated: false,
+        resourceRef: null,
+        inlineImage: false,
+        unavailableReason: null,
+      }, null).body,
+      skillCatalog: skillCatalogBrief(skillCatalog).body,
+      roleCatalog: roleCatalogBrief({
+        ...skillCatalog,
+        kind: 'roleCatalog',
+        entries: [{ ...catalogEntry, name: 'reviewer', displayName: 'Reviewer' }],
+      }).body,
+      skillInvocation: skillInvocationBrief({
+        schemaVersion: 1,
+        kind: 'skillInvocation',
+        name: 'outline',
+        displayName: 'Outline',
+        source: 'built-in',
+        identity: 'built-in:outline',
+        resourceRoot: '/skills/outline',
+        contentHash: 'c'.repeat(64),
+        instructions: 'Use the Outline CLI as the only document access path.',
+        arguments: '',
+        execution: 'inline',
+        invocationSource: 'model',
+        constraints: { allowedTools: [], model: null, effort: null },
+        invokedAt: 1,
+      }).map((block) => block.body).join('\n'),
+      compaction: compactionSummaryBrief('The context design was approved.').body,
+      historicalOutput: historicalToolOutputBrief({
+        tool: 'file_read',
+        subject: '/workspace/brief.md',
+        text: 'Approved requirements.',
+      }).map((block) => block.body).join('\n'),
+      degradation: degradationBrief({
+        code: 'payloadUnavailable',
+        source: 'userView',
+        reference: 'private-ref',
+      }).body,
+    };
+    const multiTurn = [
+      blocks.environment,
+      blocks.view,
+      blocks.skillCatalog,
+      blocks.skillInvocation,
+      environmentBrief(environment(), { ...environment(), localTime: '11:18:42' }).body,
+      blocks.referencedResource,
+      blocks.compaction,
+    ].join('\n');
+    const metrics = Object.fromEntries([
+      ...Object.entries(blocks),
+      ['multiTurn', multiTurn],
+    ].map(([name, text]) => [name, {
+      characters: text.length,
+      estimatedTokens: Math.ceil(text.length / 4),
+    }]));
+
+    expect(metrics).toEqual({
+      additionalContext: { characters: 53, estimatedTokens: 14 },
+      compaction: { characters: 54, estimatedTokens: 14 },
+      degradation: { characters: 79, estimatedTokens: 20 },
+      environment: { characters: 99, estimatedTokens: 25 },
+      historicalOutput: { characters: 170, estimatedTokens: 43 },
+      multiTurn: { characters: 600, estimatedTokens: 150 },
+      referencedResource: { characters: 137, estimatedTokens: 35 },
+      revocation: { characters: 40, estimatedTokens: 10 },
+      roleCatalog: { characters: 77, estimatedTokens: 20 },
+      skillCatalog: { characters: 70, estimatedTokens: 18 },
+      skillInvocation: { characters: 86, estimatedTokens: 22 },
+      suppliedFile: { characters: 82, estimatedTokens: 21 },
+      view: { characters: 80, estimatedTokens: 20 },
+    });
+  });
 });
 
 function view(
@@ -150,7 +351,8 @@ function view(
     selectedNodes: [],
     panels,
     suppliedOutline: [],
-    truncated: false,
+    viewsComplete: true,
+    selectionTruncated: false,
   };
 }
 

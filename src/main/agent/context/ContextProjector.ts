@@ -50,7 +50,6 @@ import { restoreSkillCatalogCheckpoint } from './SkillContextReducer';
 import { assertCanonicalUserContent } from './userContentIntegrity';
 import {
   contextDegradation,
-  renderContextDegradation,
 } from './ContextDegradation';
 import {
   boundedRedactedJsonSummary,
@@ -60,12 +59,17 @@ import {
 import { redactSecretLikeJsonAsync } from '../capabilities/agentSecretRedaction';
 import { rehydrateLargeTextArguments } from '../runtime/largeTextArguments';
 import {
+  compactionSummaryBrief,
+  contextEntryBrief,
+  contextRevocationBrief,
+  degradationBrief,
   environmentBrief,
-  instruction,
-  observation,
+  historicalToolOutputBrief,
+  referencedResourceBrief,
   roleCatalogBrief,
   skillCatalogBrief,
   skillInvocationBrief,
+  suppliedFileBrief,
   type TurnBriefBlock,
   userViewBrief,
 } from './TurnBrief';
@@ -511,10 +515,7 @@ export class CanonicalContextProjector {
       'compactionSummary',
     ).catch(() => null);
     if (summary) {
-      content.push(briefContextBlock(
-        'compactionSummary',
-        observation('untrusted', `Earlier conversation:\n${summary.text}`),
-      ));
+      content.push(briefContextBlock('compactionSummary', compactionSummaryBrief(summary.text)));
     } else {
       pushDegradation(
         'compactionSummary',
@@ -663,16 +664,11 @@ export class CanonicalContextProjector {
         );
         continue;
       }
-      const subject = observation.subject.trim() ? ` for ${observation.subject.trim()}` : '';
-      content.push(briefContextBlock('toolOutputProjection', {
-        authority: 'untrusted',
-        purpose: 'observation',
-        body: `Historical ${observation.tool} output${subject}:\n${text}`,
-      }));
-      content.push(briefContextBlock(
-        'toolOutputProjection',
-        instruction('Read the current source again before relying on this historical output if it may have changed.'),
-      ));
+      content.push(...historicalToolOutputBrief({
+        tool: observation.tool,
+        subject: observation.subject,
+        text,
+      }).map((block) => briefContextBlock('toolOutputProjection', block)));
     }
     if (item.instructionsRef) {
       const instructions = await this.readCompactionPayload(
@@ -688,11 +684,7 @@ export class CanonicalContextProjector {
         return content;
       }
       for (const entry of instructions.entries) {
-        content.push(briefContextBlock(instructions.kind, {
-          authority: entry.authority,
-          purpose: entry.purpose,
-          body: entry.text,
-        }));
+        content.push(briefContextBlock(instructions.kind, contextEntryBrief(entry)));
       }
     }
     return content;
@@ -717,12 +709,7 @@ export class CanonicalContextProjector {
     kind: ContextPayloadKind,
     degradation: ContextDegradationCheckpointEntry,
   ): ProjectedContextBlock {
-    return contextBlock(
-      kind,
-      renderContextDegradation(degradation),
-      'application',
-      'observation',
-    );
+    return briefContextBlock(kind, degradationBrief(degradation));
   }
 
   private async projectEvidence(
@@ -762,25 +749,20 @@ export class CanonicalContextProjector {
     payload: Extract<ThreadContextPayload, { readonly kind: 'additionalContext' }>,
     resourceRefs: readonly ThreadResourceReference[],
   ): Promise<ProjectedContextBlock[]> {
-    const content = payload.turnEntries.map((entry) => contextBlock(
-      payload.kind,
-      entry.text,
-      entry.authority,
-      entry.purpose,
+    const content = payload.turnEntries.map((entry) => (
+      briefContextBlock(payload.kind, contextEntryBrief(entry))
     ));
     if (payload.threadState !== null) {
       content.push(...this.projectAdditionalThreadState(payload.threadState));
     }
     for (const ref of uniqueResourceReferences(resourceRefs)) {
       const readablePath = await this.resources.resolveResourceObservationPath(ref).catch(() => null);
-      content.push(contextBlock(
-        payload.kind,
-        readablePath
-          ? `Supplied file ${formatNamedFileReference(readablePath, 'file', ref.fileName)} (${ref.mimeType}, ${ref.byteLength} bytes).`
-          : `Supplied file "${ref.fileName}" is unavailable.`,
-        'untrusted',
-        'observation',
-      ));
+      content.push(briefContextBlock(payload.kind, suppliedFileBrief({
+        fileName: ref.fileName,
+        mimeType: ref.mimeType,
+        byteLength: ref.byteLength,
+        readablePath,
+      })));
     }
     return content;
   }
@@ -793,20 +775,12 @@ export class CanonicalContextProjector {
     for (const entry of threadState) {
       const previous = this.previousAdditionalContext?.get(entry.key);
       if (previous && contextEntriesEqual(previous, entry)) continue;
-      content.push(contextBlock(
-        'additionalContext',
-        entry.text,
-        entry.authority,
-        entry.purpose,
-      ));
+      content.push(briefContextBlock('additionalContext', contextEntryBrief(entry)));
     }
     if (this.previousAdditionalContext) {
       for (const entry of this.previousAdditionalContext.values()) {
         if (next.has(entry.key)) continue;
-        const scope = contextScopeLabel(entry.key);
-        content.push(briefContextBlock('additionalContext', entry.purpose === 'instruction'
-          ? instruction(`Stop applying the "${scope}" instructions.`)
-          : observation('application', `The "${scope}" context is no longer active.`)));
+        content.push(briefContextBlock('additionalContext', contextRevocationBrief(entry)));
       }
     }
     this.previousAdditionalContext = next;
@@ -841,27 +815,10 @@ export class CanonicalContextProjector {
           ));
         }
       }
-      const nodeReference = formatNamedNodeReference(
-        resource.nodeId,
-        resource.title,
-        { unavailable: 'display' },
-      );
-      const breadcrumb = resource.breadcrumb.map((node) => node.title).filter(Boolean).join(' / ');
-      content.push(contextBlock('referencedResources', [
-        `Supplied Node: ${nodeReference}${breadcrumb ? ` at ${breadcrumb}` : ''}.`,
-        resource.unavailableReason
-          ? `Content unavailable: ${resource.unavailableReason}.`
-          : null,
-        path && resource.resourceRef
-          ? `Readable resource: ${formatNamedFileReference(
-              path,
-              resource.resourceRef.mimeType === 'inode/directory' ? 'directory' : 'file',
-              resource.title || resource.resourceRef.fileName,
-            )}.`
-          : null,
-        resource.content ? `Supplied content:\n${resource.content}` : null,
-        resource.contentTruncated ? '[Supplied content truncated.]' : null,
-      ].filter((line): line is string => line !== null).join('\n'), 'untrusted', 'observation'));
+      content.push(briefContextBlock(
+        'referencedResources',
+        referencedResourceBrief(resource, path),
+      ));
       if (resource.inlineImage && resource.resourceRef) {
         const bytes = await this.resources.readResource(resource.resourceRef).catch(() => null);
         if (!bytes) {
@@ -1079,12 +1036,8 @@ function contextEntriesEqual(left: ContextTextEntry, right: ContextTextEntry): b
     && left.source === right.source
     && left.authority === right.authority
     && left.purpose === right.purpose
-    && left.text === right.text;
-}
-
-function contextScopeLabel(key: string): string {
-  const leaf = key.split(':').at(-1) ?? key;
-  return leaf.replace(/[-_]+/gu, ' ').trim() || 'application';
+    && left.text === right.text
+    && left.scope === right.scope;
 }
 
 function outputReferencesEqual(

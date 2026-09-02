@@ -1,6 +1,9 @@
 import type {
   ContextAuthority,
+  ContextDegradationCheckpointEntry,
   ContextPurpose,
+  ContextTextEntry,
+  ReferencedResourcesContextPayload,
   RoleCatalogContextPayload,
   SkillCatalogContextPayload,
   SkillInvocationContextPayload,
@@ -11,6 +14,8 @@ import type {
 } from '../../../core/agent/protocol';
 import {
   formatFileReferenceMarker,
+  formatNamedFileReference,
+  formatNamedNodeReference,
   formatNodeReferenceMarker,
   formatThreadReferenceMarker,
   parseFileReferenceUri,
@@ -56,20 +61,28 @@ export function userViewBrief(
 
   const previousFocus = distinctFocus(previous);
   const nextFocus = distinctFocus(next);
-  if (!sameNode(previousFocus, nextFocus)) {
+  if (!sameFocus(previous, previousFocus, next, nextFocus)) {
     if (nextFocus) {
       const reference = namedNode(nextFocus);
       blocks.push(observation('untrusted', next.focusSurface === 'trailing'
         ? `Insertion target: children of ${reference}.`
         : `Focused node: ${reference}.`));
     } else if (previousFocus) {
-      blocks.push(observation('untrusted', 'Focus returned to the active view.'));
+      blocks.push(observation('untrusted', activePanel(next)
+        ? 'Focus returned to the active view.'
+        : 'Focus cleared.'));
     }
   }
 
-  if (!sameNodes(previous?.selectedNodes ?? [], next.selectedNodes)) {
+  if (
+    !sameNodes(previous?.selectedNodes ?? [], next.selectedNodes)
+    || previous?.selectionTruncated !== next.selectionTruncated
+  ) {
     if (next.selectedNodes.length > 0) {
-      blocks.push(observation('untrusted', `Selected: ${next.selectedNodes.map(namedNode).join('; ')}.`));
+      blocks.push(observation('untrusted', [
+        `Selected: ${next.selectedNodes.map(namedNode).join('; ')}.`,
+        next.selectionTruncated ? '[Selection truncated.]' : null,
+      ].filter((line): line is string => line !== null).join('\n')));
     } else if ((previous?.selectedNodes.length ?? 0) > 0) {
       blocks.push(observation('untrusted', 'Selection cleared.'));
     }
@@ -121,6 +134,86 @@ export function skillInvocationBrief(payload: SkillInvocationContextPayload): re
   ];
 }
 
+export function contextEntryBrief(entry: ContextTextEntry): TurnBriefBlock {
+  return { authority: entry.authority, purpose: entry.purpose, body: entry.text };
+}
+
+export function contextRevocationBrief(entry: ContextTextEntry): TurnBriefBlock {
+  const scope = entry.scope?.trim();
+  if (entry.purpose === 'instruction') {
+    return instruction(scope
+      ? `Stop applying the "${scope}" instructions.`
+      : 'The prior application instructions are no longer active.');
+  }
+  return observation(entry.authority, scope
+    ? `The "${scope}" context is no longer active.`
+    : 'A prior application context is no longer active.');
+}
+
+export function suppliedFileBrief(input: {
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly byteLength: number;
+  readonly readablePath: string | null;
+}): TurnBriefBlock {
+  return observation('untrusted', input.readablePath
+    ? `Supplied file ${formatNamedFileReference(input.readablePath, 'file', input.fileName)} (${input.mimeType}, ${input.byteLength} bytes).`
+    : `Supplied file "${input.fileName}" is unavailable.`);
+}
+
+export function referencedResourceBrief(
+  resource: ReferencedResourcesContextPayload['resources'][number],
+  readablePath: string | null,
+): TurnBriefBlock {
+  const nodeReference = formatNamedNodeReference(
+    resource.nodeId,
+    resource.title,
+    { unavailable: 'display' },
+  );
+  const breadcrumb = resource.breadcrumb.map((node) => node.title).filter(Boolean).join(' / ');
+  return observation('untrusted', [
+    `Supplied Node: ${nodeReference}${breadcrumb ? ` at ${breadcrumb}` : ''}.`,
+    resource.unavailableReason ? `Content unavailable: ${resource.unavailableReason}.` : null,
+    readablePath && resource.resourceRef
+      ? `Readable resource: ${formatNamedFileReference(
+          readablePath,
+          resource.resourceRef.mimeType === 'inode/directory' ? 'directory' : 'file',
+          resource.title || resource.resourceRef.fileName,
+        )}.`
+      : null,
+    resource.content ? `Supplied content:\n${resource.content}` : null,
+    resource.contentTruncated ? '[Supplied content truncated.]' : null,
+  ].filter((line): line is string => line !== null).join('\n'));
+}
+
+export function compactionSummaryBrief(text: string): TurnBriefBlock {
+  return observation('untrusted', `Earlier conversation:\n${text}`);
+}
+
+export function historicalToolOutputBrief(input: {
+  readonly tool: string;
+  readonly subject: string;
+  readonly text: string;
+}): readonly TurnBriefBlock[] {
+  const subject = input.subject.trim() ? ` for ${input.subject.trim()}` : '';
+  return [
+    observation('untrusted', `Historical ${input.tool} output${subject}:\n${input.text}`),
+    instruction('Read the current source again before relying on this historical output if it may have changed.'),
+  ];
+}
+
+export function degradationBrief(entry: ContextDegradationCheckpointEntry): TurnBriefBlock {
+  const affected = entry.source
+    .replace(/([a-z])([A-Z])/gu, '$1 $2')
+    .replace(/[-_]+/gu, ' ')
+    .trim()
+    .toLowerCase();
+  return observation(
+    'application',
+    `${affected || 'Historical context'} could not be restored. Re-inspect current state before relying on it.`,
+  );
+}
+
 export function observation(
   authority: ContextAuthority,
   body: string,
@@ -134,15 +227,22 @@ export function instruction(body: string): TurnBriefBlock {
 
 function viewStatement(payload: UserViewContextPayload): string | null {
   const panels = [...payload.panels].sort((left, right) => left.order - right.order);
-  if (panels.length === 0) return payload.activePanelId === null ? 'No application view is currently open.' : null;
-  const active = panels.find((panel) => panel.panelId === payload.activePanelId)
-    ?? panels.find((panel) => panel.active)
-    ?? panels[0]!;
+  if (panels.length === 0) {
+    return payload.viewsComplete
+      ? 'No application view is currently open.'
+      : 'The current application view could not be resolved.';
+  }
+  const active = activePanel(payload);
+  if (!active) {
+    const open = panels.slice(0, 4).map((panel) => targetDescription(panel.target)).join('; ');
+    return `Open views, left to right: ${open}.${payload.viewsComplete ? '' : ' Some open views could not be resolved.'}`;
+  }
   const other = panels.filter((panel) => panel !== active).slice(0, 3);
   const primary = `Viewing ${targetDescription(active.target)}`;
-  return other.length === 0
+  const statement = other.length === 0
     ? `${primary}.`
     : `${primary}. Other open views, left to right: ${other.map((panel) => targetDescription(panel.target)).join('; ')}.`;
+  return payload.viewsComplete ? statement : `${statement} Some other open views could not be resolved.`;
 }
 
 function targetDescription(target: UserViewTargetSnapshot): string {
@@ -179,21 +279,29 @@ function namedNode(node: Pick<UserViewNodeSnapshot, 'nodeId' | 'title'>): string
 
 function distinctFocus(payload: UserViewContextPayload | null): UserViewNodeSnapshot | null {
   if (!payload?.focusedNode) return null;
-  const active = payload.panels.find((panel) => panel.panelId === payload.activePanelId)
-    ?? payload.panels.find((panel) => panel.active);
+  const active = activePanel(payload);
   return active?.target.kind === 'node' && active.target.nodeId === payload.focusedNode.nodeId
     ? null
     : payload.focusedNode;
 }
 
 function viewSignature(payload: UserViewContextPayload): string {
-  return JSON.stringify([...payload.panels]
+  return JSON.stringify({
+    viewsComplete: payload.viewsComplete,
+    panels: [...payload.panels]
     .sort((left, right) => left.order - right.order)
     .map((panel) => ({
       order: panel.order,
       active: panel.panelId === payload.activePanelId || panel.active,
       target: visibleTarget(panel.target),
-    })));
+    })),
+  });
+}
+
+function activePanel(payload: UserViewContextPayload) {
+  return payload.panels.find((panel) => panel.panelId === payload.activePanelId)
+    ?? payload.panels.find((panel) => panel.active)
+    ?? null;
 }
 
 function visibleTarget(target: UserViewTargetSnapshot): unknown {
@@ -310,6 +418,24 @@ function catalogChange(change: 'available' | 'added' | 'changed' | 'removed'): s
 
 function sameNode(left: UserViewNodeSnapshot | null, right: UserViewNodeSnapshot | null): boolean {
   return left?.nodeId === right?.nodeId && left?.title === right?.title;
+}
+
+function sameFocus(
+  leftPayload: UserViewContextPayload | null,
+  leftNode: UserViewNodeSnapshot | null,
+  rightPayload: UserViewContextPayload,
+  rightNode: UserViewNodeSnapshot | null,
+): boolean {
+  return sameNode(leftNode, rightNode)
+    && focusRelation(leftPayload, leftNode) === focusRelation(rightPayload, rightNode);
+}
+
+function focusRelation(
+  payload: UserViewContextPayload | null,
+  node: UserViewNodeSnapshot | null,
+): 'node' | 'insertion' | null {
+  if (!node) return null;
+  return payload?.focusSurface === 'trailing' ? 'insertion' : 'node';
 }
 
 function sameNodes(left: readonly UserViewNodeSnapshot[], right: readonly UserViewNodeSnapshot[]): boolean {

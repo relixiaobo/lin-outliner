@@ -90,8 +90,6 @@ export interface TurnAdmissionContribution {
 
 export interface ThreadContextContribution {
   readonly extensionId: string;
-  /** Host-reviewed capability required before extension text may direct model behavior. */
-  readonly applicationInstructions?: true;
   readonly additionalContext: AdditionalContext;
 }
 

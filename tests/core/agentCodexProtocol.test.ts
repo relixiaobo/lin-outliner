@@ -1000,7 +1000,8 @@ describe('Codex Agent Core protocol codec', () => {
           }],
           visibleOutlineTruncated: false,
         }],
-        truncated: false,
+        viewsComplete: true,
+        selectionTruncated: false,
       },
       {
         schemaVersion: 1,
@@ -1434,7 +1435,8 @@ describe('Codex Agent Core protocol codec', () => {
         visibleNodes: [{ nodeId: 'node-1', depth: 1, expanded: false }],
         visibleOutlineTruncated: false,
       }],
-      truncated: false,
+      viewsComplete: true,
+      selectionTruncated: false,
     };
     expect(decodeRendererTurnStartRequest({
       threadId: THREAD_ID,

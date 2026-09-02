@@ -704,7 +704,7 @@ function decodeRendererUserViewHints(value: unknown) {
   const record = recordValue(value, 'userView');
   exactKeys(record, [
     'activePanelId', 'focusedPanelId', 'focusSurface', 'focusedNodeId',
-    'selectedNodeIds', 'panels', 'truncated',
+    'selectedNodeIds', 'panels', 'viewsComplete', 'selectionTruncated',
   ], 'userView');
   const selectedNodeIds = arrayValue(record.selectedNodeIds, 'userView.selectedNodeIds')
     .map((entry, index) => nonEmptyTrimmedString(entry, `userView.selectedNodeIds[${index}]`));
@@ -752,7 +752,8 @@ function decodeRendererUserViewHints(value: unknown) {
     focusedNodeId: nullableString(record.focusedNodeId, 'userView.focusedNodeId'),
     selectedNodeIds,
     panels,
-    truncated: booleanValue(record.truncated, 'userView.truncated'),
+    viewsComplete: booleanValue(record.viewsComplete, 'userView.viewsComplete'),
+    selectionTruncated: booleanValue(record.selectionTruncated, 'userView.selectionTruncated'),
   };
   if (new TextEncoder().encode(JSON.stringify(decoded)).byteLength > 64 * 1024) {
     fail('userView', 'exceeds the 64 KiB serialized limit');
@@ -829,7 +830,7 @@ export function decodeAdditionalContext(value: unknown, allowApplication: boolea
   for (const [key, entryValue] of Object.entries(record)) {
     if (!key.trim()) fail('additionalContext', 'keys must be non-empty');
     const entry = recordValue(entryValue, `additionalContext.${key}`);
-    exactKeys(entry, ['value', 'kind', 'purpose'], `additionalContext.${key}`);
+    exactKeys(entry, ['value', 'kind', 'purpose', 'scope'], `additionalContext.${key}`);
     const kind = enumValue(entry.kind, ['untrusted', 'application'], `additionalContext.${key}.kind`);
     const purpose = entry.purpose === undefined
       ? undefined
@@ -840,10 +841,16 @@ export function decodeAdditionalContext(value: unknown, allowApplication: boolea
     if (!allowApplication && purpose === 'instruction') {
       fail(`additionalContext.${key}.purpose`, 'renderer input may author only observation context');
     }
+    if (kind === 'untrusted' && purpose === 'instruction') {
+      fail(`additionalContext.${key}`, 'untrusted text cannot acquire instruction authority');
+    }
     result[key] = {
       value: stringValue(entry.value, `additionalContext.${key}.value`, true),
       kind,
       ...(purpose === undefined ? {} : { purpose }),
+      ...(entry.scope === undefined
+        ? {}
+        : { scope: nonEmptyTrimmedString(entry.scope, `additionalContext.${key}.scope`) }),
     };
   }
   return deepFreeze(result);
@@ -3874,7 +3881,8 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
     case 'userView': {
       exactKeys(record, [
         'schemaVersion', 'kind', 'activePanelId', 'focusedPanelId', 'focusSurface',
-        'focusedNode', 'selectedNodes', 'panels', 'suppliedOutline', 'truncated',
+        'focusedNode', 'selectedNodes', 'panels', 'suppliedOutline', 'viewsComplete',
+        'selectionTruncated',
       ], 'contextPayload');
       const selectedNodes = arrayValue(record.selectedNodes, 'contextPayload.selectedNodes')
         .map((entry, index) => decodeUserViewNode(entry, `contextPayload.selectedNodes[${index}]`));
@@ -3900,7 +3908,11 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
         selectedNodes,
         panels,
         suppliedOutline,
-        truncated: booleanValue(record.truncated, 'contextPayload.truncated'),
+        viewsComplete: booleanValue(record.viewsComplete, 'contextPayload.viewsComplete'),
+        selectionTruncated: booleanValue(
+          record.selectionTruncated,
+          'contextPayload.selectionTruncated',
+        ),
       });
     }
     case 'additionalContext': {
@@ -4175,7 +4187,7 @@ export function decodeThreadContextPayloadJson(encoded: string): ThreadContextPa
 
 function decodeContextTextEntry(value: unknown, path: string) {
   const record = recordValue(value, path);
-  exactKeys(record, ['key', 'source', 'authority', 'purpose', 'text'], path);
+  exactKeys(record, ['key', 'source', 'authority', 'purpose', 'text', 'scope'], path);
   const authority = enumValue(record.authority, ['application', 'untrusted'], `${path}.authority`);
   const purpose = enumValue(record.purpose, ['instruction', 'observation'], `${path}.purpose`);
   if (authority === 'untrusted' && purpose === 'instruction') {
@@ -4187,6 +4199,9 @@ function decodeContextTextEntry(value: unknown, path: string) {
     authority,
     purpose,
     text: stringValue(record.text, `${path}.text`, true),
+    ...(record.scope === undefined
+      ? {}
+      : { scope: nonEmptyTrimmedString(record.scope, `${path}.scope`) }),
   } as const;
 }
 

@@ -977,6 +977,11 @@ They own their private state and communicate through typed extension contracts.
 The host assembles extension and capability contracts into one executable
 registry, validates provider-name uniqueness and runtime schemas, and fails
 closed if an enabled extension contract has no runtime implementation.
+Instruction authority is registration metadata owned by the Host. An extension's
+per-Turn context contribution cannot grant itself that capability; it supplies only
+content and an optional stable semantic scope used for later revocation language. The
+registry snapshots the capability at registration rather than retaining a mutable
+caller-owned object.
 
 Memory is the first durable extension using this boundary. Its immutable Turn
 admission, terminal citation Items, history-rollback invalidation, and private

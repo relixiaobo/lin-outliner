@@ -25,18 +25,20 @@ export function buildRendererUserViewHints(input: {
   readonly threadName?: (threadId: string) => string | null;
 }): RendererUserViewHints {
   let remainingVisibleNodes = MAX_VISIBLE_NODES;
-  let truncated = false;
+  let viewsComplete = true;
   const panels: RendererUserViewPanelHint[] = [];
   for (let index = 0; index < input.panels.length; index += 1) {
     const panel = input.panels[index]!;
     const target = panelTarget(panel, input.index, input.threadName);
-    if (!target) continue;
+    if (!target) {
+      viewsComplete = false;
+      continue;
+    }
     const rootNodeId = target.kind === 'node' ? target.nodeId : null;
     const visible = rootNodeId
       ? visibleNodeHints(rootNodeId, input.index, input.ui, remainingVisibleNodes)
       : { nodes: [], truncated: false };
     remainingVisibleNodes -= visible.nodes.length;
-    truncated ||= visible.truncated;
     panels.push({
       panelId: panel.id,
       order: index + 1,
@@ -48,7 +50,8 @@ export function buildRendererUserViewHints(input: {
     });
   }
   const selected = selectedNodeIds(input.index, input.ui);
-  truncated ||= selected.truncated;
+  const activeViewResolved = input.activePanelId === null
+    || panels.some((panel) => panel.panelId === input.activePanelId);
   return {
     activePanelId: input.activePanelId,
     focusedPanelId: input.ui.focusedPanelId,
@@ -56,7 +59,8 @@ export function buildRendererUserViewHints(input: {
     focusedNodeId: input.ui.focusedId,
     selectedNodeIds: selected.nodeIds,
     panels,
-    truncated,
+    viewsComplete: viewsComplete && activeViewResolved,
+    selectionTruncated: selected.truncated,
   };
 }
 

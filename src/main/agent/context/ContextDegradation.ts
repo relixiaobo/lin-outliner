@@ -29,12 +29,3 @@ export function appendContextDegradations(
 ): void {
   for (const entry of entries) recordContextDegradation(target, entry);
 }
-
-export function renderContextDegradation(entry: ContextDegradationCheckpointEntry): string {
-  const affected = entry.source
-    .replace(/([a-z])([A-Z])/gu, '$1 $2')
-    .replace(/[-_]+/gu, ' ')
-    .trim()
-    .toLowerCase();
-  return `${affected || 'Historical context'} could not be restored. Re-inspect current state before relying on it.`;
-}

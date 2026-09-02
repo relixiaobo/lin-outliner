@@ -328,7 +328,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   };
   threadCapabilityReference.set(threads);
   memory.bindHost(threadService);
-  extensions.register(memory);
+  extensions.register(memory, { applicationInstructions: true });
 
   const automationStore = new AutomationStore(join(options.userDataDir, 'agent', 'automations.sqlite'));
   const automationWorktree = new AutomationWorktree(options.userDataDir);

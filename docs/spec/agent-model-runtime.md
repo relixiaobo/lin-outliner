@@ -193,6 +193,10 @@ and depths that the Outliner renders; reference chains use cycle protection, and
 derives child counts from that resolved displayed parent. Expanded table records omit
 authored field entries already represented by visible columns. Capture remains bounded
 to 80 visible Nodes, depth 5, 50 selected Nodes, and 64 KiB serialized.
+`viewsComplete` records whether every open target was resolved;
+`selectionTruncated` independently records whether the selected-Node list exceeded its
+bound. Missing renderer projection state and a stale active Pane both make the view set
+incomplete. Per-view Outline truncation remains on the supplied Outline that it affects.
 
 The Turn brief treats a pane as layout and emits only the displayed objects. It names
 the active view first and includes at most three other views in left-to-right order.
@@ -200,10 +204,16 @@ Node, readable absolute-file, and Thread identities use public reference markers
 HTTP(S) URLs remain URLs. Private pane IDs, asset/value/record IDs, focus surfaces,
 root types, child counts, reducer metadata, and invalid file or URL locators never enter
 model prose. Distinct actionable focus and non-empty selection receive separate readable
-statements; later removal emits `Focus returned to the active view.` or
-`Selection cleared.` exactly once. A changed open-view set emits one complete resulting
-view statement rather than renderer field deltas or `panel_closed` tombstones. With no
-renderer-authored view, main emits no view payload and never synthesizes a Today view.
+statements; later removal emits `Focus returned to the active view.` when that view
+still exists, `Focus cleared.` otherwise, or `Selection cleared.` exactly once. A
+transition between ordinary Node focus and a trailing insertion target is emitted even
+when the Node identity is unchanged. A bounded selection carries an explicit truncation
+marker. A changed open-view set emits one resulting view statement rather than renderer
+field deltas or `panel_closed`
+tombstones. An unresolved active target is never replaced by another Pane or described
+as an empty application; the statement instead reports that the current view could not
+be resolved and may list only resolved non-active views. With no renderer-authored view,
+main emits no view payload and never synthesizes a Today view.
 
 Viewed identity and supplied content have separate canonical and model-visible owners.
 A bounded visible Outline is stored under `suppliedOutline` and projected as its own
@@ -271,11 +281,14 @@ provider-facing `<system-reminder>`. Exactly three wrapper pairs are valid:
 `application/observation`, `untrusted/observation`, and
 `application/instruction`; `untrusted/instruction` is invalid. Authority is a
 Host-assigned permission class, not a confidence score or a property inferred from
-authored prose. Extension text receives application-instruction authority only when its
-registered contribution explicitly declares the Host-reviewed instruction capability;
-otherwise it is downgraded to an untrusted observation. A referenced
-image flushes the accumulated text bundle before its bytes, so text/image/user-content order
-is never changed; later text starts another bundle only when that ordering requires it. The
+authored prose. Extension text receives application-instruction authority only when the
+Host grants that capability while registering the extension. A contribution carries
+content and semantic scope, never its own authority grant; entries from an extension
+without the registered capability are downgraded to untrusted observations. Revoking an
+observation retains its admitted authority, so an untrusted scope label cannot be promoted
+by Host-generated lifecycle prose. A referenced image flushes the accumulated text bundle
+before its bytes, so text/image/user-content order is never changed; later text starts
+another bundle only when that ordering requires it. The
 wrapper is only a serialization boundary: typed canonical evidence, source kind, stable
 key, producer, lifecycle, hashes, reducer state, and replay metadata remain Host-private
 authority. Skill and Role catalog payloads

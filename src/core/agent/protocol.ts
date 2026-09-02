@@ -722,7 +722,8 @@ export interface RendererUserViewHints {
   readonly focusedNodeId: string | null;
   readonly selectedNodeIds: readonly string[];
   readonly panels: readonly RendererUserViewPanelHint[];
-  readonly truncated: boolean;
+  readonly viewsComplete: boolean;
+  readonly selectionTruncated: boolean;
 }
 
 export interface MemoryCitationEntry {
@@ -804,6 +805,8 @@ export interface ContextTextEntry {
   readonly authority: ContextAuthority;
   readonly purpose: ContextPurpose;
   readonly text: string;
+  /** Stable model-facing name used only when this state later needs explicit revocation. */
+  readonly scope?: string;
 }
 
 export interface TurnEnvironmentContextPayload {
@@ -910,7 +913,8 @@ export interface UserViewContextPayload {
   readonly selectedNodes: readonly UserViewNodeSnapshot[];
   readonly panels: readonly UserViewPanelSnapshot[];
   readonly suppliedOutline: readonly UserViewSuppliedOutlineSnapshot[];
-  readonly truncated: boolean;
+  readonly viewsComplete: boolean;
+  readonly selectionTruncated: boolean;
 }
 
 export type AdditionalContextPayloadEntry = ContextTextEntry;
@@ -1515,6 +1519,7 @@ export interface AdditionalContextEntry {
   readonly value: string;
   readonly kind: AdditionalContextKind;
   readonly purpose?: ContextPurpose;
+  readonly scope?: string;
 }
 
 export type AdditionalContext = Readonly<Record<string, AdditionalContextEntry>>;

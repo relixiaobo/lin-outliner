@@ -3321,7 +3321,8 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
           visibleNodes: [{ nodeId: 'focus', depth: 1, expanded: false, title: 'Injected title' }],
           visibleOutlineTruncated: false,
         }],
-        truncated: false,
+        viewsComplete: true,
+        selectionTruncated: false,
       },
     };
     await expect(fixture.service.request('turn/start', malformed as never))
@@ -3356,7 +3357,8 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
           ],
           visibleOutlineTruncated: false,
         }],
-        truncated: false,
+        viewsComplete: true,
+        selectionTruncated: false,
       },
     });
     await fixture.executor.waitUntilWaiting();
@@ -3428,13 +3430,12 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       id: 'context-probe',
       contributeThreadContext: () => ({
         extensionId: 'context-probe',
-        applicationInstructions: true,
         additionalContext: {
           extension_instruction: { kind: 'application', value: 'Extension guidance' },
           extension_observation: { kind: 'untrusted', value: 'External observation' },
         },
       }),
-    });
+    }, { applicationInstructions: true });
     const fixture = await createFixture(registry);
     const thread = (await fixture.service.startThread({
       source: 'automation',
@@ -10936,6 +10937,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
           source: 'extension:goal',
           authority: 'application',
           purpose: 'instruction',
+          scope: 'goal completion',
           text: expect.stringContaining('Treat Goal completion as unproven.'),
         },
       ]),

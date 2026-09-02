@@ -346,10 +346,10 @@ export class MemoryExtension implements AgentCoreExtension {
       this.turnMemoryUsage.delete(activeTurn.id);
       return explicitlyRequested ? {
         extensionId: this.id,
-        applicationInstructions: true as const,
         additionalContext: {
           memory: {
             kind: 'application' as const,
+            scope: 'Memory',
             value: 'Memory is disabled for this Turn. Do not create, edit, tag, move, or delete Memory Nodes. Tell the user that Memory must be enabled before this request can be applied.',
           },
         },
@@ -362,10 +362,10 @@ export class MemoryExtension implements AgentCoreExtension {
       this.turnMemoryUsage.delete(activeTurn.id);
       return explicitlyRequested ? {
         extensionId: this.id,
-        applicationInstructions: true as const,
         additionalContext: {
           memory: {
             kind: 'application' as const,
+            scope: 'Memory',
             value: 'Memory became unavailable for this Turn. Do not mutate Memory Nodes. Tell the user to retry after Memory is enabled.',
           },
         },
@@ -379,10 +379,10 @@ export class MemoryExtension implements AgentCoreExtension {
     }
     return {
       extensionId: this.id,
-      applicationInstructions: true as const,
       additionalContext: {
         memory: {
           kind: 'application' as const,
+          scope: 'Memory',
           value: MEMORY_OPERATION_CONTEXT,
         },
       },
