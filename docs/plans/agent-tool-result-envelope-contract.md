@@ -76,6 +76,9 @@ Constraints:
   Skill terminal settlement. It changed shared Agent specifications, Core protocol
   surfaces, and `SubagentCollaboration`, but not tool-result construction. Preserve
   that settlement and projection ownership while normalizing result construction.
+- **CON-6 collision order:** this plan precedes Draft PR #611. Both plans update
+  `agent-model-runtime.md`; land this Tool Result Kernel contract first so #611 can
+  rebase and describe model-visible context against the final result boundary.
 
 Rejected alternatives:
 
