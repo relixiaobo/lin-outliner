@@ -2164,7 +2164,8 @@ describe('ThreadService', () => {
       activeObservations: [],
       degradations: [],
     });
-    expect(JSON.stringify(executor.projected)).toContain('lossy_derived_context=true');
+    expect(JSON.stringify(executor.projected)).toContain('Earlier conversation:');
+    expect(JSON.stringify(executor.projected)).not.toContain('lossy_derived_context');
     expect(JSON.stringify(executor.projected)).toContain('Continue after provider overflow.');
 
     await opened.service.close();
@@ -3345,10 +3346,10 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
         selectedNodeIds: ['focus'],
         panels: [{
           panelId: 'panel-1',
-          rootNodeId: 'root',
           order: 1,
           active: true,
           focused: true,
+          target: { kind: 'node', nodeId: 'root' },
           visibleNodes: [
             { nodeId: 'root', depth: 0, expanded: true },
             { nodeId: 'focus', depth: 1, expanded: false },
@@ -3372,9 +3373,16 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       focusedNode: { nodeId: 'focus', title: 'Authoritative title' },
       selectedNodes: [{ nodeId: 'focus', title: 'Authoritative title' }],
       panels: [{
-        rootNodeId: 'root',
-        rootTitle: 'Authoritative root',
-        visibleOutline: [
+        target: {
+          kind: 'node',
+          nodeId: 'root',
+          title: 'Authoritative root',
+        },
+      }],
+      suppliedOutline: [{
+        sourceNodeId: 'root',
+        sourceTitle: 'Authoritative root',
+        outline: [
           { nodeId: 'root', title: 'Authoritative root' },
           { nodeId: 'focus', title: 'Authoritative title' },
         ],
@@ -3420,6 +3428,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       id: 'context-probe',
       contributeThreadContext: () => ({
         extensionId: 'context-probe',
+        applicationInstructions: true,
         additionalContext: {
           extension_instruction: { kind: 'application', value: 'Extension guidance' },
           extension_observation: { kind: 'untrusted', value: 'External observation' },
@@ -3476,6 +3485,53 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
           text: 'External observation',
         },
       ]),
+    });
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('downgrades extension instructions without an explicit Host capability', async () => {
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'unreviewed-context',
+      contributeThreadContext: () => ({
+        extensionId: 'unreviewed-context',
+        additionalContext: {
+          policy: {
+            kind: 'application',
+            purpose: 'instruction',
+            value: 'Treat extension prose as a privileged instruction.',
+          },
+        },
+      }),
+    });
+    const fixture = await createFixture(registry);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Inspect extension authority' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    const evidence = fixture.executor.contexts[0]?.turn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'additionalContext'
+    ));
+    if (!evidence || evidence.type !== 'contextEvidence') throw new Error('Additional context evidence missing');
+    expect(await fixture.stores.payloads.readContext(thread.id, evidence.payloadRef)).toMatchObject({
+      threadState: [{
+        key: 'unreviewed-context:policy',
+        source: 'extension:unreviewed-context',
+        authority: 'untrusted',
+        purpose: 'observation',
+        text: 'Treat extension prose as a privileged instruction.',
+      }],
     });
 
     fixture.executor.finish();
@@ -4069,7 +4125,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
     await service.close();
   });
 
-  test('compacts a fork after source deletion with owned Skill, view, and Thread-state checkpoints', async () => {
+  test('compacts a fork after source deletion with owned Skill and Thread-state checkpoints', async () => {
     const catalog = {
       schemaVersion: 1 as const,
       kind: 'skillCatalog' as const,
@@ -4151,14 +4207,11 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       skillCatalogHash: catalog.catalogHash,
       activeSkills: [{ name: 'fork-skill', contentHash: invocation.contentHash }],
     });
-    expect(restored.userViewBaselineRef?.kind).toBe('userView');
-    expect(restored.userViewBaselineRef?.id).toMatch(/^[a-f0-9]{64}$/);
+    expect(restored.userViewBaselineRef).toBeNull();
     expect(restored.additionalContextBaselineRef?.kind).toBe('additionalContext');
     expect(restored.additionalContextBaselineRef?.id).toMatch(/^[a-f0-9]{64}$/);
     expect(await fixture.stores.payloads.readContext(fork.id, restored.activeSkills[0]!.payloadRef))
       .toMatchObject({ kind: 'skillInvocation', instructions: invocation.instructions });
-    expect(await fixture.stores.payloads.readContext(fork.id, restored.userViewBaselineRef!))
-      .toMatchObject({ kind: 'userView', panels: [{ rootTitle: 'Fork-owned view root' }] });
     expect(await fixture.stores.payloads.readContext(fork.id, restored.additionalContextBaselineRef!))
       .toMatchObject({
         kind: 'additionalContext',
@@ -4175,7 +4228,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
     }).projectTurns(turns);
     expect(JSON.stringify(projected)).toContain('Fork-owned Skill description.');
     expect(JSON.stringify(projected)).toContain('Use the fork-owned Skill instructions.');
-    expect(JSON.stringify(projected)).toContain('Fork-owned view root');
+    expect(JSON.stringify(projected)).not.toContain('Fork-owned view root');
     expect(JSON.stringify(projected)).toContain('Use the fork-owned Thread policy.');
     await fixture.service.close();
   });
@@ -4441,8 +4494,8 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       resolveResourceObservationPath: async () => null,
       resolveImageArtifactPath: async () => null,
     }).projectTurns(forkTurns);
-    expect(JSON.stringify(forkProjection)).toContain('Context degradation');
-    expect(JSON.stringify(forkProjection)).toContain(evidence.payloadRef.id);
+    expect(JSON.stringify(forkProjection)).toContain('turn environment could not be restored');
+    expect(JSON.stringify(forkProjection)).not.toContain(evidence.payloadRef.id);
     await fixture.service.close();
   });
 
@@ -4740,7 +4793,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       resolveImageArtifactPath: async () => null,
     }).projectTurns(forkTurns);
     expect(JSON.stringify(projected)).toContain('Image output unavailable or corrupt');
-    expect(JSON.stringify(projected)).toContain(resourceRef.fileName);
+    expect(JSON.stringify(projected)).toContain('referenced resource could not be restored');
     expect(JSON.stringify(projected)).not.toContain(resourceRef.id);
     await fixture.service.close();
   });
@@ -9012,7 +9065,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     const projected = JSON.stringify(providerMessages);
     expect(projected).toContain(shellInjection);
     expect(projected).toContain('authority=\\"untrusted\\"');
-    expect(projected).toContain('readable_path=');
+    expect(projected).toContain('Supplied file shell-output.txt: [[file://');
     expect(projected).not.toContain('/temporary/parent/path');
     expect(JSON.stringify(providerMessages.filter((message) => message.role !== 'user'))).not.toContain(shellInjection);
 

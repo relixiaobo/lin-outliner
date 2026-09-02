@@ -73,6 +73,35 @@ function panel(rootId = 'root'): WorkspacePanelState {
 }
 
 describe('renderer Agent user-view hints', () => {
+  test('captures every semantic PanelView target without replacing previews by owner Nodes', () => {
+    const index = buildIndex(projection([node('root', 'Owner')]));
+    const views: WorkspacePanelState['view'][] = [
+      { kind: 'outliner', rootId: 'root' },
+      { kind: 'file-preview', nodeId: 'root', target: { kind: 'local-file', path: '/workspace/file.md', entryKind: 'file', label: 'file.md' } },
+      { kind: 'file-preview', nodeId: 'root', target: { kind: 'asset', assetId: 'asset-1', label: 'Diagram' } },
+      { kind: 'file-preview', nodeId: 'root', target: { kind: 'linked-file', sourceValueId: 'value-1', sourceText: '/workspace/linked.md', label: 'linked.md' } },
+      { kind: 'file-preview', target: { kind: 'url', url: 'https://example.com', label: 'Example' } },
+      { kind: 'thread-trajectory', threadId: 'thread-1', turnId: 'turn-1', selectedRecordId: 'record-1' },
+    ];
+
+    const targets = views.map((view, order) => buildRendererUserViewHints({
+      activePanelId: `panel-${order}`,
+      panels: [{ ...panel(), id: `panel-${order}`, view }],
+      index,
+      ui: ui({ focusedPanelId: `panel-${order}` }),
+      threadName: (threadId) => threadId === 'thread-1' ? 'Context review' : null,
+    }).panels[0]?.target);
+
+    expect(targets).toEqual([
+      { kind: 'node', nodeId: 'root' },
+      { kind: 'local-file', path: '/workspace/file.md', entryKind: 'file', label: 'file.md', ownerNodeId: 'root' },
+      { kind: 'asset', assetId: 'asset-1', label: 'Diagram', ownerNodeId: 'root' },
+      { kind: 'linked-file', sourceValueId: 'value-1', sourceText: '/workspace/linked.md', label: 'linked.md', ownerNodeId: 'root' },
+      { kind: 'url', url: 'https://example.com', label: 'Example', ownerNodeId: null },
+      { kind: 'thread-trajectory', threadId: 'thread-1', threadName: 'Context review', turnId: 'turn-1', selectedRecordId: 'record-1' },
+    ]);
+  });
+
   test('sends structural identities without renderer-authored Node text', () => {
     const index = buildIndex(projection([
       node('root', 'Authoritative root', { children: ['focused'] }),
@@ -94,7 +123,7 @@ describe('renderer Agent user-view hints', () => {
       selectedNodeIds: [],
       panels: [{
         panelId: 'panel-1',
-        rootNodeId: 'root',
+        target: { kind: 'node', nodeId: 'root' },
         order: 1,
         active: true,
         focused: true,

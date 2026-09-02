@@ -665,12 +665,51 @@ export interface RendererUserViewVisibleNodeHint {
   readonly expanded: boolean;
 }
 
+export type RendererUserViewTargetHint =
+  | {
+      readonly kind: 'node';
+      readonly nodeId: string;
+    }
+  | {
+      readonly kind: 'local-file';
+      readonly path: string;
+      readonly entryKind: 'file' | 'directory';
+      readonly label: string | null;
+      readonly ownerNodeId: string | null;
+    }
+  | {
+      readonly kind: 'asset';
+      readonly assetId: string;
+      readonly label: string | null;
+      readonly ownerNodeId: string | null;
+    }
+  | {
+      readonly kind: 'linked-file';
+      readonly sourceValueId: string;
+      readonly sourceText: string;
+      readonly label: string | null;
+      readonly ownerNodeId: string | null;
+    }
+  | {
+      readonly kind: 'url';
+      readonly url: string;
+      readonly label: string | null;
+      readonly ownerNodeId: string | null;
+    }
+  | {
+      readonly kind: 'thread-trajectory';
+      readonly threadId: string;
+      readonly threadName: string | null;
+      readonly turnId: string | null;
+      readonly selectedRecordId: string | null;
+    };
+
 export interface RendererUserViewPanelHint {
   readonly panelId: string;
-  readonly rootNodeId: string;
   readonly order: number;
   readonly active: boolean;
   readonly focused: boolean;
+  readonly target: RendererUserViewTargetHint;
   readonly visibleNodes: readonly RendererUserViewVisibleNodeHint[];
   readonly visibleOutlineTruncated: boolean;
 }
@@ -802,31 +841,75 @@ export interface UserViewOutlineNodeSnapshot {
   readonly includedChildCount: number | null;
 }
 
+export type UserViewTargetSnapshot =
+  | {
+      readonly kind: 'node';
+      readonly nodeId: string;
+      readonly title: string;
+      readonly rootType: string;
+      readonly childCount: number;
+      readonly breadcrumb: readonly UserViewNodeSnapshot[];
+    }
+  | {
+      readonly kind: 'local-file';
+      readonly path: string;
+      readonly entryKind: 'file' | 'directory';
+      readonly label: string;
+      readonly ownerNode: UserViewNodeSnapshot | null;
+    }
+  | {
+      readonly kind: 'asset';
+      readonly assetId: string;
+      readonly label: string;
+      readonly ownerNode: UserViewNodeSnapshot | null;
+    }
+  | {
+      readonly kind: 'linked-file';
+      readonly sourceValueId: string;
+      readonly sourceText: string;
+      readonly label: string;
+      readonly ownerNode: UserViewNodeSnapshot | null;
+    }
+  | {
+      readonly kind: 'url';
+      readonly url: string;
+      readonly label: string | null;
+      readonly ownerNode: UserViewNodeSnapshot | null;
+    }
+  | {
+      readonly kind: 'thread-trajectory';
+      readonly threadId: string;
+      readonly threadName: string;
+      readonly turnId: string | null;
+      readonly selectedRecordId: string | null;
+    };
+
 export interface UserViewPanelSnapshot {
   readonly panelId: string;
-  readonly rootNodeId: string;
-  readonly rootTitle: string;
-  readonly rootType: string;
   readonly active: boolean;
   readonly focused: boolean;
   readonly order: number;
-  readonly childCount: number;
-  readonly breadcrumb: readonly UserViewNodeSnapshot[];
-  readonly visibleOutline: readonly UserViewOutlineNodeSnapshot[];
+  readonly target: UserViewTargetSnapshot;
+}
+
+export interface UserViewSuppliedOutlineSnapshot {
+  readonly panelId: string;
+  readonly sourceNodeId: string;
+  readonly sourceTitle: string;
+  readonly outline: readonly UserViewOutlineNodeSnapshot[];
   readonly visibleOutlineTruncated: boolean;
 }
 
 export interface UserViewContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'userView';
-  readonly mode: 'interactive' | 'nonInteractive';
   readonly activePanelId: string | null;
   readonly focusedPanelId: string | null;
   readonly focusSurface: string | null;
   readonly focusedNode: UserViewNodeSnapshot | null;
   readonly selectedNodes: readonly UserViewNodeSnapshot[];
-  readonly referencedNodes: readonly UserViewNodeSnapshot[];
   readonly panels: readonly UserViewPanelSnapshot[];
+  readonly suppliedOutline: readonly UserViewSuppliedOutlineSnapshot[];
   readonly truncated: boolean;
 }
 

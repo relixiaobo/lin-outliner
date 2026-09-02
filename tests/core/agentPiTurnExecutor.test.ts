@@ -2223,14 +2223,13 @@ describe('PiTurnExecutor event normalization', () => {
     const baselineView = {
       schemaVersion: 1 as const,
       kind: 'userView' as const,
-      mode: 'interactive' as const,
       activePanelId: 'panel-1',
       focusedPanelId: 'panel-1',
       focusSurface: 'row' as const,
       focusedNode: { nodeId: 'node-1', title: 'BASELINE VIEW NODE', panelId: 'panel-1', surface: 'row' },
       selectedNodes: [],
-      referencedNodes: [],
       panels: [],
+      suppliedOutline: [],
       truncated: false,
     };
     const baselineAdditional = {
@@ -2447,8 +2446,9 @@ describe('PiTurnExecutor event normalization', () => {
     expect(providerText).toContain('ACTIVE FILE OBSERVATION');
     expect(providerText).toContain('NEW BETA SKILL DELTA');
     expect(providerText).toContain('CURRENT TURN EVENT');
-    expect(providerText).toContain('projection_mode=snapshot');
-    expect(providerText).toContain('timezone=Asia/Shanghai');
+    expect(providerText).toContain('Earlier conversation:');
+    expect(providerText).not.toContain('projection_mode');
+    expect(providerText).toContain('2026-07-28T10:00:00+08:00 [Asia/Shanghai]');
     expect(providerText).not.toContain('OLD TURN EVENT');
     expect(providerText).not.toContain('OLD USER REQUEST');
     expect(cacheAffinity).toBe(providerCacheAffinity(fixture.context.thread.id, []));

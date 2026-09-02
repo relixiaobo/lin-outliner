@@ -110,6 +110,7 @@ export class GoalExtension implements AgentCoreExtension {
     if (!record || record.goal.status === 'complete') return null;
     return {
       extensionId: this.id,
+      applicationInstructions: true as const,
       additionalContext: {
         objective: {
           kind: 'untrusted' as const,

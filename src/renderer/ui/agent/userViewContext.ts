@@ -22,23 +22,27 @@ export function buildRendererUserViewHints(input: {
   readonly panels: readonly WorkspacePanelState[];
   readonly index: DocumentIndex;
   readonly ui: UiState;
+  readonly threadName?: (threadId: string) => string | null;
 }): RendererUserViewHints {
   let remainingVisibleNodes = MAX_VISIBLE_NODES;
   let truncated = false;
   const panels: RendererUserViewPanelHint[] = [];
   for (let index = 0; index < input.panels.length; index += 1) {
     const panel = input.panels[index]!;
-    const rootNodeId = panelRootNodeId(panel);
-    if (!rootNodeId || !input.index.byId.has(rootNodeId)) continue;
-    const visible = visibleNodeHints(rootNodeId, input.index, input.ui, remainingVisibleNodes);
+    const target = panelTarget(panel, input.index, input.threadName);
+    if (!target) continue;
+    const rootNodeId = target.kind === 'node' ? target.nodeId : null;
+    const visible = rootNodeId
+      ? visibleNodeHints(rootNodeId, input.index, input.ui, remainingVisibleNodes)
+      : { nodes: [], truncated: false };
     remainingVisibleNodes -= visible.nodes.length;
     truncated ||= visible.truncated;
     panels.push({
       panelId: panel.id,
-      rootNodeId,
       order: index + 1,
       active: panel.id === input.activePanelId,
       focused: panel.id === input.ui.focusedPanelId,
+      target,
       visibleNodes: visible.nodes,
       visibleOutlineTruncated: visible.truncated,
     });
@@ -56,11 +60,58 @@ export function buildRendererUserViewHints(input: {
   };
 }
 
-function panelRootNodeId(panel: WorkspacePanelState): NodeId | null {
+function panelTarget(
+  panel: WorkspacePanelState,
+  index: DocumentIndex,
+  threadName: ((threadId: string) => string | null) | undefined,
+): RendererUserViewPanelHint['target'] | null {
   if (panel.type !== 'workspace') return null;
-  if (panel.view.kind === 'outliner') return panel.view.rootId;
-  if (panel.view.kind === 'file-preview') return panel.view.nodeId ?? null;
-  return null;
+  const view = panel.view;
+  if (view.kind === 'outliner') {
+    return index.byId.has(view.rootId) ? { kind: 'node', nodeId: view.rootId } : null;
+  }
+  if (view.kind === 'thread-trajectory') {
+    return {
+      kind: 'thread-trajectory',
+      threadId: view.threadId,
+      threadName: threadName?.(view.threadId) ?? null,
+      turnId: view.turnId ?? null,
+      selectedRecordId: view.selectedRecordId ?? null,
+    };
+  }
+  const ownerNodeId = view.nodeId && index.byId.has(view.nodeId) ? view.nodeId : null;
+  switch (view.target.kind) {
+    case 'local-file':
+      return {
+        kind: 'local-file',
+        path: view.target.path,
+        entryKind: view.target.entryKind,
+        label: view.target.label ?? null,
+        ownerNodeId,
+      };
+    case 'asset':
+      return {
+        kind: 'asset',
+        assetId: view.target.assetId,
+        label: view.target.label ?? null,
+        ownerNodeId,
+      };
+    case 'linked-file':
+      return {
+        kind: 'linked-file',
+        sourceValueId: view.target.sourceValueId,
+        sourceText: view.target.sourceText,
+        label: view.target.label ?? null,
+        ownerNodeId,
+      };
+    case 'url':
+      return {
+        kind: 'url',
+        url: view.target.url,
+        label: view.target.label ?? null,
+        ownerNodeId,
+      };
+  }
 }
 
 function selectedNodeIds(

@@ -134,6 +134,13 @@ Path-triggered Skill observation reads the bounded path already carried by succe
 Core file Items; it never decodes historical argument payloads at Turn acceptance,
 resume, or runtime preparation.
 
+Canonical payloads remain the complete persistence, audit, replay, and diagnostics
+authority. A pure Turn-brief compiler separately projects them into semantic model text;
+payload kinds, references, hashes, producer keys, reducer modes, and renderer correlation
+IDs never become model syntax. The provider wrapper carries only Host-assigned
+`authority` and `purpose`, while diagnostics retains the canonical kind in its aligned
+provenance sidecar.
+
 The effective context begins after the latest `contextReset`. Within that epoch, the
 latest valid `contextCompaction` replaces only its exact covered range with the recorded
 summary and reducer checkpoint, then preserves the declared tail. Automatic preflight
@@ -343,9 +350,9 @@ Starting a Turn follows this order:
 2. Resolve structured user content, derive the Thread's bounded initial preview
    when it is still empty, and allocate the Turn and initial user Item identities.
 3. Commit extension admission snapshots under the relevant barriers.
-4. Resolve main-owned environment, user view, Skill discovery, additional context,
-   and explicitly referenced Node resources into canonical payloads and Agent resource
-   links.
+4. Resolve main-owned environment, semantic user-view targets and separately supplied
+   view content, Skill discovery, additional context, and explicitly referenced Node
+   resources into canonical payloads and Agent resource links.
 5. Persist one `turn/started` event containing every already-complete evidence Item
    followed by the user Item in canonical order.
 6. Return acceptance before starting model side effects.

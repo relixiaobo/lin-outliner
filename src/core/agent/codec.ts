@@ -713,15 +713,15 @@ function decodeRendererUserViewHints(value: unknown) {
   const panels = arrayValue(record.panels, 'userView.panels').map((entry, panelIndex) => {
     const panel = recordValue(entry, `userView.panels[${panelIndex}]`);
     exactKeys(panel, [
-      'panelId', 'rootNodeId', 'order', 'active', 'focused', 'visibleNodes',
+      'panelId', 'order', 'active', 'focused', 'target', 'visibleNodes',
       'visibleOutlineTruncated',
     ], `userView.panels[${panelIndex}]`);
     return {
       panelId: nonEmptyTrimmedString(panel.panelId, `userView.panels[${panelIndex}].panelId`),
-      rootNodeId: nonEmptyTrimmedString(panel.rootNodeId, `userView.panels[${panelIndex}].rootNodeId`),
       order: nonNegativeInteger(panel.order, `userView.panels[${panelIndex}].order`),
       active: booleanValue(panel.active, `userView.panels[${panelIndex}].active`),
       focused: booleanValue(panel.focused, `userView.panels[${panelIndex}].focused`),
+      target: decodeRendererUserViewTarget(panel.target, `userView.panels[${panelIndex}].target`),
       visibleNodes: arrayValue(panel.visibleNodes, `userView.panels[${panelIndex}].visibleNodes`)
         .map((visible, visibleIndex) => {
           const path = `userView.panels[${panelIndex}].visibleNodes[${visibleIndex}]`;
@@ -758,6 +758,61 @@ function decodeRendererUserViewHints(value: unknown) {
     fail('userView', 'exceeds the 64 KiB serialized limit');
   }
   return decoded;
+}
+
+function decodeRendererUserViewTarget(value: unknown, path: string) {
+  const target = recordValue(value, path);
+  const kind = enumValue(target.kind, [
+    'node', 'local-file', 'asset', 'linked-file', 'url', 'thread-trajectory',
+  ], `${path}.kind`);
+  switch (kind) {
+    case 'node':
+      exactKeys(target, ['kind', 'nodeId'], path);
+      return { kind, nodeId: nonEmptyTrimmedString(target.nodeId, `${path}.nodeId`) } as const;
+    case 'local-file':
+      exactKeys(target, ['kind', 'path', 'entryKind', 'label', 'ownerNodeId'], path);
+      return {
+        kind,
+        path: nonEmptyTrimmedString(target.path, `${path}.path`),
+        entryKind: enumValue(target.entryKind, ['file', 'directory'], `${path}.entryKind`),
+        label: nullableString(target.label, `${path}.label`),
+        ownerNodeId: nullableString(target.ownerNodeId, `${path}.ownerNodeId`),
+      } as const;
+    case 'asset':
+      exactKeys(target, ['kind', 'assetId', 'label', 'ownerNodeId'], path);
+      return {
+        kind,
+        assetId: nonEmptyTrimmedString(target.assetId, `${path}.assetId`),
+        label: nullableString(target.label, `${path}.label`),
+        ownerNodeId: nullableString(target.ownerNodeId, `${path}.ownerNodeId`),
+      } as const;
+    case 'linked-file':
+      exactKeys(target, ['kind', 'sourceValueId', 'sourceText', 'label', 'ownerNodeId'], path);
+      return {
+        kind,
+        sourceValueId: nonEmptyTrimmedString(target.sourceValueId, `${path}.sourceValueId`),
+        sourceText: nonEmptyTrimmedString(target.sourceText, `${path}.sourceText`),
+        label: nullableString(target.label, `${path}.label`),
+        ownerNodeId: nullableString(target.ownerNodeId, `${path}.ownerNodeId`),
+      } as const;
+    case 'url':
+      exactKeys(target, ['kind', 'url', 'label', 'ownerNodeId'], path);
+      return {
+        kind,
+        url: nonEmptyTrimmedString(target.url, `${path}.url`),
+        label: nullableString(target.label, `${path}.label`),
+        ownerNodeId: nullableString(target.ownerNodeId, `${path}.ownerNodeId`),
+      } as const;
+    case 'thread-trajectory':
+      exactKeys(target, ['kind', 'threadId', 'threadName', 'turnId', 'selectedRecordId'], path);
+      return {
+        kind,
+        threadId: nonEmptyTrimmedString(target.threadId, `${path}.threadId`),
+        threadName: nullableString(target.threadName, `${path}.threadName`),
+        turnId: nullableString(target.turnId, `${path}.turnId`),
+        selectedRecordId: nullableString(target.selectedRecordId, `${path}.selectedRecordId`),
+      } as const;
+  }
 }
 
 export function decodeAdditionalContext(
@@ -3818,20 +3873,24 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       });
     case 'userView': {
       exactKeys(record, [
-        'schemaVersion', 'kind', 'mode', 'activePanelId', 'focusedPanelId', 'focusSurface',
-        'focusedNode', 'selectedNodes', 'referencedNodes', 'panels', 'truncated',
+        'schemaVersion', 'kind', 'activePanelId', 'focusedPanelId', 'focusSurface',
+        'focusedNode', 'selectedNodes', 'panels', 'suppliedOutline', 'truncated',
       ], 'contextPayload');
       const selectedNodes = arrayValue(record.selectedNodes, 'contextPayload.selectedNodes')
         .map((entry, index) => decodeUserViewNode(entry, `contextPayload.selectedNodes[${index}]`));
       if (selectedNodes.length > 50) fail('contextPayload.selectedNodes', 'exceeds the 50-node limit');
       const panels = arrayValue(record.panels, 'contextPayload.panels')
         .map((entry, index) => decodeUserViewPanel(entry, `contextPayload.panels[${index}]`));
-      const visibleNodes = panels.reduce((total, panel) => total + panel.visibleOutline.length, 0);
+      const suppliedOutline = arrayValue(record.suppliedOutline, 'contextPayload.suppliedOutline')
+        .map((entry, index) => decodeUserViewSuppliedOutline(
+          entry,
+          `contextPayload.suppliedOutline[${index}]`,
+        ));
+      const visibleNodes = suppliedOutline.reduce((total, supplied) => total + supplied.outline.length, 0);
       if (visibleNodes > 80) fail('contextPayload.panels', 'exceeds the 80-visible-node limit');
       return deepFreeze({
         schemaVersion: 1,
         kind,
-        mode: enumValue(record.mode, ['interactive', 'nonInteractive'], 'contextPayload.mode'),
         activePanelId: nullableString(record.activePanelId, 'contextPayload.activePanelId'),
         focusedPanelId: nullableString(record.focusedPanelId, 'contextPayload.focusedPanelId'),
         focusSurface: nullableString(record.focusSurface, 'contextPayload.focusSurface'),
@@ -3839,9 +3898,8 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
           ? null
           : decodeUserViewNode(record.focusedNode, 'contextPayload.focusedNode'),
         selectedNodes,
-        referencedNodes: arrayValue(record.referencedNodes, 'contextPayload.referencedNodes')
-          .map((entry, index) => decodeUserViewNode(entry, `contextPayload.referencedNodes[${index}]`)),
         panels,
+        suppliedOutline,
         truncated: booleanValue(record.truncated, 'contextPayload.truncated'),
       });
     }
@@ -4168,27 +4226,99 @@ function decodeUserViewOutlineNode(value: unknown, path: string) {
 
 function decodeUserViewPanel(value: unknown, path: string) {
   const record = recordValue(value, path);
-  exactKeys(record, [
-    'panelId', 'rootNodeId', 'rootTitle', 'rootType', 'active', 'focused', 'order',
-    'childCount', 'breadcrumb', 'visibleOutline', 'visibleOutlineTruncated',
-  ], path);
-  const breadcrumb = arrayValue(record.breadcrumb, `${path}.breadcrumb`)
-    .map((entry, index) => decodeUserViewNode(entry, `${path}.breadcrumb[${index}]`));
-  if (breadcrumb.length > 6) fail(`${path}.breadcrumb`, 'exceeds the six-node limit');
+  exactKeys(record, ['panelId', 'active', 'focused', 'order', 'target'], path);
   return {
     panelId: nonEmptyTrimmedString(record.panelId, `${path}.panelId`),
-    rootNodeId: nonEmptyTrimmedString(record.rootNodeId, `${path}.rootNodeId`),
-    rootTitle: stringValue(record.rootTitle, `${path}.rootTitle`, true),
-    rootType: nonEmptyTrimmedString(record.rootType, `${path}.rootType`),
     active: booleanValue(record.active, `${path}.active`),
     focused: booleanValue(record.focused, `${path}.focused`),
     order: nonNegativeInteger(record.order, `${path}.order`),
-    childCount: nonNegativeInteger(record.childCount, `${path}.childCount`),
-    breadcrumb,
-    visibleOutline: arrayValue(record.visibleOutline, `${path}.visibleOutline`)
-      .map((entry, index) => decodeUserViewOutlineNode(entry, `${path}.visibleOutline[${index}]`)),
+    target: decodeUserViewTarget(record.target, `${path}.target`),
+  };
+}
+
+function decodeUserViewSuppliedOutline(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'panelId', 'sourceNodeId', 'sourceTitle', 'outline', 'visibleOutlineTruncated',
+  ], path);
+  return {
+    panelId: nonEmptyTrimmedString(record.panelId, `${path}.panelId`),
+    sourceNodeId: nonEmptyTrimmedString(record.sourceNodeId, `${path}.sourceNodeId`),
+    sourceTitle: stringValue(record.sourceTitle, `${path}.sourceTitle`, true),
+    outline: arrayValue(record.outline, `${path}.outline`)
+      .map((entry, index) => decodeUserViewOutlineNode(entry, `${path}.outline[${index}]`)),
     visibleOutlineTruncated: booleanValue(record.visibleOutlineTruncated, `${path}.visibleOutlineTruncated`),
   };
+}
+
+function decodeUserViewTarget(value: unknown, path: string) {
+  const target = recordValue(value, path);
+  const kind = enumValue(target.kind, [
+    'node', 'local-file', 'asset', 'linked-file', 'url', 'thread-trajectory',
+  ], `${path}.kind`);
+  if (kind === 'node') {
+    exactKeys(target, ['kind', 'nodeId', 'title', 'rootType', 'childCount', 'breadcrumb'], path);
+    const breadcrumb = arrayValue(target.breadcrumb, `${path}.breadcrumb`)
+      .map((entry, index) => decodeUserViewNode(entry, `${path}.breadcrumb[${index}]`));
+    if (breadcrumb.length > 6) fail(`${path}.breadcrumb`, 'exceeds the six-node limit');
+    return {
+      kind,
+      nodeId: nonEmptyTrimmedString(target.nodeId, `${path}.nodeId`),
+      title: stringValue(target.title, `${path}.title`, true),
+      rootType: nonEmptyTrimmedString(target.rootType, `${path}.rootType`),
+      childCount: nonNegativeInteger(target.childCount, `${path}.childCount`),
+      breadcrumb,
+    } as const;
+  }
+  if (kind === 'thread-trajectory') {
+    exactKeys(target, ['kind', 'threadId', 'threadName', 'turnId', 'selectedRecordId'], path);
+    return {
+      kind,
+      threadId: nonEmptyTrimmedString(target.threadId, `${path}.threadId`),
+      threadName: nonEmptyTrimmedString(target.threadName, `${path}.threadName`),
+      turnId: nullableString(target.turnId, `${path}.turnId`),
+      selectedRecordId: nullableString(target.selectedRecordId, `${path}.selectedRecordId`),
+    } as const;
+  }
+  const ownerNode = target.ownerNode === null
+    ? null
+    : decodeUserViewNode(target.ownerNode, `${path}.ownerNode`);
+  if (kind === 'local-file') {
+    exactKeys(target, ['kind', 'path', 'entryKind', 'label', 'ownerNode'], path);
+    return {
+      kind,
+      path: nonEmptyTrimmedString(target.path, `${path}.path`),
+      entryKind: enumValue(target.entryKind, ['file', 'directory'], `${path}.entryKind`),
+      label: nonEmptyTrimmedString(target.label, `${path}.label`),
+      ownerNode,
+    } as const;
+  }
+  if (kind === 'asset') {
+    exactKeys(target, ['kind', 'assetId', 'label', 'ownerNode'], path);
+    return {
+      kind,
+      assetId: nonEmptyTrimmedString(target.assetId, `${path}.assetId`),
+      label: nonEmptyTrimmedString(target.label, `${path}.label`),
+      ownerNode,
+    } as const;
+  }
+  if (kind === 'linked-file') {
+    exactKeys(target, ['kind', 'sourceValueId', 'sourceText', 'label', 'ownerNode'], path);
+    return {
+      kind,
+      sourceValueId: nonEmptyTrimmedString(target.sourceValueId, `${path}.sourceValueId`),
+      sourceText: nonEmptyTrimmedString(target.sourceText, `${path}.sourceText`),
+      label: nonEmptyTrimmedString(target.label, `${path}.label`),
+      ownerNode,
+    } as const;
+  }
+  exactKeys(target, ['kind', 'url', 'label', 'ownerNode'], path);
+  return {
+    kind,
+    url: nonEmptyTrimmedString(target.url, `${path}.url`),
+    label: nullableString(target.label, `${path}.label`),
+    ownerNode,
+  } as const;
 }
 
 function decodeReferencedResource(value: unknown, path: string) {

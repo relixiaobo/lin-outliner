@@ -31,8 +31,10 @@ export function appendContextDegradations(
 }
 
 export function renderContextDegradation(entry: ContextDegradationCheckpointEntry): string {
-  return [
-    `[Context degradation: ${JSON.stringify(entry)}]`,
-    'The referenced historical context is unavailable. Re-inspect current state before relying on it.',
-  ].join('\n');
+  const affected = entry.source
+    .replace(/([a-z])([A-Z])/gu, '$1 $2')
+    .replace(/[-_]+/gu, ' ')
+    .trim()
+    .toLowerCase();
+  return `${affected || 'Historical context'} could not be restored. Re-inspect current state before relying on it.`;
 }

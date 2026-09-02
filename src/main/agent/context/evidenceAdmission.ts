@@ -85,7 +85,6 @@ export async function admitContextEvidence(input: {
     const userView = buildUserViewPayload(
       input.userView,
       input.projection,
-      nodeReferences.map((reference) => reference.nodeId),
     );
     if (userView) await publish(userView, userViewSummary(userView));
     if (input.skillCatalog) {
@@ -196,8 +195,12 @@ function additionalContextPayload(
     ? extensions.flatMap((contribution) => Object.entries(contribution.additionalContext).map(([key, entry]) => ({
         key: `${contribution.extensionId}:${key}`,
         source: `extension:${contribution.extensionId}`,
-        authority: entry.kind,
-        purpose: entry.kind === 'application' ? 'instruction' as const : 'observation' as const,
+        authority: entry.kind === 'application' && contribution.applicationInstructions === true
+          ? 'application' as const
+          : 'untrusted' as const,
+        purpose: entry.kind === 'application' && contribution.applicationInstructions === true
+          ? entry.purpose ?? 'instruction' as const
+          : 'observation' as const,
         text: entry.value,
       }))).sort((left, right) => compareStableText(left.key, right.key))
     : null;
@@ -238,8 +241,8 @@ export function contextEvidenceItem(
 }
 
 function userViewSummary(payload: NonNullable<ReturnType<typeof buildUserViewPayload>>): string {
-  const visible = payload.panels.reduce((total, panel) => total + panel.visibleOutline.length, 0);
-  return `User view (${payload.panels.length} panels, ${visible} visible Nodes)`;
+  const visible = payload.suppliedOutline.reduce((total, supplied) => total + supplied.outline.length, 0);
+  return `User view (${payload.panels.length} views, ${visible} supplied Nodes)`;
 }
 
 function executionMode(thread: Thread): TurnEnvironmentContextPayload['executionMode'] {

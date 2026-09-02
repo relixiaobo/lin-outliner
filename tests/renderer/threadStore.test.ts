@@ -1688,10 +1688,10 @@ function rendererUserView() {
     selectedNodeIds: ['node-1'],
     panels: [{
       panelId: 'panel-1',
-      rootNodeId: 'root-1',
       order: 0,
       active: true,
       focused: true,
+      target: { kind: 'node', nodeId: 'root-1' },
       visibleNodes: [{ nodeId: 'node-1', depth: 1, expanded: false }],
       visibleOutlineTruncated: false,
     }],

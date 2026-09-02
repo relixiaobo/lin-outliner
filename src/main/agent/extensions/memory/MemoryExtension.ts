@@ -346,6 +346,7 @@ export class MemoryExtension implements AgentCoreExtension {
       this.turnMemoryUsage.delete(activeTurn.id);
       return explicitlyRequested ? {
         extensionId: this.id,
+        applicationInstructions: true as const,
         additionalContext: {
           memory: {
             kind: 'application' as const,
@@ -361,6 +362,7 @@ export class MemoryExtension implements AgentCoreExtension {
       this.turnMemoryUsage.delete(activeTurn.id);
       return explicitlyRequested ? {
         extensionId: this.id,
+        applicationInstructions: true as const,
         additionalContext: {
           memory: {
             kind: 'application' as const,
@@ -377,6 +379,7 @@ export class MemoryExtension implements AgentCoreExtension {
     }
     return {
       extensionId: this.id,
+      applicationInstructions: true as const,
       additionalContext: {
         memory: {
           kind: 'application' as const,
