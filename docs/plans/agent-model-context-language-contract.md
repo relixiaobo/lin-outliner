@@ -59,6 +59,10 @@ and plan.
   Skill terminal settlement, and transcript presentation. It is an adjacent
   consumer rather than a context-language owner; preserve its canonical
   renderability boundary and repeat the live file-scope check before implementation.
+- **CON-7 collision order:** Draft PR #613 precedes this plan. Both plans update
+  `agent-model-runtime.md`; #613 must first settle the Tool Result Kernel boundary,
+  then this branch rebases onto its merged result and updates the shared specification
+  against that final contract.
 - **DEC-1:** model-visible `<context>` children have no `kind`. Host-assigned
   `authority` and `purpose` are the complete wrapper protocol.
 - **DEC-2:** canonical source kind, stable key, producer, lifecycle, hashes, and
@@ -581,6 +585,8 @@ Consistency means one grammar per semantic boundary:
   stable parent-Item identity, isolated Skill settlement, and transcript-presentation
   ownership outside this PR; repeat the open-claim/file-scope collision check and
   obtain PM ratification before editing shared protocol surfaces.
+- Begin implementation only after #613 merges, then rebase onto its final Tool Result
+  Kernel and `agent-model-runtime.md` changes before editing the shared specification.
 - Extend renderer-to-main canonical evidence to cover all `PanelView` variants
   while preserving Host-private Pane correlation.
 - Remove Today-based synthetic views and retain honest no-view state.
