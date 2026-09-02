@@ -2351,3 +2351,22 @@ Regression coverage must hold identity constant while crossing every meaningful
 relation boundary, then assert the emitted replacement or invalidation. Tests
 that change both identity and relation cannot prove the deduplicator preserves
 same-object semantic transitions.
+
+## Superseding UI transactions must inherit unsettled intent
+
+PR #616 first decided whether a send needed transcript anchoring from current DOM
+geometry, then canceled any pending disclosure anchor. When disclosure expansion
+and keyboard send occurred in the same event turn, layout still described the
+old short transcript; cancellation then erased the only evidence that an anchor
+transaction was already in flight, so the send fell into ordinary bottom follow.
+
+**Before canceling an unsettled UI transaction, snapshot the semantic intent that
+the successor still owes and carry it into the successor's admission decision.**
+DOM geometry is lagging evidence between an interaction and its layout commit.
+A newer action may replace pending mechanics, but it must not silently discard
+the viewport, focus, selection, or ownership promise those mechanics represented.
+
+Regression coverage must issue the superseding action before the first action's
+next layout or effect pass, then prove the successor fulfills the original
+observable promise. Sequential tests that wait for settlement cannot exercise
+this transaction handoff.

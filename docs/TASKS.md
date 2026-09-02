@@ -13,8 +13,8 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-One draft plan-only claim is open: PR #616 adds the New Thread keyboard shortcut
-and removes the always-visible Thread-wide Trajectory action. Agent context
+One implementation claim is open: PR #617 tightens the public Outline Agent
+interface contract. Thread interaction polish shipped in #616; Agent context
 language shipped in #611 after rebasing onto #613's tool-result protocol;
 root-Turn recovery shipped in #612, and delegated failure truth shipped in #614,
 so the managed Computer Pilot Skill remains eligible under its live collision
@@ -210,6 +210,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **thread-interaction-polish** (`done`, #616, 2026-09-02) — New Thread now
+  uses the registry-owned `Command+Shift+O` shortcut, compact Threads chrome
+  keeps Trajectory inspection contextual, short sends remain in natural flow,
+  and provider cache-breakpoint paths survive Trajectory decoding; plan archived
+  at [thread-interaction-polish](plans/archive/thread-interaction-polish.md).
 - **agent-model-context-language-contract** (`done`, #611, 2026-09-02) — Agent
   Turns now receive compact semantic context with explicit authority and purpose,
   complete readable Pane targets, truthful focus/selection state, and distinct

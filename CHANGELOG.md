@@ -12,6 +12,24 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **New Threads gain a taught `Command+Shift+O` path and calmer send placement
+  (PR #616, codex)** — the registry-owned shortcut uses the existing
+  provider-gated, single-flight creation path, opens the Agent rail on success,
+  and appears in the New Thread control's native title and accessibility
+  metadata. The always-visible Thread-wide Trajectory header action is gone,
+  while response actions, native message menus, and the Trajectory workspace
+  retain contextual inspection. Sends from transcripts that still fit one
+  viewport remain in natural flow; overflowing transcripts retain top anchoring,
+  including when a same-turn send supersedes an unsettled disclosure anchor.
+  Trajectory details also preserve provider cache-breakpoint JSON paths instead
+  of rejecting them as non-digests. Gate review found one Medium disclosure/send
+  transaction handoff defect; it was fixed before the final no-findings review.
+  Verified with typecheck, `docs:check`, 2,806 passing Core tests with 6 skipped
+  and one isolated passing fixed-timeout case, 1,486 renderer tests, focused Core
+  and Playwright coverage, light/dark visual checks, whitespace checks, five
+  successful GitHub E2E samples, and ten repeated passes for two unrelated
+  low-rate E2E signals.
+
 - **Agent Turns now receive one compact semantic context language (PR #611,
   codex-3)** — model-visible dynamic context uses explicit application or
   untrusted authority and observation or instruction purpose without exposing
