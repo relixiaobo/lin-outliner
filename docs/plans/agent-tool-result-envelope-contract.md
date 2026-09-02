@@ -71,9 +71,11 @@ Constraints:
 - **CON-4 hard:** malformed internal results and unexpected execution failures
   degrade to bounded tool errors rather than failing the Turn projection path.
 - **CON-5 dependency:** merged PRs #610 and #612 define provider identity and
-  Continue/Rerun behavior. PR #614 owns delegated generation and presentation
-  truth and currently overlaps shared Agent specifications and Core protocol
-  surfaces, not result construction. Rebase onto its merged result before build.
+  Continue/Rerun behavior. Merged PR #614 owns delegated generation receipts,
+  stable parent-Item identity, notification and presentation truth, and isolated
+  Skill terminal settlement. It changed shared Agent specifications, Core protocol
+  surfaces, and `SubagentCollaboration`, but not tool-result construction. Preserve
+  that settlement and projection ownership while normalizing result construction.
 
 Rejected alternatives:
 
@@ -285,6 +287,9 @@ provider-native `isError: true`.
   unchanged; unknown, invalid, aborted, and throwing external calls receive only
   the Kernel-owned common error.
 - **AC-6 (FR-7):** raw durable details and renderer projections remain equivalent;
+  foreground Agent and isolated Skill settlement still produce immutable generation
+  receipts with stable `parentItemId`, and isolated Skill receipts retain
+  `notificationState: none` without waking the Agent notification lifecycle;
   capability audit and internal paths are absent from model-visible headers.
 - **AC-7 (FR-8):** live and durable fixtures differ only by documented path/image
   durability transforms; restart and Continue reuse durable bytes without another
@@ -305,7 +310,8 @@ provider-native `isError: true`.
   it at result construction without adding a renderer or history validator.
 - Migrate Core control tools in `ToolRuntime`, collaboration results in
   `SubagentCollaboration`, Automation, Skills, local/Web/image capabilities, and
-  Kernel-owned error paths in one build-ordered PR.
+  Kernel-owned error paths in one build-ordered PR. In `SubagentCollaboration`, edit
+  result constructors without moving or bypassing #614's terminal settlement pipeline.
 - Preserve `agentToolResultPersistence` as the narrowly documented durability
   transform, then persist the exact resulting content rather than rebuilding it
   from details.
@@ -316,7 +322,7 @@ Likely implementation areas are `core/agent/tools`, `kernel/types`, `kernel`,
 `ToolRuntime`, `agentToolEnvelope`, `agentToolResultPersistence`,
 `SubagentCollaboration`, `AutomationTool`, local/Web/image/Skill tools,
 `PiTurnExecutor`, and focused Core/runtime/renderer fixtures. Shared specifications
-must be rebased after #614 before edits begin.
+start from the merged #614 receipt and presentation contract.
 
 ## Open questions
 
