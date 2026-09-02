@@ -19,6 +19,7 @@ import {
   AGENT_MESSAGE_INPUT_SCHEMA,
   normalizeAgentMessageToolInput,
 } from '../../src/core/agent/tools';
+import { agentToolResult, successEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES } from '../../src/core/agent/protocol';
 import type {
   AgentEvent,
@@ -157,6 +158,176 @@ describe('native turn kernel parity', () => {
     expect(events.map(eventLabel)).toEqual(GOLDEN.parallelBatch);
   });
 
+  test('compiles Tenon semantic results once and preserves supplemental content order', async () => {
+    const getGoal = tool('get_goal', undefined, async () => agentToolResult(
+      successEnvelope('get_goal', { internal: 'retained' }),
+      { goal: { objective: 'Ship it' } },
+      [{ type: 'text', text: 'supplemental report' }],
+    ));
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([
+        { type: 'toolCall', id: 'goal', name: 'get_goal', arguments: {} },
+      ], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'complete' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [getGoal] });
+
+    await runtime.prompt(USER);
+
+    const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+    expect(result).toMatchObject({
+      role: 'toolResult',
+      isError: false,
+      content: [
+        { type: 'text', text: '{"ok":true,"data":{"goal":{"objective":"Ship it"}}}' },
+        { type: 'text', text: 'supplemental report' },
+      ],
+      details: { ok: true, tool: 'get_goal', data: { internal: 'retained' } },
+    });
+  });
+
+  test('enforces Tenon ownership and output schemas without ending the Turn', async () => {
+    const cases: Array<{
+      readonly name: string;
+      readonly result: unknown;
+      readonly expectedMessage: string;
+    }> = [{
+      name: 'get_goal',
+      result: { kind: 'native', content: [{ type: 'text', text: 'bypass' }], details: {} },
+      expectedMessage: 'A Tenon tool bypassed the semantic result protocol.',
+    }, {
+      name: 'get_goal',
+      result: { kind: 'tenon', outcome: { ok: true }, data: 'wrong', content: [], details: {} },
+      expectedMessage: 'Tenon tool result data does not match its output schema.',
+    }, {
+      name: 'update_plan',
+      result: { kind: 'tenon', outcome: { ok: true }, data: {}, content: [], details: {} },
+      expectedMessage: 'A Tenon tool declared no output data but returned data.',
+    }, {
+      name: 'get_goal',
+      result: {
+        kind: 'tenon',
+        outcome: { ok: true, status: 'denied', success: true },
+        data: { goal: null },
+        content: [],
+        details: {},
+      },
+      expectedMessage: 'The Tenon tool returned unexpected success outcome fields.',
+    }];
+
+    for (const fixture of cases) {
+      const runtime = await executeOneTool(fixture.name, async () => fixture.result as never);
+      const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+      expect(result).toMatchObject({
+        role: 'toolResult',
+        isError: true,
+        content: [{ type: 'text', text: expect.stringContaining(fixture.expectedMessage) }],
+      });
+      expect(runtime.state.messages.at(-1)).toMatchObject({ role: 'assistant', content: [{ text: 'complete' }] });
+    }
+  });
+
+  test('redacts secret fields from the compiled header without changing private details', async () => {
+    const secret = 'abcdefghijklmnop';
+    const runtime = await executeOneTool('get_goal', async () => agentToolResult(
+      successEnvelope('get_goal', { retained: secret }),
+      { goal: { apiKey: secret } },
+    ));
+    const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+
+    expect(result).toMatchObject({
+      isError: false,
+      content: [{ type: 'text', text: '{"ok":true,"data":{"goal":{"apiKey":"[redacted]"}}}' }],
+      details: { data: { retained: secret } },
+    });
+  });
+
+  test('accepts the canonical request_user_input answer shape', async () => {
+    const runtime = await executeOneTool('request_user_input', async () => ({
+      kind: 'tenon',
+      outcome: { ok: true },
+      data: {
+        answers: [{ questionId: 'delivery', optionLabel: 'Ship now' }],
+        autoResolved: false,
+      },
+      content: [],
+      details: {},
+    }));
+
+    expect(runtime.state.messages.find((message) => message.role === 'toolResult')).toMatchObject({
+      isError: false,
+      content: [{
+        text: '{"ok":true,"data":{"answers":[{"questionId":"delivery","optionLabel":"Ship now"}],"autoResolved":false}}',
+      }],
+    });
+  });
+
+  test('degrades oversized Tenon data locally and lets the Turn continue', async () => {
+    const runtime = await executeOneTool('get_goal', async () => ({
+      kind: 'tenon',
+      outcome: { ok: true },
+      data: { goal: 'x'.repeat(256 * 1024) },
+      content: [],
+      details: {},
+    }));
+    const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+
+    expect(result).toMatchObject({
+      isError: true,
+      content: [{
+        type: 'text',
+        text: '{"ok":false,"error":{"code":"invalid_internal_result","message":"The Tenon tool result data exceeds the result limit."}}',
+      }],
+    });
+    expect(runtime.state.messages.at(-1)).toMatchObject({ role: 'assistant', content: [{ text: 'complete' }] });
+  });
+
+  test('preserves owner-native results and distinguishes returned failure from Kernel failure', async () => {
+    const nativeContent = [
+      { type: 'text' as const, text: 'owner bytes' },
+      { type: 'image' as const, data: 'aW1hZ2U=', mimeType: 'image/png' },
+    ];
+    const nativeRuntime = await executeOneTool('extension__probe', async () => ({
+      kind: 'native',
+      content: nativeContent,
+      details: { owner: 'extension' },
+    }));
+    expect(nativeRuntime.state.messages.find((message) => message.role === 'toolResult')).toMatchObject({
+      isError: false,
+      content: nativeContent,
+      details: { owner: 'extension' },
+    });
+
+    const expectedFailureRuntime = await executeOneTool('get_goal', async () => ({
+      kind: 'tenon',
+      outcome: { ok: false, error: { code: 'goal_unavailable', message: 'No Goal exists.' } },
+      content: [],
+      details: { expected: true },
+    }));
+    expect(expectedFailureRuntime.state.messages.find((message) => message.role === 'toolResult')).toMatchObject({
+      isError: false,
+      content: [{ text: '{"ok":false,"error":{"code":"goal_unavailable","message":"No Goal exists."}}' }],
+    });
+
+    const throwingRuntime = await executeOneTool('extension__throwing', async () => {
+      throw new Error('provider exploded');
+    });
+    expect(throwingRuntime.state.messages.find((message) => message.role === 'toolResult')).toMatchObject({
+      isError: true,
+      content: [{ text: '{"ok":false,"error":{"code":"execution_failed","message":"provider exploded"}}' }],
+    });
+
+    const abortedRuntime = await executeOneTool('extension__aborted', async () => {
+      const error = new Error('owner-specific cancellation text');
+      error.name = 'AbortError';
+      throw error;
+    });
+    expect(abortedRuntime.state.messages.find((message) => message.role === 'toolResult')).toMatchObject({
+      isError: true,
+      content: [{ text: '{"ok":false,"error":{"code":"aborted","message":"Operation aborted."}}' }],
+    });
+  });
+
   test('downgrades a mixed batch to sequential and rejects truncated tool calls without execution', async () => {
     const executionOrder: string[] = [];
     const sequential = tool('sequential', 'sequential', async () => {
@@ -217,7 +388,7 @@ describe('native turn kernel parity', () => {
     expect(truncatedEnd).toMatchObject({
       type: 'tool_execution_end',
       isError: true,
-      result: { content: [{ text: expect.stringContaining('output token limit') }] },
+      result: { content: [{ text: expect.stringContaining('"code":"invalid_arguments"') }] },
     });
   });
 
@@ -1070,7 +1241,12 @@ describe('native turn kernel parity', () => {
     ]);
     expect(events.some((event) => event.type === 'tool_execution_start')).toBe(false);
     expect(events.filter((event) => event.type === 'tool_execution_end')).toMatchObject([
-      { isError: true, result: { content: [{ text: 'Operation aborted' }] } },
+      {
+        isError: true,
+        result: {
+          content: [{ text: '{"ok":false,"error":{"code":"aborted","message":"Operation aborted."}}' }],
+        },
+      },
     ]);
     expect(runtime.state.messages.flatMap((message) => (
       message.role === 'assistant'
@@ -1386,6 +1562,19 @@ function createRuntime(
   });
 }
 
+async function executeOneTool(
+  name: string,
+  execute: AgentTool['execute'],
+): Promise<NativeAgentRuntime> {
+  const gateway = new ScriptedGateway([
+    () => terminalStream(assistant([{ type: 'toolCall', id: `${name}-call`, name, arguments: {} }], 'toolUse')),
+    () => terminalStream(assistant([{ type: 'text', text: 'complete' }])),
+  ]);
+  const runtime = createRuntime(gateway, { tools: [tool(name, undefined, execute)] });
+  await runtime.prompt(USER);
+  return runtime;
+}
+
 function assistant(
   content: AssistantMessage['content'],
   stopReason: AssistantMessage['stopReason'] = 'stop',
@@ -1481,7 +1670,7 @@ function parameterTool(
 }
 
 function toolResult(text: string) {
-  return { content: [{ type: 'text' as const, text }], details: { text } };
+  return { kind: 'native' as const, content: [{ type: 'text' as const, text }], details: { text } };
 }
 
 function eventLabel(event: AgentEvent): string {

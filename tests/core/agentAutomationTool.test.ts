@@ -143,7 +143,7 @@ describe('automation_update model tool', () => {
     const automationTool = createAutomationTool(service);
 
     const created = await automationTool.execute('item-1', { mode: 'create', definition: DEFINITION });
-    expect(created.details).toMatchObject({ automation: { id: AUTOMATION_ID } });
+    expect(created.details).toMatchObject({ data: { automation: { id: AUTOMATION_ID } } });
     await automationTool.execute('item-2', {
       mode: 'update',
       automation_id: AUTOMATION_ID,

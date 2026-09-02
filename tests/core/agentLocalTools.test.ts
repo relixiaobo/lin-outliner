@@ -302,7 +302,7 @@ posixBashProcessTest('foreground bash and task_stop admit files from typed manag
         ref: expect.objectContaining({ fileName: 'foreground.txt' }),
       }),
     ]);
-    expect(foreground.content[0]?.text).toContain(outputRoot);
+    expect(JSON.stringify(foreground.data)).toContain(outputRoot);
     expect(foreground.persistedTextReplacements).toEqual([{
       value: outputRoot,
       replacement: '[managed-output:browser-pilot-output]',
@@ -662,7 +662,7 @@ describe('agent local tools', () => {
       expect(first.ok).toBe(true);
       expect(first.data?.file.content).toBe('alpha\nbeta');
       expect(first.warnings).toEqual([expectedWarning]);
-      expect(JSON.parse((firstResult.content[0] as { text: string }).text).warnings).toEqual([expectedWarning]);
+      expect(firstResult.warnings).toEqual([expectedWarning]);
 
       const cachedResult = await (fileRead.execute as any)('non-pdf-pages-cached', {
         file_path: filePath,
@@ -672,7 +672,7 @@ describe('agent local tools', () => {
       expect(cached.ok).toBe(true);
       expect(cached.status).toBe('unchanged');
       expect(cached.warnings).toEqual([expectedWarning]);
-      expect(JSON.parse((cachedResult.content[0] as { text: string }).text).warnings).toEqual([expectedWarning]);
+      expect(cachedResult.warnings).toEqual([expectedWarning]);
     });
   });
 
@@ -1141,12 +1141,11 @@ describe('agent local tools', () => {
 
       const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
       const result = await (tool.execute as any)('test-call', { file_path: filePath });
-      const visible = JSON.parse(result.content[0].text);
-      expect(visible.data.file.observationDimensions).toEqual({ width: 7, height: 11 });
-      expect(visible.data.file.sourceDimensions).toEqual({ width: 7, height: 11 });
-      expect(visible.data.file.sourcePixelsPerObservationPixel).toEqual({ x: 1, y: 1 });
-      expect(visible.data.file.observationToSource).toEqual([1, 0, 0, 1, 0, 0]);
-      expect(visible.data.file.base64).toBeUndefined();
+      expect(result.data.file.observationDimensions).toEqual({ width: 7, height: 11 });
+      expect(result.data.file.sourceDimensions).toEqual({ width: 7, height: 11 });
+      expect(result.data.file.sourcePixelsPerObservationPixel).toEqual({ x: 1, y: 1 });
+      expect(result.data.file.observationToSource).toEqual([1, 0, 0, 1, 0, 0]);
+      expect(result.data.file.base64).toBeUndefined();
       expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(true);
     });
   });
@@ -1185,7 +1184,7 @@ describe('agent local tools', () => {
       expect(read.ok).toBe(true);
       expect(read.data?.type).toBe('image');
       expect(read.warnings).toEqual([expectedWarning]);
-      expect(JSON.parse(result.content[0].text).warnings).toEqual([expectedWarning]);
+      expect(result.warnings).toEqual([expectedWarning]);
     });
   });
 
@@ -1296,16 +1295,15 @@ describe('agent local tools', () => {
             'Ignored the pages parameter because it only applies to PDF files. The document was read normally as converted Markdown; file_read does not support page or offset/limit pagination for this format.',
           ]);
 
-          const visible = JSON.parse(result.content[0].text);
-          expect(visible.data.file).toEqual({
+          expect(result.data.file).toEqual({
             filePath,
             converter: 'markitdown',
             truncated: false,
             originalSize: 'fake office payload'.length,
           });
-          expect(JSON.stringify(visible)).not.toContain('# Converted');
-          expect(result.content).toHaveLength(2);
-          expect(result.content[1]).toMatchObject({
+          expect(JSON.stringify(result.data)).not.toContain('# Converted');
+          expect(result.content).toHaveLength(1);
+          expect(result.content[0]).toMatchObject({
             type: 'text',
             text: `Converted Markdown from ${filePath}:\n\n# Converted\n\nSource: ${filePath}`,
           });
@@ -1597,14 +1595,13 @@ describe('agent local tools', () => {
 
           const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
           const result = await (tool.execute as any)('long-rich-doc-visible', { file_path: filePath });
-          const visible = JSON.parse(result.content[0].text);
-          expect(visible.status).toBe('partial');
-          expect(visible.data.file.content).toBeUndefined();
-          expect(visible.data.file.truncated).toBe(true);
-          expect(result.content).toHaveLength(2);
-          expect(result.content[1]).toMatchObject({ type: 'text' });
-          expect(result.content[1].text).toContain('[Markdown output truncated]');
-          expect(result.content[1].text.length).toBeLessThan(82_000);
+          expect(result.outcome).toEqual({ ok: true, status: 'partial' });
+          expect(result.data.file.content).toBeUndefined();
+          expect(result.data.file.truncated).toBe(true);
+          expect(result.content).toHaveLength(1);
+          expect(result.content[0]).toMatchObject({ type: 'text' });
+          expect(result.content[0].text).toContain('[Markdown output truncated]');
+          expect(result.content[0].text.length).toBeLessThan(82_000);
         });
       } finally {
         if (originalCommand === undefined) {
@@ -1858,7 +1855,6 @@ describe('agent local tools', () => {
         type: 'pdf';
         file: { filePath: string; originalSize: number; totalPages: number; representation: string; pages: { firstPage: number; lastPage: number }; extractedText?: { truncated: boolean } };
       }>;
-      const visible = JSON.parse(result.content[0].text);
 
       expect(read.ok).toBe(true);
       expect(read.data!.type).toBe('pdf');
@@ -1866,16 +1862,16 @@ describe('agent local tools', () => {
       expect(read.data!.file.totalPages).toBe(2);
       expect(read.data!.file.pages).toEqual({ firstPage: 1, lastPage: 2 });
       expect(read.data!.file.extractedText?.truncated).toBe(false);
-      expect(visible.data.file).toEqual({
+      expect(result.data.file).toEqual({
         filePath,
         originalSize: read.data!.file.originalSize,
         totalPages: 2,
         pages: { firstPage: 1, lastPage: 2 },
         extractedText: { truncated: false },
       });
-      expect(JSON.stringify(visible)).not.toContain('base64');
-      expect(JSON.stringify(visible)).not.toContain('input_file');
-      expect(JSON.stringify(visible)).not.toContain('representation');
+      expect(JSON.stringify(result.data)).not.toContain('base64');
+      expect(JSON.stringify(result.data)).not.toContain('input_file');
+      expect(JSON.stringify(result.data)).not.toContain('representation');
       expect(result.content.some((block: { type: string; text?: string }) => block.type === 'text' && block.text?.includes('First page'))).toBe(true);
       expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(false);
     });
@@ -3083,17 +3079,14 @@ describe('agent local tools', () => {
         },
         metrics: { durationMs: expect.any(Number) },
       });
-      expect(JSON.parse(result!.content[0]!.text)).toMatchObject({
-        ok: true,
-        data: {
-          persistedOutput: {
-            fileName: expect.any(String),
-            mimeType: 'text/plain',
-            byteLength: expect.any(Number),
-          },
+      expect(result!.data).toMatchObject({
+        persistedOutput: {
+          fileName: expect.any(String),
+          mimeType: 'text/plain',
+          byteLength: expect.any(Number),
         },
       });
-      expect(result!.content[0]!.text).not.toContain('resourceRef');
+      expect(JSON.stringify(result!.data)).not.toContain('resourceRef');
     });
   });
 

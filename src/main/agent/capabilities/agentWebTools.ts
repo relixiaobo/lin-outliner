@@ -527,7 +527,6 @@ export function webFetchModelData(data: WebFetchData): unknown {
     visible.totalMatches = data.totalMatches ?? 0;
     if (data.nextMatchOffset !== undefined) visible.nextMatchOffset = data.nextMatchOffset;
   } else {
-    if (data.content !== undefined) visible.content = data.content;
     if (data.truncated) {
       visible.truncated = true;
       if (data.totalChars !== undefined) visible.totalChars = data.totalChars;

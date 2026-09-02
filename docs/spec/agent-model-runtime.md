@@ -530,13 +530,22 @@ Delegated-work request budgets are host-owned circuit breakers, not model tool
 arguments or per-child allocations; their admission and accounting contract is
 specified in [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
-A tool result that reports its OWN failure is delivered to the model as an
-ordinary result, not raised as a host error: the envelope carries guidance
-written for the model to act on. The host therefore requires no success-only
-evidence from one — a refused Skill invocation records no invocation, because
-none ran. Demanding it turned every refusal (an unknown Skill name, a disabled
-one, an exhausted child budget) into a dead Turn, and the guidance never reached
-the model that needed it.
+The native Kernel is the sole compiler for Tenon-owned tool results. It validates
+the catalog tool's semantic outcome and declared output-data schema, writes one
+deterministic compact JSON header, then appends supplemental text and image parts
+without reordering them. The compiled native result is the single value emitted
+to the provider and recorded by `PiTurnExecutor`; later projection never parses
+private details to reconstruct a result.
+
+A tool result that reports its own failure or expected denial is delivered to the
+model as an ordinary result with `isError: false`: its semantic header carries
+guidance written for the model to act on. The host therefore requires no
+success-only evidence from one — a refused Skill invocation records no
+invocation, because none ran. Kernel-owned rejection, cancellation, malformed
+internal output, or execution exception instead sets `isError: true` and uses a
+stable bounded common error. Demanding success from expected failures turned
+every refusal (an unknown Skill name, a disabled one, an exhausted child budget)
+into a dead Turn, and the guidance never reached the model that needed it.
 
 An OPTIONAL string tool argument the model leaves blank means "not specified", and
 is recorded as `null` rather than as an empty string: a Subagent spawn's `model`,
@@ -903,14 +912,17 @@ and projects the failed source through `CanonicalContextProjector`; the
 history, and interrupted assistant tails remain evidence without entering provider
 history. A bounded application directive tells the model that settled assistant/tool
 history is completed evidence and must not be repeated unless the reader explicitly
-asks. The runtime dispatches only the new Turn; historical tool Items are never enqueued.
+asks. The runtime dispatches only the new Turn; historical tool Items are never enqueued,
+and their persisted result content bytes are reused without another semantic compilation.
 
 Rerun instead projects a complete ordered canonical replacement: initial input followed
 by every steering input accepted by the failed Turn, with each input's structured
 content, accepted timestamp, stable client ID, author, and admission evidence preserved.
 The atomic replacement excludes assistant/tool output and runtime-only evidence from the
 failed attempt. Main requires explicit confirmation when the source contains a settled
-tool because replay starts from the beginning and may repeat effects.
+tool because replay starts from the beginning and may repeat effects. Because the failed
+attempt's tool output is excluded, a confirmed Rerun executes the tool again and compiles
+a new result rather than reusing the earlier bytes.
 
 Timeout, maximum transient retries, maximum retry delay, and cache retention are read
 once at Turn execution start and applied consistently to each provider request. Custom

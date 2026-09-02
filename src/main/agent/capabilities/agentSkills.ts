@@ -29,7 +29,6 @@ import {
 import {
   agentToolResult,
   errorEnvelope,
-  modelVisibleEnvelope,
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
@@ -796,11 +795,9 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
           data,
           instructions: 'Use only Skills listed in the current Skill catalog context, or continue without a Skill.',
         });
-        const modelData = skillToolModelData(data, invocation.artifactObservations ?? []);
-        const visible = modelVisibleEnvelope(envelope, modelData);
+        const modelData = skillToolModelData({ skill: data.skill }, invocation.artifactObservations ?? []);
         return {
-          content: [{ type: 'text', text: JSON.stringify(visible, null, 2) }],
-          details: envelope,
+          ...agentToolResult(envelope, modelData),
           ...(invocation.resourceRefs?.length ? { resourceRefs: invocation.resourceRefs } : {}),
         };
       }
@@ -821,15 +818,24 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
         error: invocation.isolated?.error,
       };
       const modelData = skillToolModelData({
-        success: true,
         skill: invocation.skill.name,
         status: invocation.execution === 'isolated' ? 'isolated' : 'loaded',
         ...(invocation.execution === 'isolated'
-          ? { result: formatIsolatedSkillToolResult(invocation.skill, invocation.isolated) }
-          : { result: `Loaded Skill: ${invocation.skill.name}` }),
+          ? {
+              outcome: invocation.isolated?.status,
+              threadId: invocation.isolated?.threadId,
+              agentRole: invocation.isolated?.agentRole,
+            }
+          : {}),
       }, invocation.artifactObservations);
+      const supplemental = invocation.execution === 'isolated'
+        ? [{
+            type: 'text' as const,
+            text: formatIsolatedSkillToolResult(invocation.skill, invocation.isolated),
+          }]
+        : [];
       return {
-        ...agentToolResult(successEnvelope(SKILL_TOOL_NAME, data), modelData),
+        ...agentToolResult(successEnvelope(SKILL_TOOL_NAME, data), modelData, supplemental),
         ...(invocation.resourceRefs.length > 0 ? { resourceRefs: invocation.resourceRefs } : {}),
       };
     },

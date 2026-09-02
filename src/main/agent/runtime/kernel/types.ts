@@ -62,7 +62,7 @@ export const EMPTY_USAGE: Usage = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-export interface AgentToolResult<T> {
+interface AgentToolResultBase<T> {
   content: (TextContent | ImageContent)[];
   details: T;
   terminate?: boolean;
@@ -71,6 +71,29 @@ export interface AgentToolResult<T> {
   /** Host-only substitutions applied only when the tool result enters durable history. */
   persistedTextReplacements?: readonly AgentToolTextReplacement[];
 }
+
+export interface NativeAgentToolResult<T> extends AgentToolResultBase<T> {
+  readonly kind: 'native';
+}
+
+export type TenonToolOutcome =
+  | { readonly ok: true; readonly status?: 'unchanged' | 'partial' }
+  | {
+      readonly ok: false;
+      readonly status?: 'denied';
+      readonly error: { readonly code: string; readonly message: string };
+    };
+
+/** Host-owned semantic result. The Kernel is the only model-visible compiler. */
+export interface TenonAgentToolResult<T> extends AgentToolResultBase<T> {
+  readonly kind: 'tenon';
+  readonly outcome: TenonToolOutcome;
+  readonly data?: JsonValue;
+  readonly instructions?: string;
+  readonly warnings?: readonly string[];
+}
+
+export type AgentToolResult<T> = NativeAgentToolResult<T> | TenonAgentToolResult<T>;
 
 export interface AgentToolTextReplacement {
   readonly value: string;

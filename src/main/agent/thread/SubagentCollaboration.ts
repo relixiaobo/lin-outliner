@@ -535,19 +535,17 @@ export class SubagentCollaboration {
           signal,
         });
         if (result.runMode === 'background') {
-          return rawTextToolResult(backgroundLaunchText({
-            agentId: result.agentId,
-          }), { agentId: result.agentId });
+          return agentResult({ agentId: result.agentId });
         }
-        return rawTextToolResult(
-          result.handoff ? result.handoff : 'Agent finished without text output.',
+        return agentResult(
           { agentId: result.agentId, coverage: result.coverage },
+          result.handoff ? result.handoff : 'Agent finished without text output.',
           result.resourceRefs,
         );
       }, agentInputSchema(modelIds), normalizeAgentToolInput),
       agentTool('agent_message', 'Agent Message', async (itemId, params) => {
         const input = normalizeAgentMessageToolInput(params);
-        return rawJsonToolResult(await this.sendAgentMessage(
+        return agentMessageResult(await this.sendAgentMessage(
           threadId,
           turnId,
           itemId,
@@ -3280,20 +3278,56 @@ function agentTool(
   };
 }
 
-function rawTextToolResult(
-  text: string,
+function agentResult(
   details: JsonValue,
+  report?: string,
   resourceRefs: readonly ThreadResourceReference[] = [],
 ): AgentToolResult<JsonValue> {
   return {
-    content: [{ type: 'text', text }],
+    kind: 'tenon',
+    outcome: { ok: true },
+    data: details,
+    content: report?.trim() ? [{ type: 'text', text: report }] : [],
     details,
     ...(resourceRefs.length === 0 ? {} : { resourceRefs }),
   };
 }
 
-function rawJsonToolResult(value: JsonValue): AgentToolResult<JsonValue> {
-  return rawTextToolResult(JSON.stringify(value), value);
+function agentMessageResult(value: JsonValue): AgentToolResult<JsonValue> {
+  const record = jsonRecord(value);
+  const agentId = typeof record?.resumedAgentId === 'string'
+    ? record.resumedAgentId
+    : jsonRecord(record?.pin ?? null)?.id;
+  return {
+    kind: 'tenon',
+    outcome: record?.success === false
+      ? {
+          ok: false,
+          status: 'denied',
+          error: { code: 'agent_message_denied', message: jsonErrorMessage(record) },
+        }
+      : { ok: true },
+    ...(record?.success === false ? {} : {
+      data: {
+        agentId: typeof agentId === 'string' ? agentId : 'main',
+        delivery: typeof record?.resumedAgentId === 'string' ? 'resumed' : 'queued',
+      },
+    }),
+    content: [],
+    details: value,
+  };
+}
+
+function jsonRecord(value: JsonValue): Readonly<Record<string, JsonValue>> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Readonly<Record<string, JsonValue>>
+    : null;
+}
+
+function jsonErrorMessage(value: Readonly<Record<string, unknown>>): string {
+  return typeof value.message === 'string' && value.message.trim()
+    ? value.message
+    : 'The Agent operation failed.';
 }
 
 function agentMessageQueuedResult(agentId: ThreadId): JsonValue {

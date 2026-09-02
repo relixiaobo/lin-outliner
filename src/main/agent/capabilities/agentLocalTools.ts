@@ -1157,7 +1157,7 @@ function createFileReadTool(
           return agentToolResult(successEnvelope('file_read', data, {
             warnings: ignoredNonPdfPagesWarnings(params.pages, 'notebook'),
             metrics: metrics(started, data),
-          }), visible);
+          }), visible, [{ type: 'text', text: data.file.content }]);
         }
         if (ext === '.pptx') {
           const read = await ingestPptxFile(filePath, fileStat.size, signal);
@@ -1253,7 +1253,7 @@ function createFileReadTool(
                 : undefined,
           warnings: textPagesWarnings,
           metrics: { ...metrics(started, data), truncated: partial },
-        }), visible);
+        }), visible, [{ type: 'text', text: data.file.content }]);
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') throw error;
         return localErrorResult('file_read', error, started, filePath);
@@ -3794,7 +3794,6 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
       return {
         file: {
           filePath: data.file.filePath,
-          content: data.file.content,
           startLine: data.file.startLine,
           totalLines: data.file.totalLines,
           hasMore: data.file.hasMore,
@@ -3812,7 +3811,7 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
         },
       };
     case 'notebook':
-      return { file: { filePath: data.file.filePath, content: data.file.content, originalSize: data.file.originalSize } };
+      return { file: { filePath: data.file.filePath, originalSize: data.file.originalSize } };
     case 'file_unchanged':
       return { file: { filePath: data.file.filePath } };
     default: {

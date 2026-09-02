@@ -844,15 +844,14 @@ describe('agent skills', () => {
     const result = await createSkillTool(runtime).execute('artifact-skill-call', {
       skill: 'artifact-skill',
     });
-    const visible = JSON.parse(result.content[0]!.text);
-    expect(visible.data.artifacts).toEqual([{
+    expect(result.data.artifacts).toEqual([{
       label: 'Generated report',
       fileName: 'report.pdf',
       mimeType: 'application/pdf',
       byteLength: 120,
       filePath: readablePath,
     }]);
-    expect(JSON.stringify(visible)).not.toContain(resourceRef.id);
+    expect(JSON.stringify(result.data)).not.toContain(resourceRef.id);
     expect(result.resourceRefs).toEqual([resourceRef]);
     expect(JSON.stringify(result.details)).not.toContain(readablePath);
   });
@@ -901,19 +900,17 @@ describe('agent skills', () => {
     const result = await createSkillTool(runtime).execute('failed-isolated-artifact-call', {
       skill: 'failed-isolated-artifact-skill',
     });
-    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+    expect(result.outcome).toEqual({
       ok: false,
-      data: {
-        artifacts: [{
-          filePath: readablePath,
-          fileName: 'failed-report.pdf',
-          mimeType: 'application/pdf',
-          byteLength: 120,
-        }],
-      },
       error: { code: 'isolated_execution_failed', message: 'Child execution failed' },
     });
-    expect(result.content[0]!.text).not.toContain(resourceRef.id);
+    expect(result.data).toMatchObject({ artifacts: [{
+      filePath: readablePath,
+      fileName: 'failed-report.pdf',
+      mimeType: 'application/pdf',
+      byteLength: 120,
+    }] });
+    expect(JSON.stringify(result.data)).not.toContain(resourceRef.id);
     expect(result.resourceRefs).toEqual([resourceRef]);
     expect(JSON.stringify(result.details)).not.toContain(readablePath);
   });
@@ -956,19 +953,17 @@ describe('agent skills', () => {
     const result = await createSkillTool(runtime).execute('failing-artifact-skill-call', {
       skill: 'failing-artifact-skill',
     });
-    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+    expect(result.outcome).toEqual({
       ok: false,
-      data: {
-        artifacts: [{
-          filePath: readablePath,
-          fileName: 'partial.txt',
-          mimeType: 'text/plain',
-          byteLength: 7,
-        }],
-      },
       error: { code: 'skill_shell_failed', message: 'Command failed; file=partial.txt' },
     });
-    expect(result.content[0]!.text).not.toContain(resourceRef.id);
+    expect(result.data).toMatchObject({ artifacts: [{
+      filePath: readablePath,
+      fileName: 'partial.txt',
+      mimeType: 'text/plain',
+      byteLength: 7,
+    }] });
+    expect(JSON.stringify(result.data)).not.toContain(resourceRef.id);
     expect(JSON.stringify(result.details)).not.toContain(readablePath);
     expect(result.resourceRefs).toEqual([resourceRef]);
   });

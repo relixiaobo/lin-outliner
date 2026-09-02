@@ -4,6 +4,7 @@ import type { JsonValue } from '../../../core/agent/protocol';
 import { modelToolContract } from '../../../core/agent/tools';
 import { decodeAutomationToolInput } from '../../../core/agent/automation';
 import type { AutomationService } from './AutomationService';
+import { agentToolResult, successEnvelope } from '../capabilities/agentToolEnvelope';
 
 export function createAutomationTool(service: AutomationService): AgentTool {
   const contract = modelToolContract('automation_update');
@@ -36,12 +37,9 @@ export function createAutomationTool(service: AutomationService): AgentTool {
   };
 }
 
-function toolResult(value: unknown): AgentToolResult<JsonValue> {
+function toolResult(value: unknown): AgentToolResult<unknown> {
   const details = JSON.parse(JSON.stringify(value ?? null)) as JsonValue;
-  return {
-    content: [{ type: 'text', text: JSON.stringify(details, null, 2) }],
-    details,
-  };
+  return agentToolResult(successEnvelope('automation_update', details), details);
 }
 
 function abortError(): Error {

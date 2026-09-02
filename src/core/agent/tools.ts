@@ -10,6 +10,7 @@ import {
 } from './protocol';
 import { decodeRequestUserInputQuestions } from './codec';
 import {
+  AUTOMATION_STATUSES,
   AUTOMATION_IDENTIFIER_MAX_LENGTH,
   AUTOMATION_NAME_MAX_LENGTH,
   AUTOMATION_PATH_MAX_LENGTH,
@@ -18,6 +19,7 @@ import {
   AUTOMATION_RRULE_MAX_LENGTH,
   AUTOMATION_TIMEZONE_MAX_LENGTH,
 } from './automation';
+import { REASONING_EFFORTS } from './configuration';
 
 export {
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
@@ -215,6 +217,106 @@ const enumSchema = (values: readonly string[], description?: string): JsonSchema
   ...(description ? { description } : {}),
 });
 
+const toolOutputObjectSchema = (description: string): ObjectJsonSchema => ({
+  type: 'object',
+  description,
+});
+
+const booleanSchema = (description?: string): JsonSchema => ({
+  type: 'boolean',
+  ...(description ? { description } : {}),
+});
+
+const integerSchema = (description?: string): JsonSchema => ({
+  type: 'integer',
+  ...(description ? { description } : {}),
+});
+
+const nullableSchema = (schema: JsonSchema): JsonSchema => ({
+  anyOf: [schema, { type: 'null' }],
+});
+
+const artifactOutputSchema = objectSchema({
+  label: stringSchema(),
+  fileName: stringSchema(),
+  mimeType: stringSchema(),
+  byteLength: integerSchema(),
+  filePath: stringSchema(),
+}, ['label', 'fileName', 'mimeType', 'byteLength']);
+
+const persistedOutputSchema = objectSchema({
+  filePath: stringSchema(),
+  fileName: stringSchema(),
+  mimeType: stringSchema(),
+  byteLength: integerSchema(),
+}, ['fileName', 'mimeType', 'byteLength']);
+
+const localFileMutationOutputSchema = objectSchema({
+  type: stringSchema(),
+  filePath: stringSchema(),
+  structuredPatch: arraySchema(toolOutputObjectSchema('One structured patch hunk.')),
+  skillWrite: toolOutputObjectSchema('Skill write audit visible to the model.'),
+}, ['filePath', 'structuredPatch']);
+
+const retainedCapabilityOutputSchemas: Readonly<Record<typeof RETAINED_CAPABILITY_TOOL_NAMES[number], JsonSchema>> = {
+  file_read: objectSchema({
+    file: toolOutputObjectSchema('Bounded file metadata; document text and images are supplemental content.'),
+  }, ['file']),
+  file_glob: objectSchema({
+    filenames: arraySchema(stringSchema()),
+    truncated: booleanSchema(),
+  }, ['filenames']),
+  file_grep: objectSchema({
+    content: stringSchema(),
+    numMatches: integerSchema(),
+    filenames: arraySchema(stringSchema()),
+  }),
+  file_edit: localFileMutationOutputSchema,
+  file_write: localFileMutationOutputSchema,
+  file_delete: objectSchema({
+    trashPath: stringSchema(),
+    kind: stringSchema(),
+  }, ['trashPath', 'kind']),
+  bash: objectSchema({
+    stdout: stringSchema(),
+    stderr: stringSchema(),
+    interrupted: booleanSchema(),
+    exitCode: integerSchema(),
+    isImage: booleanSchema(),
+    backgroundTaskId: stringSchema(),
+    taskStatus: stringSchema(),
+    persistedOutput: persistedOutputSchema,
+    artifacts: arraySchema(artifactOutputSchema),
+    temporaryOutputPath: stringSchema(),
+    outputLimitExceeded: booleanSchema(),
+  }, ['stdout', 'stderr']),
+  web_search: objectSchema({
+    results: arraySchema(toolOutputObjectSchema('One bounded Web or image search result.')),
+    kind: enumSchema(['image']),
+    truncated: booleanSchema(),
+    totalResults: integerSchema(),
+    hint: toolOutputObjectSchema('A bounded Web recovery hint.'),
+  }, ['results']),
+  web_fetch: objectSchema({
+    title: stringSchema(),
+    finalUrl: stringSchema(),
+    statusCode: integerSchema(),
+    binaryFile: persistedOutputSchema,
+    metadata: toolOutputObjectSchema('Bounded page metadata.'),
+    matches: arraySchema(objectSchema({ snippet: stringSchema() }, ['snippet'])),
+    totalMatches: integerSchema(),
+    nextMatchOffset: integerSchema(),
+    truncated: booleanSchema(),
+    totalChars: integerSchema(),
+    nextOffset: integerSchema(),
+    hint: toolOutputObjectSchema('A bounded Web recovery hint.'),
+  }),
+  generate_image: objectSchema({
+    images: arraySchema(toolOutputObjectSchema('Generated image identity, current path, and geometry.')),
+    text: arraySchema(stringSchema()),
+  }, ['images']),
+};
+
 const requestUserInputSchema = objectSchema({
   questions: arraySchema(objectSchema({
     id: stringSchema('Stable snake-case identifier used to map the answer.'),
@@ -295,7 +397,7 @@ const nullableStringSchema: JsonSchema = {
 const automationConfigurationSchema = objectSchema({
   modelProvider: nullableStringSchema,
   model: nullableStringSchema,
-  reasoningEffort: { anyOf: [enumSchema(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']), { type: 'null' }] },
+  reasoningEffort: nullableSchema(enumSchema(REASONING_EFFORTS)),
 });
 
 const automationDefinitionProperties = {
@@ -310,6 +412,97 @@ const automationMutableProperties = {
   ...automationDefinitionProperties,
   status: enumSchema(['active', 'paused']),
 };
+
+const automationOutputSchema = objectSchema({
+  id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
+  name: boundedStringSchema(AUTOMATION_NAME_MAX_LENGTH),
+  prompt: boundedStringSchema(AUTOMATION_PROMPT_MAX_LENGTH),
+  schedule: automationScheduleSchema,
+  destination: automationDestinationSchema,
+  projectBindings: boundedArraySchema(automationProjectBindingSchema, AUTOMATION_PROJECT_BINDINGS_MAX_COUNT),
+  configuration: objectSchema({
+    modelProvider: nullableStringSchema,
+    model: nullableStringSchema,
+    reasoningEffort: nullableSchema(enumSchema(REASONING_EFFORTS)),
+  }, ['modelProvider', 'model', 'reasoningEffort']),
+  status: enumSchema(AUTOMATION_STATUSES),
+  revision: integerSchema(),
+  nextOccurrenceAt: nullableSchema(integerSchema()),
+  createdAt: integerSchema(),
+  updatedAt: integerSchema(),
+}, [
+  'id',
+  'name',
+  'prompt',
+  'schedule',
+  'destination',
+  'projectBindings',
+  'configuration',
+  'status',
+  'revision',
+  'nextOccurrenceAt',
+  'createdAt',
+  'updatedAt',
+]);
+
+const automationUpdateOutputSchema: ObjectJsonSchema = {
+  type: 'object',
+  oneOf: [
+    objectSchema({ automation: nullableSchema(automationOutputSchema) }, ['automation']),
+    objectSchema({ data: arraySchema(automationOutputSchema) }, ['data']),
+    objectSchema({ deleted: { const: true }, id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH) }, ['deleted', 'id']),
+  ],
+};
+
+const threadReadOutputSchema = objectSchema({
+  threadId: boundedStringSchema(64),
+  title: stringSchema(),
+  untrusted: booleanSchema(),
+  instructions: stringSchema(),
+  coverage: objectSchema({
+    turnCount: integerSchema(),
+    oldestPosition: nullableSchema(integerSchema()),
+    newestPosition: nullableSchema(integerSchema()),
+    hasOlder: booleanSchema(),
+    hasNewer: booleanSchema(),
+    truncated: booleanSchema(),
+  }, ['turnCount', 'oldestPosition', 'newestPosition', 'hasOlder', 'hasNewer', 'truncated']),
+  previousCursor: nullableSchema(stringSchema()),
+  nextCursor: nullableSchema(stringSchema()),
+  turns: arraySchema(objectSchema({
+    turnId: stringSchema(),
+    status: enumSchema(['inProgress', 'completed', 'interrupted', 'failed']),
+    items: arraySchema(objectSchema({
+      role: enumSchema(['user', 'assistant', 'activity']),
+      text: stringSchema(),
+      toolOutput: stringSchema(),
+    }, ['role', 'text'])),
+  }, ['turnId', 'status', 'items'])),
+  citations: arraySchema(objectSchema({
+    citationKey: stringSchema(),
+    displayName: stringSchema(),
+    mimeType: stringSchema(),
+    byteLength: integerSchema(),
+  }, ['citationKey', 'displayName', 'mimeType', 'byteLength'])),
+  selectedCitations: arraySchema(objectSchema({
+    displayName: stringSchema(),
+    representation: enumSchema(['reveal', 'replay', 'edit', 'observe']),
+    fileReference: stringSchema(),
+  }, ['displayName', 'representation'])),
+  toolOutputIncluded: booleanSchema(),
+}, [
+  'threadId',
+  'title',
+  'untrusted',
+  'instructions',
+  'coverage',
+  'previousCursor',
+  'nextCursor',
+  'turns',
+  'citations',
+  'selectedCitations',
+  'toolOutputIncluded',
+]);
 
 // The root stays a flat object with no union keyword. OpenAI rejects a function
 // schema whose ROOT carries oneOf/anyOf/allOf/enum/not ("schema must have type
@@ -485,6 +678,10 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
     scope: 'anyThread',
     schemaOwner: 'configuration',
     inputSchema: null,
+    outputSchema: objectSchema({
+      agentId: stringSchema('Stable Agent identity.'),
+      coverage: toolOutputObjectSchema('Bounded foreground handoff coverage.'),
+    }, ['agentId']),
     actionKinds: ['agent.subagent.spawn'],
   },
   {
@@ -493,6 +690,10 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: AGENT_MESSAGE_INPUT_SCHEMA,
+    outputSchema: objectSchema({
+      agentId: stringSchema('Target Agent identity.'),
+      delivery: enumSchema(['queued', 'resumed']),
+    }, ['agentId', 'delivery']),
     actionKinds: ['agent.subagent.send'],
   },
   {
@@ -501,6 +702,11 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: TASK_STOP_INPUT_SCHEMA,
+    outputSchema: objectSchema({
+      taskId: stringSchema('Stopped task identity.'),
+      taskType: stringSchema('Task owner family.'),
+      state: enumSchema(['stopped']),
+    }, ['taskId', 'taskType', 'state']),
     actionKinds: ['agent.subagent.interrupt', 'shell.stop'],
   },
 ];
@@ -516,6 +722,10 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: threadSearchSchema,
+    outputSchema: objectSchema({
+      results: arraySchema(toolOutputObjectSchema('One bounded untrusted Thread search result.')),
+      untrusted: booleanSchema(),
+    }, ['results', 'untrusted']),
     actionKinds: ['thread.history.search'],
   },
   {
@@ -528,6 +738,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: threadReadSchema,
+    outputSchema: threadReadOutputSchema,
     actionKinds: ['thread.history.read'],
   },
   {
@@ -541,6 +752,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     scope: 'rootThread',
     schemaOwner: 'core',
     inputSchema: automationUpdateToolSchema,
+    outputSchema: automationUpdateOutputSchema,
     actionKinds: ['agent.automation.manage'],
   },
   {
@@ -549,6 +761,14 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     scope: 'rootThread',
     schemaOwner: 'core',
     inputSchema: requestUserInputSchema,
+    outputSchema: objectSchema({
+      answers: arraySchema(objectSchema({
+        questionId: stringSchema(),
+        optionLabel: stringSchema(),
+        otherText: stringSchema(),
+      }, ['questionId'])),
+      autoResolved: booleanSchema(),
+    }, ['answers', 'autoResolved']),
     actionKinds: ['agent.user_input.request'],
   },
   {
@@ -557,6 +777,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: updatePlanSchema,
+    outputSchema: null,
     actionKinds: ['agent.plan.update'],
   },
   {
@@ -565,6 +786,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: objectSchema({}),
+    outputSchema: objectSchema({ goal: {} }, ['goal']),
     actionKinds: ['agent.goal.read'],
   },
   {
@@ -576,6 +798,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
       objective: stringSchema('Concrete objective to pursue.'),
       token_budget: { type: 'integer', minimum: 1 },
     }, ['objective']),
+    outputSchema: objectSchema({ goal: toolOutputObjectSchema('Created Goal state.') }, ['goal']),
     actionKinds: ['agent.goal.create'],
   },
   {
@@ -586,6 +809,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     inputSchema: objectSchema({
       status: enumSchema(['complete', 'blocked']),
     }, ['status']),
+    outputSchema: objectSchema({ goal: toolOutputObjectSchema('Updated Goal state.') }, ['goal']),
     actionKinds: ['agent.goal.update'],
   },
 ];
@@ -624,6 +848,7 @@ const retainedCapabilityToolContracts: readonly StaticModelToolContract[] = RETA
   scope: 'anyThread',
   schemaOwner: 'capability',
   inputSchema: null,
+  outputSchema: retainedCapabilityOutputSchemas[name],
   actionKinds: CAPABILITY_ACTION_KINDS[name],
 }));
 
@@ -634,6 +859,14 @@ const configurationToolContracts: readonly StaticModelToolContract[] = [
     scope: 'anyThread',
     schemaOwner: 'configuration',
     inputSchema: null,
+    outputSchema: objectSchema({
+      skill: stringSchema('Canonical Skill identity.'),
+      status: enumSchema(['loaded', 'isolated']),
+      outcome: stringSchema('Isolated Skill terminal state.'),
+      threadId: stringSchema('Isolated Skill Thread identity.'),
+      agentRole: stringSchema('Isolated Skill Agent Role.'),
+      artifacts: arraySchema(artifactOutputSchema),
+    }, ['skill']),
     actionKinds: ['agent.skill.invoke'],
   },
 ];

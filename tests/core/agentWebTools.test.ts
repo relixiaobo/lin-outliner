@@ -204,18 +204,15 @@ describe('agent web tools', () => {
 
     const envelope = await buildWebFetchSuccessEnvelope(fetchedText(html), params, 12);
     const result = agentToolResult(envelope, webFetchModelData(envelope.data!));
-    const visible = JSON.parse(result.content[0]!.type === 'text' ? result.content[0]!.text : '{}');
 
     expect(result.details).toBe(envelope);
     // The model-visible projection drops `tool` and omits `status` on success;
     // the runtime envelope on details keeps the full shape.
-    expect(visible).not.toHaveProperty('tool');
-    expect(visible).not.toHaveProperty('status');
+    expect(result.data).not.toHaveProperty('tool');
+    expect(result.outcome).toEqual({ ok: true });
     expect(result.details!.tool).toBe('web_fetch');
     // The full WebFetchData stays on details; the model only sees title + metadata.
-    expect(visible).toMatchObject({
-      ok: true,
-      data: {
+    expect(result.data).toMatchObject({
         title: 'Lin Docs',
         metadata: {
           title: 'Lin Docs',
@@ -226,14 +223,12 @@ describe('agent web tools', () => {
           headings: ['Overview', 'Install'],
           links: [{ text: 'Next', url: 'https://example.com/docs/next' }],
         },
-      },
     });
     // Echoed arguments and telemetry are dropped from the model view.
-    expect(visible.data.mode).toBeUndefined();
-    expect(visible.data.format).toBeUndefined();
-    expect(visible.data.url).toBeUndefined();
-    expect(visible.data.durationMs).toBeUndefined();
-    expect(visible.version).toBeUndefined();
+    expect(result.data).not.toHaveProperty('mode');
+    expect(result.data).not.toHaveProperty('format');
+    expect(result.data).not.toHaveProperty('url');
+    expect(result.data).not.toHaveProperty('durationMs');
     expect(envelope.data!.content).toBeUndefined();
   });
 
@@ -410,14 +405,12 @@ describe('web tool model-visible projections', () => {
 
     expect(webFetchModelData(base)).toEqual({
       title: 'Page',
-      content: 'hello',
       truncated: true,
       totalChars: 12,
       nextOffset: 5,
     });
     expect(webFetchModelData({ ...base, truncated: false, nextOffset: undefined })).toEqual({
       title: 'Page',
-      content: 'hello',
     });
   });
 
@@ -435,7 +428,6 @@ describe('web tool model-visible projections', () => {
     expect(webFetchModelData(data)).toEqual({
       finalUrl: 'https://other.com/b',
       statusCode: 404,
-      content: 'x',
     });
   });
 

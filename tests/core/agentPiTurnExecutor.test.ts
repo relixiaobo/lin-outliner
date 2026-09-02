@@ -4036,7 +4036,7 @@ describe('PiTurnExecutor provider payload', () => {
       execute: async () => {
         toolExecutions += 1;
         if (toolExecutions === 1) throw new Error('Recoverable tool failure');
-        return { content: [{ type: 'text', text: 'recovered' }], details: {} };
+        return { kind: 'native', content: [{ type: 'text', text: 'recovered' }], details: {} };
       },
     };
     const responses = [
@@ -4505,7 +4505,7 @@ describe('PiTurnExecutor provider payload', () => {
       },
       execute: async (_callId: string, args: unknown) => {
         executions.push(args);
-        return { content: [{ type: 'text' as const, text: 'request completed' }], details: {} };
+        return { kind: 'native' as const, content: [{ type: 'text' as const, text: 'request completed' }], details: {} };
       },
     } as AgentTool;
     const providerContexts: Message[][] = [];
@@ -4579,7 +4579,7 @@ describe('PiTurnExecutor provider payload', () => {
       },
       execute: async (callId: string, args: unknown) => {
         executions.push({ callId, args });
-        return { content: [{ type: 'text' as const, text: 'valid pair completed' }], details: {} };
+        return { kind: 'native' as const, content: [{ type: 'text' as const, text: 'valid pair completed' }], details: {} };
       },
     } as AgentTool;
     const providerContexts: Message[][] = [];
@@ -4845,7 +4845,7 @@ function parityTool(
     description,
     parameters: parameters as AgentTool['parameters'],
     executionMode: 'sequential',
-    execute: async () => ({ content: [{ type: 'text', text: 'unused' }], details: {} }),
+    execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'unused' }], details: {} }),
   };
 }
 
@@ -5209,7 +5209,7 @@ function testTool(name: string, description: string): AgentTool {
       additionalProperties: false,
       properties: {},
     },
-    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+    execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'ok' }], details: {} }),
   } as AgentTool;
 }
 
@@ -5219,7 +5219,7 @@ function historyTestTool(name: string): AgentTool {
     label: name,
     description: `${name} history fixture`,
     parameters: { type: 'object', additionalProperties: true },
-    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+    execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'ok' }], details: {} }),
   } as AgentTool;
 }
 

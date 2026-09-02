@@ -55,7 +55,12 @@ describe('unified task_stop dispatcher', () => {
       shell_id: 'ignored-shell-id',
     });
     expect(calls).toEqual(['agent-task-id']);
-    expect(result.details).toMatchObject({ task_id: 'agent-task-id', task_type: 'local_agent' });
+    expect(result.details).toMatchObject({
+      data: { task_id: 'agent-task-id', task_type: 'local_agent' },
+    });
+    expect(result).toMatchObject({
+      data: { taskId: 'agent-task-id', taskType: 'local_agent', state: 'stopped' },
+    });
   });
 
   test('falls back to the shell owner and returns the canonical stop fields', async () => {
@@ -128,10 +133,10 @@ describe('unified task_stop dispatcher', () => {
         },
       },
     });
-    expect(terminal.content).toEqual([expect.objectContaining({
-      type: 'text',
-      text: expect.stringContaining('persistedOutput'),
-    })]);
+    expect(terminal).toMatchObject({
+      data: { taskId: shellId, taskType: 'shell', state: 'stopped' },
+      content: [],
+    });
   });
 
   test('does not expose or stop a background shell owned by another Thread', async () => {
