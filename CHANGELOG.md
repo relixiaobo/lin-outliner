@@ -12,6 +12,22 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Web search now recovers trustworthy Google results after provider markup
+  drift (PR #615, codex)** — ranked organic candidates preserve direct links and
+  opaque Google `/goto` capabilities, while a bounded JavaScript-disabled
+  provider window intercepts the first main-frame redirect before the external
+  result page is requested. Every recovered target is revalidated as
+  credential-free external HTTP(S), DuckDuckGo remains the final fallback, and
+  genuine empty SERPs stay distinct from challenges, extraction drift, and
+  transport failures. Search metadata remains discovery-only evidence until
+  `web_fetch` observes the admitted source. Gate review found two Medium
+  authoritative-empty and redirect-probe coverage defects; both were fixed
+  before the final no-findings review. Independently verified with typecheck,
+  `docs:check`, 32 focused Core tests, and the Electron probe build; the branch
+  also reported a 12/12 live Electron search-to-fetch probe, 2,775 passing full
+  Core tests with 6 skipped and one load-dependent timeout that passed alone,
+  and five successful GitHub E2E samples plus baseline subtraction.
+
 - **Tenon-owned tools now return one enforced semantic result protocol (PR
   #613, codex-3)** — all 22 built-in model tools report success, unchanged,
   partial, denied, or recoverable failure through one Kernel-compiled compact

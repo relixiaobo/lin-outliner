@@ -209,6 +209,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **web-search-serp-recovery** (`done`, #615, 2026-09-02) — Google organic
+  discovery now resolves bounded provider-private `/goto` capabilities without
+  requesting result content, while the Google/DuckDuckGo chain distinguishes
+  authoritative empty SERPs from diagnostic failures; plan archived at
+  [web-search-serp-recovery](plans/archive/web-search-serp-recovery.md).
 - **agent-tool-result-envelope-contract** (`done`, #613, 2026-09-02) — all
   Tenon-owned model tools now share one Kernel-enforced semantic result envelope,
   bounded model projection, private Host details, and first-header-only durable

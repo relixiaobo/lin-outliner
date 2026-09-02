@@ -2313,3 +2313,23 @@ recovery guidance without hiding programming, storage, or provider faults.
 Regression coverage must throw both the typed domain failure and an ordinary
 error through the same adapter, then prove that only the typed failure becomes
 a non-Kernel semantic result.
+
+## Boundary probes must force the boundary they claim to verify
+
+PR #615 first added a live search probe that accepted either provider and checked
+only the first returned URL. It could pass through a Google direct link or the
+DuckDuckGo fallback without executing the new Google redirect interceptor, so a
+green result did not prove the security boundary under review. The same review
+also found that a result-link selector doubled as page readiness, making a real
+empty SERP unreachable by the extractor that was supposed to classify it.
+
+**A probe for a security or classification boundary must force the exact branch,
+then assert both the admitted result and the forbidden side effect.** Separate
+page readiness from result existence, require evidence that the intended
+provider mechanism ran, and observe requests or writes at the boundary rather
+than inferring safety from the final value.
+
+Regression coverage should pair a deterministic local fixture with any live
+provider check: drive the real redirect or empty-state event, verify the expected
+classification, and prove the protected target received zero requests. A live
+happy path is supplementary drift detection, not deterministic boundary proof.
