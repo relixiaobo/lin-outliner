@@ -4,6 +4,8 @@ import type { JsonValue } from '../../../core/agent/protocol';
 import { modelToolContract } from '../../../core/agent/tools';
 import { decodeAutomationToolInput } from '../../../core/agent/automation';
 import type { AutomationService } from './AutomationService';
+import { agentToolResult, errorEnvelope, successEnvelope } from '../capabilities/agentToolEnvelope';
+import { AgentToolFailure } from '../AgentToolFailure';
 
 export function createAutomationTool(service: AutomationService): AgentTool {
   const contract = modelToolContract('automation_update');
@@ -16,32 +18,36 @@ export function createAutomationTool(service: AutomationService): AgentTool {
     executionMode: 'sequential',
     execute: async (_itemId, value, signal) => {
       if (signal?.aborted) throw abortError();
-      const command = decodeAutomationToolInput(value);
-      switch (command.mode) {
-        case 'create':
-          return toolResult({ automation: await service.create(command.create) });
-        case 'update':
-          return toolResult({ automation: await service.update(command.update) });
-        case 'view':
-          return toolResult(command.id === null
-            ? await service.request('list', {})
-            : await service.request('read', { id: command.id }));
-        case 'delete':
-          return toolResult(await service.request('delete', {
-            id: command.id,
-            expectedRevision: command.expectedRevision,
-          }));
+      try {
+        const command = decodeAutomationToolInput(value);
+        switch (command.mode) {
+          case 'create':
+            return toolResult({ automation: await service.create(command.create) });
+          case 'update':
+            return toolResult({ automation: await service.update(command.update) });
+          case 'view':
+            return toolResult(command.id === null
+              ? await service.request('list', {})
+              : await service.request('read', { id: command.id }));
+          case 'delete':
+            return toolResult(await service.request('delete', {
+              id: command.id,
+              expectedRevision: command.expectedRevision,
+            }));
+        }
+      } catch (error) {
+        if (!(error instanceof AgentToolFailure)) throw error;
+        return agentToolResult(errorEnvelope('automation_update', error.code, error.message, {
+          instructions: error.instructions,
+        }));
       }
     },
   };
 }
 
-function toolResult(value: unknown): AgentToolResult<JsonValue> {
+function toolResult(value: unknown): AgentToolResult<unknown> {
   const details = JSON.parse(JSON.stringify(value ?? null)) as JsonValue;
-  return {
-    content: [{ type: 'text', text: JSON.stringify(details, null, 2) }],
-    details,
-  };
+  return agentToolResult(successEnvelope('automation_update', details), details);
 }
 
 function abortError(): Error {

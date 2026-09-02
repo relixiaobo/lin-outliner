@@ -9648,8 +9648,10 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       plan: [{ step: 'Implement', status: 'in_progress' }],
     });
     expect(planUpdate.details).toMatchObject({
-      explanation: 'Canonical execution plan',
-      plan: [{ step: 'Implement', status: 'in_progress' }],
+      data: {
+        explanation: 'Canonical execution plan',
+        plan: [{ step: 'Implement', status: 'in_progress' }],
+      },
     });
     expect(notifications).toContainEqual({
       type: 'turn/plan/updated',
@@ -9662,7 +9664,17 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       objective: 'Finish the canonical runtime',
       token_budget: 100,
     });
-    expect(createdGoal.details).toMatchObject({ goal: { status: 'active', tokenBudget: 100 } });
+    expect(createdGoal.details).toMatchObject({ data: { goal: { status: 'active', tokenBudget: 100 } } });
+    const duplicateGoal = await executeTool(tools, 'create_goal', 'goal-create-duplicate', {
+      objective: 'Replace the active Goal',
+    });
+    expect(duplicateGoal).toMatchObject({
+      outcome: {
+        ok: false,
+        error: { code: 'goal_already_exists' },
+      },
+      instructions: expect.stringContaining('get_goal'),
+    });
     await recordCollaborationSpawnBoundary(context, 'spawn-item');
     const spawned = await executeTool(tools, 'agent', 'spawn-item', {
       description: 'helper',
@@ -13519,14 +13531,14 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
         description: EXTENSION_PROBE_CONTRACT.description,
         parameters: EXTENSION_PROBE_CONTRACT.inputSchema!,
         executionMode: 'sequential',
-        execute: async () => ({ content: [{ type: 'text', text: 'updated' }], details: { updated: true } }),
+        execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'updated' }], details: { updated: true } }),
       }, {
         name: 'broken_probe__run',
         label: 'Broken Probe',
         description: 'This malformed contribution must be omitted.',
         parameters: null as never,
         executionMode: 'sequential',
-        execute: async () => ({ content: [{ type: 'text', text: 'bad' }], details: { bad: true } }),
+        execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'bad' }], details: { bad: true } }),
       }, {
         name: 'mismatched_probe__run',
         label: 'Mismatched Probe',
@@ -13538,14 +13550,14 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
           required: ['actual'],
         } as never,
         executionMode: 'sequential',
-        execute: async () => ({ content: [{ type: 'text', text: 'bad' }], details: { bad: true } }),
+        execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'bad' }], details: { bad: true } }),
       }, {
         name: 'malformed_dynamic',
         label: 'Malformed Dynamic Tool',
         description: 'This malformed dynamic contribution must be omitted.',
         parameters: null as never,
         executionMode: 'sequential',
-        execute: async () => ({ content: [{ type: 'text', text: 'bad' }], details: { bad: true } }),
+        execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'bad' }], details: { bad: true } }),
       }],
     });
     const warnings: string[] = [];
@@ -13734,7 +13746,7 @@ function forkPayloadProjectionTool(): AgentTool {
     label: 'payload',
     description: 'Project the persisted argument payload.',
     parameters: FORK_PAYLOAD_TOOL_SCHEMA as any,
-    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+    execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'ok' }], details: {} }),
   };
 }
 
@@ -13799,7 +13811,7 @@ function runtimeSchemaTools(): import('../../src/main/agent/runtime/kernel/types
         description: contract.description,
         parameters: { type: 'object', additionalProperties: false },
         executionMode: 'sequential' as const,
-        execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: { ok: true } }),
+        execute: async () => ({ kind: 'tenon' as const, outcome: { ok: true as const }, data: {}, content: [], details: { ok: true } }),
       }]
     : []);
 }
@@ -14494,7 +14506,7 @@ function historyProjectionTool(
     label: name,
     description: `${name} history projection fixture`,
     parameters: { type: 'object', additionalProperties: true },
-    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+    execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'ok' }], details: {} }),
   } as import('../../src/main/agent/runtime/kernel/types').AgentTool;
 }
 

@@ -3299,6 +3299,53 @@ describe('PiTurnExecutor event normalization', () => {
     expect(persistedOutput).not.toContain(resourceRef.id);
   });
 
+  test('transforms only the Tenon header and preserves supplemental JSON text exactly', async () => {
+    const fixture = createContext();
+    const producingPath = '/tmp/turn-observation/report.json';
+    const header = JSON.stringify({
+      ok: true,
+      data: { binaryFile: { filePath: producingPath, fileName: 'report.json' } },
+    });
+    const supplemental = JSON.stringify({
+      ok: true,
+      filePath: '/document-owned/path',
+      temporaryOutputPath: '/document-owned/temporary-path',
+    });
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent('call-web-json', 'web_fetch', {
+      url: 'https://example.com/report.json',
+    }));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-web-json',
+      toolName: 'web_fetch',
+      result: {
+        content: [
+          { type: 'text', text: header },
+          { type: 'text', text: supplemental },
+        ],
+        details: { ok: true },
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    expect(item).toMatchObject({
+      type: 'dynamicToolCall',
+      contentItems: [
+        { type: 'text', text: expect.not.stringContaining(producingPath) },
+        { type: 'text', text: supplemental },
+      ],
+    });
+    if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
+      throw new Error('Expected Web JSON output reference.');
+    }
+    const persistedOutput = await fixture.context.readOutput(item.outputRef);
+    expect(persistedOutput).not.toContain(producingPath);
+    expect(persistedOutput).toContain(supplemental);
+  });
+
   test('keeps bash artifact handles and repeated instruction paths out of the canonical command Item', async () => {
     const fixture = createContext();
     const resourceRef: ThreadResourceReference = {
@@ -4036,7 +4083,7 @@ describe('PiTurnExecutor provider payload', () => {
       execute: async () => {
         toolExecutions += 1;
         if (toolExecutions === 1) throw new Error('Recoverable tool failure');
-        return { content: [{ type: 'text', text: 'recovered' }], details: {} };
+        return { kind: 'native', content: [{ type: 'text', text: 'recovered' }], details: {} };
       },
     };
     const responses = [
@@ -4505,7 +4552,7 @@ describe('PiTurnExecutor provider payload', () => {
       },
       execute: async (_callId: string, args: unknown) => {
         executions.push(args);
-        return { content: [{ type: 'text' as const, text: 'request completed' }], details: {} };
+        return { kind: 'native' as const, content: [{ type: 'text' as const, text: 'request completed' }], details: {} };
       },
     } as AgentTool;
     const providerContexts: Message[][] = [];
@@ -4579,7 +4626,7 @@ describe('PiTurnExecutor provider payload', () => {
       },
       execute: async (callId: string, args: unknown) => {
         executions.push({ callId, args });
-        return { content: [{ type: 'text' as const, text: 'valid pair completed' }], details: {} };
+        return { kind: 'native' as const, content: [{ type: 'text' as const, text: 'valid pair completed' }], details: {} };
       },
     } as AgentTool;
     const providerContexts: Message[][] = [];
@@ -4845,7 +4892,7 @@ function parityTool(
     description,
     parameters: parameters as AgentTool['parameters'],
     executionMode: 'sequential',
-    execute: async () => ({ content: [{ type: 'text', text: 'unused' }], details: {} }),
+    execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'unused' }], details: {} }),
   };
 }
 
@@ -5209,7 +5256,7 @@ function testTool(name: string, description: string): AgentTool {
       additionalProperties: false,
       properties: {},
     },
-    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+    execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'ok' }], details: {} }),
   } as AgentTool;
 }
 
@@ -5219,7 +5266,7 @@ function historyTestTool(name: string): AgentTool {
     label: name,
     description: `${name} history fixture`,
     parameters: { type: 'object', additionalProperties: true },
-    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+    execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'ok' }], details: {} }),
   } as AgentTool;
 }
 

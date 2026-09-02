@@ -18,6 +18,7 @@ import {
   type AutomationUpdateInput,
 } from '../../../core/agent/automation';
 import type { ThreadService } from '../ThreadService';
+import { AgentToolFailure } from '../AgentToolFailure';
 import {
   assertAutomationConfigurationMatchesThread,
   AutomationDispatcher,
@@ -167,7 +168,13 @@ export class AutomationService {
   async update(raw: AutomationUpdateInput): Promise<Automation> {
     const input = decodeAutomationUpdateInput(raw);
     const current = this.options.store.read(input.id, this.now());
-    if (!current) throw new Error(`Automation not found: ${input.id}`);
+    if (!current) {
+      throw new AgentToolFailure(
+        'automation_not_found',
+        `Automation not found: ${input.id}`,
+        'View the current Automations, then retry with an existing automation_id.',
+      );
+    }
     const normalized = {
       ...input,
       ...(input.schedule ? { schedule: normalizeAutomationSchedule(input.schedule) } : {}),

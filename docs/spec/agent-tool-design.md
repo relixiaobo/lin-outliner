@@ -819,30 +819,72 @@ permission, cancellation, and tool-execution failures do not increment this guar
 
 ## Result Contract
 
-Capability tools return native model-tool results with human-readable content
-and structured `details`. Tenon capability envelopes use:
+The 22 tools in `MODEL_TOOL_CATALOG` return a Host-owned semantic result. MCP,
+plugin, extension, and other owner-native dynamic tools retain their own result
+content unchanged. The discriminant prevents a Tenon tool from bypassing the
+semantic contract. An owner-native tool that returns the Tenon discriminant is
+rejected as malformed; expected capability and policy refusals instead travel
+through a private Host control-flow value, so result content cannot impersonate
+Host ownership.
 
 ```ts
-interface ToolEnvelope<T> {
-  ok: boolean;
-  tool: string;
-  status: string;
-  data?: T;
-  error?: {
-    code: string;
-    message: string;
-    recoverable: boolean;
-    details?: unknown;
-  };
+type ToolOutcome =
+  | { ok: true; status?: 'unchanged' | 'partial' }
+  | { ok: false; status?: 'denied'; error: { code: string; message: string } };
+
+interface TenonToolResult {
+  kind: 'tenon';
+  outcome: ToolOutcome;
+  data?: JsonValue;
   instructions?: string;
-  metrics?: { durationMs?: number };
-  capabilityAudit?: unknown;
+  warnings?: readonly string[];
+  content: readonly (TextContent | ImageContent)[];
+  details: unknown;
 }
 ```
 
-Validation errors are stable failures with recovery guidance. Owner-native
-unavailable results identify the blocked action kind. Unexpected exceptions are
-captured by the runtime and complete the Item as failed.
+`ok` is the sole success discriminator. `status` appears only when it adds
+`unchanged`, `partial`, or `denied` meaning. `data` is bounded decision data;
+document/report text and images are ordered supplemental content. Family-owned
+`details`, resource manifests, persistence replacements, capability audit, and
+metrics remain Host-private.
+
+Every catalog entry declares an `outputSchema`, or `null` when it returns no
+data. Output schemas enumerate every visible field, close every object against
+additional properties, and bound strings and collections under the aggregate
+result ceiling. Descriptions never substitute for structural validation. The
+Kernel validates the semantic result, enforces shared data/error/instruction/
+warning limits, redacts secret-like header fields, and serializes exactly one
+compact JSON header followed by supplemental parts in their original order. No
+individual Tenon tool serializes provider-visible result JSON.
+
+Expected tool failure or policy denial is an ordinary completed tool result with
+`isError: false`, so its recovery guidance reaches the model. Unknown tools,
+invalid arguments, cancellation, malformed internal results, and unexpected
+exceptions are Kernel-owned failures with stable bounded codes and
+`isError: true`. A malformed result degrades locally instead of killing the Turn.
+Owner-native returned success and error content remain byte- and order-preserving;
+only a failure created by Tenon's Kernel uses the common error header.
+
+Expected business refusals are explicit typed failures at the domain boundary,
+not inferred from exception messages. ToolRuntime maps Goal, Thread-history, and
+task-stop refusals, and the Automation adapter maps Automation refusals, into
+semantic error envelopes. Aborts and every untyped exception continue to escape
+to the Kernel as `aborted` or `execution_failed`; adapters never catch all errors.
+
+`file_edit` and `file_write` project their structured patch before Kernel
+validation. The model-visible projection admits at most 4,096 patch lines across
+all hunks and stays within the shared 256 KiB result-data ceiling. If either
+limit clips the projection, the completed mutation returns `status: "partial"`
+with a warning and private `metrics.truncated`; the complete patch remains only
+in Host-private `details.data`. A clipped presentation therefore cannot turn a
+completed filesystem mutation into `invalid_internal_result`.
+
+Durability transforms inspect only the first compiled Tenon header. They preserve
+its exact bytes when no ephemeral path or image fact changes, transform selected
+ephemeral fields without pretty-printing the result, and never parse later
+supplemental text as JSON. Explicit text replacements may still apply to any part
+when the producing tool declares them.
 
 Visible tool output is bounded independently from durable structured details.
 The runtime may shorten presentation without changing the recorded result.

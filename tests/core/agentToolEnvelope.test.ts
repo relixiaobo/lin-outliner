@@ -4,22 +4,19 @@ import {
   errorEnvelope,
   successEnvelope,
 } from '../../src/main/agent/capabilities/agentToolEnvelope';
+import { MODEL_TOOL_CATALOG } from '../../src/core/agent/tools';
 
 describe('agent tool envelope', () => {
-  test('builds kernel-compatible tool results with model-visible content', () => {
+  test('builds semantic results without compiling model-visible content', () => {
     const envelope = successEnvelope('example_tool', { secret: 'full', visible: 'yes' });
     const result = agentToolResult(envelope, { visible: 'yes' });
 
     expect(result.details).toBe(envelope);
-    expect(result.content).toHaveLength(1);
-    expect(result.content[0]).toMatchObject({ type: 'text' });
-    const [content] = result.content;
-    if (!content || content.type !== 'text') throw new Error('Expected text content');
-    // The model-visible JSON drops the echoed `tool` and the redundant
-    // `status: 'success'` (implied by `ok: true`); the full envelope stays on details.
-    expect(JSON.parse(content.text)).toEqual({
-      ok: true,
+    expect(result).toMatchObject({
+      kind: 'tenon',
+      outcome: { ok: true },
       data: { visible: 'yes' },
+      content: [],
     });
   });
 
@@ -28,19 +25,26 @@ describe('agent tool envelope', () => {
       successEnvelope('example_tool', { full: 'data' }, { status: 'unchanged' }),
       { slim: 'view' },
     );
-    expect(JSON.parse((unchanged.content[0] as { text: string }).text)).toEqual({
-      ok: true,
-      status: 'unchanged',
+    expect(unchanged).toMatchObject({
+      kind: 'tenon',
+      outcome: { ok: true, status: 'unchanged' },
       data: { slim: 'view' },
     });
 
     const failed = agentToolResult(errorEnvelope('example_tool', 'bad_input', 'Bad input'));
-    // No `tool`, no `status: 'error'` (implied by `ok: false`), and the visible
-    // error is `{ code, message }` only — `recoverable` stays on details.
-    expect(JSON.parse((failed.content[0] as { text: string }).text)).toEqual({
-      ok: false,
-      error: { code: 'bad_input', message: 'Bad input' },
+    expect(failed).toMatchObject({
+      kind: 'tenon',
+      outcome: { ok: false, error: { code: 'bad_input', message: 'Bad input' } },
     });
+  });
+
+  test('requires an explicit output-data contract for every Tenon tool', () => {
+    expect(MODEL_TOOL_CATALOG).toHaveLength(22);
+    expect(MODEL_TOOL_CATALOG.every((contract) => 'outputSchema' in contract)).toBe(true);
+    expect(MODEL_TOOL_CATALOG.find((contract) => contract.identity.name === 'update_plan')?.outputSchema)
+      .toBeNull();
+    expect(MODEL_TOOL_CATALOG.filter((contract) => contract.identity.name !== 'update_plan')
+      .every((contract) => contract.outputSchema?.type === 'object')).toBe(true);
   });
 
 });

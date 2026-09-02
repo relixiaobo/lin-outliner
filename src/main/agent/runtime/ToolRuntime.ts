@@ -1,4 +1,5 @@
 import type { AgentTool, AgentToolResult } from './kernel/types';
+import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from '../capabilities/agentToolEnvelope';
 import type { TSchema } from 'typebox';
 import {
   assembleModelToolRegistry,
@@ -33,9 +34,11 @@ import {
 import { redactSecretLikeJsonAsync } from '../capabilities/agentSecretRedaction';
 import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules';
 import type { ThreadService } from '../ThreadService';
+import { AgentToolFailure } from '../AgentToolFailure';
 import type { TurnExecutionContext } from './types';
 import { compileToolParameters } from './kernel/exactToolArguments';
 import { createToolArtifactSink, type ToolArtifactSink } from './ToolArtifactSink';
+import { HostToolDenial } from './kernel/HostToolDenial';
 
 export interface ToolRuntimeOptions {
   readonly localWorkspace?: AgentLocalWorkspaceContext | ((context: TurnExecutionContext) => AgentLocalWorkspaceContext);
@@ -353,7 +356,7 @@ export class ToolRuntime {
             })),
         });
         return {
-          ...toolResult(result.data),
+          ...toolResult('thread_read', result.data),
           ...(result.resourceRefs.length > 0 ? { resourceRefs: result.resourceRefs } : {}),
         };
       }),
@@ -384,13 +387,30 @@ export class ToolRuntime {
         const shellOwnsTask = hasBackgroundShellTask(taskId, threadId);
         const agentOwnsTask = this.service.hasAgentTask(threadId, taskId);
         if (agentOwnsTask && shellOwnsTask) {
-          throw new Error(`Task ID is ambiguous between an Agent and shell task: ${taskId}`);
+          throw new AgentToolFailure(
+            'task_ambiguous',
+            `Task ID is ambiguous between an Agent and shell task: ${taskId}`,
+            'Inspect the active task identifiers and retry task_stop with an unambiguous ID.',
+          );
         }
         const agent = await this.service.stopAgentTask(threadId, turnId, taskId);
-        if (agent !== null) return toolResult(agent);
+        if (agent !== null) return toolResult('task_stop', agent);
         const shell = await stopBackgroundShellTaskResult(taskId, threadId, artifactSink);
-        if (shell !== null) return shell;
-        throw new Error(`No task found with ID: ${taskId}`);
+        if (shell !== null) {
+          const details = shell.details as unknown as ToolEnvelope<JsonValue>;
+          return {
+            ...agentToolResult(details, { taskId, taskType: 'shell', state: 'stopped' }),
+            ...(shell.resourceRefs === undefined ? {} : { resourceRefs: shell.resourceRefs }),
+            ...(shell.persistedTextReplacements === undefined
+              ? {}
+              : { persistedTextReplacements: shell.persistedTextReplacements }),
+          };
+        }
+        throw new AgentToolFailure(
+          'task_not_found',
+          `No task found with ID: ${taskId}`,
+          'Use a task ID returned by agent or bash. If the task already ended, continue without stopping it.',
+        );
       }, normalizeTaskStopToolInput),
     ];
   }
@@ -469,10 +489,11 @@ export class ToolRuntime {
               ? 'subagent_read_only_restricted'
               : 'subagent_repository_mutation_restricted';
           const code = capability.behavior === 'unavailable' ? capability.code : policyCode!;
-          const result = toolResult({
+          const details: ToolEnvelope<JsonValue> & { readonly capabilityAudit: JsonValue } = {
             ok: false,
             tool: canonicalIdentity,
-            status: 'unavailable',
+            version: 1,
+            status: 'denied',
             error: {
               code: 'operation_unavailable',
               message: reason,
@@ -481,17 +502,22 @@ export class ToolRuntime {
             },
             instructions: 'This operation is unavailable in the current context. Continue with another available approach.',
             capabilityAudit: capabilityAudit(capability, policyCode),
-          });
+          };
           await this.service.notifyToolCompleted(
             context.thread.id,
             context.turn.id,
             itemId,
             identity,
             observableArgs,
-            (await redactSecretLikeJsonAsync(jsonValue(result.details))).value,
+            (await redactSecretLikeJsonAsync(jsonValue(details))).value,
             reason,
           );
-          return result;
+          throw new HostToolDenial({
+            code: 'operation_unavailable',
+            message: reason,
+            instructions: details.instructions,
+            details: jsonValue(details),
+          });
         }
         try {
           const rawResult = await tool.execute(itemId, params, signal, onUpdate);
@@ -602,7 +628,9 @@ function coreTool(
     parameters: contract.inputSchema as TSchema,
     ...(prepareArguments === undefined ? {} : { prepareArguments }),
     executionMode: 'sequential',
-    execute: async (itemId, params, signal) => toolResult(await execute(itemId, params, signal)),
+    execute: async (itemId, params, signal) => executeExpectedFailure(name, async () => (
+      toolResult(name, await execute(itemId, params, signal))
+    )),
   };
 }
 
@@ -621,16 +649,53 @@ function coreResultTool(
     parameters: contract.inputSchema as TSchema,
     ...(prepareArguments === undefined ? {} : { prepareArguments }),
     executionMode: 'sequential',
-    execute: async (itemId, params, signal) => await execute(itemId, params, signal),
+    execute: async (itemId, params, signal) => executeExpectedFailure(name, () => execute(itemId, params, signal)),
   };
 }
 
-function toolResult(value: unknown): AgentToolResult<JsonValue> {
+async function executeExpectedFailure(
+  tool: string,
+  execute: () => AgentToolResult<unknown> | Promise<AgentToolResult<unknown>>,
+): Promise<AgentToolResult<unknown>> {
+  try {
+    return await execute();
+  } catch (error) {
+    if (!(error instanceof AgentToolFailure)) throw error;
+    return agentToolResult(errorEnvelope(tool, error.code, error.message, {
+      instructions: error.instructions,
+    }));
+  }
+}
+
+function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
   const details = jsonValue(value);
-  return {
-    content: [{ type: 'text', text: JSON.stringify(details, null, 2) }],
-    details,
-  };
+  if (tool === 'update_plan') {
+    return agentToolResult(successEnvelope(tool, details));
+  }
+  if (tool === 'request_user_input' && isRecord(details)) {
+    return agentToolResult(successEnvelope(tool, details), {
+      answers: details.answers,
+      autoResolved: details.autoResolved,
+    });
+  }
+  if (tool === 'thread_search' && isRecord(details)) {
+    return agentToolResult(successEnvelope(tool, details, {
+      instructions: typeof details.instructions === 'string' ? details.instructions : undefined,
+    }), {
+      results: details.results,
+      untrusted: details.untrusted,
+    });
+  }
+  if (tool === 'task_stop' && isRecord(details)) {
+    const taskId = typeof details.task_id === 'string' ? details.task_id : details.taskId;
+    const taskType = typeof details.task_type === 'string' ? details.task_type : details.taskType;
+    return agentToolResult(successEnvelope(tool, details), {
+      taskId,
+      taskType,
+      state: 'stopped',
+    });
+  }
+  return agentToolResult(successEnvelope(tool, details), details);
 }
 
 function identityFromProviderName(name: string): ModelToolIdentity {

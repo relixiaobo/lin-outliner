@@ -153,6 +153,15 @@ describe('agent tool result persistence', () => {
     }
   });
 
+  test('preserves compact header bytes when no durability fact changes', () => {
+    const text = JSON.stringify({ ok: true, data: { stdout: 'ok', stderr: '' } });
+    expect(persistedToolResultText({
+      toolNamespace: null,
+      toolName: 'bash',
+      text,
+    })).toBe(text);
+  });
+
   test('preserves built-in generated-image results when no image was saved', () => {
     const text = JSON.stringify({
       ok: true,

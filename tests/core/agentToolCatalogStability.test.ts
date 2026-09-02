@@ -50,6 +50,49 @@ describe('canonical provider tool catalog', () => {
     expect(failures).toEqual([]);
   });
 
+  test('declares and compiles output-data validation for every catalog tool', () => {
+    expect(MODEL_TOOL_CATALOG).toHaveLength(22);
+    const failures: string[] = [];
+    for (const contract of MODEL_TOOL_CATALOG) {
+      const name = canonicalModelToolKey(contract.identity);
+      if (contract.outputSchema === undefined) {
+        failures.push(`${name}: missing output schema declaration`);
+        continue;
+      }
+      if (contract.outputSchema === null) continue;
+      try {
+        compileToolParameters(contract.outputSchema as never);
+      } catch (error) {
+        failures.push(`${name}: ${String(error)}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  test('rejects undeclared model-visible output fields', () => {
+    const schema = (name: string) => {
+      const contract = MODEL_TOOL_CATALOG.find((candidate) => canonicalModelToolKey(candidate.identity) === name);
+      if (!contract?.outputSchema) throw new Error(`Missing ${name} output schema`);
+      return compileToolParameters(contract.outputSchema as never);
+    };
+
+    expect(schema('file_read').Check({
+      file: {
+        filePath: '/workspace/input.txt',
+        content: 'private full content',
+        base64: 'private bytes',
+        internalPath: '/private/runtime/path',
+      },
+    })).toBe(false);
+    expect(schema('thread_search').Check({
+      results: [{ threadId: 'thread-id', title: 'Title', updatedAt: 1, snippet: 'Hit', readCursor: null, internal: true }],
+      untrusted: true,
+    })).toBe(false);
+    expect(schema('create_goal').Check({
+      goal: { objective: 'Ship it', internalContinuationState: true },
+    })).toBe(false);
+  });
+
   test('offers every static model-tool schema to providers as an object-rooted schema', () => {
     const unsendable = MODEL_TOOL_CATALOG
       .filter((contract) => contract.inputSchema !== null)
@@ -67,7 +110,7 @@ describe('canonical provider tool catalog', () => {
       description: contract.description,
       parameters: contract.inputSchema as never,
       executionMode: 'sequential' as const,
-      execute: async () => ({ content: [], details: {} }),
+      execute: async () => ({ kind: 'tenon' as const, outcome: { ok: true as const }, data: {}, content: [], details: {} }),
     } satisfies AgentTool;
 
     expect(() => validateExactToolArguments(tool, {
@@ -140,7 +183,7 @@ describe('canonical provider tool catalog', () => {
         description: 'Root-union probe.',
         parameters: { oneOf: [{ type: 'object' }] } as never,
         executionMode: 'sequential' as const,
-        execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: { ok: true } }),
+        execute: async () => ({ kind: 'tenon' as const, outcome: { ok: true as const }, data: {}, content: [], details: { ok: true } }),
       }],
       assembleRegistry: true,
     });
@@ -236,7 +279,7 @@ function runtimeSchemaTools(): AgentTool[] {
         description: contract.description,
         parameters: { type: 'object', additionalProperties: false } as never,
         executionMode: 'sequential' as const,
-        execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: { ok: true } }),
+        execute: async () => ({ kind: 'tenon' as const, outcome: { ok: true as const }, data: {}, content: [], details: { ok: true } }),
       }]
     : []);
 }

@@ -1,14 +1,17 @@
 import { createHash } from 'node:crypto';
 import {
   SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
+  type JsonValue,
   type ModelProviderToolCall,
   type TurnError,
 } from '../../../../core/agent/protocol';
 import { portableProviderToolCallId } from '../../../../core/agent/providerToolCallIdentity';
+import { modelToolContract, type JsonSchema } from '../../../../core/agent/tools';
 import { streamWithPolicy } from './retryPolicy';
 import {
   redactSecretLikeContent,
 } from '../../capabilities/agentSecretRedaction';
+import { scanSecretStrings } from '../../capabilities/agentSecretStringScanner';
 import type {
   AgentTool,
   AgentToolCall,
@@ -17,6 +20,8 @@ import type {
   KernelAgentOptions,
   KernelEvent,
   Message,
+  NativeAgentToolResult,
+  TenonAgentToolResult,
   ToolResultMessage,
 } from './types';
 import {
@@ -32,7 +37,9 @@ import {
   type ToolCallAdmissionRequest,
 } from '../toolCallHistory';
 import { uuidV7 } from '../../uuid';
-import { validateExactToolArguments } from './exactToolArguments';
+import { HostToolDenial } from './HostToolDenial';
+import { compileToolParameters, validateExactToolArguments } from './exactToolArguments';
+import { MAX_TENON_RESULT_DATA_BYTES } from '../../capabilities/agentToolEnvelope';
 
 export type KernelEventSink = (event: KernelEvent) => Promise<void> | void;
 
@@ -53,6 +60,11 @@ export interface KernelSteeringMessage {
 }
 
 const MAX_DETERMINISTIC_ADMISSION_FAILURES = 8;
+const MAX_TENON_RESULT_INSTRUCTIONS_LENGTH = 8_000;
+const MAX_TENON_RESULT_WARNINGS = 20;
+const MAX_TENON_RESULT_WARNING_LENGTH = 2_000;
+const MAX_TENON_RESULT_ERROR_CODE_LENGTH = 128;
+const MAX_TENON_RESULT_ERROR_MESSAGE_LENGTH = 2_000;
 
 type DeterministicAdmissionFailureReason = Extract<
   ToolCallAdmissionRequest['outcome'],
@@ -348,7 +360,7 @@ interface PreparedToolCall {
 interface ImmediateToolCall {
   kind: 'immediate';
   tool: AgentTool<any> | null;
-  result: AgentToolResult<any>;
+  result: NativeAgentToolResult<any>;
   isError: boolean;
   admission: ToolCallAdmissionRequest;
 }
@@ -361,7 +373,7 @@ interface ToolCallAdmissionRecord {
 }
 
 interface ExecutedToolCall {
-  result: AgentToolResult<any>;
+  result: NativeAgentToolResult<any>;
   isError: boolean;
 }
 
@@ -406,7 +418,8 @@ async function failTruncatedToolCalls(
       toolCall,
       providerToolCallId: call.activeProviderToolCallId,
       result: errorToolResult(
-        `Tool call "${toolCall.name}" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
+        'invalid_arguments',
+        `Tool call "${toolCall.name}" was not executed because its arguments may be truncated. Re-issue the call with complete arguments.`,
       ),
       isError: true,
     };
@@ -477,7 +490,7 @@ async function executeToolCallsSequential(
         providerToolCallId: call.activeProviderToolCallId,
         result: preparation.kind === 'immediate'
           ? preparation.result
-          : errorToolResult('Tool call was not executed because its canonical arguments could not be persisted.'),
+          : errorToolResult('operation_unavailable', 'Tool call arguments could not be persisted.'),
         isError: true,
       };
     }
@@ -522,7 +535,7 @@ async function executeToolCallsParallel(
         providerToolCallId: call.activeProviderToolCallId,
         result: preparation.kind === 'immediate'
           ? preparation.result
-          : errorToolResult('Tool call was not executed because its canonical arguments could not be persisted.'),
+          : errorToolResult('operation_unavailable', 'Tool call arguments could not be persisted.'),
         isError: true,
       };
       await emitToolExecutionEnd(finalized, emit);
@@ -571,7 +584,7 @@ async function prepareToolCall(
     return {
       kind: 'immediate',
       tool: null,
-      result: errorToolResult('Tool is not exposed by the active registry.'),
+      result: errorToolResult('tool_not_exposed', 'Tool is not exposed by the active registry.'),
       isError: true,
       admission: await rejectedToolCallAdmissionRequest(toolCall, providerCall, null, 'unresolvedTool'),
     };
@@ -621,7 +634,7 @@ async function prepareToolCall(
     return {
       kind: 'immediate',
       tool,
-      result: errorToolResult(errorMessage(error)),
+      result: errorToolResult('invalid_arguments', errorMessage(error)),
       isError: true,
       admission: await rejectedToolCallAdmissionRequest(toolCall, providerCall, identity, 'invalidArguments'),
     };
@@ -653,7 +666,7 @@ function abortedPreparedToolCall(prepared: PreparedToolCall): FinalizedToolCall 
   return {
     toolCall: prepared.toolCall,
     providerToolCallId: prepared.admission.providerCall.id,
-    result: errorToolResult('Operation aborted'),
+    result: errorToolResult('aborted', 'Operation aborted.'),
     isError: true,
   };
 }
@@ -677,11 +690,19 @@ async function executePreparedToolCall(
     });
     acceptingUpdates = false;
     await Promise.all(updates);
-    return { result, isError: false };
+    return finalizeToolResult(prepared.tool, result);
   } catch (error) {
     acceptingUpdates = false;
     await Promise.all(updates);
-    return { result: errorToolResult(errorMessage(error)), isError: true };
+    if (error instanceof HostToolDenial) return hostDeniedToolResult(error);
+    const aborted = signal.aborted || (error instanceof Error && error.name === 'AbortError');
+    return {
+      result: errorToolResult(
+        aborted ? 'aborted' : 'execution_failed',
+        aborted ? 'Operation aborted.' : errorMessage(error),
+      ),
+      isError: true,
+    };
   } finally {
     acceptingUpdates = false;
   }
@@ -692,8 +713,204 @@ function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCall[]): boolean 
     && finalizedCalls.every((finalized) => finalized.result.terminate === true);
 }
 
-function errorToolResult(message: string): AgentToolResult<Record<string, never>> {
-  return { content: [{ type: 'text', text: message }], details: {} };
+function finalizeToolResult(
+  tool: AgentTool,
+  result: AgentToolResult<unknown>,
+): ExecutedToolCall {
+  const contract = modelToolContract(canonicalToolIdentity(tool));
+  if (!result || typeof result !== 'object' || (result.kind !== 'native' && result.kind !== 'tenon')) {
+    return {
+      result: errorToolResult('invalid_internal_result', 'The tool returned a malformed internal result.'),
+      isError: true,
+    };
+  }
+  if (contract === null) {
+    if (result.kind === 'native') return { result, isError: false };
+    return {
+      result: errorToolResult('invalid_internal_result', 'An owner-native tool returned a non-native result.'),
+      isError: true,
+    };
+  }
+  if (result.kind !== 'tenon') {
+    return {
+      result: errorToolResult('invalid_internal_result', 'A Tenon tool bypassed the semantic result protocol.'),
+      isError: true,
+    };
+  }
+  const schemaIssue = tenonResultSchemaIssue(contract.outputSchema, result);
+  if (schemaIssue !== null) {
+    return {
+      result: errorToolResult('invalid_internal_result', schemaIssue),
+      isError: true,
+    };
+  }
+  return { result: compileTenonToolResult(result), isError: false };
+}
+
+function hostDeniedToolResult(error: HostToolDenial): ExecutedToolCall {
+  const result: TenonAgentToolResult<JsonValue> = {
+    kind: 'tenon',
+    outcome: {
+      ok: false,
+      status: 'denied',
+      error: { code: error.denial.code, message: error.denial.message },
+    },
+    ...(error.denial.instructions === undefined ? {} : { instructions: error.denial.instructions }),
+    content: [],
+    details: error.denial.details,
+  };
+  const shapeIssue = tenonResultShapeIssue(result);
+  return shapeIssue === null
+    ? { result: compileTenonToolResult(result), isError: false }
+    : {
+        result: errorToolResult('invalid_internal_result', shapeIssue),
+        isError: true,
+      };
+}
+
+function tenonResultSchemaIssue(
+  schema: JsonSchema | null | undefined,
+  result: TenonAgentToolResult<unknown>,
+): string | null {
+  const shapeIssue = tenonResultShapeIssue(result);
+  if (shapeIssue !== null) return shapeIssue;
+  if (schema === undefined) return 'The Tenon tool contract does not declare an output schema.';
+  if (result.data === undefined) {
+    return result.outcome.ok && schema !== null
+      ? 'A successful Tenon tool result omitted its declared data.'
+      : null;
+  }
+  if (schema === null) return 'A Tenon tool declared no output data but returned data.';
+  try {
+    const validator = compileToolParameters(schema as import('typebox').TSchema);
+    return validator.Check(result.data) ? null : 'Tenon tool result data does not match its output schema.';
+  } catch {
+    return 'The Tenon tool output schema is invalid.';
+  }
+}
+
+function tenonResultShapeIssue(result: TenonAgentToolResult<unknown>): string | null {
+  if (!hasOnlyKeys(result, [
+    'kind',
+    'outcome',
+    'data',
+    'instructions',
+    'warnings',
+    'content',
+    'details',
+    'terminate',
+    'resourceRefs',
+    'persistedTextReplacements',
+  ])) return 'The Tenon tool returned unexpected result fields.';
+  if (!result.outcome || typeof result.outcome !== 'object' || Array.isArray(result.outcome) || typeof result.outcome.ok !== 'boolean') {
+    return 'The Tenon tool returned a malformed outcome.';
+  }
+  if (result.outcome.ok) {
+    if (!hasOnlyKeys(result.outcome, ['ok', 'status'])) return 'The Tenon tool returned unexpected success outcome fields.';
+    if (result.outcome.status !== undefined && result.outcome.status !== 'unchanged' && result.outcome.status !== 'partial') {
+      return 'The Tenon tool returned an invalid success status.';
+    }
+  } else {
+    if (!hasOnlyKeys(result.outcome, ['ok', 'status', 'error'])) return 'The Tenon tool returned unexpected failure outcome fields.';
+    if (result.outcome.status !== undefined && result.outcome.status !== 'denied') {
+      return 'The Tenon tool returned an invalid failure status.';
+    }
+    if (
+      !result.outcome.error
+      || typeof result.outcome.error !== 'object'
+      || Array.isArray(result.outcome.error)
+      || !hasOnlyKeys(result.outcome.error, ['code', 'message'])
+      || typeof result.outcome.error.code !== 'string'
+      || typeof result.outcome.error.message !== 'string'
+      || result.outcome.error.code.length === 0
+      || result.outcome.error.message.length === 0
+    ) {
+      return 'The Tenon tool returned a malformed error outcome.';
+    }
+    if (result.outcome.error.code.length > MAX_TENON_RESULT_ERROR_CODE_LENGTH) {
+      return 'The Tenon tool error code exceeds the result limit.';
+    }
+    if (result.outcome.error.message.length > MAX_TENON_RESULT_ERROR_MESSAGE_LENGTH) {
+      return 'The Tenon tool error message exceeds the result limit.';
+    }
+  }
+  if (result.instructions !== undefined) {
+    if (typeof result.instructions !== 'string') return 'The Tenon tool returned malformed instructions.';
+    if (result.instructions.length > MAX_TENON_RESULT_INSTRUCTIONS_LENGTH) {
+      return 'The Tenon tool instructions exceed the result limit.';
+    }
+  }
+  if (result.warnings !== undefined) {
+    if (!Array.isArray(result.warnings) || result.warnings.length > MAX_TENON_RESULT_WARNINGS) {
+      return 'The Tenon tool warnings exceed the result limit.';
+    }
+    if (result.warnings.some((warning) => typeof warning !== 'string' || warning.length > MAX_TENON_RESULT_WARNING_LENGTH)) {
+      return 'A Tenon tool warning exceeds the result limit.';
+    }
+  }
+  if (!Array.isArray(result.content) || result.content.some((part) => (
+    !part
+    || typeof part !== 'object'
+    || Array.isArray(part)
+    || (part.type === 'text'
+      ? typeof part.text !== 'string'
+      : part.type === 'image'
+        ? typeof part.data !== 'string' || typeof part.mimeType !== 'string'
+        : true)
+  ))) return 'The Tenon tool returned malformed supplemental content.';
+  if (result.terminate !== undefined && typeof result.terminate !== 'boolean') {
+    return 'The Tenon tool returned a malformed termination flag.';
+  }
+  if (result.data === undefined) {
+    return null;
+  }
+  try {
+    if (Buffer.byteLength(JSON.stringify(result.data), 'utf8') > MAX_TENON_RESULT_DATA_BYTES) {
+      return 'The Tenon tool result data exceeds the result limit.';
+    }
+    return null;
+  } catch {
+    return 'The Tenon tool result data is not serializable JSON.';
+  }
+}
+
+function compileTenonToolResult(
+  result: TenonAgentToolResult<unknown>,
+): NativeAgentToolResult<unknown> {
+  const header = {
+    ok: result.outcome.ok,
+    ...(result.outcome.status === undefined ? {} : { status: result.outcome.status }),
+    ...(result.outcome.ok ? {} : { error: result.outcome.error }),
+    ...(result.data === undefined ? {} : { data: result.data }),
+    ...(result.instructions?.trim() ? { instructions: result.instructions } : {}),
+    ...(result.warnings?.length ? { warnings: result.warnings } : {}),
+  };
+  const serialized = JSON.stringify(header);
+  const redacted = scanSecretStrings([{ content: serialized, inspectEncodedJson: true }])[0]
+    ?? '{"ok":false,"error":{"code":"invalid_internal_result","message":"Tool result redaction failed."}}';
+  return {
+    kind: 'native',
+    content: [{ type: 'text', text: redacted }, ...result.content],
+    details: result.details,
+    ...(result.terminate === undefined ? {} : { terminate: result.terminate }),
+    ...(result.resourceRefs === undefined ? {} : { resourceRefs: result.resourceRefs }),
+    ...(result.persistedTextReplacements === undefined
+      ? {}
+      : { persistedTextReplacements: result.persistedTextReplacements }),
+  };
+}
+
+function hasOnlyKeys(value: object, allowed: readonly string[]): boolean {
+  const allowedKeys = new Set(allowed);
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+function errorToolResult(code: string, message: string): NativeAgentToolResult<Record<string, never>> {
+  return {
+    kind: 'native',
+    content: [{ type: 'text', text: JSON.stringify({ ok: false, error: { code, message } }) }],
+    details: {},
+  };
 }
 
 async function emitToolExecutionStart(toolCall: AgentToolCall, emit: KernelEventSink): Promise<void> {
@@ -843,5 +1060,6 @@ async function emitToolResultMessage(message: ToolResultMessage, emit: KernelEve
 }
 
 function errorMessage(error: unknown): string {
-  return redactSecretLikeContent(error instanceof Error ? error.message : String(error));
+  return redactSecretLikeContent(error instanceof Error ? error.message : String(error))
+    .slice(0, MAX_TENON_RESULT_ERROR_MESSAGE_LENGTH);
 }

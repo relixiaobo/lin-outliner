@@ -488,7 +488,7 @@ function agentTool(
     description,
     parameters: parameters as AgentTool['parameters'],
     executionMode: 'sequential',
-    execute: async () => ({ content: [{ type: 'text', text: 'unused' }], details: {} }),
+    execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'unused' }], details: {} }),
   };
 }
 

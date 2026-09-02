@@ -521,6 +521,8 @@ reach it.
 - every ordinary tool, including a loaded or isolated Skill, uses the same
   expandable row inside the counted activity group; tool-specific icons,
   summaries, images, and child-Thread links remain supplemental affordances;
+  the row reads family-owned private details and canonical output references,
+  never reparses the compact model-visible result header as UI state;
   tool images resolve from their stable `artifactRef` through the owning Thread. Preview
   selects the original first and observation second, then serves a disposable stable
   extensionless materialization with MIME derived from its bytes. The renderer never

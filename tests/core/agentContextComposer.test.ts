@@ -2018,7 +2018,7 @@ function projectionTool(name: string, parameters: Record<string, unknown> = {
     label: name,
     description: `${name} projection fixture`,
     parameters,
-    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+    execute: async () => ({ kind: 'native', content: [{ type: 'text', text: 'ok' }], details: {} }),
   } as AgentTool;
 }
 

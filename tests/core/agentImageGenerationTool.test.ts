@@ -87,14 +87,10 @@ describe('generate_image tool', () => {
     expect(details.data?.images[0]?.providerIndex).toBe(1);
     expect(details.data?.images[0]?.path).toBe(GENERATED_IMAGE_PATH);
 
-    const text = result.content.find((part) => part.type === 'text');
     const image = result.content.find((part) => part.type === 'image');
     expect(image).toEqual({ type: 'image', data: ONE_PIXEL_PNG_BASE64, mimeType: 'image/png' });
-    if (!text || text.type !== 'text') throw new Error('Expected text result');
-    expect(text.text).not.toContain(ONE_PIXEL_PNG_BASE64);
-    expect(JSON.parse(text.text)).toEqual({
-      ok: true,
-      data: {
+    expect(JSON.stringify(result.data)).not.toContain(ONE_PIXEL_PNG_BASE64);
+    expect(result.data).toEqual({
         images: [{
           providerIndex: 1,
           artifactId: GENERATED_IMAGE_ARTIFACT.id,
@@ -108,9 +104,8 @@ describe('generate_image tool', () => {
           sourcePixelsPerObservationPixel: { x: 1, y: 1 },
           observationToSource: [1, 0, 0, 1, 0, 0],
         }],
-      },
-      instructions: 'The generated image is saved at the returned local path. Available previews are already shown to the user; do not render them again in the final answer. Each artifact id is stable; its local path is a rematerializable access hint and can become unavailable under storage retention. If an image belongs somewhere in particular, copy it there now.',
     });
+    expect(result.instructions).toContain('The generated image is saved at the returned local path.');
   });
 
   test('keeps saved siblings and provider indexes when one original write fails', async () => {
@@ -417,13 +412,12 @@ describe('generate_image tool', () => {
     const tool = createGenerateImageTool(runtime);
     const result = await tool.execute('call-rate-limited', { prompt: 'A tiny icon' });
     const details = result.details as ToolEnvelope<GenerateImageData>;
-    const visible = JSON.parse(result.content.find((part) => part.type === 'text')?.text ?? '{}');
 
     expect(details.ok).toBe(false);
     expect(details.error?.code).toBe('rate_limited');
     expect(details.instructions).toContain('Do not retry immediately');
-    expect(visible.error.code).toBe('rate_limited');
-    expect(visible.instructions).toContain('switch the default image model');
+    expect(result.outcome).toMatchObject({ ok: false, error: { code: 'rate_limited' } });
+    expect(result.instructions).toContain('switch the default image model');
   });
 
   test('does not unwrap a legacy Markdown image when an input path is missing', async () => {
@@ -453,13 +447,12 @@ describe('generate_image tool', () => {
       image_paths: [missingPath],
     });
     const details = result.details as ToolEnvelope<GenerateImageData>;
-    const visible = JSON.parse(result.content.find((part) => part.type === 'text')?.text ?? '{}');
 
     expect(details.ok).toBe(false);
     expect(details.error?.code).toBe('input_image_unavailable');
     expect(attemptedPath).toBe(missingPath);
     expect(details.error?.message).toContain(missingPath);
     expect(details.instructions).toContain('regenerate the missing image');
-    expect(visible.error.code).toBe('input_image_unavailable');
+    expect(result.outcome).toMatchObject({ ok: false, error: { code: 'input_image_unavailable' } });
   });
 });

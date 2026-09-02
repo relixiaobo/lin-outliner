@@ -1,4 +1,5 @@
 import type { AgentToolResult } from '../runtime/kernel/types';
+import type { JsonValue } from '../../../core/agent/protocol';
 
 export type ToolStatus = 'success' | 'partial' | 'unchanged' | 'denied' | 'error';
 
@@ -28,27 +29,13 @@ export interface ToolEnvelope<TData = unknown> {
 }
 
 export const TOOL_RESULT_VERSION = 1;
+export const MAX_TENON_RESULT_DATA_BYTES = 256 * 1024;
 
 /**
  * The model-visible error carries only what the model can act on. `recoverable`
  * is dropped (it is a constant `true`); the runtime `details` envelope keeps it.
  */
 export type VisibleToolError = Pick<ToolError, 'code' | 'message'>;
-
-export type ModelVisibleToolEnvelope<TData = unknown> =
-  Pick<ToolEnvelope<TData>, 'ok'>
-  & Partial<Pick<ToolEnvelope<TData>, 'status' | 'data' | 'instructions' | 'warnings'>>
-  & { error?: VisibleToolError };
-
-/**
- * `status` is only worth showing the model when it adds something beyond `ok` +
- * `error`. `success` merely restates `ok:true`; `error` merely restates
- * `ok:false` + the `error` object. The informative states are `unchanged`,
- * `partial`, and `denied`.
- */
-export function isInformativeStatus(status: ToolStatus): boolean {
-  return status !== 'success' && status !== 'error';
-}
 
 export function visibleToolError(error: ToolError): VisibleToolError {
   return { code: error.code, message: error.message };
@@ -67,9 +54,28 @@ export function agentToolResult<TData>(
   modelData?: unknown,
   extraContent: AgentToolResult<TData>['content'] = [],
 ): AgentToolResult<ToolEnvelope<TData>> {
-  const visibleEnvelope = modelVisibleEnvelope(envelope, modelData);
   return {
-    content: [{ type: 'text', text: JSON.stringify(visibleEnvelope, null, 2) }, ...extraContent],
+    kind: 'tenon',
+    outcome: envelope.ok
+      ? {
+          ok: true,
+          ...(envelope.status === 'unchanged' || envelope.status === 'partial'
+            ? { status: envelope.status }
+            : {}),
+        }
+      : {
+          ok: false,
+          ...(envelope.status === 'denied' ? { status: 'denied' as const } : {}),
+          error: visibleToolError(envelope.error ?? {
+            code: 'tool_failed',
+            message: 'The operation failed.',
+            recoverable: true,
+          }),
+        },
+    ...(modelData === undefined ? {} : { data: modelData as JsonValue }),
+    ...(envelope.instructions === undefined ? {} : { instructions: envelope.instructions }),
+    ...(envelope.warnings === undefined ? {} : { warnings: envelope.warnings }),
+    content: [...extraContent],
     details: envelope,
   };
 }
@@ -127,22 +133,4 @@ export function dropUndefinedFields<T extends Record<string, unknown>>(obj: T): 
 
 function compactOptions<T extends Record<string, unknown>>(options: T): Partial<T> {
   return dropUndefinedFields(options);
-}
-
-/**
- * Projects the runtime envelope down to what the model sees. Shared by every
- * tool; `data` is shown only when `modelData` is defined.
- */
-export function modelVisibleEnvelope<TData>(
-  envelope: ToolEnvelope<TData>,
-  modelData?: unknown,
-): ModelVisibleToolEnvelope<unknown> {
-  return {
-    ok: envelope.ok,
-    ...(isInformativeStatus(envelope.status) ? { status: envelope.status } : {}),
-    ...(modelData !== undefined ? { data: modelData } : {}),
-    ...(envelope.error ? { error: visibleToolError(envelope.error) } : {}),
-    ...(envelope.instructions ? { instructions: envelope.instructions } : {}),
-    ...(envelope.warnings?.length ? { warnings: envelope.warnings } : {}),
-  };
 }

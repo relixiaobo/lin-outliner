@@ -305,7 +305,14 @@ function createWebFetchTool(artifactSink?: ToolArtifactSink): AgentTool<any, Too
 }
 
 function webFetchToolResult(envelope: ToolEnvelope<WebFetchData>) {
-  const result = agentToolResult(envelope, envelope.data ? webFetchModelData(envelope.data) : undefined);
+  const supplemental = envelope.data?.mode === 'read' && envelope.data.content !== undefined
+    ? [{ type: 'text' as const, text: envelope.data.content }]
+    : [];
+  const result = agentToolResult(
+    envelope,
+    envelope.data ? webFetchModelData(envelope.data) : undefined,
+    supplemental,
+  );
   const resourceRef = envelope.data?.binaryFile?.resourceRef;
   return resourceRef ? { ...result, resourceRefs: [resourceRef] } : result;
 }

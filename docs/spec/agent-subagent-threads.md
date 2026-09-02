@@ -53,6 +53,10 @@ Turn into an immutable generation receipt, adding the recorded duration and
 whether useful terminal output exists. Foreground settlement, including an
 isolated Skill, has no parent notification, so its delivered row projects as
 `notificationState: none` with no delivery Turn; it still produces a receipt.
+Tool-result normalization does not derive or rewrite these facts: the receipt
+retains the stable spawning `parentItemId`, and an isolated Skill returns its
+bounded report as supplemental `skill` result text without entering the Agent
+notification lifecycle.
 The stable execution row remains current Agent liveness, never historical
 generation outcome.
 
