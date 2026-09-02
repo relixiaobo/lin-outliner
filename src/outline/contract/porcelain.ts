@@ -1,4 +1,5 @@
 import Type, { type TSchema } from 'typebox';
+import { outlineRecipeVariants } from './recipes';
 import {
   CaptureProvenanceSchema,
   FieldDefinitionPatchSchema,
@@ -9,24 +10,15 @@ import {
   LocalDateSchema,
   NodeDraftSchema,
   NodeIdentifierSchema,
-  OneTargetRefSchema,
   QueryExpressionSchema,
   RichTextSchema,
   TagDefinitionPatchSchema,
-  TargetRefSchema,
-  TargetSpecSchema,
-  DestinationPlacementSchema,
-  PlacementSchema,
-  ViewCreateSpecificationSchema,
-  ViewDisplaySpecificationSchema,
-  ViewFilterSpecificationSchema,
-  ViewSetSpecificationSchema,
-  ViewSortSpecificationSchema,
-  ViewFieldSchema,
   ViewModeSchema,
   ViewSystemFieldSchema,
   SortDirectionSchema,
   DisplayPlacementSchema,
+  ExactLocatorInputSchema,
+  BoundedSelectionInputSchema,
 } from './schemas';
 
 const closed = { additionalProperties: false } as const;
@@ -38,18 +30,65 @@ const ScalarValueSchema = Type.Union([
   Type.Null(),
 ]);
 
-export const ViewSortSpecSchema = ViewSortSpecificationSchema;
-export const ViewFilterSpecSchema = ViewFilterSpecificationSchema;
-export const ViewDisplaySpecSchema = ViewDisplaySpecificationSchema;
-export const ViewCreateSpecSchema = ViewCreateSpecificationSchema;
-export const ViewSetSpecSchema = ViewSetSpecificationSchema;
+const ViewFieldInputSchema = Type.Union([ViewSystemFieldSchema, ExactLocatorInputSchema]);
+export const ViewSortSpecSchema = Type.Object({
+  field: ViewFieldInputSchema,
+  direction: Type.Optional(SortDirectionSchema),
+}, closed);
+export const ViewFilterSpecSchema = Type.Object({
+  field: ViewFieldInputSchema,
+  operator: Type.Optional(FilterOperatorSchema),
+  values: Type.Optional(Type.Array(Type.String({ maxLength: 65_536 }), { maxItems: 10_000 })),
+  valueLogic: Type.Optional(FilterValueLogicSchema),
+}, closed);
+export const ViewDisplaySpecSchema = Type.Object({
+  field: ViewFieldInputSchema,
+  visible: Type.Optional(Type.Boolean()),
+  width: Type.Optional(Type.Number({ minimum: 0 })),
+  order: Type.Optional(Type.Number()),
+  label: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
+  placement: Type.Optional(DisplayPlacementSchema),
+}, closed);
+export const ViewCreateSpecSchema = Type.Object({
+  mode: Type.Optional(ViewModeSchema),
+  toolbar: Type.Optional(Type.Boolean()),
+  group: Type.Optional(Type.Union([ViewFieldInputSchema, Type.Null()])),
+  sort: Type.Optional(Type.Array(ViewSortSpecSchema, { maxItems: 1_000 })),
+  filters: Type.Optional(Type.Array(ViewFilterSpecSchema, { maxItems: 1_000 })),
+  display: Type.Optional(Type.Array(ViewDisplaySpecSchema, { maxItems: 1_000 })),
+}, closed);
+export const ViewSetSpecSchema = Type.Object({
+  mode: Type.Optional(ViewModeSchema),
+  toolbar: Type.Optional(Type.Boolean()),
+  group: Type.Optional(Type.Union([ViewFieldInputSchema, Type.Null()])),
+  replace: Type.Optional(Type.Object({
+    sort: Type.Optional(Type.Array(ViewSortSpecSchema, { maxItems: 1_000 })),
+    filters: Type.Optional(Type.Array(ViewFilterSpecSchema, { maxItems: 1_000 })),
+    display: Type.Optional(Type.Array(ViewDisplaySpecSchema, { maxItems: 1_000 })),
+  }, { ...closed, minProperties: 1 })),
+}, { ...closed, minProperties: 1 });
 
-const TargetOnlySchema = Type.Object({ target: TargetRefSchema }, closed);
-const TargetFieldSchema = Type.Object({ target: TargetRefSchema, field: TargetRefSchema }, closed);
-const TargetTagSchema = Type.Object({ target: TargetRefSchema, tag: TargetRefSchema }, closed);
+const TargetOnlySchema = Type.Object({ target: BoundedSelectionInputSchema }, closed);
+const ExactTargetOnlySchema = Type.Object({ target: ExactLocatorInputSchema }, closed);
+const TargetFieldSchema = Type.Object({ target: BoundedSelectionInputSchema, field: ExactLocatorInputSchema }, closed);
+const TargetTagSchema = Type.Object({ target: BoundedSelectionInputSchema, tag: ExactLocatorInputSchema }, closed);
+
+const ExactDestinationPlacementInputSchema = Type.Union([
+  Type.Object({ kind: Type.Literal('first'), parent: ExactLocatorInputSchema }, closed),
+  Type.Object({ kind: Type.Literal('last'), parent: ExactLocatorInputSchema }, closed),
+  Type.Object({ kind: Type.Literal('index'), parent: ExactLocatorInputSchema, index: Type.Integer({ minimum: 0 }) }, closed),
+  Type.Object({ kind: Type.Literal('before'), sibling: ExactLocatorInputSchema }, closed),
+  Type.Object({ kind: Type.Literal('after'), sibling: ExactLocatorInputSchema }, closed),
+]);
+
+const ExactPlacementInputSchema = Type.Union([
+  ExactDestinationPlacementInputSchema,
+  Type.Object({ kind: Type.Literal('previous') }, closed),
+  Type.Object({ kind: Type.Literal('next') }, closed),
+]);
 
 const TreeAddInputSchema = Type.Object({
-  placement: DestinationPlacementSchema,
+  placement: ExactDestinationPlacementInputSchema,
   nodes: Type.Array(NodeDraftSchema, { minItems: 1, maxItems: 100_000 }),
   bind: OptionalBind,
 }, closed);
@@ -61,7 +100,7 @@ const KeyedViewFieldSchema = Type.Union([
 ]);
 const ViewedTreeAddInputSchema = Type.Object({
   kind: Type.Literal('viewed-tree'),
-  placement: DestinationPlacementSchema,
+  placement: ExactDestinationPlacementInputSchema,
   title: Type.String({ minLength: 1, maxLength: 4_194_304 }),
   description: Type.Optional(Type.String({ maxLength: 4_194_304 })),
   fields: Type.Optional(Type.Array(Type.Union([
@@ -70,7 +109,7 @@ const ViewedTreeAddInputSchema = Type.Object({
       name: Type.String({ minLength: 1, maxLength: 1_024 }),
       config: FieldDefinitionPatchSchema,
     }, closed),
-    Type.Object({ key: FieldKeySchema, field: OneTargetRefSchema }, closed),
+    Type.Object({ key: FieldKeySchema, field: ExactLocatorInputSchema }, closed),
   ]), { maxItems: 256 })),
   items: Type.Array(Type.Object({
     content: Type.String({ maxLength: 4_194_304 }),
@@ -106,7 +145,7 @@ const ViewedTreeAddInputSchema = Type.Object({
 const AddInputSchema = Type.Union([TreeAddInputSchema, ViewedTreeAddInputSchema]);
 
 const SetInputSchema = Type.Object({
-  target: TargetRefSchema,
+  target: BoundedSelectionInputSchema,
   content: Type.Optional(RichTextSchema),
   description: Type.Optional(Type.Union([Type.String({ maxLength: 4_194_304 }), Type.Null()])),
   codeLanguage: Type.Optional(Type.String({ maxLength: 128 })),
@@ -117,7 +156,7 @@ const SetInputSchema = Type.Object({
 }, { ...closed, minProperties: 2 });
 
 const TextReplaceInputSchema = Type.Object({
-  target: TargetSpecSchema,
+  target: BoundedSelectionInputSchema,
   find: Type.String({ minLength: 1, maxLength: 65_536 }),
   replacement: Type.String({ maxLength: 4_194_304 }),
   field: Type.Optional(Type.Union([
@@ -129,36 +168,36 @@ const TextReplaceInputSchema = Type.Object({
 }, closed);
 
 const MoveInputSchema = Type.Object({
-  target: TargetRefSchema,
-  placement: PlacementSchema,
+  target: BoundedSelectionInputSchema,
+  placement: ExactPlacementInputSchema,
 }, closed);
 
 const DuplicateInputSchema = Type.Object({
-  target: TargetRefSchema,
-  placement: PlacementSchema,
+  target: BoundedSelectionInputSchema,
+  placement: ExactPlacementInputSchema,
   bind: OptionalBind,
 }, closed);
 
-const MergeInputSchema = Type.Object({ source: TargetRefSchema, target: TargetRefSchema }, closed);
-const DoneSetInputSchema = Type.Object({ target: TargetRefSchema, value: Type.Boolean() }, closed);
+const MergeInputSchema = Type.Object({ source: BoundedSelectionInputSchema, target: ExactLocatorInputSchema }, closed);
+const DoneSetInputSchema = Type.Object({ target: BoundedSelectionInputSchema, value: Type.Boolean() }, closed);
 const FieldDefineInputSchema = Type.Union([
   Type.Object({
-    target: TargetRefSchema,
+    target: BoundedSelectionInputSchema,
     name: Type.String({ minLength: 1, maxLength: 1_024 }),
     fieldType: Type.Optional(FieldTypeSchema),
     value: Type.Optional(ScalarValueSchema),
     index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
   }, closed),
   Type.Object({
-    target: TargetRefSchema,
-    field: TargetRefSchema,
+    target: BoundedSelectionInputSchema,
+    field: ExactLocatorInputSchema,
     value: Type.Optional(ScalarValueSchema),
     index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
   }, closed),
 ]);
-const FieldSetInputSchema = Type.Object({ target: TargetRefSchema, field: TargetRefSchema, value: ScalarValueSchema }, closed);
-const FieldReuseInputSchema = Type.Object({ target: TargetRefSchema, sourceField: TargetRefSchema, field: TargetRefSchema }, closed);
-const FieldSelectInputSchema = Type.Object({ target: TargetRefSchema, field: TargetRefSchema, option: TargetRefSchema }, closed);
+const FieldSetInputSchema = Type.Object({ target: BoundedSelectionInputSchema, field: ExactLocatorInputSchema, value: ScalarValueSchema }, closed);
+const FieldReuseInputSchema = Type.Object({ target: BoundedSelectionInputSchema, sourceField: ExactLocatorInputSchema, field: ExactLocatorInputSchema }, closed);
+const FieldSelectInputSchema = Type.Object({ target: BoundedSelectionInputSchema, field: ExactLocatorInputSchema, option: ExactLocatorInputSchema }, closed);
 
 const DefinitionCreateInputSchema = Type.Union([
   Type.Object({
@@ -180,40 +219,41 @@ const DefinitionCreateInputSchema = Type.Union([
 ]);
 
 const DefinitionConfigureInputSchema = Type.Union([
-  Type.Object({ target: TargetRefSchema, definitionType: Type.Literal('tag'), patch: TagDefinitionPatchSchema }, closed),
-  Type.Object({ target: TargetRefSchema, definitionType: Type.Literal('field'), patch: FieldDefinitionPatchSchema }, closed),
+  Type.Object({ target: ExactLocatorInputSchema, definitionType: Type.Literal('tag'), patch: TagDefinitionPatchSchema }, closed),
+  Type.Object({ target: ExactLocatorInputSchema, definitionType: Type.Literal('field'), patch: FieldDefinitionPatchSchema }, closed),
 ]);
 
-const ReferenceInputSchema = Type.Object({ target: TargetRefSchema, reference: TargetRefSchema }, closed);
-const ViewSetInputSchema = Type.Object({ target: TargetRefSchema, view: ViewSetSpecSchema }, closed);
-const ViewGroupInputSchema = Type.Object({ target: TargetRefSchema, field: Type.Union([ViewFieldSchema, Type.Null()]) }, closed);
-const ViewSortAddInputSchema = Type.Object({ target: TargetRefSchema, sort: ViewSortSpecSchema }, closed);
-const ViewSortSetInputSchema = Type.Object({ target: TargetRefSchema, ruleId: IdentifierSchema, sort: ViewSortSpecSchema }, closed);
-const ViewRuleInputSchema = Type.Object({ target: TargetRefSchema, ruleId: IdentifierSchema }, closed);
-const ViewFilterAddInputSchema = Type.Object({ target: TargetRefSchema, filter: ViewFilterSpecSchema }, closed);
+const ReferenceInputSchema = Type.Object({ target: BoundedSelectionInputSchema, reference: ExactLocatorInputSchema }, closed);
+const ExactReferenceInputSchema = Type.Object({ target: ExactLocatorInputSchema, reference: ExactLocatorInputSchema }, closed);
+const ViewSetInputSchema = Type.Object({ target: ExactLocatorInputSchema, view: ViewSetSpecSchema }, closed);
+const ViewGroupInputSchema = Type.Object({ target: ExactLocatorInputSchema, field: Type.Union([ViewFieldInputSchema, Type.Null()]) }, closed);
+const ViewSortAddInputSchema = Type.Object({ target: ExactLocatorInputSchema, sort: ViewSortSpecSchema }, closed);
+const ViewSortSetInputSchema = Type.Object({ target: ExactLocatorInputSchema, ruleId: IdentifierSchema, sort: ViewSortSpecSchema }, closed);
+const ViewRuleInputSchema = Type.Object({ target: ExactLocatorInputSchema, ruleId: IdentifierSchema }, closed);
+const ViewFilterAddInputSchema = Type.Object({ target: ExactLocatorInputSchema, filter: ViewFilterSpecSchema }, closed);
 const ViewFilterSetInputSchema = Type.Object({
-  target: TargetRefSchema,
+  target: ExactLocatorInputSchema,
   ruleId: IdentifierSchema,
   patch: Type.Object({
-    field: Type.Optional(Type.Union([ViewFieldSchema, Type.Null()])),
+    field: Type.Optional(Type.Union([ViewFieldInputSchema, Type.Null()])),
     operator: Type.Optional(Type.Union([FilterOperatorSchema, Type.Null()])),
     values: Type.Optional(Type.Union([Type.Array(Type.String({ maxLength: 65_536 }), { maxItems: 10_000 }), Type.Null()])),
     valueLogic: Type.Optional(Type.Union([FilterValueLogicSchema, Type.Null()])),
   }, { ...closed, minProperties: 1 }),
 }, closed);
-const ViewDisplayAddInputSchema = Type.Object({ target: TargetRefSchema, display: ViewDisplaySpecSchema }, closed);
-const ViewDisplaySetInputSchema = Type.Object({ target: TargetRefSchema, displayFieldId: IdentifierSchema, patch: Type.Partial(ViewDisplaySpecSchema, { minProperties: 1 }) }, closed);
-const ViewDisplayRemoveInputSchema = Type.Object({ target: TargetRefSchema, displayFieldId: IdentifierSchema }, closed);
+const ViewDisplayAddInputSchema = Type.Object({ target: ExactLocatorInputSchema, display: ViewDisplaySpecSchema }, closed);
+const ViewDisplaySetInputSchema = Type.Object({ target: ExactLocatorInputSchema, displayFieldId: IdentifierSchema, patch: Type.Partial(ViewDisplaySpecSchema, { minProperties: 1 }) }, closed);
+const ViewDisplayRemoveInputSchema = Type.Object({ target: ExactLocatorInputSchema, displayFieldId: IdentifierSchema }, closed);
 const SearchCreateInputSchema = Type.Union([
   Type.Object({
-    parent: Type.Optional(TargetRefSchema),
+    parent: Type.Optional(ExactLocatorInputSchema),
     title: Type.String({ minLength: 1, maxLength: 4_194_304 }),
     query: QueryExpressionSchema,
     view: Type.Optional(ViewCreateSpecSchema),
     bind: OptionalBind,
   }, closed),
   Type.Object({
-    parent: Type.Optional(TargetRefSchema),
+    parent: Type.Optional(ExactLocatorInputSchema),
     title: Type.String({ minLength: 1, maxLength: 4_194_304 }),
     match: Type.String({ minLength: 1, maxLength: 65_536 }),
     view: Type.Optional(ViewCreateSpecSchema),
@@ -222,24 +262,24 @@ const SearchCreateInputSchema = Type.Union([
 ]);
 const SearchSetInputSchema = Type.Union([
   Type.Object({
-    target: TargetRefSchema,
+    target: ExactLocatorInputSchema,
     title: Type.Optional(Type.String({ minLength: 1, maxLength: 4_194_304 })),
     query: Type.Optional(QueryExpressionSchema),
     view: Type.Optional(ViewSetSpecSchema),
   }, { ...closed, minProperties: 2 }),
   Type.Object({
-    target: TargetRefSchema,
+    target: ExactLocatorInputSchema,
     title: Type.Optional(Type.String({ minLength: 1, maxLength: 4_194_304 })),
     match: Type.Optional(Type.String({ minLength: 1, maxLength: 65_536 })),
     view: Type.Optional(ViewSetSpecSchema),
   }, { ...closed, minProperties: 2 }),
 ]);
-const SearchEnsureTagInputSchema = Type.Object({ tag: TargetRefSchema, bind: OptionalBind }, closed);
+const SearchEnsureTagInputSchema = Type.Object({ tag: ExactLocatorInputSchema, bind: OptionalBind }, closed);
 const DailyEnsureInputSchema = Type.Object({ date: LocalDateSchema, bind: OptionalBind }, closed);
 
 const CaptureAddInputSchema = Type.Union([
   Type.Object({
-    parent: TargetRefSchema,
+    parent: ExactLocatorInputSchema,
     title: Type.String({ minLength: 1, maxLength: 4_194_304 }),
     description: Type.Optional(Type.String({ maxLength: 4_194_304 })),
     provenance: CaptureProvenanceSchema,
@@ -257,14 +297,14 @@ const CaptureAddInputSchema = Type.Union([
 ]);
 
 const SourceAddInputSchema = Type.Object({
-  target: OneTargetRefSchema,
+  target: ExactLocatorInputSchema,
   sourceText: Type.String({ maxLength: 32_768 }),
   valueId: Type.Optional(NodeIdentifierSchema),
-  after: Type.Optional(Type.Union([OneTargetRefSchema, Type.Null()])),
+  after: Type.Optional(Type.Union([ExactLocatorInputSchema, Type.Null()])),
 }, closed);
 const SourceValueInputSchema = Type.Object({
-  target: OneTargetRefSchema,
-  value: OneTargetRefSchema,
+  target: ExactLocatorInputSchema,
+  value: ExactLocatorInputSchema,
 }, closed);
 const SourceReplaceInputSchema = Type.Object({
   ...SourceValueInputSchema.properties,
@@ -272,7 +312,7 @@ const SourceReplaceInputSchema = Type.Object({
 }, closed);
 const SourceReorderInputSchema = Type.Object({
   ...SourceValueInputSchema.properties,
-  after: Type.Union([OneTargetRefSchema, Type.Null()]),
+  after: Type.Union([ExactLocatorInputSchema, Type.Null()]),
 }, closed);
 
 export interface CommandOptionHelp {
@@ -354,10 +394,10 @@ const PORCELAIN_BASE_CONTRACTS = Object.freeze({
   move: contract(MoveInputSchema, 'move TARGET DESTINATION | move TARGET --before|--after SIBLING | move TARGET --previous|--next', [target, option('destination', 'TARGET', 'Destination parent for first, last, or index placement.'), option('first', undefined, 'Place first under DESTINATION.'), option('last', undefined, 'Place last under DESTINATION.', { default: 'true' }), option('index', 'INDEX', 'Place at a zero-based index under DESTINATION.'), option('before', 'SIBLING', 'Place immediately before one exact sibling.'), option('after', 'SIBLING', 'Place immediately after one exact sibling.'), option('previous', undefined, 'Move the selected sibling block one position earlier.'), option('next', undefined, 'Move the selected sibling block one position later.')]),
   duplicate: contract(DuplicateInputSchema, 'duplicate TARGET DESTINATION | duplicate TARGET --before|--after SIBLING | duplicate TARGET --previous|--next', [target, option('destination', 'TARGET', 'Destination parent for first, last, or index placement.'), option('first', undefined, 'Place copies first under DESTINATION.'), option('last', undefined, 'Place copies last under DESTINATION.', { default: 'true' }), option('index', 'INDEX', 'Place copies at a zero-based index under DESTINATION.'), option('before', 'SIBLING', 'Place copies immediately before one exact sibling.'), option('after', 'SIBLING', 'Place copies immediately after one exact sibling.'), option('previous', undefined, 'Place each copy immediately before its source.'), option('next', undefined, 'Place each copy immediately after its source.'), bind]),
   merge: contract(MergeInputSchema, 'merge SOURCE TARGET', [option('source', 'TARGET', 'Source Node or bounded set.'), target]),
-  indent: contract(TargetOnlySchema, 'indent TARGET', [target]),
-  outdent: contract(TargetOnlySchema, 'outdent TARGET', [target]),
+  indent: contract(ExactTargetOnlySchema, 'indent TARGET', [target]),
+  outdent: contract(ExactTargetOnlySchema, 'outdent TARGET', [target]),
   'done set': contract(DoneSetInputSchema, 'done set TARGET BOOLEAN', [target, value]),
-  'done cycle': contract(TargetOnlySchema, 'done cycle TARGET', [target]),
+  'done cycle': contract(ExactTargetOnlySchema, 'done cycle TARGET', [target]),
   'tag add': contract(TargetTagSchema, 'tag add TARGET TAG', [target, option('tag', 'TAG', 'Tag definition target.')]),
   'tag remove': contract(TargetTagSchema, 'tag remove TARGET TAG', [target, option('tag', 'TAG', 'Tag definition target.')]),
   'field define': contract(FieldDefineInputSchema, 'field define TARGET NAME [--value VALUE]', [target, option('name', 'NAME', 'New field name.'), option('field-type', 'TYPE', 'New field type.'), option('field', 'FIELD', 'Attach an existing field definition.'), value, option('index', 'INDEX', 'Field slot index.')]),
@@ -370,38 +410,38 @@ const PORCELAIN_BASE_CONTRACTS = Object.freeze({
   'definition configure': contract(DefinitionConfigureInputSchema, 'definition configure TARGET TYPE --patch JSON|FILE', [target, option('type', 'tag|field', 'Definition kind.'), option('patch', 'JSON|FILE', 'Patch with omitted properties preserved.')]),
   'definition merge': contract(MergeInputSchema, 'definition merge SOURCE TARGET', [option('source', 'TARGET', 'Source definitions.'), target]),
   'reference add': contract(ReferenceInputSchema, 'reference add TARGET REFERENCE', [target, option('reference', 'TARGET', 'Referenced Node target.')]),
-  'reference set': contract(ReferenceInputSchema, 'reference set TARGET REFERENCE', [target, option('reference', 'TARGET', 'New referenced Node target.')]),
-  'reference replace': contract(ReferenceInputSchema, 'reference replace TARGET REFERENCE', [target, option('reference', 'TARGET', 'Referenced Node that replaces the content Node.')]),
-  'reference inline': contract(ReferenceInputSchema, 'reference inline TARGET [REFERENCE]', [target, option('reference', 'TARGET', 'Required referenced Node target when TARGET is a content Node; omit only to convert an existing tree reference.')]),
-  'reference restore': contract(ReferenceInputSchema, 'reference restore TARGET REFERENCE', [target, option('reference', 'TARGET', 'Referenced Node target.')]),
+  'reference set': contract(ExactReferenceInputSchema, 'reference set TARGET REFERENCE', [target, option('reference', 'TARGET', 'New referenced Node target.')]),
+  'reference replace': contract(ExactReferenceInputSchema, 'reference replace TARGET REFERENCE', [target, option('reference', 'TARGET', 'Referenced Node that replaces the content Node.')]),
+  'reference inline': contract(ExactReferenceInputSchema, 'reference inline TARGET [REFERENCE]', [target, option('reference', 'TARGET', 'Required referenced Node target when TARGET is a content Node; omit only to convert an existing tree reference.')]),
+  'reference restore': contract(ExactReferenceInputSchema, 'reference restore TARGET REFERENCE', [target, option('reference', 'TARGET', 'Referenced Node target.')]),
   'view set': contract(ViewSetInputSchema, 'view set TARGET MODE | view set --input FILE|-', [target, option('mode', 'MODE', 'Set list, table, cards, or calendar mode.'), option('toolbar', 'BOOLEAN', 'Set toolbar visibility.'), option('group', 'FIELD|null', 'Set the grouping field.'), option('replace', 'JSON|FILE', 'Explicitly replace sort, filter, or display collections.')]),
   'view group set': contract(ViewGroupInputSchema, 'view group set TARGET FIELD|null', [target, option('field', 'FIELD|null', 'Grouping field.')]),
   'view sort add': contract(ViewSortAddInputSchema, 'view sort add TARGET --field FIELD', [target, option('field', 'FIELD', 'Sort field.'), option('direction', 'asc|desc', 'Sort direction.', { default: 'asc' })]),
   'view sort set': contract(ViewSortSetInputSchema, 'view sort set TARGET --rule ID --field FIELD', [target, option('rule', 'ID', 'Sort-rule Node ID.'), option('field', 'FIELD', 'Sort field.'), option('direction', 'asc|desc', 'Sort direction.')]),
   'view sort remove': contract(ViewRuleInputSchema, 'view sort remove TARGET --rule ID', [target, option('rule', 'ID', 'Sort-rule Node ID.')]),
-  'view sort clear': contract(TargetOnlySchema, 'view sort clear TARGET', [target]),
+  'view sort clear': contract(ExactTargetOnlySchema, 'view sort clear TARGET', [target]),
   'view filter add': contract(ViewFilterAddInputSchema, 'view filter add TARGET --field FIELD', [target, option('field', 'FIELD', 'Filter field.'), option('operator', 'OP', 'Filter operator.', { default: 'contains' }), option('values', 'JSON', 'Filter value list.', { default: '[]' }), option('logic', 'all|any', 'Filter value logic.', { default: 'any' })]),
   'view filter set': contract(ViewFilterSetInputSchema, 'view filter set TARGET --rule ID [PATCH OPTIONS]', [target, option('rule', 'ID', 'Filter-rule Node ID.'), option('field', 'FIELD', 'Filter field.'), option('operator', 'OP', 'Filter operator.'), option('values', 'JSON', 'Filter value list.'), option('logic', 'all|any', 'Filter value logic.')]),
   'view filter remove': contract(ViewRuleInputSchema, 'view filter remove TARGET --rule ID', [target, option('rule', 'ID', 'Filter-rule Node ID.')]),
-  'view filter clear': contract(TargetOnlySchema, 'view filter clear TARGET', [target]),
+  'view filter clear': contract(ExactTargetOnlySchema, 'view filter clear TARGET', [target]),
   'view display add': contract(ViewDisplayAddInputSchema, 'view display add TARGET --field FIELD', [target, option('field', 'FIELD', 'Display field.')]),
   'view display set': contract(ViewDisplaySetInputSchema, 'view display set TARGET --display-field ID --value JSON', [target, option('display-field', 'ID', 'Display-field Node ID.'), value]),
   'view display remove': contract(ViewDisplayRemoveInputSchema, 'view display remove TARGET --display-field ID', [target, option('display-field', 'ID', 'Display-field Node ID.')]),
   'search create': contract(SearchCreateInputSchema, 'search create [PARENT] TITLE (--match TEXT | --query JSON|FILE) | search create --input FILE|-', [parent, option('title', 'TITLE', 'Saved Search title.'), option('match', 'TEXT', 'Ergonomic STRING_MATCH shorthand.'), option('query', 'JSON|FILE', 'Canonical structured query.'), option('view', 'MODE', 'Initial view mode.'), option('sort', 'FIELD:DIRECTION', 'Append one initial sort rule.'), option('filter', 'JSON', 'Append one initial filter rule.'), option('group', 'FIELD|null', 'Set initial grouping.'), option('display', 'FIELD', 'Append one initial display field.'), option('toolbar', 'BOOLEAN', 'Set initial toolbar visibility.'), bind], ['outline search create --title "Modules" --match "module" --view table --sort sys:updatedAt:desc']),
   'search ensure-tag': contract(SearchEnsureTagInputSchema, 'search ensure-tag TAG', [option('tag', 'TAG', 'Tag definition target.'), bind]),
   'search set': contract(SearchSetInputSchema, 'search set TARGET [--title TITLE] [--query JSON|FILE]', [target, option('title', 'TITLE', 'Patch the Search title.'), option('match', 'TEXT', 'Set a STRING_MATCH query.'), option('query', 'JSON|FILE', 'Set the canonical structured query.'), option('view', 'MODE', 'Patch view mode.'), option('replace', 'JSON|FILE', 'Explicitly replace view collections.')]),
-  'search refresh': contract(TargetOnlySchema, 'search refresh TARGET', [target]),
-  'template apply': contract(Type.Object({ tag: TargetRefSchema }, closed), 'template apply TAG', [option('tag', 'TAG', 'Tag definition target.')]),
+  'search refresh': contract(ExactTargetOnlySchema, 'search refresh TARGET', [target]),
+  'template apply': contract(Type.Object({ tag: ExactLocatorInputSchema }, closed), 'template apply TAG', [option('tag', 'TAG', 'Tag definition target.')]),
   'daily ensure': contract(DailyEnsureInputSchema, 'daily ensure YYYY-MM-DD', [option('date', 'YYYY-MM-DD', 'Local calendar date.'), bind]),
   'capture add': contract(CaptureAddInputSchema, 'capture add (--parent TARGET | --date YYYY-MM-DD) --title TITLE --metadata FILE', [parent, option('date', 'YYYY-MM-DD', 'Ensure and capture below this local date.'), option('title', 'TITLE', 'Capture title.'), option('description', 'TEXT', 'Capture description.'), option('metadata', 'JSON|FILE', 'Capture provenance.'), option('tree', 'FILE|-', 'Typed captured child tree.'), bind]),
   'source add': contract(SourceAddInputSchema, 'source add TARGET SOURCE [--after VALUE|null]', [target, option('source', 'URI', 'Exact Source text.'), option('value-id', 'ID', 'Explicit Source value Node ID.'), option('after', 'VALUE|null', 'Insert after one direct Source value; null inserts first.')]),
   'source replace': contract(SourceReplaceInputSchema, 'source replace TARGET VALUE SOURCE', [target, option('value', 'VALUE', 'Direct Source value.'), option('source', 'URI', 'Replacement Source text.')]),
   'source reorder': contract(SourceReorderInputSchema, 'source reorder TARGET VALUE --after VALUE|null', [target, option('value', 'VALUE', 'Direct Source value.'), option('after', 'VALUE|null', 'Direct Source anchor; null moves first.')]),
   'source remove': contract(SourceValueInputSchema, 'source remove TARGET VALUE', [target, option('value', 'VALUE', 'Direct Source value.')]),
-  'source clear': contract(Type.Object({ target: OneTargetRefSchema }, closed), 'source clear TARGET', [target]),
+  'source clear': contract(ExactTargetOnlySchema, 'source clear TARGET', [target]),
   trash: contract(TargetOnlySchema, 'trash TARGET', [target]),
   restore: contract(TargetOnlySchema, 'restore TARGET', [target]),
-  purge: contract(TargetOnlySchema, 'purge TARGET [--contents]', [target, option('contents', undefined, 'Purge the contents of Trash.')]),
+  purge: contract(ExactTargetOnlySchema, 'purge TARGET [--contents]', [target, option('contents', undefined, 'Purge the contents of Trash.')]),
 } satisfies Readonly<Record<string, PorcelainBaseContract>>);
 
 type PorcelainCommandKey = keyof typeof PORCELAIN_BASE_CONTRACTS;
@@ -482,8 +522,8 @@ const PORCELAIN_EXAMPLES = {
   'field remove': ['outline field remove node:project field:status', 'outline field remove --input field-remove-many.json'],
   'field reuse': ['outline field reuse node:project field:local field:status', 'outline field reuse --input field-reuse.json'],
   'field select': ['outline field select node:project field:status option:active', 'outline field select --input field-select-many.json'],
-  'definition create': ['outline definition create field Status --field-type select --options options.json', 'outline definition create --input complete-definition.json'],
-  'definition configure': ['outline definition configure field:status field --patch field-patch.json', 'outline definition configure --input definition-patch.json'],
+  'definition create': ['outline definition create field Status --field-type select', 'outline definition create --input complete-definition.json'],
+  'definition configure': ['outline definition configure field:status field --patch \'{"fieldType":"options"}\'', 'outline definition configure --input definition-patch.json'],
   'definition merge': ['outline definition merge tag:duplicate tag:canonical --preview --idempotency-key cli:review-definition-merge', 'outline definition merge tag:duplicate tag:canonical --idempotency-key cli:review-definition-merge --expect-diff SHA256 --yes'],
   'reference add': ['outline reference add node:brief node:source', 'outline reference add --input references-many.json'],
   'reference set': ['outline reference set node:reference node:new-target', 'outline reference set --input reference-retarget.json'],
@@ -536,9 +576,12 @@ const IDEMPOTENT_COMMANDS = new Set<PorcelainCommandKey>([
   'source remove', 'source clear', 'trash', 'restore',
 ]);
 const EXACT_TARGET_COMMANDS = new Set<PorcelainCommandKey>([
-  'indent', 'outdent', 'done cycle', 'reference replace', 'reference inline', 'reference restore', 'view sort set',
-  'view sort remove', 'view filter set', 'view filter remove', 'view display set', 'view display remove',
-  'source add', 'source replace', 'source reorder', 'source remove', 'source clear',
+  'indent', 'outdent', 'done cycle', 'definition configure', 'reference set', 'reference replace',
+  'reference inline', 'reference restore', 'view set', 'view group set', 'view sort add', 'view sort set',
+  'view sort remove', 'view sort clear', 'view filter add', 'view filter set', 'view filter remove',
+  'view filter clear', 'view display add', 'view display set', 'view display remove', 'search ensure-tag',
+  'search set', 'search refresh', 'template apply', 'source add', 'source replace', 'source reorder',
+  'source remove', 'source clear', 'purge',
 ]);
 
 const PORCELAIN_DEFAULTS: Partial<Record<PorcelainCommandKey, readonly string[]>> = {
@@ -566,17 +609,23 @@ function finalizePorcelainContract<Name extends PorcelainCommandKey>(
           ? 'replace'
           : 'patch';
   const idempotent = IDEMPOTENT_COMMANDS.has(name);
+  const recipeExamples = outlineRecipeVariants(name).map((recipe) => `outline example ${recipe.command} ${recipe.variant}`);
+  const directExamples = PORCELAIN_EXAMPLES[name].filter((example) => (
+    !example.includes('--input') && !/\b[A-Za-z0-9_-]+\.json\b/u.test(example)
+  ));
   return Object.freeze({
     ...base,
     summary: PORCELAIN_SUMMARIES[name],
     behavior,
     idempotent,
     positionals: Object.freeze([`Exact positional forms: ${base.usage}.`]),
-    selectors: 'TARGET and PARENT accept a Node ID, typed ID, semantic @alias, or a FILE containing Selector, TargetSpec, or binding JSON.',
+    selectors: 'Exact TARGET and PARENT values are Node IDs, typed IDs, stable @aliases, or @date:YYYY-MM-DD strings. Bulk-capable structured targets use a bounded TargetSpec.',
     cardinality: EXACT_TARGET_COMMANDS.has(name)
       ? 'This command requires one exact target. Structured many selectors are rejected.'
-      : 'Structured selectors must declare one, zero-or-one, or many cardinality; many mutations require an explicit max bound.',
-    input: `Use argv for common shorthand. Use --input FILE|- for one ${name}-specific JSON object; inspect it with outline schema ${name}.`,
+      : 'Exact locator strings lower to cardinality one. Structured many selectors require an explicit max bound.',
+    input: recipeExamples.length > 0
+      ? `Use argv for common shorthand. Use --input FILE|- with the validated structured stdin from ${recipeExamples[0]}. Full schema discovery is reserved for integrations and debugging.`
+      : `Use argv for common shorthand. --input FILE|- accepts one ${name}-specific JSON object; full schema discovery is reserved for integrations and debugging.`,
     output: 'Preview returns one normalized Diff. Apply returns one Operation or semantic no-change result; created or ensured IDs are included in the bounded return Projection.',
     defaults: Object.freeze([
       ...(PORCELAIN_DEFAULTS[name] ?? []),
@@ -584,7 +633,7 @@ function finalizePorcelainContract<Name extends PorcelainCommandKey>(
       ...(name === 'view set' || name === 'search set' ? ['Only the explicitly named replace object replaces sort, filter, or display collections.'] : []),
     ]),
     destructive,
-    examples: Object.freeze(PORCELAIN_EXAMPLES[name]),
+    examples: Object.freeze([...directExamples, ...recipeExamples].slice(0, 3)),
   });
 }
 

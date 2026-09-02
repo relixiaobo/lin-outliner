@@ -1,116 +1,108 @@
 ---
 name: outline
-description: Inspect, edit, organize, import into, or recover the Tenon outline through the public outline CLI. Use for any request that reads or changes Outliner Nodes, fields, tags, references, views, searches, Daily Notes, media, Trash, or operation history.
+description: Inspect, edit, organize, import into, or recover the Tenon outline through the public outline CLI. Use for persisted Outliner Nodes, fields, tags, references, views, searches, Daily Notes, media, Trash, or operation history.
 ---
 
 # Outline
 
-Use the `outline` CLI as the only document access path. Never read workspace
-storage, call private app APIs, or substitute UI state for persisted document
-state. Through Bash, execute `outline` directly. Do not wrap it in a shell
-pipeline, heredoc, loop, command substitution, or helper program. For
-`--input -`, put the complete JSON payload in Bash's separate `stdin` field.
+Use `outline` through Bash as the only persisted document interface. Execute it
+directly: no shell pipeline, heredoc, loop, command substitution, temporary input
+file, helper program, or private storage/API access. For `--input -`, send the
+complete JSON through Bash's separate `stdin` field.
 
-## Start Every Task
+Default output is the bounded Agent receipt. Use `--json` only when the user asks
+for a machine contract or raw records. Do not repeat a successful command solely
+to recover an identifier: its receipt contains the next-step handles.
 
-Load this Skill once, then choose the narrowest public command. Run
-`outline status` only when availability is uncertain. If the command is not
-already clear, read [references/commands.md](references/commands.md) or run
-exact family/command help. Read only `outline schema COMMAND` for a structured
-form you actually need. Do not load root help, the aggregate ChangeSet schema,
-or a fixture for ordinary work.
+## Route The Intent
 
-The default output is a bounded summary for the current model. Use `--json` only
-when an exact machine contract is explicitly required. Never use Python, Node, `jq`,
-`sed`, `grep`, temporary input files, or file tools to assemble or interpret an
-Outline operation.
+Choose the first matching shape:
 
-## Inspect Current State
+| Intent | Command shape |
+| --- | --- |
+| Read a known target | `outline show TARGET` |
+| Discover or count | `outline find ...` |
+| Inspect a persisted view | `outline view inspect OWNER_ID` |
+| Create or patch one resource | One porcelain command |
+| Create one resource with structured state | The same porcelain command with `--input -` |
+| Change dependent resources together | One `outline commit --input -` ChangeSet |
+| Review destructive or high-impact work | `outline diff --output FILE`, then exact `outline apply FILE` |
+| Inspect or recover history | `outline log ...` / `outline revert OPERATION_ID` |
+| Import external data | `import inspect`, `import plan`, exact `apply`, then `import verify` |
 
-Use `outline show` for a known exact target and `outline find`
-for discovery. Prefer exact IDs and stable aliases such as `@inbox`, `@library`,
-`@saved-searches`, `@today`, and `@date:YYYY-MM-DD`. Never select from display
-text without one bounded read proving the target. Read only the smallest
-Projection needed to decide the mutation.
+Use exact IDs and stable locators such as `@inbox`, `@library`,
+`@saved-searches`, `@today`, and `@date:YYYY-MM-DD`. Never infer identity from
+display text without a bounded read. Exact structured targets are locator
+strings; only genuinely bulk-capable inputs accept a bounded TargetSpec with an
+explicit `max`.
 
-Use `outline view inspect TARGET` to verify persisted view mode, exact
-direct-item count, and ordered display configuration. Do not fetch a complete
-table or parse generic descendant projections for view verification.
+For an unfamiliar structured shape, run exactly one matching recipe command,
+for example `outline example add viewed-tree`, `outline example find
+named-counts`, or `outline example commit dependent-change`. Use `outline
+COMMAND --help` only when no recipe or obvious argv form covers the intent.
+`outline schema` is an integration/debugging surface, not the normal discovery
+path.
 
-## Choose One Mutation Shape
+## Native Collections
 
-| Intent | Use |
-|---|---|
-| Create one complete resource | One porcelain `create` or `add` invocation |
-| Supply complex state for that resource | The same command with `--input -` |
-| Patch one resource | One declared patch or leaf-edit command |
-| Configure a complete search or view | One convergent `set` command |
-| Change multiple resources or dependencies | One ChangeSet with bindings |
-| Perform a bounded bulk mutation | One bounded selector or one ChangeSet |
-| Replace literal text across bounded Nodes | One reviewed `text replace` invocation |
-| Import external data | The public import workflow |
+A table, list, cards view, or calendar is one ordinary owner Node with direct
+ordinary child items, field-backed values, and persisted view configuration. Do
+not substitute Markdown or aligned text.
 
-Always try porcelain first. Use a generic ChangeSet only when one intent spans
-multiple independently addressable resources or dependencies that porcelain
-cannot express. Never use a shell mutation loop, query intermediate created
-IDs, or split one atomic intent into several writes. Every structured `many`
-mutation has an explicit `max` bound.
+Create a complete collection atomically with `outline add --input -`, then use
+the returned owner ID in one `outline view inspect OWNER_ID` verification:
 
-Create and add forms explicitly create. Patch forms preserve omitted
-properties. Only a documented replacement form replaces a collection.
-Repeated `set`, `configure`, and `ensure` calls must converge or return
-semantic no-change.
+```json
+{
+  "kind": "viewed-tree",
+  "placement": { "kind": "first", "parent": "@today" },
+  "title": "Prices",
+  "fields": [
+    { "key": "price", "name": "Price", "config": { "fieldType": "number" } }
+  ],
+  "items": [
+    { "content": "Item A", "values": { "price": 12 } }
+  ],
+  "view": { "mode": "table" }
+}
+```
 
-For a known non-destructive ChangeSet, use `outline commit --input -`
-directly. Use `diff --output` followed by exact `apply` for destructive work,
-ambiguous target effects, conversion of existing content, high-impact changes,
-or when the user requests review. Read
-[references/changesets.md](references/changesets.md) only for that generic path.
-For external imports, read [references/import.md](references/import.md).
+Field keys are local stable names shared by `fields`, item `values`, and view
+configuration. Reused fields use an exact locator. System fields use canonical
+`sys:*` names. Date values use `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or
+`start/end`; Daily Note dates are local calendar dates with no timezone
+conversion.
 
-## Model Common Structures
+## Mutate, Review, Verify
 
-Model a view-backed collection as one ordinary owner Node, reusable field
-definitions, and one direct ordinary child Node per item. Store values in
-fields and configure the complete view on the owner. Never substitute a
-Markdown table or aligned text for native table state.
+Prefer one complete porcelain invocation. Use a ChangeSet only when one intent
+has dependencies or spans independently addressable resources. Bind resources
+created or ensured inside a ChangeSet and consume those bindings later; never
+query intermediate IDs or issue a shell mutation loop.
 
-For a new table, list, cards view, or calendar view below one exact destination,
-run one `outline add --input -` with `kind: "viewed-tree"`. Declare
-local fields once with stable `key` values, reference them from item `values`
-and view configuration as `{ "fieldKey": "key" }`, and use canonical `sys:*`
-names for system fields. The CLI creates definitions, owner, ordinary items,
-field values, and view atomically. Then verify with one
-`outline view inspect OWNER_ID`.
+Use direct `commit` for a known non-destructive ChangeSet. For destructive,
+conversion, ambiguous-target, high-impact, or explicitly reviewed work, persist
+one immutable Diff, review its hashes/effects/destructive classes/bindings and
+warnings, then apply that exact artifact once. Destructive porcelain uses
+`--preview --idempotency-key KEY`, followed by the same command and key with
+`--expect-diff SHA256 --yes`; `--yes` alone is invalid.
 
-Date field values use `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end` with `/`.
-Use exact local-date selectors for Daily Notes; do not apply timezone conversion
-to a local calendar date. In the final response, mention an ordinary persisted
-`node:UUID` as `[[node://UUID]]`, removing the internal `node:` prefix.
+After consequential writes, verify independently with one bounded `show`,
+`find`, or `view inspect`. Dispatch is not final-state proof. Stop when target
+selection, bounds, coverage, review, or verification is unresolved.
 
-## Review and Execute
+If settlement is unknown, do not write again. Run the exact `outline log
+--idempotency-key ...` command from the failure receipt. Revert only a known
+completed Operation with `outline revert OPERATION_ID`; never invent a
+compensating edit.
 
-`diff --output FILE` writes the exact immutable Diff and prints a bounded summary
-review receipt. Review its hashes, base revision, effects, destructive classes,
-bindings, warnings, and any omission count. Stop or narrow the work if a
-review-critical tail is omitted. Pass the exact artifact to `apply`; never
-reconstruct it.
+For imports, profile the authorized source with `outline import inspect SOURCE`,
+then create a reviewed Diff and evidence with `outline import plan SOURCE
+--output import.diff.json --evidence-output import.evidence.json`. Apply the
+exact Diff once and run `outline import verify OPERATION_ID --diff
+import.diff.json --evidence import.evidence.json`. Every source record must be
+accounted as imported, merged, dropped, unsupported, or empty; unaccounted must
+be zero.
 
-Destructive porcelain requires `--preview --idempotency-key KEY`, followed by
-the same command and key with `--expect-diff SHA256 --yes`. `--yes` alone is
-invalid. Never treat an idempotency key as permission to repeat an uncertain
-write.
-
-## Verify and Recover Safely
-
-Every successful write returns one bounded receipt with its Operation ID,
-revision transition, affected count/digest, returned root IDs, and recovery
-state. Verify consequential work independently with one bounded `show`, `find`,
-or `view inspect`; dispatch alone is not proof of final state.
-
-If settlement is unknown, stop writing and inspect `outline log` by the
-same idempotency key. Do not retry with a new key. Revert a known completed
-Operation with `outline revert OPERATION_ID`; never issue an unrelated
-compensating edit. Stop before writing when selection is unresolved,
-cardinality is surprising, the reviewed Diff changed, acknowledgement is
-incomplete, or verification cannot distinguish the intended result.
+In the final response, reference an ordinary persisted `node:UUID` as
+`[[node://UUID]]`, removing the internal `node:` prefix.

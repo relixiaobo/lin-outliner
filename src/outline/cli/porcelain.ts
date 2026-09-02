@@ -72,7 +72,7 @@ export async function buildPorcelainRequest(
         payload,
       );
     }
-    structuredInput = payload as Record<string, unknown>;
+    structuredInput = normalizeStructuredInput(command, payload as Record<string, unknown>);
   }
   if (command === 'text replace') {
     const replacementInput = structuredInput ?? await textReplaceInputFromArgv(parsed, context);
@@ -103,6 +103,106 @@ export async function buildPorcelainRequest(
     ...(expectDiff ? { expectDiff } : {}),
     ...(yes ? { acknowledgeDestructive: true } : {}),
   };
+}
+
+function normalizeStructuredInput(
+  command: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalized = { ...input };
+  if (input.placement !== undefined) normalized.placement = structuredPlacement(input.placement);
+  if (input.target !== undefined) normalized.target = structuredTarget(input.target);
+
+  if (command === 'merge' || command === 'definition merge') {
+    normalized.source = structuredTarget(input.source);
+  }
+  for (const key of ['sourceField', 'tag', 'reference', 'option'] as const) {
+    if (input[key] !== undefined && typeof input[key] === 'string') {
+      normalized[key] = exactTarget(input[key]);
+    }
+  }
+  if (input.field !== undefined && typeof input.field === 'string' && command !== 'view group set') {
+    normalized.field = exactTarget(input.field);
+  }
+  if ((command === 'search create' || command === 'capture add') && input.parent !== undefined) {
+    normalized.parent = exactTarget(input.parent);
+  }
+  if ((command === 'search create' || command === 'search set') && isRecord(input.view)) {
+    normalized.view = structuredViewConfiguration(input.view);
+  }
+  if (command === 'view set' && isRecord(input.view)) {
+    normalized.view = structuredViewConfiguration(input.view);
+  } else if (command === 'view group set' && input.field !== null) {
+    normalized.field = structuredViewField(input.field);
+  } else if ((command === 'view sort add' || command === 'view sort set') && isRecord(input.sort)) {
+    normalized.sort = structuredViewFieldContainer(input.sort);
+  } else if (command === 'view filter add' && isRecord(input.filter)) {
+    normalized.filter = structuredViewFieldContainer(input.filter);
+  } else if ((command === 'view filter set' || command === 'view display set') && isRecord(input.patch)) {
+    normalized.patch = structuredViewFieldContainer(input.patch);
+  } else if (command === 'view display add' && isRecord(input.display)) {
+    normalized.display = structuredViewFieldContainer(input.display);
+  }
+  if (command.startsWith('source ')) {
+    if (input.value !== undefined) normalized.value = exactTarget(input.value);
+    if (input.after !== undefined && input.after !== null) normalized.after = exactTarget(input.after);
+  }
+  if (command === 'add' && input.kind === 'viewed-tree' && Array.isArray(input.fields)) {
+    normalized.fields = input.fields.map((field) => isRecord(field) && typeof field.field === 'string'
+      ? { ...field, field: exactTarget(field.field) }
+      : field);
+  }
+  return normalized;
+}
+
+function structuredViewConfiguration(value: Record<string, unknown>): Record<string, unknown> {
+  const normalized = { ...value };
+  if (value.group !== undefined && value.group !== null) normalized.group = structuredViewField(value.group);
+  for (const key of ['sort', 'filters', 'display'] as const) {
+    if (Array.isArray(value[key])) normalized[key] = value[key].map(structuredViewFieldContainer);
+  }
+  if (isRecord(value.replace)) {
+    normalized.replace = structuredViewConfiguration(value.replace);
+  }
+  return normalized;
+}
+
+function structuredViewFieldContainer(value: unknown): unknown {
+  if (!isRecord(value) || value.field === undefined || value.field === null) return value;
+  return { ...value, field: structuredViewField(value.field) };
+}
+
+function structuredViewField(value: unknown): PublicViewField {
+  if (typeof value !== 'string') throw usageError('View field must be a system field or exact field locator string.');
+  return value.startsWith('sys:') ? value as PublicViewField : exactTarget(value);
+}
+
+function structuredTarget(value: unknown): TargetRef {
+  if (typeof value === 'string') return exactTarget(value);
+  if (isRecord(value) && isRecord(value.selector) && typeof value.cardinality === 'string') {
+    return { target: value as unknown as TargetSpec };
+  }
+  throw usageError('Structured target must be an exact locator string or bounded TargetSpec.');
+}
+
+function exactTarget(value: unknown): OneTargetRef {
+  if (typeof value !== 'string') throw usageError('Exact target must be a Node ID, typed ID, or stable @alias string.');
+  return { target: { selector: parseSelectorToken(value), cardinality: 'one' } };
+}
+
+function structuredPlacement(value: unknown): DestinationPlacement | Placement {
+  if (!isRecord(value) || typeof value.kind !== 'string') throw usageError('Structured placement is invalid.');
+  if (value.kind === 'previous' || value.kind === 'next') return { kind: value.kind };
+  if (value.kind === 'before' || value.kind === 'after') {
+    return { kind: value.kind, sibling: exactTarget(value.sibling) };
+  }
+  if (value.kind === 'first' || value.kind === 'last') {
+    return { kind: value.kind, parent: exactTarget(value.parent) };
+  }
+  if (value.kind === 'index') {
+    return { kind: 'index', parent: exactTarget(value.parent), index: Number(value.index) };
+  }
+  throw usageError(`Unknown structured placement kind: ${String(value.kind)}.`);
 }
 
 async function buildChangesFromInput(

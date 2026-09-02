@@ -18,7 +18,7 @@
     "build": "tsc --noEmit && electron-vite build",
     "agent:dump": "bun scripts/agent-dump.ts",
     "skills:sync": "bun scripts/sync-built-in-skills.ts",
-    "outline:build": "bun build src/outline/cli/entry.ts --outfile build/generated/outline/outline.mjs --target node --format esm && bun build src/outline/runtime/server/entry.ts --outfile build/generated/outline/outline-runtime.mjs --target node --format esm && bun build src/main/builtInSkills/outline/scripts/source-adapters.ts --outfile build/generated/built-in-skills/outline/scripts/source-adapters.mjs --target node --format esm",
+    "outline:build": "bun build src/outline/cli/entry.ts --outfile build/generated/outline/outline.mjs --target node --format esm && bun build src/outline/runtime/server/entry.ts --outfile build/generated/outline/outline-runtime.mjs --target node --format esm && bun build src/outline/import/adapters/source-adapters.ts --outfile build/generated/outline/import-adapters.mjs --target node --format esm",
     "preview": "vite preview",
     "app:dev": "electron-vite dev",
     "renderer:dev": "vite --host 127.0.0.1",

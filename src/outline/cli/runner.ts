@@ -17,6 +17,8 @@ import {
   OutlineContractError,
   outlineCapability,
   outlineCapabilityManifest,
+  outlineRecipe,
+  outlineRecipeVariants,
   compactOutlineSchema,
   checkOutlineSchema,
   outlineSchemaValidationDetails,
@@ -37,7 +39,7 @@ import {
 } from './arguments';
 import { buildPorcelainRequest } from './porcelain';
 import { executeImportInvocation } from './import';
-import { inspectView, renderSummaryResult } from './presentation';
+import { inspectView, renderEventSummary, renderFailureSummary, renderSummaryResult } from './presentation';
 
 const MAX_INLINE_DIFF_BYTES = 8 * 1024 * 1024;
 const GLOBAL_OPTION_BY_NAME = new Map(OUTLINE_GLOBAL_OPTIONS.map((entry) => [entry.name, entry]));
@@ -195,6 +197,24 @@ async function executeInvocation(
     const client = await supervisor.connect(options.signal);
     client.close();
     return bundled;
+  }
+  if (invocation.command === 'example') {
+    const split = splitOptionTerminator(invocation.args);
+    const tokens = [...split.options, ...split.literals];
+    if (tokens.length < 2) {
+      const available = outlineRecipeVariants().map((recipe) => `${recipe.command} ${recipe.variant}`).join(', ');
+      throw usageError(`example requires COMMAND and VARIANT. Available recipes: ${available}.`);
+    }
+    const variant = tokens.at(-1)!;
+    const command = tokens.slice(0, -1).join(' ');
+    const recipe = outlineRecipe(command, variant);
+    if (!recipe) {
+      const available = outlineRecipeVariants(command).map((entry) => entry.variant);
+      throw usageError(available.length > 0
+        ? `Unknown ${command} recipe variant: ${variant}. Available variants: ${available.join(', ')}.`
+        : `No recipes are registered for command: ${command}.`);
+    }
+    return recipe;
   }
   if (invocation.command.startsWith('import ')) {
     return executeImportInvocation(invocation.command, invocation.args, {
@@ -771,7 +791,7 @@ async function executeStreamingInvocation(
         await rm(temporaryPath!, { force: true });
       }
       if (output === '-' || invocation.output === 'summary') {
-        await io.stderr(`outline: [${streamError.code}] ${streamError.message}\n`);
+        await io.stderr(renderFailureSummary(streamError));
       }
       return { handled: true, exitCode: outlineExitCodeForError(streamError) };
     }
@@ -878,9 +898,9 @@ async function writeSummaryStreamRecord(
   if (record.type === 'data') {
     await io.stdout(typeof record.data === 'string' ? record.data : `${JSON.stringify(record.data)}\n`);
   } else if (record.type === 'event') {
-    await io.stdout(`${JSON.stringify(record.event)}\n`);
+    await io.stdout(renderEventSummary(record.event));
   } else if (record.type === 'error') {
-    await io.stderr(`outline: [${record.error.code}] ${record.error.message}\n`);
+    await io.stderr(renderFailureSummary(record.error));
   }
 }
 
@@ -1055,8 +1075,7 @@ async function writeFailure(
     await io.stdout(`${JSON.stringify(response)}\n`);
     return;
   }
-  await io.stderr(`outline: [${error.code}] ${error.message}\n`);
-  for (const next of error.next ?? []) await io.stderr(`  ${next}\n`);
+  await io.stderr(renderFailureSummary(error));
 }
 
 function renderHelp(argv: readonly string[]): string {

@@ -45,13 +45,7 @@ export function resolveOutlineCliRuntime(options: OutlineCliRuntimeOptions): Out
     return {
       binDir: path.join(root, 'bin'),
       cliEntry: path.join(root, 'outline.mjs'),
-      importAdapterEntry: path.join(
-        options.resourcesPath,
-        'built-in-skills',
-        'outline',
-        'scripts',
-        'source-adapters.mjs',
-      ),
+      importAdapterEntry: path.join(root, 'import-adapters.mjs'),
       runtimeEntry: path.join(root, 'outline-runtime.mjs'),
       cliRuntime: options.processExecPath,
       runAsNode: true,
@@ -65,10 +59,9 @@ export function resolveOutlineCliRuntime(options: OutlineCliRuntimeOptions): Out
     importAdapterEntry: path.join(
       repositoryRoot,
       'src',
-      'main',
-      'builtInSkills',
       'outline',
-      'scripts',
+      'import',
+      'adapters',
       'source-adapters.ts',
     ),
     runtimeEntry: path.join(repositoryRoot, 'src', 'outline', 'runtime', 'server', 'entry.ts'),

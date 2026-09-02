@@ -144,7 +144,7 @@ describe('outline porcelain CLI', () => {
       const rich = await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
         placement: {
           kind: 'last',
-          parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } },
+          parent: '@library',
         },
         nodes: [{
           content: {
@@ -202,7 +202,7 @@ describe('outline porcelain CLI', () => {
       expect((await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
         placement: {
           kind: 'last',
-          parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } },
+          parent: '@library',
         },
         nodes: [
           tree('Placement source', [tree('A'), tree('B'), tree('C')]),
@@ -260,7 +260,7 @@ describe('outline porcelain CLI', () => {
       expect((await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
         placement: {
           kind: 'last',
-          parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } },
+          parent: '@library',
         },
         nodes: [
           tree('Reference replacement parent', [tree('Original subtree', [tree('Original child')])]),
@@ -337,7 +337,7 @@ describe('outline porcelain CLI', () => {
       const before = JSON.parse(JSON.stringify(runtime.workspace.documentState())) as unknown;
       const invalid = await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
         kind: 'viewed-tree',
-        placement: { kind: 'last', parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } } },
+        placement: { kind: 'last', parent: '@library' },
         title: 'Invalid table',
         fields: [{ key: 'known', name: 'Known', config: { fieldType: 'plain' } }],
         items: [{ content: 'Item', values: { missing: 'value' } }],
@@ -364,7 +364,7 @@ describe('outline porcelain CLI', () => {
     try {
       const input = JSON.stringify({
         kind: 'viewed-tree',
-        placement: { kind: 'last', parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } } },
+        placement: { kind: 'last', parent: '@library' },
         title: 'Large viewed tree',
         items: Array.from({ length: 10_000 }, (_, index) => ({ content: `Item ${index} "quoted" \\ slash` })),
         view: { mode: 'table', display: [{ field: 'sys:name', label: 'Item' }] },

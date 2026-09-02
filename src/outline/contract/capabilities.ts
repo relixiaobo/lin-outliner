@@ -33,10 +33,28 @@ import {
   type PorcelainContract,
 } from './porcelain';
 import { canonicalSha256 } from './canonical';
+import { OUTLINE_RECIPES, OutlineRecipeSchema } from './recipes';
+import { checkOutlineSchema } from './validation';
 import { OUTLINE_QUERY_OPERATORS } from './queryOperators';
 import { OUTLINE_PRIVATE_RUNTIME_CONTRACT_VERSION } from './version';
 
 export type OutlineCapabilityKind = 'local' | 'read' | 'mutate' | 'observe' | 'asset';
+export type OutlineReceiptFamily =
+  | 'status'
+  | 'capabilities'
+  | 'schema'
+  | 'recipe'
+  | 'query'
+  | 'projection'
+  | 'view'
+  | 'diff'
+  | 'mutation'
+  | 'mutation-or-diff'
+  | 'history'
+  | 'asset'
+  | 'artifact'
+  | 'import'
+  | 'event';
 
 export interface OutlineCapability<TRequest extends TSchema = TSchema, TResult extends TSchema = TSchema> {
   readonly name: string;
@@ -46,6 +64,7 @@ export interface OutlineCapability<TRequest extends TSchema = TSchema, TResult e
   readonly destructive: boolean;
   readonly auditCategory: string;
   readonly summary: string;
+  readonly receipt: OutlineReceiptFamily;
   readonly requestSchema: TRequest;
   readonly resultSchema: TResult;
   readonly coverage: readonly string[];
@@ -196,6 +215,7 @@ const FIXED_COMMAND_HELP = Object.freeze({
   version: fixedHelp({ usage: 'version', summary: 'Print CLI, app, protocol, and storage versions.', behavior: 'metadata', idempotent: true, positionals: [], options: [], selectors: 'No selectors.', cardinality: 'Not applicable.', input: 'No input.', output: 'Writes version fields; summary output is one concise line.', defaults: noDefaults, destructive: false, examples: ['outline version', 'outline --json version'] }),
   status: fixedHelp({ usage: 'status', summary: 'Inspect Runtime presence and storage health without starting it.', behavior: 'read-only', idempotent: true, positionals: [], options: [], selectors: 'No selectors.', cardinality: 'Not applicable.', input: 'No input.', output: 'Returns Runtime, transaction-log, and recovery state.', defaults: noDefaults, destructive: false, examples: ['outline status', 'outline --json status'] }),
   capabilities: fixedHelp({ usage: 'capabilities [--runtime]', summary: 'Print the executable CLI registry and optionally verify Runtime parity.', behavior: 'metadata', idempotent: true, positionals: [], options: [option('runtime', undefined, 'Compare the bundled registry with the running Runtime without accepting drift.')], selectors: 'No selectors.', cardinality: 'Not applicable.', input: 'No structured input.', output: 'Returns command schemas plus help and completion metadata.', defaults: ['Without --runtime, reads only the bundled registry.'], destructive: false, examples: ['outline capabilities', 'outline --json capabilities --runtime'] }),
+  example: fixedHelp({ usage: 'example COMMAND VARIANT', summary: 'Print one validated executable recipe for a structured CLI workflow.', behavior: 'metadata', idempotent: true, positionals: ['COMMAND and VARIANT select one registry-owned recipe.'], options: [], selectors: 'No selectors.', cardinality: 'Not applicable.', input: 'No input. The recipe contains literal stdin when required.', output: 'Returns bounded Command, Stdin, Result, and Verify sections.', defaults: noDefaults, destructive: false, examples: ['outline example add viewed-tree', 'outline example find named-counts', 'outline --json example commit dependent-change'] }),
   schema: fixedHelp({ usage: 'schema [SCHEMA|COMMAND...] [--part request|result|both]', summary: 'Print an exact public or command-specific JSON Schema.', behavior: 'metadata', idempotent: true, positionals: ['SCHEMA names a public schema; COMMAND may contain multiple command-path words.'], options: [option('part', 'PART', 'For a command, return its request, result, or both schemas.', { default: 'request' })], selectors: 'No selectors.', cardinality: 'Not applicable.', input: 'The positional name is optional; omission returns every public schema.', output: 'Returns compact JSON Schema. Command schema discovery returns the request contract by default; use --part result or --part both when needed.', defaults: ['Omitting the name returns all public schemas.', 'Command schema part defaults to request.'], destructive: false, examples: ['outline schema QueryExpression', 'outline schema search create', 'outline --json schema view sort add --part both'] }),
   find: fixedHelp({ usage: 'find [TEXT] [OPTIONS]', summary: 'Find or exactly count Nodes with text shorthand, live Saved Searches, or canonical queries.', behavior: 'read-only', idempotent: true, positionals: ['TEXT is ergonomic STRING_MATCH shorthand; use --query for one canonical query.'], options: [option('query', 'FILE|-', 'Read one canonical structured query.'), option('search', 'SEARCH_ID', 'Execute a Saved Search live without refreshing materialized children.'), option('count', undefined, 'Return an exact count without Node payloads.'), option('input', 'FILE|-', 'Read one complete find request, including named batch counts and an optional sharedQuery.'), option('within', 'FILE|-', 'Bound the query below one structured Selector.'), option('include-trash', undefined, 'Include trashed Nodes in transient query execution.'), option('order', 'ORDER', 'Use document, created, updated, or text order.', { default: 'document' }), ...READ_OPTIONS], selectors: selectorSyntax, cardinality: 'Node results use cardinality many with explicit --limit; count forms are exact and return no Nodes.', input: 'Use TEXT for common search, --query for one canonical query, --search for a live Saved Search, or --input alone for the exact command schema. Run outline schema QueryExpression for every executable structured operator.', output: 'Returns a bounded Projection, one exact count, or named exact batch counts. Batch sharedQuery is combined with every query using canonical AND.', defaults: ['Limit defaults to 100 for Node results.', 'Projection kind defaults to summary.'], destructive: false, examples: ['outline find "quarterly plan" --limit 20', 'outline find --search search:modules --count', 'outline find --input named-counts.json'] }),
   show: fixedHelp({ usage: 'show [SELECTOR...] [PROJECTION OPTIONS]', summary: 'Read one or more exact targets with a bounded Projection.', behavior: 'read-only', idempotent: true, positionals: ['Each optional SELECTOR is an exact ID, typed ID, @alias, or @date:YYYY-MM-DD; multiple positional values form one ordered ID selector. Omit SELECTOR when --projection declares targets.'], options: READ_OPTIONS, selectors: selectorSyntax, cardinality: 'One positional selector uses cardinality one; multiple exact IDs and structured query/search selectors use bounded many.', input: 'Use positional shorthand, --selector FILE|-, or one complete standalone --projection FILE|-. A separate Selector must match the Projection target exactly.', output: projectionOutput, defaults: ['Limit defaults to 100.', 'Projection kind defaults to node.'], destructive: false, examples: ['outline show node:project', 'outline show node:first node:second --include backlinks', 'outline show --projection node-with-backlinks.json'] }),
@@ -218,11 +238,30 @@ const FIXED_COMMAND_HELP = Object.freeze({
 } satisfies Record<string, CommandHelpContract>);
 
 function capability<TRequest extends TSchema, TResult extends TSchema>(
-  value: Omit<OutlineCapability<TRequest, TResult>, 'help'>,
+  value: Omit<OutlineCapability<TRequest, TResult>, 'help' | 'receipt'> & { readonly receipt?: OutlineReceiptFamily },
 ): OutlineCapability<TRequest, TResult> {
   const help = value.porcelain ?? FIXED_COMMAND_HELP[value.name as keyof typeof FIXED_COMMAND_HELP];
   if (!help) throw new Error(`Missing CLI help contract for capability: ${value.name}`);
-  return Object.freeze({ ...value, help });
+  return Object.freeze({ ...value, receipt: value.receipt ?? receiptForCapability(value.name), help });
+}
+
+function receiptForCapability(name: string): OutlineReceiptFamily {
+  if (name === 'version' || name === 'status') return 'status';
+  if (name === 'capabilities') return 'capabilities';
+  if (name === 'schema') return 'schema';
+  if (name === 'example') return 'recipe';
+  if (name === 'find') return 'query';
+  if (name === 'show') return 'projection';
+  if (name === 'view inspect') return 'view';
+  if (name === 'diff') return 'diff';
+  if (name === 'log') return 'history';
+  if (name.startsWith('asset ')) return name === 'asset export' ? 'artifact' : 'asset';
+  if (name.startsWith('import ')) return 'import';
+  if (name === 'export') return 'artifact';
+  if (name === 'watch') return 'event';
+  return name === 'commit' || name === 'apply' || ['revert', 'undo', 'redo'].includes(name)
+    ? 'mutation'
+    : 'mutation-or-diff';
 }
 
 function historySelectionSchema() {
@@ -239,6 +278,7 @@ const FIXED_CAPABILITIES = [
   capability({ name: 'version', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Print CLI, app, and protocol versions.', requestSchema: EmptyInput, resultSchema: Type.Object({ cliVersion: Type.String(), appVersion: Type.String(), protocolMajors: Type.Array(Type.Integer()), storageVersion: Type.Integer() }, closed), coverage: [] }),
   capability({ name: 'status', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Inspect Runtime presence and storage health without starting it.', requestSchema: EmptyInput, resultSchema: RuntimeStatusSchema, coverage: [] }),
   capability({ name: 'capabilities', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Print the executable public capability registry.', requestSchema: Type.Object({ runtime: Type.Optional(Type.Boolean()) }, closed), resultSchema: Type.Array(Type.Unknown()), coverage: [] }),
+  capability({ name: 'example', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Print one validated executable structured-workflow recipe.', requestSchema: Type.Object({ command: Type.String({ minLength: 1, maxLength: 128 }), variant: Type.String({ minLength: 1, maxLength: 64 }) }, closed), resultSchema: OutlineRecipeSchema, coverage: [] }),
   capability({ name: 'schema', kind: 'local', runtimeRequired: false, streaming: false, destructive: false, auditCategory: 'metadata', summary: 'Print exact public JSON Schemas.', requestSchema: Type.Object({ name: Type.Optional(Type.String()), part: Type.Optional(Type.Union([Type.Literal('request'), Type.Literal('result'), Type.Literal('both')])) }, closed), resultSchema: Type.Unknown(), coverage: [] }),
   capability({ name: 'find', kind: 'read', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'read.search', summary: 'Find or exactly count Nodes with canonical queries or live Saved Searches.', requestSchema: FindInput, resultSchema: Type.Union([ProjectionResultSchema, OutlineCountResultSchema, OutlineBatchCountResultSchema]), coverage: ['search_nodes'] }),
   capability({ name: 'show', kind: 'read', runtimeRequired: true, streaming: false, destructive: false, auditCategory: 'read.node', summary: 'Read deterministic targets with a bounded Projection.', requestSchema: ReadInput, resultSchema: ProjectionResultSchema, coverage: ['get_projection', 'backlinks'] }),
@@ -355,6 +395,31 @@ export const OUTLINE_CAPABILITIES = Object.freeze([
 
 const capabilityByName = new Map(OUTLINE_CAPABILITIES.map((entry) => [entry.name, entry]));
 
+for (const recipe of OUTLINE_RECIPES) {
+  if (!checkOutlineSchema(OutlineRecipeSchema, recipe as unknown)) {
+    throw new Error(`Invalid Outline recipe contract: ${recipe.command} ${recipe.variant}`);
+  }
+  const capability = capabilityByName.get(recipe.command);
+  if (!capability) throw new Error(`Outline recipe references unknown command: ${recipe.command}`);
+  if (!recipe.invocation.startsWith(`outline ${recipe.command}`)) {
+    throw new Error(`Outline recipe invocation does not match its command: ${recipe.command} ${recipe.variant}`);
+  }
+  if (recipe.stdin !== undefined) {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(recipe.stdin) as unknown;
+    } catch {
+      throw new Error(`Outline recipe stdin is not JSON: ${recipe.command} ${recipe.variant}`);
+    }
+    const schema = recipe.command === 'diff' || recipe.command === 'commit'
+      ? ChangeSetSchema
+      : capability.porcelain?.inputSchema ?? capability.requestSchema;
+    if (!checkOutlineSchema(schema, payload)) {
+      throw new Error(`Outline recipe stdin does not match its command: ${recipe.command} ${recipe.variant}`);
+    }
+  }
+}
+
 export function outlineCapability(name: string): OutlineCapability | undefined {
   return capabilityByName.get(name);
 }
@@ -444,6 +509,7 @@ export function outlineCapabilityManifest() {
     destructive: entry.destructive,
     auditCategory: entry.auditCategory,
     summary: entry.summary,
+    receipt: entry.receipt,
     coverage: [...entry.coverage],
     requestSchema: compactOutlineSchema(entry.porcelain?.inputSchema ?? entry.requestSchema),
     resultSchema: compactOutlineSchema(entry.resultSchema),

@@ -2,12 +2,7 @@
   "kind": "viewed-tree",
   "placement": {
     "kind": "last",
-    "parent": {
-      "target": {
-        "selector": { "by": "date", "date": "2042-03-04" },
-        "cardinality": "one"
-      }
-    }
+    "parent": "@date:2042-03-04"
   },
   "title": "Model prices",
   "fields": [

@@ -347,13 +347,7 @@ async function packagedMainConfiguration(inspector: CdpClient): Promise<Packaged
 }
 
 function assertPackagedMainConfiguration(config: Awaited<ReturnType<typeof packagedMainConfiguration>>): void {
-  const expectedImportAdapter = path.join(
-    resourcesRoot,
-    'built-in-skills',
-    'outline',
-    'scripts',
-    'source-adapters.mjs',
-  );
+  const expectedImportAdapter = path.join(resourcesRoot, 'outline', 'import-adapters.mjs');
   const toolPath = (config.extraToolPath ?? '').split(path.delimiter).filter(Boolean);
   if (config.cliEntry !== cliBundle
     || config.runtimeEntry !== runtimeBundle

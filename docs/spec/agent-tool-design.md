@@ -70,12 +70,13 @@ and guarded recovery. Public schemas and exact root/family/command help come fro
 the executable registry; the Skill does not reimplement parsing, selection,
 projection, validation, mutation, or command schemas.
 
-`SKILL.md` is the Agent operating loop rather than a compressed command manual.
-Its generated `references/commands.md` provides the complete family/command map
-from the same registry; `references/changesets.md` and `references/import.md`
-carry only the two advanced workflows. Selecting a command leads to exact
-runtime help and `schema COMMAND`, so the Agent can learn the whole surface
-without creating a second hand-maintained CLI contract.
+`SKILL.md` is a self-contained policy router rather than a compressed command
+manual. The executable registry provides bounded validated recipes through
+`outline example COMMAND VARIANT`; exact runtime help is the fallback and full
+`schema COMMAND` output is reserved for integrations, debugging, and recipe
+gaps. Skill text contains one byte-checked viewed-tree example and no packaged
+reference manual, so the Agent does not load a second hand-maintained CLI
+contract.
 
 The executable has the same capability registry for a user shell, built-in
 Agent, external Agent, and desktop adapter. Agent execution does not receive a
@@ -911,8 +912,10 @@ when the producing tool declares them.
 
 Visible tool output is bounded independently from durable structured details.
 The runtime may shorten presentation without changing the recorded result.
-The built-in Outline workflow uses deterministic default CLI summaries through
-direct Bash invocations. Structured `--input -` bytes use Bash's
+The built-in Outline workflow uses deterministic default CLI receipts through
+direct Bash invocations. Every capability declares a receipt family and known
+results expose the identifiers, hashes, artifacts, omissions, and recovery
+coordinates needed by their next documented command. Structured `--input -` bytes use Bash's
 separate stdin transport; the command string contains only `outline` and its
 arguments. Complete `--json` responses and exact Diff artifacts remain
 available when machine fidelity is explicitly required.

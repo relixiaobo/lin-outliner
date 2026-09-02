@@ -1,5 +1,5 @@
 import { canonicalSha256 } from '../contract/canonical';
-import { OutlineContractError, outlineError } from '../contract/errors';
+import { OutlineContractError, outlineError, type OutlineError } from '../contract/errors';
 import {
   ProjectionResultSchema,
   type OneTargetRef,
@@ -16,6 +16,10 @@ const MAX_VIEW_FIELDS = 4;
 const MAX_RETURNED_ROOTS = 8;
 const MAX_PROJECTION_NODES = 4;
 const MAX_BATCH_COUNTS = 16;
+const MAX_HISTORY_OPERATIONS = 8;
+const MAX_HISTORY_NODE_IDS = 8;
+const MAX_EVENT_NODE_IDS = 8;
+const MAX_IMPORT_WARNINGS = 4;
 const NON_ITEM_NODE_TYPES = new Set([
   'queryCondition', 'viewDef', 'sortRule', 'filterRule', 'displayField',
   'defConfig', 'systemOption', 'fieldEntry',
@@ -157,7 +161,94 @@ export function renderSummaryResult(command: string, data: unknown): string {
   return `Omitted lines: ${lines.length}; bytes=${Buffer.byteLength(output)}\nDigest: ${digest}\n`;
 }
 
+export function renderFailureSummary(error: OutlineError): string {
+  const lines = [`outline: [${safeFailureText(error.code, 128)}] ${safeFailureText(error.message, 1_024)}`];
+  const details = isRecord(error.details) ? error.details : undefined;
+  const validation = details && isRecord(details.validation) ? details.validation : undefined;
+  const issues = validation && Array.isArray(validation.issues) ? validation.issues.slice(0, 8) : [];
+  for (const issue of issues) {
+    if (!isRecord(issue)) continue;
+    lines.push(`  At ${summaryScalar(issue.path ?? '/', 512)}: ${summaryScalar(issue.message, 1_024)}`);
+  }
+  if (validation?.truncated === true) lines.push('  Additional validation issues omitted; fix the listed paths first.');
+  if (details) {
+    for (const key of ['expected', 'actual', 'idempotencyKey', 'operationId', 'settlementKey', 'cause'] as const) {
+      if (details[key] !== undefined && !isRecord(details[key]) && !Array.isArray(details[key])) {
+        lines.push(`  ${failureLabel(key)}: ${summaryScalar(details[key], 1_024)}`);
+      }
+    }
+    for (const key of ['missingIds', 'candidateIds', 'nodeIds'] as const) {
+      if (!Array.isArray(details[key])) continue;
+      const values = details[key].slice(0, 16);
+      lines.push(`  ${failureLabel(key)}: ${values.map((value) => summaryScalar(value, 256)).join(', ')}`);
+      if (details[key].length > values.length) lines.push(`  Omitted ${failureLabel(key)}: ${details[key].length - values.length}`);
+    }
+    const conflict = isRecord(details.conflictDiff) ? details.conflictDiff : undefined;
+    if (conflict) {
+      lines.push(`  Operation: ${summaryScalar(conflict.operationId, 256)}`);
+      const changed = Array.isArray(conflict.changedPreconditions) ? conflict.changedPreconditions : [];
+      const ids = changed.slice(0, 16).flatMap((entry) => isRecord(entry) ? [entry.id] : []);
+      if (ids.length > 0) lines.push(`  Conflicting Nodes: ${ids.map((id) => summaryScalar(id, 256)).join(', ')}`);
+      if (changed.length > ids.length) lines.push(`  Omitted conflicts: ${changed.length - ids.length}`);
+    }
+  } else if (error.details !== undefined) {
+    lines.push(`  Detail: ${summaryScalar(error.details, 1_024)}`);
+  }
+  for (const next of error.next ?? []) lines.push(`  Next: ${safeFailureText(next, 1_024)}`);
+  return boundedLines(lines, error);
+}
+
+function safeFailureText(value: unknown, maxBytes: number): string {
+  const valueText = String(value);
+  const encoded = valueText.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu, (character) => {
+    const escapes: Readonly<Record<string, string>> = {
+      '\b': '\\b', '\t': '\\t', '\n': '\\n', '\f': '\\f', '\r': '\\r',
+    };
+    return escapes[character]
+      ?? `\\u${character.codePointAt(0)!.toString(16).padStart(4, '0')}`;
+  });
+  if (Buffer.byteLength(encoded) <= maxBytes) return encoded;
+  const suffix = `... [bytes=${Buffer.byteLength(encoded)}; sha256=${canonicalSha256(valueText)}]`;
+  const budget = Math.max(0, maxBytes - Buffer.byteLength(suffix));
+  let prefix = '';
+  let bytes = 0;
+  for (const character of encoded) {
+    const nextBytes = Buffer.byteLength(character);
+    if (bytes + nextBytes > budget) break;
+    prefix += character;
+    bytes += nextBytes;
+  }
+  return `${prefix}${suffix}`;
+}
+
+function failureLabel(key: string): string {
+  return key.replace(/([A-Z])/gu, ' $1').replace(/^./u, (value) => value.toUpperCase());
+}
+
+function boundedLines(lines: readonly string[], source: unknown): string {
+  const output = `${lines.join('\n')}\n`;
+  if (Buffer.byteLength(output) <= MAX_SUMMARY_BYTES) return output;
+  const digest = canonicalSha256(source);
+  const kept = [...lines];
+  while (kept.length > 1) {
+    kept.pop();
+    const suffix = `  Omitted detail; digest=${digest}\n`;
+    const bounded = `${kept.join('\n')}\n${suffix}`;
+    if (Buffer.byteLength(bounded) <= MAX_SUMMARY_BYTES) return bounded;
+  }
+  return `outline: [internal_error] Failure receipt omitted; digest=${digest}\n`;
+}
+
 function summaryLines(command: string, data: unknown): string[] {
+  if (command === 'example' && isRecord(data) && typeof data.invocation === 'string') {
+    return [
+      `Command: ${summaryScalar(data.invocation, 1_024)}`,
+      ...(typeof data.stdin === 'string' ? ['Stdin:', data.stdin] : []),
+      `Result: ${summaryScalar(data.receipt, 128)} receipt`,
+      ...(typeof data.verify === 'string' ? [`Verify: ${summaryScalar(data.verify, 1_024)}`] : []),
+      ...(typeof data.review === 'string' ? [`Review: ${summaryScalar(data.review, 1_024)}`] : []),
+    ];
+  }
   if (command === 'capabilities' && Array.isArray(data)) {
     return data.map((entry) => isRecord(entry)
       ? `${summaryScalar(entry.name, 128)}\t${summaryScalar(entry.summary)}`
@@ -173,37 +264,25 @@ function summaryLines(command: string, data: unknown): string[] {
     ];
   }
   if (isRecord(data) && data.kind === 'outline.summary-diff-receipt' && isRecord(data.diff)) {
-    const diff = data.diff;
-    const effects = new Map<string, number>();
-    for (const affected of Array.isArray(diff.affected) ? diff.affected : []) {
-      if (!isRecord(affected)) continue;
-      const effect = String(affected.effect);
-      effects.set(effect, (effects.get(effect) ?? 0) + 1);
-    }
-    const bindings = isRecord(diff.bindings) ? Object.entries(diff.bindings) : [];
-    const shownBindings = bindings.slice(0, MAX_DIFF_BINDINGS);
-    const warnings = Array.isArray(diff.warnings) ? diff.warnings : [];
-    const shownWarnings = warnings.slice(0, MAX_DIFF_WARNINGS);
-    const destructive = new Map<string, number>();
-    for (const entry of Array.isArray(diff.destructive) ? diff.destructive : []) {
-      if (!isRecord(entry)) continue;
-      const kind = String(entry.kind);
-      destructive.set(kind, (destructive.get(kind) ?? 0) + Number(entry.targetCount ?? 0));
-    }
     return [
       `Command: ${summaryScalar(command)}`,
       `Artifact: ${summaryScalar(data.path)}; bytes=${summaryScalar(data.byteCount)}; sha256=${summaryScalar(data.sha256)}`,
-      `Diff: ${summaryScalar(diff.diffHash)}`,
-      `ChangeSet: ${summaryScalar(diff.changeSetHash)}`,
-      `Base revision: ${summaryScalar(diff.baseRevision)}`,
-      `Effects: ${[...effects].map(([effect, count]) => `${summaryScalar(effect, 128)}=${count}`).join(', ') || 'none'}`,
-      `Destructive: ${[...destructive].map(([kind, count]) => `${summaryScalar(kind, 128)}=${count}`).join(', ') || 'none'}`,
-      `Bindings: ${shownBindings.map(([name, ids]) => `${summaryScalar(name, 128)}=${Array.isArray(ids) ? ids.length : 0}`).join(', ') || 'none'}`,
-      ...(bindings.length > shownBindings.length ? [`Omitted bindings: ${bindings.length - shownBindings.length}`] : []),
-      ...shownWarnings.map((warning) => isRecord(warning)
-        ? `Warning: ${summaryScalar(warning.code, 128)} ${summaryScalar(warning.message, 256)}`
-        : `Warning: ${summaryScalar(warning)}`),
-      ...(warnings.length > shownWarnings.length ? [`Omitted warnings: ${warnings.length - shownWarnings.length}`] : []),
+      ...diffSummaryLines(data.diff),
+    ];
+  }
+  if (isRecord(data) && data.kind === 'outline.diff') {
+    return [`Command: ${summaryScalar(command)}`, ...diffSummaryLines(data)];
+  }
+  if (isRecord(data) && data.running === true && isRecord(data.runtime)) {
+    const runtime = data.runtime;
+    const transactionLog = isRecord(runtime.transactionLog) ? runtime.transactionLog : {};
+    const recovery = isRecord(runtime.recovery) ? runtime.recovery : {};
+    return [
+      `Command: ${summaryScalar(command)}`,
+      `Runtime: running; instance=${summaryScalar(runtime.instanceId)}; version=${summaryScalar(runtime.runtimeVersion)}`,
+      `Revision: ${summaryScalar(runtime.revision)}; storage=${summaryScalar(runtime.storageVersion)}`,
+      `Transaction log: ${summaryScalar(transactionLog.health)}; sequence=${summaryScalar(transactionLog.sequence)}; valid=${summaryScalar(transactionLog.validBytes)}/${summaryScalar(transactionLog.totalBytes)} bytes`,
+      `Recovery: available=${summaryScalar(recovery.available)}; conflicted=${summaryScalar(recovery.conflicted)}; reverted=${summaryScalar(recovery.reverted)}; expired=${summaryScalar(recovery.expired)}`,
     ];
   }
   if (isRecord(data) && data.kind === 'outline.view-summary') {
@@ -261,11 +340,118 @@ function summaryLines(command: string, data: unknown): string[] {
         : `  ${summaryScalar(entry)}`),
     ];
   }
+  if (isRecord(data) && Array.isArray(data.operations)) {
+    const shown = data.operations.slice(0, MAX_HISTORY_OPERATIONS);
+    const affectedPage = isRecord(data.affectedNodeIds) ? data.affectedNodeIds : undefined;
+    const affectedNodeIds = affectedPage && Array.isArray(affectedPage.nodeIds)
+      ? affectedPage.nodeIds
+      : [];
+    const shownAffectedNodeIds = affectedNodeIds.slice(0, MAX_HISTORY_NODE_IDS);
+    return [
+      `Command: ${summaryScalar(command)}`,
+      `Operations: ${data.operations.length}; shown=${shown.length}; omitted=${data.operations.length - shown.length}; digest=${canonicalSha256(data.operations)}`,
+      `Continuation: ${typeof data.cursor === 'string' ? summaryScalar(data.cursor, 1_024) : 'none'}`,
+      ...(affectedPage ? [
+        `Affected page: operation=${summaryScalar(affectedPage.operationId)}; offset=${summaryScalar(affectedPage.offset)}; page=${affectedNodeIds.length}; shown=${shownAffectedNodeIds.length}; omitted=${affectedNodeIds.length - shownAffectedNodeIds.length}; total=${summaryScalar(affectedPage.totalCount)}; digest=${summaryScalar(affectedPage.fullSetHash)}`,
+        ...(shownAffectedNodeIds.length > 0
+          ? [`  ${shownAffectedNodeIds.map((id) => summaryScalar(id, 256)).join(', ')}`]
+          : []),
+      ] : []),
+      ...shown.map((operation) => isRecord(operation)
+        ? `  ${summaryScalar(operation.operationId, 256)}\trevision=${summaryScalar(operation.revisionBefore)}->${summaryScalar(operation.revisionAfter)}\t${summaryScalar(operation.summary, 512)}`
+        : `  ${summaryScalar(operation)}`),
+    ];
+  }
+  if (isRecord(data) && typeof data.assetId === 'string' && isRecord(data.metadata)) {
+    return [
+      `Command: ${summaryScalar(command)}`,
+      ...(typeof data.leaseId === 'string' ? [`Lease: ${summaryScalar(data.leaseId)}`] : []),
+      `Asset: ${summaryScalar(data.assetId)}`,
+      `Type: ${summaryScalar(data.metadata.mimeType)}; bytes=${summaryScalar(data.metadata.byteSize)}`,
+      ...(typeof data.expiresAt === 'string' ? [`Expires: ${summaryScalar(data.expiresAt)}`] : []),
+      ...(typeof data.createdAt === 'string' ? [`Created: ${summaryScalar(data.createdAt)}`] : []),
+    ];
+  }
+  if (isRecord(data) && data.kind === 'outline.import-plan') return importPlanLines(command, data);
+  if (isRecord(data) && data.kind === 'outline.import-verification') return [
+    `Command: ${summaryScalar(command)}`,
+    `Operation: ${summaryScalar(data.operationId)}`,
+    `Affected: ${summaryScalar(data.affectedNodeCount)}; expected created=${summaryScalar(data.expectedCreatedNodes)}`,
+    `Verified roots: ${Array.isArray(data.verifiedRoots) ? data.verifiedRoots.length : 0}; digest=${canonicalSha256(data.verifiedRoots ?? [])}`,
+    `Verification reads: ${Array.isArray(data.verificationReads) ? data.verificationReads.length : 0}; digest=${canonicalSha256(data.verificationReads ?? [])}`,
+  ];
+  if (isRecord(data) && typeof data.ok === 'boolean' && typeof data.source === 'string' && typeof data.confidence === 'number') {
+    const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+    return [
+      `Command: ${summaryScalar(command)}`,
+      `Source: ${summaryScalar(data.source, 1_024)}`,
+      `Profile: ${summaryScalar(data.kind)}; confidence=${summaryScalar(data.confidence)}; bytes=${summaryScalar(data.bytes ?? 'unknown')}`,
+      `Stats: ${isRecord(data.stats) ? Object.entries(data.stats).map(([key, value]) => `${summaryScalar(key, 128)}=${summaryScalar(value, 128)}`).join(', ') || 'none' : 'none'}`,
+      ...warnings.slice(0, MAX_IMPORT_WARNINGS).map((warning) => `Warning: ${summaryScalar(warning, 512)}`),
+      ...(warnings.length > MAX_IMPORT_WARNINGS ? [`Omitted warnings: ${warnings.length - MAX_IMPORT_WARNINGS}; digest=${canonicalSha256(warnings)}`] : []),
+    ];
+  }
+  if (isRecord(data) && typeof data.path === 'string' && typeof data.byteCount === 'number' && typeof data.sha256 === 'string') {
+    return [
+      `Command: ${summaryScalar(command)}`,
+      `Artifact: ${summaryScalar(data.path, 1_024)}`,
+      `Bytes: ${summaryScalar(data.byteCount)}; sha256=${summaryScalar(data.sha256)}`,
+    ];
+  }
   return [
     `Command: ${summaryScalar(command)}`,
-    `Result: ${summaryResultKind(data)}`,
+    `Status: succeeded; receipt=${summaryResultKind(data)}`,
     `Digest: ${canonicalSha256(data)}`,
-    'Details: rerun with --json for the complete machine result.',
+  ];
+}
+
+function diffSummaryLines(diff: Record<string, unknown>): string[] {
+  const effects = new Map<string, number>();
+  for (const affected of Array.isArray(diff.affected) ? diff.affected : []) {
+    if (!isRecord(affected)) continue;
+    const effect = String(affected.effect);
+    effects.set(effect, (effects.get(effect) ?? 0) + 1);
+  }
+  const bindings = isRecord(diff.bindings) ? Object.entries(diff.bindings) : [];
+  const shownBindings = bindings.slice(0, MAX_DIFF_BINDINGS);
+  const warnings = Array.isArray(diff.warnings) ? diff.warnings : [];
+  const shownWarnings = warnings.slice(0, MAX_DIFF_WARNINGS);
+  const destructive = new Map<string, number>();
+  for (const entry of Array.isArray(diff.destructive) ? diff.destructive : []) {
+    if (!isRecord(entry)) continue;
+    const kind = String(entry.kind);
+    destructive.set(kind, (destructive.get(kind) ?? 0) + Number(entry.targetCount ?? 0));
+  }
+  return [
+    `Diff: ${summaryScalar(diff.diffHash)}`,
+    `ChangeSet: ${summaryScalar(diff.changeSetHash)}`,
+    `Base revision: ${summaryScalar(diff.baseRevision)}`,
+    `Effects: ${[...effects].map(([effect, count]) => `${summaryScalar(effect, 128)}=${count}`).join(', ') || 'none'}`,
+    `Destructive: ${[...destructive].map(([kind, count]) => `${summaryScalar(kind, 128)}=${count}`).join(', ') || 'none'}`,
+    `Bindings: ${shownBindings.map(([name, ids]) => `${summaryScalar(name, 128)}=${Array.isArray(ids) ? ids.length : 0}`).join(', ') || 'none'}`,
+    ...(bindings.length > shownBindings.length ? [`Omitted bindings: ${bindings.length - shownBindings.length}; digest=${canonicalSha256(bindings.slice(shownBindings.length))}`] : []),
+    ...shownWarnings.map((warning) => isRecord(warning)
+      ? `Warning: ${summaryScalar(warning.code, 128)} ${summaryScalar(warning.message, 256)}`
+      : `Warning: ${summaryScalar(warning)}`),
+    ...(warnings.length > shownWarnings.length ? [`Omitted warnings: ${warnings.length - shownWarnings.length}; digest=${canonicalSha256(warnings.slice(shownWarnings.length))}`] : []),
+  ];
+}
+
+function importPlanLines(command: string, data: Record<string, unknown>): string[] {
+  const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+  return [
+    `Command: ${summaryScalar(command)}`,
+    `Import: ${summaryScalar(data.sourceFormat)}; source=${summaryScalar(data.sourceFingerprint)}; changeset=${summaryScalar(data.changeSetFingerprint)}`,
+    `Diff: ${summaryScalar(data.diffHash)}; ChangeSet: ${summaryScalar(data.changeSetHash)}; affected=${summaryScalar(data.affectedNodeCount)}; destructive=${summaryScalar(data.destructive)}`,
+    `Artifact: ${summaryScalar(data.output, 1_024)}; evidence=${summaryScalar(data.evidenceOutput, 1_024)}`,
+    ...(typeof data.changeSetOutput === 'string' ? [`ChangeSet artifact: ${summaryScalar(data.changeSetOutput, 1_024)}`] : []),
+    ...(typeof data.coverageOutput === 'string' ? [`Coverage artifact: ${summaryScalar(data.coverageOutput, 1_024)}`] : []),
+    `Coverage: ${isRecord(data.coverage) ? Object.entries(data.coverage).map(([key, value]) => `${summaryScalar(key, 128)}=${summaryScalar(value, 128)}`).join(', ') : 'none'}`,
+    `Dates: ${Array.isArray(data.dates) ? data.dates.length : 0}; digest=${canonicalSha256(data.dates ?? [])}`,
+    ...warnings.slice(0, MAX_IMPORT_WARNINGS).map((warning) => isRecord(warning)
+      ? `Warning: ${summaryScalar(warning.code, 128)} ${summaryScalar(warning.message, 512)}`
+      : `Warning: ${summaryScalar(warning, 512)}`),
+    ...(warnings.length > MAX_IMPORT_WARNINGS ? [`Omitted warnings: ${warnings.length - MAX_IMPORT_WARNINGS}; digest=${canonicalSha256(warnings.slice(MAX_IMPORT_WARNINGS))}`] : []),
   ];
 }
 
@@ -280,9 +466,50 @@ function projectionSummaryLines(command: string, data: Record<string, unknown>):
     `Projection: ${summaryScalar(projection.kind)}`,
     `Nodes: ${nodes.length}; shown=${shownNodes.length}; omitted=${nodes.length - shownNodes.length}; digest=${canonicalSha256(nodes)}`,
     `Backlinks: ${backlinks.length}; digest=${canonicalSha256(backlinks)}`,
-    `Continuation: ${typeof data.cursor === 'string' ? 'available' : 'none'}; truncated=${data.truncated === true}`,
+    `Continuation: ${typeof data.cursor === 'string' ? summaryScalar(data.cursor, 1_024) : 'none'}; truncated=${data.truncated === true}`,
     ...shownNodes.map((node, index) => nodeSummaryLine(node, index)),
   ];
+}
+
+export function renderEventSummary(event: unknown): string {
+  if (!isRecord(event)) return boundedLines([
+    'Event: invalid',
+    `Digest: ${canonicalSha256(event)}`,
+  ], event);
+  const operation = isRecord(event.operation) ? event.operation : undefined;
+  const changes = isRecord(event.changes) ? event.changes : undefined;
+  const changedNodes = changes && Array.isArray(changes.changedNodes) ? changes.changedNodes : [];
+  const removedIds = changes && Array.isArray(changes.removedIds) ? changes.removedIds : [];
+  const recovery = isRecord(event.recovery) ? event.recovery : undefined;
+  const recoveryOperationIds = recovery && Array.isArray(recovery.operationIds) ? recovery.operationIds : [];
+  const recoveryPatchIds = recovery && Array.isArray(recovery.recoveryPatchIds) ? recovery.recoveryPatchIds : [];
+  const projection = isRecord(event.projection) ? event.projection : undefined;
+  const projectionNodes = projection && Array.isArray(projection.nodes) ? projection.nodes : [];
+  const shownChangedIds = changedNodes.slice(0, MAX_EVENT_NODE_IDS).map((node) => (
+    isRecord(node) && typeof node.id === 'string' ? node.id : `digest:${canonicalSha256(node)}`
+  ));
+  const shownRemovedIds = removedIds.slice(0, MAX_EVENT_NODE_IDS);
+  return boundedLines([
+    `Event: ${summaryScalar(event.type, 128)}`,
+    `Cursor: ${summaryScalar(event.cursor, 1_024)}`,
+    `Instance: ${summaryScalar(event.instanceId, 256)}; sequence=${summaryScalar(event.sequence)}; revision=${summaryScalar(event.revision)}`,
+    ...(operation ? [
+      `Operation: ${summaryScalar(operation.operationId, 256)}; revision=${summaryScalar(operation.revisionBefore)}->${summaryScalar(operation.revisionAfter)}; affected=${summaryScalar(operation.affectedNodeCount)}; digest=${summaryScalar(operation.affectedNodeIdsHash)}`,
+    ] : []),
+    ...(changes ? [
+      `Changed Nodes: ${changedNodes.length}; shown=${shownChangedIds.length}; omitted=${changedNodes.length - shownChangedIds.length}; digest=${canonicalSha256(changedNodes)}`,
+      ...(shownChangedIds.length > 0 ? [`  ${shownChangedIds.map((id) => summaryScalar(id, 256)).join(', ')}`] : []),
+      `Removed Nodes: ${removedIds.length}; shown=${shownRemovedIds.length}; omitted=${removedIds.length - shownRemovedIds.length}; digest=${canonicalSha256(removedIds)}`,
+      ...(shownRemovedIds.length > 0 ? [`  ${shownRemovedIds.map((id) => summaryScalar(id, 256)).join(', ')}`] : []),
+    ] : []),
+    ...(recovery ? [
+      `Recovery Operations: ${recoveryOperationIds.length}; digest=${canonicalSha256(recoveryOperationIds)}`,
+      `Recovery Patches: ${recoveryPatchIds.length}; digest=${canonicalSha256(recoveryPatchIds)}`,
+    ] : []),
+    ...(projection ? [
+      `Projection: revision=${summaryScalar(projection.revision)}; nodes=${projectionNodes.length}; digest=${canonicalSha256(projectionNodes)}; continuation=${typeof projection.cursor === 'string' ? summaryScalar(projection.cursor, 1_024) : 'none'}; truncated=${projection.truncated === true}`,
+    ] : []),
+  ], event);
 }
 
 function nodeSummaryLine(value: unknown, index: number): string {
