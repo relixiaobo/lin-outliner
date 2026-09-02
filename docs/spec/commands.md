@@ -22,9 +22,12 @@ Runtime capabilities.
   non-executable operators.
 - `src/outline/contract/capabilities.ts` is the executable public capability
   registry. Each entry owns its name, exact CLI request and result schema,
-  command-family placement, help and completion metadata, parser options,
+  receipt family, command-family placement, help and completion metadata, parser options,
   streaming/destructive flags, mutation semantics, audit category, summary,
   examples, and coverage.
+- `src/outline/contract/recipes.ts` owns bounded executable examples for common
+  structured variants. Recipe stdin is validated against the same authoring
+  schema used by the production parser.
 - `src/core/commands.ts` remains the Runtime-internal mutation protocol. Public
   Change variants lower to Core commands only inside Runtime.
 
@@ -37,9 +40,9 @@ owned. Missing and duplicate owners both fail the guard.
 
 | Kind | Capabilities | Contract |
 | --- | --- | --- |
-| Local metadata | `version`, `status`, `capabilities`, `schema` | Runs without document access; `status` never starts Runtime. |
+| Local metadata | `version`, `status`, `capabilities`, `example`, `schema` | Runs without document access; `status` never starts Runtime. `example` returns one validated workflow recipe. |
 | Read | `find`, `show`, `export` | Resolves deterministic selectors and returns bounded Projections. |
-| Observe | `watch` | Streams ordered resumable Events as JSONL. |
+| Observe | `watch` | Streams bounded ordered resumable event receipts; `--json` emits complete JSONL. |
 | Mutation kernel | `diff`, `commit`, `apply` | Previews one ChangeSet, directly commits a non-destructive ChangeSet, or atomically applies one exact reviewed Diff. |
 | History | `log`, `revert`, `undo`, `redo` | Reads durable Operations or records a guarded reversal as another Operation. |
 | Asset | `asset ingest`, `asset show`, `asset export` | Stages verified bytes, reads metadata, or streams verified bytes. |
@@ -48,10 +51,17 @@ owned. Missing and duplicate owners both fail the guard.
 `capabilities` is executable authority rather than a hand-maintained help list.
 `outline --help`, family help, exact command help, shell completion metadata,
 parser option admission, `outline schema COMMAND`, and the built-in Skill's
-generated `references/commands.md` derive from that registry.
-Porcelain command schemas describe their resource-specific input rather than the
-generic Runtime MutationInput. Drift tests compare the exact published options,
-schemas, positionals, completion data, and generated Agent command inventory.
+recipe routing derive from that registry. `outline example COMMAND VARIANT` is
+the normal discovery surface for unfamiliar structured work. Full schema output
+is reserved for integrations, debugging, and uncovered machine contracts.
+Porcelain command schemas describe resource-specific authoring input rather than
+the generic Runtime MutationInput. Exact destinations and exact resource
+references are locator strings (`ID`, typed ID, stable alias, or
+`@date:YYYY-MM-DD`) that lower to cardinality one. Only commands that genuinely
+support bulk mutation embed query grammar through a bounded TargetSpec with an
+explicit `max`; generic ChangeSets retain complete TargetRef and binding graphs.
+Drift tests compare the exact published options, schemas, positionals, completion
+data, recipe coverage, and Skill routing against the capability registry.
 Capability kind and audit category drive host classification; execution context
 never removes a public schema field or document capability.
 
@@ -83,7 +93,7 @@ after the command terminator are literal positionals, and `--help` or `-h`
 there is content rather than control syntax.
 
 Advanced query help and completion metadata use the same executable operator
-registry as `QueryExpressionSchema` and the generated Agent command reference.
+registry as `QueryExpressionSchema`.
 `outline schema QueryExpression` is the exact public grammar. Each rule is a
 closed operator-specific object: required field, tag, target, or value operands
 cannot be omitted, unrelated operands cannot be supplied, and an operator absent
@@ -112,20 +122,30 @@ an internal CLI failure. Common file
 errors retain their path and actionable cause in summary output while preserving
 stable public error categories.
 
-Summary success output is a deterministic, ANSI-free receipt capped at 4 KiB.
+Summary success and failure output are deterministic, ANSI-free receipts capped
+at 4 KiB.
 Every dynamic scalar is encoded onto one line before budgeting: C0/C1 controls,
 DEL, CR/LF, and tabs cannot alter terminal state or forge receipt fields.
 Mutation receipts report settlement, Operation and revision identity, affected
 count/digest, recovery, and bounded returned roots; viewed-tree add also reports
 owner, item/display counts, and mode. View inspection reports complete display
 state when it fits and otherwise explicit omission evidence plus a digest. A
-`show` or `find` summary reports projection identity, counts, continuation state,
-complete-set digests, and a bounded Node sample rather than truncated JSON. A
+`show` or `find` summary reports projection identity, counts, the exact
+continuation cursor, complete-set digests, and a bounded Node sample rather than
+truncated JSON. A
 default `diff --output FILE` leaves the exact artifact unchanged and reports its
 path, bytes/hash, Diff/ChangeSet hashes, base revision, effect counts,
-destructive classes, bindings, and warnings. Other result families without a
-specialized summary report only type, digest, and `--json` recovery guidance;
-they never print a partial JSON document. `--json` remains complete.
+destructive classes, bindings, and warnings. Every non-stream capability declares
+a receipt family with a specialized presenter. Raw Diffs, Runtime status,
+Operation history (including current affected-ID pages), asset leases/records,
+export artifacts, and import
+profiles/plans/verifications expose their immediate downstream handles without a
+second `--json` invocation. Watch summary events preserve cursor, revision,
+Operation identity, counts, and complete-set digests without emitting Node
+payloads. Schema failures show up to eight JSON Pointer issues;
+conflicts and uncertain settlement show bounded expected/actual, Node, Operation,
+or idempotency identities without echoing rejected input. `--json` remains
+complete.
 
 ### Porcelain intent routing
 
@@ -185,7 +205,7 @@ collections. The view leaf commands remain for small edits.
 A real table is represented by one owner Node with `viewMode: table`, direct
 child row Nodes, reusable field definitions, field-backed cell values, and an
 explicit display/sort/filter configuration. The developer-only
-`fixtures/table-view-add.json` drives the mandatory golden flow: one `add`
+`tests/fixtures/outline/table-view-add.json` drives the mandatory golden flow: one `add`
 creates the table below an ensured Daily Note, one `view inspect` verifies its
 persisted mode and counts, and one revert restores the exact prior state. The
 fixture is not an Agent instruction. Markdown tables, aligned child text, and owner Nodes without a table

@@ -13,7 +13,7 @@ import {
   type NormalizedImport,
   type ImportSection,
   type ImportWarning,
-} from '../../../../outline/import/normalized';
+} from '../normalized';
 
 interface TanaDoc {
   id: string;

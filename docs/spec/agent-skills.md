@@ -335,8 +335,8 @@ the packaging hook restores executable mode where needed and fails the build whe
 resource is absent.
 
 The Skill owns no document logic. `outline` discovers current capabilities,
-root/family/exact command help, completion metadata, and command-specific schemas
-from the executable registry. It routes one complete resource to one porcelain
+validated structured recipes, root/family/exact command help, completion
+metadata, and command-specific schemas from the executable registry. It routes one complete resource to one porcelain
 invocation, complex state for that resource to the same command's `--input`, and
 dependent, cross-date, or bounded bulk work to one ChangeSet with bindings. A
 known non-destructive ChangeSet uses direct `commit`; destructive, ambiguous,
@@ -344,10 +344,10 @@ conversion, high-impact, and review-requested work uses one immutable Diff
 artifact and exact apply. It
 never uses a shell mutation loop or intermediate created-ID lookup. For ordinary
 document work it also avoids ad hoc Python, Node, or shell programs for schema
-discovery, CLI-output transformation, or ChangeSet assembly; public
-command-specific schemas and direct `--input -` payloads are
-the execution path. Bundled source adapters remain reserved for the documented
-external import workflow.
+discovery, CLI-output transformation, or ChangeSet assembly; validated registry
+recipes and direct `--input -` payloads are the execution path. Full schema
+discovery is reserved for integration, debugging, or recipe gaps. Bundled source
+adapters remain reserved for the documented external import workflow.
 
 The Skill distinguishes explicit create/add from convergent set/configure/ensure,
 omitted patch properties from explicit replacement, and common STRING_MATCH
@@ -355,9 +355,8 @@ shorthand from canonical structured queries. It teaches stable aliases including
 `@library` and `@saved-searches`, bounded selector cardinality, complete-resource
 creation, one-Operation settlement, exact Diff review, and guarded revert. It
 does not copy schemas or parser tables into Skill text. The executable query
-operator inventory and operand formats are generated from the public query
-registry into `references/commands.md` and remain available exactly through
-`outline schema QueryExpression`.
+operator inventory and operand formats remain available exactly through
+`outline schema QueryExpression` when integration-level discovery is required.
 
 Three frequent modeling rules remain in the entrypoint because they change
 ordinary task decisions. A document table is one owner with table view state,
@@ -375,13 +374,13 @@ programs, or temporary input files. The developer-only table fixture is tested
 but not linked from Agent instructions, so internal binding topology does not
 enter model context.
 
-Its Agent-facing information architecture has four layers. `SKILL.md` teaches
-the inspect/choose/review/execute/verify/recover loop. A generated
-`references/commands.md` gives one compact complete command-family and command
-inventory. `references/changesets.md` and `references/import.md` are loaded only
-for their advanced paths. Exact options, defaults, examples, schemas, and parser
-admission remain registry-owned through command help and `schema COMMAND`; a
-drift test byte-compares the generated command map with the registry renderer.
+Its Agent-facing information architecture has two layers. A self-contained
+`SKILL.md` teaches the inspect/choose/review/execute/verify/recover policy and one
+validated viewed-tree example. The executable registry owns exact options,
+defaults, recipes, schemas, parser admission, and receipts. The Skill source
+directory contains only `SKILL.md`; runtime import adapters live under
+`src/outline/import/adapters/`, and test fixtures live under
+`tests/fixtures/outline/`.
 
 The Skill routes import requests to its import workflow. Bundled or
 Agent-authored source adapters only read source data and emit normalized data

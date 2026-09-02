@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { Value } from 'typebox/value';
 import { runOutlineCli } from '../../src/outline/cli';
-import { renderSummaryResult } from '../../src/outline/cli/presentation';
+import { renderEventSummary, renderFailureSummary, renderSummaryResult } from '../../src/outline/cli/presentation';
 import {
   issueOutlineAgentAttestation,
   OUTLINE_AGENT_ATTESTATION_ENV,
@@ -85,9 +85,75 @@ describe('outline CLI', () => {
     expect(output).toContain('Command: show');
     expect(output).toContain('Nodes: 100; shown=4; omitted=96; digest=');
     expect(output).toContain('text=Decision context');
-    expect(output).toContain('Continuation: available; truncated=true');
+    expect(output).toContain('Continuation: cursor:next; truncated=true');
     expect(output).not.toContain('Omitted lines:');
     expect(output.trimStart().startsWith('{')).toBe(false);
+  });
+
+  test('keeps history pages closed-loop with affected IDs and exact cursors', () => {
+    const output = renderSummaryResult('log', {
+      operations: [{
+        operationId: 'operation:1', revisionBefore: 1, revisionAfter: 2, summary: 'Bulk update',
+      }],
+      affectedNodeIds: {
+        operationId: 'operation:1',
+        nodeIds: ['node:first', 'node:second'],
+        offset: 0,
+        totalCount: 4,
+        fullSetHash: 'a'.repeat(64),
+      },
+      cursor: 'cursor:affected-next',
+    });
+    expect(output).toContain('Continuation: cursor:affected-next');
+    expect(output).toContain('page=2; shown=2; omitted=0; total=4');
+    expect(output).toContain('node:first, node:second');
+  });
+
+  test('bounds watch event receipts without losing resumable identity', () => {
+    const changedNodes = Array.from({ length: 500 }, (_, index) => ({
+      id: `node:${index}`,
+      content: { text: `${'x'.repeat(200)}\u001b[31m` },
+    }));
+    const output = renderEventSummary({
+      kind: 'outline.event',
+      type: 'operation.committed',
+      instanceId: 'runtime:1',
+      sequence: 17,
+      revision: 9,
+      cursor: 'cursor:resume-event',
+      operation: {
+        operationId: 'operation:1',
+        revisionBefore: 8,
+        revisionAfter: 9,
+        affectedNodeCount: changedNodes.length,
+        affectedNodeIdsHash: 'b'.repeat(64),
+      },
+      changes: { changedNodes, removedIds: ['node:removed'] },
+    });
+    expect(Buffer.byteLength(output)).toBeLessThanOrEqual(4 * 1024);
+    expect(output).toContain('Event: operation.committed');
+    expect(output).toContain('Cursor: cursor:resume-event');
+    expect(output).toContain('Operation: operation:1');
+    expect(output).toContain('Changed Nodes: 500; shown=8; omitted=492; digest=');
+    expect(output).toContain('Removed Nodes: 1; shown=1; omitted=0; digest=');
+    expect(output).not.toContain('\u001b');
+    expect(output.trimStart().startsWith('{')).toBe(false);
+  });
+
+  test('escapes controls in failure headers and recovery commands', () => {
+    const output = renderFailureSummary({
+      code: 'invalid_input',
+      category: 'usage',
+      message: 'bad\tinput\u0000\u0085\nStatus: forged',
+      retryable: false,
+      next: ['outline show node:1\u001b[2J'],
+    });
+    expect(output).not.toContain('\u001b');
+    expect(output).not.toContain('\u0000');
+    expect(output).not.toContain('\u0085');
+    expect(output).not.toContain('\nStatus: forged');
+    expect(output).toContain('bad\\tinput\\u0000\\u0085\\nStatus: forged');
+    expect(output).toContain('outline show node:1\\u001b[2J');
   });
 
   test('reports omitted returned roots with complete-set evidence', () => {
@@ -344,7 +410,7 @@ describe('outline CLI', () => {
     expect(await runOutlineCli(['--json', 'schema', 'add'], { runtimeRoot: root, io: request.io })).toBe(0);
     const requestSchema = JSON.parse(request.stdout).data as Record<string, unknown>;
     expect(Buffer.byteLength(JSON.stringify(requestSchema))).toBeLessThanOrEqual(512 * 1024);
-    expect(countObjectKey(requestSchema, 'Selector')).toBe(1);
+    expect(countObjectKey(requestSchema, 'Selector')).toBe(0);
 
     expect(await runOutlineCli(['--json', 'schema', 'ChangeSet'], {
       runtimeRoot: root,
@@ -450,7 +516,7 @@ describe('outline CLI', () => {
     expect(output.stdout).toContain('Parent defaults to @saved-searches.');
     expect(output.stdout).toContain('outline schema search create');
     expect(output.stdout).toContain('outline search create --title "Modules" --match "module"');
-    expect(output.stdout).toContain('outline search create --input complete-search.json');
+    expect(output.stdout).toContain('outline example search create complete');
     expect(output.stdout).not.toContain('[ARGS]');
     expect(await readdir(root)).toEqual([]);
   });
@@ -559,7 +625,7 @@ describe('outline CLI', () => {
     expect(output.stdout).toContain('(default: asc)');
     expect(output.stdout).toContain('--input FILE|-');
     expect(output.stdout).toContain('outline view sort add node:projects --field sys:updatedAt --direction desc');
-    expect(output.stdout).toContain('outline view sort add --input sort-rule.json');
+    expect(output.stdout).not.toContain('sort-rule.json');
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -633,7 +699,7 @@ describe('outline CLI', () => {
     expect(addHelp.stdout).toContain('--index INDEX');
     expect(addHelp.stdout).toContain('--before SIBLING');
     expect(addHelp.stdout).toContain('--after SIBLING');
-    expect(addHelp.stdout).toContain('outline add --input complete-tree.json');
+    expect(addHelp.stdout).toContain('outline example add viewed-tree');
 
     expect(await runOutlineCli(['move', '--help'], { runtimeRoot: root, io: moveHelp.io })).toBe(0);
     expect(moveHelp.stdout).toContain('--previous');

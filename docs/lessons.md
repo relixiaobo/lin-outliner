@@ -2370,3 +2370,24 @@ Regression coverage must issue the superseding action before the first action's
 next layout or effect pass, then prove the successor fulfills the original
 observable promise. Sequential tests that wait for settlement cannot exercise
 this transaction handoff.
+
+## Model-facing receipts need protocol-level completeness
+
+PR #617 first declared default CLI output closed-loop while projection receipts
+hid opaque continuation cursors, history receipts omitted the current affected-ID
+page, watch summary mode emitted unbounded raw Events, and failure headers still
+passed terminal control bytes through. Each output looked readable in its common
+case, but none enforced the contract needed by an unattended Agent.
+
+**Treat a model-facing receipt as a bounded protocol message, not presentation
+copy.** Preserve every opaque handle required by the documented next operation,
+include bounded current-page evidence plus complete-set counts and digests, apply
+the byte budget to every stream record, and encode all control characters before
+line assembly. A summary that requires an immediate JSON rerun to recover a
+cursor or identity is not closed-loop.
+
+Regression coverage must exercise the hostile and maximal shapes: many-target
+input without its required bound, oversized Events, paginated history and
+projections, and control bytes in both errors and recovery commands. Assert exact
+handles, omission evidence, byte ceilings, and absence of raw terminal controls;
+small happy-path snapshots cannot prove these properties.

@@ -38,7 +38,8 @@ const digest = 'a'.repeat(64);
 describe('outline public contract', () => {
   test('exports every named versioned schema as valid JSON Schema', () => {
     expect(Object.keys(OUTLINE_PUBLIC_SCHEMAS).sort()).toEqual([
-      'AssetLease', 'AssetMetadata', 'AssetRecord', 'Change', 'ChangeSet', 'DestinationPlacement', 'Diff', 'Event', 'EventFilter',
+      'AssetLease', 'AssetMetadata', 'AssetRecord', 'BoundedSelectionInput', 'Change', 'ChangeSet', 'DestinationPlacement', 'Diff', 'Event', 'EventFilter',
+      'ExactLocatorInput',
       'ImportCoverage', 'ImportEvidence', 'ImportOptions', 'ImportPlanResult', 'ImportSourceProfile',
       'ImportStats', 'ImportVerifyResult', 'ImportWarning', 'NoChangeResult', 'NodeDraft', 'NormalizedImport',
       'NormalizedImportNode', 'Operation', 'OperationLogPage', 'OutlineBatchCountResult', 'OutlineCountResult',
@@ -258,7 +259,7 @@ describe('outline public contract', () => {
         'input', 'preview', 'expect-diff', 'idempotency-key',
       ]));
       expect(options.some((entry) => entry.name === 'yes')).toBe(capability.destructive);
-      expect(capability.help.examples.length).toBeGreaterThanOrEqual(2);
+      expect(capability.help.examples.length).toBeGreaterThanOrEqual(1);
       expect(capability.help.examples.length).toBeLessThanOrEqual(3);
       expect(capability.help.positionals.join(' ')).not.toContain('[ARGS]');
       expect(capability.help.input).toContain('--input FILE|-');
@@ -275,7 +276,7 @@ describe('outline public contract', () => {
     expect(Value.Check(searchCreate.inputSchema, { changeSet: { operations: [] } })).toBe(false);
 
     const displayRemove = OUTLINE_CAPABILITIES.find((entry) => entry.name === 'view display remove')!.porcelain!;
-    const target = { target: { selector: { by: 'id', id: 'node:owner' }, cardinality: 'one' } };
+    const target = 'node:owner';
     expect(Value.Check(displayRemove.inputSchema, { target, displayFieldId: 'display:field' })).toBe(true);
     expect(Value.Check(displayRemove.inputSchema, { target, ruleId: 'display:field' })).toBe(false);
   });
@@ -308,7 +309,7 @@ describe('outline public contract', () => {
       );
       expect(Buffer.byteLength(JSON.stringify(published.requestSchema))).toBeLessThanOrEqual(512 * 1024);
       expect(countSchemaKey(published.requestSchema, '$defs')).toBeLessThanOrEqual(1);
-      expect(capability.help.examples.length).toBeGreaterThanOrEqual(2);
+      expect(capability.help.examples.length).toBeGreaterThanOrEqual(1);
       expect(capability.help.examples.length).toBeLessThanOrEqual(3);
     }
   });

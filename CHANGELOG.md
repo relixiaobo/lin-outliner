@@ -12,6 +12,23 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Outline Agent workflows now use one direct, closed-loop public interface
+  (PR #617, codex-2)** — the built-in Skill routes known work straight to narrow
+  porcelain commands and unfamiliar structured work to bounded executable
+  recipes, while success, failure, history, projection, watch, asset, and import
+  receipts preserve the exact downstream handles needed for the next step.
+  Exact-target inputs no longer carry generic query grammar, bulk selection
+  requires an explicit bound, and import adapters, test fixtures, maintained
+  specs, and packaged Skill content now have separate ownership. The retired
+  generated command manuals and reference machinery are gone. Gate review found
+  one High compile failure, four Medium bounded-selection and receipt gaps, and
+  two Low control-encoding and spec-drift defects; all seven were fixed before
+  the final no-findings review. Verified with typecheck, `docs:check`, the
+  packaged Outline build, 57 focused CLI/interface tests, 2,748 passing Core
+  tests with 6 skipped and one load-sensitive timeout that passed alone, and
+  whitespace checks. The non-gating five-sample GitHub E2E signal remained
+  running at merge.
+
 - **New Threads gain a taught `Command+Shift+O` path and calmer send placement
   (PR #616, codex)** — the registry-owned shortcut uses the existing
   provider-gated, single-flight creation path, opens the Agent rail on success,
