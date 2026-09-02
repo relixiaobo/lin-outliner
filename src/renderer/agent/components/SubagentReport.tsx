@@ -82,8 +82,13 @@ export function SubagentReport({
   // already be running again, but that cannot erase who ended this report.
   if (receipt?.stopProvenance === 'user') {
     return (
-      <div className="thread-item thread-agent-note">
-        <span>{t.agent.thread.agent.stoppedNote({ name: entry.displayName })}</span>
+      <div className="thread-item thread-agent-report-shell">
+        <div className="thread-agent-note">
+          <span>{t.agent.thread.agent.stoppedNote({ name: entry.displayName })}</span>
+        </div>
+        {entry.executionSelectionFallback ? (
+          <ExecutionFallbackWarning agentType={entry.agentType} />
+        ) : null}
       </div>
     );
   }

@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { act, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { ThreadId } from '../../src/core/agent/protocol';
 import { SubagentChip } from '../../src/renderer/agent/components/SubagentChip';
+import { SubagentReport } from '../../src/renderer/agent/components/SubagentReport';
 import { SubagentRegistryProvider } from '../../src/renderer/agent/components/SubagentRegistryContext';
+import { threadStore } from '../../src/renderer/agent/store/threadStore';
 import {
   SUBAGENT_STRIP_LINGER_MS,
   SubagentWorkStrip,
@@ -117,6 +119,57 @@ describe('Agent chip elapsed ticking', () => {
       await Promise.resolve();
     });
     expect(targets).toEqual([{ page: 'agents', agentType: 'general-purpose' }]);
+  });
+
+  test('keeps fallback guidance on a delivered run that the user stopped', async () => {
+    const { document, root } = installDom();
+    const ensureHistory = spyOn(threadStore, 'ensureThreadHistory').mockResolvedValue(undefined as never);
+    const receipt = {
+      generation: 1,
+      turnId: 'turn-child',
+      parentItemId: 'agent-call',
+      terminalStatus: 'interrupted' as const,
+      stopProvenance: 'user' as const,
+      durationMs: 1_000,
+      error: null,
+      partialOutputAvailable: false,
+      parentThreadId: 'thread-parent',
+      notificationState: 'delivered' as const,
+      deliveryTurnId: 'turn-delivery',
+    };
+    const entry: SubagentRegistryEntry = {
+      ...runningEntry(Date.now()),
+      status: 'interrupted',
+      stoppedByUser: true,
+      generationReceipts: new Map([[1, receipt]]),
+      executionSelectionFallback: {
+        requestedModelProvider: 'anthropic',
+        requestedModel: 'anthropic/retired-model',
+        requestedReasoningEffort: 'high',
+        reason: 'unavailable',
+      },
+    };
+
+    try {
+      await render(root, (
+        <SubagentRegistryProvider
+          actions={{ openAgent: () => undefined, stopAgent: null }}
+          byAgentId={new Map<ThreadId, SubagentRegistryEntry>([[entry.agentId, entry]])}
+        >
+          <SubagentReport
+            delivery={{ agentId: entry.agentId, generation: 1 }}
+            index={{} as never}
+            onOpenNodeReference={() => undefined}
+          />
+        </SubagentRegistryProvider>
+      ));
+
+      expect(document.querySelector('.thread-agent-note')?.textContent).toContain('stopped');
+      expect(document.querySelector('.thread-agent-execution-warning')?.textContent)
+        .toContain('this run followed its parent');
+    } finally {
+      ensureHistory.mockRestore();
+    }
   });
 });
 

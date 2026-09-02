@@ -31,7 +31,10 @@ export async function resolveAgentExecutionSelection(
   input: AgentExecutionSelectionResolverInput,
 ): Promise<ResolvedAgentExecutionSelection> {
   const { selection, parent } = input;
-  if (!selection) return { ...parent, fallback: null };
+  if (!selection) {
+    await validateRuntimeSelection(parent, input);
+    return { ...parent, fallback: null };
+  }
 
   const requested: ThreadConfigurationSummary = {
     modelProvider: selection.modelProvider ?? parent.modelProvider,
@@ -50,9 +53,7 @@ export async function resolveAgentExecutionSelection(
     input.validateSelection(requested, provider);
     return { ...requested, fallback: null };
   } catch {
-    const parentProvider = await input.getProviderRuntimeConfig(parent.modelProvider);
-    if (!parentProvider) throw new Error(`Parent provider is not configured: ${parent.modelProvider}`);
-    input.validateSelection(parent, parentProvider);
+    await validateRuntimeSelection(parent, input);
     return {
       ...parent,
       fallback: {
@@ -63,4 +64,17 @@ export async function resolveAgentExecutionSelection(
       },
     };
   }
+}
+
+async function validateRuntimeSelection(
+  selection: ThreadConfigurationSummary,
+  input: Pick<AgentExecutionSelectionResolverInput, 'getProviderRuntimeConfig' | 'validateSelection'>,
+): Promise<void> {
+  const prefix = `${selection.modelProvider}/`;
+  const modelId = selection.model.startsWith(prefix)
+    ? selection.model.slice(prefix.length)
+    : undefined;
+  const provider = await input.getProviderRuntimeConfig(selection.modelProvider, modelId);
+  if (!provider) throw new Error(`Parent provider or model is unavailable: ${selection.modelProvider}`);
+  input.validateSelection(selection, provider);
 }

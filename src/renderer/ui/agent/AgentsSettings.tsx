@@ -33,6 +33,7 @@ import { Textarea } from '../primitives/Textarea';
 import { AddIcon, ICON_SIZE } from '../icons';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { buildModelChoices, flattenModelChoices } from './modelChoices';
+import { isProviderUsable } from './providerUsability';
 
 /** Before the view loads there is nothing to narrow; an empty catalogue reads as "no choices yet", not "none allowed". */
 const EMPTY_CAPABILITIES: AgentCapabilityCatalog = { tools: [], skills: [] };
@@ -153,7 +154,7 @@ export function AgentsSettings({ initialAgentType, onError, onNotice, settings }
             onSelect={() => setEditing({ kind: 'role', role })}
             sublabel={listSublabel(
               role.description || layerLabel(role.layer, t),
-              executionModelUnavailable(role.name, view.executionSelections, settings),
+              executionModelUnavailable(role.name, view.executionSelections, settings, role.layer),
               t.settings.agents.unavailable,
             )}
           />
@@ -405,6 +406,7 @@ function AgentEditorDialog({
   const storedExecution = executionSelectionFor(
     executionSelections,
     role?.name ?? entry?.agentType ?? null,
+    role?.layer,
   );
   const [model, setModel] = useState(storedExecution?.model ?? '');
   const [reasoningEffort, setReasoningEffort] = useState(storedExecution?.reasoningEffort ?? '');
@@ -415,12 +417,16 @@ function AgentEditorDialog({
       ?? '',
     model,
   }), [model, providerSettings, storedExecution?.modelProvider]);
-  const flatModelChoices = useMemo(() => flattenModelChoices(modelChoices), [modelChoices]);
+  const flatModelChoices = useMemo(() => flattenModelChoices(modelChoices).filter((choice) => (
+    modelChoiceAvailable(choice, providerSettings) || choice.value === storedExecution?.model
+  )), [modelChoices, providerSettings, storedExecution?.model]);
   const selectedModel = flatModelChoices.find((choice) => choice.value === model);
   const reasoningLevels = model
     ? selectedModel?.option.supportedThinkingLevels ?? []
     : REASONING_EFFORTS;
-  const modelUnavailable = Boolean(model && (!selectedModel || selectedModel.option.contextWindow <= 0));
+  const modelUnavailable = Boolean(model && (
+    !selectedModel || !modelChoiceAvailable(selectedModel, providerSettings)
+  ));
   // What is stored may name things the catalogue does not: an MCP or extension
   // tool, or a Skill declared but not installed. Those rows are RENDERED, so the
   // user can see and keep them — filtering the save against the catalogue alone
@@ -671,7 +677,7 @@ function AgentEditorDialog({
                 {flatModelChoices.map((choice) => (
                   <option key={choice.value} value={choice.value}>
                     {choice.option.name}{modelChoices.showProviderLabel ? ` (${choice.providerId})` : ''}
-                    {choice.option.contextWindow <= 0 ? ` - ${t.settings.agents.unavailable}` : ''}
+                    {!modelChoiceAvailable(choice, providerSettings) ? ` - ${t.settings.agents.unavailable}` : ''}
                   </option>
                 ))}
               </SelectControl>
@@ -779,9 +785,11 @@ function AgentEditorDialog({
 function executionSelectionFor(
   rows: readonly AgentExecutionSelectionRow[],
   agentType: string | null,
+  layer?: 'user' | 'project',
 ): AgentExecutionSelectionRow | null {
   if (!agentType) return null;
   const matching = rows.filter((row) => row.agentType === agentType);
+  if (layer) return matching.find((row) => row.layer === layer) ?? null;
   return matching.find((row) => row.layer === 'project')
     ?? matching.find((row) => row.layer === 'user')
     ?? null;
@@ -791,16 +799,26 @@ function executionModelUnavailable(
   agentType: string,
   rows: readonly AgentExecutionSelectionRow[],
   settings: AgentProviderSettingsView | null,
+  layer?: 'user' | 'project',
 ): boolean {
   if (settings === null) return false;
-  const selection = executionSelectionFor(rows, agentType);
+  const selection = executionSelectionFor(rows, agentType, layer);
   if (!selection?.model) return false;
   const choices = flattenModelChoices(buildModelChoices(settings, {
     modelProvider: selection.modelProvider ?? '',
     model: selection.model,
   }));
   const selected = choices.find((choice) => choice.value === selection.model);
-  return !selected || selected.option.contextWindow <= 0;
+  return !selected || !modelChoiceAvailable(selected, settings);
+}
+
+function modelChoiceAvailable(
+  choice: ReturnType<typeof flattenModelChoices>[number],
+  settings: AgentProviderSettingsView | null,
+): boolean {
+  if (!settings || choice.option.contextWindow <= 0) return false;
+  const provider = settings.providers.find((candidate) => candidate.providerId === choice.providerId);
+  return provider !== undefined && isProviderUsable(settings, provider);
 }
 
 function listSublabel(base: string, unavailable: boolean, unavailableLabel: string): string {

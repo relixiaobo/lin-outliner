@@ -15,18 +15,29 @@ const providers: Record<string, AgentProviderRuntimeConfig> = {
 };
 
 describe('fresh Agent execution selection', () => {
-  test('inherits without consulting the provider catalog when no row is configured', async () => {
-    let reads = 0;
+  test('validates the inherited parent selection when no row is configured', async () => {
+    const reads: Array<readonly [string, string | undefined]> = [];
+    const validated: ThreadConfigurationSummary[] = [];
     await expect(resolveAgentExecutionSelection({
       selection: null,
       parent,
-      getProviderRuntimeConfig: async () => {
-        reads += 1;
+      getProviderRuntimeConfig: async (providerId, modelId) => {
+        reads.push([providerId, modelId]);
         return providers.openai!;
       },
-      validateSelection: () => undefined,
+      validateSelection: (selection) => { validated.push(selection); },
     })).resolves.toEqual({ ...parent, fallback: null });
-    expect(reads).toBe(0);
+    expect(reads).toEqual([['openai', 'gpt-parent']]);
+    expect(validated).toEqual([parent]);
+  });
+
+  test('rejects an unavailable inherited parent before admission', async () => {
+    await expect(resolveAgentExecutionSelection({
+      selection: null,
+      parent,
+      getProviderRuntimeConfig: async () => null,
+      validateSelection: () => undefined,
+    })).rejects.toThrow('Parent provider or model is unavailable: openai');
   });
 
   test('validates an explicit cross-provider model by its current catalog identity', async () => {
@@ -82,7 +93,7 @@ describe('fresh Agent execution selection', () => {
       },
       parent,
       getProviderRuntimeConfig: async (providerId, modelId) => {
-        if (providerId === parent.modelProvider && modelId === undefined) return providers.openai!;
+        if (providerId === parent.modelProvider) return providers.openai!;
         return requestedProvider(providerId, modelId);
       },
       validateSelection: (selection) => {
@@ -109,6 +120,6 @@ describe('fresh Agent execution selection', () => {
       parent,
       getProviderRuntimeConfig: async () => null,
       validateSelection: () => undefined,
-    })).rejects.toThrow('Parent provider is not configured: openai');
+    })).rejects.toThrow('Parent provider or model is unavailable: openai');
   });
 });

@@ -227,6 +227,90 @@ describe('the Agents editor', () => {
     });
   });
 
+  test('marks a disabled provider unavailable and exposes only its saved model', async () => {
+    const anthropic = PROVIDER_SETTINGS.availableProviders[0]!;
+    const rendered = await renderAgents({
+      settings: {
+        ...PROVIDER_SETTINGS,
+        providers: PROVIDER_SETTINGS.providers.map((provider) => (
+          provider.providerId === 'anthropic' ? { ...provider, enabled: false } : provider
+        )),
+        availableProviders: [{
+          ...anthropic,
+          models: [
+            ...anthropic.models,
+            {
+              id: 'claude-sonnet-5',
+              name: 'Claude Sonnet 5',
+              reasoning: true,
+              supportedThinkingLevels: ['low', 'medium', 'high'],
+              contextWindow: 200_000,
+              maxTokens: 64_000,
+            },
+          ],
+        }, PROVIDER_SETTINGS.availableProviders[1]!],
+      },
+      view: {
+        ...VIEW,
+        executionSelections: [{
+          agentType: 'explore',
+          layer: 'user',
+          modelProvider: 'anthropic',
+          model: 'anthropic/claude-opus-5',
+          reasoningEffort: 'high',
+        }],
+      },
+    });
+
+    expect(rowByLabel(rendered.document, 'Rena').textContent).toContain('Unavailable');
+    await rendered.click(rowByLabel(rendered.document, 'Rena'));
+    const model = selectByLabel(rendered.document, 'Model');
+    expect(model.textContent).toContain('Claude Opus 5 (anthropic) - Unavailable');
+    expect(model.textContent).not.toContain('Claude Sonnet 5');
+    expect(model.textContent).toContain('GPT-5.6 (openai)');
+  });
+
+  test('edits a custom Role execution row from the Role\'s own layer', async () => {
+    const rendered = await renderAgents({
+      view: {
+        ...VIEW,
+        roles: [
+          VIEW.roles[0]!,
+          { ...VIEW.roles[0]!, layer: 'project', persona: 'Project Wren' },
+        ],
+        executionSelections: [
+          {
+            agentType: 'auditor',
+            layer: 'user',
+            modelProvider: 'openai',
+            model: 'openai/gpt-5.6',
+            reasoningEffort: 'xhigh',
+          },
+          {
+            agentType: 'auditor',
+            layer: 'project',
+            modelProvider: 'anthropic',
+            model: 'anthropic/claude-opus-5',
+            reasoningEffort: 'high',
+          },
+        ],
+      },
+    });
+
+    await rendered.click(rowByLabel(rendered.document, 'Wren'));
+    expect(selectByLabel(rendered.document, 'Model').value).toBe('openai/gpt-5.6');
+    expect(selectByLabel(rendered.document, 'Reasoning').value).toBe('xhigh');
+    await rendered.click(rendered.document.querySelector('.agent-editor-actions .button-primary')!);
+    expect(rendered.calls[1]!.args).toMatchObject({
+      layer: 'user',
+      execution: {
+        modelProvider: 'openai',
+        model: 'openai/gpt-5.6',
+        reasoningEffort: 'xhigh',
+      },
+    });
+  });
+
   test('opens the requested Agent editor without fetching provider settings again', async () => {
     const rendered = await renderAgents({ initialAgentType: 'auditor' });
 
