@@ -391,7 +391,7 @@ function summaryLines(command: string, data: unknown): string[] {
           : []),
       ] : []),
       ...shown.map((operation) => isRecord(operation)
-        ? `  ${summaryScalar(operation.operationId, 256)}\trevision=${summaryScalar(operation.revisionBefore)}->${summaryScalar(operation.revisionAfter)}\t${summaryScalar(operation.summary, 512)}`
+        ? `  ${summaryScalar(operation.operationId, 256)}\trevision=${summaryScalar(operation.revisionBefore)}->${summaryScalar(operation.revisionAfter)}\trecovery=${isRecord(operation.recovery) ? summaryScalar(operation.recovery.state, 64) : 'unknown'}\t${summaryScalar(operation.summary, 512)}`
         : `  ${summaryScalar(operation)}`),
     ];
   }
@@ -552,13 +552,34 @@ function nodeSummaryLine(value: unknown, index: number): string {
   const text = isRecord(value.content) && typeof value.content.text === 'string'
     ? value.content.text
     : value.text;
+  const done = typeof value.done === 'boolean'
+    ? value.done
+    : typeof value.completedAt === 'number'
+      ? value.completedAt > 0
+      : undefined;
   const fields = [
     value.id !== undefined ? `id=${summaryScalar(value.id, 128)}` : undefined,
     value.type !== undefined ? `type=${summaryScalar(value.type, 64)}` : undefined,
     value.parentId !== undefined ? `parent=${summaryScalar(value.parentId, 128)}` : undefined,
     text !== undefined ? `text=${summaryScalar(text, 256)}` : undefined,
+    value.description !== undefined ? `description=${summaryScalar(value.description, 512)}` : undefined,
+    done !== undefined ? `done=${summaryScalar(done, 16)}` : undefined,
+    Array.isArray(value.fields) && value.fields.length > 0
+      ? `fields=${summaryLogicalFields(value.fields)}`
+      : undefined,
   ].filter((field): field is string => field !== undefined);
   return `  Node ${index + 1}: ${fields.join('; ') || 'no common fields'}; digest=${canonicalSha256(value)}`;
+}
+
+function summaryLogicalFields(fields: readonly unknown[]): string {
+  return fields.slice(0, 8).map((field) => {
+    if (!isRecord(field)) return summaryScalar(field, 128);
+    const name = summaryScalar(field.name ?? field.id ?? 'Field', 96);
+    const values = Array.isArray(field.values)
+      ? field.values.map((value) => summaryScalar(value, 96)).join(', ')
+      : '';
+    return `${name}: ${values || '(empty)'}`;
+  }).join(' | ') + (fields.length > 8 ? ` | +${fields.length - 8} more` : '');
 }
 
 function isProjectionResult(value: unknown): value is Record<string, unknown> & {

@@ -156,7 +156,9 @@ export async function parseReadCommand(
     kind: kind ?? (command === 'find' ? 'summary' : command === 'get' ? 'node' : 'export'),
     targets: target,
     ...(depth !== undefined ? { depth } : command === 'export' ? { depth: 1_024 } : {}),
-    ...(include ? { include } : command === 'export'
+    ...(include ? { include } : command === 'get'
+      ? { include: ['description', 'fields'] }
+      : command === 'export'
       ? { include: ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'] }
       : {}),
     page: { limit, ...(cursor ? { cursor } : {}) },

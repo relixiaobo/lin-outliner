@@ -1,10 +1,23 @@
 import type { Core } from '../../core/core';
+import { boolCodec, numberCodec } from '../../core/configSchema';
+import { projectFieldConfig } from '../../core/configProjection';
+import { fieldSlotValueSource, nodeFieldSlots } from '../../core/fieldSlots';
 import { buildReferenceSummary } from '../../core/references';
+import {
+  CREATED_FIELD,
+  DONE_AT_FIELD,
+  DONE_FIELD,
+  REF_COUNT_FIELD,
+  UPDATED_FIELD,
+  systemFieldLabel,
+  systemFieldValues,
+} from '../../core/systemFields';
 import {
   type NodeProjection,
 } from '../../core/types';
 import { canonicalSha256 } from '../contract/canonical';
 import { OutlineContractError, outlineError } from '../contract/errors';
+import { publicFieldTypeFromCore, type PublicFieldType } from '../contract/porcelain';
 import type { Projection, ProjectionResult, TargetRef } from '../contract/schemas';
 import { createSelectionIndex, isInTrash, resolveTargetSpec, type OutlineSelectionIndex } from './selector';
 
@@ -55,7 +68,7 @@ export function projectOutlineFromSelectionIndex(
     : undefined;
   const nodes = projection.kind === 'backlinks'
     ? []
-    : pageIds.map((nodeId) => projectNode(index.byId.get(nodeId)!, projection));
+    : pageIds.map((nodeId) => projectNode(index, index.byId.get(nodeId)!, projection));
   const backlinks = allBacklinks?.slice(offset, offset + limit);
   const pageWidth = Math.max(pageIds.length, backlinks?.length ?? 0);
   const nextOffset = offset + pageWidth;
@@ -140,6 +153,7 @@ function collectOutlineIds(
 }
 
 function projectNode(
+  index: OutlineSelectionIndex,
   node: NodeProjection,
   projection: Projection,
 ): Record<string, unknown> {
@@ -165,7 +179,11 @@ function projectNode(
   if (!include.has('media')) {
     for (const key of ['assetId', 'thumbnailAssetId', 'mediaUrl', 'bannerAssetId']) delete result[key];
   }
-  if (!include.has('fields')) delete result.fieldDefId;
+  if (include.has('fields')) {
+    result.fields = projectLogicalFields(index, node);
+  } else {
+    delete result.fieldDefId;
+  }
   if (!include.has('view')) {
     for (const key of [
       'viewMode',
@@ -192,6 +210,84 @@ function projectNode(
   }
   if (!include.has('trash')) delete result.trashedFromParentId;
   return result;
+}
+
+interface LogicalFieldProjection {
+  readonly id: string;
+  readonly name: string;
+  readonly type: PublicFieldType;
+  readonly values: readonly (string | number | boolean)[];
+  readonly inherited: boolean;
+}
+
+function projectLogicalFields(
+  index: OutlineSelectionIndex,
+  owner: NodeProjection,
+): LogicalFieldProjection[] {
+  return nodeFieldSlots(index.byId, owner.id).flatMap((slot) => {
+    if (slot.fieldDefId.startsWith('sys:')) {
+      const name = systemFieldLabel(slot.fieldDefId);
+      if (!name) return [];
+      const type = systemFieldType(slot.fieldDefId);
+      return [{
+        id: slot.fieldDefId,
+        name,
+        type,
+        values: decodeLogicalFieldValues(type, systemFieldValues(owner, slot.fieldDefId, index.byId)),
+        inherited: false,
+      }];
+    }
+
+    const definition = index.byId.get(slot.fieldDefId);
+    if (definition?.type !== 'fieldDef') return [];
+    const type = publicFieldTypeFromCore(projectFieldConfig(index.byId, definition).fieldType);
+    const source = fieldSlotValueSource(index.byId, slot);
+    const entry = source ? index.byId.get(source.entryId) : undefined;
+    const rawValues = entry?.type === 'fieldEntry'
+      ? entry.children.flatMap((valueId) => {
+          if (isInTrash(index, valueId)) return [];
+          const value = index.byId.get(valueId);
+          if (!value) return [];
+          const displayed = value.type === 'reference' && value.targetId
+            ? index.byId.get(value.targetId) ?? value
+            : value;
+          return [displayed.content.text];
+        })
+      : [];
+    return [{
+      id: definition.id,
+      name: definition.content.text,
+      type,
+      values: decodeLogicalFieldValues(type, rawValues),
+      inherited: source?.inherited ?? false,
+    }];
+  });
+}
+
+function systemFieldType(fieldId: string): PublicFieldType {
+  if (fieldId === DONE_FIELD) return 'checkbox';
+  if (fieldId === REF_COUNT_FIELD) return 'number';
+  if (fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD || fieldId === DONE_AT_FIELD) return 'date';
+  return 'text';
+}
+
+function decodeLogicalFieldValues(
+  type: PublicFieldType,
+  values: readonly string[],
+): readonly (string | number | boolean)[] {
+  if (type === 'number') {
+    return values.flatMap((value) => {
+      const decoded = numberCodec.decode(value);
+      return decoded === undefined ? [] : [decoded];
+    });
+  }
+  if (type === 'checkbox') {
+    return values.flatMap((value) => {
+      const decoded = boolCodec.decode(value);
+      return decoded === undefined ? [] : [decoded];
+    });
+  }
+  return [...values];
 }
 
 interface PageCursor {

@@ -15,7 +15,7 @@ import type {
 } from '../contract/schemas';
 import { CaptureProvenanceSchema } from '../contract/schemas';
 import { OutlineContractError, outlineError } from '../contract/errors';
-import { porcelainContract, porcelainHelpOptions } from '../contract/porcelain';
+import { PUBLIC_FIELD_TYPES, porcelainContract, porcelainHelpOptions } from '../contract/porcelain';
 import { checkOutlineSchema, outlineSchemaValidationDetails } from '../contract/validation';
 import { createChangeSet, parseSelectorToken, splitOptionTerminator, type StructuredReader } from './arguments';
 import { canonicalJson } from '../contract/canonical';
@@ -316,17 +316,6 @@ function editChangeFromInput(input: Record<string, unknown>): Change {
   if (instructions.length === 0) throw usageError('edit requires at least one desired-state property.');
   return { op: 'update', targets: input.target as TargetRef, changes: instructions };
 }
-
-const PUBLIC_FIELD_TYPES = {
-  text: 'plain',
-  select: 'options',
-  'select-from-tag': 'options_from_supertag',
-  date: 'date',
-  number: 'number',
-  url: 'uri',
-  email: 'email',
-  checkbox: 'checkbox',
-} as const;
 
 async function buildCreateChanges(
   input: Record<string, unknown>,

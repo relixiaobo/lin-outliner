@@ -201,9 +201,15 @@ async function executeInvocation(
   if (invocation.command === 'example') {
     const split = splitOptionTerminator(invocation.args);
     const tokens = [...split.options, ...split.literals];
-    if (tokens.length < 2) {
+    if (tokens.length < 1) {
       const available = outlineRecipeVariants().map((recipe) => `${recipe.command} ${recipe.variant}`).join(', ');
-      throw usageError(`example requires COMMAND and VARIANT. Available recipes: ${available}.`);
+      throw usageError(`example requires COMMAND and optional VARIANT. Available recipes: ${available}.`);
+    }
+    const exactCommand = tokens.join(' ');
+    const exactRecipes = outlineRecipeVariants(exactCommand);
+    if (exactRecipes.length === 1) return exactRecipes[0]!;
+    if (exactRecipes.length > 1) {
+      throw usageError(`example requires a VARIANT for ${exactCommand}. Available variants: ${exactRecipes.map((entry) => entry.variant).join(', ')}.`);
     }
     const variant = tokens.at(-1)!;
     const command = tokens.slice(0, -1).join(' ');
@@ -632,7 +638,6 @@ async function executeAssetExport(
 
 function parseLogInput(args: readonly string[]): Record<string, unknown> {
   const split = splitOptionTerminator(args);
-  if (split.literals.length > 0) throw usageError(`Unexpected history argument: ${split.literals[0]}`);
   const result: Record<string, unknown> = {};
   for (let index = 0; index < split.options.length; index += 1) {
     const arg = split.options[index];
@@ -645,7 +650,12 @@ function parseLogInput(args: readonly string[]): Record<string, unknown> {
     else if (arg === '--thread') result.threadId = requiredValue(split.options[++index], '--thread');
     else if (arg === '--turn') result.turnId = requiredValue(split.options[++index], '--turn');
     else if (arg === '--item') result.itemId = requiredValue(split.options[++index], '--item');
+    else if (!arg?.startsWith('-') && result.operationId === undefined) result.operationId = arg;
     else throw usageError(`Unknown history option: ${arg}`);
+  }
+  for (const literal of split.literals) {
+    if (result.operationId === undefined) result.operationId = literal;
+    else throw usageError(`Unexpected history argument: ${literal}`);
   }
   return result;
 }

@@ -331,8 +331,8 @@ successful settlement are disjoint result states with different retry rules.
 The disclosure ladder is fixed:
 
 1. Skill metadata identifies when persisted Outline work is in scope.
-2. `SKILL.md` provides the intent router, data/view distinction, review boundary,
-   and stopping/recovery rules.
+2. `SKILL.md` provides the intent router, minimal syntax for routine one-call
+   work, data/view distinction, review boundary, and stopping/recovery rules.
 3. `outline example INTENT [VARIANT]` returns one validated executable shape for
    an unfamiliar common task.
 4. Exact command help explains its options, defaults, convergence, risk, and
@@ -342,11 +342,13 @@ The disclosure ladder is fixed:
 6. Complete named schemas and capabilities remain for integration, audit, and
    debugging, not ordinary Agent work.
 
-The Skill does not copy enum inventories, command manuals, storage structure, or
-failure algorithms. It does not tell the Agent to preflight global definitions
-or independently verify a command whose typed result already verifies its
-declared postconditions. Conditional details may live in Skill references only
-when they change decisions; executable mechanics remain registry-owned.
+The Skill does not copy exhaustive enum inventories, command manuals, storage
+structure, or failure algorithms. It retains a direct form when omitting that
+form causes a predictable metadata round trip. It does not tell the Agent to
+preflight global definitions or independently verify a command whose typed
+result already verifies its declared postconditions. Conditional details may
+live in Skill references only when they change decisions; executable mechanics
+remain registry-owned.
 
 Every common recipe is byte-checked against the production request schema and
 forward-tested as an Agent task. A failed common recipe is a CLI contract bug,
@@ -372,6 +374,7 @@ The corpus covers at least:
 | Workflow | Normal call budget after Skill load |
 | --- | --- |
 | Exact read | one `get` |
+| Exact Field-backed Node read | one `get`; no storage traversal |
 | Text discovery or count | one `find` |
 | Plain or nested creation | one `create` |
 | Creation with fields and any View mode | one `create` |
@@ -381,8 +384,12 @@ The corpus covers at least:
 | Move or duplicate | one structural command when targets are exact |
 | Declarative View switch/configuration | one `view set`; Node data unchanged |
 | Saved Search creation/update | one corresponding search command |
+| Daily Note ensure | one `daily ensure`; no pre-read |
+| Trash or restore | one corresponding lifecycle command |
+| Bounded query edit | one matching recipe, one `edit`; no ID enumeration |
 | Cross-resource dependent mutation | one `transact` |
-| Destructive/high-impact mutation | one `preview`, one exact `apply` after required review |
+| Destructive semantic mutation | one semantic preview, one exact invocation of the same command after review |
+| Destructive advanced ChangeSet | one `preview`, one exact `apply` after review |
 | Unknown settlement recovery | one exact `history` lookup; no blind retry |
 | Revert | one `revert` |
 | Import | inspect, preview/plan, exact apply, built-in verification |
@@ -440,8 +447,10 @@ Core protocol changes.
 Deliver coherent `get` and `find` contracts, shared selectors/projections,
 narrow result assertions, bounded summaries, and continuation. Absorb `show`
 and standalone `view inspect` behavior where `get` projections or assertions
-express the same intent. Keep export/watch specialized. Update read recipes and
-prove exact read and discovery budgets.
+express the same intent. Exact Node reads project reusable Field identity,
+public type, typed values, and inheritance on the owning Node instead of making
+the Agent traverse storage field entries. Keep export/watch specialized. Update
+read recipes and prove exact read and discovery budgets.
 
 #### Step C: Convergent editing
 

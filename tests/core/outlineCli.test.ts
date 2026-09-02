@@ -21,6 +21,7 @@ import {
   OutlineStreamRecordSchema,
   canonicalSha256,
   outlineCapabilityContractDigest,
+  porcelainContract,
   type ChangeSet,
   type Diff,
 } from '../../src/outline/contract';
@@ -72,6 +73,7 @@ describe('outline CLI', () => {
       type: 'plain',
       parentId: 'node:parent',
       content: { text: index === 0 ? 'Decision context' : `Node ${index} ${'x'.repeat(500)}` },
+      ...(index === 0 ? { description: 'Owner: Alice', completedAt: 42 } : {}),
     }));
     const output = renderSummaryResult('get', {
       projection: { kind: 'outline' },
@@ -85,6 +87,8 @@ describe('outline CLI', () => {
     expect(output).toContain('Command: get');
     expect(output).toContain('Nodes: 100; shown=4; omitted=96; digest=');
     expect(output).toContain('text=Decision context');
+    expect(output).toContain('description=Owner: Alice');
+    expect(output).toContain('done=true');
     expect(output).toContain('Continuation: cursor:next; truncated=true');
     expect(output).not.toContain('Omitted lines:');
     expect(output.trimStart().startsWith('{')).toBe(false);
@@ -93,7 +97,8 @@ describe('outline CLI', () => {
   test('keeps history pages closed-loop with affected IDs and exact cursors', () => {
     const output = renderSummaryResult('history', {
       operations: [{
-        operationId: 'operation:1', revisionBefore: 1, revisionAfter: 2, summary: 'Bulk update',
+        operationId: 'operation:1', revisionBefore: 1, revisionAfter: 2,
+        recovery: { state: 'available' }, summary: 'Bulk update',
       }],
       affectedNodeIds: {
         operationId: 'operation:1',
@@ -107,6 +112,7 @@ describe('outline CLI', () => {
     expect(output).toContain('Continuation: cursor:affected-next');
     expect(output).toContain('page=2; shown=2; omitted=0; total=4');
     expect(output).toContain('node:first, node:second');
+    expect(output).toContain('recovery=available');
   });
 
   test('bounds watch event receipts without losing resumable identity', () => {
@@ -546,6 +552,24 @@ describe('outline CLI', () => {
     expect(await readdir(root)).toEqual([]);
   });
 
+  test('infers the sole recipe variant for multi-word commands', async () => {
+    const root = await makeRoot();
+    const inferred = captureIo();
+    const explicit = captureIo();
+
+    expect(await runOutlineCli(['example', 'search', 'create'], {
+      runtimeRoot: root,
+      io: inferred.io,
+    })).toBe(0);
+    expect(await runOutlineCli(['example', 'search', 'create', 'complete'], {
+      runtimeRoot: root,
+      io: explicit.io,
+    })).toBe(0);
+    expect(inferred.stdout).toBe(explicit.stdout);
+    expect(inferred.stdout).toContain('Command: outline search create --input -');
+    expect(await readdir(root)).toEqual([]);
+  });
+
   test('keeps undo help, schema, and argv origin guards in sync', async () => {
     const root = await makeRoot();
     const help = captureIo();
@@ -742,6 +766,12 @@ describe('outline CLI', () => {
     expect(editRequest).toContain('references');
     expect(editRequest).toContain('sources');
     expect(editRequest).not.toContain('changeSet');
+    const editHelp = captureIo();
+    expect(await runOutlineCli(['edit', '--help'], { runtimeRoot: root, io: editHelp.io })).toBe(0);
+    for (const command of ['create', 'edit']) {
+      const examples = porcelainContract(command)?.examples ?? [];
+      expect(new Set(examples).size).toBe(examples.length);
+    }
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -1011,6 +1041,114 @@ describe('outline CLI', () => {
       expect(JSON.parse(recovered.stdout).data.operations).toHaveLength(1);
     } finally {
       runtime.router.handle = originalHandle;
+      await runtime.stop();
+    }
+  });
+
+  test('closes exact Node and Operation reads with default summaries', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const created = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'create', '@today', 'Exact read target',
+      ], { runtimeRoot: root, io: created.io })).toBe(0);
+      const createResult = JSON.parse(created.stdout).data;
+      const nodeId = createResult.rootId as string;
+      const operationId = createResult.settlement.operationId as string;
+
+      const edited = captureIo();
+      expect(await runOutlineCli([
+        '--json', '--no-start', 'edit', nodeId, '--description', 'Owner: Alice', '--done', 'true',
+      ], { runtimeRoot: root, io: edited.io })).toBe(0);
+
+      const shown = captureIo();
+      expect(await runOutlineCli(['--no-start', 'get', nodeId], {
+        runtimeRoot: root,
+        io: shown.io,
+      })).toBe(0);
+      expect(shown.stdout).toContain('text=Exact read target');
+      expect(shown.stdout).toContain('description=Owner: Alice');
+      expect(shown.stdout).toContain('done=true');
+
+      const history = captureIo();
+      expect(await runOutlineCli(['--no-start', 'history', operationId], {
+        runtimeRoot: root,
+        io: history.io,
+      })).toBe(0);
+      expect(history.stdout).toContain(operationId);
+      expect(history.stdout).toContain('recovery=available');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('projects logical Field values through an exact Node read', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const created = captureIo(JSON.stringify({
+        at: { parent: '@today', position: 'last' },
+        fields: [
+          { key: 'status', name: 'Read status', type: 'text' },
+          { key: 'estimate', name: 'Read estimate', type: 'number' },
+        ],
+        node: {
+          text: 'Field read register',
+          children: [{
+            text: 'Inspect field values',
+            fields: { status: 'Active', estimate: 3 },
+          }],
+        },
+        view: { mode: 'table', display: ['status', 'estimate'] },
+      }));
+      expect(await runOutlineCli(['--json', '--no-start', 'create', '--input', '-'], {
+        runtimeRoot: root,
+        io: created.io,
+      })).toBe(0);
+      const ownerId = JSON.parse(created.stdout).data.rootId as string;
+
+      const owner = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'get', ownerId, '--include', 'children'], {
+        runtimeRoot: root,
+        io: owner.io,
+      })).toBe(0);
+      const itemId = JSON.parse(owner.stdout).data.nodes[0].children
+        .find((id: string) => id.startsWith('node:')) as string;
+
+      const summary = captureIo();
+      expect(await runOutlineCli(['--no-start', 'get', itemId], {
+        runtimeRoot: root,
+        io: summary.io,
+      })).toBe(0);
+      expect(summary.stdout).toContain('fields=Read status: Active | Read estimate: 3');
+
+      const json = captureIo();
+      expect(await runOutlineCli(['--json', '--no-start', 'get', itemId], {
+        runtimeRoot: root,
+        io: json.io,
+      })).toBe(0);
+      expect(JSON.parse(json.stdout).data.nodes[0].fields).toEqual([
+        expect.objectContaining({
+          id: expect.stringMatching(/^field:/),
+          name: 'Read status',
+          type: 'text',
+          values: ['Active'],
+          inherited: false,
+        }),
+        expect.objectContaining({
+          id: expect.stringMatching(/^field:/),
+          name: 'Read estimate',
+          type: 'number',
+          values: [3],
+          inherited: false,
+        }),
+      ]);
+    } finally {
       await runtime.stop();
     }
   });

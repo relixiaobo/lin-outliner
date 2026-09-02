@@ -35,14 +35,41 @@ Use the narrowest semantic command:
 | Create or update reusable definitions | `outline define create|ensure|edit` |
 | Read or replace presentation | `outline view get|set` |
 | Create, edit, or run a Saved Search | `outline search create|edit|run` |
-| Permanently destructive work | `outline preview`, then exact `outline apply` |
+| Ensure a Daily Note or use Trash | `outline daily ensure`, `outline trash`, or `outline restore` |
+| Permanently destructive semantic work | the same semantic command with `--preview`, then `--expect-diff` |
 | Multi-resource work with dependencies | `outline transact --input -` |
 | Recover | `outline history`, `outline revert`, `outline undo`, or `outline redo` |
 
 Use exact IDs or stable locators such as `@inbox`, `@library`, `@today`, and
 `@date:YYYY-MM-DD`. Use one bounded `find` before a write only when identity is
 not already known. A structured many-target request must include an explicit
-`max`.
+`max`. Exact `get` returns the Node description and logical Field values by
+default; do not traverse storage children to read Fields.
+
+Use these common forms directly, without help or example discovery:
+
+```text
+outline get TARGET
+outline find "TEXT" --limit N
+outline create PARENT "TEXT"
+outline edit TARGET --description "TEXT" --done true
+outline move TARGET PARENT --last
+outline duplicate TARGET PARENT
+outline view set TARGET MODE
+outline search create --title "TITLE" --match "TEXT" --view table
+outline daily ensure YYYY-MM-DD
+outline trash TARGET
+outline restore TARGET
+outline history OPERATION_ID
+outline revert OPERATION_ID
+outline purge TARGET --preview --idempotency-key KEY
+outline purge TARGET --expect-diff SHA256 --yes --idempotency-key KEY
+```
+
+View `MODE` is `outline`, `table`, `cards`, or `calendar`.
+Run `daily ensure` directly without a pre-read. When the intent applies one
+change to every query match, do not find or enumerate IDs first; use `outline
+example edit bounded-query`, then one bounded `outline edit --input -`.
 
 ## Common Create
 
@@ -108,7 +135,8 @@ read unless the user asks to inspect content not covered by the receipt.
 
 When the task fits the Common Create shape above, run it directly; that example
 is already validated. For a structured form not represented here, request one
-matching example such as `outline example edit complete`. Use `outline COMMAND
+matching example such as `outline example edit complete` or `outline example
+search create`. Use `outline COMMAND
 --help` only when neither the entrypoint nor an example covers the task. Use
 `outline schema COMMAND` only to build an integration or diagnose a concrete
 validation failure; never dump a schema speculatively.
@@ -119,9 +147,12 @@ the invalid property and accepted vocabulary.
 
 Use `transact` only when one intent spans dependent resources; bind resources
 inside its ChangeSet instead of querying intermediate IDs. For destructive or
-explicitly reviewed work, persist one immutable Diff with `preview`, inspect its
-hash and effects, then `apply` that exact artifact once. Never approximate a
-reviewed change or substitute an unreviewed compensating mutation.
+explicitly reviewed semantic work (`replace text`, `merge`, or `purge`), run the
+same command first with `--preview --idempotency-key KEY`, inspect its Diff, then
+once with `--expect-diff SHA256 --yes --idempotency-key KEY`. For an advanced
+ChangeSet, persist one immutable Diff with `outline preview`, inspect it, then
+`outline apply` that exact artifact once. Never approximate a reviewed change
+or substitute an unreviewed compensating mutation.
 
 If settlement is unknown, do not retry the write. Run the exact
 `outline history --idempotency-key KEY` command from the failure receipt. Revert

@@ -1203,6 +1203,10 @@ describe('agent skills', () => {
     expect(instructions).toContain('bind resources inside its ChangeSet instead of querying intermediate IDs');
     expect(instructions).toContain('Request-local field keys');
     expect(instructions).toContain('outline example edit complete');
+    expect(instructions).toContain('outline example edit bounded-query');
+    expect(instructions).toContain('outline daily ensure YYYY-MM-DD');
+    expect(instructions).toContain('outline trash TARGET');
+    expect(instructions).toContain('outline restore TARGET');
     expect(instructions).toContain('explicit `max`');
     expect(instructions).toContain('When the task fits the Common Create shape above, run it directly');
     expect(instructions).toContain('Do not issue a separate verification read');

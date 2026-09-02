@@ -76,10 +76,12 @@ The public model is independent of presentation and storage choreography:
 - Operation is the atomic settlement and recovery identity.
 
 The built-in Skill is a compact decision router. It teaches this model, the
-narrowest semantic command, exact and bounded selection, one common `create`
-shape, destructive review, and uncertain-settlement recovery. Exact schemas,
-options, examples, accepted vocabulary, and receipt formatting remain executable
-registry data.
+narrowest semantic command, exact and bounded selection, direct syntax for
+routine one-call work, one common `create` shape, destructive review, and
+uncertain-settlement recovery. Exact schemas, uncommon options, structured
+examples, accepted vocabulary, and receipt formatting remain executable registry
+data. Routine syntax belongs in the Skill when omitting it predictably causes a
+metadata round trip.
 
 Reads use `outline get`, `outline find`, `outline export`, and
 `outline watch`. One complete resource uses one semantic invocation; complex
@@ -100,16 +102,33 @@ command help, then a narrow `schema --path` fragment. Bare schema discovery
 returns only a compact catalog. Full schema bodies are for integrations or a
 concrete diagnosis, not routine task planning.
 
+An exact `get` includes the Node description and logical Fields by default. A
+Field projection contains the reusable definition ID, public name and type,
+typed values, and whether the value is inherited. It is attached to the owning
+Node; storage `fieldEntry` Nodes are not part of the Agent's read model. The
+bounded summary shows content, description, completion state, and compact Field
+values needed for an ordinary read. An exact Operation lookup accepts `history
+OPERATION_ID`; history summaries show recovery state. Recipe lookup recognizes
+multi-word commands and infers the variant when exactly one recipe exists.
+
+Idempotent Daily Note ensure and exact Trash or restore operations use their
+semantic command directly without a pre-read. A user intent that applies one
+change to every query match lowers to one bounded query target and one Operation;
+it does not discover IDs and loop over them. The `edit bounded-query` recipe is
+the progressive-disclosure entry for that shape.
+
 A successful semantic mutation returns a compact committed-state verified
 receipt with Operation ID, bounded handles, affected-set evidence, and recovery
 command. That receipt is completion proof for covered postconditions; a separate
 read is only for facts it does not cover. Unknown settlement is never retried:
 the Agent follows the receipt's exact `history --idempotency-key` command.
 
-Destructive or explicitly reviewed work uses one immutable `preview` and exact
-`apply`. The Diff hash, base revision, idempotency key, and acknowledgement
-remain bound. `replace text`, merge, and purge therefore preserve the same
-review and recovery properties as direct ChangeSets.
+Destructive or explicitly reviewed work uses one immutable preview and exact
+apply. A semantic command such as `replace text`, `merge`, or `purge` is invoked
+first with `--preview` and then once with the returned `--expect-diff` hash and
+same idempotency key. Advanced ChangeSets use the lower-level `outline preview`
+and `outline apply` artifact pair. The Diff hash, base revision, idempotency key,
+and acknowledgement remain bound in both forms.
 
 The built-in Source definition remains stable ID `field:source`. Source values
 are ordinary Field value Nodes; public `edit.sources` hides that storage

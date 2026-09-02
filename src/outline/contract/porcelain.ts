@@ -33,6 +33,26 @@ export const PublicFieldTypeSchema = Type.Union([
   Type.Literal('email'), Type.Literal('checkbox'),
 ]);
 
+export const PUBLIC_FIELD_TYPES = Object.freeze({
+  text: 'plain',
+  select: 'options',
+  'select-from-tag': 'options_from_supertag',
+  date: 'date',
+  number: 'number',
+  url: 'uri',
+  email: 'email',
+  checkbox: 'checkbox',
+} as const);
+
+export type PublicFieldType = keyof typeof PUBLIC_FIELD_TYPES;
+
+export function publicFieldTypeFromCore(type: (typeof PUBLIC_FIELD_TYPES)[PublicFieldType]): PublicFieldType {
+  const match = Object.entries(PUBLIC_FIELD_TYPES)
+    .find(([, coreType]) => coreType === type)?.[0];
+  if (!match) throw new Error(`Unknown Core Field type: ${type}`);
+  return match as PublicFieldType;
+}
+
 const PublicFieldConfigSchema = Type.Object({
   nullable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
   hide: Type.Optional(Type.Union([
@@ -502,6 +522,7 @@ function finalizePorcelainContract<Name extends PorcelainCommandKey>(
   const directExamples = PORCELAIN_EXAMPLES[name].filter((example) => (
     !example.includes('--input') && !/\b[A-Za-z0-9_-]+\.json\b/u.test(example)
   ));
+  const examples = [...new Set([...directExamples, ...recipeExamples])].slice(0, 3);
   return Object.freeze({
     ...base,
     summary: PORCELAIN_SUMMARIES[name],
@@ -522,7 +543,7 @@ function finalizePorcelainContract<Name extends PorcelainCommandKey>(
       ...(name === 'view set' || name === 'search edit' ? ['Only the explicitly named replace object replaces sort, filter, or display collections.'] : []),
     ]),
     destructive,
-    examples: Object.freeze([...directExamples, ...recipeExamples].slice(0, 3)),
+    examples: Object.freeze(examples),
   });
 }
 
