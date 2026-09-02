@@ -2295,3 +2295,21 @@ Regression coverage must cross both dimensions: a notifying background child
 and a non-notifying foreground or isolated child should each retain the same
 terminal outcome, while only the former wakes and enters the parent delivery
 queue.
+
+## Semantic tool failures require an explicit control-flow type
+
+PR #613 first normalized successful tool results while ordinary domain
+exceptions from Goal, Thread-history, Automation, and task-stop paths still
+fell through the Kernel's unexpected-execution handler. The result schema was
+uniform, but recoverable model decisions were still reported as infrastructure
+failures.
+
+**Do not classify expected failure by catching every exception or matching its
+message.** Give recoverable domain refusals one explicit typed control-flow
+boundary, translate only that type into semantic tool output, and let aborts and
+ordinary exceptions keep their Kernel failure semantics. This preserves useful
+recovery guidance without hiding programming, storage, or provider faults.
+
+Regression coverage must throw both the typed domain failure and an ordinary
+error through the same adapter, then prove that only the typed failure becomes
+a non-Kernel semantic result.

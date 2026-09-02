@@ -12,6 +12,22 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Tenon-owned tools now return one enforced semantic result protocol (PR
+  #613, codex-3)** — all 22 built-in model tools report success, unchanged,
+  partial, denied, or recoverable failure through one Kernel-compiled compact
+  header while native MCP, plugin, extension, and other owner results retain
+  their own content. Closed per-tool output schemas bound every visible field;
+  large file patches are clipped before validation with full Host-private
+  details retained, and typed Goal, Thread-history, Automation, and task-stop
+  failures remain actionable without disguising unexpected exceptions. Durable
+  persistence transforms only the first Tenon header and preserves supplemental
+  JSON, document text, native media, and exact unchanged header bytes. Gate
+  review found two Medium oversized-patch and business-failure-classification
+  defects; both were fixed before the final no-findings review. Verified with
+  typecheck, `docs:check`, 406 focused Core tests, a real 10,000-line file-write
+  probe, 2,781 passing full Core tests with 6 skipped and two load-dependent
+  timeouts that passed alone, and five successful GitHub E2E samples.
+
 - **Delegated Agent history now remains factual across later work (PR #614,
   codex)** — every terminal generation projects an immutable receipt with its
   exact outcome, bounded error, stop provenance, stable parent Item identity,

@@ -13,12 +13,12 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-Two draft plan-only claims are open: PR #611 defines the model-visible Agent
-context language, and PR #613 defines model-visible tool-result envelopes. Both
-were scoped against the then-open #612 surfaces and must rebase onto its merged
-Agent baseline and refresh their collision checks before implementation.
-Root-Turn recovery shipped in #612 and delegated failure truth shipped in #614,
-so the managed Computer Pilot Skill is eligible under its live collision check.
+One draft plan-only claim is open: PR #611 defines the model-visible Agent
+context language. It must rebase onto #613's merged tool-result protocol and
+refresh its collision check before implementation. Root-Turn recovery shipped
+in #612, model-visible tool-result envelopes shipped in #613, and delegated
+failure truth shipped in #614, so the managed Computer Pilot Skill is eligible
+under its live collision check.
 The public Outline CLI, built-in Skill, and shared preview-shell lanes are also
 clear.
 Startup Window, preview readers, and Skill authoring remain independently
@@ -209,6 +209,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-tool-result-envelope-contract** (`done`, #613, 2026-09-02) — all
+  Tenon-owned model tools now share one Kernel-enforced semantic result envelope,
+  bounded model projection, private Host details, and first-header-only durable
+  transformation; plan archived at
+  [agent-tool-result-envelope-contract](plans/archive/agent-tool-result-envelope-contract.md).
 - **agent-delegated-failure-truth** (`done`, #614, 2026-09-02) — immutable
   per-generation receipts now preserve delegated outcomes, stop provenance,
   direct-parent notification state, and historical anchors while stable Agents
