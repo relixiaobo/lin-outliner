@@ -358,6 +358,17 @@ test.describe('agent settings window', () => {
     }
   });
 
+  test('bounds a custom Agent type to the Settings deep-link limit', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agent/agents');
+    await settings.getByRole('button', { name: 'Add an agent' }).click();
+    const dialog = page.getByRole('dialog');
+
+    await dialog.getByRole('textbox', { name: 'Type' }).fill(`a${'b'.repeat(64)}`);
+
+    await expect(dialog.getByRole('alert')).toContainText('at most 64');
+    await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
   test('refuses to create an agent over a name that already exists', async ({ page }) => {
     const settings = await openSettings(page, '&category=agent/agents');
 

@@ -45,12 +45,20 @@ describe('settings window query routing', () => {
   });
 
   test('carries a bounded Agent type only for the Agents page', () => {
+    const longestAgentType = `a${'b'.repeat(63)}`;
     expect(settingsOpenTargetFromSearch(
       '?surface=settings&category=agent/agents&agent=custom_reviewer',
     )).toEqual({
       category: 'agent',
       page: 'agents',
       agentType: 'custom_reviewer',
+    });
+    expect(settingsOpenTargetFromSearch(
+      `?surface=settings&category=agent/agents&agent=${longestAgentType}`,
+    )).toEqual({
+      category: 'agent',
+      page: 'agents',
+      agentType: longestAgentType,
     });
     expect(settingsOpenTargetFromSearch(
       '?surface=settings&category=agent/skills&agent=custom_reviewer',

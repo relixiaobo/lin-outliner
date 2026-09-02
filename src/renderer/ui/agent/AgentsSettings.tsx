@@ -4,6 +4,7 @@ import {
   IDENTITY_COLOR_TINT,
   MAIN_PRESENTATION_KEY,
   REASONING_EFFORTS,
+  isAgentTypeIdentifier,
   type IdentityColor,
 } from '../../../core/agent/configuration';
 import type {
@@ -37,9 +38,6 @@ import { isProviderUsable } from './providerUsability';
 
 /** Before the view loads there is nothing to narrow; an empty catalogue reads as "no choices yet", not "none allowed". */
 const EMPTY_CAPABILITIES: AgentCapabilityCatalog = { tools: [], skills: [] };
-
-/** The loader's `validateDefinitionName` rule, mirrored so the editor can say it. */
-const DEFINITION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 
 /**
  * The Agents page: who is in the conversation, and who the user may change.
@@ -83,7 +81,7 @@ export function AgentsSettings({ initialAgentType, onError, onNotice, settings }
   useEffect(() => {
     if (openedInitialTarget.current || view === null || !initialAgentType) return;
     openedInitialTarget.current = true;
-    const role = view.roles.find((candidate) => candidate.name === initialAgentType);
+    const role = effectiveEditableRole(view.roles, initialAgentType);
     if (role) {
       setEditing({ kind: 'role', role });
       return;
@@ -459,7 +457,7 @@ function AgentEditorDialog({
   // name used to be refused into a banner the dialog covers, so Save read as
   // doing nothing at all.
   const nameInvalid = target.kind === 'new' && name.trim().length > 0
-    && !DEFINITION_NAME_PATTERN.test(name.trim());
+    && !isAgentTypeIdentifier(name.trim());
   const canSave = isMain || !editable
     ? true
     : name.trim().length > 0 && description.trim().length > 0
@@ -793,6 +791,15 @@ function executionSelectionFor(
   return matching.find((row) => row.layer === 'project')
     ?? matching.find((row) => row.layer === 'user')
     ?? null;
+}
+
+function effectiveEditableRole(
+  roles: readonly AgentEditableRole[],
+  name: string,
+): AgentEditableRole | undefined {
+  const matching = roles.filter((role) => role.name === name);
+  return matching.find((role) => role.layer === 'project')
+    ?? matching.find((role) => role.layer === 'user');
 }
 
 function executionModelUnavailable(

@@ -70,11 +70,7 @@ async function validateRuntimeSelection(
   selection: ThreadConfigurationSummary,
   input: Pick<AgentExecutionSelectionResolverInput, 'getProviderRuntimeConfig' | 'validateSelection'>,
 ): Promise<void> {
-  const prefix = `${selection.modelProvider}/`;
-  const modelId = selection.model.startsWith(prefix)
-    ? selection.model.slice(prefix.length)
-    : undefined;
-  const provider = await input.getProviderRuntimeConfig(selection.modelProvider, modelId);
-  if (!provider) throw new Error(`Parent provider or model is unavailable: ${selection.modelProvider}`);
+  const provider = await input.getProviderRuntimeConfig(selection.modelProvider);
+  if (!provider) throw new Error(`Parent provider is unavailable: ${selection.modelProvider}`);
   input.validateSelection(selection, provider);
 }

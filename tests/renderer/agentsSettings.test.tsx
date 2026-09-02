@@ -319,6 +319,37 @@ describe('the Agents editor', () => {
     expect(rendered.calls.map((call) => call.name)).toEqual(['agent_identity_catalog']);
   });
 
+  test('a fallback deep link opens the winning project Role and its own execution row', async () => {
+    const rendered = await renderAgents({
+      initialAgentType: 'auditor',
+      view: {
+        ...VIEW,
+        roles: [
+          VIEW.roles[0]!,
+          {
+            ...VIEW.roles[0]!,
+            layer: 'project',
+            description: 'Project audit.',
+            developerInstructions: 'Use the project workflow.',
+            persona: 'Project Wren',
+          },
+        ],
+        executionSelections: [{
+          agentType: 'auditor',
+          layer: 'user',
+          modelProvider: 'openai',
+          model: 'openai/gpt-5.6',
+          reasoningEffort: 'xhigh',
+        }],
+      },
+    });
+
+    expect((fieldByLabel(rendered.document, 'Use it for') as HTMLInputElement).value)
+      .toBe('Project audit.');
+    expect(selectByLabel(rendered.document, 'Model').value).toBe('');
+    expect(selectByLabel(rendered.document, 'Reasoning').value).toBe('');
+  });
+
   test('tells the write which agent already exists, so create cannot replace', async () => {
     const { document, click, calls } = await renderAgents();
 

@@ -5,6 +5,8 @@
 // the window and broadcasts changes) and the renderer (which routes on the
 // surface and listens for change broadcasts).
 
+import { isAgentTypeIdentifier } from './agent/configuration';
+
 export const WINDOW_SURFACE_QUERY_PARAM = 'surface';
 export type WindowSurface = 'main' | 'settings' | 'provider-config';
 
@@ -40,7 +42,6 @@ export const SETTINGS_ANCHOR_PARAM = 'anchor';
 export const SETTINGS_AGENT_TYPE_PARAM = 'agent';
 export const LIN_SETTINGS_NAVIGATE_CHANNEL = 'lin:settings-navigate';
 const SETTINGS_ANCHOR_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const SETTINGS_AGENT_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 /** Which category owns each page, so a page target routes without being told twice. */
 const PAGE_CATEGORY: Record<SettingsPageTarget, SettingsCategoryTarget> = {
@@ -70,7 +71,7 @@ export function isSettingsAnchorTarget(value: unknown): value is string {
 }
 
 export function isSettingsAgentTypeTarget(value: unknown): value is string {
-  return typeof value === 'string' && SETTINGS_AGENT_TYPE_PATTERN.test(value);
+  return isAgentTypeIdentifier(value);
 }
 
 export function settingsPageCategory(page: SettingsPageTarget): SettingsCategoryTarget {

@@ -74,7 +74,9 @@ UI or acquire a second setting identity. Deleting a custom Role removes its
 same-layer execution row in the same atomic write, so recreating the name cannot
 silently recover a stale model choice. A custom Role's execution row must live in
 that Role's layer; only built-in Agent types may independently choose the user or
-project layer.
+project layer. When both layers define a same-name custom Role, only the
+execution row beside the winning project Role is effective; it never inherits
+the shadowed user Role's row.
 
 ### Settings experience
 
@@ -127,6 +129,11 @@ is field-wise:
 4. if a formerly valid explicit selection is now unavailable or incompatible,
    use the direct parent's complete provider/model/reasoning selection for this
    spawn and record why the fallback occurred.
+
+Parent validation resolves the usable provider connection first and delegates
+model validation to the runtime resolver, so an arbitrary model ID already used
+successfully through a custom OpenAI-compatible endpoint remains inheritable
+without appearing in the provider catalog.
 
 Fallback is visible but never blocks the Turn. The child starts normally and its
 launch/report surface shows one persistent, non-modal warning: the configured

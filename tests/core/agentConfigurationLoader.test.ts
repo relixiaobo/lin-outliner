@@ -273,6 +273,41 @@ describe('AgentConfigurationLoader', () => {
     ]));
   });
 
+  test('resolves a custom Agent execution row only from the winning Role layer', async () => {
+    const { userData, cwd } = await fixturePaths();
+    await writeJson(userConfigurationPath(userData), {
+      roles: {
+        auditor: { description: 'User auditor.', developerInstructions: 'Use the user workflow.' },
+      },
+      agentExecution: {
+        auditor: {
+          modelProvider: 'openai',
+          model: 'openai/user-model',
+          reasoningEffort: 'high',
+        },
+      },
+    });
+    await writeJson(projectConfigurationPath(cwd), {
+      roles: {
+        auditor: { description: 'Project auditor.', developerInstructions: 'Use the project workflow.' },
+      },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+
+    expect(loader.resolveRole('auditor', cwd)).toMatchObject({
+      source: 'project',
+      description: 'Project auditor.',
+    });
+    expect(loader.resolveAgentExecution('auditor', cwd)).toBeNull();
+    expect(loader.listAgentExecutionSelections(cwd)).toContainEqual({
+      agentType: 'auditor',
+      layer: 'user',
+      modelProvider: 'openai',
+      model: 'openai/user-model',
+      reasoningEffort: 'high',
+    });
+  });
+
   test('rejects Role execution fields and malformed execution rows at the decode boundary', async () => {
     const { userData, cwd } = await fixturePaths();
     const path = userConfigurationPath(userData);
@@ -330,6 +365,27 @@ describe('AgentConfigurationLoader', () => {
     expect(() => loader.resolveAgentExecution('auditor', cwd)).toThrow(
       'requires a Role in the same layer',
     );
+  });
+
+  test('bounds custom Agent type names to the Settings deep-link limit', async () => {
+    const { userData, cwd } = await fixturePaths();
+    const path = userConfigurationPath(userData);
+    const validName = `a${'b'.repeat(63)}`;
+    await writeJson(path, {
+      roles: {
+        [validName]: { description: 'Valid.', developerInstructions: 'Use the bounded name.' },
+      },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+    expect(loader.resolveRole(validName, cwd).name).toBe(validName);
+
+    const invalidName = `a${'b'.repeat(64)}`;
+    await writeJson(path, {
+      roles: {
+        [invalidName]: { description: 'Too long.', developerInstructions: 'Reject this name.' },
+      },
+    });
+    expect(() => loader.resolveRole(invalidName, cwd)).toThrow('at most 64');
   });
 
   test('fails closed on unknown fields and unavailable selections', async () => {

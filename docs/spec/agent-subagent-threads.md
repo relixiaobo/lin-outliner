@@ -186,7 +186,9 @@ exact catalog spelling. Otherwise it trims for matching only, compares
 case-insensitively, and treats runs of spaces, underscores, and hyphens as the
 same separator. One normalized match resolves to its canonical spelling;
 multiple matches are an ambiguity error, and no match reports the available
-types. Diagnostics and persistence use the canonical result.
+types. Custom Agent type identifiers are limited to 64 ASCII letters, digits,
+hyphens, and underscores so every valid type remains addressable by the bounded
+Settings deep link. Diagnostics and persistence use the canonical result.
 
 ### Presentation
 
@@ -368,8 +370,9 @@ Agent type, never by hidden backing Role. A row may contain one
 `modelProvider`/provider-qualified `model` pair and an independent
 `reasoningEffort`; project replaces the same user row as a whole entry rather
 than merging individual fields. A custom type's row must live beside its Role
-in the same layer. Deleting that Role removes its same-layer execution row in
-the same atomic write.
+in the same layer, and only the row beside the winning Role is effective: a
+project Role never inherits a shadowed user Role's execution row. Deleting that
+Role removes its same-layer execution row in the same atomic write.
 
 Every collaboration Agent editor except `main` offers **Follow parent** plus the
 models from currently usable providers. Reasoning choices are filtered to the
@@ -383,6 +386,9 @@ provider/model/reasoning selection and validates the result before UUID minting,
 ledger admission, worktree preparation, child Thread creation, or provider I/O.
 If the configured selection is unavailable or incompatible, the child starts on
 the parent's complete selection and records a bounded `unavailable` fallback.
+The inherited parent model is validated by the runtime model resolver over its
+usable provider connection; catalog membership is not required for an arbitrary
+model ID served by a custom OpenAI-compatible endpoint.
 The launch result tells the delegating model, while the chip/report tells the
 user and links to that type's Agent Settings. If the parent selection is also
 unusable, the call fails before creating child artifacts. This availability

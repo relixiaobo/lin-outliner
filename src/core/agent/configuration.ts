@@ -3,6 +3,16 @@ import { identitySlot } from '../identityHash';
 export const REASONING_EFFORTS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 
+export const MAX_AGENT_TYPE_LENGTH = 64;
+const AGENT_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
+
+/** The identifier grammar shared by configuration, dispatch, and Settings deep links. */
+export function isAgentTypeIdentifier(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length <= MAX_AGENT_TYPE_LENGTH
+    && AGENT_TYPE_PATTERN.test(value);
+}
+
 export interface ConfigurationProfile {
   readonly name: string;
   readonly source: 'builtIn' | 'user' | 'project';

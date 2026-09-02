@@ -7,6 +7,7 @@ import {
   MAIN_PRESENTATION_KEY,
   REASONING_EFFORTS,
   deriveIdentityColor,
+  isAgentTypeIdentifier,
   type AgentPresentation,
   type AgentPresentationOverride,
   type AgentExecutionSelection,
@@ -265,7 +266,7 @@ export class AgentConfigurationLoader {
   }
 
   resolveRole(nameInput: string, cwd: string): AgentRole {
-    const name = normalizeSelectedName(nameInput, 'Agent Role');
+    const name = normalizeSelectedAgentType(nameInput, 'Agent Role');
     const merged = this.loadMerged(cwd);
     const role = merged.roles.get(name) ?? BUILT_IN_AGENT_ROLE_DEFINITIONS[name];
     if (!role) throw new Error(`Unknown Agent Role: ${name}`);
@@ -480,7 +481,14 @@ export class AgentConfigurationLoader {
   }
 
   resolveAgentExecution(agentType: string, cwd: string): AgentExecutionSelection | null {
-    return this.loadMerged(cwd).agentExecution.get(agentType) ?? null;
+    const user = this.readLayerAndClearFailure(userConfigurationPath(this.userDataPath), 'user');
+    const project = this.readLayerAndClearFailure(projectConfigurationPath(cwd), 'project');
+    if (BUILT_IN_AGENT_TYPES.some((entry) => entry.canonicalType === agentType)) {
+      return project.agentExecution.get(agentType) ?? user.agentExecution.get(agentType) ?? null;
+    }
+    if (project.roles.has(agentType)) return project.agentExecution.get(agentType) ?? null;
+    if (user.roles.has(agentType)) return user.agentExecution.get(agentType) ?? null;
+    return null;
   }
 
   listAgentExecutionSelections(cwd: string): readonly AgentExecutionSelectionRow[] {
@@ -780,7 +788,7 @@ export function decodeConfigurationLayer(
   }
   const roles = new Map<string, AgentRole>();
   for (const [name, roleValue] of Object.entries(optionalObject(root.roles, `${path}.roles`))) {
-    validateDefinitionName(name, `${path}.roles`);
+    validateAgentTypeName(name, `${path}.roles`);
     // `main` names the conversation's own agent everywhere presentation is
     // addressed. A Role by that name would resolve to one identity in the
     // override map and another in the Agent-type catalog.
@@ -793,7 +801,7 @@ export function decodeConfigurationLayer(
   for (const [name, overrideValue] of Object.entries(
     optionalObject(root.presentationOverrides, `${path}.presentationOverrides`),
   )) {
-    if (name !== MAIN_PRESENTATION_KEY) validateDefinitionName(name, `${path}.presentationOverrides`);
+    if (name !== MAIN_PRESENTATION_KEY) validateAgentTypeName(name, `${path}.presentationOverrides`);
     presentationOverrides.set(
       name,
       decodePresentation(overrideValue, `${path}.presentationOverrides.${name}`),
@@ -803,7 +811,7 @@ export function decodeConfigurationLayer(
   for (const [name, selectionValue] of Object.entries(
     optionalObject(root.agentExecution, `${path}.agentExecution`),
   )) {
-    validateDefinitionName(name, `${path}.agentExecution`);
+    validateAgentTypeName(name, `${path}.agentExecution`);
     const builtIn = BUILT_IN_AGENT_TYPES.some((entry) => entry.canonicalType === name);
     if (!builtIn && !roles.has(name)) {
       throw new Error(`${path}.agentExecution.${name} requires a Role in the same layer`);
@@ -1023,6 +1031,12 @@ function normalizeSelectedName(value: string, label: string): string {
   return normalized;
 }
 
+function normalizeSelectedAgentType(value: string, label: string): string {
+  const normalized = value.trim();
+  validateAgentTypeName(normalized, label);
+  return normalized;
+}
+
 function normalizeAgentTypeForMatch(value: string): string {
   return value.trim().toLowerCase().replace(/[ _-]+/gu, '-');
 }
@@ -1035,6 +1049,12 @@ function joinAlternatives(values: readonly string[]): string {
 function validateDefinitionName(value: string, path: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/u.test(value)) {
     throw new Error(`${path} must use letters, digits, hyphens, and underscores`);
+  }
+}
+
+function validateAgentTypeName(value: string, path: string): void {
+  if (!isAgentTypeIdentifier(value)) {
+    throw new Error(`${path} must use at most 64 letters, digits, hyphens, and underscores`);
   }
 }
 

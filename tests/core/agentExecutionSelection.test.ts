@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { ThreadConfigurationSummary } from '../../src/core/agent/protocol';
 import type { AgentProviderRuntimeConfig } from '../../src/main/agent/capabilities/agentSettings';
+import { validateAgentModelSelection } from '../../src/main/agent/capabilities/agentModelResolution';
 import { resolveAgentExecutionSelection } from '../../src/main/agent/agentExecutionSelection';
 
 const parent: ThreadConfigurationSummary = Object.freeze({
@@ -27,8 +28,35 @@ describe('fresh Agent execution selection', () => {
       },
       validateSelection: (selection) => { validated.push(selection); },
     })).resolves.toEqual({ ...parent, fallback: null });
-    expect(reads).toEqual([['openai', 'gpt-parent']]);
+    expect(reads).toEqual([['openai', undefined]]);
     expect(validated).toEqual([parent]);
+  });
+
+  test('lets the runtime resolver validate an inherited custom-endpoint model outside the catalog', async () => {
+    const reads: Array<readonly [string, string | undefined]> = [];
+    const validated: ThreadConfigurationSummary[] = [];
+    const customParent = {
+      ...parent,
+      model: 'openai/private-deployment',
+      reasoningEffort: 'off' as const,
+    };
+    await expect(resolveAgentExecutionSelection({
+      selection: null,
+      parent: customParent,
+      getProviderRuntimeConfig: async (providerId, modelId) => {
+        reads.push([providerId, modelId]);
+        return { providerId, enabled: true, baseUrl: 'http://127.0.0.1:11434/v1' };
+      },
+      validateSelection: (selection, provider) => {
+        validated.push(selection);
+        validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
+      },
+    })).resolves.toEqual({
+      ...customParent,
+      fallback: null,
+    });
+    expect(reads).toEqual([['openai', undefined]]);
+    expect(validated).toEqual([customParent]);
   });
 
   test('rejects an unavailable inherited parent before admission', async () => {
@@ -37,7 +65,7 @@ describe('fresh Agent execution selection', () => {
       parent,
       getProviderRuntimeConfig: async () => null,
       validateSelection: () => undefined,
-    })).rejects.toThrow('Parent provider or model is unavailable: openai');
+    })).rejects.toThrow('Parent provider is unavailable: openai');
   });
 
   test('validates an explicit cross-provider model by its current catalog identity', async () => {
@@ -120,6 +148,6 @@ describe('fresh Agent execution selection', () => {
       parent,
       getProviderRuntimeConfig: async () => null,
       validateSelection: () => undefined,
-    })).rejects.toThrow('Parent provider or model is unavailable: openai');
+    })).rejects.toThrow('Parent provider is unavailable: openai');
   });
 });
