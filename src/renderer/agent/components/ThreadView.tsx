@@ -2438,6 +2438,7 @@ export function ThreadView({
     const submittedAttachmentIds = new Set(submittedAttachments.map((attachment) => attachment.id));
     const editorSnapshot = composerRef.current?.snapshot() ?? null;
     const scroll = scrollRef.current;
+    const disclosureAnchorPending = hasPendingAnchor();
     const renderedSendSpacer = scroll?.querySelector<HTMLElement>('.thread-send-anchor-spacer') ?? null;
     const preSendContentScrollHeight = scroll
       ? Math.max(
@@ -2447,10 +2448,13 @@ export function ThreadView({
             - disclosureAnchorRunwayRef.current,
         )
       : 0;
-    const shouldAnchorSend = Boolean(scroll && transcriptNeedsSendAnchor({
-      clientHeight: scroll.clientHeight,
-      scrollHeight: preSendContentScrollHeight,
-    }));
+    const shouldAnchorSend = Boolean(scroll && (
+      disclosureAnchorPending
+      || transcriptNeedsSendAnchor({
+        clientHeight: scroll.clientHeight,
+        scrollHeight: preSendContentScrollHeight,
+      })
+    ));
     const previousViewport = scroll ? {
       anchor: followRef.current ? null : readTranscriptAnchor(scroll),
       disclosureRunway: disclosureAnchorRunwayRef.current,
