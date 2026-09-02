@@ -1,7 +1,10 @@
-import { app } from 'electron';
+import { BrowserWindow, app, session as electronSession } from 'electron';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 
 import { createAgentTools } from '../src/main/agent/capabilities/agentTools';
+import { WEB_SEARCH_PARTITION } from '../src/main/agent/capabilities/agentWebConstants';
+import { interceptFirstMainFrameRedirect } from '../src/main/agent/capabilities/agentWebRedirect';
+import { isGoogleRedirectCandidateUrl } from '../src/main/agent/capabilities/agentWebSearchSerp';
 import { isToolEnvelope, type ToolEnvelope } from '../src/main/agent/capabilities/agentToolEnvelope';
 
 interface ProbeResult {
@@ -32,6 +35,7 @@ interface WebFetchProbeData {
 
 interface WebSearchProbeData {
   finalUrl?: string;
+  providerName?: string;
   resultCount?: number;
   hint?: {
     type: string;
@@ -47,21 +51,26 @@ interface WebSearchProbeData {
 interface LocalWebFixture {
   contentUrl: string;
   redirectUrl: string;
+  searchRedirectUrl: string;
+  searchTargetUrl: string;
+  requests: string[];
   close: () => Promise<void>;
 }
 
 const results: ProbeResult[] = [];
 const tools = createAgentTools();
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
-const SEARCH_TOOL_TIMEOUT_MS = 85_000;
+const SEARCH_TOOL_TIMEOUT_MS = 210_000;
 const EXPECTED_PROBE_NAMES = [
   'local fixture setup',
   'web_fetch read local fixture',
   'web_fetch metadata local fixture',
   'web_fetch find local fixture',
   'web_fetch follows local redirect',
+  'search redirect interception boundary',
   'local fixture teardown',
-  'web_search Google SERP',
+  'web_search provider chain',
+  'web_fetch search result',
   'web_fetch read example.com',
   'web_fetch metadata example.com',
   'web_fetch find example.com',
@@ -72,6 +81,12 @@ async function main(): Promise<number> {
     // Tool-owned windows may close mid-run; this probe exits explicitly after its summary.
   });
   await app.whenReady();
+
+  const searchRequests: string[] = [];
+  electronSession.fromPartition(WEB_SEARCH_PARTITION).webRequest.onBeforeRequest((details, callback) => {
+    searchRequests.push(details.url);
+    callback({});
+  });
 
   const fixtureState: { fixture?: LocalWebFixture } = {};
   await runProbe('local fixture setup', async () => {
@@ -89,6 +104,7 @@ async function main(): Promise<number> {
         'deterministic local page',
       );
       await runWebFetchRedirectProbe(fixture);
+      await runSearchRedirectBoundaryProbe(fixture);
     } finally {
       await runProbe('local fixture teardown', async () => {
         await fixture.close();
@@ -96,21 +112,17 @@ async function main(): Promise<number> {
       });
     }
   }
-  await runProbe('web_search Google SERP', async () => {
+  let discoveredUrl: string | undefined;
+  await runProbe('web_search provider chain', async () => {
+    const requestStart = searchRequests.length;
     const envelope = await executeTool<WebSearchProbeData>(
       'web_search',
       {
-        query: 'electron BrowserWindow documentation',
+        query: 'site:electronjs.org/docs/latest/api/browser-window BrowserWindow',
         limit: 3,
       },
       SEARCH_TOOL_TIMEOUT_MS,
     );
-    if (!envelope.ok && envelope.error?.code === 'extraction_failed') {
-      return {
-        verdict: 'SKIP' as const,
-        detail: `search provider did not expose a normal SERP: ${envelope.error.message}`,
-      };
-    }
     assertOk(envelope);
     if (envelope.data?.hint) {
       return {
@@ -121,8 +133,51 @@ async function main(): Promise<number> {
     if (!envelope.data?.resultCount) {
       throw new Error('expected at least one search result');
     }
+    if (envelope.data.providerName !== 'google_serp') {
+      throw new Error(`expected google_serp provider; got ${envelope.data.providerName ?? '<unknown>'}`);
+    }
+    const returnedResults = envelope.data.results ?? [];
+    if (returnedResults.length !== envelope.data.resultCount) {
+      throw new Error(`expected ${envelope.data.resultCount} result records; got ${returnedResults.length}`);
+    }
+    const requests = searchRequests.slice(requestStart);
+    const googleRedirectRequests = requests.filter(isGoogleRedirectCandidateUrl);
+    if (googleRedirectRequests.length === 0) {
+      throw new Error('expected the Google resolver to request at least one admitted /goto URL');
+    }
+    for (const result of returnedResults) {
+      if (!/^https?:\/\//.test(result.url)) {
+        throw new Error(`expected result to have an http(s) URL; got ${result.url}`);
+      }
+      if (requests.some((requestedUrl) => sameResourceUrl(requestedUrl, result.url))) {
+        throw new Error(`search requested result content before web_fetch: ${result.url}`);
+      }
+    }
     const first = envelope.data.results?.[0];
-    return `count=${envelope.data.resultCount} first="${preview(first?.title ?? '')}"`;
+    if (!first || !/^https?:\/\//.test(first.url)) {
+      throw new Error(`expected first result to have an http(s) URL; got ${first?.url ?? '<missing>'}`);
+    }
+    const host = new URL(first.url).hostname;
+    if (host !== 'electronjs.org' && !host.endsWith('.electronjs.org')) {
+      throw new Error(`expected an electronjs.org result; got ${first.url}`);
+    }
+    discoveredUrl = first.url;
+    return `provider=${envelope.data.providerName} count=${envelope.data.resultCount} goto=${googleRedirectRequests.length} first="${preview(first.title)}"`;
+  });
+
+  await runProbe('web_fetch search result', async () => {
+    if (!discoveredUrl) {
+      return { verdict: 'SKIP' as const, detail: 'search did not yield a URL to fetch' };
+    }
+    const envelope = await executeTool<WebFetchProbeData>('web_fetch', {
+      url: discoveredUrl,
+      max_chars: 10_000,
+    });
+    assertOk(envelope);
+    if (!envelope.data.content?.includes('BrowserWindow')) {
+      throw new Error(`expected fetched result content to include BrowserWindow; got ${preview(envelope.data.content ?? '')}`);
+    }
+    return `status=${envelope.data.statusCode} finalUrl=${envelope.data.finalUrl ?? discoveredUrl}`;
   });
 
   // Keep a non-window probe after web_search so a BrowserWindow close cannot
@@ -210,6 +265,46 @@ async function runWebFetchRedirectProbe(fixture: LocalWebFixture): Promise<void>
   });
 }
 
+async function runSearchRedirectBoundaryProbe(fixture: LocalWebFixture): Promise<void> {
+  await runProbe('search redirect interception boundary', async () => {
+    const requestStart = fixture.requests.length;
+    const window = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        session: electronSession.fromPartition('web-search-redirect-probe'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        javascript: false,
+      },
+    });
+
+    try {
+      const target = await interceptFirstMainFrameRedirect(
+        window.webContents,
+        fixture.searchRedirectUrl,
+        5_000,
+        (sourceUrl, targetUrl) => (
+          sourceUrl === fixture.searchRedirectUrl && targetUrl === fixture.searchTargetUrl
+            ? targetUrl
+            : null
+        ),
+      );
+      if (target !== fixture.searchTargetUrl) {
+        throw new Error(`expected admitted redirect target ${fixture.searchTargetUrl}; got ${target ?? '<empty>'}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const requestPaths = fixture.requests.slice(requestStart).map((url) => new URL(url).pathname);
+      if (requestPaths.length !== 1 || requestPaths[0] !== '/search-redirect') {
+        throw new Error(`expected only the redirect source request; got ${requestPaths.join(', ') || '<none>'}`);
+      }
+      return `requests=${requestPaths.join(',')} target=${target}`;
+    } finally {
+      if (!window.isDestroyed()) window.destroy();
+    }
+  });
+}
+
 async function startLocalWebFixture(): Promise<LocalWebFixture> {
   const html = [
     '<!doctype html><html lang="en"><head><title>Tenon Web Fetch Probe</title></head>',
@@ -218,14 +313,26 @@ async function startLocalWebFixture(): Promise<LocalWebFixture> {
     '<p>Readable content, metadata, and find mode must all survive request construction.</p>',
     '</article></main></body></html>',
   ].join('');
+  const requests: string[] = [];
   const server = createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+    requests.push(requestUrl.toString());
     const metadataError = inconsistentFetchMetadata(request.headers);
     if (metadataError) {
       response.writeHead(409, { 'content-type': 'text/plain; charset=utf-8' });
       response.end(metadataError);
       return;
     }
-    const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+    if (requestUrl.pathname === '/search-redirect') {
+      response.writeHead(302, { location: '/search-target' });
+      response.end();
+      return;
+    }
+    if (requestUrl.pathname === '/search-target') {
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      response.end('this target must not be requested');
+      return;
+    }
     if (requestUrl.pathname === '/redirect') {
       response.writeHead(302, { location: '/content' });
       response.end();
@@ -253,6 +360,9 @@ async function startLocalWebFixture(): Promise<LocalWebFixture> {
   return {
     contentUrl: `${origin}/content`,
     redirectUrl: `${origin}/redirect`,
+    searchRedirectUrl: `${origin}/search-redirect`,
+    searchTargetUrl: `${origin}/search-target`,
+    requests,
     close: () => closeServer(server),
   };
 }
@@ -398,6 +508,18 @@ function printSummary(): void {
 function preview(value: string, limit = 120): string {
   const compact = value.replace(/\s+/g, ' ').trim();
   return compact.length > limit ? `${compact.slice(0, limit)}...` : compact;
+}
+
+function sameResourceUrl(left: string, right: string): boolean {
+  try {
+    const leftUrl = new URL(left);
+    const rightUrl = new URL(right);
+    const host = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, '');
+    const path = (url: URL) => url.pathname.replace(/\/$/, '') || '/';
+    return host(leftUrl) === host(rightUrl) && path(leftUrl) === path(rightUrl);
+  } catch {
+    return false;
+  }
 }
 
 function flushOutput(stream: NodeJS.WriteStream): Promise<void> {

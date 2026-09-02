@@ -1,25 +1,30 @@
 import { describe, expect, test } from 'bun:test';
 import { parseHTML } from 'linkedom';
-import type { WebSearchResult } from '../../src/main/agent/capabilities/agentWebTools';
 import {
+  DUCKDUCKGO_SERP_READY_SELECTOR,
+  admitGoogleRedirectTarget,
   duckDuckGoSerpExtractorExpression,
   extractDuckDuckGoSerp,
   extractGoogleSerp,
   googleSerpExtractorExpression,
+  isGoogleRedirectCandidateUrl,
   isTransientSearchError,
+  runTwoProviderSearchChain,
+  selectSearchOutcomeIndex,
   shouldFallbackToSecondaryEngine,
+  type SearchAttemptSummary,
 } from '../../src/main/agent/capabilities/agentWebSearchSerp';
 
-function runGoogleSerpExtractor(html: string): { htmlLength: number; results: WebSearchResult[] } {
+function runGoogleSerpExtractor(html: string): ReturnType<typeof extractGoogleSerp> {
   const { document } = parseHTML(html);
   return extractGoogleSerp(document, 10);
 }
 
-function runGoogleSerpExtractorExpression(html: string): { htmlLength: number; results: WebSearchResult[] } {
+function runGoogleSerpExtractorExpression(html: string): ReturnType<typeof extractGoogleSerp> {
   const { document } = parseHTML(html);
   const run = new Function('document', `return ${googleSerpExtractorExpression(10)};`) as (
     document: Document,
-  ) => { htmlLength: number; results: WebSearchResult[] };
+  ) => ReturnType<typeof extractGoogleSerp>;
   return run(document);
 }
 
@@ -46,23 +51,60 @@ describe('Google SERP extraction', () => {
   test('extracts snippets from surrounding result blocks', () => {
     const payload = runGoogleSerpExtractor(SERP_HTML);
 
-    expect(payload.results).toHaveLength(2);
-    expect(payload.results[0]).toMatchObject({
+    expect(payload.candidates).toHaveLength(2);
+    expect(payload.candidates[0]).toMatchObject({
       title: 'Alpha Result',
       url: 'https://example.com/alpha',
       source: 'example.com',
     });
-    expect(payload.results[0]!.snippet).toContain('Alpha snippet');
-    expect(payload.results[0]!.snippet).not.toBe('');
-    expect(payload.results[1]!.snippet).toContain('Beta snippet');
+    expect(payload.candidates[0]!.snippet).toContain('Alpha snippet');
+    expect(payload.candidates[0]!.snippet).not.toBe('');
+    expect(payload.candidates[1]!.snippet).toContain('Beta snippet');
+    expect(payload.candidateCount).toBe(3);
   });
 
   test('builds an executable browser expression from the pure extractor', () => {
-    expect(runGoogleSerpExtractorExpression(SERP_HTML).results).toEqual(runGoogleSerpExtractor(SERP_HTML).results);
+    expect(runGoogleSerpExtractorExpression(SERP_HTML).candidates).toEqual(runGoogleSerpExtractor(SERP_HTML).candidates);
+  });
+
+  test('preserves opaque Google redirects in result order', () => {
+    const html = [
+      '<!doctype html><html><body><div id="search">',
+      '<div><a href="/goto?url=opaque-signed-token"><h3>Current Result</h3></a>',
+      '<span>example.com</span><p>A real visible result whose target is opaque.</p></div>',
+      '<div><a href="https://direct.example/docs"><h3>Direct Result</h3></a>',
+      '<p>A directly readable result after the opaque result.</p></div>',
+      '</div></body></html>',
+    ].join('');
+
+    const payload = runGoogleSerpExtractor(html);
+    expect(payload.candidateCount).toBe(2);
+    expect(payload.candidates.map((candidate) => candidate.title)).toEqual(['Current Result', 'Direct Result']);
+    expect(payload.candidates[0]).toMatchObject({
+      kind: 'google_redirect',
+      redirectUrl: 'https://www.google.com/goto?url=opaque-signed-token',
+    });
+    expect(payload.candidates[1]).toMatchObject({ kind: 'direct', url: 'https://direct.example/docs' });
+  });
+
+  test('admits only bounded Google candidates and first-hop external http targets', () => {
+    const candidate = 'https://www.google.com/goto?url=opaque-token';
+    expect(isGoogleRedirectCandidateUrl(candidate)).toBe(true);
+    expect(isGoogleRedirectCandidateUrl('http://www.google.com/goto?url=opaque-token')).toBe(false);
+    expect(isGoogleRedirectCandidateUrl('https://google.com/goto?url=opaque-token')).toBe(false);
+    expect(isGoogleRedirectCandidateUrl('https://user:secret@www.google.com/goto?url=opaque-token')).toBe(false);
+    expect(isGoogleRedirectCandidateUrl('https://www.google.com/search?url=opaque-token')).toBe(false);
+    expect(admitGoogleRedirectTarget(candidate, 'https://example.com/docs#section')).toBe('https://example.com/docs');
+    expect(admitGoogleRedirectTarget(candidate, 'http://example.com/docs')).toBe('http://example.com/docs');
+    expect(admitGoogleRedirectTarget(candidate, 'https://accounts.google.com/login')).toBeNull();
+    expect(admitGoogleRedirectTarget(candidate, 'https://translate.google/page')).toBeNull();
+    expect(admitGoogleRedirectTarget(candidate, 'https://user:secret@example.com/docs')).toBeNull();
+    expect(admitGoogleRedirectTarget(candidate, 'file:///etc/passwd')).toBeNull();
+    expect(admitGoogleRedirectTarget('https://evil.example/goto?url=x', 'https://example.com')).toBeNull();
   });
 });
 
-function runDuckDuckGoExtractor(html: string): { htmlLength: number; results: WebSearchResult[] } {
+function runDuckDuckGoExtractor(html: string): ReturnType<typeof extractDuckDuckGoSerp> {
   const { document } = parseHTML(html);
   return extractDuckDuckGoSerp(document, 10);
 }
@@ -99,14 +141,46 @@ describe('DuckDuckGo SERP extraction', () => {
     expect(payload.results[0]!.snippet).toContain('Alpha snippet');
     // The ad row's target must never surface.
     expect(payload.results.some((r) => r.url.includes('ads.example.com'))).toBe(false);
+    expect(payload.candidateCount).toBe(3);
   });
 
   test('builds an executable browser expression from the pure extractor', () => {
     const { document } = parseHTML(DDG_HTML);
     const run = new Function('document', `return ${duckDuckGoSerpExtractorExpression(10)};`) as (
       document: Document,
-    ) => { results: WebSearchResult[] };
+    ) => ReturnType<typeof extractDuckDuckGoSerp>;
     expect(run(document).results).toEqual(runDuckDuckGoExtractor(DDG_HTML).results);
+  });
+
+  test('recognizes a normal empty SERP independently from result anchors', () => {
+    const { document } = parseHTML([
+      '<!doctype html><html><body><div id="links" class="results">',
+      '<div class="no-results">No results.</div>',
+      '</div></body></html>',
+    ].join(''));
+
+    expect(document.querySelector(DUCKDUCKGO_SERP_READY_SELECTOR)).not.toBeNull();
+    expect(extractDuckDuckGoSerp(document, 10)).toMatchObject({ candidateCount: 0, results: [] });
+  });
+
+  test('does not recognize the challenge shell as a normal SERP', () => {
+    const { document } = parseHTML([
+      '<!doctype html><html><body>',
+      '<form id="challenge-form"><div class="anomaly-modal__modal">Complete the challenge</div></form>',
+      '</body></html>',
+    ].join(''));
+
+    expect(document.querySelector(DUCKDUCKGO_SERP_READY_SELECTOR)).toBeNull();
+  });
+
+  test('does not mistake result-anchor markup drift for an authoritative empty SERP', () => {
+    const { document } = parseHTML([
+      '<!doctype html><html><body><div id="links" class="results">',
+      '<div class="result"><a class="renamed-result-link" href="https://example.com">Result</a></div>',
+      '</div></body></html>',
+    ].join(''));
+
+    expect(document.querySelector(DUCKDUCKGO_SERP_READY_SELECTOR)).toBeNull();
   });
 
   test('skips a sponsored row whose ad marker rides an outer wrapper, not the nearest .result', () => {
@@ -140,6 +214,49 @@ describe('web search fallback decision helpers', () => {
     expect(shouldFallbackToSecondaryEngine({ kind: 'error', resultCount: 0, code: 'network_error' })).toBe(true);
     expect(shouldFallbackToSecondaryEngine({ kind: 'error', resultCount: 0, code: 'invalid_args' })).toBe(false);
     expect(shouldFallbackToSecondaryEngine({ kind: 'error', resultCount: 0, code: 'aborted' })).toBe(false);
+  });
+
+  test('selectSearchOutcomeIndex prefers results, then truthful empty, then diagnostics', () => {
+    expect(selectSearchOutcomeIndex([
+      { kind: 'error', resultCount: 0, code: 'extraction_failed' },
+      { kind: 'ok', resultCount: 4 },
+    ])).toBe(1);
+    expect(selectSearchOutcomeIndex([
+      { kind: 'ok', resultCount: 0 },
+      { kind: 'ok', resultCount: 0 },
+    ])).toBe(1);
+    expect(selectSearchOutcomeIndex([
+      { kind: 'hint', resultCount: 0 },
+      { kind: 'ok', resultCount: 0 },
+    ])).toBe(0);
+    expect(selectSearchOutcomeIndex([])).toBe(-1);
+  });
+
+  test('runs Google then DuckDuckGo and returns authoritative empty only after both empty SERPs', async () => {
+    type Attempt = SearchAttemptSummary & { provider: 'google_serp' | 'duckduckgo_html' };
+    const calls: string[] = [];
+    const outcome = await runTwoProviderSearchChain<Attempt>(
+      async () => {
+        calls.push('google_serp');
+        const { document } = parseHTML('<!doctype html><html><body><div id="search"></div></body></html>');
+        const extraction = extractGoogleSerp(document, 10);
+        return { provider: 'google_serp', kind: 'ok', resultCount: extraction.candidates.length };
+      },
+      async () => {
+        calls.push('duckduckgo_html');
+        const { document } = parseHTML([
+          '<!doctype html><html><body><div id="links" class="results">',
+          '<div class="no-results">No results.</div>',
+          '</div></body></html>',
+        ].join(''));
+        const extraction = extractDuckDuckGoSerp(document, 10);
+        return { provider: 'duckduckgo_html', kind: 'ok', resultCount: extraction.results.length };
+      },
+      (attempt) => attempt,
+    );
+
+    expect(calls).toEqual(['google_serp', 'duckduckgo_html']);
+    expect(outcome).toEqual({ provider: 'duckduckgo_html', kind: 'ok', resultCount: 0 });
   });
 
   test('isTransientSearchError retries nav faults, including the dominant navigation_failed', () => {

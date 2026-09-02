@@ -6,8 +6,20 @@ import type { WebSearchResult } from './agentWebTools';
 
 export interface GoogleSerpExtraction {
   htmlLength: number;
-  results: WebSearchResult[];
+  candidateCount: number;
+  candidates: GoogleSerpCandidate[];
 }
+
+interface GoogleSerpCandidateBase {
+  title: string;
+  snippet: string;
+  source?: string;
+}
+
+export type GoogleSerpCandidate = GoogleSerpCandidateBase & (
+  | { kind: 'direct'; url: string }
+  | { kind: 'google_redirect'; redirectUrl: string }
+);
 
 export function googleSerpExtractorExpression(maxResults = MAX_SEARCH_LIMIT): string {
   return `(${extractGoogleSerp.toString()})(document, ${normalizeSerpLimit(maxResults)})`;
@@ -15,8 +27,9 @@ export function googleSerpExtractorExpression(maxResults = MAX_SEARCH_LIMIT): st
 
 export function extractGoogleSerp(document: Document, maxResults: number): GoogleSerpExtraction {
   const root = document.querySelector('#search') || document.querySelector('#rso') || document;
+  const headings = Array.from(root.querySelectorAll('h3'));
   const seen = new Set<string>();
-  const results: WebSearchResult[] = [];
+  const candidates: GoogleSerpCandidate[] = [];
   const limit = Number.isFinite(maxResults) ? Math.max(1, Math.trunc(maxResults)) : 10;
 
   const compact = (value: unknown): string => String(value || '').replace(/\s+/g, ' ').trim();
@@ -34,14 +47,25 @@ export function extractGoogleSerp(document: Document, maxResults: number): Googl
     }
   };
 
-  const normalizeHref = (href: string | null | undefined): string | null => {
+  const normalizeHref = (
+    href: string | null | undefined,
+  ): { kind: 'direct'; url: string } | { kind: 'google_redirect'; redirectUrl: string } | null => {
     if (!href) return null;
     try {
       const url = new URL(href, 'https://www.google.com');
       if (url.pathname === '/url') {
-        return url.searchParams.get('q') || url.searchParams.get('url');
+        const target = url.searchParams.get('q') || url.searchParams.get('url');
+        return target ? { kind: 'direct', url: target } : null;
       }
-      if (url.protocol === 'http:' || url.protocol === 'https:') return url.toString();
+      if (
+        url.protocol === 'https:'
+        && url.hostname === 'www.google.com'
+        && url.pathname === '/goto'
+        && url.searchParams.has('url')
+      ) {
+        return { kind: 'google_redirect', redirectUrl: url.toString() };
+      }
+      if (url.protocol === 'http:' || url.protocol === 'https:') return { kind: 'direct', url: url.toString() };
     } catch {
       return null;
     }
@@ -53,6 +77,7 @@ export function extractGoogleSerp(document: Document, maxResults: number): Googl
       const parsed = new URL(url);
       const host = parsed.hostname.toLowerCase();
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+      if (parsed.username || parsed.password) return false;
       if (/(^|\.)google\.[a-z.]+$/i.test(host)) return false;
       if (/(^|\.)googleusercontent\.com$/i.test(host)) return false;
       if (/^webcache\.googleusercontent\.com$/i.test(host)) return false;
@@ -131,39 +156,76 @@ export function extractGoogleSerp(document: Document, maxResults: number): Googl
     return text.length > 400 ? `${text.slice(0, 400).trim()}...` : text;
   };
 
-  for (const h3 of Array.from(root.querySelectorAll('h3'))) {
-    if (results.length >= limit) break;
+  for (const h3 of headings) {
+    if (candidates.length >= limit) break;
     const anchor = h3.closest('a');
-    const url = normalizeHref(anchor?.getAttribute('href'));
-    if (!url || seen.has(url) || !isExternalResultUrl(url)) continue;
+    const target = normalizeHref(anchor?.getAttribute('href'));
+    if (!target) continue;
+    const identity = target.kind === 'direct' ? target.url : target.redirectUrl;
+    if (seen.has(identity) || (target.kind === 'direct' && !isExternalResultUrl(target.url))) continue;
     const title = textOf(h3);
     if (!title) continue;
 
-    seen.add(url);
-    results.push({
+    seen.add(identity);
+    candidates.push({
       title,
-      url,
-      snippet: snippetFor(resultBlockFor(h3, anchor, title, url), h3, anchor, title, url),
-      source: sourceOf(url),
+      snippet: snippetFor(resultBlockFor(h3, anchor, title, identity), h3, anchor, title, identity),
+      ...(target.kind === 'direct' ? { ...target, source: sourceOf(target.url) } : target),
     });
   }
 
   return {
     htmlLength: document.documentElement?.outerHTML?.length || 0,
-    results,
+    candidateCount: headings.length,
+    candidates,
   };
+}
+
+export function isGoogleRedirectCandidateUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:'
+      && url.hostname === 'www.google.com'
+      && !url.username
+      && !url.password
+      && !url.port
+      && url.pathname === '/goto'
+      && Boolean(url.searchParams.get('url'))
+      && value.length <= 4_096;
+  } catch {
+    return false;
+  }
+}
+
+export function admitGoogleRedirectTarget(candidateUrl: string, targetUrl: string): string | null {
+  if (!isGoogleRedirectCandidateUrl(candidateUrl)) return null;
+  try {
+    const target = new URL(targetUrl);
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') return null;
+    if (target.username || target.password) return null;
+    const host = target.hostname.toLowerCase();
+    if (
+      /(^|\.)google\.[a-z.]+$/i.test(host)
+      || /(^|\.)googleusercontent\.com$/i.test(host)
+      || /(^|\.)translate\.google/i.test(host)
+    ) return null;
+    target.hash = '';
+    return target.toString();
+  } catch {
+    return null;
+  }
 }
 
 export interface DuckDuckGoSerpExtraction {
   htmlLength: number;
+  candidateCount: number;
   results: WebSearchResult[];
 }
 
-// Single source of truth for the DuckDuckGo HTML-endpoint result link. The
-// readiness gate in agentTools.ts imports this; the extractor below hardcodes the
-// same literal because it is serialized via .toString() and cannot reference a
-// module binding.
-export const DUCKDUCKGO_RESULT_SELECTOR = 'a.result__a';
+// A settled HTML SERP exposes either an organic anchor or the explicit empty
+// marker. A generic results container is intentionally insufficient: if the
+// anchor markup drifts, that must remain diagnostic rather than look empty.
+export const DUCKDUCKGO_SERP_READY_SELECTOR = 'a.result__a, .no-results';
 
 export function duckDuckGoSerpExtractorExpression(maxResults = MAX_SEARCH_LIMIT): string {
   return `(${extractDuckDuckGoSerp.toString()})(document, ${normalizeSerpLimit(maxResults)})`;
@@ -178,6 +240,7 @@ export function duckDuckGoSerpExtractorExpression(maxResults = MAX_SEARCH_LIMIT)
  * fully self-contained — no module-scope helpers.
  */
 export function extractDuckDuckGoSerp(document: Document, maxResults: number): DuckDuckGoSerpExtraction {
+  const candidates = Array.from(document.querySelectorAll('a.result__a'));
   const seen = new Set<string>();
   const results: WebSearchResult[] = [];
   const limit = Number.isFinite(maxResults) ? Math.max(1, Math.trunc(maxResults)) : 10;
@@ -209,10 +272,9 @@ export function extractDuckDuckGoSerp(document: Document, maxResults: number): D
     }
   };
 
-  // The 'a.result__a' literal must stay in sync with DUCKDUCKGO_RESULT_SELECTOR;
-  // this function is serialized via .toString() and runs in-page, so it cannot
-  // reference the exported constant.
-  for (const anchor of Array.from(document.querySelectorAll('a.result__a'))) {
+  // This function is serialized via .toString() and runs in-page, so the result
+  // anchor remains self-contained and independent from the page-readiness gate.
+  for (const anchor of candidates) {
     if (results.length >= limit) break;
     // Skip sponsored rows. The ad marker can ride the nearest `.result` OR an
     // outer wrapper, so match any ad-classed ancestor rather than only the
@@ -238,6 +300,7 @@ export function extractDuckDuckGoSerp(document: Document, maxResults: number): D
 
   return {
     htmlLength: document.documentElement?.outerHTML?.length || 0,
+    candidateCount: candidates.length,
     results,
   };
 }
@@ -251,6 +314,23 @@ export interface SearchAttemptSummary {
   code?: string;
 }
 
+export async function runTwoProviderSearchChain<T>(
+  primary: () => Promise<T>,
+  secondary: () => Promise<T>,
+  summarize: (outcome: T) => SearchAttemptSummary,
+  stopRequested: () => boolean = () => false,
+): Promise<T> {
+  const primaryOutcome = await primary();
+  if (stopRequested() || !shouldFallbackToSecondaryEngine(summarize(primaryOutcome))) return primaryOutcome;
+
+  const secondaryOutcome = await secondary();
+  if (stopRequested() || !shouldFallbackToSecondaryEngine(summarize(secondaryOutcome))) return secondaryOutcome;
+
+  const attempts = [primaryOutcome, secondaryOutcome];
+  const index = selectSearchOutcomeIndex(attempts.map(summarize));
+  return attempts[index] ?? secondaryOutcome;
+}
+
 // Try the secondary engine when the primary loaded but returned nothing, was
 // blocked / needs a browser (hint), or failed with a recoverable error. A bad
 // query or a caller abort is not worth a second engine.
@@ -258,6 +338,20 @@ export function shouldFallbackToSecondaryEngine(summary: SearchAttemptSummary): 
   if (summary.kind === 'ok') return summary.resultCount === 0;
   if (summary.kind === 'hint') return true;
   return summary.code !== 'invalid_args' && summary.code !== 'aborted';
+}
+
+// Choose the truthful terminal outcome after every eligible provider has run.
+// A non-empty success wins. Empty is authoritative only when every provider
+// reached a normal empty SERP; otherwise retain a diagnostic error/hint.
+export function selectSearchOutcomeIndex(attempts: readonly SearchAttemptSummary[]): number {
+  if (attempts.length === 0) return -1;
+  const success = attempts.findIndex((attempt) => attempt.kind === 'ok' && attempt.resultCount > 0);
+  if (success >= 0) return success;
+  if (attempts.every((attempt) => attempt.kind === 'ok')) return attempts.length - 1;
+  const error = attempts.findIndex((attempt) => attempt.kind === 'error');
+  if (error >= 0) return error;
+  const hint = attempts.findIndex((attempt) => attempt.kind === 'hint');
+  return hint >= 0 ? hint : attempts.length - 1;
 }
 
 // A transient nav fault is worth one immediate retry. web_search always targets
@@ -278,6 +372,7 @@ function normalizeSerpLimit(value: number): number {
 
 export interface BingImagesExtraction {
   htmlLength: number;
+  candidateCount: number;
   results: WebSearchResult[];
 }
 
@@ -299,6 +394,7 @@ export function bingImagesExtractorExpression(maxResults = MAX_SEARCH_LIMIT): st
  * it must stay fully self-contained — no module-scope helpers.
  */
 export function extractBingImages(document: Document, maxResults: number): BingImagesExtraction {
+  const candidates = Array.from(document.querySelectorAll('a.iusc'));
   const seen = new Set<string>();
   const results: WebSearchResult[] = [];
   const limit = Number.isFinite(maxResults) ? Math.max(1, Math.trunc(maxResults)) : 10;
@@ -323,7 +419,7 @@ export function extractBingImages(document: Document, maxResults: number): BingI
   // The 'a.iusc' literal must stay in sync with BING_IMAGES_RESULT_SELECTOR; this
   // function is serialized via .toString() and runs in-page, so it cannot
   // reference the exported constant.
-  for (const anchor of Array.from(document.querySelectorAll('a.iusc'))) {
+  for (const anchor of candidates) {
     if (results.length >= limit) break;
     const raw = anchor.getAttribute('m');
     if (!raw) continue;
@@ -366,6 +462,7 @@ export function extractBingImages(document: Document, maxResults: number): BingI
 
   return {
     htmlLength: document.documentElement?.outerHTML?.length || 0,
+    candidateCount: candidates.length,
     results,
   };
 }
