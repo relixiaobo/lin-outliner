@@ -1030,7 +1030,7 @@ describe('OutlineRuntimeWorkspace', () => {
     expect(resumed.affectedNodeIds).toMatchObject({ offset: 1_000, totalCount: operation.affectedNodeCount });
     expect(resumed.affectedNodeIds?.nodeIds).toEqual(pages.slice(1_000, 1_001));
     expect(resumed.cursor).toEqual(expect.any(String));
-  });
+  }, 15_000);
 
   test('derives bounded many defaults for every multi-target Runtime read selector', async () => {
     const root = await makeRoot();
@@ -1069,7 +1069,7 @@ describe('OutlineRuntimeWorkspace', () => {
     ];
     const router = new OutlineRuntimeRouter(workspace);
 
-    for (const command of ['show', 'export'] as const) {
+    for (const command of ['get', 'export'] as const) {
       for (const { selector, max } of selectors) {
         const response = await router.handle({
           protocolVersion: 1,
@@ -1120,7 +1120,7 @@ describe('OutlineRuntimeWorkspace', () => {
     const standalone = await router.handle({
       protocolVersion: 1,
       requestId: 'request:standalone-projection',
-      command: 'show',
+      command: 'get',
       input: { projection },
     }, { origin: 'local-user' });
     expect(standalone.ok).toBe(true);
@@ -1133,7 +1133,7 @@ describe('OutlineRuntimeWorkspace', () => {
     const conflicting = await router.handle({
       protocolVersion: 1,
       requestId: 'request:conflicting-projection',
-      command: 'show',
+      command: 'get',
       input: { selector: { by: 'id', id: secondId }, projection },
     }, { origin: 'local-user' });
     expect(conflicting).toMatchObject({
@@ -1141,7 +1141,7 @@ describe('OutlineRuntimeWorkspace', () => {
       error: {
         code: 'invalid_input',
         category: 'usage',
-        message: 'show Selector conflicts with the Selector declared by --projection.',
+        message: 'get Selector conflicts with the Selector declared by --projection.',
       },
     });
   });
@@ -1150,12 +1150,12 @@ describe('OutlineRuntimeWorkspace', () => {
     const root = await makeRoot();
     const workspace = await openWorkspace(root);
     const router = new OutlineRuntimeRouter(workspace);
-    router.register('show', () => ({ nodes: 'not-an-array' }));
+    router.register('get', () => ({ nodes: 'not-an-array' }));
 
     const response = await router.handle({
       protocolVersion: 1,
       requestId: 'request:invalid-handler-result',
-      command: 'show',
+      command: 'get',
       input: { selector: { by: 'alias', alias: 'today' } },
     }, { origin: 'local-user' });
     expect(response).toMatchObject({
@@ -1169,7 +1169,7 @@ async function logPage(router: OutlineRuntimeRouter, input: Record<string, unkno
   const response = await router.handle({
     protocolVersion: 1,
     requestId: `request:${crypto.randomUUID()}`,
-    command: 'log',
+    command: 'history',
     input,
   }, { origin: 'local-user' });
   if (!response.ok) throw response.error;

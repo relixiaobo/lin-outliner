@@ -86,7 +86,7 @@ safety from the Agent's stated intent.
 
 For a Bash call with `stdin`, capability evaluation parses the command once and returns
 both its action descriptors and one Host-private consumer class. Omitted input is
-`absent`; the exact direct `outline add|commit|diff --input -` registry forms are
+`absent`; exact registry-backed `outline COMMAND --input -` forms are
 `registered-data`; known interpreter stdin-source forms are `executable`; every nested
 shell wrapper, pipeline, alternate input source, or unproved consumer is `unknown`. Stdin text is opaque
 to this classifier. Explore, plan, read-only, and worktree Agents reject `executable` and
@@ -140,7 +140,7 @@ local file read/write/delete, shell execution classes, web access, publishing,
 external messaging, Goal control, Agent orchestration, Skill invocation, image
 generation, and Thread-history search/read. Import is not a separate model-tool action: a directly executable
 `outline` Bash segment is classified from the executable public capability
-registry. Local metadata, reads, observe, and `diff` are `outline.read`;
+registry. Local metadata, reads, observe, and `preview` are `outline.read`;
 ordinary mutation porcelain is `outline.edit`; destructive capability, `apply`,
 and `revert` also carry `outline.delete`.
 
@@ -182,7 +182,7 @@ transaction metadata.
 CLI import commits preserve the same audit identity without accepting raw IDs
 from the process or request body. After capability admission, the host issues a
 short-lived, single-use token bound to the current Thread, Turn, and Bash Item.
-Only the recognized commit process receives it, and the local API consumes it
+Only the recognized mutation process receives it, and the local API consumes it
 before request-body parsing. A missing, expired, evicted, or reused token fails
 without a document write.
 

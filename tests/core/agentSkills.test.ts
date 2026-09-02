@@ -1180,7 +1180,7 @@ describe('agent skills', () => {
     expect(await runtime.getSkill('research')).toBeNull();
   });
 
-  test('teaches the built-in outline Skill to route complete CRUD intents without shell choreography', async () => {
+  test('teaches the built-in outline Skill to use the agent-first model without shell choreography', async () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
       executeIsolatedSkill: async () => ({
@@ -1195,19 +1195,19 @@ describe('agent skills', () => {
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
     const instructions = invocation.renderedContent.replace(/\s+/gu, ' ');
-    expect(instructions).toContain('| Create or patch one resource | One porcelain command |');
-    expect(instructions).toContain('| Create one resource with structured state | The same porcelain command with `--input -` |');
-    expect(instructions).toContain('| Change dependent resources together | One `outline commit --input -` ChangeSet |');
-    expect(instructions).toContain('never query intermediate IDs or issue a shell mutation loop');
-    expect(instructions).toContain('Exact structured targets are locator strings');
-    expect(instructions).toContain('outline example add viewed-tree');
-    expect(instructions).toContain('`--yes` alone is invalid');
-    expect(instructions).toContain('`@saved-searches`');
+    expect(instructions).toContain('A **Node** is the only content and tree identity');
+    expect(instructions).toContain('A **Field** is a reusable typed definition');
+    expect(instructions).toContain('A **View** projects Nodes as `outline`, `table`, `cards`, or `calendar`');
+    expect(instructions).toContain('| Create a complete Node tree and optional View | `outline create ...` |');
+    expect(instructions).toContain('| Multi-resource work with dependencies | `outline transact --input -` |');
+    expect(instructions).toContain('bind resources inside its ChangeSet instead of querying intermediate IDs');
+    expect(instructions).toContain('Request-local field keys');
+    expect(instructions).toContain('outline example edit complete');
     expect(instructions).toContain('explicit `max`');
-    expect(instructions).toContain('Prefer one complete porcelain invocation');
-    expect(instructions).toContain('known non-destructive ChangeSet');
+    expect(instructions).toContain('When the task fits the Common Create shape above, run it directly');
+    expect(instructions).toContain('Do not issue a separate verification read');
     expect(instructions).toContain('Bash\'s separate `stdin` field');
-    expect(instructions).toContain('outline view inspect OWNER_ID');
+    expect(instructions).toContain('outline view get|set');
   });
 
   test('loads bundled built-in skills with real resource directories', async () => {
@@ -1473,14 +1473,14 @@ describe('agent skills', () => {
     expect(outline?.execution).toBe('inline');
     expect(outlineCatalogEntry?.description).toContain('Invoke without args.');
     expect(outline?.body).toContain('# Outline');
-    expect(outline?.body).toContain('## Route The Intent');
-    expect(outline?.body).toContain('## Native Collections');
-    expect(outline?.body).toContain('## Mutate, Review, Verify');
-    expect(outline?.body).toContain('ordinary child items');
-    expect(outline?.body).toContain('Markdown or aligned text');
-    expect(outline?.body).toContain('`YYYY-MM-DDTHH:mm`');
+    expect(outline?.body).toContain('## Model');
+    expect(outline?.body).toContain('## Route');
+    expect(outline?.body).toContain('## Common Create');
+    expect(outline?.body).toContain('## Disclosure And Recovery');
+    expect(outline?.body).toContain('children are the actual items');
+    expect(outline?.body).toContain('Public Field types are');
     expect(outline?.body).toContain('`[[node://UUID]]`');
-    expect(outline?.body).toContain('outline example add viewed-tree');
+    expect(outline?.body).toContain('outline example edit complete');
     expect(outline?.body).not.toContain('references/');
     expect(outline?.body).not.toContain(['table-view', 'changeset.json'].join('-'));
     const toolResult = await createSkillTool(runtime).execute('outline-skill-call', {
@@ -2174,7 +2174,7 @@ describe('built-in skill resource packaging', () => {
     expect((await readdir(generatedRoot)).sort()).toEqual(['outline']);
     const outlineRoot = path.join(generatedRoot, 'outline');
     expect(await readFile(path.join(outlineRoot, 'SKILL.md'), 'utf8'))
-      .toContain('outline example add viewed-tree');
+      .toContain('outline example edit complete');
     expect((await readdir(outlineRoot)).sort()).toEqual(['SKILL.md']);
     for (const name of ['data-analysis', 'document', 'feed-processing', 'pdf', 'presentation', 'spreadsheet']) {
       await expect(readFile(path.join(generatedRoot, name, 'SKILL.md'), 'utf8')).rejects.toThrow();

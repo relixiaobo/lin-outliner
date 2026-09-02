@@ -16,6 +16,7 @@ import {
   type OutlineResponse,
   type Operation,
   type OperationLogPage,
+  type NodeDraft,
 } from '../../contract/schemas';
 import { canonicalSha256 } from '../../contract/canonical';
 import { checkOutlineSchema, outlineSchemaValidationDetails } from '../../contract/validation';
@@ -187,13 +188,28 @@ export class OutlineRuntimeRouter {
         page: { limit: value.target.max ?? 100 },
       });
     }
-    if (command === 'show') {
+    if (command === 'get') {
       const value = input as { selector?: Selector; projection?: Projection };
-      const selector = reconcileReadSelector('show', value.selector, value.projection);
+      const selector = reconcileReadSelector('get', value.selector, value.projection);
       return this.workspace.project(value.projection ?? {
         kind: 'node',
         targets: { target: readTargetSpec(selector) },
         include: ['description', 'children', 'tags', 'fields', 'references', 'media', 'view', 'trash'],
+      });
+    }
+    if (command === 'search run') {
+      const value = input as { searchId: string; limit?: number };
+      const limit = value.limit ?? 100;
+      return this.workspace.project({
+        kind: 'summary',
+        targets: {
+          target: {
+            selector: { by: 'search', id: value.searchId, limit },
+            cardinality: 'many',
+            max: limit,
+          },
+        },
+        page: { limit },
       });
     }
     if (command === 'export') {
@@ -233,17 +249,17 @@ export class OutlineRuntimeRouter {
       }
       throw new OutlineContractError(outlineError('invalid_input', 'usage', 'Asset ingest input is incomplete.'));
     }
-    if (command === 'asset show') {
+    if (command === 'asset get') {
       return this.workspace.assets.show(String((input as { assetId: string }).assetId));
     }
     if (command === 'asset export') {
       const { record, bytes } = await this.workspace.assets.readVerified(String((input as { assetId: string }).assetId));
       return { asset: record, data: Buffer.from(bytes).toString('base64') };
     }
-    if (command === 'diff') {
+    if (command === 'preview') {
       return diffOutlineChangeSet(this.workspace, (input as { changeSet: ChangeSet }).changeSet);
     }
-    if (command === 'commit') {
+    if (command === 'transact') {
       const value = input as { changeSet: ChangeSet; undoGroup?: Operation['undoGroup'] };
       return commitOutlineChangeSet(this.workspace, value.changeSet, context, { undoGroup: value.undoGroup });
     }
@@ -251,7 +267,7 @@ export class OutlineRuntimeRouter {
       const value = input as { diff: Diff; acknowledgeDestructive?: boolean };
       return applyOutlineDiff(this.workspace, value.diff, context, value.acknowledgeDestructive === true);
     }
-    if (command === 'log') return this.log(input as Record<string, unknown>);
+    if (command === 'history') return this.log(input as Record<string, unknown>);
     if (command === 'revert') {
       const value = input as Record<string, unknown>;
       const operationId = String(value.operationId);
@@ -262,6 +278,14 @@ export class OutlineRuntimeRouter {
     }
     if (command === 'redo') {
       return this.workspace.redo(historyMutationOptions(command, input as Record<string, unknown>, context));
+    }
+    if (command === 'create') {
+      return this.create(input as {
+        changeSet: ChangeSet;
+        preview?: boolean;
+        expectDiff?: string;
+        acknowledgeDestructive?: boolean;
+      }, context);
     }
     const capability = outlineCapability(command);
     if (capability?.kind === 'mutate') {
@@ -289,6 +313,103 @@ export class OutlineRuntimeRouter {
       'protocol',
       `Runtime capability is registered but has no handler: ${command}`,
     ));
+  }
+
+  private async create(
+    input: { changeSet: ChangeSet; preview?: boolean; expectDiff?: string; acknowledgeDestructive?: boolean },
+    context: OutlineRuntimeRequestContext,
+  ): Promise<unknown> {
+    const diff = await diffOutlineChangeSet(this.workspace, input.changeSet);
+    if (input.preview) return diff;
+    if (input.expectDiff && input.expectDiff !== diff.diffHash) {
+      throw new OutlineContractError(outlineError(
+        'diff_mismatch',
+        'conflict',
+        'The current normalized Diff does not match --expect-diff.',
+        { details: { expected: input.expectDiff, actual: diff.diffHash } },
+      ));
+    }
+    const settlement = await applyOutlineDiff(
+      this.workspace,
+      diff,
+      context,
+      input.acknowledgeDestructive === true,
+    );
+    if (settlement.kind !== 'outline.operation') {
+      throw new OutlineContractError(outlineError(
+        'internal_error',
+        'internal',
+        'Create settled without creating the requested Node identity.',
+      ));
+    }
+    const create = input.changeSet.operations.find((change) => change.op === 'create' && !('resource' in change));
+    if (!create || create.op !== 'create' || 'resource' in create) {
+      throw new OutlineContractError(outlineError('internal_error', 'internal', 'Create request omitted its Node tree.'));
+    }
+    const rootId = diff.bindings[create.bind ?? 'created']?.[0];
+    if (!rootId) throw new OutlineContractError(outlineError('internal_error', 'internal', 'Create result omitted its root identity.'));
+    const expectedNodeCount = create.nodes.reduce((total, node) => total + authoredNodeCount(node), 0);
+    const state = this.workspace.documentState();
+    const root = state.nodes[rootId];
+    const actualNodeCount = root ? persistedAuthoredNodeCount(state.nodes, rootId) : 0;
+    const viewChange = input.changeSet.operations
+      .filter((change) => change.op === 'update')
+      .flatMap((change) => change.op === 'update' ? change.changes : [])
+      .find((change) => change.kind === 'view' && change.property === 'configuration' && change.action === 'set');
+    const requestedMode = viewChange && viewChange.kind === 'view' && viewChange.property === 'configuration'
+      ? viewChange.view.mode ?? 'list'
+      : 'list';
+    const viewNode = root?.children.map((id) => state.nodes[id]).find((node) => node?.type === 'viewDef');
+    const actualMode = viewNode?.viewMode ?? 'list';
+    if (actualNodeCount !== expectedNodeCount || actualMode !== requestedMode) {
+      throw new OutlineContractError(outlineError(
+        'operation_settlement_unknown',
+        'durability',
+        'Create committed but its persisted postconditions did not verify.',
+        {
+          retryable: false,
+          details: { operationId: settlement.operationId },
+          next: [`outline history --operation ${settlement.operationId}`],
+        },
+      ));
+    }
+    const definitionEnsures = input.changeSet.operations.filter((change) => (
+      change.op === 'ensure' && change.resource === 'definition'
+    ));
+    const createdIds = new Set(diff.affected.filter((entry) => entry.effect === 'create').map((entry) => entry.id));
+    const createdDefinitions = definitionEnsures.filter((change) => (
+      change.op === 'ensure' && createdIds.has(diff.bindings[change.bind]?.[0] ?? '')
+    )).length;
+    const itemCount = root?.children.filter((id) => {
+      const type = state.nodes[id]?.type;
+      return type === undefined || type === 'codeBlock' || type === 'reference' || type === 'search';
+    }).length ?? 0;
+    return {
+      kind: 'outline.create-result',
+      status: 'applied',
+      committed: true,
+      settlement: {
+        kind: 'outline.operation-settlement',
+        operationId: settlement.operationId,
+        revisionBefore: settlement.revisionBefore,
+        revisionAfter: settlement.revisionAfter,
+        diffHash: settlement.diffHash,
+        affectedNodeCount: settlement.affectedNodeCount,
+        affectedNodeIdsHash: settlement.affectedNodeIdsHash,
+        recovery: settlement.recovery,
+      },
+      rootId,
+      nodeCount: actualNodeCount,
+      itemCount,
+      fieldCount: definitionEnsures.length,
+      definitions: {
+        created: createdDefinitions,
+        reused: definitionEnsures.length - createdDefinitions,
+      },
+      view: { mode: actualMode === 'list' ? 'outline' : actualMode },
+      verification: { passed: true, revision: settlement.revisionAfter },
+      recoveryCommand: `outline revert ${settlement.operationId}`,
+    };
   }
 
   private async log(input: Record<string, unknown>): Promise<OperationLogPage> {
@@ -387,6 +508,25 @@ export class OutlineRuntimeRouter {
   }
 }
 
+function authoredNodeCount(node: NodeDraft): number {
+  return 1 + node.children.reduce((total, child) => total + authoredNodeCount(child), 0);
+}
+
+function persistedAuthoredNodeCount(
+  nodes: Readonly<Record<string, { readonly type?: string; readonly children: readonly string[] }>>,
+  nodeId: string,
+): number {
+  const node = nodes[nodeId];
+  if (!node) return 0;
+  const authored = node.type === undefined
+    || node.type === 'plain'
+    || node.type === 'codeBlock'
+    || node.type === 'reference'
+    || node.type === 'search';
+  if (!authored) return 0;
+  return 1 + node.children.reduce((total, childId) => total + persistedAuthoredNodeCount(nodes, childId), 0);
+}
+
 function historyMutationOptions(
   command: 'revert' | 'undo' | 'redo',
   input: Record<string, unknown>,
@@ -431,7 +571,7 @@ function staleLogCursor(): OutlineContractError {
 }
 
 export function requestCanMutate(command: string, input: unknown): boolean {
-  if (command === 'diff') return false;
+  if (command === 'preview') return false;
   if (command === 'revert' || command === 'undo' || command === 'redo') return true;
   const capability = outlineCapability(command);
   return capability?.kind === 'mutate' && !(isRecord(input) && input.preview === true);

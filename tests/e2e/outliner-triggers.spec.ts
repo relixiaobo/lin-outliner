@@ -32,7 +32,7 @@ async function appliedOperations(page: import('@playwright/test').Page, fromCall
       changeSet?: { operations?: Array<Record<string, unknown>> };
     };
     if (call.cmd === 'outline/apply') return input.diff?.normalizedChangeSet?.operations ?? [];
-    if (call.cmd === 'outline/commit') return input.changeSet?.operations ?? [];
+    if (call.cmd === 'outline/transact') return input.changeSet?.operations ?? [];
     return [];
   });
 }
@@ -236,7 +236,7 @@ async function delayMockApply(
       };
       const operations = request.command === 'apply'
         ? input.diff?.normalizedChangeSet?.operations ?? []
-        : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+        : request.command === 'transact' ? input.changeSet?.operations ?? [] : [];
       const matched = operations.some((operation) => (
         operation.op === matches.op
         && (!matches.instructionKind || (
@@ -1125,7 +1125,7 @@ test.describe('outliner trigger parity', () => {
           .find((node) => node.id === todayId)?.children,
         writes: (win.__LIN_E2E__?.calls.slice(beforeCalls) ?? []).filter((call) => {
           const command = (call as { cmd?: string }).cmd;
-          return command === 'outline/apply' || command === 'outline/commit';
+          return command === 'outline/apply' || command === 'outline/transact';
         }),
         expectedChildren: beforeChildren,
       };

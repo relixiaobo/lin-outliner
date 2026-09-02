@@ -3202,9 +3202,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             else if (type === 'tagDef') result = [createTag(name).focus!.nodeId];
             else {
               const fieldId = `field-def-${++sequence}`;
+              const config = change.config as Record<string, unknown> | undefined;
               makeNode(fieldId, name, {
                 type: 'fieldDef', parentId: ids.schema,
-                fieldType: String(change.fieldType ?? 'plain'), nullable: true,
+                fieldType: String(config?.fieldType ?? 'plain'), nullable: true,
               });
               appendChild(ids.schema, fieldId);
               result = [fieldId];
@@ -3589,7 +3590,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         : {};
       calls.push({ cmd: `outline/${request.command}`, args: clone(input) });
       try {
-        if (request.command === 'show') {
+        if (request.command === 'get') {
           if (initialOutlineShowPending) {
             initialOutlineShowPending = false;
             if (options.initWorkspaceDelayMs) await delay(options.initWorkspaceDelayMs);
@@ -3613,14 +3614,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             mockProjectionResult(projectionSpec, selectedIds),
           );
         }
-        if (request.command === 'diff') {
+        if (request.command === 'preview') {
           return outlineSuccess(
             request.requestId,
             request.command,
             previewMockChangeSet(input.changeSet as MockChangeSet),
           );
         }
-        if (request.command === 'commit') {
+        if (request.command === 'transact') {
           return outlineSuccess(
             request.requestId,
             request.command,
@@ -3632,17 +3633,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             request.requestId,
             request.command,
             applyMockDiff(input.diff as MockDiff, input.acknowledgeDestructive === true),
-          );
-        }
-        if (request.command === 'commit') {
-          const diff = previewMockChangeSet(input.changeSet as MockChangeSet);
-          if (diff.destructive.length > 0) {
-            throw new Error('Direct commit does not accept destructive ChangeSets.');
-          }
-          return outlineSuccess(
-            request.requestId,
-            request.command,
-            applyMockDiff(diff, false),
           );
         }
         if (request.command === 'undo' || request.command === 'redo') {
@@ -3794,7 +3784,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const diff = previewMockChangeSet(request.changeSet);
           const response = await win.lin!.outline.request({
             requestId: request.requestId,
-            command: 'commit',
+            command: 'transact',
             input: {
               changeSet: request.changeSet,
               ...(request.undoGroup ? { undoGroup: request.undoGroup } : {}),
@@ -6925,7 +6915,7 @@ export async function appliedOutlineOperations(page: Page, fromCall = 0): Promis
       changeSet?: { operations?: Array<Record<string, unknown>> };
     };
     if (call.cmd === 'outline/apply') return input.diff?.normalizedChangeSet?.operations ?? [];
-    if (call.cmd === 'outline/commit') return input.changeSet?.operations ?? [];
+    if (call.cmd === 'outline/transact') return input.changeSet?.operations ?? [];
     return [];
   });
 }
@@ -6965,11 +6955,11 @@ export async function holdOutlineMutation(
         changeSet?: { operations?: Array<Record<string, unknown>> };
         diff?: { normalizedChangeSet?: { operations?: Array<Record<string, unknown>> } };
       };
-      const operations = request.command === 'commit'
+      const operations = request.command === 'transact'
         ? input.changeSet?.operations ?? []
         : input.diff?.normalizedChangeSet?.operations ?? [];
       const matches = !held
-        && (request.command === 'apply' || request.command === 'commit')
+        && (request.command === 'apply' || request.command === 'transact')
         && operations.some((operation) => (
           (!match.op || operation.op === match.op)
           && (!match.instructionKind || (

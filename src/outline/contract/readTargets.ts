@@ -13,7 +13,7 @@ export function readTargetSpec(selector: Selector): TargetSpec {
 }
 
 export function reconcileReadSelector(
-  command: 'show' | 'export',
+  command: 'get' | 'export',
   selector: Selector | undefined,
   projection: Projection | undefined,
 ): Selector {

@@ -92,7 +92,7 @@ export function runDesktopMutation(
       const needsReviewedDiff = options.acknowledgeDestructive === true
         || options.requiresDiff === true;
       const diff = needsReviewedDiff
-        ? await requestOutline<Diff>('diff', { changeSet })
+        ? await requestOutline<Diff>('preview', { changeSet })
         : null;
       const acceptedReceipt = diff ? null : await requestAcceptedDesktopMutation(changeSet, options.undoGroup);
       const accepted = acceptedReceipt as (typeof acceptedReceipt & { readonly update: ProjectionUpdate });
@@ -161,7 +161,7 @@ export function previewDesktopMutation(build: (revision: number) => ChangeSet): 
     return Promise.reject(new Error('Tenon Outline session has not loaded a document revision.'));
   }
   const input = build(revision);
-  return requestOutline<Diff>('diff', {
+  return requestOutline<Diff>('preview', {
     changeSet: {
       ...input,
       base: { ...input.base, revision },

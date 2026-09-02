@@ -33,7 +33,7 @@ export function splitOptionTerminator(args: readonly string[]): SplitOptionArgum
 }
 
 export async function parseReadCommand(
-  command: 'find' | 'show' | 'export',
+  command: 'find' | 'get' | 'export',
   args: readonly string[],
   read: StructuredReader,
 ): Promise<ParsedReadCommand> {
@@ -153,7 +153,7 @@ export async function parseReadCommand(
     ? targetRef(resolvedSelector, 'many', selectorBound(resolvedSelector) ?? limit)
     : { target: readTargetSpec(resolvedSelector) };
   const requestedProjection: Projection = projection ?? {
-    kind: kind ?? (command === 'find' ? 'summary' : command === 'show' ? 'node' : 'export'),
+    kind: kind ?? (command === 'find' ? 'summary' : command === 'get' ? 'node' : 'export'),
     targets: target,
     ...(depth !== undefined ? { depth } : command === 'export' ? { depth: 1_024 } : {}),
     ...(include ? { include } : command === 'export'

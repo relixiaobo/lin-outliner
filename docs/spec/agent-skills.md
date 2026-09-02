@@ -317,88 +317,73 @@ legacy installations, or update the CLI independently of the active Skill.
 
 The packaged platform floor contains one built-in Outliner Skill:
 
-- `outline` teaches all persisted Outliner reads, edits, history, and recovery
-  through the public `outline` CLI, including complete-resource routing and
-  bounded reviewed literal text transforms. Its import workflow teaches source
-  inspection, optional cleanup, deterministic normalization, coverage
-  accounting, one reviewed Diff/apply, and independent verification. Tana
-  guidance maps only deterministic source structures and treats unsupported
-  coverage as an explicit fidelity limit, not proof of a lossless migration.
+- `outline` routes all persisted Node, Field, View, Search, Daily Note, asset,
+  import, lifecycle, and recovery work through the public CLI.
 
-It uses inline execution because document work depends on the current user's exact
-request, visible document context, research, and follow-up corrections. Loading the
-workflow into the parent Turn avoids a lossy model-authored task handoff and does not
-widen the parent's effective tool catalog. Packaged resource staging is explicit;
-arbitrary optional Skills are not copied into the application bundle. The packaged
-`outline` launcher and internal read-only source-adapter worker are required resources:
-the packaging hook restores executable mode where needed and fails the build when a
-resource is absent.
+It executes inline because document work depends on the current request and
+document context. Loading it adds guidance, not authority or another document
+client. The packaged launcher and import adapters are explicit build resources;
+the packaging hook restores executable mode and fails when one is absent.
 
-The Skill owns no document logic. `outline` discovers current capabilities,
-validated structured recipes, root/family/exact command help, completion
-metadata, and command-specific schemas from the executable registry. It routes one complete resource to one porcelain
-invocation, complex state for that resource to the same command's `--input`, and
-dependent, cross-date, or bounded bulk work to one ChangeSet with bindings. A
-known non-destructive ChangeSet uses direct `commit`; destructive, ambiguous,
-conversion, high-impact, and review-requested work uses one immutable Diff
-artifact and exact apply. It
-never uses a shell mutation loop or intermediate created-ID lookup. For ordinary
-document work it also avoids ad hoc Python, Node, or shell programs for schema
-discovery, CLI-output transformation, or ChangeSet assembly; validated registry
-recipes and direct `--input -` payloads are the execution path. Full schema
-discovery is reserved for integration, debugging, or recipe gaps. Bundled source
-adapters remain reserved for the documented external import workflow.
+### Information architecture
 
-The Skill distinguishes explicit create/add from convergent set/configure/ensure,
-omitted patch properties from explicit replacement, and common STRING_MATCH
-shorthand from canonical structured queries. It teaches stable aliases including
-`@library` and `@saved-searches`, bounded selector cardinality, complete-resource
-creation, one-Operation settlement, exact Diff review, and guarded revert. It
-does not copy schemas or parser tables into Skill text. The executable query
-operator inventory and operand formats remain available exactly through
-`outline schema QueryExpression` when integration-level discovery is required.
+The Skill has three disclosure levels:
 
-Three frequent modeling rules remain in the entrypoint because they change
-ordinary task decisions. A document table is one owner with table view state,
-direct child row Nodes, field-backed cells, and explicit display/group/sort
-configuration; it is not Markdown or aligned text. Date field values use
-`YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or `start/end`, and local Daily Note dates are
-not timezone-converted. Final Agent answers reference an ordinary persisted
-`node:UUID` as `[[node://UUID]]`, removing the internal `node:` prefix, so the
-client resolves current titles.
+1. Its discovery description names the domain precisely.
+2. Its self-contained `SKILL.md` teaches the logical model, routing decisions,
+   common `create` shape, exact selection, receipt semantics, review, and
+   recovery.
+3. The executable registry supplies conditional detail through validated
+   examples, exact help, and narrow schema fragments.
 
-New view-backed collections use the mode-neutral `add --input -` viewed-tree
-form and `view inspect` verification. Bash executes only `outline`; structured
-payloads travel in its separate stdin field without pipelines, heredocs, helper
-programs, or temporary input files. The developer-only table fixture is tested
-but not linked from Agent instructions, so internal binding topology does not
-enter model context.
+The entrypoint stays below 8 KiB and contains no copied parser table or schema
+manual. Its only JSON example is byte-checked against the registry's collection
+recipe. The Skill directory contains only `SKILL.md`; adapters and fixtures
+live with production code and tests.
 
-Its Agent-facing information architecture has two layers. A self-contained
-`SKILL.md` teaches the inspect/choose/review/execute/verify/recover policy and one
-validated viewed-tree example. The executable registry owns exact options,
-defaults, recipes, schemas, parser admission, and receipts. The Skill source
-directory contains only `SKILL.md`; runtime import adapters live under
-`src/outline/import/adapters/`, and test fixtures live under
-`tests/fixtures/outline/`.
+### Operating contract
 
-The Skill routes import requests to its import workflow. Bundled or
-Agent-authored source adapters only read source data and emit normalized data
-plus coverage; they have no Runtime write client. Public `import inspect`,
-`import plan`, and `import verify` own the bounded profile, generic
-ChangeSet/Diff planning, evidence binding, and post-Operation verification. An
-Agent-authored task-local adapter must emit public `NormalizedImport`.
-Valid Tana `journalPart` records with canonical local dates lower to native
-Daily Note `ensure` bindings in the same ChangeSet, while non-date sections may
-remain under a staging root. Import is append-only and never implies
-deduplication or synchronization.
+Node is the only structural content identity. A Field is reusable and its values
+belong to Nodes. Outline, Table, Cards, and Calendar are Views over the same
+Nodes. One user intent settles as at most one Operation.
 
-The Skill stops before mutation when coverage, selectors, evidence binding, or
-Diff review is unresolved. After apply it reports the ordinary Operation ID,
-affected set, dates, warnings, and verification result. A mismatch is never
-retried or manually deleted; authorized recovery names that exact Operation in
-`outline revert`.
+Routine exact-target work should complete after Skill load with one semantic CLI
+call. Work requiring identity discovery uses one bounded read followed by one
+write. A successful committed-state verified receipt proves the covered
+postconditions and supplies recovery identity, so the Skill does not prescribe a
+redundant verification call.
 
+The normal authoring path is `create` or `edit`. Structured payloads travel
+through Bash's separate stdin field to `--input -`; the Agent does not build
+temporary files, pipelines, heredocs, loops, or helper programs. `create`
+declares request-local Field keys once, and the CLI ensures compatible global
+definitions without a pre-search or manual ID-reuse loop.
+
+When the task fits the validated common `create` shape in the Skill, the Agent
+executes it directly. For other unfamiliar structured work, it requests one
+matching `outline example`. Exact help is next. `outline schema COMMAND --path
+JSON_POINTER` is reserved for a specific unresolved fragment; bare schema
+returns only a catalog, and full schema bodies are not speculative discovery.
+Collection-wide summaries belong to the owner description; direct children are
+the item identities projected by the View.
+
+A failed validation supplies a precise path and corrective vocabulary. The Agent
+repairs that property once. An incompatible Field ensure reports the existing
+definition and differences and writes nothing.
+
+Destructive or explicitly reviewed work uses `preview` and exact `apply`
+with one idempotency key. Unknown settlement uses the exact `history
+--idempotency-key` command in the receipt and is never retried. Recovery names
+the completed Operation.
+
+The import path remains `import inspect`, `import plan`, exact `apply`, and
+`import verify`. Adapters are read-only and emit normalized public data plus
+coverage. Unsupported coverage is an explicit fidelity limit. Valid local-date
+journal records may lower to native Daily Note ensure bindings in the same
+ChangeSet.
+
+Final Agent answers link an ordinary persisted `node:UUID` as
+`[[node://UUID]]`, removing the internal prefix.
 ## Settings
 
 Agent settings control additional directories and disabled Skill identities.

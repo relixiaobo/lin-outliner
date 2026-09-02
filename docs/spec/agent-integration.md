@@ -23,14 +23,20 @@ Agent Core. It is a contract checklist, not project status.
   CLI; do not add a document-native model tool or private import endpoint.
 - Classify Outline shell calls from the executable capability registry and
   require host attestation for built-in Agent mutations.
-- Route one complete resource to one porcelain invocation, complex state for
-  that resource to the same command's `--input`, and dependent/cross-date/bulk
-  work to one ChangeSet with bindings; never use shell mutation loops or
-  intermediate created-ID discovery.
-- Discover exact syntax and semantics through root/family/command help and
-  `outline schema COMMAND`; preserve patch omission, explicit replacement,
-  selector cardinality, destructive Diff binding, and idempotent
-  set/configure/ensure behavior.
+- Model Node as the only content/tree identity, Field as a reusable definition
+  whose values belong to Nodes, View as projection-only configuration, and
+  Operation as the settlement/recovery identity.
+- Route one complete resource to one semantic invocation, complex state for
+  that resource to the same command's `--input`, and only genuinely dependent
+  work to one `transact` ChangeSet with bindings; never use shell mutation loops
+  or intermediate created-ID discovery.
+- Discover syntax progressively through the Skill, one validated example,
+  exact command help, and a narrow `outline schema COMMAND --path` fragment.
+  Preserve patch omission, explicit replacement, selector cardinality,
+  destructive Diff binding, and compatible Field ensure behavior.
+- Treat a committed-state verified semantic receipt as proof for its covered
+  postconditions. Read again only for facts outside that receipt, and recover
+  unknown settlement through exact idempotency history rather than retrying.
 - Keep the Agent orchestration surface to `agent`, `agent_message`, and unified
   `task_stop`; do not add a roster, inbox, follow-up, wait, or polling alias.
 - Declare Core scope and action kinds.
@@ -131,6 +137,9 @@ Agent Core. It is a contract checklist, not project status.
 - Verify help, completion metadata, parser options, and exact command schemas
   derive from one registry and cover root, family, create, leaf-view, and
   destructive help goldens without starting Runtime.
+- Verify bare schema discovery and common schema fragments remain within their
+  token budgets, and retired public names or internal Field/View tokens cannot
+  return through registry, Skill, recipes, or current specifications.
 - Verify complete-resource and dependent-resource CLI goldens assert final
   document state, mutation invocation count, Operation count, visible Operation
   ID/affected/recovery data, and guarded exact revert.

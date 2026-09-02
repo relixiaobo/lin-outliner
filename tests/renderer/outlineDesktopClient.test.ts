@@ -63,8 +63,8 @@ describe('renderer Outline client', () => {
       },
     } as unknown as OutlineResponse));
 
-    await expect(requestOutline('show', {})).rejects.toBeInstanceOf(OutlineRequestError);
-    await expect(requestOutline('show', {})).rejects.toMatchObject({
+    await expect(requestOutline('get', {})).rejects.toBeInstanceOf(OutlineRequestError);
+    await expect(requestOutline('get', {})).rejects.toMatchObject({
       outlineError: { code: 'stale_revision', category: 'conflict' },
     });
   });
@@ -109,7 +109,7 @@ describe('renderer Outline client', () => {
     const subscription = subscribeDesktopProjection((update) => updates.push(update), () => undefined);
     await new Promise((resolve) => setTimeout(resolve, 0));
     stream?.(streamEvent(8, 'cursor:8'));
-    resolveProjection(success('show', projectionPage(2)));
+    resolveProjection(success('get', projectionPage(2)));
 
     await subscription.ready;
 
@@ -129,7 +129,7 @@ describe('renderer Outline client', () => {
         return acceptedMutation(request.changeSet, 8);
       },
       request: async (request) => {
-        if (request.command === 'show') return success('show', projectionPage(2));
+        if (request.command === 'get') return success('get', projectionPage(2));
         throw new Error(`Unexpected command: ${request.command}`);
       },
       subscribe: (_subscription, listener) => {
@@ -172,7 +172,7 @@ describe('renderer Outline client', () => {
         return acceptedMutation(request.changeSet, 8);
       },
       request: async (request) => {
-        if (request.command === 'show') return success('show', projectionPage(2));
+        if (request.command === 'get') return success('get', projectionPage(2));
         throw new Error(`Unexpected command: ${request.command}`);
       },
       subscribe: (_subscription, listener) => {
@@ -213,7 +213,7 @@ describe('renderer Outline client', () => {
         throw new Error('injected stale mutation');
       },
       request: async (request) => {
-        if (request.command === 'show') return success('show', projectionPage(2));
+        if (request.command === 'get') return success('get', projectionPage(2));
         throw new Error(`Unexpected command: ${request.command}`);
       },
       subscribe: (_subscription, listener) => {
@@ -269,7 +269,7 @@ describe('renderer Outline client', () => {
       }),
       request: async (request) => {
         commands.push(request.command);
-        if (request.command === 'show') return success('show', projectionPage(2));
+        if (request.command === 'get') return success('get', projectionPage(2));
         throw new Error(`Unexpected command: ${request.command}`);
       },
       subscribe: (_subscription, listener) => {
@@ -350,7 +350,7 @@ describe('renderer Outline client', () => {
 
     stream?.(streamEvent(9, 'cursor:9'));
     stream?.(streamEvent(10, 'cursor:10'));
-    resolveResync(success('show', projectionPage(2, 9)));
+    resolveResync(success('get', projectionPage(2, 9)));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(updates.map(({ kind, revision }) => ({ kind, revision }))).toEqual([

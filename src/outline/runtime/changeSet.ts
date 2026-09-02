@@ -515,6 +515,7 @@ async function executeChange(
             copyPath,
             parentIndex === 0,
             assetLeases,
+            bindings,
           ));
         }
       }
@@ -732,7 +733,7 @@ function executeCreateDefinition(
   }
   const children = change.definitionType === 'tag' ? change.template : change.options;
   for (const [childIndex, draft] of (children ?? []).entries()) {
-    createDraft(core, definitionId, null, draft, `${operationIndex}:0:${childIndex}`, true, assetLeases);
+    createDraft(core, definitionId, null, draft, `${operationIndex}:0:${childIndex}`, true, assetLeases, {});
   }
   return [definitionId];
 }
@@ -777,6 +778,19 @@ function executeEnsure(
     if (change.id && existing.id !== change.id) {
       throw usageError(`Definition name is already bound to another ID: ${change.name}`);
     }
+    const mismatches = definitionCompatibilityMismatches(core, existing.id, change);
+    if (mismatches.length > 0) {
+      throw new OutlineContractError(outlineError(
+        'invalid_input',
+        'conflict',
+        `Definition is incompatible with the requested configuration: ${change.name}`,
+        {
+          retryable: true,
+          details: { existingId: existing.id, mismatches },
+          next: [`Use the exact field locator ${existing.id} or choose a different definition name.`],
+        },
+      ));
+    }
     return [existing.id];
   }
   if (change.id) {
@@ -785,13 +799,43 @@ function executeEnsure(
   }
   const outcome = change.definitionType === 'tag'
     ? core.createTag(change.name, change.id)
-    : core.createFieldDefinition(change.name, (change.fieldType ?? 'plain') as FieldType, change.id);
+    : core.createFieldDefinition(change.name, (change.config?.fieldType ?? 'plain') as FieldType, change.id);
   if (!outcome.focus?.nodeId) throw new Error(`Core did not create definition: ${change.name}`);
   if (change.definitionType === 'tag' && change.extends) {
     const extendsId = exactlyOne(resolveTargetRef(baseIndex, change.extends, bindings), 'extended tag definition');
     core.setTagConfig(outcome.focus.nodeId, { extends: extendsId });
   }
+  if (change.definitionType === 'field' && change.config && Object.keys(change.config).length > 0) {
+    core.setFieldConfig(outcome.focus.nodeId, change.config);
+  }
   return [outcome.focus.nodeId];
+}
+
+function definitionCompatibilityMismatches(
+  core: Core,
+  definitionId: string,
+  change: Extract<Change, { op: 'ensure'; resource: 'definition' }>,
+): Array<{ property: string; requested: unknown; actual: unknown }> {
+  if (change.definitionType !== 'field' || !change.config) return [];
+  const current = buildConfigIndex(core.state()).field(definitionId);
+  if (!current) throw new Error(`Definition config is unavailable: ${definitionId}`);
+  const mismatches: Array<{ property: string; requested: unknown; actual: unknown }> = [];
+  for (const [property, requested] of Object.entries(change.config)) {
+    let normalized: unknown = requested;
+    if (requested === null) {
+      if (property === 'nullable') normalized = true;
+      else if (property === 'hideField') normalized = 'never';
+      else normalized = undefined;
+    }
+    if (property === 'autoInitialize' && typeof requested === 'string') {
+      normalized = requested.split(/[,+]/).map((entry) => entry.trim()).filter(Boolean);
+    }
+    const actual = (current as unknown as Record<string, unknown>)[property];
+    if (canonicalJson(actual ?? null) !== canonicalJson(normalized ?? null)) {
+      mismatches.push({ property, requested: normalized ?? null, actual: actual ?? null });
+    }
+  }
+  return mismatches;
 }
 
 function createDraft(
@@ -802,6 +846,7 @@ function createDraft(
   copyPath: string,
   preserveId: boolean,
   assetLeases: Readonly<Record<string, AssetLease>>,
+  bindings: Readonly<Record<string, readonly string[]>>,
 ): string {
   const id = preserveId ? draft.id! : deterministicPublicNodeId(draft.id!, copyPath);
   const metadata = isRecord(draft.metadata) ? draft.metadata : {};
@@ -842,10 +887,13 @@ function createDraft(
   for (const tagId of draft.tags ?? []) core.applyTag(id, tagId);
   for (const field of draft.fields ?? []) {
     if (field.values.length === 0) continue;
-    core.updateFieldSlot(id, field.fieldDefId, { kind: 'appendNodes', nodes: field.values.map(toCoreTree) });
+    const fieldDefId = 'fieldDefId' in field
+      ? field.fieldDefId
+      : exactlyOne(resolveTargetRef(createSelectionIndex(core.projection()), field.field, bindings), 'field definition');
+    core.updateFieldSlot(id, fieldDefId, { kind: 'appendNodes', nodes: field.values.map(toCoreTree) });
   }
   for (const [childIndex, child] of draft.children.entries()) {
-    createDraft(core, id, null, child, `${copyPath}:${childIndex}`, preserveId, assetLeases);
+    createDraft(core, id, null, child, `${copyPath}:${childIndex}`, preserveId, assetLeases, bindings);
   }
   return id;
 }
@@ -1498,7 +1546,7 @@ function assertDirectCommitIsNonDestructive(changeSet: ChangeSet): void {
   throw new OutlineContractError(outlineError(
     'confirmation_required',
     'confirmation',
-    'Destructive ChangeSets must be previewed with outline diff and applied as an exact reviewed Diff.',
+    'Destructive ChangeSets must be previewed with outline preview and applied as an exact reviewed Diff.',
     { details: { destructive } },
   ));
 }

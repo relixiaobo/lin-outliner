@@ -73,7 +73,7 @@ describe('outline CLI', () => {
       parentId: 'node:parent',
       content: { text: index === 0 ? 'Decision context' : `Node ${index} ${'x'.repeat(500)}` },
     }));
-    const output = renderSummaryResult('show', {
+    const output = renderSummaryResult('get', {
       projection: { kind: 'outline' },
       revision: 42,
       anchors: {},
@@ -82,7 +82,7 @@ describe('outline CLI', () => {
       cursor: 'cursor:next',
     });
     expect(Buffer.byteLength(output)).toBeLessThanOrEqual(4 * 1024);
-    expect(output).toContain('Command: show');
+    expect(output).toContain('Command: get');
     expect(output).toContain('Nodes: 100; shown=4; omitted=96; digest=');
     expect(output).toContain('text=Decision context');
     expect(output).toContain('Continuation: cursor:next; truncated=true');
@@ -91,7 +91,7 @@ describe('outline CLI', () => {
   });
 
   test('keeps history pages closed-loop with affected IDs and exact cursors', () => {
-    const output = renderSummaryResult('log', {
+    const output = renderSummaryResult('history', {
       operations: [{
         operationId: 'operation:1', revisionBefore: 1, revisionAfter: 2, summary: 'Bulk update',
       }],
@@ -146,19 +146,19 @@ describe('outline CLI', () => {
       category: 'usage',
       message: 'bad\tinput\u0000\u0085\nStatus: forged',
       retryable: false,
-      next: ['outline show node:1\u001b[2J'],
+      next: ['outline get node:1\u001b[2J'],
     });
     expect(output).not.toContain('\u001b');
     expect(output).not.toContain('\u0000');
     expect(output).not.toContain('\u0085');
     expect(output).not.toContain('\nStatus: forged');
     expect(output).toContain('bad\\tinput\\u0000\\u0085\\nStatus: forged');
-    expect(output).toContain('outline show node:1\\u001b[2J');
+    expect(output).toContain('outline get node:1\\u001b[2J');
   });
 
   test('reports omitted returned roots with complete-set evidence', () => {
     const returnedRoots = Array.from({ length: 12 }, (_, index) => `node:${index}`);
-    const output = renderSummaryResult('add', {
+    const output = renderSummaryResult('create', {
       kind: 'outline.operation',
       operationId: 'operation:1',
       revisionBefore: 1,
@@ -268,7 +268,7 @@ describe('outline CLI', () => {
     const missingPath = path.join(root, 'missing-selector.json');
     const output = captureIo();
     const streamedInput = captureIo();
-    expect(await runOutlineCli(['show', '--selector', missingPath], {
+    expect(await runOutlineCli(['get', '--selector', missingPath], {
       runtimeRoot: root,
       io: output.io,
     })).toBe(2);
@@ -276,7 +276,7 @@ describe('outline CLI', () => {
     expect(output.stderr).toContain(`File not found: ${missingPath}.`);
     expect(output.stderr).not.toContain('could not be completed');
 
-    expect(await runOutlineCli(['diff', '--input', missingPath], {
+    expect(await runOutlineCli(['preview', '--input', missingPath], {
       runtimeRoot: root,
       io: streamedInput.io,
     })).toBe(2);
@@ -334,7 +334,7 @@ describe('outline CLI', () => {
       });
 
       const mutation = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'add', '@today', 'Status health row'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'create', '@today', 'Status health row'], {
         runtimeRoot: root,
         io: mutation.io,
       })).toBe(0);
@@ -370,16 +370,16 @@ describe('outline CLI', () => {
 
     expect(await runOutlineCli(['--json', 'schema', 'Selector'], { runtimeRoot: root, io: selector.io })).toBe(0);
     expect(JSON.parse(selector.stdout).data.$defs.Selector.$id).toBe('Selector');
-    expect(await runOutlineCli(['schema', 'add'], { runtimeRoot: root, io: defaultSchema.io })).toBe(0);
+    expect(await runOutlineCli(['schema', 'create', '--path', '/properties/fields'], { runtimeRoot: root, io: defaultSchema.io })).toBe(0);
     const completeDefaultSchema = JSON.parse(defaultSchema.stdout) as Record<string, unknown>;
-    expect(completeDefaultSchema).toHaveProperty('$defs');
-    expect(Buffer.byteLength(defaultSchema.stdout)).toBeGreaterThan(4 * 1024);
+    expect(completeDefaultSchema).toHaveProperty('items');
+    expect(Buffer.byteLength(defaultSchema.stdout)).toBeLessThan(4 * 1024);
     expect(await runOutlineCli(['schema', 'QueryExpression'], {
       runtimeRoot: root,
       io: defaultQuerySchema.io,
     })).toBe(0);
     expect(JSON.parse(defaultQuerySchema.stdout)).toHaveProperty('$defs.QueryExpression');
-    expect(await runOutlineCli(['--json', 'schema', 'done', 'set'], { runtimeRoot: root, io: porcelain.io })).toBe(0);
+    expect(await runOutlineCli(['--json', 'schema', 'edit'], { runtimeRoot: root, io: porcelain.io })).toBe(0);
     expect(JSON.parse(porcelain.stdout).data).toHaveProperty('properties');
     expect(JSON.parse(porcelain.stdout).data).not.toHaveProperty('request');
     expect(JSON.parse(porcelain.stdout).data).not.toHaveProperty('result');
@@ -406,11 +406,37 @@ describe('outline CLI', () => {
     const publicSchema = captureIo();
     const invalid = captureIo();
     const publicPart = captureIo();
+    const catalog = captureIo();
+    const fragment = captureIo();
+    const missingPath = captureIo();
 
-    expect(await runOutlineCli(['--json', 'schema', 'add'], { runtimeRoot: root, io: request.io })).toBe(0);
+    expect(await runOutlineCli(['--json', 'schema'], { runtimeRoot: root, io: catalog.io })).toBe(0);
+    expect(JSON.parse(catalog.stdout).data).toMatchObject({
+      schemas: expect.arrayContaining(['ChangeSet', 'Selector']),
+      commands: expect.arrayContaining(['create', 'view set']),
+    });
+    expect(Buffer.byteLength(catalog.stdout)).toBeLessThan(8 * 1024);
+
+    expect(await runOutlineCli(['--json', 'schema', 'create'], { runtimeRoot: root, io: request.io })).toBe(0);
     const requestSchema = JSON.parse(request.stdout).data as Record<string, unknown>;
     expect(Buffer.byteLength(JSON.stringify(requestSchema))).toBeLessThanOrEqual(512 * 1024);
     expect(countObjectKey(requestSchema, 'Selector')).toBe(0);
+
+    expect(await runOutlineCli(['--json', 'schema', 'create', '--path', '/properties/fields'], {
+      runtimeRoot: root,
+      io: fragment.io,
+    })).toBe(0);
+    const fieldFragment = JSON.parse(fragment.stdout).data as Record<string, unknown>;
+    expect(fieldFragment).toHaveProperty('items');
+    expect(Buffer.byteLength(JSON.stringify(fieldFragment))).toBeLessThan(4 * 1024);
+
+    expect(await runOutlineCli(['--json', 'schema', 'create', '--path', '/properties/missing'], {
+      runtimeRoot: root,
+      io: missingPath.io,
+    })).toBe(2);
+    expect(JSON.parse(missingPath.stdout)).toMatchObject({
+      error: { code: 'invalid_input', message: 'Schema path does not exist: /properties/missing' },
+    });
 
     expect(await runOutlineCli(['--json', 'schema', 'ChangeSet'], {
       runtimeRoot: root,
@@ -420,13 +446,13 @@ describe('outline CLI', () => {
     expect(Buffer.byteLength(JSON.stringify(changeSetSchema))).toBeLessThanOrEqual(512 * 1024);
     expect(countObjectKey(changeSetSchema, '$defs')).toBeLessThanOrEqual(1);
 
-    expect(await runOutlineCli(['--json', 'schema', 'add', '--part', 'result'], {
+    expect(await runOutlineCli(['--json', 'schema', 'create', '--part', 'result'], {
       runtimeRoot: root,
       io: result.io,
     })).toBe(0);
     expect(JSON.parse(result.stdout).data).not.toEqual(requestSchema);
 
-    expect(await runOutlineCli(['--json', 'schema', '--part', 'both', 'add'], {
+    expect(await runOutlineCli(['--json', 'schema', '--part', 'both', 'create'], {
       runtimeRoot: root,
       io: both.io,
     })).toBe(0);
@@ -435,7 +461,7 @@ describe('outline CLI', () => {
       result: JSON.parse(result.stdout).data,
     });
 
-    expect(await runOutlineCli(['--json', 'schema', 'add', '--part', 'unknown'], {
+    expect(await runOutlineCli(['--json', 'schema', 'create', '--part', 'unknown'], {
       runtimeRoot: root,
       io: invalid.io,
     })).toBe(2);
@@ -461,11 +487,11 @@ describe('outline CLI', () => {
     expect(await runOutlineCli(['--json', '--help'], { runtimeRoot: root, io: jsonOutput.io })).toBe(0);
     expect(jsonOutput.stdout).toBe(output.stdout);
     expect(output.stdout).toContain('Command families:');
-    expect(output.stdout).toContain('search         Create, configure, ensure, and refresh Saved Searches.');
-    expect(output.stdout).toContain('text           Apply bounded, reviewed literal text transformations.');
-    expect(output.stdout).toContain('view           Configure complete views');
+    expect(output.stdout).toContain('search         Create, edit, and run Saved Searches.');
+    expect(output.stdout).toContain('replace        Apply bounded, reviewed content transformations.');
+    expect(output.stdout).toContain('view           Read or set a projection over the same Nodes.');
     expect(output.stdout).toContain('Direct commands:');
-    expect(output.stdout).toContain('schema         Print exact public JSON Schemas.');
+    expect(output.stdout).toContain('schema         List available schemas or print one exact bounded schema fragment.');
     expect(output.stdout).not.toContain('COMMAND [ARGS]\n\nCommands:');
     expect(await readdir(root)).toEqual([]);
   });
@@ -477,9 +503,8 @@ describe('outline CLI', () => {
     expect(await runOutlineCli(['search', '--help'], { runtimeRoot: root, io: output.io })).toBe(0);
     expect(output.stdout).toContain('Usage: outline [GLOBAL OPTIONS] search SUBCOMMAND [ARGS]');
     expect(output.stdout).toContain('create             Create a complete Saved Search');
-    expect(output.stdout).toContain('ensure-tag         Ensure the canonical Saved Search');
-    expect(output.stdout).toContain('refresh            Refresh materialized results');
-    expect(output.stdout).toContain('set                Atomically patch a Search');
+    expect(output.stdout).toContain('edit               Converge a Saved Search');
+    expect(output.stdout).toContain('run                Run one Saved Search live');
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -590,53 +615,51 @@ describe('outline CLI', () => {
     expect(await readdir(root)).toEqual([]);
   });
 
-  test('documents standalone Projections for show and export from their exact schemas', async () => {
+  test('documents standalone Projections for get and export from their exact schemas', async () => {
     const root = await makeRoot();
     const showHelp = captureIo();
     const exportHelp = captureIo();
     const showSchema = captureIo();
 
-    expect(await runOutlineCli(['show', '--help'], { runtimeRoot: root, io: showHelp.io })).toBe(0);
-    expect(showHelp.stdout).toContain('Usage: outline [GLOBAL OPTIONS] show [SELECTOR...]');
+    expect(await runOutlineCli(['get', '--help'], { runtimeRoot: root, io: showHelp.io })).toBe(0);
+    expect(showHelp.stdout).toContain('Usage: outline [GLOBAL OPTIONS] get [SELECTOR...]');
     expect(showHelp.stdout).toContain('Omit SELECTOR when --projection declares targets.');
     expect(showHelp.stdout).toContain('A separate Selector must match the Projection target exactly.');
-    expect(showHelp.stdout).toContain('outline show --projection node-with-backlinks.json');
+    expect(showHelp.stdout).toContain('outline get --projection node-with-backlinks.json');
 
     expect(await runOutlineCli(['export', '--help'], { runtimeRoot: root, io: exportHelp.io })).toBe(0);
     expect(exportHelp.stdout).toContain('Usage: outline [GLOBAL OPTIONS] export [SELECTOR]');
     expect(exportHelp.stdout).toContain('outline export --projection complete-export.json');
 
-    expect(await runOutlineCli(['--json', 'schema', 'show'], { runtimeRoot: root, io: showSchema.io })).toBe(0);
+    expect(await runOutlineCli(['--json', 'schema', 'get'], { runtimeRoot: root, io: showSchema.io })).toBe(0);
     const requestSchema = JSON.stringify(JSON.parse(showSchema.stdout).data);
     expect(requestSchema).toContain('projection');
     expect(requestSchema).toContain('selector');
     expect(await readdir(root)).toEqual([]);
   });
 
-  test('renders exact view sort add help with default and structured forms', async () => {
+  test('renders complete view set help with structured replacement', async () => {
     const root = await makeRoot();
     const output = captureIo();
 
-    expect(await runOutlineCli(['view', 'sort', 'add', '--help'], { runtimeRoot: root, io: output.io })).toBe(0);
-    expect(output.stdout).toContain('Usage: outline [GLOBAL OPTIONS] view sort add TARGET --field FIELD');
+    expect(await runOutlineCli(['view', 'set', '--help'], { runtimeRoot: root, io: output.io })).toBe(0);
+    expect(output.stdout).toContain('Usage: outline [GLOBAL OPTIONS] view set TARGET MODE');
     expect(output.stdout).toContain('--target TARGET');
-    expect(output.stdout).toContain('--field FIELD');
-    expect(output.stdout).toContain('--direction asc|desc');
-    expect(output.stdout).toContain('(default: asc)');
+    expect(output.stdout).toContain('--mode MODE');
+    expect(output.stdout).toContain('--replace JSON|FILE');
     expect(output.stdout).toContain('--input FILE|-');
-    expect(output.stdout).toContain('outline view sort add node:projects --field sys:updatedAt --direction desc');
-    expect(output.stdout).not.toContain('sort-rule.json');
+    expect(output.stdout).toContain('outline view set');
     expect(await readdir(root)).toEqual([]);
   });
 
-  test('publishes exact view inspect help and compact result schema', async () => {
+  test('publishes exact view get help and compact result schema', async () => {
     const root = await makeRoot();
     const help = captureIo();
     const schema = captureIo();
-    expect(await runOutlineCli(['view', 'inspect', '--help'], { runtimeRoot: root, io: help.io })).toBe(0);
-    expect(help.stdout).toContain('view inspect TARGET');
+    expect(await runOutlineCli(['view', 'get', '--help'], { runtimeRoot: root, io: help.io })).toBe(0);
+    expect(help.stdout).toContain('view get TARGET');
     expect(help.stdout).toContain('outline.view-summary');
-    expect(await runOutlineCli(['--json', 'schema', 'view', 'inspect', '--part', 'result'], { runtimeRoot: root, io: schema.io })).toBe(0);
+    expect(await runOutlineCli(['--json', 'schema', 'view', 'get', '--part', 'result'], { runtimeRoot: root, io: schema.io })).toBe(0);
     const resultSchema = JSON.stringify(JSON.parse(schema.stdout).data);
     expect(resultSchema).toContain('displayDigest');
     expect(resultSchema).toContain('itemCount');
@@ -659,12 +682,12 @@ describe('outline CLI', () => {
     expect(await readdir(root)).toEqual([]);
   });
 
-  test('renders exact text replace help and schema from the same command contract', async () => {
+  test('renders exact replace text help and schema from the same command contract', async () => {
     const root = await makeRoot();
     const help = captureIo();
     const schema = captureIo();
 
-    expect(await runOutlineCli(['text', 'replace', '--help'], { runtimeRoot: root, io: help.io })).toBe(0);
+    expect(await runOutlineCli(['replace', 'text', '--help'], { runtimeRoot: root, io: help.io })).toBe(0);
     expect(help.stdout).toContain('Behavior: destructive; idempotent');
     expect(help.stdout).toContain('--matching TEXT');
     expect(help.stdout).toContain('--query JSON|FILE');
@@ -674,8 +697,8 @@ describe('outline CLI', () => {
     expect(help.stdout).toContain('--preview');
     expect(help.stdout).toContain('--expect-diff SHA256');
     expect(help.stdout).toContain('--yes alone is rejected');
-    expect(help.stdout).toContain('outline text replace --matching "keyword 1" --max 500');
-    expect(await runOutlineCli(['--json', 'schema', 'text', 'replace'], { runtimeRoot: root, io: schema.io })).toBe(0);
+    expect(help.stdout).toContain('outline replace text');
+    expect(await runOutlineCli(['--json', 'schema', 'replace', 'text'], { runtimeRoot: root, io: schema.io })).toBe(0);
     const requestSchema = JSON.stringify(JSON.parse(schema.stdout).data);
     expect(requestSchema).toContain('maxReplacements');
     expect(requestSchema).toContain('caseSensitive');
@@ -683,41 +706,27 @@ describe('outline CLI', () => {
     expect(await readdir(root)).toEqual([]);
   });
 
-  test('derives placement and reference replacement help and schemas from their exact command contracts', async () => {
+  test('derives placement and complete edit schemas from their exact command contracts', async () => {
     const root = await makeRoot();
     const addHelp = captureIo();
     const moveHelp = captureIo();
-    const referenceHelp = captureIo();
-    const replaceHelp = captureIo();
-    const inlineHelp = captureIo();
     const addSchema = captureIo();
-    const replaceSchema = captureIo();
+    const editSchema = captureIo();
 
-    expect(await runOutlineCli(['add', '--help'], { runtimeRoot: root, io: addHelp.io })).toBe(0);
+    expect(await runOutlineCli(['create', '--help'], { runtimeRoot: root, io: addHelp.io })).toBe(0);
     expect(addHelp.stdout).toContain('--first');
     expect(addHelp.stdout).toContain('--last');
     expect(addHelp.stdout).toContain('--index INDEX');
     expect(addHelp.stdout).toContain('--before SIBLING');
     expect(addHelp.stdout).toContain('--after SIBLING');
-    expect(addHelp.stdout).toContain('outline example add viewed-tree');
+    expect(addHelp.stdout).toContain('outline example create collection');
 
     expect(await runOutlineCli(['move', '--help'], { runtimeRoot: root, io: moveHelp.io })).toBe(0);
     expect(moveHelp.stdout).toContain('--previous');
     expect(moveHelp.stdout).toContain('--next');
     expect(moveHelp.stdout).toContain('zero-based index');
 
-    expect(await runOutlineCli(['reference', '--help'], { runtimeRoot: root, io: referenceHelp.io })).toBe(0);
-    expect(referenceHelp.stdout).toContain('replace');
-    expect(referenceHelp.stdout).toContain('Replace one content Node with a tree reference');
-    expect(await runOutlineCli(['reference', 'replace', '--help'], { runtimeRoot: root, io: replaceHelp.io })).toBe(0);
-    expect(replaceHelp.stdout).toContain('Behavior: replace; not idempotent');
-    expect(replaceHelp.stdout).toContain('outline reference replace node:draft node:canonical');
-    expect(await runOutlineCli(['reference', 'inline', '--help'], { runtimeRoot: root, io: inlineHelp.io })).toBe(0);
-    expect(inlineHelp.stdout).toContain('Required referenced Node target when TARGET is a content Node');
-    expect(inlineHelp.stdout).toContain('REFERENCE may be omitted only when TARGET is already a tree reference');
-    expect(inlineHelp.stdout).toContain('outline reference inline node:draft node:canonical');
-
-    expect(await runOutlineCli(['--json', 'schema', 'add'], { runtimeRoot: root, io: addSchema.io })).toBe(0);
+    expect(await runOutlineCli(['--json', 'schema', 'create'], { runtimeRoot: root, io: addSchema.io })).toBe(0);
     const addRequest = JSON.stringify(JSON.parse(addSchema.stdout).data);
     for (const placement of ['first', 'last', 'index', 'before', 'after']) {
       expect(addRequest).toContain(`\"const\":\"${placement}\"`);
@@ -725,14 +734,14 @@ describe('outline CLI', () => {
     expect(addRequest).not.toContain('\"const\":\"previous\"');
     expect(addRequest).not.toContain('\"const\":\"next\"');
 
-    expect(await runOutlineCli(['--json', 'schema', 'reference', 'replace'], {
+    expect(await runOutlineCli(['--json', 'schema', 'edit'], {
       runtimeRoot: root,
-      io: replaceSchema.io,
+      io: editSchema.io,
     })).toBe(0);
-    const replaceRequest = JSON.stringify(JSON.parse(replaceSchema.stdout).data);
-    expect(replaceRequest).toContain('target');
-    expect(replaceRequest).toContain('reference');
-    expect(replaceRequest).not.toContain('changeSet');
+    const editRequest = JSON.stringify(JSON.parse(editSchema.stdout).data);
+    expect(editRequest).toContain('references');
+    expect(editRequest).toContain('sources');
+    expect(editRequest).not.toContain('changeSet');
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -764,7 +773,7 @@ describe('outline CLI', () => {
       summary: expect.stringContaining('indexed Node text'),
     });
     expect(findOperators.some((entry) => entry.name === 'EDITED_BY')).toBe(false);
-    expect(manifest.find((entry) => entry.name === 'show')?.completion.queryOperators).toBeUndefined();
+    expect(manifest.find((entry) => entry.name === 'get')?.completion.queryOperators).toBeUndefined();
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -777,8 +786,8 @@ describe('outline CLI', () => {
     })).toBe(0);
     expect(Buffer.byteLength(output.stdout)).toBeLessThanOrEqual(4 * 1024);
     expect(output.stdout).toContain('version\tPrint CLI');
-    expect(output.stdout).toContain('Omitted lines:');
-    expect(output.stdout).toContain('Digest:');
+    expect(output.stdout).toContain('create\tCreate one complete Node tree');
+    expect(output.stdout).not.toContain('Omitted lines:');
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -797,7 +806,7 @@ describe('outline CLI', () => {
     expect(option.stderr).toContain('Did you mean --match?');
     expect(option.stderr).toContain('outline search create --help');
     expect(await runOutlineCli(['view', 'sort', 'add'], { runtimeRoot: root, io: missing.io })).toBe(2);
-    expect(missing.stderr).toContain('outline view sort add --help');
+    expect(missing.stderr).toContain('Did you mean "view set"?');
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -849,22 +858,22 @@ describe('outline CLI', () => {
     try {
       const created = captureIo();
       expect(await runOutlineCli([
-        '--json', '--no-start', 'add', '--parent', '@today', '--idempotency-key', 'cli:history', 'History item',
+        '--json', '--no-start', 'create', '--parent', '@today', '--idempotency-key', 'cli:history', 'History item',
       ], { runtimeRoot: runningRoot, io: created.io })).toBe(0);
-      const createdOperation = JSON.parse(created.stdout).data;
+      const createdOperation = JSON.parse(created.stdout).data.settlement;
 
       const log = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'log', '--idempotency-key', 'cli:history'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'history', '--idempotency-key', 'cli:history'], {
         runtimeRoot: runningRoot,
         io: log.io,
       })).toBe(0);
       expect(JSON.parse(log.stdout)).toMatchObject({
         ok: true,
-        command: 'log',
+        command: 'history',
         data: { operations: [{ operationId: createdOperation.operationId }] },
       });
       const missingLog = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'log', '--idempotency-key', 'cli:missing'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'history', '--idempotency-key', 'cli:missing'], {
         runtimeRoot: runningRoot,
         io: missingLog.io,
       })).toBe(0);
@@ -886,11 +895,11 @@ describe('outline CLI', () => {
       expect(JSON.parse(repeatedRevert.stdout).data.operationId).toBe(revertOperation.operationId);
 
       const second = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'add', '--parent', '@today', 'Undo item'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'create', '--parent', '@today', 'Undo item'], {
         runtimeRoot: runningRoot,
         io: second.io,
       })).toBe(0);
-      const secondOperation = JSON.parse(second.stdout).data;
+      const secondOperation = JSON.parse(second.stdout).data.settlement;
       const undone = captureIo();
       expect(await runOutlineCli([
         '--json', '--no-start', 'undo', '--origin', 'own',
@@ -940,13 +949,13 @@ describe('outline CLI', () => {
 
     const absentRoot = await makeRoot();
     const absent = captureIo();
-    expect(await runOutlineCli(['--json', '--no-start', 'log'], {
+    expect(await runOutlineCli(['--json', '--no-start', 'history'], {
       runtimeRoot: absentRoot,
       io: absent.io,
     })).toBe(5);
     expect(JSON.parse(absent.stdout)).toMatchObject({
       ok: false,
-      command: 'log',
+      command: 'history',
       error: { code: 'runtime_unavailable', category: 'unavailable' },
     });
   });
@@ -964,7 +973,7 @@ describe('outline CLI', () => {
         && result.ok
         && result.data
         && typeof result.data === 'object'
-        && (result.data as { kind?: unknown }).kind === 'outline.operation') {
+        && ['outline.operation', 'outline.create-result'].includes(String((result.data as { kind?: unknown }).kind))) {
         dropCommittedResponse = false;
         for (const connection of (runtime as unknown as {
           connections: Set<{ destroy: () => void }>;
@@ -974,7 +983,7 @@ describe('outline CLI', () => {
     };
     try {
       const lost = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'add', '@today', 'Lost acknowledgement'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'create', '@today', 'Lost acknowledgement'], {
         runtimeRoot: root,
         io: lost.io,
       })).toBe(7);
@@ -982,12 +991,12 @@ describe('outline CLI', () => {
       const idempotencyKey = failure.error.details.idempotencyKey as string;
       expect(failure).toMatchObject({
         ok: false,
-        command: 'add',
+        command: 'create',
         error: {
           code: 'operation_settlement_unknown',
           retryable: false,
           details: { idempotencyKey: expect.stringMatching(/^cli:/) },
-          next: [`outline log --idempotency-key '${idempotencyKey}'`],
+          next: [`outline history --idempotency-key '${idempotencyKey}'`],
         },
       });
       expect(runtime.workspace.projection().nodes).toContainEqual(
@@ -995,7 +1004,7 @@ describe('outline CLI', () => {
       );
 
       const recovered = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'log', '--idempotency-key', idempotencyKey], {
+      expect(await runOutlineCli(['--json', '--no-start', 'history', '--idempotency-key', idempotencyKey], {
         runtimeRoot: root,
         io: recovered.io,
       })).toBe(0);
@@ -1012,20 +1021,17 @@ describe('outline CLI', () => {
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
-      const nodeId = `node:${crypto.randomUUID()}`;
       const created = captureIo();
       expect(await runOutlineCli([
-        '--json', '--no-start', 'add', '--parent', '@today', '--tree', JSON.stringify({
-          id: nodeId,
-          content: { text: 'Conflict target', marks: [], inlineRefs: [] },
-          children: [],
-        }),
+        '--json', '--no-start', 'create', '@today', 'Conflict target',
       ], { runtimeRoot: root, io: created.io })).toBe(0);
-      const operationId = JSON.parse(created.stdout).data.operationId as string;
+      const createResult = JSON.parse(created.stdout).data;
+      const nodeId = createResult.rootId as string;
+      const operationId = createResult.settlement.operationId as string;
 
       const changed = captureIo();
       expect(await runOutlineCli([
-        '--json', '--no-start', 'set', nodeId, '--description', 'Changed later',
+        '--json', '--no-start', 'edit', nodeId, '--description', 'Changed later',
       ], { runtimeRoot: root, io: changed.io })).toBe(0);
       const reverted = captureIo();
       expect(await runOutlineCli([
@@ -1050,7 +1056,7 @@ describe('outline CLI', () => {
         },
       });
       const shown = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'show', nodeId, '--include', 'description'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'get', nodeId, '--include', 'description'], {
         runtimeRoot: root,
         io: shown.io,
       })).toBe(0);
@@ -1069,7 +1075,7 @@ describe('outline CLI', () => {
     const missing = captureIo('{not json');
 
     try {
-      expect(await runOutlineCli(['--json', '--no-start', 'diff', '--input', '-'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'preview', '--input', '-'], {
         runtimeRoot: root,
         io: explicit.io,
       })).toBe(2);
@@ -1094,7 +1100,7 @@ describe('outline CLI', () => {
     try {
       const changeSet = createTodayChangeSet('CLI searchable result');
       const preview = captureIo(JSON.stringify(changeSet));
-      expect(await runOutlineCli(['--json', '--no-start', 'diff', '--input', '-'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'preview', '--input', '-'], {
         runtimeRoot: root,
         io: preview.io,
       })).toBe(0);
@@ -1110,7 +1116,7 @@ describe('outline CLI', () => {
       expect(operation).toMatchObject({ kind: 'outline.operation', origin: 'local-user' });
 
       const committed = captureIo(JSON.stringify(createTodayChangeSet('CLI committed result')));
-      expect(await runOutlineCli(['--json', '--no-start', 'commit', '--input', '-'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'transact', '--input', '-'], {
         runtimeRoot: root,
         io: committed.io,
       })).toBe(0);
@@ -1145,11 +1151,13 @@ describe('outline CLI', () => {
       expect(summaryFind.stdout).toContain('text=CLI searchable result');
 
       const literalHelp = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'add', '@today', '--', '--help'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'create', '@today', '--', '--help'], {
         runtimeRoot: root,
         io: literalHelp.io,
       })).toBe(0);
-      expect(JSON.parse(literalHelp.stdout).data).toMatchObject({ kind: 'outline.operation' });
+      expect(JSON.parse(literalHelp.stdout).data).toMatchObject({
+        kind: 'outline.create-result', committed: true, verification: { passed: true },
+      });
       expect(Object.values(runtime.workspace.documentState().nodes))
         .toContainEqual(expect.objectContaining({ content: expect.objectContaining({ text: '--help' }) }));
 
@@ -1164,7 +1172,7 @@ describe('outline CLI', () => {
 
       const nodeId = diff.bindings.created?.[0];
       const shown = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'show', nodeId!], {
+      expect(await runOutlineCli(['--json', '--no-start', 'get', nodeId!], {
         runtimeRoot: root,
         io: shown.io,
       })).toBe(0);
@@ -1197,7 +1205,7 @@ describe('outline CLI', () => {
     if (!runtime) return;
     const add = async (text: string) => {
       const output = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'add', '@today', text], {
+      expect(await runOutlineCli(['--json', '--no-start', 'create', '@today', text], {
         runtimeRoot: root,
         io: output.io,
       })).toBe(0);
@@ -1268,7 +1276,7 @@ describe('outline CLI', () => {
       });
 
       const shown = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'show', betaId, alphaId], {
+      expect(await runOutlineCli(['--json', '--no-start', 'get', betaId, alphaId], {
         runtimeRoot: root,
         io: shown.io,
       })).toBe(0);
@@ -1286,7 +1294,7 @@ describe('outline CLI', () => {
         page: { limit: 2 },
       };
       const projectionOnlyShow = captureIo(JSON.stringify(projection));
-      expect(await runOutlineCli(['--json', '--no-start', 'show', '--projection', '-'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'get', '--projection', '-'], {
         runtimeRoot: root,
         io: projectionOnlyShow.io,
       })).toBe(0);
@@ -1312,13 +1320,13 @@ describe('outline CLI', () => {
         },
       }));
       expect(await runOutlineCli([
-        '--json', '--no-start', 'show', betaId, '--projection', '-',
+        '--json', '--no-start', 'get', betaId, '--projection', '-',
       ], { runtimeRoot: root, io: conflicting.io })).toBe(2);
       expect(JSON.parse(conflicting.stdout)).toMatchObject({
         ok: false,
         error: {
           code: 'invalid_input',
-          message: 'show Selector conflicts with the Selector declared by --projection.',
+          message: 'get Selector conflicts with the Selector declared by --projection.',
         },
       });
 
@@ -1370,7 +1378,7 @@ describe('outline CLI', () => {
       });
 
       const shown = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'show', '@date:2040-02-29'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'get', '@date:2040-02-29'], {
         runtimeRoot: root,
         io: shown.io,
       })).toBe(0);
@@ -1397,7 +1405,7 @@ describe('outline CLI', () => {
       const outputPath = path.join(root, 'reviewed.diff.json');
       const output = captureIo(input);
       expect(await runOutlineCli([
-        '--json', '--no-start', 'diff', '--input', '-', '--input-format', 'jsonl', '--output', outputPath,
+        '--json', '--no-start', 'preview', '--input', '-', '--input-format', 'jsonl', '--output', outputPath,
       ], { runtimeRoot: root, io: output.io })).toBe(0);
       expect(JSON.parse(output.stdout).data).toMatchObject({ path: outputPath, sha256: expect.any(String) });
       expect((JSON.parse(await readFile(outputPath, 'utf8')) as Diff).kind).toBe('outline.diff');
@@ -1405,7 +1413,7 @@ describe('outline CLI', () => {
       const summaryPath = path.join(root, 'reviewed-summary.diff.json');
       const summary = captureIo(JSON.stringify(changeSet));
       expect(await runOutlineCli([
-        '--no-start', 'diff', '--input', '-', '--output', summaryPath,
+        '--no-start', 'preview', '--input', '-', '--output', summaryPath,
       ], { runtimeRoot: root, io: summary.io })).toBe(0);
       expect(Buffer.byteLength(summary.stdout)).toBeLessThanOrEqual(4 * 1024);
       expect(summary.stdout).toContain(`Artifact: ${summaryPath}`);
@@ -1420,7 +1428,7 @@ describe('outline CLI', () => {
 
       const corrupted = captureIo(input.replace(canonicalSha256(changeSet), '0'.repeat(64)));
       expect(await runOutlineCli([
-        '--json', '--no-start', 'diff', '--input', '-', '--input-format', 'jsonl',
+        '--json', '--no-start', 'preview', '--input', '-', '--input-format', 'jsonl',
       ], { runtimeRoot: root, io: corrupted.io })).toBe(2);
       expect(JSON.parse(corrupted.stdout).error.message).toContain('SHA-256');
     } finally {
@@ -1449,7 +1457,7 @@ describe('outline CLI', () => {
       };
       const raw = JSON.stringify(changeSet);
       const inline = captureIo(raw);
-      expect(await runOutlineCli(['--json', '--no-start', 'diff', '--input', '-'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'preview', '--input', '-'], {
         runtimeRoot: root,
         io: inline.io,
       })).toBe(2);
@@ -1458,7 +1466,7 @@ describe('outline CLI', () => {
       const outputPath = path.join(root, 'large.diff.json');
       const output = captureIo(raw);
       expect(await runOutlineCli([
-        '--json', '--no-start', 'diff', '--input', '-', '--output', outputPath,
+        '--json', '--no-start', 'preview', '--input', '-', '--output', outputPath,
       ], { runtimeRoot: root, io: output.io })).toBe(0);
       const result = JSON.parse(output.stdout).data;
       const byteCount = result.byteCount as number;
@@ -1477,7 +1485,7 @@ describe('outline CLI', () => {
     }
   }, 30_000);
 
-  test('streams asset ingest, show, and verified export through the Runtime', async () => {
+  test('streams asset ingest, get, and verified export through the Runtime', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
@@ -1497,7 +1505,7 @@ describe('outline CLI', () => {
       expect(lease.metadata).toMatchObject({ byteSize: sourceBytes.byteLength, mimeType: 'text/plain' });
 
       const shown = captureIo();
-      expect(await runOutlineCli(['--json', '--no-start', 'asset', 'show', lease.assetId], {
+      expect(await runOutlineCli(['--json', '--no-start', 'asset', 'get', lease.assetId], {
         runtimeRoot: root,
         io: shown.io,
       })).toBe(0);
@@ -1565,7 +1573,7 @@ describe('outline CLI', () => {
       });
       const environment = { [OUTLINE_AGENT_ATTESTATION_ENV]: token };
       const preview = captureIo(JSON.stringify(createTodayChangeSet('CLI Agent write')));
-      expect(await runOutlineCli(['--json', '--no-start', 'diff', '--input', '-'], {
+      expect(await runOutlineCli(['--json', '--no-start', 'preview', '--input', '-'], {
         runtimeRoot: root,
         env: environment,
         io: preview.io,
@@ -1615,13 +1623,13 @@ describe('outline CLI', () => {
     let releaseRead: (() => void) | undefined;
     const started = new Promise<void>((resolve) => { startRead = resolve; });
     const blocked = new Promise<void>((resolve) => { releaseRead = resolve; });
-    runtime.router.register('show', async () => {
+    runtime.router.register('get', async () => {
       startRead?.();
       await blocked;
       return { invalidAfterCancellation: true };
     });
     const child = Bun.spawn([
-      process.execPath, cliEntry, '--json', '--no-start', '--timeout', '300000', 'show', '@today',
+      process.execPath, cliEntry, '--json', '--no-start', '--timeout', '300000', 'get', '@today',
     ], {
       env: { ...process.env, TENON_OUTLINE_RUNTIME_ROOT: root },
       stdout: 'pipe',
@@ -1681,7 +1689,7 @@ describe('outline CLI', () => {
       if (result.ok
         && result.data
         && typeof result.data === 'object'
-        && (result.data as { kind?: unknown }).kind === 'outline.operation') {
+        && ['outline.operation', 'outline.create-result'].includes(String((result.data as { kind?: unknown }).kind))) {
         startWrite?.();
         await blocked;
       }
@@ -1689,7 +1697,7 @@ describe('outline CLI', () => {
     };
     const child = Bun.spawn([
       process.execPath, cliEntry, '--json', '--no-start', '--timeout', '300000',
-      'add', '@today', 'Interrupted after commit',
+      'create', '@today', 'Interrupted after commit',
     ], {
       env: { ...process.env, TENON_OUTLINE_RUNTIME_ROOT: root },
       stdout: 'pipe',
@@ -1704,7 +1712,7 @@ describe('outline CLI', () => {
       const failure = JSON.parse(await stdoutPromise);
       expect(failure).toMatchObject({
         ok: false,
-        command: 'add',
+        command: 'create',
         error: {
           code: 'operation_settlement_unknown',
           details: { idempotencyKey: expect.stringMatching(/^cli:/) },

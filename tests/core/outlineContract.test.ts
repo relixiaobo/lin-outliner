@@ -77,7 +77,7 @@ describe('outline public contract', () => {
   });
 
   test('caches compiled validators for large recursive capability payloads', () => {
-    const schema = outlineCapability('diff')!.requestSchema;
+    const schema = outlineCapability('preview')!.requestSchema;
     const validator = outlineSchemaValidator(schema);
     expect(outlineSchemaValidator(schema)).toBe(validator);
     const input = {
@@ -173,7 +173,7 @@ describe('outline public contract', () => {
       protocolVersion: 1,
       requestId: 'r1',
       ok: true,
-      command: 'show',
+      command: 'get',
       revision: 2,
       data: [],
     })).toBe(true);
@@ -181,7 +181,7 @@ describe('outline public contract', () => {
       protocolVersion: 1,
       requestId: 'r1',
       ok: true,
-      command: 'show',
+      command: 'get',
       data: [],
       diagnostic: 'stdout leak',
     })).toBe(false);
@@ -234,11 +234,22 @@ describe('outline public contract', () => {
   test('registers every fixed command with request and result schemas', () => {
     const names = OUTLINE_CAPABILITIES.map((entry) => entry.name);
     expect(new Set(names).size).toBe(names.length);
-    expect(names).toContain('diff');
-    expect(names).toContain('apply');
-    expect(names).toContain('asset ingest');
-    expect(names).toContain('purge');
-    expect(names).not.toContain('asset delete');
+    expect(names).toEqual([
+      'version', 'status', 'capabilities', 'example', 'schema',
+      'find', 'get', 'view get', 'search run', 'export', 'watch',
+      'preview', 'transact', 'apply', 'history', 'revert', 'undo', 'redo',
+      'asset ingest', 'asset get', 'asset export',
+      'import inspect', 'import plan', 'import verify',
+      'create', 'edit', 'replace text', 'move', 'duplicate', 'merge',
+      'define create', 'define ensure', 'define edit', 'view set',
+      'search create', 'search edit', 'template apply', 'daily ensure',
+      'capture create', 'trash', 'restore', 'purge',
+    ]);
+    for (const retired of [
+      'add', 'set', 'show', 'diff', 'commit', 'log', 'view inspect', 'asset show',
+      'text replace', 'done set', 'tag add', 'field set', 'reference set',
+      'definition create', 'search set', 'search refresh', 'capture add', 'source add',
+    ]) expect(names).not.toContain(retired);
     const compiled = new Set<object>();
     for (const entry of OUTLINE_CAPABILITIES) {
       for (const schema of [entry.requestSchema, entry.resultSchema, entry.porcelain?.inputSchema]) {
@@ -275,10 +286,13 @@ describe('outline public contract', () => {
     expect(Value.Check(searchCreate.inputSchema, { ...base, match: 'module', query: { kind: 'rule', op: 'STRING_MATCH', text: 'module' } })).toBe(false);
     expect(Value.Check(searchCreate.inputSchema, { changeSet: { operations: [] } })).toBe(false);
 
-    const displayRemove = OUTLINE_CAPABILITIES.find((entry) => entry.name === 'view display remove')!.porcelain!;
+    const viewSet = OUTLINE_CAPABILITIES.find((entry) => entry.name === 'view set')!.porcelain!;
     const target = 'node:owner';
-    expect(Value.Check(displayRemove.inputSchema, { target, displayFieldId: 'display:field' })).toBe(true);
-    expect(Value.Check(displayRemove.inputSchema, { target, ruleId: 'display:field' })).toBe(false);
+    expect(Value.Check(viewSet.inputSchema, {
+      target,
+      view: { mode: 'table', replace: { display: [{ field: 'field:priority', visible: true }] } },
+    })).toBe(true);
+    expect(Value.Check(viewSet.inputSchema, { target, displayFieldId: 'display:field' })).toBe(false);
   });
 
   test('derives help, completion metadata, and exact CLI schemas from every capability contract', () => {
@@ -297,7 +311,7 @@ describe('outline public contract', () => {
           name: entry.name,
           ...(entry.value ? { value: entry.value } : {}),
         })),
-        ...(['find', 'text replace', 'search create', 'search set'].includes(capability.name) ? {
+        ...(['find', 'replace text', 'search create', 'search edit'].includes(capability.name) ? {
           queryOperators: OUTLINE_QUERY_OPERATORS.map((operator) => ({
             name: operator.name,
             summary: operator.summary,
@@ -357,7 +371,7 @@ describe('outline public contract', () => {
     }
 
     expect(coverageOwners.get('document_events')).toEqual(['watch']);
-    expect(coverageOwners.get('operation_history')).toEqual(['log']);
+    expect(coverageOwners.get('operation_history')).toEqual(['history']);
     for (const command of DOCUMENT_COMMANDS) {
       if (command === 'init_workspace') {
         expect(coverageOwners.has(command)).toBe(false);

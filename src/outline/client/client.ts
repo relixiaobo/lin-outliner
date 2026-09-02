@@ -374,7 +374,7 @@ export class OutlineClient {
     }
   }
 
-  async diffArtifact(
+  async previewArtifact(
     source: AsyncIterable<Uint8Array> | Iterable<Uint8Array>,
     options: {
       readonly inputFormat: 'json' | 'jsonl';
@@ -384,10 +384,10 @@ export class OutlineClient {
     },
   ): Promise<OutlineDiffArtifact> {
     const lifetime = createRequestLifetime(options.signal, this.requestTimeoutMs);
-    const requestId = `diff:${crypto.randomUUID()}`;
+    const requestId = `preview:${crypto.randomUUID()}`;
     try {
       const response = await this.openUploadRequest({
-        path: '/v1/diff',
+        path: '/v1/preview',
         headers: {
           'content-type': options.inputFormat === 'jsonl'
             ? 'application/x-ndjson; charset=utf-8'

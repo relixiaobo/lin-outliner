@@ -196,7 +196,7 @@ An eligible Turn receives compact routing instructions, not Memory prose. The
 instructions tell the model to use `outline find` only when prior preferences,
 decisions, commitments, unresolved questions, or recurring workflow facts could
 materially improve the answer, then inspect only the one or two most relevant
-results with `outline show`. Self-contained requests such as current time,
+results with `outline get`. Self-contained requests such as current time,
 simple formatting, or questions fully answered by the current Turn skip Memory
 lookup. The public CLI is the only retrieval surface.
 
@@ -243,7 +243,7 @@ Nodes or their retained evidence; those Nodes remain user-editable until
 ordinary editing, consolidation, or Reset changes them.
 
 Citation ranking records only a bounded set of canonical Memory Nodes returned
-by a successful foreground `outline show` in the same eligible Turn. Find
+by a successful foreground `outline get` in the same eligible Turn. Find
 results, ordinary Nodes, failed or background shell calls, malformed output, and
 uncited reads do not count. At terminal completion, the extension parses only
 rendered final-answer Markdown and records usage when it contains the exact Node

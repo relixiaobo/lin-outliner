@@ -1,108 +1,135 @@
 ---
 name: outline
-description: Inspect, edit, organize, import into, or recover the Tenon outline through the public outline CLI. Use for persisted Outliner Nodes, fields, tags, references, views, searches, Daily Notes, media, Trash, or operation history.
+description: Read, create, edit, organize, present, import, or recover persisted Tenon outline data through the public outline CLI. Use for Nodes, fields, tags, references, Views, Saved Searches, Daily Notes, media, Trash, or Operation history.
 ---
 
 # Outline
 
-Use `outline` through Bash as the only persisted document interface. Execute it
-directly: no shell pipeline, heredoc, loop, command substitution, temporary input
-file, helper program, or private storage/API access. For `--input -`, send the
-complete JSON through Bash's separate `stdin` field.
+Use `outline` through Bash as the only persisted document interface. Invoke it
+directly. For `--input -`, pass JSON through Bash's separate `stdin` field; do
+not construct temporary files, pipelines, loops, or helper programs.
 
-Default output is the bounded Agent receipt. Use `--json` only when the user asks
-for a machine contract or raw records. Do not repeat a successful command solely
-to recover an identifier: its receipt contains the next-step handles.
+## Model
 
-## Route The Intent
+- A **Node** is the only content and tree identity. A table row, card, calendar
+  item, and outline item are the same Node under different Views.
+- A **Field** is a reusable typed definition; each value belongs to a Node.
+  Request-local field keys connect declarations, values, and View display only.
+- A **View** projects Nodes as `outline`, `table`, `cards`, or `calendar`
+  without converting or copying data. Every scope has an effective Outline View
+  even when no explicit View is persisted.
+- An **Operation** is the atomic settlement and recovery unit. One intent should
+  create at most one Operation; rejected input creates none.
 
-Choose the first matching shape:
+## Route
 
-| Intent | Command shape |
+Use the narrowest semantic command:
+
+| Intent | Command |
 | --- | --- |
-| Read a known target | `outline show TARGET` |
+| Read an exact target | `outline get TARGET` |
 | Discover or count | `outline find ...` |
-| Inspect a persisted view | `outline view inspect OWNER_ID` |
-| Create or patch one resource | One porcelain command |
-| Create one resource with structured state | The same porcelain command with `--input -` |
-| Change dependent resources together | One `outline commit --input -` ChangeSet |
-| Review destructive or high-impact work | `outline diff --output FILE`, then exact `outline apply FILE` |
-| Inspect or recover history | `outline log ...` / `outline revert OPERATION_ID` |
-| Import external data | `import inspect`, `import plan`, exact `apply`, then `import verify` |
+| Create a complete Node tree and optional View | `outline create ...` |
+| Converge Node content, metadata, tags, fields, or references | `outline edit ...` |
+| Reorganize Nodes | `outline move`, `outline duplicate`, or `outline merge` |
+| Create or update reusable definitions | `outline define create|ensure|edit` |
+| Read or replace presentation | `outline view get|set` |
+| Create, edit, or run a Saved Search | `outline search create|edit|run` |
+| Permanently destructive work | `outline preview`, then exact `outline apply` |
+| Multi-resource work with dependencies | `outline transact --input -` |
+| Recover | `outline history`, `outline revert`, `outline undo`, or `outline redo` |
 
-Use exact IDs and stable locators such as `@inbox`, `@library`,
-`@saved-searches`, `@today`, and `@date:YYYY-MM-DD`. Never infer identity from
-display text without a bounded read. Exact structured targets are locator
-strings; only genuinely bulk-capable inputs accept a bounded TargetSpec with an
-explicit `max`.
+Use exact IDs or stable locators such as `@inbox`, `@library`, `@today`, and
+`@date:YYYY-MM-DD`. Use one bounded `find` before a write only when identity is
+not already known. A structured many-target request must include an explicit
+`max`.
 
-For an unfamiliar structured shape, run exactly one matching recipe command,
-for example `outline example add viewed-tree`, `outline example find
-named-counts`, or `outline example commit dependent-change`. Use `outline
-COMMAND --help` only when no recipe or obvious argv form covers the intent.
-`outline schema` is an integration/debugging surface, not the normal discovery
-path.
+## Common Create
 
-## Native Collections
-
-A table, list, cards view, or calendar is one ordinary owner Node with direct
-ordinary child items, field-backed values, and persisted view configuration. Do
-not substitute Markdown or aligned text.
-
-Create a complete collection atomically with `outline add --input -`, then use
-the returned owner ID in one `outline view inspect OWNER_ID` verification:
+Create plain, nested, field-backed, and View-backed content with the same shape:
 
 ```json
 {
-  "kind": "viewed-tree",
-  "placement": { "kind": "first", "parent": "@today" },
-  "title": "Prices",
+  "at": {
+    "parent": "@today",
+    "position": "first"
+  },
   "fields": [
-    { "key": "price", "name": "Price", "config": { "fieldType": "number" } }
+    {
+      "key": "weather",
+      "name": "Weather",
+      "type": "text"
+    },
+    {
+      "key": "low",
+      "name": "Night low (C)",
+      "type": "number"
+    }
   ],
-  "items": [
-    { "content": "Item A", "values": { "price": 12 } }
-  ],
-  "view": { "mode": "table" }
+  "node": {
+    "text": "Chengdu district weather",
+    "description": "Sunny throughout.",
+    "children": [
+      {
+        "text": "Central districts",
+        "fields": {
+          "weather": "Sunny",
+          "low": 21
+        }
+      }
+    ]
+  },
+  "view": {
+    "mode": "table",
+    "display": [
+      "weather",
+      "low"
+    ]
+  }
 }
 ```
 
-Field keys are local stable names shared by `fields`, item `values`, and view
-configuration. Reused fields use an exact locator. System fields use canonical
-`sys:*` names. Date values use `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or
-`start/end`; Daily Note dates are local calendar dates with no timezone
-conversion.
+Run it once with `outline create --input -`. Public Field types are `text`,
+`select`, `select-from-tag`, `date`, `number`, `url`, `email`, and
+`checkbox`. Definitions are reused automatically only when same-name explicit
+constraints are compatible; a mismatch returns the existing definition ID and
+differences without writing. Do not look up or manually reuse field IDs after a
+compatible success.
 
-## Mutate, Review, Verify
+Keep collection-wide summaries on the owner Node's `description`; direct
+children are the actual items projected as rows, cards, or calendar entries.
 
-Prefer one complete porcelain invocation. Use a ChangeSet only when one intent
-has dependencies or spans independently addressable resources. Bind resources
-created or ensured inside a ChangeSet and consume those bindings later; never
-query intermediate IDs or issue a shell mutation loop.
+A successful semantic mutation receipt is derived from committed state and
+contains the Operation ID, result handles, verification result, and recovery
+command. Treat it as completion proof. Do not issue a separate verification
+read unless the user asks to inspect content not covered by the receipt.
 
-Use direct `commit` for a known non-destructive ChangeSet. For destructive,
-conversion, ambiguous-target, high-impact, or explicitly reviewed work, persist
-one immutable Diff, review its hashes/effects/destructive classes/bindings and
-warnings, then apply that exact artifact once. Destructive porcelain uses
-`--preview --idempotency-key KEY`, followed by the same command and key with
-`--expect-diff SHA256 --yes`; `--yes` alone is invalid.
+## Disclosure And Recovery
 
-After consequential writes, verify independently with one bounded `show`,
-`find`, or `view inspect`. Dispatch is not final-state proof. Stop when target
-selection, bounds, coverage, review, or verification is unresolved.
+When the task fits the Common Create shape above, run it directly; that example
+is already validated. For a structured form not represented here, request one
+matching example such as `outline example edit complete`. Use `outline COMMAND
+--help` only when neither the entrypoint nor an example covers the task. Use
+`outline schema COMMAND` only to build an integration or diagnose a concrete
+validation failure; never dump a schema speculatively.
 
-If settlement is unknown, do not write again. Run the exact `outline log
---idempotency-key ...` command from the failure receipt. Revert only a known
-completed Operation with `outline revert OPERATION_ID`; never invent a
-compensating edit.
+If validation fails, follow the returned path and corrective command once. Do
+not search broadly or inspect the full schema when the error already identifies
+the invalid property and accepted vocabulary.
 
-For imports, profile the authorized source with `outline import inspect SOURCE`,
-then create a reviewed Diff and evidence with `outline import plan SOURCE
---output import.diff.json --evidence-output import.evidence.json`. Apply the
-exact Diff once and run `outline import verify OPERATION_ID --diff
-import.diff.json --evidence import.evidence.json`. Every source record must be
-accounted as imported, merged, dropped, unsupported, or empty; unaccounted must
-be zero.
+Use `transact` only when one intent spans dependent resources; bind resources
+inside its ChangeSet instead of querying intermediate IDs. For destructive or
+explicitly reviewed work, persist one immutable Diff with `preview`, inspect its
+hash and effects, then `apply` that exact artifact once. Never approximate a
+reviewed change or substitute an unreviewed compensating mutation.
 
-In the final response, reference an ordinary persisted `node:UUID` as
-`[[node://UUID]]`, removing the internal `node:` prefix.
+If settlement is unknown, do not retry the write. Run the exact
+`outline history --idempotency-key KEY` command from the failure receipt. Revert
+only a known completed Operation.
+
+Use `import inspect`, `import plan`, exact `apply`, then `import verify` for
+external datasets. Use `asset ingest|get|export` for retained bytes and
+`capture create` for provenanced captures.
+
+In the final response, link an ordinary persisted `node:UUID` as
+`[[node://UUID]]`, omitting the internal `node:` prefix.
