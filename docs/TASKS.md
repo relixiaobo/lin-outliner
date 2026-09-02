@@ -13,12 +13,12 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-One implementation claim is open: PR #617 tightens the public Outline Agent
-interface contract. Thread interaction polish shipped in #616; Agent context
-language shipped in #611 after rebasing onto #613's tool-result protocol;
-root-Turn recovery shipped in #612, and delegated failure truth shipped in #614,
-so the managed Computer Pilot Skill remains eligible under its live collision
-check.
+One implementation claim is open: Draft PR #618 adds Agent execution-selection
+settings. The public Outline Agent interface shipped in #617; Thread interaction
+polish shipped in #616; Agent context language shipped in #611 after rebasing
+onto #613's tool-result protocol; root-Turn recovery shipped in #612, and
+delegated failure truth shipped in #614, so the managed Computer Pilot Skill
+remains eligible under its live collision check.
 The public Outline CLI, built-in Skill, and shared preview-shell lanes are also
 clear.
 Startup Window, preview readers, and Skill authoring remain independently
@@ -210,6 +210,10 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **outline-agent-interface-contract** (`done`, #617, 2026-09-02) — the public
+  Outline CLI now routes common Agent work through bounded executable recipes,
+  narrow porcelain inputs, and closed-loop receipts; plan archived at
+  [outline-agent-interface-contract](plans/archive/outline-agent-interface-contract.md).
 - **thread-interaction-polish** (`done`, #616, 2026-09-02) — New Thread now
   uses the registry-owned `Command+Shift+O` shortcut, compact Threads chrome
   keeps Trajectory inspection contextual, short sends remain in natural flow,
