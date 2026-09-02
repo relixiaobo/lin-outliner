@@ -54,9 +54,10 @@ and plan.
   be published during provider preparation; UI changes never asynchronously
   rewrite a generation.
 - **CON-6 dependency:** merged PRs #609, #610, and #612 are the Skill invocation,
-  provider-call identity, and Turn recovery baseline. Open PR #614 owns delegated
-  generation receipts, notification truth, and transcript presentation. It is an
-  adjacent consumer rather than a context-language owner; preserve its canonical
+  provider-call identity, and Turn recovery baseline. Merged PR #614 owns delegated
+  generation receipts, stable parent-Item identity, notification truth, isolated
+  Skill terminal settlement, and transcript presentation. It is an adjacent
+  consumer rather than a context-language owner; preserve its canonical
   renderability boundary and repeat the live file-scope check before implementation.
 - **DEC-1:** model-visible `<context>` children have no `kind`. Host-assigned
   `authority` and `purpose` are the complete wrapper protocol.
@@ -576,9 +577,10 @@ Consistency means one grammar per semantic boundary:
 
 ## Execution
 
-- Start from the merged #609/#610/#612 baseline. Keep #614's delegated receipt and
-  transcript-presentation ownership outside this PR, repeat the open-claim/file-scope
-  collision check, and obtain PM ratification before editing shared protocol surfaces.
+- Start from the merged #609/#610/#612/#614 baseline. Keep #614's delegated receipt,
+  stable parent-Item identity, isolated Skill settlement, and transcript-presentation
+  ownership outside this PR; repeat the open-claim/file-scope collision check and
+  obtain PM ratification before editing shared protocol surfaces.
 - Extend renderer-to-main canonical evidence to cover all `PanelView` variants
   while preserving Host-private Pane correlation.
 - Remove Today-based synthetic views and retain honest no-view state.
