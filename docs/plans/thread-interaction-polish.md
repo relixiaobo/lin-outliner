@@ -9,7 +9,8 @@ shortcut, teach that shortcut at the existing New Thread control, and remove the
 always-visible Thread-header Trajectory button because Trajectory is a technical
 inspection surface rather than an everyday command. Keep short conversations
 visually settled after send instead of manufacturing enough blank runway to pin
-their newest user message to the top of the transcript.
+their newest user message to the top of the transcript. Restore Trajectory detail
+reads when provider cache breakpoints contain their canonical JSON paths.
 
 ## Non-goals
 
@@ -45,6 +46,9 @@ their newest user message to the top of the transcript.
 - **FR-7:** The short-versus-overflowing decision is captured from pre-send real
   transcript geometry. Optimistic content, temporary disclosure runway, and a
   later-growing response cannot retroactively switch the mode.
+- **FR-8:** Trajectory provider-call evidence decodes `cacheBreakpoints` as JSON
+  path strings, matching the retained Turn diagnostics contract, rather than as
+  SHA-256 digests.
 
 ### Shortcut ownership
 
@@ -80,6 +84,13 @@ anchor or mount `.thread-send-anchor-spacer`; the sent message therefore remains
 in natural document flow. Overflowing conversations keep the existing pending
 anchor, settlement, virtualization coverage, and failure restoration paths.
 
+### Trajectory evidence decoding
+
+Use the same `stringArray` decoder for provider-call cache breakpoints in both
+canonical Turn diagnostics and projected Trajectory details. Request
+fingerprints remain SHA-256 digests; cache breakpoints remain paths such as
+`$.messages[0].content[0].cache_control`.
+
 ## Verification
 
 - Renderer tests prove registry matching and formatting for `global.new_thread`.
@@ -94,6 +105,8 @@ anchor, settlement, virtualization coverage, and failure restoration paths.
   creates no send spacer and does not move its new message to the top, while the
   existing overflowing-transcript case still anchors at the top and follows its
   streamed response.
+- A core projection/codec regression test proves a non-empty cache-breakpoint
+  JSON path survives the Trajectory detail response decoder.
 - Run `bun run typecheck`, relevant renderer/E2E tests, `bun run docs:check`, and
   `git diff --check`; visually verify the dock header and tooltip in light and
   dark mode.
@@ -114,6 +127,8 @@ anchor, settlement, virtualization coverage, and failure restoration paths.
   at the bottom.
 - **AC-6:** Sending from an already overflowing transcript preserves the current
   top-anchor, temporary-runway, streaming-follow, and failed-send behavior.
+- **AC-7:** Opening Trajectory detail for diagnostics with non-empty provider
+  cache breakpoints succeeds and preserves each recorded JSON path.
 
 ## Open questions
 

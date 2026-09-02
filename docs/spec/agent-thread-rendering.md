@@ -1087,7 +1087,9 @@ focused to that Turn.
 Trajectory is the Thread-wide technical workspace. It is a main-owned,
 inspection-only projection over canonical Turns, retained diagnostics, context
 payload references, and tool output references; it is not a second execution
-ledger and it is not derived from renderer transcript pagination.
+ledger and it is not derived from renderer transcript pagination. Provider-call
+cache breakpoints remain recorded JSON paths in this projection and decode as
+ordinary strings; only the adjacent request fingerprint is a SHA-256 digest.
 
 DeepSeek Harness `TrajectoryView`, `TrajectoryToolbar`, `TrajectoryTimeline`,
 and `TrajectoryTable` are the product-interface authority for this workspace's

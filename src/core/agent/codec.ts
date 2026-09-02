@@ -3316,8 +3316,7 @@ function decodeThreadTrajectoryProviderCallEvidence(
     reservedOutputTokens: nonNegativeInteger(record.reservedOutputTokens, `${path}.reservedOutputTokens`),
     commonPrefixMessageCount: nonNegativeInteger(record.commonPrefixMessageCount, `${path}.commonPrefixMessageCount`),
     requestFingerprint: sha256(record.requestFingerprint, `${path}.requestFingerprint`),
-    cacheBreakpoints: arrayValue(record.cacheBreakpoints, `${path}.cacheBreakpoints`)
-      .map((entry, index) => sha256(entry, `${path}.cacheBreakpoints[${index}]`)),
+    cacheBreakpoints: stringArray(record.cacheBreakpoints, `${path}.cacheBreakpoints`),
     request: record.request === null ? null : jsonValue(record.request, `${path}.request`),
     response: record.response === null ? null : jsonValue(record.response, `${path}.response`),
     transportResponse: record.transportResponse === null

@@ -450,6 +450,27 @@ describe('ThreadTrajectoryProjection', () => {
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', contextDetail)).toEqual(contextDetail);
   });
 
+  test('decodes provider cache breakpoint JSON paths in Trajectory detail', async () => {
+    const base = inputEnvelopeDiagnostics();
+    const cacheBreakpoints = ['$.messages[0].content[0].cache_control'];
+    const projection = trajectoryProjection({
+      diagnostics: {
+        ...base,
+        providerCalls: [{ ...base.providerCalls[0]!, cacheBreakpoints }],
+      },
+      contextPayload: turnEnvironmentPayload(),
+      turn: inputEnvelopeTurn(),
+    });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const input = response.records.find((record) => record.kind === 'input');
+    if (!input) throw new Error('Expected input record');
+
+    const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: input.id });
+    if (detail.detail?.kind !== 'input') throw new Error('Expected input detail');
+    expect(detail.detail.diagnostics?.providerCall?.cacheBreakpoints).toEqual(cacheBreakpoints);
+    expect(decodeAgentCoreResponse('thread/trajectory/detail/read', detail)).toEqual(detail);
+  });
+
   test('uses captured attachment, Node, and image input while keeping Node snapshots in Context', async () => {
     const base = inputEnvelopeDiagnostics();
     const call = base.providerCalls[0]!;
