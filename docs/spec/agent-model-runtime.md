@@ -683,10 +683,16 @@ The output scanner runs exactly once before either boundary. Pending completion
 events are idempotent across restart and cannot overtake already-admitted genuine
 user input. Nested delivery advances one parent edge at a time so only a parent's
 synthesized result reaches its own parent.
-Renderer-facing execution projection is stable-Agent current state plus
-delivered per-generation anchors. The current generation's terminal fields do
-not replace older delivered rows; after resume, those rows continue to identify
-which parent Turn consumed each earlier result.
+Renderer-facing execution projection separates stable-Agent current state from
+immutable terminal-generation receipts. Each receipt is joined from the
+execution ledger's terminal notification row and canonical child Turn, and
+carries the exact generation and Turn, stable delegating parent Item, outcome,
+stop provenance, duration, bounded error, partial-output availability, direct
+parent, notification state, and delivery Turn. Foreground settlement, including
+an isolated Skill, projects a receipt with no notification or delivery Turn.
+After resume, current-generation fields cannot replace an older receipt;
+historical anchors and reports continue to identify the exact run and, where
+applicable, the parent Turn that consumed it.
 
 Completion notifications and Agent-to-`main` message envelopes remain durable
 queued work while either endpoint has an undelivered row. Catalog projection uses

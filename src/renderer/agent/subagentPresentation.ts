@@ -1,6 +1,7 @@
 import type {
   SubAgentActivityThreadItem,
   SubagentExecutionProjection,
+  SubagentGenerationReceipt,
   SubagentRunMode,
   SubagentWorktreeSummary,
   ThreadId,
@@ -45,6 +46,7 @@ export interface SubagentRegistryEntry {
   readonly form: SubagentDelegationForm;
   readonly runMode: SubagentRunMode;
   readonly generation: number;
+  readonly generationReceipts: ReadonlyMap<number, SubagentGenerationReceipt>;
   readonly status: SubagentRegistryStatus;
   /** User authority: the model may not resume this Agent until the user does. */
   readonly stoppedByUser: boolean;
@@ -85,6 +87,8 @@ export interface SubagentAnchor {
   readonly kind: SubagentAnchorKind;
   readonly agentId: ThreadId;
   readonly itemId: ThreadItemId;
+  /** Exact generation this historical anchor represents; null only for legacy evidence. */
+  readonly generation: number | null;
 }
 
 export interface SubagentTurnAnchors {
@@ -104,20 +108,7 @@ export interface SubagentTurnAnchors {
 /** One delivery: whose result arrived, and which of its runs produced it. */
 export interface SubagentDelivery {
   readonly agentId: ThreadId;
-  /**
-   * How many of this Agent's deliveries came AFTER this one — 0 for the newest.
-   * The report reads the Agent's settled Turns from the end by this count, so a
-   * delivery the host never materialized cannot slide every earlier card onto
-   * the wrong run.
-   */
-  readonly fromLatest: number;
-  /**
-   * Which run of that Agent this delivery carries, counted from zero in
-   * narrative order. One generation is one child Turn — steering joins the Turn
-   * already running, and only a resume starts another — so the Nth delivery
-   * from an Agent is its Nth Turn, which is the report this anchor can show.
-   */
-  readonly generationIndex: number;
+  readonly generation: number;
 }
 
 export interface SubagentConversationProjection {
@@ -208,12 +199,16 @@ export function projectSubagentConversation(
   const anchorsByTurnId = new Map<TurnId, SubagentTurnAnchors>();
   const agentByCallItemId = new Map<ThreadItemId, ThreadId>();
   const owners = [input.rootThreadId, ...entries.keys()];
+  const generationIndex = anchorGenerationIndex(input.executions, input.turnsByThread, input.latestTurnByThread);
   for (const ownerThreadId of owners) {
     for (const turn of input.turnsByThread.get(ownerThreadId) ?? []) {
       // Turn objects are replaced only when their own content changes, so
       // identity is the exact invalidation signal: an unchanged Turn keeps the
       // anchor set it already had, whatever else moved in the conversation.
-      const anchors = previousMemo?.anchorsByTurn.get(turn) ?? projectTurnAnchors(turn);
+      const previousAnchors = previousMemo?.anchorsByTurn.get(turn) ?? null;
+      const anchors = registryUnchanged && previousAnchors !== null
+        ? previousAnchors
+        : reuseTurnAnchors(previousAnchors, projectTurnAnchors(turn, generationIndex));
       anchorsByTurn.set(turn, anchors);
       anchorsByTurnId.set(turn.id, anchors);
       for (const [itemId, agentId] of anchors.agentByCallItemId) {
@@ -255,7 +250,51 @@ export function projectSubagentConversation(
  * duplicate of state the chip already shows, in a place the reader never asked
  * about.
  */
-function projectTurnAnchors(turn: Turn): SubagentTurnAnchors {
+function anchorGenerationIndex(
+  executions: ReadonlyMap<ThreadId, SubagentExecutionProjection>,
+  turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>,
+  latestTurnByThread: ReadonlyMap<ThreadId, Turn>,
+): {
+  readonly byAgentTurnId: ReadonlyMap<string, number>;
+  readonly byParentItemId: ReadonlyMap<ThreadItemId, number>;
+} {
+  const byAgentTurnId = new Map<string, number>();
+  const byParentItemId = new Map<ThreadItemId, number>();
+  for (const execution of executions.values()) {
+    for (const receipt of execution.generationReceipts) {
+      // User-driven resumes can retain the original tool identity because no
+      // new parent call exists. The oldest receipt owns that historical anchor;
+      // a later generation must not rewrite it.
+      if (!byParentItemId.has(receipt.parentItemId)) {
+        byParentItemId.set(receipt.parentItemId, receipt.generation);
+      }
+    }
+    if (!byParentItemId.has(execution.parentItemId)) {
+      byParentItemId.set(execution.parentItemId, execution.generation);
+    }
+    const generationByTurnId = new Map<TurnId, number>(
+      execution.generationReceipts.map((receipt) => [receipt.turnId, receipt.generation]),
+    );
+    generationByTurnId.set(execution.currentTurnId, execution.generation);
+    for (const [turnId, generation] of generationByTurnId) {
+      byAgentTurnId.set(`${execution.agentId}\0${turnId}`, generation);
+      const turn = (turnsByThread.get(execution.agentId) ?? [])
+        .find((candidate) => candidate.id === turnId)
+        ?? (latestTurnByThread.get(execution.agentId)?.id === turnId
+          ? latestTurnByThread.get(execution.agentId)
+          : null);
+      if (turn?.provenance.trigger.kind === 'subagent') {
+        byParentItemId.set(turn.provenance.trigger.parentItemId, generation);
+      }
+    }
+  }
+  return { byAgentTurnId, byParentItemId };
+}
+
+function projectTurnAnchors(
+  turn: Turn,
+  generationIndex: ReturnType<typeof anchorGenerationIndex>,
+): SubagentTurnAnchors {
   const itemIds = new Set(turn.items.map((item) => item.id));
   const spawnByClaimedItemId = new Map<ThreadItemId, SubAgentActivityThreadItem>();
   for (const item of turn.items) {
@@ -284,14 +323,14 @@ function projectTurnAnchors(turn: Turn): SubagentTurnAnchors {
       // the activity Item is the only evidence the delegation happened.
       seenSpawns.add(item.agentThreadId);
       items.push(item);
-      addAnchor(spawnAnchor(item));
+      addAnchor(spawnAnchor(item, generationIndex));
       continue;
     }
     const spawn = spawnByClaimedItemId.get(item.id);
     if (spawn) {
       seenSpawns.add(spawn.agentThreadId);
       items.push(spawn);
-      addAnchor(spawnAnchor(spawn));
+      addAnchor(spawnAnchor(spawn, generationIndex));
       agentByCallItemId.set(item.id, spawn.agentThreadId);
       continue;
     }
@@ -301,7 +340,12 @@ function projectTurnAnchors(turn: Turn): SubagentTurnAnchors {
       // recipient Thread to open.
       if (agentId !== undefined) {
         items.push(item);
-        addAnchor({ kind: 'resume', agentId, itemId: item.id });
+      addAnchor({
+        kind: 'resume',
+        agentId,
+        itemId: item.id,
+        generation: generationIndex.byParentItemId.get(item.id) ?? null,
+      });
         agentByCallItemId.set(item.id, agentId);
         continue;
       }
@@ -311,8 +355,41 @@ function projectTurnAnchors(turn: Turn): SubagentTurnAnchors {
   return { items, anchorByItemId, agentByCallItemId, agentIds };
 }
 
-function spawnAnchor(item: SubAgentActivityThreadItem): SubagentAnchor {
-  return { kind: 'spawn', agentId: item.agentThreadId, itemId: item.id };
+function spawnAnchor(
+  item: SubAgentActivityThreadItem,
+  generationIndex: ReturnType<typeof anchorGenerationIndex>,
+): SubagentAnchor {
+  const generation = (item.spawnItemId === null
+    ? null
+    : generationIndex.byParentItemId.get(item.spawnItemId) ?? null)
+    ?? (item.agentTurnId === null
+      ? null
+      : generationIndex.byAgentTurnId.get(`${item.agentThreadId}\0${item.agentTurnId}`) ?? null);
+  return { kind: 'spawn', agentId: item.agentThreadId, itemId: item.id, generation };
+}
+
+function reuseTurnAnchors(
+  previous: SubagentTurnAnchors | null,
+  next: SubagentTurnAnchors,
+): SubagentTurnAnchors {
+  if (!previous || previous.items.length !== next.items.length) return next;
+  if (!previous.items.every((item, index) => item === next.items[index])) return next;
+  if (previous.anchorByItemId.size !== next.anchorByItemId.size) return next;
+  for (const [itemId, anchor] of next.anchorByItemId) {
+    const before = previous.anchorByItemId.get(itemId);
+    if (
+      before?.kind !== anchor.kind
+      || before.agentId !== anchor.agentId
+      || before.generation !== anchor.generation
+    ) return next;
+  }
+  if (previous.agentByCallItemId.size !== next.agentByCallItemId.size) return next;
+  for (const [itemId, agentId] of next.agentByCallItemId) {
+    if (previous.agentByCallItemId.get(itemId) !== agentId) return next;
+  }
+  if (previous.agentIds.length !== next.agentIds.length) return next;
+  if (!previous.agentIds.every((agentId, index) => agentId === next.agentIds[index])) return next;
+  return previous;
 }
 
 /**
@@ -334,7 +411,7 @@ function spawnAnchor(item: SubAgentActivityThreadItem): SubagentAnchor {
 function deliveries(
   owners: readonly ThreadId[],
   turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>,
-  latestTurnByThread: ReadonlyMap<ThreadId, Turn>,
+  _latestTurnByThread: ReadonlyMap<ThreadId, Turn>,
   executions: ReadonlyMap<ThreadId, SubagentExecutionProjection>,
 ): Map<TurnId, SubagentDelivery> {
   const visibleTurnIds = new Set<TurnId>();
@@ -346,9 +423,9 @@ function deliveries(
   const resolved = new Map<TurnId, SubagentDelivery>();
   const ambiguous = new Set<TurnId>();
   for (const execution of executions.values()) {
-    const latestSettled = latestSettledGeneration(execution, turnsByThread, latestTurnByThread);
-    for (const delivery of deliveredGenerations(execution)) {
-      const turnId = delivery.deliveryTurnId;
+    for (const receipt of execution.generationReceipts) {
+      const turnId = receipt.notificationState === 'delivered' ? receipt.deliveryTurnId : null;
+      if (turnId === null) continue;
       if (!visibleTurnIds.has(turnId)) continue;
       if (resolved.has(turnId)) {
         resolved.delete(turnId);
@@ -358,53 +435,11 @@ function deliveries(
       if (ambiguous.has(turnId)) continue;
       resolved.set(turnId, {
         agentId: execution.agentId,
-        generationIndex: Math.max(0, delivery.generation - 1),
-        fromLatest: Math.max(0, latestSettled - delivery.generation),
+        generation: receipt.generation,
       });
     }
   }
   return resolved;
-}
-
-function deliveredGenerations(
-  execution: SubagentExecutionProjection,
-): readonly { readonly generation: number; readonly deliveryTurnId: TurnId }[] {
-  const byGeneration = new Map<number, TurnId>();
-  for (const notification of execution.deliveredNotifications) {
-    byGeneration.set(notification.generation, notification.deliveryTurnId);
-  }
-  if (
-    execution.notificationState === 'delivered'
-    && execution.deliveryTurnId !== null
-    && execution.terminalStatus !== null
-  ) {
-    byGeneration.set(execution.generation, execution.deliveryTurnId);
-  }
-  return [...byGeneration]
-    .sort(([left], [right]) => left - right)
-    .map(([generation, deliveryTurnId]) => ({ generation, deliveryTurnId }));
-}
-
-function latestSettledGeneration(
-  execution: SubagentExecutionProjection,
-  turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>,
-  latestTurnByThread: ReadonlyMap<ThreadId, Turn>,
-): number {
-  const latestTurn = latestTurnByThread.get(execution.agentId) ?? null;
-  const latestTurnSettled = latestTurn !== null
-    && latestTurn.status !== 'inProgress'
-    && latestTurn.provenance.trigger.kind !== 'feature';
-  const durableLowerBound = execution.terminalStatus !== null || latestTurnSettled
-    ? execution.generation
-    : Math.max(0, execution.generation - 1);
-  const turns = turnsByThread.get(execution.agentId);
-  if (turns) {
-    const settledCount = turns.filter((candidate) => (
-      candidate.status !== 'inProgress' && candidate.provenance.trigger.kind !== 'feature'
-    )).length;
-    return Math.max(settledCount, durableLowerBound);
-  }
-  return durableLowerBound;
 }
 
 function projectRegistryEntries(input: SubagentProjectionInput): Map<ThreadId, SubagentRegistryEntry> {
@@ -427,6 +462,9 @@ function projectRegistryEntries(input: SubagentProjectionInput): Map<ThreadId, S
       form,
       runMode: execution.runMode,
       generation: execution.generation,
+      generationReceipts: new Map(
+        execution.generationReceipts.map((receipt) => [receipt.generation, receipt]),
+      ),
       status: live.status,
       stoppedByUser: execution.stopProvenance === 'user',
       startedAt: live.startedAt,
@@ -493,6 +531,7 @@ function recordlessChildren(
         runMode: 'background',
         generation: 1,
         currentTurnId: input.latestTurnByThread.get(thread.id)?.id ?? thread.id,
+        parentItemId: thread.id,
         stopProvenance: 'none',
         terminalStatus: null,
         notificationState: 'none',
@@ -503,7 +542,7 @@ function recordlessChildren(
         coverageDisposition: null,
         omittedOutputBytes: 0,
         omittedOutputTokens: 0,
-        deliveredNotifications: [],
+        generationReceipts: [],
         notificationCutoff: 'open',
         executionMode: 'ordinary',
         settlementCoverage: null,
@@ -770,6 +809,7 @@ function entryEqual(left: SubagentRegistryEntry, right: SubagentRegistryEntry): 
     && left.form === right.form
     && left.runMode === right.runMode
     && left.generation === right.generation
+    && generationReceiptsEqual(left.generationReceipts, right.generationReceipts)
     && left.status === right.status
     && left.stoppedByUser === right.stoppedByUser
     && left.startedAt === right.startedAt
@@ -779,6 +819,17 @@ function entryEqual(left: SubagentRegistryEntry, right: SubagentRegistryEntry): 
     && left.worktree?.branch === right.worktree?.branch
     && left.worktree?.path === right.worktree?.path
     && turnErrorEqual(left.error, right.error);
+}
+
+function generationReceiptsEqual(
+  left: ReadonlyMap<number, SubagentGenerationReceipt>,
+  right: ReadonlyMap<number, SubagentGenerationReceipt>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [generation, receipt] of left) {
+    if (right.get(generation) !== receipt) return false;
+  }
+  return true;
 }
 
 function turnErrorEqual(left: TurnError | null, right: TurnError | null): boolean {
@@ -811,8 +862,7 @@ function reuseDeliveryMap(
     const before = previous.get(turnId);
     if (
       before?.agentId !== delivery.agentId
-      || before.generationIndex !== delivery.generationIndex
-      || before.fromLatest !== delivery.fromLatest
+      || before.generation !== delivery.generation
     ) {
       return next;
     }

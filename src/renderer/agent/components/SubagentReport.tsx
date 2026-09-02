@@ -7,6 +7,7 @@ import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadTurns } from '../store/threadStore';
 import { subagentSpeakerName, type SubagentDelivery } from '../subagentPresentation';
 import { ThreadMarkdown } from './ThreadMarkdown';
+import { generationReceiptDelivery, generationReceiptStatus } from './SubagentChip';
 import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
 
 /**
@@ -49,6 +50,8 @@ export function SubagentReport({
   const t = useT();
   const entry = useSubagentEntry(delivery.agentId);
   const actions = useSubagentActions();
+  const receipt = entry?.generationReceipts.get(delivery.generation) ?? null;
+  const parentEntry = useSubagentEntry(receipt?.parentThreadId ?? null);
   // This card needs one Agent's Turns, not the whole store: subscribed to the
   // snapshot it re-rendered — and re-parsed its markdown — on every streaming
   // delta in the conversation around it.
@@ -71,30 +74,27 @@ export function SubagentReport({
   }, [delivery.agentId, loaded]);
 
   if (!entry) return null;
-  // A user-stopped Agent gets a note instead: the conversation continued
-  // because the reader ended it, which is not a result arriving.
-  if (entry.stoppedByUser) {
+  // Stop ownership belongs to this generation receipt. The stable Agent may
+  // already be running again, but that cannot erase who ended this report.
+  if (receipt?.stopProvenance === 'user') {
     return (
       <div className="thread-item thread-agent-note">
         <span>{t.agent.thread.agent.stoppedNote({ name: entry.displayName })}</span>
       </div>
     );
   }
-
-  // Counted back from the newest, over the Agent's SETTLED Turns: a run still
-  // in progress reported nothing, and a Turn the reader started from this
-  // Agent's own composer is a run like any other. A history that has not caught
-  // up yet falls back to the newest, which is the only run it can honestly show.
-  // Runs the delegator started, in order. A Turn still in progress reported
-  // nothing, and a context command sent to the Agent — `/clear` and its kind —
-  // settles a Turn that skips generation admission entirely and so never
-  // delivers anything to anyone: counted as a run, it shifted every delivered
-  // card in the conversation onto its neighbour's answer, permanently.
-  const settled = turns?.filter((candidate) => (
-    candidate.status !== 'inProgress' && candidate.provenance.trigger.kind !== 'feature'
-  ));
-  const reported = settled?.at(-1 - delivery.fromLatest) ?? settled?.at(-1);
+  const reported = receipt === null
+    ? undefined
+    : turns?.find((candidate) => candidate.id === receipt.turnId);
   const report = reported ? turnTerminalAnswer(reported.items) : '';
+  const parentName = parentEntry?.displayName ?? t.agent.thread.agent.main;
+  // Duration already belongs to the report's speaker metadata. Repeating it in
+  // the card would make one immutable generation fact look like two statuses.
+  const status = receipt === null ? null : generationReceiptStatus(receipt, t, false);
+  const deliveryStatus = receipt === null ? null : generationReceiptDelivery(receipt, parentName, t);
+  const partial = receipt?.partialOutputAvailable && receipt.terminalStatus !== 'finished'
+    ? t.agent.thread.agent.partialOutputAvailable
+    : null;
   // The task it was handed, over what it answered. Suppressed when the speaker
   // above is already saying it — an Agent with no type falls back to its task
   // description for a name, and printing one sentence twice is not a heading.
@@ -115,6 +115,11 @@ export function SubagentReport({
         tabIndex={0}
       >
         {task === null ? null : <p className="thread-agent-report-task">{task}</p>}
+        {status === null ? null : (
+          <p className={`thread-agent-report-status thread-agent-report-status-${receipt!.terminalStatus}`}>
+            {[status, deliveryStatus, partial].filter(Boolean).join(' · ')}
+          </p>
+        )}
         <div className="thread-agent-report-body">
           {report ? (
             <ThreadMarkdown index={index} onNodeReferenceOpen={onOpenNodeReference} text={report} />

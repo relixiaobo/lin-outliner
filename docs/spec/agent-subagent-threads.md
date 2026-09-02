@@ -44,6 +44,18 @@ effective configuration, optional worktree, stop provenance, and a monotonically
 increasing execution generation. A resume appends a new Turn to the same child
 Thread and increments the generation; it does not create another Agent identity.
 
+The execution ledger is also the sole persistence owner for terminal generation
+facts. Each terminal notification row identifies the generation, canonical
+child Turn, stable delegating parent Item, outcome and stop provenance, bounded
+error, direct parent, delivery state, and any parent Turn that consumed the
+notification. Renderer projection combines that row with the canonical child
+Turn into an immutable generation receipt, adding the recorded duration and
+whether useful terminal output exists. Foreground settlement, including an
+isolated Skill, has no parent notification, so its delivered row projects as
+`notificationState: none` with no delivery Turn; it still produces a receipt.
+The stable execution row remains current Agent liveness, never historical
+generation outcome.
+
 An isolated Skill also persists an execution row, but its Thread source is
 `agent.skill` rather than `collaboration`. The row carries the foreground tool
 policy needed to execute and recover safely; it does not turn the Skill into an
@@ -566,11 +578,18 @@ payload through that exact context-evidence source, authority, purpose, and key,
 then verify its SHA-256 against the durable delivery batch before committing the
 claim. They never recover the digest from synthetic user text.
 
-Delivered notifications remain per-generation facts after the stable Agent
-execution record advances. The current record's `deliveryTurnId` describes only
-the current generation; presentation receives the delivered notification rows
-for every already-delivered generation so an earlier report card stays anchored
-to its original parent Turn after the same Agent is resumed.
+Terminal notification rows remain per-generation facts after the stable Agent
+execution record advances. Presentation receives receipts for every terminal
+generation, including pending, delivering, delivered, and foreground/no-
+notification settlement. Each receipt retains the stable parent Item identity
+and stop provenance recorded for that generation. A historical spawn or resume
+anchor resolves through that parent Item even when the child completed in a
+continuation Turn; a delivered report carries the generation recorded by its
+receipt. Both therefore retain their own outcome, stop ownership, duration,
+error, partial-output fact, and delivery state when the same stable Agent is
+resumed and starts working again. The current record's terminal and delivery
+fields describe only its current generation and cannot overwrite those
+historical facts.
 
 Terminal settlement can discover a live descendant after its initial guard,
 including while the transcript flush is in flight. That condition is an internal

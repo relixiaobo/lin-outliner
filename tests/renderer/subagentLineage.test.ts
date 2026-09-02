@@ -53,6 +53,7 @@ function registry(
     form: 'agent' as const,
     runMode: 'background' as const,
     generation: 1,
+    generationReceipts: new Map(),
     status: 'finished' as const,
     stoppedByUser: false,
     startedAt: null,

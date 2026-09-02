@@ -300,6 +300,7 @@ describe('renderer Thread store', () => {
       runMode: 'background' as const,
       generation: 1,
       currentTurnId: 'child-turn',
+      parentItemId: 'spawn-item',
       stopProvenance: 'none' as const,
       terminalStatus: null,
       notificationState: 'none' as const,

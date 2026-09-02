@@ -195,6 +195,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       <SubagentChip
         agentId={props.anchor.agentId}
         fallbackName={anchorFallbackName(props.item)}
+        generation={props.anchor.generation}
         kind={props.anchor.kind}
       />
     );
