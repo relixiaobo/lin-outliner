@@ -14,3 +14,9 @@ export function isTranscriptFollowing(position: TranscriptScrollPosition): boole
 export function hasTranscriptContentBelow(position: TranscriptScrollPosition): boolean {
   return position.scrollHeight - position.scrollTop - position.clientHeight > 1;
 }
+
+export function transcriptNeedsSendAnchor(
+  position: Pick<TranscriptScrollPosition, 'clientHeight' | 'scrollHeight'>,
+): boolean {
+  return position.scrollHeight - position.clientHeight > 1;
+}

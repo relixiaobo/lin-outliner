@@ -135,6 +135,7 @@ import { formatNumber } from '../../ui/formatting';
 import {
   hasTranscriptContentBelow,
   isTranscriptFollowing,
+  transcriptNeedsSendAnchor,
   TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX,
 } from '../threadScrollFollow';
 import {
@@ -2437,6 +2438,19 @@ export function ThreadView({
     const submittedAttachmentIds = new Set(submittedAttachments.map((attachment) => attachment.id));
     const editorSnapshot = composerRef.current?.snapshot() ?? null;
     const scroll = scrollRef.current;
+    const renderedSendSpacer = scroll?.querySelector<HTMLElement>('.thread-send-anchor-spacer') ?? null;
+    const preSendContentScrollHeight = scroll
+      ? Math.max(
+          0,
+          scroll.scrollHeight
+            - (renderedSendSpacer?.getBoundingClientRect().height ?? 0)
+            - disclosureAnchorRunwayRef.current,
+        )
+      : 0;
+    const shouldAnchorSend = Boolean(scroll && transcriptNeedsSendAnchor({
+      clientHeight: scroll.clientHeight,
+      scrollHeight: preSendContentScrollHeight,
+    }));
     const previousViewport = scroll ? {
       anchor: followRef.current ? null : readTranscriptAnchor(scroll),
       disclosureRunway: disclosureAnchorRunwayRef.current,
@@ -2451,7 +2465,7 @@ export function ThreadView({
       previousTailTurnId: turns.at(-1)?.id ?? null,
       releaseFollowOnAnchor: Boolean(
         scroll
-        && scroll.scrollHeight - scroll.clientHeight > TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX,
+        && preSendContentScrollHeight - scroll.clientHeight > TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX,
       ),
       targetMeasureCompleted: 0,
       targetMeasureRequest: 0,
@@ -2477,8 +2491,8 @@ export function ThreadView({
     // fire on the layout pass this send causes and pull them back up, releasing
     // follow on the way so the reply streams away below the fold.
     scrollRestoreRef.current = null;
-    pendingSendScrollRef.current = pendingSend;
-    if (scroll) {
+    pendingSendScrollRef.current = shouldAnchorSend ? pendingSend : null;
+    if (scroll && shouldAnchorSend) {
       updateSendAnchorSpacer({
         height: scroll.clientHeight + (pendingSend.releaseFollowOnAnchor
           ? TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX + 2

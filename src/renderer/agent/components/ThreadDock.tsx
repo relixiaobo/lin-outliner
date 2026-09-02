@@ -20,7 +20,6 @@ import {
   BackIcon,
   ChevronDownIcon,
   ICON_SIZE,
-  ListIcon,
   ScheduledIcon,
   SettingsIcon,
   WarningIcon,
@@ -40,6 +39,7 @@ import { reportActionError } from '../../ui/interactions/actionSteps';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { runtimeSlashCommands, slashCommandsFromSkills } from '../threadComposerCommands';
 import { shouldRestoreComposerAfterThreadCreation } from '../composerRefocus';
+import { formatShortcutHint, matchesShortcutEvent } from '../../ui/interactions/shortcutRegistry';
 
 const AutomationsView = lazy(async () => {
   const module = await import('../automations/AutomationsView');
@@ -54,6 +54,7 @@ interface ThreadDockProps {
   readonly railState: ThreadRailState;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenTurnDetails: (threadId: string, turnId?: string) => void;
+  readonly onRequestOpen: () => void;
   readonly onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   readonly onResizeReset: () => void;
   readonly onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -65,6 +66,7 @@ export const ThreadDock = memo(function ThreadDock({
   railState,
   onOpenNodeReference,
   onOpenTurnDetails,
+  onRequestOpen,
   onResizeKeyDown,
   onResizeReset,
   onResizeStart,
@@ -177,6 +179,7 @@ export const ThreadDock = memo(function ThreadDock({
   const plan = thread ? snapshot.planByThread.get(thread.id) ?? null : null;
   const providerBlocksCreation = providerSettingsLoaded
     && (!providerSettings || !resolveUsableActiveProvider(providerSettings));
+  const newThreadShortcutHint = formatShortcutHint('global.new_thread');
   useEffect(() => {
     if (open && !openRef.current) {
       setComposerFocusRequest((current) => ({
@@ -367,6 +370,25 @@ export const ThreadDock = memo(function ThreadDock({
   }, [providerBlocksCreation]);
 
   useEffect(() => {
+    const handleNewThreadShortcut = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented
+        || event.repeat
+        || creatingRef.current
+        || !providerSettingsLoaded
+        || providerBlocksCreation
+        || !matchesShortcutEvent(event, 'global.new_thread')
+      ) return;
+      event.preventDefault();
+      void createThread().then((created) => {
+        if (created) onRequestOpen();
+      });
+    };
+    window.addEventListener('keydown', handleNewThreadShortcut);
+    return () => window.removeEventListener('keydown', handleNewThreadShortcut);
+  }, [createThread, onRequestOpen, providerBlocksCreation, providerSettingsLoaded]);
+
+  useEffect(() => {
     if (thread) {
       autoCreateAttemptedRef.current = false;
       return;
@@ -477,19 +499,6 @@ export const ThreadDock = memo(function ThreadDock({
           ) : null}
           {surface === 'thread' && openAgentId === null ? (
             <SubagentWorkStrip byAgentId={subagentProjection.byAgentId} />
-          ) : null}
-          {surface === 'thread' && openAgentId === null && thread ? (
-            <IconButton
-              className="thread-dock-surface-action"
-              icon={ListIcon}
-              label={t.agent.trajectory.title}
-              onClick={() => {
-                setListOpen(false);
-                onOpenTurnDetails(thread.id);
-              }}
-              strokeWidth={1.7}
-              variant="chrome"
-            />
           ) : null}
           {surface === 'thread' && openAgentId === null ? (
             <IconButton
@@ -626,7 +635,11 @@ export const ThreadDock = memo(function ThreadDock({
           <ThreadList
             anchorRef={threadListAnchorRef}
             createDisabled={creating || providerBlocksCreation}
-            createTitle={providerBlocksCreation ? t.agent.thread.providerRequired : t.agent.thread.new}
+            createTitle={providerBlocksCreation
+              ? t.agent.thread.providerRequired
+              : newThreadShortcutHint
+                ? `${t.agent.thread.new} (${newThreadShortcutHint})`
+                : t.agent.thread.new}
             onClose={() => setListOpen(false)}
             onCreate={() => void createThread()}
             onDelete={setDeleteTarget}

@@ -46,6 +46,7 @@ export type ShortcutId =
   | 'trailing.redo'
   | 'trailing.checkbox'
   | 'global.open_agent_panel'
+  | 'global.new_thread'
   | 'global.go_to_today'
   | 'global.nav_back'
   | 'global.nav_forward'
@@ -136,6 +137,7 @@ export const OUTLINER_SHORTCUTS: ShortcutDefinition[] = [
   { id: 'trailing.checkbox', scope: 'trailing', bindings: [binding('Enter', { mod: true })], description: 'Create checkbox row' },
 
   { id: 'global.open_agent_panel', scope: 'global', bindings: [binding('m', { mod: true })], description: 'Open agent panel' },
+  { id: 'global.new_thread', scope: 'global', bindings: [binding('o', { mod: true, shift: true })], description: 'New Thread' },
   { id: 'global.go_to_today', scope: 'global', bindings: [binding('d', { mod: true, shift: true })], description: 'Go to today' },
   { id: 'global.nav_back', scope: 'global', bindings: [binding('[', { mod: true }), codeBinding('BracketLeft', { mod: true }), binding('ArrowLeft', { alt: true })], description: 'Navigate active panel back' },
   { id: 'global.nav_forward', scope: 'global', bindings: [binding(']', { mod: true }), codeBinding('BracketRight', { mod: true }), binding('ArrowRight', { alt: true })], description: 'Navigate active panel forward' },

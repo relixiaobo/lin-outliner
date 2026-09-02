@@ -42,6 +42,28 @@ async function createNewThread(page: Page): Promise<void> {
     .click();
 }
 
+test('creates a new Thread with Command-Shift-O and teaches the shortcut in the Thread list', async ({ page }) => {
+  await openMockedApp(page);
+  const startsBefore = (await commandCalls(page)).filter((call) => call.cmd === 'thread/start').length;
+  await page.getByRole('button', { name: 'Collapse agent' }).click();
+  await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'collapsed');
+
+  await page.keyboard.press('Meta+Shift+O');
+
+  await expect.poll(async () => (
+    (await commandCalls(page)).filter((call) => call.cmd === 'thread/start').length
+  )).toBe(startsBefore + 1);
+  await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
+  await expect(page.locator('.thread-dock-title')).toContainText('Untitled Thread');
+  await expect(page.locator('.thread-dock-header').getByRole('button', { name: 'Trajectory' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+  const newThread = page.getByRole('dialog', { name: 'Threads' }).getByRole('button', { name: 'New Thread' });
+  await expect(newThread).toHaveAttribute('title', 'New Thread (⇧⌘O)');
+  await expect(newThread).toHaveAttribute('aria-keyshortcuts', 'Meta+Shift+O');
+  await expect(page.locator('.thread-list-row')).toHaveCount(2);
+});
+
 async function pasteComposerText(page: Page, text: string): Promise<void> {
   await page.evaluate((value) => {
     const dataTransfer = new DataTransfer();
@@ -7293,6 +7315,41 @@ test.describe('canonical agent Thread surface', () => {
     await expect(composer).toHaveText('Keep this draft while answering.');
   });
 
+  test('keeps a short transcript in natural flow after send', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      await target.lin?.agentCoreRequest('turn/start', {
+        threadId,
+        input: [{ type: 'text', text: 'Earlier short conversation evidence.' }],
+        clientUserMessageId: 'short-conversation-evidence',
+      });
+    });
+
+    const transcript = page.locator('.thread-transcript');
+    const earlier = page.locator('.thread-user-message').filter({ hasText: 'Earlier short conversation evidence.' });
+    await expect(earlier).toBeVisible();
+    await expect.poll(() => transcript.evaluate((element) => element.scrollHeight <= element.clientHeight + 1)).toBe(true);
+
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Keep this short conversation settled.');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const latest = page.locator('.thread-user-message').filter({ hasText: 'Keep this short conversation settled.' });
+    await expect(latest).toBeVisible();
+    await expect(page.locator('.thread-send-anchor-spacer')).toHaveCount(0);
+    await expect.poll(async () => {
+      const [earlierBox, latestBox] = await Promise.all([earlier.boundingBox(), latest.boundingBox()]);
+      if (!earlierBox || !latestBox) return false;
+      return earlierBox.y < latestBox.y;
+    }).toBe(true);
+  });
+
   test('anchors a sent message and resumes streaming follow only after jumping to latest', async ({ page }) => {
     await createNewThread(page);
     await page.evaluate(async () => {
@@ -9166,6 +9223,7 @@ test('opens provider settings instead of creating a Thread when no provider is u
   await expect(page.getByRole('dialog', { name: 'Threads' })
     .getByRole('button', { name: 'New Thread' })).toBeDisabled();
   await page.keyboard.press('Escape');
+  await page.keyboard.press('Meta+Shift+O');
   await page.getByRole('button', { name: 'Open Providers' }).click();
 
   const calls = await commandCalls(page);

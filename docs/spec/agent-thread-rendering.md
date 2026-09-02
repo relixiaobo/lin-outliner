@@ -1718,8 +1718,12 @@ root-Thread path, leaving a focused composer rather than a dead-end empty state.
 
 The Thread list is an anchored popover. It clamps to the viewport, closes on an
 outside pointer or Escape, traps focus while open, restores focus to its trigger,
-and owns New Thread plus every Thread-management action. The dock header contains
-only the list trigger and global dock-close chrome. Each row exposes one More
+and owns New Thread plus every Thread-management action. New Thread is also
+available through `Command+Shift+O`; the control's native hover title teaches
+that registry-owned shortcut, while `aria-keyshortcuts` exposes it to assistive
+technology without changing the control's accessible name. The dock
+header does not expose the technical Thread-wide Trajectory command; Trajectory
+remains available from response actions and native message menus. Each row exposes one More
 control on hover or keyboard focus without moving row geometry; its Details,
 Rename, and Delete menu uses the same anchored-overlay contract with native menu
 arrow-key navigation. Ordinary root-user rows show relative time only. Special
@@ -1765,8 +1769,13 @@ row back out along with the composer draft it restores. Only a send that opens a
 Turn draws one; a steer joins the Turn already running, where the row does not
 belong.
 
-The message is anchored at the transcript top inset on the layout pass it first
-renders, and follow is re-derived from the resulting position. The anchor names
+When the real transcript already exceeds its viewport at send time, the message
+is anchored at the transcript top inset on the layout pass it first renders, and
+follow is re-derived from the resulting position. A transcript that still fits
+within one viewport creates no send-anchor spacer and stays on ordinary bottom
+follow, so earlier short-conversation content remains naturally above the new
+message. This decision uses pre-send real transcript geometry; optimistic rows,
+temporary runway, and later response growth do not switch modes. The anchor names
 its Turn by the same two-way resolution, re-run on every pass and never latched:
 the id it resolves first is usually the stand-in row's, and that row leaves the
 DOM the moment the canonical Turn lands — an anchor holding it would have
@@ -1777,8 +1786,8 @@ Agent's result delivery — also a user-role Item, also arriving in this window 
 from being mistaken for this send. The bottom pin is suspended from the click until the anchor
 lands, so the message is never parked at the bottom edge on the way. A long
 conversation therefore streams below the anchored message without moving it;
-short conversations that are still within the bottom threshold continue
-following. The anchor identifies and mounts its target before measuring it, and
+short conversations continue following without anchoring. The anchor identifies
+and mounts its target before measuring it, and
 an optimistic-to-canonical replacement repeats that staging for the new row.
 The target's inline disclosures must commit their initial collapsed layout and
 the Turn-height cache must match the live row before the runway is calculated.
