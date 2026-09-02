@@ -13,12 +13,12 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-One draft plan-only claim is open: PR #611 defines the model-visible Agent
-context language. It must rebase onto #613's merged tool-result protocol and
-refresh its collision check before implementation. Root-Turn recovery shipped
-in #612, model-visible tool-result envelopes shipped in #613, and delegated
-failure truth shipped in #614, so the managed Computer Pilot Skill is eligible
-under its live collision check.
+One draft plan-only claim is open: PR #616 adds the New Thread keyboard shortcut
+and removes the always-visible Thread-wide Trajectory action. Agent context
+language shipped in #611 after rebasing onto #613's tool-result protocol;
+root-Turn recovery shipped in #612, and delegated failure truth shipped in #614,
+so the managed Computer Pilot Skill remains eligible under its live collision
+check.
 The public Outline CLI, built-in Skill, and shared preview-shell lanes are also
 clear.
 Startup Window, preview readers, and Skill authoring remain independently
@@ -113,8 +113,9 @@ contract or user-visible decision.
   next packaged train, stop every Tenon process, manually reset installed and
   clone-scoped pre-#607 Agent stores, and verify fresh packaged/dev first launch.
   This covers the input-author, context dependency-manifest, unified Agent
-  resource-reference, and whole-Turn `history/rerun` event-name cuts; no
-  migration or automatic deletion ships.
+  resource-reference, whole-Turn `history/rerun` event-name, and #611 user-view /
+  additional-context payload-shape cuts; no migration or automatic deletion
+  ships.
 - **Launcher NSPanel packaged verification** — one `.dmg` pass for Cmd+Tab,
   fullscreen floating, focus, dock icon, and light/dark behavior.
 
@@ -209,6 +210,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-model-context-language-contract** (`done`, #611, 2026-09-02) — Agent
+  Turns now receive compact semantic context with explicit authority and purpose,
+  complete readable Pane targets, truthful focus/selection state, and distinct
+  viewed versus supplied content; plan archived at
+  [agent-model-context-language-contract](plans/archive/agent-model-context-language-contract.md).
 - **web-search-serp-recovery** (`done`, #615, 2026-09-02) — Google organic
   discovery now resolves bounded provider-private `/goto` capabilities without
   requesting result content, while the Google/DuckDuckGo chain distinguishes
