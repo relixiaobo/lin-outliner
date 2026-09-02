@@ -244,7 +244,7 @@ The collision self-check found no overlap: open PRs #611 and #616 do not touch
 Outline, and the board marks the public Outline CLI and built-in Skill lane
 clear. Re-run the PR/file-scope check before opening the Draft PR.
 
-## Open Questions
+## Open questions
 
 There are no unresolved product questions. Ratification accepts `outline
 example`, narrow exact-locator porcelain inputs, exhaustive default

@@ -344,7 +344,7 @@ describe('outline CLI', () => {
     expect(await runOutlineCli(['--json', 'schema', 'add'], { runtimeRoot: root, io: request.io })).toBe(0);
     const requestSchema = JSON.parse(request.stdout).data as Record<string, unknown>;
     expect(Buffer.byteLength(JSON.stringify(requestSchema))).toBeLessThanOrEqual(512 * 1024);
-    expect(countObjectKey(requestSchema, 'Selector')).toBe(1);
+    expect(countObjectKey(requestSchema, 'Selector')).toBe(0);
 
     expect(await runOutlineCli(['--json', 'schema', 'ChangeSet'], {
       runtimeRoot: root,
@@ -450,7 +450,7 @@ describe('outline CLI', () => {
     expect(output.stdout).toContain('Parent defaults to @saved-searches.');
     expect(output.stdout).toContain('outline schema search create');
     expect(output.stdout).toContain('outline search create --title "Modules" --match "module"');
-    expect(output.stdout).toContain('outline search create --input complete-search.json');
+    expect(output.stdout).toContain('outline example search create complete');
     expect(output.stdout).not.toContain('[ARGS]');
     expect(await readdir(root)).toEqual([]);
   });
@@ -559,7 +559,7 @@ describe('outline CLI', () => {
     expect(output.stdout).toContain('(default: asc)');
     expect(output.stdout).toContain('--input FILE|-');
     expect(output.stdout).toContain('outline view sort add node:projects --field sys:updatedAt --direction desc');
-    expect(output.stdout).toContain('outline view sort add --input sort-rule.json');
+    expect(output.stdout).not.toContain('sort-rule.json');
     expect(await readdir(root)).toEqual([]);
   });
 
@@ -633,7 +633,7 @@ describe('outline CLI', () => {
     expect(addHelp.stdout).toContain('--index INDEX');
     expect(addHelp.stdout).toContain('--before SIBLING');
     expect(addHelp.stdout).toContain('--after SIBLING');
-    expect(addHelp.stdout).toContain('outline add --input complete-tree.json');
+    expect(addHelp.stdout).toContain('outline example add viewed-tree');
 
     expect(await runOutlineCli(['move', '--help'], { runtimeRoot: root, io: moveHelp.io })).toBe(0);
     expect(moveHelp.stdout).toContain('--previous');

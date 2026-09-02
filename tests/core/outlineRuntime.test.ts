@@ -40,7 +40,7 @@ describe('Outline CLI runtime', () => {
     expect(config).toEqual({
       binDir: path.join('/repo', 'src', 'outline', 'bin'),
       cliEntry: path.join('/repo', 'src', 'outline', 'cli', 'entry.ts'),
-      importAdapterEntry: path.join('/repo', 'src', 'main', 'builtInSkills', 'outline', 'scripts', 'source-adapters.ts'),
+      importAdapterEntry: path.join('/repo', 'src', 'outline', 'import', 'adapters', 'source-adapters.ts'),
       runtimeEntry: path.join('/repo', 'src', 'outline', 'runtime', 'server', 'entry.ts'),
       cliRuntime: 'bun',
       runAsNode: false,
@@ -58,7 +58,7 @@ describe('Outline CLI runtime', () => {
     });
     expect(process.env[TENON_OUTLINE_CLI_ENTRY_ENV]).toBe('/app/Contents/Resources/outline/outline.mjs');
     expect(process.env[TENON_OUTLINE_IMPORT_ADAPTER_ENTRY_ENV]).toBe(
-      '/app/Contents/Resources/built-in-skills/outline/scripts/source-adapters.mjs',
+      '/app/Contents/Resources/outline/import-adapters.mjs',
     );
     expect(process.env[TENON_OUTLINE_RUNTIME_ENTRY_ENV]).toBe(
       '/app/Contents/Resources/outline/outline-runtime.mjs',
@@ -74,7 +74,7 @@ describe('Outline CLI runtime', () => {
 
   test('routes public import inspection through the development launcher default adapter', async () => {
     const launcher = path.join(repoRoot, 'src', 'outline', 'bin', 'outline');
-    const source = path.join(repoRoot, 'src', 'main', 'builtInSkills', 'outline', 'fixtures', 'tana-minimal.json');
+    const source = path.join(repoRoot, 'tests', 'fixtures', 'outline', 'tana-minimal.json');
     const { stdout } = await execFile(launcher, ['--json', 'import', 'inspect', source], {
       env: {
         ...process.env,
@@ -92,28 +92,13 @@ describe('Outline CLI runtime', () => {
     const sourceLauncher = path.join(repoRoot, 'src', 'outline', 'bin', 'outline');
     const cliBundle = path.join(repoRoot, 'build', 'generated', 'outline', 'outline.mjs');
     const runtimeBundle = path.join(repoRoot, 'build', 'generated', 'outline', 'outline-runtime.mjs');
-    const adapterBundle = path.join(
-      repoRoot,
-      'build',
-      'generated',
-      'built-in-skills',
-      'outline',
-      'scripts',
-      'source-adapters.mjs',
-    );
+    const adapterBundle = path.join(repoRoot, 'build', 'generated', 'outline', 'import-adapters.mjs');
     const root = await mkdtemp(path.join(tmpdir(), 'outline-packaged-smoke-'));
     const contents = path.join(root, 'Tenon.app', 'Contents');
     const launcher = path.join(contents, 'Resources', 'outline', 'bin', 'outline');
     const packagedCli = path.join(contents, 'Resources', 'outline', 'outline.mjs');
     const packagedRuntime = path.join(contents, 'Resources', 'outline', 'outline-runtime.mjs');
-    const packagedAdapter = path.join(
-      contents,
-      'Resources',
-      'built-in-skills',
-      'outline',
-      'scripts',
-      'source-adapters.mjs',
-    );
+    const packagedAdapter = path.join(contents, 'Resources', 'outline', 'import-adapters.mjs');
     const packagedExecutable = path.join(contents, 'MacOS', 'Tenon');
     await Promise.all([
       mkdir(path.dirname(launcher), { recursive: true }),
@@ -162,7 +147,7 @@ describe('Outline CLI runtime', () => {
         expect.objectContaining({ name: 'watch' }),
       ]));
 
-      const source = path.join(repoRoot, 'src', 'main', 'builtInSkills', 'outline', 'fixtures', 'tana-minimal.json');
+      const source = path.join(repoRoot, 'tests', 'fixtures', 'outline', 'tana-minimal.json');
       const inspected = JSON.parse((await runLauncher(['--json', 'import', 'inspect', source])).stdout);
       expect(inspected).toMatchObject({ ok: true, command: 'import inspect', data: { kind: 'tana' } });
 

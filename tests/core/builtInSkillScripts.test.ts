@@ -20,8 +20,8 @@ import { canonicalSha256 } from '../../src/outline/contract/canonical';
 
 const execFile = promisify(execFileCallback);
 const root = path.resolve(import.meta.dir, '..', '..');
-const skillRoot = path.join(root, 'src', 'main', 'builtInSkills', 'outline');
-const adapter = path.join(skillRoot, 'scripts', 'source-adapters.ts');
+const fixtureRoot = path.join(root, 'tests', 'fixtures', 'outline');
+const adapter = path.join(root, 'src', 'outline', 'import', 'adapters', 'source-adapters.ts');
 const adapterEnvironment = { TENON_OUTLINE_IMPORT_ADAPTER_ENTRY: adapter };
 
 describe('built-in outline Skill import workflow', () => {
@@ -32,7 +32,7 @@ describe('built-in outline Skill import workflow', () => {
 
     await runAdapter([
       'tana',
-      path.join(skillRoot, 'fixtures', 'tana-fields-and-tags.json'),
+      path.join(fixtureRoot, 'tana-fields-and-tags.json'),
       '--out', normalizedPath,
       '--coverage-out', coveragePath,
       '--fidelity', 'full',
@@ -64,7 +64,7 @@ describe('built-in outline Skill import workflow', () => {
 
     await runAdapter([
       'tana',
-      path.join(skillRoot, 'fixtures', 'tana-daily-notes.json'),
+      path.join(fixtureRoot, 'tana-daily-notes.json'),
       '--out', normalizedPath,
       '--coverage-out', coveragePath,
       '--fidelity', 'full',
@@ -86,7 +86,7 @@ describe('built-in outline Skill import workflow', () => {
   test('imports representative Tana data through public plan, apply, verify, and exact revert', async () => {
     const directory = await temporaryDirectory('outline-import-public-tana-');
     const artifacts = artifactPaths(directory);
-    const source = path.join(skillRoot, 'fixtures', 'tana-real-export-shapes.json');
+    const source = path.join(fixtureRoot, 'tana-real-export-shapes.json');
     const runtime = await OutlineRuntimeServer.start({ root: artifacts.runtime, contentRoot: `${artifacts.runtime}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
@@ -264,7 +264,7 @@ describe('built-in outline Skill import workflow', () => {
     const artifacts = artifactPaths(directory);
     const source = path.join(directory, 'source.json');
     const sourceText = await readFile(
-      path.join(skillRoot, 'fixtures', 'tana-minimal.json'),
+      path.join(fixtureRoot, 'tana-minimal.json'),
       'utf8',
     );
     await writeFile(source, sourceText, 'utf8');
@@ -327,7 +327,7 @@ describe('built-in outline Skill import workflow', () => {
     await symlink(physical, alias, 'dir');
     const source = path.join(physical, 'source.json');
     const sourceText = await readFile(
-      path.join(skillRoot, 'fixtures', 'tana-minimal.json'),
+      path.join(fixtureRoot, 'tana-minimal.json'),
       'utf8',
     );
     await writeFile(source, sourceText, 'utf8');
@@ -353,7 +353,7 @@ describe('built-in outline Skill import workflow', () => {
     const source = path.join(directory, 'source.json');
     const output = path.join(directory, 'output.json');
     const sourceText = await readFile(
-      path.join(skillRoot, 'fixtures', 'tana-minimal.json'),
+      path.join(fixtureRoot, 'tana-minimal.json'),
       'utf8',
     );
     await writeFile(source, sourceText, 'utf8');

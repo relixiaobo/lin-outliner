@@ -8,7 +8,7 @@ import {
   requiredArg,
   type SourceProfile,
   writeJson,
-} from '../../../../outline/import/normalized';
+} from '../normalized';
 
 const USAGE = 'Usage: bun inspect-source.ts <file-or-directory> [--out <profile.json>]';
 

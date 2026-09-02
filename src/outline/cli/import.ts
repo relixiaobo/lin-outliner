@@ -429,7 +429,7 @@ async function runSourceAdapter(
 ): Promise<void> {
   const environment = { ...process.env, ...env };
   const entry = environment[IMPORT_ADAPTER_ENTRY_ENV]
-    ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../main/builtInSkills/outline/scripts/source-adapters.ts');
+    ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../import/adapters/source-adapters.ts');
   const runtime = environment[CLI_RUNTIME_ENV] ?? process.execPath;
   if (environment[RUN_AS_NODE_ENV] === '1') environment.ELECTRON_RUN_AS_NODE = '1';
   try {

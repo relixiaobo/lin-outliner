@@ -5,7 +5,7 @@ import {
   readText,
   requiredArg,
   writeJson,
-} from '../../../../outline/import/normalized';
+} from '../normalized';
 import { inspectSource } from './inspect-source';
 import { lastTanaCoverageEntries, normalizeTanaExport } from './tana-adapter';
 

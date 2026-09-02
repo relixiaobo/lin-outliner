@@ -86,6 +86,17 @@ export const TargetRefSchema = Type.Union([
   Type.Object({ binding: BindingName }, closed),
 ], { $id: 'TargetRef' });
 
+export const ExactLocatorInputSchema = Type.String({
+  minLength: 1,
+  maxLength: 256,
+  $id: 'ExactLocatorInput',
+});
+
+export const BoundedSelectionInputSchema = Type.Union([
+  ExactLocatorInputSchema,
+  TargetSpecSchema,
+], { $id: 'BoundedSelectionInput' });
+
 export const OneTargetRefSchema = Type.Union([
   Type.Object({
     target: Type.Object({
@@ -1361,6 +1372,8 @@ export const OUTLINE_PUBLIC_SCHEMAS = Object.freeze({
   Selector: SelectorSchema,
   TargetSpec: TargetSpecSchema,
   TargetRef: TargetRefSchema,
+  ExactLocatorInput: ExactLocatorInputSchema,
+  BoundedSelectionInput: BoundedSelectionInputSchema,
   DestinationPlacement: DestinationPlacementSchema,
   Placement: PlacementSchema,
   Projection: ProjectionSchema,
@@ -1401,6 +1414,8 @@ export type QueryExpression = Static<typeof QueryExpressionSchema>;
 export type Selector = Static<typeof SelectorSchema>;
 export type TargetSpec = Static<typeof TargetSpecSchema>;
 export type TargetRef = Static<typeof TargetRefSchema>;
+export type ExactLocatorInput = Static<typeof ExactLocatorInputSchema>;
+export type BoundedSelectionInput = Static<typeof BoundedSelectionInputSchema>;
 export type OneTargetRef = Static<typeof OneTargetRefSchema>;
 export type DestinationPlacement = Static<typeof DestinationPlacementSchema>;
 export type Placement = Static<typeof PlacementSchema>;

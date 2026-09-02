@@ -16,6 +16,65 @@ afterAll(async () => {
 });
 
 describe('outline mandatory CLI golden flows', () => {
+  test('FLOW-1 creates and verifies the Chengdu weather table in exactly three Provider tool calls', async () => {
+    await withRuntime(async ({ runtime, cli }) => {
+      await cli.json(['daily', 'ensure', '2026-09-02']);
+      const before = snapshot(runtime);
+      const operationsBefore = await countOperations(runtime);
+      const callsBefore = cli.calls;
+      const skill = await readFile(path.resolve(
+        import.meta.dir,
+        '../../src/main/builtInSkills/outline/SKILL.md',
+      ), 'utf8');
+      const providerTrace = [{ tool: 'skill', command: 'outline' }];
+
+      const mutationReceipt = await cli.summary(
+        ['add', '--input', '-'],
+        JSON.stringify(chengduWeatherViewedTree()),
+      );
+      providerTrace.push({ tool: 'bash', command: 'outline add --input -' });
+      const ownerId = mutationReceipt.match(/^Owner: (node:[^\s]+)$/mu)?.[1];
+      const operationId = mutationReceipt.match(/^Operation: (operation:[^\s]+)$/mu)?.[1];
+      expect(ownerId).toBeDefined();
+      expect(operationId).toBeDefined();
+
+      const verificationReceipt = await cli.summary(['view', 'inspect', ownerId!]);
+      providerTrace.push({ tool: 'bash', command: 'outline view inspect OWNER_ID' });
+
+      expect(providerTrace).toEqual([
+        { tool: 'skill', command: 'outline' },
+        { tool: 'bash', command: 'outline add --input -' },
+        { tool: 'bash', command: 'outline view inspect OWNER_ID' },
+      ]);
+      expect(cli.calls - callsBefore).toBe(2);
+      expect(providerTrace).toHaveLength(3);
+      expect(providerTrace.some((entry) => /\b(help|schema|example)\b/u.test(entry.command))).toBe(false);
+      expect(providerTrace.some((entry) => /\b(file|python|node|bun)\b/u.test(entry.tool))).toBe(false);
+      expect(providerTrace.some((entry) => /[|<>]|<<|\$\(/u.test(entry.command))).toBe(false);
+      expect(Buffer.byteLength(skill)).toBeLessThanOrEqual(8 * 1024);
+      expect(Buffer.byteLength(mutationReceipt)).toBeLessThanOrEqual(4 * 1024);
+      expect(Buffer.byteLength(verificationReceipt)).toBeLessThanOrEqual(4 * 1024);
+      expect(mutationReceipt).toContain('Items: 15');
+      expect(verificationReceipt).toContain('Items: 15');
+      expect(verificationReceipt).toContain('Display fields: 3');
+      expect(await countOperations(runtime)).toBe(operationsBefore + 1);
+
+      const state = runtime.workspace.documentState();
+      const weatherNode = state.nodes[ownerId!]!;
+      expect(typeof weatherNode.parentId).toBe('string');
+      expect(weatherNode.content.text).toBe('Chengdu district weather (2026-09-02)');
+      expect(weatherNode.description).toContain('UV intensity is very strong across the region');
+      const weatherParentId = weatherNode.parentId!;
+      expect(state.nodes[weatherParentId]?.content.text).toBe('2026-09-02');
+      expect(weatherNode.children.map((id) => state.nodes[id]?.content.text).filter(Boolean))
+        .toEqual(expect.arrayContaining(['Central districts (Jinjiang/Qingyang/Jinniu/Wuhou/Chenghua)', 'Jintang', 'Dujiangyan']));
+
+      const operation = (await runtime.workspace.store.operations()).find((entry) => entry.operationId === operationId);
+      expect(operation).toBeDefined();
+      await exactRevert(runtime, operation!, before, cli);
+    });
+  });
+
   test('1. creates a complete STRING_MATCH table Search in one invocation and exactly reverts it', async () => {
     await withRuntime(async ({ runtime, cli }) => {
       await cli.json(['add', '@library', 'module alpha']);
@@ -51,7 +110,7 @@ describe('outline mandatory CLI golden flows', () => {
       const operationsBefore = await countOperations(runtime);
       const input = JSON.parse(await readFile(path.resolve(
         import.meta.dir,
-        '../../src/main/builtInSkills/outline/fixtures/table-view-add.json',
+        '../fixtures/outline/table-view-add.json',
       ), 'utf8')) as unknown;
       const callsBefore = cli.calls;
       const operation = operationResult(await cli.json(['add', '--input', '-'], JSON.stringify(input)));
@@ -455,6 +514,7 @@ async function exactRevert(
 interface CliHarness {
   calls: number;
   json(args: readonly string[], stdin?: string): Promise<unknown>;
+  summary(args: readonly string[], stdin?: string): Promise<string>;
 }
 
 async function withRuntime(
@@ -482,6 +542,22 @@ async function withRuntime(
       const response = JSON.parse(stdout) as { ok: boolean; data?: unknown; error?: unknown };
       expect({ code, response }).toMatchObject({ code: 0, response: { ok: true } });
       return response.data;
+    },
+    async summary(args, stdin = '') {
+      this.calls += 1;
+      let stdout = '';
+      let stderr = '';
+      const code = await runOutlineCli(['--no-start', ...args], {
+        runtimeRoot: root,
+        io: {
+          stdout: (value) => { stdout += value; },
+          stderr: (value) => { stderr += value; },
+          readStdin: async () => stdin,
+          stdinBytes: () => (async function* () { yield Buffer.from(stdin); })(),
+        },
+      });
+      expect({ code, stderr }).toEqual({ code: 0, stderr: '' });
+      return stdout;
     },
   };
   try {
@@ -558,5 +634,38 @@ function captureProvenance() {
     status: 'saved',
     intent: 'capture',
     warnings: [],
+  };
+}
+
+function chengduWeatherViewedTree() {
+  const rows: readonly [string, number, number, string][] = [
+    ['Central districts (Jinjiang/Qingyang/Jinniu/Wuhou/Chenghua)', 21, 32, ''],
+    ['Longquanyi', 20, 32, ''],
+    ['Xindu', 21, 32, ''],
+    ['Wenjiang', 21, 32, ''],
+    ['Shuangliu', 21, 32, ''],
+    ['Pidu', 20, 32, ''],
+    ['Qingbaijiang', 21, 32, ''],
+    ['Jintang', 20, 35, 'Hottest in the region'],
+    ['Pengzhou', 20, 32, ''],
+    ['Xinjin', 21, 32, ''],
+    ['Pujiang', 21, 32, ''],
+    ['Qionglai', 20, 32, ''],
+    ['Chongzhou', 19, 32, ''],
+    ['Dayi', 19, 32, ''],
+    ['Dujiangyan', 18, 30, 'Coolest in the region'],
+  ];
+  return {
+    kind: 'viewed-tree',
+    placement: { kind: 'first', parent: '@date:2026-09-02' },
+    title: 'Chengdu district weather (2026-09-02)',
+    description: 'Sunny throughout, wind below force 3, and UV intensity is very strong across the region. Temperatures generally decrease toward the Longmen Mountains to the northwest and increase toward Jintang to the northeast; diurnal ranges are usually 10-12 C.',
+    fields: [
+      { key: 'low', name: 'Night low (C)', config: { fieldType: 'number' } },
+      { key: 'high', name: 'Day high (C)', config: { fieldType: 'number' } },
+      { key: 'note', name: 'Note', config: { fieldType: 'plain' } },
+    ],
+    items: rows.map(([content, low, high, note]) => ({ content, values: { low, high, note } })),
+    view: { mode: 'table' },
   };
 }
