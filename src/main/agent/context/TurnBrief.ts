@@ -156,9 +156,10 @@ export function suppliedFileBrief(input: {
   readonly byteLength: number;
   readonly readablePath: string | null;
 }): TurnBriefBlock {
+  const entryKind = input.mimeType === 'inode/directory' ? 'directory' : 'file';
   return observation('untrusted', input.readablePath
-    ? `Supplied file ${formatNamedFileReference(input.readablePath, 'file', input.fileName)} (${input.mimeType}, ${input.byteLength} bytes).`
-    : `Supplied file "${input.fileName}" is unavailable.`);
+    ? `Supplied ${entryKind} ${formatNamedFileReference(input.readablePath, entryKind, input.fileName)} (${input.mimeType}, ${input.byteLength} bytes).`
+    : `Supplied ${entryKind} "${input.fileName}" is unavailable.`);
 }
 
 export function referencedResourceBrief(
@@ -202,16 +203,18 @@ export function historicalToolOutputBrief(input: {
   ];
 }
 
-export function degradationBrief(entry: ContextDegradationCheckpointEntry): TurnBriefBlock {
+export function degradationBrief(
+  entry: ContextDegradationCheckpointEntry,
+): readonly TurnBriefBlock[] {
   const affected = entry.source
     .replace(/([a-z])([A-Z])/gu, '$1 $2')
     .replace(/[-_]+/gu, ' ')
     .trim()
     .toLowerCase();
-  return observation(
-    'application',
-    `${affected || 'Historical context'} could not be restored. Re-inspect current state before relying on it.`,
-  );
+  return [
+    observation('application', `${affected || 'Historical context'} could not be restored.`),
+    instruction('Re-inspect current state before relying on the unavailable context.'),
+  ];
 }
 
 export function observation(
@@ -280,7 +283,9 @@ function namedNode(node: Pick<UserViewNodeSnapshot, 'nodeId' | 'title'>): string
 function distinctFocus(payload: UserViewContextPayload | null): UserViewNodeSnapshot | null {
   if (!payload?.focusedNode) return null;
   const active = activePanel(payload);
-  return active?.target.kind === 'node' && active.target.nodeId === payload.focusedNode.nodeId
+  return active?.target.kind === 'node'
+    && active.target.nodeId === payload.focusedNode.nodeId
+    && payload.focusSurface !== 'trailing'
     ? null
     : payload.focusedNode;
 }

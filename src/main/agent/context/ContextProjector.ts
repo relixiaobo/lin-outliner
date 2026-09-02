@@ -233,10 +233,10 @@ export class CanonicalContextProjector {
     let timestamp = fallbackTimestamp;
     for (const item of items) {
       if (item.type === 'contextEvidence') {
-        const parts = await this.projectEvidence(item).catch(() => [this.degradationPart(
+        const parts = await this.projectEvidence(item).catch(() => this.degradationParts(
           item.kind,
           contextDegradation('payloadUnavailable', item.kind, item.payloadRef.id),
-        )]);
+        ));
         for (const part of parts) {
           if (part.type === 'contextBlock') {
             contextBlocks.push(part);
@@ -354,14 +354,14 @@ export class CanonicalContextProjector {
           else flushAssistant();
           const payload = await this.readEvidencePayload(item).catch(() => null);
           if (!payload || payload.kind !== 'inheritedContext') {
-            appendContextParts([this.degradationPart(
+            appendContextParts(this.degradationParts(
               'inheritedContext',
               contextDegradation(
                 payload ? 'payloadInvalid' : 'payloadUnavailable',
                 'inheritedContext',
                 item.payloadRef.id,
               ),
-            )]);
+            ));
             continue;
           }
           const inheritedProjector = new CanonicalContextProjector(this.model, this.resources, this.options);
@@ -377,16 +377,16 @@ export class CanonicalContextProjector {
             || item.outputRefs.some((ref) => this.unavailableToolOutputProjections.has(outputReferenceKey(ref)))
           )
         ) {
-          appendContextParts([this.degradationPart(
+          appendContextParts(this.degradationParts(
             'toolOutputProjection',
             contextDegradation('payloadUnavailable', 'toolOutputProjection', item.payloadRef.id),
-          )]);
+          ));
           continue;
         }
-        appendContextParts(await this.projectEvidence(item).catch(() => [this.degradationPart(
+        appendContextParts(await this.projectEvidence(item).catch(() => this.degradationParts(
           item.kind,
           contextDegradation('payloadUnavailable', item.kind, item.payloadRef.id),
-        )]));
+        )));
         continue;
       }
       if (item.type === 'userMessage') {
@@ -420,10 +420,10 @@ export class CanonicalContextProjector {
         continue;
       }
       if (item.type === 'contextCompaction') {
-        appendContextParts(await this.projectCompaction(item, sourceTurns).catch(() => [this.degradationPart(
+        appendContextParts(await this.projectCompaction(item, sourceTurns).catch(() => this.degradationParts(
           'compactionRestoredState',
           contextDegradation('payloadInvalid', 'compactionRestoredState', item.restoredStateRef.id),
-        )]));
+        )));
         continue;
       }
       // The assistant channel is a few-shot demonstration of what this model
@@ -507,7 +507,7 @@ export class CanonicalContextProjector {
       const key = JSON.stringify([degradation.code, degradation.source, degradation.reference]);
       if (renderedDegradations.has(key)) return;
       renderedDegradations.add(key);
-      content.push(this.degradationPart(kind, degradation));
+      content.push(...this.degradationParts(kind, degradation));
     };
     const summary = await this.readCompactionPayload(
       item,
@@ -705,11 +705,11 @@ export class CanonicalContextProjector {
     return payload as Extract<ThreadContextPayload, { readonly kind: K }>;
   }
 
-  private degradationPart(
+  private degradationParts(
     kind: ContextPayloadKind,
     degradation: ContextDegradationCheckpointEntry,
-  ): ProjectedContextBlock {
-    return briefContextBlock(kind, degradationBrief(degradation));
+  ): ProjectedContextBlock[] {
+    return degradationBrief(degradation).map((block) => briefContextBlock(kind, block));
   }
 
   private async projectEvidence(
@@ -809,7 +809,7 @@ export class CanonicalContextProjector {
       if (resource.resourceRef) {
         path = await this.resources.resolveResourceObservationPath(resource.resourceRef);
         if (!path) {
-          content.push(this.degradationPart(
+          content.push(...this.degradationParts(
             'referencedResources',
             contextDegradation('payloadUnavailable', 'referencedResource', resource.resourceRef.fileName),
           ));
@@ -822,7 +822,7 @@ export class CanonicalContextProjector {
       if (resource.inlineImage && resource.resourceRef) {
         const bytes = await this.resources.readResource(resource.resourceRef).catch(() => null);
         if (!bytes) {
-          content.push(this.degradationPart(
+          content.push(...this.degradationParts(
             'referencedResources',
             contextDegradation('payloadUnavailable', 'referencedImage', resource.resourceRef.fileName),
           ));

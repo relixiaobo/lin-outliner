@@ -534,8 +534,18 @@ describe('canonical context projection', () => {
     const messages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
       turn(1, [item, userItem('user-1', 1_720_000_000_123, 'Inspect the image')], true),
     ]);
-    expect(messages.map(messageText).join('\n')).toContain('referenced resources could not be restored');
-    expect(messages.map(messageText).join('\n')).not.toContain(item.payloadRef.id);
+    const projectedText = messages.map(messageText).join('\n');
+    expect(projectedText).toContain([
+      '<context authority="application" purpose="observation">',
+      'referenced resources could not be restored.',
+      '</context>',
+    ].join('\n'));
+    expect(projectedText).toContain([
+      '<context authority="application" purpose="instruction">',
+      'Re-inspect current state before relying on the unavailable context.',
+      '</context>',
+    ].join('\n'));
+    expect(projectedText).not.toContain(item.payloadRef.id);
   });
 
   test('projects referenced Node resources through the same file marker contract', async () => {

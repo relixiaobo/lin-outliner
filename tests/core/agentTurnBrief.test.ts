@@ -143,10 +143,10 @@ describe('Agent Turn brief language', () => {
     expect(boundedText).toContain('[Selection truncated.]');
   });
 
-  test('emits a changed insertion relation when focus stays on the same Node', () => {
+  test('emits a trailing insertion relation on the active Node', () => {
     const focusedNode = {
-      nodeId: 'node:00000000-0000-4000-8000-000000000002',
-      title: 'Child',
+      nodeId: NODE_ID,
+      title: 'Active',
       panelId: null,
       surface: 'row',
     };
@@ -158,8 +158,42 @@ describe('Agent Turn brief language', () => {
     const insertion = { ...focused, focusSurface: 'trailing' };
 
     expect(userViewBrief(focused, insertion).map((block) => block.body)).toContain(
-      'Insertion target: children of "Child" [[node://00000000-0000-4000-8000-000000000002]].',
+      `Insertion target: children of "Active" [[node://${NODE_KEY}]].`,
     );
+  });
+
+  test('uses directory identity for supplied directory references and failures', () => {
+    expect(suppliedFileBrief({
+      fileName: 'assets',
+      mimeType: 'inode/directory',
+      byteLength: 0,
+      readablePath: '/workspace/assets',
+    }).body).toBe('Supplied directory assets: [[file:///workspace/assets/]] (inode/directory, 0 bytes).');
+    expect(suppliedFileBrief({
+      fileName: 'assets',
+      mimeType: 'inode/directory',
+      byteLength: 0,
+      readablePath: null,
+    }).body).toBe('Supplied directory "assets" is unavailable.');
+  });
+
+  test('separates degradation facts from recovery instructions', () => {
+    expect(degradationBrief({
+      code: 'payloadUnavailable',
+      source: 'userView',
+      reference: 'private-ref',
+    })).toEqual([
+      {
+        authority: 'application',
+        purpose: 'observation',
+        body: 'user view could not be restored.',
+      },
+      {
+        authority: 'application',
+        purpose: 'instruction',
+        body: 'Re-inspect current state before relying on the unavailable context.',
+      },
+    ]);
   });
 
   test('preserves observation authority when prior context is revoked', () => {
@@ -300,7 +334,7 @@ describe('Agent Turn brief language', () => {
         code: 'payloadUnavailable',
         source: 'userView',
         reference: 'private-ref',
-      }).body,
+      }).map((block) => block.body).join('\n'),
     };
     const multiTurn = [
       blocks.environment,
@@ -322,7 +356,7 @@ describe('Agent Turn brief language', () => {
     expect(metrics).toEqual({
       additionalContext: { characters: 53, estimatedTokens: 14 },
       compaction: { characters: 54, estimatedTokens: 14 },
-      degradation: { characters: 79, estimatedTokens: 20 },
+      degradation: { characters: 100, estimatedTokens: 25 },
       environment: { characters: 99, estimatedTokens: 25 },
       historicalOutput: { characters: 170, estimatedTokens: 43 },
       multiTurn: { characters: 600, estimatedTokens: 150 },

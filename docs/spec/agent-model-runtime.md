@@ -220,7 +220,9 @@ A bounded visible Outline is stored under `suppliedOutline` and projected as its
 `untrusted/observation` adjacent to the view statement. Opening a file, asset, URL, or
 Trajectory does not imply that its bytes or text were supplied. Renderer/document
 claims and labels remain `untrusted/observation` even after main validates and enriches
-their identities.
+their identities. Supplied resource markers derive file versus directory identity from
+the canonical MIME type, including the directory trailing slash required by reference
+parsing and directory tooling.
 
 The same runtime also implements auxiliary Thread naming after the first user
 Turn becomes terminal. It resolves that Thread's current provider/model,
@@ -845,8 +847,10 @@ or invalidate it. Every nested context/output dependency is validated before the
 checkpoint is admitted.
 If a previously admitted inspection payload later becomes unavailable or disagrees with
 its checkpoint, reduction records a typed degradation entry and clears or skips only the
-affected catalog, baseline, or observation. Projection renders the deduplicated marker;
-compaction, fork, and delegation remain usable. Strict dependency rejection remains at
+affected catalog, baseline, or observation. Projection renders the deduplicated fact as
+an `application/observation` and any required re-inspection command as a separate
+`application/instruction`; commands never hide inside observation prose. Compaction,
+fork, and delegation remain usable. Strict dependency rejection remains at
 payload publication and Thread decode, not on the provider-request path.
 
 Compaction does not reconstruct document observations from shell output. Outline
