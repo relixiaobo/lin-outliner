@@ -2391,3 +2391,22 @@ input without its required bound, oversized Events, paginated history and
 projections, and control bytes in both errors and recovery commands. Assert exact
 handles, omission evidence, byte ceilings, and absence of raw terminal controls;
 small happy-path snapshots cannot prove these properties.
+
+## Adjunct configuration must follow its owning layer
+
+PR #618 first merged custom Role definitions and their execution-selection rows
+independently. When a project Role shadowed a same-name user Role without writing
+its own execution row, runtime combined the project definition with the stale
+user selection while Settings showed Follow parent.
+
+**When one layered entry is meaningful only as state attached to another, resolve
+the owner first and read the adjunct exclusively from that winning layer.** Keep
+independent layering only for identities whose owner is not layer-defined, and
+make deep links and editors use the same winner as runtime. Two maps with the
+same key are not automatically two independently mergeable configuration
+surfaces.
+
+Regression coverage must place same-name owners in both layers, put adjunct
+state only in the losing layer, and assert runtime resolution, editor selection,
+and displayed inherited state together. A test with adjunct rows in both layers
+cannot expose accidental cross-layer inheritance.

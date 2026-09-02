@@ -12,6 +12,23 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Child Agent model choices now live in Agent Settings (PR #618, codex-4)**
+  — every collaboration Agent type starts by following its direct parent's
+  provider, model, and reasoning effort, while an optional user/project setting
+  can select a currently usable model without expanding the model-visible
+  `agent` tool. Fresh spawns validate before durable admission, persist the
+  effective execution snapshot, and visibly fall back to the complete parent
+  selection when a saved choice becomes unavailable. Definition, presentation,
+  capability, and execution edits remain one atomic configuration write, and a
+  custom Role reads execution state only from its winning configuration layer.
+  Gate review found one High cross-layer selection leak and two Medium custom-
+  endpoint and Settings deep-link defects; all three were fixed before the final
+  no-findings review. Verified with typecheck, `docs:check`, 57 focused tests,
+  47 Agent Settings Playwright tests, 1,497 renderer tests, and 2,836 passing
+  Core tests with 6 skipped and one load-dependent timeout that passed alone in
+  1.62 seconds. All five non-gating GitHub E2E samples subsequently passed with
+  baseline subtraction also green.
+
 - **Outline Agent workflows now use one direct, closed-loop public interface
   (PR #617, codex-2)** — the built-in Skill routes known work straight to narrow
   porcelain commands and unfamiliar structured work to bounded executable
