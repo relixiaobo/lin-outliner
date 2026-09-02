@@ -93,17 +93,17 @@ import {
 } from './agentWebFetchRequest';
 import {
   BING_IMAGES_RESULT_SELECTOR,
-  DUCKDUCKGO_RESULT_SELECTOR,
+  DUCKDUCKGO_SERP_READY_SELECTOR,
   admitGoogleRedirectTarget,
   bingImagesExtractorExpression,
   duckDuckGoSerpExtractorExpression,
   googleSerpExtractorExpression,
   isGoogleRedirectCandidateUrl,
   isTransientSearchError,
-  selectSearchOutcomeIndex,
-  shouldFallbackToSecondaryEngine,
+  runTwoProviderSearchChain,
   type GoogleSerpCandidate,
 } from './agentWebSearchSerp';
+import { interceptFirstMainFrameRedirect } from './agentWebRedirect';
 
 const GOOGLE_SEARCH_HOME_URL = 'https://www.google.com/';
 const GOOGLE_SEARCH_INPUT_SELECTOR = 'textarea[name="q"], input[name="q"]';
@@ -581,21 +581,18 @@ async function runWebSearchWithFallback(
   params: NormalizedWebSearchParams,
   signal?: AbortSignal,
 ): Promise<SearchOutcome> {
-  const attempts: SearchOutcome[] = [];
-  const google = await runSearchWithRetry(
-    () => searchGoogle(buildGoogleSearchUrl(params.effectiveQuery), params.limit, signal),
-    signal,
+  return runTwoProviderSearchChain(
+    () => runSearchWithRetry(
+      () => searchGoogle(buildGoogleSearchUrl(params.effectiveQuery), params.limit, signal),
+      signal,
+    ),
+    () => runSearchWithRetry(
+      () => searchDuckDuckGo(params.effectiveQuery, signal),
+      signal,
+    ),
+    searchAttemptSummary,
+    () => Boolean(signal?.aborted),
   );
-  attempts.push(google);
-  if (signal?.aborted || !shouldFallbackToSecondaryEngine(searchAttemptSummary(google))) return google;
-
-  const duck = await runSearchWithRetry(
-    () => searchDuckDuckGo(params.effectiveQuery, signal),
-    signal,
-  );
-  attempts.push(duck);
-  if (signal?.aborted || !shouldFallbackToSecondaryEngine(searchAttemptSummary(duck))) return duck;
-  return selectFinalSearchOutcome(attempts);
 }
 
 function searchAttemptSummary(outcome: SearchOutcome) {
@@ -604,11 +601,6 @@ function searchAttemptSummary(outcome: SearchOutcome) {
     resultCount: outcome.kind === 'ok' ? outcome.results.length : 0,
     ...(outcome.kind === 'error' ? { code: outcome.code } : {}),
   };
-}
-
-function selectFinalSearchOutcome(attempts: readonly SearchOutcome[]): SearchOutcome {
-  const index = selectSearchOutcomeIndex(attempts.map(searchAttemptSummary));
-  return attempts[index] ?? attempts[attempts.length - 1]!;
 }
 
 // The invariant envelope fields shared by the hint / error / success branches —
@@ -1307,71 +1299,20 @@ function resolveGoogleRedirect(
   signal?: AbortSignal,
 ): Promise<string | null> {
   if (!isGoogleRedirectCandidateUrl(candidateUrl) || signal?.aborted) return Promise.resolve(null);
-
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (target: string | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      webContents.off('will-redirect', onRedirect);
-      webContents.off('will-navigate', onNavigate);
-      resolve(target);
-    };
-    const stop = () => {
-      try {
-        webContents.stop();
-      } catch {
-        // no-op
-      }
-    };
-    const onRedirect = (
-      event: ElectronEvent<WebContentsWillRedirectEventParams>,
-      redirectUrl: string,
-      _isInPlace: boolean,
-      isMainFrame: boolean,
-    ) => {
-      if (!isMainFrame) return;
-      event.preventDefault();
-      stop();
-      finish(admitGoogleRedirectTarget(candidateUrl, event.url || redirectUrl));
-    };
-    const onNavigate = (
-      event: ElectronEvent<WebContentsWillNavigateEventParams>,
-      _navigateUrl: string,
-      _isInPlace: boolean,
-      isMainFrame: boolean,
-    ) => {
-      if (!isMainFrame) return;
-      event.preventDefault();
-      stop();
-      finish(null);
-    };
-    const onAbort = () => {
-      stop();
-      finish(null);
-    };
-    const timer = setTimeout(() => {
-      stop();
-      finish(null);
-    }, timeoutMs);
-
-    signal?.addEventListener('abort', onAbort, { once: true });
-    webContents.on('will-redirect', onRedirect);
-    webContents.on('will-navigate', onNavigate);
-    void webContents.loadURL(candidateUrl).then(
-      () => finish(null),
-      () => finish(null),
-    );
-  });
+  return interceptFirstMainFrameRedirect(
+    webContents,
+    candidateUrl,
+    timeoutMs,
+    admitGoogleRedirectTarget,
+    signal,
+  );
 }
 
 interface ServerRenderedSerpSpec {
   searchUrl: string;
-  // Single source of truth for the result anchor (also used as the readiness
-  // gate) and the in-page extractor serialized from the pure SERP function.
-  resultSelector: string;
+  // Page readiness is independent from result existence so a normal empty SERP
+  // still reaches the extractor and becomes an authoritative empty outcome.
+  readinessSelector: string;
   extractorExpression: string;
   emptyMessage: string;
   providerName?: string;
@@ -1381,7 +1322,7 @@ interface ServerRenderedSerpSpec {
 }
 
 // Shared scrape skeleton for a server-rendered SERP (Bing Images, DuckDuckGo
-// /html/): navigate → wait for the result selector → on miss run the shared
+// /html/): navigate → wait for the page readiness selector → on miss run the shared
 // verification check (generic reCAPTCHA / Cloudflare / "Just a moment" markers
 // surface as search_blocked, otherwise a needs_browser hint) → extract. Google
 // is NOT routed through here — it needs the search-box dance. Keeping the two
@@ -1408,7 +1349,7 @@ async function runServerRenderedSerp(
       };
     }
 
-    const ready = await waitForSelector(webContents, spec.resultSelector, 8_000, signal);
+    const ready = await waitForSelector(webContents, spec.readinessSelector, 8_000, signal);
     const finalUrl = webContents.getURL() || spec.searchUrl;
     if (!ready) {
       const hint = await detectSearchVerification(webContents, finalUrl);
@@ -1441,7 +1382,7 @@ async function searchBingImages(query: string, signal?: AbortSignal): Promise<Se
   }
   return runServerRenderedSerp({
     searchUrl: buildBingImagesSearchUrl(query),
-    resultSelector: BING_IMAGES_RESULT_SELECTOR,
+    readinessSelector: BING_IMAGES_RESULT_SELECTOR,
     extractorExpression: bingImagesExtractorExpression(),
     emptyMessage: 'could not extract Bing image results',
     scroll: true,
@@ -1457,7 +1398,7 @@ async function searchDuckDuckGo(query: string, signal?: AbortSignal): Promise<Se
   }
   return runServerRenderedSerp({
     searchUrl: buildDuckDuckGoSearchUrl(query),
-    resultSelector: DUCKDUCKGO_RESULT_SELECTOR,
+    readinessSelector: DUCKDUCKGO_SERP_READY_SELECTOR,
     extractorExpression: duckDuckGoSerpExtractorExpression(),
     emptyMessage: 'could not extract DuckDuckGo results',
     providerName: DUCKDUCKGO_PROVIDER,

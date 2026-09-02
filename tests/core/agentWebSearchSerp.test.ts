@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { parseHTML } from 'linkedom';
 import {
+  DUCKDUCKGO_SERP_READY_SELECTOR,
   admitGoogleRedirectTarget,
   duckDuckGoSerpExtractorExpression,
   extractDuckDuckGoSerp,
@@ -8,8 +9,10 @@ import {
   googleSerpExtractorExpression,
   isGoogleRedirectCandidateUrl,
   isTransientSearchError,
+  runTwoProviderSearchChain,
   selectSearchOutcomeIndex,
   shouldFallbackToSecondaryEngine,
+  type SearchAttemptSummary,
 } from '../../src/main/agent/capabilities/agentWebSearchSerp';
 
 function runGoogleSerpExtractor(html: string): ReturnType<typeof extractGoogleSerp> {
@@ -149,6 +152,37 @@ describe('DuckDuckGo SERP extraction', () => {
     expect(run(document).results).toEqual(runDuckDuckGoExtractor(DDG_HTML).results);
   });
 
+  test('recognizes a normal empty SERP independently from result anchors', () => {
+    const { document } = parseHTML([
+      '<!doctype html><html><body><div id="links" class="results">',
+      '<div class="no-results">No results.</div>',
+      '</div></body></html>',
+    ].join(''));
+
+    expect(document.querySelector(DUCKDUCKGO_SERP_READY_SELECTOR)).not.toBeNull();
+    expect(extractDuckDuckGoSerp(document, 10)).toMatchObject({ candidateCount: 0, results: [] });
+  });
+
+  test('does not recognize the challenge shell as a normal SERP', () => {
+    const { document } = parseHTML([
+      '<!doctype html><html><body>',
+      '<form id="challenge-form"><div class="anomaly-modal__modal">Complete the challenge</div></form>',
+      '</body></html>',
+    ].join(''));
+
+    expect(document.querySelector(DUCKDUCKGO_SERP_READY_SELECTOR)).toBeNull();
+  });
+
+  test('does not mistake result-anchor markup drift for an authoritative empty SERP', () => {
+    const { document } = parseHTML([
+      '<!doctype html><html><body><div id="links" class="results">',
+      '<div class="result"><a class="renamed-result-link" href="https://example.com">Result</a></div>',
+      '</div></body></html>',
+    ].join(''));
+
+    expect(document.querySelector(DUCKDUCKGO_SERP_READY_SELECTOR)).toBeNull();
+  });
+
   test('skips a sponsored row whose ad marker rides an outer wrapper, not the nearest .result', () => {
     const html = [
       '<!doctype html><html><body>',
@@ -196,6 +230,33 @@ describe('web search fallback decision helpers', () => {
       { kind: 'ok', resultCount: 0 },
     ])).toBe(0);
     expect(selectSearchOutcomeIndex([])).toBe(-1);
+  });
+
+  test('runs Google then DuckDuckGo and returns authoritative empty only after both empty SERPs', async () => {
+    type Attempt = SearchAttemptSummary & { provider: 'google_serp' | 'duckduckgo_html' };
+    const calls: string[] = [];
+    const outcome = await runTwoProviderSearchChain<Attempt>(
+      async () => {
+        calls.push('google_serp');
+        const { document } = parseHTML('<!doctype html><html><body><div id="search"></div></body></html>');
+        const extraction = extractGoogleSerp(document, 10);
+        return { provider: 'google_serp', kind: 'ok', resultCount: extraction.candidates.length };
+      },
+      async () => {
+        calls.push('duckduckgo_html');
+        const { document } = parseHTML([
+          '<!doctype html><html><body><div id="links" class="results">',
+          '<div class="no-results">No results.</div>',
+          '</div></body></html>',
+        ].join(''));
+        const extraction = extractDuckDuckGoSerp(document, 10);
+        return { provider: 'duckduckgo_html', kind: 'ok', resultCount: extraction.results.length };
+      },
+      (attempt) => attempt,
+    );
+
+    expect(calls).toEqual(['google_serp', 'duckduckgo_html']);
+    expect(outcome).toEqual({ provider: 'duckduckgo_html', kind: 'ok', resultCount: 0 });
   });
 
   test('isTransientSearchError retries nav faults, including the dominant navigation_failed', () => {

@@ -222,11 +222,10 @@ export interface DuckDuckGoSerpExtraction {
   results: WebSearchResult[];
 }
 
-// Single source of truth for the DuckDuckGo HTML-endpoint result link. The
-// readiness gate in agentTools.ts imports this; the extractor below hardcodes the
-// same literal because it is serialized via .toString() and cannot reference a
-// module binding.
-export const DUCKDUCKGO_RESULT_SELECTOR = 'a.result__a';
+// A settled HTML SERP exposes either an organic anchor or the explicit empty
+// marker. A generic results container is intentionally insufficient: if the
+// anchor markup drifts, that must remain diagnostic rather than look empty.
+export const DUCKDUCKGO_SERP_READY_SELECTOR = 'a.result__a, .no-results';
 
 export function duckDuckGoSerpExtractorExpression(maxResults = MAX_SEARCH_LIMIT): string {
   return `(${extractDuckDuckGoSerp.toString()})(document, ${normalizeSerpLimit(maxResults)})`;
@@ -273,9 +272,8 @@ export function extractDuckDuckGoSerp(document: Document, maxResults: number): D
     }
   };
 
-  // The 'a.result__a' literal must stay in sync with DUCKDUCKGO_RESULT_SELECTOR;
-  // this function is serialized via .toString() and runs in-page, so it cannot
-  // reference the exported constant.
+  // This function is serialized via .toString() and runs in-page, so the result
+  // anchor remains self-contained and independent from the page-readiness gate.
   for (const anchor of candidates) {
     if (results.length >= limit) break;
     // Skip sponsored rows. The ad marker can ride the nearest `.result` OR an
@@ -314,6 +312,23 @@ export interface SearchAttemptSummary {
   kind: 'ok' | 'hint' | 'error';
   resultCount: number;
   code?: string;
+}
+
+export async function runTwoProviderSearchChain<T>(
+  primary: () => Promise<T>,
+  secondary: () => Promise<T>,
+  summarize: (outcome: T) => SearchAttemptSummary,
+  stopRequested: () => boolean = () => false,
+): Promise<T> {
+  const primaryOutcome = await primary();
+  if (stopRequested() || !shouldFallbackToSecondaryEngine(summarize(primaryOutcome))) return primaryOutcome;
+
+  const secondaryOutcome = await secondary();
+  if (stopRequested() || !shouldFallbackToSecondaryEngine(summarize(secondaryOutcome))) return secondaryOutcome;
+
+  const attempts = [primaryOutcome, secondaryOutcome];
+  const index = selectSearchOutcomeIndex(attempts.map(summarize));
+  return attempts[index] ?? secondaryOutcome;
 }
 
 // Try the secondary engine when the primary loaded but returned nothing, was

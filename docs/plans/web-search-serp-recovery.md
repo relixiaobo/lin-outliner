@@ -80,11 +80,14 @@ target admission plus the two-provider chain's outcome precedence.
 
 Strengthen the real Electron probe with a stable known-source query, require at
 least one validated result, then `web_fetch` that returned URL and verify its
-content. Record search-partition requests and fail if search requests the
-returned target before fetch begins. Provider challenges remain an explicit
-skip only when the tool returns a challenge hint; silent successful empty output
-is a failure. Repair the probe build command by externalizing the Vite-owned
-secret-scan worker import so the probe actually reaches Electron.
+content. A local HTTP 302 fixture verifies that the first main-frame redirect is
+intercepted and its target path is never requested. Record search-partition
+requests, require a Google `/goto` request on a successful live search, and fail
+if search requests any returned target before fetch begins. Provider challenges
+remain an explicit skip only when the tool returns a challenge hint; silent
+successful empty output is a failure. Repair the probe build command by
+externalizing the Vite-owned secret-scan worker import so the probe actually
+reaches Electron.
 
 Document the provider chain and the distinction between a genuine empty SERP
 and extraction failure in `docs/spec/agent-tool-design.md`.
