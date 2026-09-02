@@ -69,6 +69,30 @@ describe('canonical provider tool catalog', () => {
     expect(failures).toEqual([]);
   });
 
+  test('rejects undeclared model-visible output fields', () => {
+    const schema = (name: string) => {
+      const contract = MODEL_TOOL_CATALOG.find((candidate) => canonicalModelToolKey(candidate.identity) === name);
+      if (!contract?.outputSchema) throw new Error(`Missing ${name} output schema`);
+      return compileToolParameters(contract.outputSchema as never);
+    };
+
+    expect(schema('file_read').Check({
+      file: {
+        filePath: '/workspace/input.txt',
+        content: 'private full content',
+        base64: 'private bytes',
+        internalPath: '/private/runtime/path',
+      },
+    })).toBe(false);
+    expect(schema('thread_search').Check({
+      results: [{ threadId: 'thread-id', title: 'Title', updatedAt: 1, snippet: 'Hit', readCursor: null, internal: true }],
+      untrusted: true,
+    })).toBe(false);
+    expect(schema('create_goal').Check({
+      goal: { objective: 'Ship it', internalContinuationState: true },
+    })).toBe(false);
+  });
+
   test('offers every static model-tool schema to providers as an object-rooted schema', () => {
     const unsendable = MODEL_TOOL_CATALOG
       .filter((contract) => contract.inputSchema !== null)

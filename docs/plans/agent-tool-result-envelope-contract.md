@@ -53,7 +53,8 @@ and guards ship together; none is a separately releasable groundwork slice.
 - **DEC-3:** duplicate and empty success, status, message, reason, and changed
   fields are omitted.
 - **DEC-4:** external successful and owner-returned-error results remain native;
-  Tenon standardizes only failures created by its own Kernel.
+  an external result carrying Tenon's discriminant is rejected. Host policy
+  denials use private control flow and only the Kernel compiles them.
 - **DEC-5:** large text and native media follow one compact JSON header as separate
   ordered content parts.
 - **DEC-6:** documented durability transforms may replace ephemeral path/image
@@ -111,9 +112,11 @@ must return the semantic result form. Registration APIs make that requirement a
 type-level distinction from owner-native external tools.
 
 MCP, extension, plugin, and other external dynamic tools retain their native
-successful content and returned error payloads. When Tenon's Kernel itself rejects
-or cannot execute any tool call, Tenon owns that failure and emits the common
-bounded error form regardless of tool origin.
+successful content and returned error payloads. They cannot select the Tenon
+result grammar. When Tenon's Kernel itself rejects or cannot execute any tool
+call, Tenon owns that failure and emits the common bounded error form regardless
+of tool origin; Host policy denial reaches that compiler through private control
+flow rather than an owner-returned result.
 
 ### Internal result model
 
@@ -264,7 +267,8 @@ provider-native `isError: true`.
 - **FR-4:** document/report text and native media use supplemental content parts
   after the compact JSON header; bounded text with meaningful field identity may
   remain in `data`.
-- **FR-5:** every Tenon-owned contract validates the bounded visible `data` shape.
+- **FR-5:** every Tenon-owned contract validates a bounded visible `data` shape
+  whose objects enumerate their fields and reject additional properties.
 - **FR-6:** external owner-native results remain byte- and order-preserving unless
   Tenon's Kernel owns the rejection or execution failure.
 - **FR-7:** family details, resources, termination, capability audit, and durable

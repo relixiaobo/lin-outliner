@@ -51,7 +51,10 @@ export function persistedToolResultText(input: {
   try {
     const visible = JSON.parse(input.text) as unknown;
     if (['web_fetch', 'bash', 'task_stop', 'skill'].includes(input.toolName)) {
-      return JSON.stringify(withoutToolArtifactPaths(visible), null, 2);
+      const replacements = collectToolArtifactPathReplacements(visible);
+      return replacements.size === 0
+        ? input.text
+        : JSON.stringify(removeToolArtifactPaths(visible, replacements));
     }
     if (input.toolName !== GENERATE_IMAGE_TOOL_NAME) return input.text;
     if (
@@ -71,14 +74,10 @@ export function persistedToolResultText(input: {
       ...visible,
       data: { ...visible.data, images },
       instructions: 'Generated images shown with this result are saved in the conversation; do not render them again. Use the adjacent readable path for file operations when available.',
-    }, null, 2);
+    });
   } catch {
     return input.text;
   }
-}
-
-function withoutToolArtifactPaths(value: unknown): unknown {
-  return removeToolArtifactPaths(value, collectToolArtifactPathReplacements(value));
 }
 
 function collectToolArtifactPathReplacements(

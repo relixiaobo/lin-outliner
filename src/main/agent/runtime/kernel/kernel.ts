@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
+  type JsonValue,
   type ModelProviderToolCall,
   type TurnError,
 } from '../../../../core/agent/protocol';
@@ -36,6 +37,7 @@ import {
   type ToolCallAdmissionRequest,
 } from '../toolCallHistory';
 import { uuidV7 } from '../../uuid';
+import { HostToolDenial } from './HostToolDenial';
 import { compileToolParameters, validateExactToolArguments } from './exactToolArguments';
 
 export type KernelEventSink = (event: KernelEvent) => Promise<void> | void;
@@ -692,6 +694,7 @@ async function executePreparedToolCall(
   } catch (error) {
     acceptingUpdates = false;
     await Promise.all(updates);
+    if (error instanceof HostToolDenial) return hostDeniedToolResult(error);
     const aborted = signal.aborted || (error instanceof Error && error.name === 'AbortError');
     return {
       result: errorToolResult(
@@ -723,15 +726,6 @@ function finalizeToolResult(
   }
   if (contract === null) {
     if (result.kind === 'native') return { result, isError: false };
-    if (result.outcome && !result.outcome.ok && result.outcome.status === 'denied') {
-      const shapeIssue = tenonResultShapeIssue(result);
-      return shapeIssue === null
-        ? { result: compileTenonToolResult(result), isError: false }
-        : {
-            result: errorToolResult('invalid_internal_result', shapeIssue),
-            isError: true,
-          };
-    }
     return {
       result: errorToolResult('invalid_internal_result', 'An owner-native tool returned a non-native result.'),
       isError: true,
@@ -751,6 +745,27 @@ function finalizeToolResult(
     };
   }
   return { result: compileTenonToolResult(result), isError: false };
+}
+
+function hostDeniedToolResult(error: HostToolDenial): ExecutedToolCall {
+  const result: TenonAgentToolResult<JsonValue> = {
+    kind: 'tenon',
+    outcome: {
+      ok: false,
+      status: 'denied',
+      error: { code: error.denial.code, message: error.denial.message },
+    },
+    ...(error.denial.instructions === undefined ? {} : { instructions: error.denial.instructions }),
+    content: [],
+    details: error.denial.details,
+  };
+  const shapeIssue = tenonResultShapeIssue(result);
+  return shapeIssue === null
+    ? { result: compileTenonToolResult(result), isError: false }
+    : {
+        result: errorToolResult('invalid_internal_result', shapeIssue),
+        isError: true,
+      };
 }
 
 function tenonResultSchemaIssue(

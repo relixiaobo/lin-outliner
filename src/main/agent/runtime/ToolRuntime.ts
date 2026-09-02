@@ -37,6 +37,7 @@ import type { ThreadService } from '../ThreadService';
 import type { TurnExecutionContext } from './types';
 import { compileToolParameters } from './kernel/exactToolArguments';
 import { createToolArtifactSink, type ToolArtifactSink } from './ToolArtifactSink';
+import { HostToolDenial } from './kernel/HostToolDenial';
 
 export interface ToolRuntimeOptions {
   readonly localWorkspace?: AgentLocalWorkspaceContext | ((context: TurnExecutionContext) => AgentLocalWorkspaceContext);
@@ -493,17 +494,21 @@ export class ToolRuntime {
             instructions: 'This operation is unavailable in the current context. Continue with another available approach.',
             capabilityAudit: capabilityAudit(capability, policyCode),
           };
-          const result = agentToolResult(details);
           await this.service.notifyToolCompleted(
             context.thread.id,
             context.turn.id,
             itemId,
             identity,
             observableArgs,
-            (await redactSecretLikeJsonAsync(jsonValue(result.details))).value,
+            (await redactSecretLikeJsonAsync(jsonValue(details))).value,
             reason,
           );
-          return result;
+          throw new HostToolDenial({
+            code: 'operation_unavailable',
+            message: reason,
+            instructions: details.instructions,
+            details: jsonValue(details),
+          });
         }
         try {
           const rawResult = await tool.execute(itemId, params, signal, onUpdate);

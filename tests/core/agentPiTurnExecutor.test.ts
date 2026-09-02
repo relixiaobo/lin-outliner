@@ -3299,6 +3299,53 @@ describe('PiTurnExecutor event normalization', () => {
     expect(persistedOutput).not.toContain(resourceRef.id);
   });
 
+  test('transforms only the Tenon header and preserves supplemental JSON text exactly', async () => {
+    const fixture = createContext();
+    const producingPath = '/tmp/turn-observation/report.json';
+    const header = JSON.stringify({
+      ok: true,
+      data: { binaryFile: { filePath: producingPath, fileName: 'report.json' } },
+    });
+    const supplemental = JSON.stringify({
+      ok: true,
+      filePath: '/document-owned/path',
+      temporaryOutputPath: '/document-owned/temporary-path',
+    });
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent('call-web-json', 'web_fetch', {
+      url: 'https://example.com/report.json',
+    }));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-web-json',
+      toolName: 'web_fetch',
+      result: {
+        content: [
+          { type: 'text', text: header },
+          { type: 'text', text: supplemental },
+        ],
+        details: { ok: true },
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    expect(item).toMatchObject({
+      type: 'dynamicToolCall',
+      contentItems: [
+        { type: 'text', text: expect.not.stringContaining(producingPath) },
+        { type: 'text', text: supplemental },
+      ],
+    });
+    if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
+      throw new Error('Expected Web JSON output reference.');
+    }
+    const persistedOutput = await fixture.context.readOutput(item.outputRef);
+    expect(persistedOutput).not.toContain(producingPath);
+    expect(persistedOutput).toContain(supplemental);
+  });
+
   test('keeps bash artifact handles and repeated instruction paths out of the canonical command Item', async () => {
     const fixture = createContext();
     const resourceRef: ThreadResourceReference = {

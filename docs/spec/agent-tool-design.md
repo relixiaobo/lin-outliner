@@ -822,8 +822,10 @@ permission, cancellation, and tool-execution failures do not increment this guar
 The 22 tools in `MODEL_TOOL_CATALOG` return a Host-owned semantic result. MCP,
 plugin, extension, and other owner-native dynamic tools retain their own result
 content unchanged. The discriminant prevents a Tenon tool from bypassing the
-semantic contract and prevents Tenon from interpreting an external owner's
-payload.
+semantic contract. An owner-native tool that returns the Tenon discriminant is
+rejected as malformed; expected capability and policy refusals instead travel
+through a private Host control-flow value, so result content cannot impersonate
+Host ownership.
 
 ```ts
 type ToolOutcome =
@@ -848,10 +850,13 @@ document/report text and images are ordered supplemental content. Family-owned
 metrics remain Host-private.
 
 Every catalog entry declares an `outputSchema`, or `null` when it returns no
-data. The Kernel validates the semantic result, enforces shared data/error/
-instruction/warning limits, redacts secret-like header fields, and serializes
-exactly one compact JSON header followed by supplemental parts in their original
-order. No individual Tenon tool serializes provider-visible result JSON.
+data. Output schemas enumerate every visible field, close every object against
+additional properties, and bound strings and collections under the aggregate
+result ceiling. Descriptions never substitute for structural validation. The
+Kernel validates the semantic result, enforces shared data/error/instruction/
+warning limits, redacts secret-like header fields, and serializes exactly one
+compact JSON header followed by supplemental parts in their original order. No
+individual Tenon tool serializes provider-visible result JSON.
 
 Expected tool failure or policy denial is an ordinary completed tool result with
 `isError: false`, so its recovery guidance reaches the model. Unknown tools,
@@ -860,6 +865,12 @@ exceptions are Kernel-owned failures with stable bounded codes and
 `isError: true`. A malformed result degrades locally instead of killing the Turn.
 Owner-native returned success and error content remain byte- and order-preserving;
 only a failure created by Tenon's Kernel uses the common error header.
+
+Durability transforms inspect only the first compiled Tenon header. They preserve
+its exact bytes when no ephemeral path or image fact changes, transform selected
+ephemeral fields without pretty-printing the result, and never parse later
+supplemental text as JSON. Explicit text replacements may still apply to any part
+when the producing tool declares them.
 
 Visible tool output is bounded independently from durable structured details.
 The runtime may shorten presentation without changing the recorded result.

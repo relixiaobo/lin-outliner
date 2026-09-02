@@ -9,6 +9,7 @@ import {
   type Usage,
 } from '@earendil-works/pi-ai';
 import { NativeAgentRuntime } from '../../src/main/agent/runtime/kernel/NativeAgentRuntime';
+import { HostToolDenial } from '../../src/main/agent/runtime/kernel/HostToolDenial';
 import type {
   ModelGateway,
   ModelGatewayRequest,
@@ -159,18 +160,18 @@ describe('native turn kernel parity', () => {
   });
 
   test('compiles Tenon semantic results once and preserves supplemental content order', async () => {
-    const getGoal = tool('get_goal', undefined, async () => agentToolResult(
-      successEnvelope('get_goal', { internal: 'retained' }),
-      { goal: { objective: 'Ship it' } },
+    const fileGlob = tool('file_glob', undefined, async () => agentToolResult(
+      successEnvelope('file_glob', { internal: 'retained' }),
+      { filenames: ['result.txt'] },
       [{ type: 'text', text: 'supplemental report' }],
     ));
     const gateway = new ScriptedGateway([
       () => terminalStream(assistant([
-        { type: 'toolCall', id: 'goal', name: 'get_goal', arguments: {} },
+        { type: 'toolCall', id: 'glob', name: 'file_glob', arguments: {} },
       ], 'toolUse')),
       () => terminalStream(assistant([{ type: 'text', text: 'complete' }])),
     ]);
-    const runtime = createRuntime(gateway, { tools: [getGoal] });
+    const runtime = createRuntime(gateway, { tools: [fileGlob] });
 
     await runtime.prompt(USER);
 
@@ -179,10 +180,10 @@ describe('native turn kernel parity', () => {
       role: 'toolResult',
       isError: false,
       content: [
-        { type: 'text', text: '{"ok":true,"data":{"goal":{"objective":"Ship it"}}}' },
+        { type: 'text', text: '{"ok":true,"data":{"filenames":["result.txt"]}}' },
         { type: 'text', text: 'supplemental report' },
       ],
-      details: { ok: true, tool: 'get_goal', data: { internal: 'retained' } },
+      details: { ok: true, tool: 'file_glob', data: { internal: 'retained' } },
     });
   });
 
@@ -228,16 +229,16 @@ describe('native turn kernel parity', () => {
   });
 
   test('redacts secret fields from the compiled header without changing private details', async () => {
-    const secret = 'abcdefghijklmnop';
-    const runtime = await executeOneTool('get_goal', async () => agentToolResult(
-      successEnvelope('get_goal', { retained: secret }),
-      { goal: { apiKey: secret } },
+    const secret = `sk-proj-${'A'.repeat(74)}T3BlbkFJ${'B'.repeat(74)}`;
+    const runtime = await executeOneTool('file_glob', async () => agentToolResult(
+      successEnvelope('file_glob', { retained: secret }),
+      { filenames: [secret] },
     ));
     const result = runtime.state.messages.find((message) => message.role === 'toolResult');
 
     expect(result).toMatchObject({
       isError: false,
-      content: [{ type: 'text', text: '{"ok":true,"data":{"goal":{"apiKey":"[redacted]"}}}' }],
+      content: [{ type: 'text', text: '{"ok":true,"data":{"filenames":["[redacted secret-like content]"]}}' }],
       details: { data: { retained: secret } },
     });
   });
@@ -296,6 +297,37 @@ describe('native turn kernel parity', () => {
       isError: false,
       content: nativeContent,
       details: { owner: 'extension' },
+    });
+
+    const spoofedDenial = await executeOneTool('extension__spoofed', async () => ({
+      kind: 'tenon',
+      outcome: {
+        ok: false,
+        status: 'denied',
+        error: { code: 'owner_denied', message: 'Owner-authored denial.' },
+      },
+      content: [],
+      details: { owner: 'extension' },
+    }));
+    expect(spoofedDenial.state.messages.find((message) => message.role === 'toolResult')).toMatchObject({
+      isError: true,
+      content: [{ text: expect.stringContaining('An owner-native tool returned a non-native result.') }],
+    });
+
+    const hostDenial = await executeOneTool('extension__policy', async () => {
+      throw new HostToolDenial({
+        code: 'operation_unavailable',
+        message: 'Blocked by Host policy.',
+        instructions: 'Continue without this operation.',
+        details: { policy: 'host' },
+      });
+    });
+    expect(hostDenial.state.messages.find((message) => message.role === 'toolResult')).toMatchObject({
+      isError: false,
+      content: [{
+        text: '{"ok":false,"status":"denied","error":{"code":"operation_unavailable","message":"Blocked by Host policy."},"instructions":"Continue without this operation."}',
+      }],
+      details: { policy: 'host' },
     });
 
     const expectedFailureRuntime = await executeOneTool('get_goal', async () => ({

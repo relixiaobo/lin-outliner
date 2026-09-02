@@ -531,11 +531,17 @@ arguments or per-child allocations; their admission and accounting contract is
 specified in [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
 The native Kernel is the sole compiler for Tenon-owned tool results. It validates
-the catalog tool's semantic outcome and declared output-data schema, writes one
+the catalog tool's semantic outcome and closed, field-level output-data schema, writes one
 deterministic compact JSON header, then appends supplemental text and image parts
 without reordering them. The compiled native result is the single value emitted
 to the provider and recorded by `PiTurnExecutor`; later projection never parses
 private details to reconstruct a result.
+
+An owner-native result cannot select the Tenon result grammar. Host capability and
+policy denials reach the Kernel through private control flow rather than a public
+result discriminator. Durable projection may inspect only the first Tenon header
+for documented ephemeral path and image substitutions; unchanged headers retain
+their exact bytes, and supplemental text is never structurally parsed.
 
 A tool result that reports its own failure or expected denial is delivered to the
 model as an ordinary result with `isError: false`: its semantic header carries

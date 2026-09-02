@@ -1516,7 +1516,7 @@ async function persistFullToolOutput(
   isError: boolean,
 ): Promise<ThreadItemOutputReference | null> {
   const output = fullToolOutput(result);
-  const text = persistedToolItemResultText(item, output.text, result);
+  const text = persistedFullToolOutputText(item, result, output.text);
   if (!text) return null;
   const state = isError ? 'error' : 'output';
   const tool = toolItemLabel(item);
@@ -1528,6 +1528,29 @@ async function persistFullToolOutput(
     output.mimeType,
     preview ? `${tool} ${state}: ${preview}` : `${tool} ${state}`,
   );
+}
+
+function persistedFullToolOutputText(item: ThreadItem, result: unknown, fallback: string): string {
+  if (!isRecord(result) || !Array.isArray(result.content)) {
+    return persistedToolItemResultText(item, fallback, result);
+  }
+  const textParts = result.content.flatMap((part, partIndex) => (
+    isRecord(part) && part.type === 'text' && typeof part.text === 'string'
+      ? [persistedToolResultPartText(item, part.text, result, partIndex)]
+      : []
+  ));
+  return textParts.length > 0 ? textParts.join('\n') : persistedToolItemResultText(item, fallback, result);
+}
+
+function persistedToolResultPartText(
+  item: ThreadItem,
+  text: string,
+  result: unknown,
+  partIndex: number,
+): string {
+  return partIndex === 0
+    ? persistedToolItemResultText(item, text, result)
+    : applyPersistedToolTextReplacements(text, result);
 }
 
 function persistedToolItemResultText(item: ThreadItem, text: string, result?: unknown): string {
@@ -1743,10 +1766,10 @@ async function dynamicOutput(
     dimensionsUnavailable: 0,
     normalizationFailed: 0,
   };
-  for (const part of result.content) {
+  for (const [partIndex, part] of result.content.entries()) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
     if (part.type === 'text' && typeof part.text === 'string' && remainingText > 0) {
-      const persisted = persistedToolItemResultText(item, part.text, result);
+      const persisted = persistedToolResultPartText(item, part.text, result, partIndex);
       const text = boundedText(persisted, remainingText);
       content.push({ type: 'text', text });
       remainingText -= text.length;

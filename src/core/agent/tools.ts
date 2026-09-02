@@ -217,9 +217,17 @@ const enumSchema = (values: readonly string[], description?: string): JsonSchema
   ...(description ? { description } : {}),
 });
 
-const toolOutputObjectSchema = (description: string): ObjectJsonSchema => ({
-  type: 'object',
-  description,
+const MAX_TOOL_OUTPUT_STRING_LENGTH = 256 * 1024;
+const MAX_TOOL_OUTPUT_ARRAY_LENGTH = 4_096;
+
+const outputStringSchema = (description?: string): JsonSchema => ({
+  ...stringSchema(description),
+  maxLength: MAX_TOOL_OUTPUT_STRING_LENGTH,
+});
+
+const outputArraySchema = (items: JsonSchema, maximum = MAX_TOOL_OUTPUT_ARRAY_LENGTH): JsonSchema => ({
+  ...arraySchema(items),
+  maxItems: maximum,
 });
 
 const booleanSchema = (description?: string): JsonSchema => ({
@@ -237,39 +245,199 @@ const nullableSchema = (schema: JsonSchema): JsonSchema => ({
 });
 
 const artifactOutputSchema = objectSchema({
-  label: stringSchema(),
-  fileName: stringSchema(),
-  mimeType: stringSchema(),
+  label: outputStringSchema(),
+  fileName: outputStringSchema(),
+  mimeType: outputStringSchema(),
   byteLength: integerSchema(),
-  filePath: stringSchema(),
+  filePath: outputStringSchema(),
 }, ['label', 'fileName', 'mimeType', 'byteLength']);
 
 const persistedOutputSchema = objectSchema({
-  filePath: stringSchema(),
-  fileName: stringSchema(),
-  mimeType: stringSchema(),
+  filePath: outputStringSchema(),
+  fileName: outputStringSchema(),
+  mimeType: outputStringSchema(),
   byteLength: integerSchema(),
 }, ['fileName', 'mimeType', 'byteLength']);
 
+const structuredPatchHunkSchema = objectSchema({
+  oldStart: integerSchema(),
+  oldLines: integerSchema(),
+  newStart: integerSchema(),
+  newLines: integerSchema(),
+  lines: outputArraySchema(outputStringSchema()),
+}, ['oldStart', 'oldLines', 'newStart', 'newLines', 'lines']);
+
+const skillWriteOutputSchema = objectSchema({
+  skillName: outputStringSchema(),
+  source: enumSchema(['user', 'project']),
+  relativePath: outputStringSchema(),
+  changeType: enumSchema(['create', 'patch', 'replace', 'support-file-write']),
+  warnings: outputArraySchema(outputStringSchema()),
+}, ['skillName', 'source', 'relativePath', 'changeType', 'warnings']);
+
 const localFileMutationOutputSchema = objectSchema({
-  type: stringSchema(),
-  filePath: stringSchema(),
-  structuredPatch: arraySchema(toolOutputObjectSchema('One structured patch hunk.')),
-  skillWrite: toolOutputObjectSchema('Skill write audit visible to the model.'),
+  type: enumSchema(['create', 'update']),
+  filePath: outputStringSchema(),
+  structuredPatch: outputArraySchema(structuredPatchHunkSchema),
+  skillWrite: skillWriteOutputSchema,
 }, ['filePath', 'structuredPatch']);
 
+const dimensionsOutputSchema = objectSchema({
+  width: numberSchema(),
+  height: numberSchema(),
+}, ['width', 'height']);
+
+const fileReadOutputSchema = objectSchema({
+  file: objectSchema({
+    filePath: outputStringSchema(),
+    originalSize: integerSchema(),
+    observationDimensions: dimensionsOutputSchema,
+    sourceDimensions: dimensionsOutputSchema,
+    sourcePixelsPerObservationPixel: objectSchema({
+      x: numberSchema(),
+      y: numberSchema(),
+    }, ['x', 'y']),
+    observationToSource: outputArraySchema(numberSchema(), 6),
+    totalPages: integerSchema(),
+    pages: objectSchema({
+      firstPage: integerSchema(),
+      lastPage: integerSchema(),
+    }, ['firstPage', 'lastPage']),
+    extractedText: objectSchema({ truncated: booleanSchema() }, ['truncated']),
+    renderedImages: objectSchema({ count: integerSchema() }, ['count']),
+    startLine: integerSchema(),
+    totalLines: integerSchema(),
+    hasMore: booleanSchema(),
+    lineTruncated: booleanSchema(),
+    converter: enumSchema(['markitdown', 'pptx-structural']),
+    truncated: booleanSchema(),
+    coverage: objectSchema({
+      totalSlides: integerSchema(),
+      slidesWithoutText: outputArraySchema(integerSchema()),
+      notesSlides: integerSchema(),
+      chartCount: integerSchema(),
+    }, ['totalSlides', 'slidesWithoutText', 'notesSlides', 'chartCount']),
+  }, ['filePath']),
+}, ['file']);
+
+const webToolHintSchema: JsonSchema = {
+  anyOf: [
+    objectSchema({
+      type: enumSchema(['login_required']),
+      origin: outputStringSchema(),
+      detectedVia: enumSchema(['url_redirect', 'selector_match', 'title_keyword', 'http_401']),
+    }, ['type', 'origin', 'detectedVia']),
+    objectSchema({
+      type: enumSchema(['needs_browser']),
+      reason: enumSchema(['spa_shell', 'cloudflare', 'verification', 'http_error']),
+    }, ['type', 'reason']),
+    objectSchema({
+      type: enumSchema(['search_blocked']),
+      reason: enumSchema(['captcha', 'rate_limit', 'unusual_traffic']),
+      origin: outputStringSchema(),
+    }, ['type', 'reason', 'origin']),
+    objectSchema({
+      type: enumSchema(['redirected_host']),
+      originalUrl: outputStringSchema(),
+      finalUrl: outputStringSchema(),
+      finalHost: outputStringSchema(),
+    }, ['type', 'originalUrl', 'finalUrl', 'finalHost']),
+  ],
+};
+
+const webSearchResultOutputSchema = objectSchema({
+  title: outputStringSchema(),
+  url: outputStringSchema(),
+  snippet: outputStringSchema(),
+  imageUrl: outputStringSchema(),
+  thumbnailUrl: outputStringSchema(),
+  publishedAt: outputStringSchema(),
+}, ['title', 'url']);
+
+const webPageMetadataOutputSchema = objectSchema({
+  title: outputStringSchema(),
+  description: outputStringSchema(),
+  canonicalUrl: outputStringSchema(),
+  siteName: outputStringSchema(),
+  language: outputStringSchema(),
+  headings: outputArraySchema(outputStringSchema()),
+  links: outputArraySchema(objectSchema({
+    text: outputStringSchema(),
+    url: outputStringSchema(),
+  }, ['text', 'url'])),
+});
+
+const generatedImageOutputSchema = objectSchema({
+  providerIndex: integerSchema(),
+  artifactId: outputStringSchema(),
+  path: outputStringSchema(),
+  mimeType: outputStringSchema(),
+  byteLength: integerSchema(),
+  width: numberSchema(),
+  height: numberSchema(),
+  observationDimensions: dimensionsOutputSchema,
+  sourceDimensions: dimensionsOutputSchema,
+  sourcePixelsPerObservationPixel: objectSchema({
+    x: numberSchema(),
+    y: numberSchema(),
+  }, ['x', 'y']),
+  observationToSource: outputArraySchema(numberSchema(), 6),
+}, [
+  'providerIndex',
+  'artifactId',
+  'path',
+  'mimeType',
+  'byteLength',
+  'observationDimensions',
+  'sourceDimensions',
+  'sourcePixelsPerObservationPixel',
+  'observationToSource',
+]);
+
+const agentCoverageOutputSchema = objectSchema({
+  full: integerSchema(),
+  excerpted: integerSchema(),
+  omitted: integerSchema(),
+}, ['full', 'excerpted', 'omitted']);
+
+const threadSearchResultOutputSchema = objectSchema({
+  threadId: outputStringSchema(),
+  title: outputStringSchema(),
+  updatedAt: integerSchema(),
+  snippet: outputStringSchema(),
+  readCursor: nullableSchema(outputStringSchema()),
+}, ['threadId', 'title', 'updatedAt', 'snippet', 'readCursor']);
+
+const threadGoalOutputSchema = objectSchema({
+  threadId: outputStringSchema(),
+  objective: outputStringSchema(),
+  status: enumSchema(['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete']),
+  tokenBudget: nullableSchema(integerSchema()),
+  tokensUsed: integerSchema(),
+  timeUsedSeconds: numberSchema(),
+  createdAt: integerSchema(),
+  updatedAt: integerSchema(),
+}, [
+  'threadId',
+  'objective',
+  'status',
+  'tokenBudget',
+  'tokensUsed',
+  'timeUsedSeconds',
+  'createdAt',
+  'updatedAt',
+]);
+
 const retainedCapabilityOutputSchemas: Readonly<Record<typeof RETAINED_CAPABILITY_TOOL_NAMES[number], JsonSchema>> = {
-  file_read: objectSchema({
-    file: toolOutputObjectSchema('Bounded file metadata; document text and images are supplemental content.'),
-  }, ['file']),
+  file_read: fileReadOutputSchema,
   file_glob: objectSchema({
-    filenames: arraySchema(stringSchema()),
+    filenames: outputArraySchema(outputStringSchema()),
     truncated: booleanSchema(),
   }, ['filenames']),
   file_grep: objectSchema({
-    content: stringSchema(),
+    content: outputStringSchema(),
     numMatches: integerSchema(),
-    filenames: arraySchema(stringSchema()),
+    filenames: outputArraySchema(outputStringSchema()),
   }),
   file_edit: localFileMutationOutputSchema,
   file_write: localFileMutationOutputSchema,
@@ -278,42 +446,42 @@ const retainedCapabilityOutputSchemas: Readonly<Record<typeof RETAINED_CAPABILIT
     kind: stringSchema(),
   }, ['trashPath', 'kind']),
   bash: objectSchema({
-    stdout: stringSchema(),
-    stderr: stringSchema(),
+    stdout: outputStringSchema(),
+    stderr: outputStringSchema(),
     interrupted: booleanSchema(),
     exitCode: integerSchema(),
     isImage: booleanSchema(),
-    backgroundTaskId: stringSchema(),
-    taskStatus: stringSchema(),
+    backgroundTaskId: outputStringSchema(),
+    taskStatus: enumSchema(['running', 'completed', 'failed', 'stopped']),
     persistedOutput: persistedOutputSchema,
-    artifacts: arraySchema(artifactOutputSchema),
-    temporaryOutputPath: stringSchema(),
+    artifacts: outputArraySchema(artifactOutputSchema, 16),
+    temporaryOutputPath: outputStringSchema(),
     outputLimitExceeded: booleanSchema(),
   }, ['stdout', 'stderr']),
   web_search: objectSchema({
-    results: arraySchema(toolOutputObjectSchema('One bounded Web or image search result.')),
+    results: outputArraySchema(webSearchResultOutputSchema, 100),
     kind: enumSchema(['image']),
     truncated: booleanSchema(),
     totalResults: integerSchema(),
-    hint: toolOutputObjectSchema('A bounded Web recovery hint.'),
+    hint: webToolHintSchema,
   }, ['results']),
   web_fetch: objectSchema({
-    title: stringSchema(),
-    finalUrl: stringSchema(),
+    title: outputStringSchema(),
+    finalUrl: outputStringSchema(),
     statusCode: integerSchema(),
     binaryFile: persistedOutputSchema,
-    metadata: toolOutputObjectSchema('Bounded page metadata.'),
-    matches: arraySchema(objectSchema({ snippet: stringSchema() }, ['snippet'])),
+    metadata: webPageMetadataOutputSchema,
+    matches: outputArraySchema(objectSchema({ snippet: outputStringSchema() }, ['snippet'])),
     totalMatches: integerSchema(),
     nextMatchOffset: integerSchema(),
     truncated: booleanSchema(),
     totalChars: integerSchema(),
     nextOffset: integerSchema(),
-    hint: toolOutputObjectSchema('A bounded Web recovery hint.'),
+    hint: webToolHintSchema,
   }),
   generate_image: objectSchema({
-    images: arraySchema(toolOutputObjectSchema('Generated image identity, current path, and geometry.')),
-    text: arraySchema(stringSchema()),
+    images: outputArraySchema(generatedImageOutputSchema, 16),
+    text: outputArraySchema(outputStringSchema(), 16),
   }, ['images']),
 };
 
@@ -679,8 +847,8 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
     schemaOwner: 'configuration',
     inputSchema: null,
     outputSchema: objectSchema({
-      agentId: stringSchema('Stable Agent identity.'),
-      coverage: toolOutputObjectSchema('Bounded foreground handoff coverage.'),
+      agentId: outputStringSchema('Stable Agent identity.'),
+      coverage: nullableSchema(agentCoverageOutputSchema),
     }, ['agentId']),
     actionKinds: ['agent.subagent.spawn'],
   },
@@ -723,7 +891,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     schemaOwner: 'core',
     inputSchema: threadSearchSchema,
     outputSchema: objectSchema({
-      results: arraySchema(toolOutputObjectSchema('One bounded untrusted Thread search result.')),
+      results: outputArraySchema(threadSearchResultOutputSchema, 20),
       untrusted: booleanSchema(),
     }, ['results', 'untrusted']),
     actionKinds: ['thread.history.search'],
@@ -786,7 +954,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: objectSchema({}),
-    outputSchema: objectSchema({ goal: {} }, ['goal']),
+    outputSchema: objectSchema({ goal: nullableSchema(threadGoalOutputSchema) }, ['goal']),
     actionKinds: ['agent.goal.read'],
   },
   {
@@ -798,7 +966,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
       objective: stringSchema('Concrete objective to pursue.'),
       token_budget: { type: 'integer', minimum: 1 },
     }, ['objective']),
-    outputSchema: objectSchema({ goal: toolOutputObjectSchema('Created Goal state.') }, ['goal']),
+    outputSchema: objectSchema({ goal: threadGoalOutputSchema }, ['goal']),
     actionKinds: ['agent.goal.create'],
   },
   {
@@ -809,7 +977,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     inputSchema: objectSchema({
       status: enumSchema(['complete', 'blocked']),
     }, ['status']),
-    outputSchema: objectSchema({ goal: toolOutputObjectSchema('Updated Goal state.') }, ['goal']),
+    outputSchema: objectSchema({ goal: threadGoalOutputSchema }, ['goal']),
     actionKinds: ['agent.goal.update'],
   },
 ];

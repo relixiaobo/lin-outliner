@@ -10,6 +10,7 @@ import { parseAgentCapabilitySettings } from '../../src/main/agent/capabilities/
 import type { AgentSkillRuntime } from '../../src/main/agent/capabilities/agentSkills';
 import type { PersistedSubagentToolPolicy } from '../../src/main/agent/capabilities/subagentToolPolicy';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
+import { HostToolDenial } from '../../src/main/agent/runtime/kernel/HostToolDenial';
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 
@@ -261,8 +262,8 @@ describe('Subagent ToolRuntime policy', () => {
         "find . '-exec' touch changed.txt {} \\;",
         'find . -fprint changed.txt',
       ]) {
-        const result = await bash.execute('write', { command });
-        expect(result.details).toMatchObject({
+        const denial = await expectedHostDenial(bash.execute('write', { command }));
+        expect(denial.denial.details).toMatchObject({
           error: {
             code: 'operation_unavailable',
             details: { reason: 'subagent_repository_mutation_restricted' },
@@ -304,8 +305,8 @@ describe('Subagent ToolRuntime policy', () => {
       'curl -X POST https://example.test/items -d value=changed',
       'outline add @today changed',
     ]) {
-      const result = await bash.execute('blocked', { command });
-      expect(result.details).toMatchObject({
+      const denial = await expectedHostDenial(bash.execute('blocked', { command }));
+      expect(denial.denial.details).toMatchObject({
         error: {
           code: 'operation_unavailable',
           details: { reason: 'subagent_read_only_restricted' },
@@ -355,8 +356,8 @@ describe('Subagent ToolRuntime policy', () => {
       });
       expect(readExecutions).toBe(1);
 
-      const writeResult = await rewrite.execute('rewrite', {});
-      expect(writeResult.details).toMatchObject({
+      const writeDenial = await expectedHostDenial(rewrite.execute('rewrite', {}));
+      expect(writeDenial.denial.details).toMatchObject({
         error: {
           code: 'operation_unavailable',
           details: { reason: 'subagent_repository_mutation_restricted' },
@@ -368,8 +369,8 @@ describe('Subagent ToolRuntime policy', () => {
       });
       expect(writeExecutions).toBe(0);
 
-      const codeResult = await runCode.execute('run-code', {});
-      expect(codeResult.details).toMatchObject({
+      const codeDenial = await expectedHostDenial(runCode.execute('run-code', {}));
+      expect(codeDenial.denial.details).toMatchObject({
         error: {
           code: 'operation_unavailable',
           details: { reason: 'subagent_repository_mutation_restricted' },
@@ -398,9 +399,9 @@ describe('Subagent ToolRuntime policy', () => {
         .find((candidate) => candidate.name === 'docs__unclassified');
       if (!tool) throw new Error('Expected unclassified extension tool.');
 
-      const result = await tool.execute('unclassified', {});
+      const denial = await expectedHostDenial(tool.execute('unclassified', {}));
 
-      expect(result.details).toMatchObject({
+      expect(denial.denial.details).toMatchObject({
         error: {
           code: 'operation_unavailable',
           details: { reason: 'subagent_repository_mutation_restricted' },
@@ -428,9 +429,9 @@ describe('Subagent ToolRuntime policy', () => {
         .find((tool) => tool.name === 'docs__lookup');
       if (!lookup) throw new Error('Expected extension lookup tool.');
 
-      const result = await lookup.execute('lookup', {});
+      const denial = await expectedHostDenial(lookup.execute('lookup', {}));
 
-      expect(result.details).toMatchObject({
+      expect(denial.denial.details).toMatchObject({
         error: {
           code: 'operation_unavailable',
           details: { reason: 'user_blocked' },
@@ -535,11 +536,22 @@ function runtimeTool(name: string, onExecute?: () => void): AgentTool {
     execute: async () => {
       onExecute?.();
       return {
+        kind: 'native' as const,
         content: [{ type: 'text', text: 'ok' }],
         details: { ok: true },
       };
     },
   };
+}
+
+async function expectedHostDenial(result: Promise<unknown>): Promise<HostToolDenial> {
+  try {
+    await result;
+  } catch (error) {
+    expect(error).toBeInstanceOf(HostToolDenial);
+    return error as HostToolDenial;
+  }
+  throw new Error('Expected Host tool denial.');
 }
 
 function extensionContract(
