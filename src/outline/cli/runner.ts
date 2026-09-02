@@ -39,7 +39,7 @@ import {
 } from './arguments';
 import { buildPorcelainRequest } from './porcelain';
 import { executeImportInvocation } from './import';
-import { inspectView, renderFailureSummary, renderSummaryResult } from './presentation';
+import { inspectView, renderEventSummary, renderFailureSummary, renderSummaryResult } from './presentation';
 
 const MAX_INLINE_DIFF_BYTES = 8 * 1024 * 1024;
 const GLOBAL_OPTION_BY_NAME = new Map(OUTLINE_GLOBAL_OPTIONS.map((entry) => [entry.name, entry]));
@@ -898,7 +898,7 @@ async function writeSummaryStreamRecord(
   if (record.type === 'data') {
     await io.stdout(typeof record.data === 'string' ? record.data : `${JSON.stringify(record.data)}\n`);
   } else if (record.type === 'event') {
-    await io.stdout(`${JSON.stringify(record.event)}\n`);
+    await io.stdout(renderEventSummary(record.event));
   } else if (record.type === 'error') {
     await io.stderr(renderFailureSummary(record.error));
   }

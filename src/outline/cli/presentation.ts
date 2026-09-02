@@ -17,6 +17,8 @@ const MAX_RETURNED_ROOTS = 8;
 const MAX_PROJECTION_NODES = 4;
 const MAX_BATCH_COUNTS = 16;
 const MAX_HISTORY_OPERATIONS = 8;
+const MAX_HISTORY_NODE_IDS = 8;
+const MAX_EVENT_NODE_IDS = 8;
 const MAX_IMPORT_WARNINGS = 4;
 const NON_ITEM_NODE_TYPES = new Set([
   'queryCondition', 'viewDef', 'sortRule', 'filterRule', 'displayField',
@@ -197,14 +199,24 @@ export function renderFailureSummary(error: OutlineError): string {
 }
 
 function safeFailureText(value: unknown, maxBytes: number): string {
-  const valueText = String(value).replace(/[\r\n\u2028\u2029]/gu, ' ');
-  if (Buffer.byteLength(valueText) <= maxBytes) return valueText;
-  const suffix = `... [bytes=${Buffer.byteLength(valueText)}; sha256=${canonicalSha256(valueText)}]`;
+  const valueText = String(value);
+  const encoded = valueText.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu, (character) => {
+    const escapes: Readonly<Record<string, string>> = {
+      '\b': '\\b', '\t': '\\t', '\n': '\\n', '\f': '\\f', '\r': '\\r',
+    };
+    return escapes[character]
+      ?? `\\u${character.codePointAt(0)!.toString(16).padStart(4, '0')}`;
+  });
+  if (Buffer.byteLength(encoded) <= maxBytes) return encoded;
+  const suffix = `... [bytes=${Buffer.byteLength(encoded)}; sha256=${canonicalSha256(valueText)}]`;
   const budget = Math.max(0, maxBytes - Buffer.byteLength(suffix));
   let prefix = '';
-  for (const character of valueText) {
-    if (Buffer.byteLength(prefix + character) > budget) break;
+  let bytes = 0;
+  for (const character of encoded) {
+    const nextBytes = Buffer.byteLength(character);
+    if (bytes + nextBytes > budget) break;
     prefix += character;
+    bytes += nextBytes;
   }
   return `${prefix}${suffix}`;
 }
@@ -330,16 +342,24 @@ function summaryLines(command: string, data: unknown): string[] {
   }
   if (isRecord(data) && Array.isArray(data.operations)) {
     const shown = data.operations.slice(0, MAX_HISTORY_OPERATIONS);
+    const affectedPage = isRecord(data.affectedNodeIds) ? data.affectedNodeIds : undefined;
+    const affectedNodeIds = affectedPage && Array.isArray(affectedPage.nodeIds)
+      ? affectedPage.nodeIds
+      : [];
+    const shownAffectedNodeIds = affectedNodeIds.slice(0, MAX_HISTORY_NODE_IDS);
     return [
       `Command: ${summaryScalar(command)}`,
       `Operations: ${data.operations.length}; shown=${shown.length}; omitted=${data.operations.length - shown.length}; digest=${canonicalSha256(data.operations)}`,
+      `Continuation: ${typeof data.cursor === 'string' ? summaryScalar(data.cursor, 1_024) : 'none'}`,
+      ...(affectedPage ? [
+        `Affected page: operation=${summaryScalar(affectedPage.operationId)}; offset=${summaryScalar(affectedPage.offset)}; page=${affectedNodeIds.length}; shown=${shownAffectedNodeIds.length}; omitted=${affectedNodeIds.length - shownAffectedNodeIds.length}; total=${summaryScalar(affectedPage.totalCount)}; digest=${summaryScalar(affectedPage.fullSetHash)}`,
+        ...(shownAffectedNodeIds.length > 0
+          ? [`  ${shownAffectedNodeIds.map((id) => summaryScalar(id, 256)).join(', ')}`]
+          : []),
+      ] : []),
       ...shown.map((operation) => isRecord(operation)
         ? `  ${summaryScalar(operation.operationId, 256)}\trevision=${summaryScalar(operation.revisionBefore)}->${summaryScalar(operation.revisionAfter)}\t${summaryScalar(operation.summary, 512)}`
         : `  ${summaryScalar(operation)}`),
-      `Continuation: ${typeof data.cursor === 'string' ? summaryScalar(data.cursor, 1_024) : 'none'}`,
-      ...(isRecord(data.affectedNodeIds) ? [
-        `Affected page: operation=${summaryScalar(data.affectedNodeIds.operationId)}; offset=${summaryScalar(data.affectedNodeIds.offset)}; total=${summaryScalar(data.affectedNodeIds.totalCount)}; digest=${summaryScalar(data.affectedNodeIds.fullSetHash)}`,
-      ] : []),
     ];
   }
   if (isRecord(data) && typeof data.assetId === 'string' && isRecord(data.metadata)) {
@@ -446,9 +466,50 @@ function projectionSummaryLines(command: string, data: Record<string, unknown>):
     `Projection: ${summaryScalar(projection.kind)}`,
     `Nodes: ${nodes.length}; shown=${shownNodes.length}; omitted=${nodes.length - shownNodes.length}; digest=${canonicalSha256(nodes)}`,
     `Backlinks: ${backlinks.length}; digest=${canonicalSha256(backlinks)}`,
-    `Continuation: ${typeof data.cursor === 'string' ? 'available' : 'none'}; truncated=${data.truncated === true}`,
+    `Continuation: ${typeof data.cursor === 'string' ? summaryScalar(data.cursor, 1_024) : 'none'}; truncated=${data.truncated === true}`,
     ...shownNodes.map((node, index) => nodeSummaryLine(node, index)),
   ];
+}
+
+export function renderEventSummary(event: unknown): string {
+  if (!isRecord(event)) return boundedLines([
+    'Event: invalid',
+    `Digest: ${canonicalSha256(event)}`,
+  ], event);
+  const operation = isRecord(event.operation) ? event.operation : undefined;
+  const changes = isRecord(event.changes) ? event.changes : undefined;
+  const changedNodes = changes && Array.isArray(changes.changedNodes) ? changes.changedNodes : [];
+  const removedIds = changes && Array.isArray(changes.removedIds) ? changes.removedIds : [];
+  const recovery = isRecord(event.recovery) ? event.recovery : undefined;
+  const recoveryOperationIds = recovery && Array.isArray(recovery.operationIds) ? recovery.operationIds : [];
+  const recoveryPatchIds = recovery && Array.isArray(recovery.recoveryPatchIds) ? recovery.recoveryPatchIds : [];
+  const projection = isRecord(event.projection) ? event.projection : undefined;
+  const projectionNodes = projection && Array.isArray(projection.nodes) ? projection.nodes : [];
+  const shownChangedIds = changedNodes.slice(0, MAX_EVENT_NODE_IDS).map((node) => (
+    isRecord(node) && typeof node.id === 'string' ? node.id : `digest:${canonicalSha256(node)}`
+  ));
+  const shownRemovedIds = removedIds.slice(0, MAX_EVENT_NODE_IDS);
+  return boundedLines([
+    `Event: ${summaryScalar(event.type, 128)}`,
+    `Cursor: ${summaryScalar(event.cursor, 1_024)}`,
+    `Instance: ${summaryScalar(event.instanceId, 256)}; sequence=${summaryScalar(event.sequence)}; revision=${summaryScalar(event.revision)}`,
+    ...(operation ? [
+      `Operation: ${summaryScalar(operation.operationId, 256)}; revision=${summaryScalar(operation.revisionBefore)}->${summaryScalar(operation.revisionAfter)}; affected=${summaryScalar(operation.affectedNodeCount)}; digest=${summaryScalar(operation.affectedNodeIdsHash)}`,
+    ] : []),
+    ...(changes ? [
+      `Changed Nodes: ${changedNodes.length}; shown=${shownChangedIds.length}; omitted=${changedNodes.length - shownChangedIds.length}; digest=${canonicalSha256(changedNodes)}`,
+      ...(shownChangedIds.length > 0 ? [`  ${shownChangedIds.map((id) => summaryScalar(id, 256)).join(', ')}`] : []),
+      `Removed Nodes: ${removedIds.length}; shown=${shownRemovedIds.length}; omitted=${removedIds.length - shownRemovedIds.length}; digest=${canonicalSha256(removedIds)}`,
+      ...(shownRemovedIds.length > 0 ? [`  ${shownRemovedIds.map((id) => summaryScalar(id, 256)).join(', ')}`] : []),
+    ] : []),
+    ...(recovery ? [
+      `Recovery Operations: ${recoveryOperationIds.length}; digest=${canonicalSha256(recoveryOperationIds)}`,
+      `Recovery Patches: ${recoveryPatchIds.length}; digest=${canonicalSha256(recoveryPatchIds)}`,
+    ] : []),
+    ...(projection ? [
+      `Projection: revision=${summaryScalar(projection.revision)}; nodes=${projectionNodes.length}; digest=${canonicalSha256(projectionNodes)}; continuation=${typeof projection.cursor === 'string' ? summaryScalar(projection.cursor, 1_024) : 'none'}; truncated=${projection.truncated === true}`,
+    ] : []),
+  ], event);
 }
 
 function nodeSummaryLine(value: unknown, index: number): string {

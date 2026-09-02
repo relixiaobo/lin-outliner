@@ -5,6 +5,7 @@ import {
   OUTLINE_CAPABILITIES,
   OUTLINE_RECIPES,
   compactOutlineSchema,
+  checkOutlineSchema,
   outlineCapability,
   outlineRecipe,
 } from '../../src/outline/contract';
@@ -70,6 +71,25 @@ describe('Outline Agent interface contract', () => {
     const bulk = JSON.stringify(compactOutlineSchema(outlineCapability('done set')!.porcelain!.inputSchema));
     expect(bulk).toContain('BoundedSelectionInput');
     expect(bulk).toContain('QueryExpression');
+  });
+
+  test('rejects unbounded many targets at the public porcelain boundary', () => {
+    const selector = {
+      by: 'query',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'Task' },
+      limit: 25,
+    };
+    for (const command of ['done set', 'text replace']) {
+      const schema = outlineCapability(command)!.porcelain!.inputSchema;
+      const input = command === 'done set'
+        ? { target: { selector, cardinality: 'many' }, value: true }
+        : { target: { selector, cardinality: 'many' }, find: 'old', replacement: 'new', maxReplacements: 25 };
+      expect(checkOutlineSchema(schema, input), command).toBe(false);
+      expect(checkOutlineSchema(schema, {
+        ...input,
+        target: { selector, cardinality: 'many', max: 25 },
+      }), command).toBe(true);
+    }
   });
 
   test('lowers exact view field locators without exposing generic TargetRef input', async () => {

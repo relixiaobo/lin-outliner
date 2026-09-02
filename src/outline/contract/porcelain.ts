@@ -13,7 +13,6 @@ import {
   QueryExpressionSchema,
   RichTextSchema,
   TagDefinitionPatchSchema,
-  TargetSpecSchema,
   ViewModeSchema,
   ViewSystemFieldSchema,
   SortDirectionSchema,
@@ -157,7 +156,7 @@ const SetInputSchema = Type.Object({
 }, { ...closed, minProperties: 2 });
 
 const TextReplaceInputSchema = Type.Object({
-  target: TargetSpecSchema,
+  target: BoundedSelectionInputSchema,
   find: Type.String({ minLength: 1, maxLength: 65_536 }),
   replacement: Type.String({ maxLength: 4_194_304 }),
   field: Type.Optional(Type.Union([

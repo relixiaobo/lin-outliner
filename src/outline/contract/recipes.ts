@@ -189,7 +189,7 @@ const recipes = [
   },
 ] as const satisfies readonly OutlineRecipe[];
 
-export const OUTLINE_RECIPES = Object.freeze(recipes);
+export const OUTLINE_RECIPES: readonly OutlineRecipe[] = Object.freeze(recipes);
 
 const recipeByKey = new Map(OUTLINE_RECIPES.map((recipe) => [`${recipe.command}\0${recipe.variant}`, recipe]));
 

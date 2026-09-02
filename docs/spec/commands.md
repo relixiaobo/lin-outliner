@@ -42,7 +42,7 @@ owned. Missing and duplicate owners both fail the guard.
 | --- | --- | --- |
 | Local metadata | `version`, `status`, `capabilities`, `example`, `schema` | Runs without document access; `status` never starts Runtime. `example` returns one validated workflow recipe. |
 | Read | `find`, `show`, `export` | Resolves deterministic selectors and returns bounded Projections. |
-| Observe | `watch` | Streams ordered resumable Events as JSONL. |
+| Observe | `watch` | Streams bounded ordered resumable event receipts; `--json` emits complete JSONL. |
 | Mutation kernel | `diff`, `commit`, `apply` | Previews one ChangeSet, directly commits a non-destructive ChangeSet, or atomically applies one exact reviewed Diff. |
 | History | `log`, `revert`, `undo`, `redo` | Reads durable Operations or records a guarded reversal as another Operation. |
 | Asset | `asset ingest`, `asset show`, `asset export` | Stages verified bytes, reads metadata, or streams verified bytes. |
@@ -60,8 +60,8 @@ references are locator strings (`ID`, typed ID, stable alias, or
 `@date:YYYY-MM-DD`) that lower to cardinality one. Only commands that genuinely
 support bulk mutation embed query grammar through a bounded TargetSpec with an
 explicit `max`; generic ChangeSets retain complete TargetRef and binding graphs.
-Drift tests compare the exact published options,
-schemas, positionals, completion data, and generated Agent command inventory.
+Drift tests compare the exact published options, schemas, positionals, completion
+data, recipe coverage, and Skill routing against the capability registry.
 Capability kind and audit category drive host classification; execution context
 never removes a public schema field or document capability.
 
@@ -93,7 +93,7 @@ after the command terminator are literal positionals, and `--help` or `-h`
 there is content rather than control syntax.
 
 Advanced query help and completion metadata use the same executable operator
-registry as `QueryExpressionSchema` and the generated Agent command reference.
+registry as `QueryExpressionSchema`.
 `outline schema QueryExpression` is the exact public grammar. Each rule is a
 closed operator-specific object: required field, tag, target, or value operands
 cannot be omitted, unrelated operands cannot be supplied, and an operator absent
@@ -130,15 +130,19 @@ Mutation receipts report settlement, Operation and revision identity, affected
 count/digest, recovery, and bounded returned roots; viewed-tree add also reports
 owner, item/display counts, and mode. View inspection reports complete display
 state when it fits and otherwise explicit omission evidence plus a digest. A
-`show` or `find` summary reports projection identity, counts, continuation state,
-complete-set digests, and a bounded Node sample rather than truncated JSON. A
+`show` or `find` summary reports projection identity, counts, the exact
+continuation cursor, complete-set digests, and a bounded Node sample rather than
+truncated JSON. A
 default `diff --output FILE` leaves the exact artifact unchanged and reports its
 path, bytes/hash, Diff/ChangeSet hashes, base revision, effect counts,
 destructive classes, bindings, and warnings. Every non-stream capability declares
 a receipt family with a specialized presenter. Raw Diffs, Runtime status,
-Operation history, asset leases/records, export artifacts, and import
+Operation history (including current affected-ID pages), asset leases/records,
+export artifacts, and import
 profiles/plans/verifications expose their immediate downstream handles without a
-second `--json` invocation. Schema failures show up to eight JSON Pointer issues;
+second `--json` invocation. Watch summary events preserve cursor, revision,
+Operation identity, counts, and complete-set digests without emitting Node
+payloads. Schema failures show up to eight JSON Pointer issues;
 conflicts and uncertain settlement show bounded expected/actual, Node, Operation,
 or idempotency identities without echoing rejected input. `--json` remains
 complete.

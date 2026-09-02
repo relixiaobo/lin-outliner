@@ -94,7 +94,16 @@ export const ExactLocatorInputSchema = Type.String({
 
 export const BoundedSelectionInputSchema = Type.Union([
   ExactLocatorInputSchema,
-  TargetSpecSchema,
+  Type.Object({
+    selector: SelectorSchema,
+    cardinality: Type.Union([Type.Literal('one'), Type.Literal('zero-or-one')]),
+    max: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
+  }, closed),
+  Type.Object({
+    selector: SelectorSchema,
+    cardinality: Type.Literal('many'),
+    max: Type.Integer({ minimum: 1, maximum: 10_000 }),
+  }, closed),
 ], { $id: 'BoundedSelectionInput' });
 
 export const OneTargetRefSchema = Type.Union([
