@@ -117,6 +117,7 @@ export class GoalExtension implements AgentCoreExtension {
         },
         completion_doctrine: {
           kind: 'application' as const,
+          scope: 'goal completion',
           value: GOAL_COMPLETION_DOCTRINE,
         },
       },

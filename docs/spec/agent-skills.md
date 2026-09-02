@@ -117,7 +117,9 @@ durable after the complete Skill tool Item and before the next provider request.
 
 An invocation snapshots canonical identity, content hash, exact rendered authored
 instructions, arguments, source, execution mode, resource root, constraints, invocation
-source, and time. Inline instructions project as application guidance; isolated authored
+source, and time. Catalog availability projects as an application observation, while
+inline authored instructions project in a separate `application/instruction` context;
+isolated authored
 instructions remain child-only developer instructions, while the invocation task is the
 child's canonical user message. Dynamic embedded-shell results are excluded from the
 instruction snapshot and admitted separately as untrusted child observations. The parent
@@ -126,7 +128,8 @@ tool follows the catalog-governed input contract: it omits arguments for load-on
 inline Skills, supplies only declared variable input for parameterized inline Skills,
 and preserves the user's exact task and explicit constraints for isolated Skills
 without inventing an implementation plan or overriding the Skill workflow. There is no
-prompt overlay, private steering queue, or text parser. Restart
+prompt overlay, private steering queue, or text parser. Invocation arguments are not
+repeated in reminder prose. Restart
 replays the same payload bytes from canonical Items. A later invocation of the same
 canonical name is authoritative from that point forward without deleting or rebinding
 older evidence.

@@ -550,14 +550,13 @@ describe('context compaction reducer', () => {
     const userView = {
       schemaVersion: 1 as const,
       kind: 'userView' as const,
-      mode: 'interactive' as const,
       activePanelId: 'panel-1',
       focusedPanelId: 'panel-1',
       focusSurface: 'row',
       focusedNode: { nodeId: 'node-a', title: 'Inherited node', panelId: 'panel-1', surface: 'row' },
       selectedNodes: [],
-      referencedNodes: [],
       panels: [],
+      suppliedOutline: [],
       truncated: false,
     };
     const additionalContext = {

@@ -406,8 +406,8 @@ describe('ThreadTrajectoryProjection', () => {
       },
     ]));
     expect(systemContexts[0]?.preview).toContain('<system-reminder>');
-    expect(systemContexts[0]?.preview).toContain('<context-evidence kind="turnEnvironment"');
-    expect(systemContexts[0]?.preview).toContain('<context-evidence kind="userView"');
+    expect(systemContexts[0]?.preview).toContain('<context authority="application" purpose="observation">');
+    expect(systemContexts[0]?.preview).toContain('<context authority="untrusted" purpose="observation">');
     expect(contexts.flatMap((record) => record.label.type === 'context' ? record.label.kinds : []))
       .not.toContain('additionalContext');
     expect(contexts.flatMap((record) => record.label.type === 'context' ? record.label.kinds : []))
@@ -443,10 +443,10 @@ describe('ThreadTrajectoryProjection', () => {
     });
     expect(context.relatedEvidence).toEqual([{ type: 'providerCall', threadId: THREAD_ID, turnId: TURN_ID, callIndex: 0 }]);
     expect(contextDetail.detail.modelContextText).toContain('<system-reminder>');
-    expect(contextDetail.detail.modelContextText).toContain('<context-evidence kind="turnEnvironment"');
-    expect(contextDetail.detail.modelContextText).toContain('working_directory=/workspace');
-    expect(contextDetail.detail.modelContextText).toContain('<context-evidence kind="userView"');
-    expect(contextDetail.detail.modelContextText).toContain('active_panel_id=panel-1');
+    expect(contextDetail.detail.modelContextText).toContain('<context authority="application" purpose="observation">');
+    expect(contextDetail.detail.modelContextText).toContain('Working directory: /workspace.');
+    expect(contextDetail.detail.modelContextText).toContain('<context authority="untrusted" purpose="observation">');
+    expect(contextDetail.detail.modelContextText).toContain('Viewing "Plan" [[node://');
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', contextDetail)).toEqual(contextDetail);
   });
 
@@ -479,10 +479,10 @@ describe('ThreadTrajectoryProjection', () => {
     ].join('\n');
     const nodeContext = [
       '<system-reminder>',
-      '<context-evidence kind="referencedResources" authority="untrusted" purpose="observation">',
-      `node_id=${REFERENCE_NODE_ID}`,
-      'snapshot_content:\nRelease plan body',
-      '</context-evidence>',
+      '<context authority="untrusted" purpose="observation">',
+      `Supplied Node: "Plan" [[node://${REFERENCE_NODE_ID}]].`,
+      'Supplied content:\nRelease plan body',
+      '</context>',
       '</system-reminder>',
     ].join('\n');
     const diagnostics: TurnDiagnosticsPayload = {
@@ -630,7 +630,7 @@ describe('ThreadTrajectoryProjection', () => {
     expect(inputText).toContain('Readable path: /workspace/diagram.png');
     expect(inputText).toContain('Use file_read with this path to inspect the attachment.');
     expect(inputText).toContain('[Attachment image: diagram.png, image/png, 128 bytes]');
-    expect(inputText).not.toContain('snapshot_content');
+    expect(inputText).not.toContain('Supplied content:');
     expect(inputDetail.detail.modelInputParts?.at(-1)).toEqual({
       type: 'image',
       mimeType: 'image/png',
@@ -642,7 +642,7 @@ describe('ThreadTrajectoryProjection', () => {
 
     const contextDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: context.id });
     if (contextDetail.detail?.kind !== 'context') throw new Error('Expected Context detail');
-    expect(contextDetail.detail.modelContextText).toContain('snapshot_content:\nRelease plan body');
+    expect(contextDetail.detail.modelContextText).toContain('Supplied content:\nRelease plan body');
     expect(inputText).not.toContain(contextDetail.detail.modelContextText!);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', inputDetail)).toEqual(inputDetail);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', contextDetail)).toEqual(contextDetail);
@@ -1910,12 +1910,13 @@ function inputEnvelopeDiagnostics(): TurnDiagnosticsPayload {
   const messageId = '4'.repeat(64);
   const modelContextText = [
     '<system-reminder>',
-    '<context-evidence kind="turnEnvironment" authority="application" purpose="observation">',
-    'working_directory=/workspace',
-    '</context-evidence>',
-    '<context-evidence kind="userView" authority="untrusted" purpose="observation">',
-    'active_panel_id=panel-1',
-    '</context-evidence>',
+    '<context authority="application" purpose="observation">',
+    'Local time at this input: 2026-09-01T11:14:11+08:00 [Asia/Shanghai].',
+    'Working directory: /workspace.',
+    '</context>',
+    '<context authority="untrusted" purpose="observation">',
+    `Viewing "Plan" [[node://${REFERENCE_NODE_ID}]].`,
+    '</context>',
     '</system-reminder>',
   ].join('\n');
   return {

@@ -12,6 +12,27 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Agent Turns now receive one compact semantic context language (PR #611,
+  codex-3)** — model-visible dynamic context uses explicit application or
+  untrusted authority and observation or instruction purpose without exposing
+  canonical payload kinds, reducer state, hashes, or renderer correlation IDs.
+  Every real Pane target is described through readable Node, file, directory,
+  asset, URL, or Thread identity; input admissions add local time, changed
+  working directory, execution mode, distinct focus and selection, supplied
+  content, capability changes, and lifecycle recovery only when relevant.
+  Host registration exclusively authorizes application instructions, opening a
+  resource never implies its content was supplied, and reset, compaction, fork,
+  Continue, Rerun, and steering retain their separate canonical semantics. The
+  user-view and additional-context payload rewrite is a strict pre-release
+  storage cut: pre-#611 installed and clone-scoped Agent stores must be reset
+  with every Tenon process stopped. Gate review found three Medium active-Node
+  trailing-focus, directory-reference, and observation/instruction-boundary
+  defects; all were fixed before the final no-findings review. Verified with
+  typecheck, `docs:check`, 46 focused Core tests, 2,805 passing full Core tests
+  with 6 skipped and one load-dependent timeout that passed alone, 1,485 full
+  renderer tests on the implementation head, and whitespace checks; the
+  non-gating five-sample GitHub E2E signal remained running at merge.
+
 - **Web search now recovers trustworthy Google results after provider markup
   drift (PR #615, codex)** — ranked organic candidates preserve direct links and
   opaque Google `/goto` capabilities, while a bounded JavaScript-disabled

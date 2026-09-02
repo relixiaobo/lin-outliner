@@ -2333,3 +2333,21 @@ Regression coverage should pair a deterministic local fixture with any live
 provider check: drive the real redirect or empty-state event, verify the expected
 classification, and prove the protected target received zero requests. A live
 happy path is supplementary drift detection, not deterministic boundary proof.
+
+## Context deduplication must preserve semantic relations
+
+PR #611 first removed redundant focus context by comparing the focused Node ID
+with the active view target. That erased a real transition when the same Node
+changed from ordinary row focus to the trailing insertion surface: object identity
+stayed constant while the model-visible operation target changed.
+
+**Deduplicate projected context by the semantic relation the consumer acts on,
+not only by the identity of the objects involved.** Surface, role, direction,
+completeness, and availability can change meaning without changing an entity ID.
+Define the model-visible equivalence relation explicitly and use it for both
+delta detection and omission of state already implied by another context block.
+
+Regression coverage must hold identity constant while crossing every meaningful
+relation boundary, then assert the emitted replacement or invalidation. Tests
+that change both identity and relation cannot prove the deduplicator preserves
+same-object semantic transitions.

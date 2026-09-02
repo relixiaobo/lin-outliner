@@ -1202,12 +1202,12 @@ the Raw accepted-input evidence and never substitutes for missing prepared
 provider evidence in either the ledger or inspector Preview. Context Preview uses
 captured model-visible context text from the prepared canonical provider context
 whenever diagnostics retained it. That text
-is the `<system-reminder>` / `<context-evidence ...>` projection supplied at the
+is the `<system-reminder>` / `<context authority="..." purpose="...">` projection supplied at the
 provider-context boundary after projection, budgeting, compaction, and
 diagnostic credential redaction. Non-stable CONTEXT rows are keyed by
 prepared-context-part diagnostics evidence, not by retained `contextEvidence`
 Items. A prepared provider content part is the ledger unit: if one
-`<system-reminder>` part contains multiple `<context-evidence>` blocks, it
+`<system-reminder>` part contains multiple `<context>` blocks, it
 appears as one CONTEXT row and the inspector shows the whole part text. If a
 retained `contextEvidence` Item emitted no model-visible text, it is
 not a Trajectory message row. Provider-visible tool catalogs are CONTEXT rows

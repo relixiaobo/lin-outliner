@@ -68,7 +68,8 @@ const EMPTY_AGENT_USER_VIEW: RendererUserViewHints = {
   focusedNodeId: null,
   selectedNodeIds: [],
   panels: [],
-  truncated: false,
+  viewsComplete: false,
+  selectionTruncated: false,
 };
 
 export function App() {
@@ -268,6 +269,10 @@ export function App() {
       panels: source.panels,
       index: currentIndex,
       ui: source.ui,
+      threadName: (threadId) => {
+        const thread = threadStore.getSnapshot().threads.find((candidate) => candidate.id === threadId);
+        return thread?.name || thread?.agentNickname || thread?.agentRole || thread?.preview || null;
+      },
     }) : EMPTY_AGENT_USER_VIEW;
   }, []);
 

@@ -28,35 +28,15 @@ function viewModeOf(nodes: ReadonlyMap<string, NodeProjection>, owner: NodeProje
 export function buildUserViewPayload(
   hints: RendererUserViewHints | undefined,
   projection: DocumentProjection | null,
-  referencedNodeIds: readonly string[],
 ): UserViewContextPayload | null {
-  if (!projection) return null;
-  const byId = new Map(projection.nodes.map((node) => [node.id, node]));
-  const referencedNodes = unique(referencedNodeIds)
-    .flatMap((nodeId) => nodeSnapshot(nodeId, byId) ?? []);
-  if (!hints) {
-    if (referencedNodes.length === 0 && !projection.todayId) return null;
-    return {
-      schemaVersion: 1,
-      kind: 'userView',
-      mode: 'nonInteractive',
-      activePanelId: null,
-      focusedPanelId: null,
-      focusSurface: null,
-      focusedNode: null,
-      selectedNodes: [],
-      referencedNodes,
-      panels: projection.todayId && byId.has(projection.todayId)
-        ? [panelSnapshot('today', projection.todayId, 1, true, false, [], false, byId)]
-        : [],
-      truncated: false,
-    };
-  }
+  if (!hints) return null;
+  const byId = new Map((projection?.nodes ?? []).map((node) => [node.id, node]));
 
   const panels = [...hints.panels]
     .sort((left, right) => left.order - right.order || compareStableText(left.panelId, right.panelId))
     .flatMap((panel) => {
-    if (!byId.has(panel.rootNodeId)) return [];
+    const target = viewTargetSnapshot(panel.target, panel.panelId, byId);
+    if (!target) return [];
     const visibleOutline = panel.visibleNodes.flatMap((visible) => {
       const node = byId.get(visible.nodeId);
       if (!node) return [];
@@ -71,30 +51,39 @@ export function buildUserViewPayload(
         includedChildCount: visible.expanded && visible.depth >= 5 && childCount > 0 ? 0 : null,
       }];
     });
-    return [panelSnapshot(
-      panel.panelId,
-      panel.rootNodeId,
-      panel.order,
-      panel.active,
-      panel.focused,
-      visibleOutline,
-      panel.visibleOutlineTruncated,
-      byId,
-    )];
+    return [{
+      panel: {
+        panelId: panel.panelId,
+        active: panel.active,
+        focused: panel.focused,
+        order: panel.order,
+        target,
+      },
+      supplied: target.kind === 'node' && (visibleOutline.length > 0 || panel.visibleOutlineTruncated)
+        ? {
+            panelId: panel.panelId,
+            sourceNodeId: target.nodeId,
+            sourceTitle: target.title,
+            outline: visibleOutline,
+            visibleOutlineTruncated: panel.visibleOutlineTruncated,
+          }
+        : null,
+    }];
     });
+  const panelSnapshots = panels.map((entry) => entry.panel);
   return {
     schemaVersion: 1,
     kind: 'userView',
-    mode: 'interactive',
-    activePanelId: validPanelId(hints.activePanelId, panels),
-    focusedPanelId: validPanelId(hints.focusedPanelId, panels),
+    activePanelId: validPanelId(hints.activePanelId, panelSnapshots),
+    focusedPanelId: validPanelId(hints.focusedPanelId, panelSnapshots),
     focusSurface: hints.focusSurface,
     focusedNode: hints.focusedNodeId ? nodeSnapshot(hints.focusedNodeId, byId, hints.focusedPanelId, hints.focusSurface) : null,
     selectedNodes: unique(hints.selectedNodeIds)
       .flatMap((nodeId) => nodeSnapshot(nodeId, byId, hints.focusedPanelId, 'selection') ?? []),
-    referencedNodes,
-    panels,
-    truncated: hints.truncated || panels.length < hints.panels.length,
+    panels: panelSnapshots,
+    suppliedOutline: panels.flatMap((entry) => entry.supplied ?? []),
+    viewsComplete: hints.viewsComplete && panelSnapshots.length === hints.panels.length,
+    selectionTruncated: hints.selectionTruncated,
   };
 }
 
@@ -198,29 +187,65 @@ export function resolvedNodeTitle(
   return sourceFallbackTitle(current, byId) ?? authoredTitle;
 }
 
-function panelSnapshot(
+function viewTargetSnapshot(
+  target: RendererUserViewHints['panels'][number]['target'],
   panelId: string,
-  rootNodeId: string,
-  order: number,
-  active: boolean,
-  focused: boolean,
-  visibleOutline: UserViewContextPayload['panels'][number]['visibleOutline'],
-  visibleOutlineTruncated: boolean,
   byId: ReadonlyMap<string, NodeProjection>,
-): UserViewContextPayload['panels'][number] {
-  const root = byId.get(rootNodeId)!;
+): UserViewContextPayload['panels'][number]['target'] | null {
+  if (target.kind === 'node') {
+    const root = byId.get(target.nodeId);
+    return root ? {
+      kind: 'node',
+      nodeId: root.id,
+      title: resolvedNodeTitle(root, byId),
+      rootType: root.type ?? 'outline',
+      childCount: displayedChildCount(root, byId),
+      breadcrumb: nodeBreadcrumb(root, byId),
+    } : null;
+  }
+  if (target.kind === 'thread-trajectory') {
+    return {
+      kind: target.kind,
+      threadId: target.threadId,
+      threadName: compact(target.threadName ?? `Thread ${target.threadId}`, MAX_TITLE_CHARS),
+      turnId: target.turnId,
+      selectedRecordId: target.selectedRecordId,
+    };
+  }
+  const ownerNode = target.ownerNodeId
+    ? nodeSnapshot(target.ownerNodeId, byId, panelId, 'view-owner')
+    : null;
+  if (target.kind === 'local-file') {
+    return {
+      kind: target.kind,
+      path: target.path,
+      entryKind: target.entryKind,
+      label: compact(target.label ?? fileLabel(target.path), MAX_TITLE_CHARS),
+      ownerNode,
+    };
+  }
+  if (target.kind === 'asset') {
+    return {
+      kind: target.kind,
+      assetId: target.assetId,
+      label: compact(target.label ?? ownerNode?.title ?? 'Asset', MAX_TITLE_CHARS),
+      ownerNode,
+    };
+  }
+  if (target.kind === 'linked-file') {
+    return {
+      kind: target.kind,
+      sourceValueId: target.sourceValueId,
+      sourceText: target.sourceText,
+      label: compact(target.label ?? fileLabel(target.sourceText), MAX_TITLE_CHARS),
+      ownerNode,
+    };
+  }
   return {
-    panelId,
-    rootNodeId,
-    rootTitle: resolvedNodeTitle(root, byId),
-    rootType: root.type ?? 'outline',
-    active,
-    focused,
-    order,
-    childCount: displayedChildCount(root, byId),
-    breadcrumb: nodeBreadcrumb(root, byId),
-    visibleOutline,
-    visibleOutlineTruncated,
+    kind: target.kind,
+    url: target.url,
+    label: target.label ? compact(target.label, MAX_TITLE_CHARS) : null,
+    ownerNode,
   };
 }
 
@@ -259,6 +284,11 @@ function validPanelId(
 function compact(value: string, limit: number): string {
   const normalized = value.replace(/\s+/gu, ' ').trim();
   return normalized.length <= limit ? normalized : `${normalized.slice(0, limit - 3).trimEnd()}...`;
+}
+
+function fileLabel(value: string): string {
+  const normalized = value.replace(/[\\/]+$/u, '');
+  return normalized.split(/[\\/]/u).at(-1) || value;
 }
 
 function unique(values: readonly string[]): string[] {

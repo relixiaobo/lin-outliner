@@ -163,39 +163,66 @@ current handles in JSON for that execution, its persisted copy strips `filePath`
 successfully admitted files remain in the tool manifest even when a later embedded
 command fails.
 
-For every ordinary input, main records `turnEnvironment` evidence containing the
-accepted UTC instant, local date/time, IANA timezone and offset, locale, working
-directory, execution/conversation mode, reply identity, and Today Node identity/title.
-The Today Node ID is application-owned; its document-authored title projects through a
-separate untrusted evidence block.
-The first environment payload in an epoch projects a complete snapshot. Later payloads
-project only changed fields; the accepted instant is normally the only mandatory delta,
-while stable timezone, locale, working-directory, mode, identity, and Today values do
-not consume repeated provider tokens. Reset or compaction starts a new baseline.
+For every newly admitted Turn-start or steering input, main records
+`turnEnvironment` evidence containing the accepted UTC instant, local date/time, IANA
+timezone and offset, locale, working directory, execution/conversation mode, reply
+identity, and Today Node identity/title. Canonical evidence retains all of those facts
+for audit and replay. The Turn brief publishes one compact local timestamp at every
+input admission, the Host-owned working directory at the first retained baseline and
+when it changes, and execution behavior only when it is not the ordinary interactive
+root or when it changes. Today and reply identity do not independently enter the brief.
+Rerun reconstructs the source Turn's admitted evidence and does not resample the clock,
+working directory, or view.
 Stateless provider calls still resend the retained historical messages. Those earlier
 reminder bytes are an unchanged cacheable prefix; they are not regenerated as new
-current-Turn evidence. "No repeat" in this contract means that a later Turn appends only
-its delta rather than appending another copy of unchanged state.
+current-Turn evidence. "No repeat" in this contract means that a later input appends
+only its new timestamp and any changed Thread-scoped facts rather than another copy of
+unchanged state.
 Hidden internal Memory Turns remain isolated from ordinary environment, view,
 catalog, resource, and extension context.
 
-Interactive user-view evidence starts from renderer IDs only: at most 80 visible
-Nodes across all panels, depth 5, 50 selected Nodes, and 64 KiB serialized. Main
-resolves titles, breadcrumbs, outline syntax, checkbox/done state, references,
-descriptions, tags, file names, child counts, and Today fallback from the current
+Interactive user-view capture begins with structural renderer hints: pane identity and
+order, active/focused state, focus and selection Node IDs, bounded visible Outline
+structure, and the semantic `PanelView` target. Targets distinguish an Outliner Node,
+local file or directory, document asset, linked file, HTTP(S) URL, and Thread
+Trajectory. Preview owner Nodes supplement the preview target and never replace it.
+Main resolves Node titles, breadcrumbs, outline syntax, checkbox/done state,
+references, descriptions, tags, file labels, and child counts from the current
 `DocumentProjection`. Expanded references contribute the same resolved target children
 and depths that the Outliner renders; reference chains use cycle protection, and main
 derives child counts from that resolved displayed parent. Expanded table records omit
-authored field entries already represented by visible columns. Panels and text leaves
-use fixed ordering and escaping.
-Projection emits a complete first snapshot and deterministic later field-level diffs.
-An unchanged snapshot emits no reminder block; changed nullable fields and removed
-panels emit explicit tombstones. Replaying the same canonical payload sequence
-reconstructs the same snapshot/delta bytes.
-Only the host-derived projection mode and interaction mode are application observations.
-Panel/focus/selection/visibility claims originate in renderer state, while Node text is
-document content; the complete resolved view body is therefore serialized as an
-`untrusted/observation` block even though main validates and enriches it.
+authored field entries already represented by visible columns. Capture remains bounded
+to 80 visible Nodes, depth 5, 50 selected Nodes, and 64 KiB serialized.
+`viewsComplete` records whether every open target was resolved;
+`selectionTruncated` independently records whether the selected-Node list exceeded its
+bound. Missing renderer projection state and a stale active Pane both make the view set
+incomplete. Per-view Outline truncation remains on the supplied Outline that it affects.
+
+The Turn brief treats a pane as layout and emits only the displayed objects. It names
+the active view first and includes at most three other views in left-to-right order.
+Node, readable absolute-file, and Thread identities use public reference markers;
+HTTP(S) URLs remain URLs. Private pane IDs, asset/value/record IDs, focus surfaces,
+root types, child counts, reducer metadata, and invalid file or URL locators never enter
+model prose. Distinct actionable focus and non-empty selection receive separate readable
+statements; later removal emits `Focus returned to the active view.` when that view
+still exists, `Focus cleared.` otherwise, or `Selection cleared.` exactly once. A
+transition between ordinary Node focus and a trailing insertion target is emitted even
+when the Node identity is unchanged. A bounded selection carries an explicit truncation
+marker. A changed open-view set emits one resulting view statement rather than renderer
+field deltas or `panel_closed`
+tombstones. An unresolved active target is never replaced by another Pane or described
+as an empty application; the statement instead reports that the current view could not
+be resolved and may list only resolved non-active views. With no renderer-authored view,
+main emits no view payload and never synthesizes a Today view.
+
+Viewed identity and supplied content have separate canonical and model-visible owners.
+A bounded visible Outline is stored under `suppliedOutline` and projected as its own
+`untrusted/observation` adjacent to the view statement. Opening a file, asset, URL, or
+Trajectory does not imply that its bytes or text were supplied. Renderer/document
+claims and labels remain `untrusted/observation` even after main validates and enriches
+their identities. Supplied resource markers derive file versus directory identity from
+the canonical MIME type, including the directory trailing slash required by reference
+parsing and directory tooling.
 
 The same runtime also implements auxiliary Thread naming after the first user
 Turn becomes terminal. It resolves that Thread's current provider/model,
@@ -249,18 +276,34 @@ instructions, then continues with its declared preserved tail. Checkpoint hashes
 payload references remain canonical state and are not sent as model guidance. The covered
 raw range is not sent as a second copy.
 
-At each canonical tail position, all contiguous text evidence is serialized into ordered
-`<context-evidence>` children inside one provider-facing `<system-reminder>`. A referenced
-image flushes the accumulated text bundle before its bytes, so text/image/user-content order
-is never changed; later text starts another bundle only when that ordering requires it. The
-wrapper is only a serialization boundary: typed canonical evidence and host-assigned
-`kind`/`authority`/`purpose` metadata remain authoritative. Skill and Role catalog payloads
+At each canonical tail position, the pure Turn-brief compiler converts complete typed
+evidence into decision-relevant semantic statements. All contiguous text statements are
+serialized into ordered `<context authority="..." purpose="...">` children inside one
+provider-facing `<system-reminder>`. Exactly three wrapper pairs are valid:
+`application/observation`, `untrusted/observation`, and
+`application/instruction`; `untrusted/instruction` is invalid. Authority is a
+Host-assigned permission class, not a confidence score or a property inferred from
+authored prose. Extension text receives application-instruction authority only when the
+Host grants that capability while registering the extension. A contribution carries
+content and semantic scope, never its own authority grant; entries from an extension
+without the registered capability are downgraded to untrusted observations. Revoking an
+observation retains its admitted authority, so an untrusted scope label cannot be promoted
+by Host-generated lifecycle prose. A referenced image flushes the accumulated text bundle
+before its bytes, so text/image/user-content order is never changed; later text starts
+another bundle only when that ordering requires it. The
+wrapper is only a serialization boundary: typed canonical evidence, source kind, stable
+key, producer, lifecycle, hashes, reducer state, and replay metadata remain Host-private
+authority. Skill and Role catalog payloads
 retain their hashes, identities, sources, and change records for reduction and audit, while
-their provider projection contains only mode, meaningful delta state, names, distinct
-display names, descriptions, and usage guidance. Skill invocation similarly omits storage
+their provider projection is an application observation containing only readable
+availability or delta state, names, distinct display names, and descriptions. Skill
+invocation similarly omits storage
 identity, content hash, resource root, and admission timestamps from model-visible prose.
-Literal user-authored `<system-reminder>` or `<context-evidence>` text is never parsed or
-upgraded, and there is no compatibility parser for those wrappers. The active provider
+Inline authored Skill instructions are a separate application-instruction child; Skill
+arguments remain in the native user/tool input that owns them and are not repeated in
+reminder prose. Literal user-authored `<system-reminder>`, `<context>`, or historical
+`<context-evidence>` text is never parsed or upgraded, and there is no compatibility
+parser for those wrappers. The active provider
 supplies message metadata. No hidden provider transcript is stored or used as a history
 authority.
 
@@ -804,8 +847,10 @@ or invalidate it. Every nested context/output dependency is validated before the
 checkpoint is admitted.
 If a previously admitted inspection payload later becomes unavailable or disagrees with
 its checkpoint, reduction records a typed degradation entry and clears or skips only the
-affected catalog, baseline, or observation. Projection renders the deduplicated marker;
-compaction, fork, and delegation remain usable. Strict dependency rejection remains at
+affected catalog, baseline, or observation. Projection renders the deduplicated fact as
+an `application/observation` and any required re-inspection command as a separate
+`application/instruction`; commands never hide inside observation prose. Compaction,
+fork, and delegation remain usable. Strict dependency rejection remains at
 payload publication and Thread decode, not on the provider-request path.
 
 Compaction does not reconstruct document observations from shell output. Outline
@@ -987,7 +1032,8 @@ typed context evidence and its kind, compaction output, assistant history, and t
 results. The sidecar is not provider input and does not affect message bytes, ordering,
 budgeting, or cache affinity. Diagnostics persists it with each prepared window, and the
 codec rejects any message or part-count mismatch. The renderer uses only this typed
-sidecar to label context evidence; literal user text that spells a `system-reminder` or
+sidecar to label context evidence; the model-visible `<context>` element intentionally
+has no kind. Literal user text that spells a `system-reminder`, `context`, or historical
 `context-evidence` wrapper remains a regular text part. Ephemeral same-Turn signed
 thinking uses assistant-history provenance because its canonical assistant message owns
 the position; that classification does not make the signature durable or available to a
