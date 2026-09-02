@@ -37,6 +37,7 @@ import {
   WEB_FETCH_RETRY_DELAY_MS,
   WEB_FETCH_USER_AGENT,
   WEB_SEARCH_RETRY_DELAY_MS,
+  WEB_SEARCH_PARTITION,
   WEB_SEARCH_USER_AGENT,
   buildBingImagesSearchUrl,
   buildDuckDuckGoSearchUrl,
@@ -93,25 +94,31 @@ import {
 import {
   BING_IMAGES_RESULT_SELECTOR,
   DUCKDUCKGO_RESULT_SELECTOR,
+  admitGoogleRedirectTarget,
   bingImagesExtractorExpression,
   duckDuckGoSerpExtractorExpression,
   googleSerpExtractorExpression,
+  isGoogleRedirectCandidateUrl,
   isTransientSearchError,
+  selectSearchOutcomeIndex,
   shouldFallbackToSecondaryEngine,
+  type GoogleSerpCandidate,
 } from './agentWebSearchSerp';
 
 const GOOGLE_SEARCH_HOME_URL = 'https://www.google.com/';
 const GOOGLE_SEARCH_INPUT_SELECTOR = 'textarea[name="q"], input[name="q"]';
 const GOOGLE_SEARCH_RESULT_SELECTOR = '#search, #rso';
-const WEB_SEARCH_PARTITION = 'persist:web-search';
 const WEB_FETCH_HTTP_PARTITION = 'web-fetch-http';
 const WEB_FETCH_BROWSER_PARTITION = 'web-fetch-browser';
 const SEARCH_NAV_TIMEOUT_MS = 60_000;
+const GOOGLE_REDIRECT_TIMEOUT_MS = 4_000;
+const GOOGLE_REDIRECT_TOTAL_TIMEOUT_MS = 20_000;
 const SEARCH_RATE_INTERVAL_MS = 3_000;
 const SEARCH_RATE_BURST = 2;
 let recentSearchStarts: number[] = [];
 let webFetchBrowserTail: Promise<void> = Promise.resolve();
 let webFetchBrowserSessionConfigured = false;
+let webSearchSessionConfigured = false;
 
 const WEB_FETCH_PARAMETERS = {
   type: 'object',
@@ -566,41 +573,42 @@ async function runSearchWithRetry(
   return attempt();
 }
 
-// Web search: Google (with one transient retry), then DuckDuckGo — itself
-// retried once — when Google is blocked, empty, or failed recoverably. The
-// DuckDuckGo outcome carries its own providerName so the envelope and the
-// fallback warning reflect the real engine.
+// Web search: Google, then DuckDuckGo. Each engine gets one transient retry. A
+// non-empty result returns immediately; after both eligible engines settle,
+// selectFinalSearchOutcome preserves a diagnostic failure/hint unless both
+// reached a normal empty SERP.
 async function runWebSearchWithFallback(
   params: NormalizedWebSearchParams,
   signal?: AbortSignal,
 ): Promise<SearchOutcome> {
+  const attempts: SearchOutcome[] = [];
   const google = await runSearchWithRetry(
-    () => searchGoogle(buildGoogleSearchUrl(params.effectiveQuery), signal),
+    () => searchGoogle(buildGoogleSearchUrl(params.effectiveQuery), params.limit, signal),
     signal,
   );
-  if (signal?.aborted) return google;
-  const summary = {
-    kind: google.kind,
-    resultCount: google.kind === 'ok' ? google.results.length : 0,
-    ...(google.kind === 'error' ? { code: google.code } : {}),
-  };
-  if (!shouldFallbackToSecondaryEngine(summary)) return google;
+  attempts.push(google);
+  if (signal?.aborted || !shouldFallbackToSecondaryEngine(searchAttemptSummary(google))) return google;
 
-  // Give the fallback the same one-shot transient retry the primary got.
   const duck = await runSearchWithRetry(
     () => searchDuckDuckGo(params.effectiveQuery, signal),
     signal,
   );
-  // A DuckDuckGo page that loaded and parsed is authoritative even when empty:
-  // returning it tells the agent "no hits — broaden the query" rather than a
-  // misleading "retry / use a browser", and it is the only branch where a
-  // fallback result is surfaced (so the fallback warning fires exactly here).
-  if (duck.kind === 'ok') return duck;
-  // The fallback did not yield results either. Surface the primary, user-intended
-  // Google outcome — its hint/error is the more diagnostic signal and its
-  // finalUrl points at the google.com SERP the user asked for — rather than
-  // discarding it for DuckDuckGo's own failure.
-  return google;
+  attempts.push(duck);
+  if (signal?.aborted || !shouldFallbackToSecondaryEngine(searchAttemptSummary(duck))) return duck;
+  return selectFinalSearchOutcome(attempts);
+}
+
+function searchAttemptSummary(outcome: SearchOutcome) {
+  return {
+    kind: outcome.kind,
+    resultCount: outcome.kind === 'ok' ? outcome.results.length : 0,
+    ...(outcome.kind === 'error' ? { code: outcome.code } : {}),
+  };
+}
+
+function selectFinalSearchOutcome(attempts: readonly SearchOutcome[]): SearchOutcome {
+  const index = selectSearchOutcomeIndex(attempts.map(searchAttemptSummary));
+  return attempts[index] ?? attempts[attempts.length - 1]!;
 }
 
 // The invariant envelope fields shared by the hint / error / success branches —
@@ -625,9 +633,7 @@ function baseSearchData(
 function searchWarnings(params: NormalizedWebSearchParams, providerName?: string): string[] | undefined {
   const warnings: string[] = [];
   if (providerName === DUCKDUCKGO_PROVIDER) {
-    // The primary engine may have been blocked, empty, OR unparseable — do not
-    // assert it was "unavailable", which could be false and mislead the agent.
-    warnings.push('These results are from the DuckDuckGo fallback; the primary engine (Google) returned no usable results.');
+    warnings.push('These results are from the DuckDuckGo fallback; Google returned no usable results.');
   }
   if (params.kind === 'image') {
     warnings.push('Image results may be copyright-protected. Treat them as drafts and confirm licensing with the user before final use.');
@@ -1189,7 +1195,7 @@ async function withSearchWindow(
   }
 }
 
-async function searchGoogle(searchUrl: string, signal?: AbortSignal): Promise<SearchOutcome> {
+async function searchGoogle(searchUrl: string, limit: number, signal?: AbortSignal): Promise<SearchOutcome> {
   const query = googleQueryFromSearchUrl(searchUrl);
   if (!query) {
     return { kind: 'error', code: 'invalid_args', message: 'missing search query', finalUrl: searchUrl };
@@ -1237,14 +1243,127 @@ async function searchGoogle(searchUrl: string, signal?: AbortSignal): Promise<Se
     }
 
     await gentlyScrollSearchResults(webContents);
-    const payload = await safeExecuteJs<{ htmlLength: number; results: WebSearchResult[] }>(
+    const payload = await safeExecuteJs<{ htmlLength: number; candidateCount: number; candidates: GoogleSerpCandidate[] }>(
       webContents,
       googleSerpExtractorExpression(),
     );
     if (!payload) {
       return { kind: 'error', code: 'extraction_failed', message: 'could not extract Google results', finalUrl };
     }
-    return { kind: 'ok', finalUrl, results: payload.results, htmlBytes: payload.htmlLength };
+    const results = await resolveGoogleCandidates(payload.candidates, limit, signal);
+    if (signal?.aborted) {
+      return { kind: 'error', code: 'aborted', message: 'search aborted', finalUrl };
+    }
+    if (payload.candidateCount > 0 && results.length === 0) {
+      return { kind: 'error', code: 'extraction_failed', message: 'Google result links could not be extracted', finalUrl };
+    }
+    return { kind: 'ok', finalUrl, results, htmlBytes: payload.htmlLength };
+  });
+}
+
+async function resolveGoogleCandidates(
+  candidates: readonly GoogleSerpCandidate[],
+  limit: number,
+  signal?: AbortSignal,
+): Promise<WebSearchResult[]> {
+  const results: WebSearchResult[] = [];
+  const seen = new Set<string>();
+  const deadline = Date.now() + GOOGLE_REDIRECT_TOTAL_TIMEOUT_MS;
+  let resolverWindow: BrowserWindow | undefined;
+
+  try {
+    for (const candidate of candidates) {
+      if (results.length >= limit || signal?.aborted || Date.now() >= deadline) break;
+      let url = candidate.kind === 'direct' ? candidate.url : undefined;
+      if (candidate.kind === 'google_redirect') {
+        resolverWindow ??= createGoogleRedirectResolverWindow();
+        const remainingMs = Math.max(1, deadline - Date.now());
+        url = await resolveGoogleRedirect(
+          resolverWindow.webContents,
+          candidate.redirectUrl,
+          Math.min(GOOGLE_REDIRECT_TIMEOUT_MS, remainingMs),
+          signal,
+        ) ?? undefined;
+      }
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      results.push({
+        title: candidate.title,
+        url,
+        snippet: candidate.snippet,
+        source: new URL(url).host,
+      });
+    }
+    return results;
+  } finally {
+    if (resolverWindow && !resolverWindow.isDestroyed()) resolverWindow.destroy();
+  }
+}
+
+function resolveGoogleRedirect(
+  webContents: WebContents,
+  candidateUrl: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  if (!isGoogleRedirectCandidateUrl(candidateUrl) || signal?.aborted) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (target: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      webContents.off('will-redirect', onRedirect);
+      webContents.off('will-navigate', onNavigate);
+      resolve(target);
+    };
+    const stop = () => {
+      try {
+        webContents.stop();
+      } catch {
+        // no-op
+      }
+    };
+    const onRedirect = (
+      event: ElectronEvent<WebContentsWillRedirectEventParams>,
+      redirectUrl: string,
+      _isInPlace: boolean,
+      isMainFrame: boolean,
+    ) => {
+      if (!isMainFrame) return;
+      event.preventDefault();
+      stop();
+      finish(admitGoogleRedirectTarget(candidateUrl, event.url || redirectUrl));
+    };
+    const onNavigate = (
+      event: ElectronEvent<WebContentsWillNavigateEventParams>,
+      _navigateUrl: string,
+      _isInPlace: boolean,
+      isMainFrame: boolean,
+    ) => {
+      if (!isMainFrame) return;
+      event.preventDefault();
+      stop();
+      finish(null);
+    };
+    const onAbort = () => {
+      stop();
+      finish(null);
+    };
+    const timer = setTimeout(() => {
+      stop();
+      finish(null);
+    }, timeoutMs);
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+    webContents.on('will-redirect', onRedirect);
+    webContents.on('will-navigate', onNavigate);
+    void webContents.loadURL(candidateUrl).then(
+      () => finish(null),
+      () => finish(null),
+    );
   });
 }
 
@@ -1298,11 +1417,14 @@ async function runServerRenderedSerp(
     }
 
     if (spec.scroll) await gentlyScrollSearchResults(webContents);
-    const payload = await safeExecuteJs<{ htmlLength: number; results: WebSearchResult[] }>(
+    const payload = await safeExecuteJs<{ htmlLength: number; candidateCount: number; results: WebSearchResult[] }>(
       webContents,
       spec.extractorExpression,
     );
     if (!payload) {
+      return { kind: 'error', code: 'extraction_failed', message: spec.emptyMessage, finalUrl, ...tag };
+    }
+    if (payload.candidateCount > 0 && payload.results.length === 0) {
       return { kind: 'error', code: 'extraction_failed', message: spec.emptyMessage, finalUrl, ...tag };
     }
     return { kind: 'ok', finalUrl, results: payload.results, htmlBytes: payload.htmlLength, ...tag };
@@ -1361,12 +1483,43 @@ function createWebSearchWindow(): BrowserWindow {
     show: false,
     title: 'Tenon Web Search',
     webPreferences: {
-      session: electronSession.fromPartition(WEB_SEARCH_PARTITION),
+      session: credentialFreeSearchSession(),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   });
+}
+
+function createGoogleRedirectResolverWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    x: -20_000,
+    y: -20_000,
+    width: 320,
+    height: 240,
+    show: false,
+    title: 'Tenon Search URL Resolver',
+    webPreferences: {
+      session: credentialFreeSearchSession(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      javascript: false,
+    },
+  });
+  window.webContents.setUserAgent(WEB_SEARCH_USER_AGENT);
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  return window;
+}
+
+function credentialFreeSearchSession(): Session {
+  const clientSession = electronSession.fromPartition(WEB_SEARCH_PARTITION);
+  if (!webSearchSessionConfigured) {
+    clientSession.setPermissionCheckHandler(() => false);
+    clientSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    webSearchSessionConfigured = true;
+  }
+  return clientSession;
 }
 
 function googleQueryFromSearchUrl(url: string): string | null {

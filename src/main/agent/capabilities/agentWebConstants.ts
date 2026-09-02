@@ -19,6 +19,7 @@ export const WEB_FETCH_CLIENT_HINT_PLATFORM = '"macOS"';
 export const WEB_SEARCH_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) '
   + `Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
+export const WEB_SEARCH_PARTITION = 'persist:web-search';
 // One short-backoff retry for a transient search failure (nav network drop /
 // timeout) before giving up or falling back to the secondary engine.
 export const WEB_SEARCH_RETRY_DELAY_MS = 600;

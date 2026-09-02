@@ -26,6 +26,7 @@ export {
   WEB_FETCH_RETRY_DELAY_MS,
   WEB_FETCH_USER_AGENT,
   WEB_SEARCH_RETRY_DELAY_MS,
+  WEB_SEARCH_PARTITION,
   WEB_SEARCH_USER_AGENT,
 } from './agentWebConstants';
 export { extractContent, extractMetadata } from './agentWebFetchContent';

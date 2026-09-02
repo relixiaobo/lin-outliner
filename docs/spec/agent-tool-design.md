@@ -319,6 +319,29 @@ on a later command execution.
 - `web_fetch`: HTTP retrieval with redirect, size, and content extraction limits
 - `generate_image`: configured image-provider generation
 
+Web discovery uses a bounded Google → DuckDuckGo HTML provider chain. Each
+eligible engine receives at most one retry for a transient navigation fault,
+and the chain stops at the first non-empty result set. Google organic links that
+expose opaque `/goto` capabilities are resolved only inside the Google adapter:
+a dedicated JavaScript-disabled window requests an admitted
+`https://www.google.com/goto` URL, intercepts its first main-frame redirect, and
+prevents navigation before the external target is requested. Resolution has
+per-candidate and whole-batch time bounds; popups, same-host redirects, further
+navigations, invalid protocols, and malformed URLs are rejected. DuckDuckGo
+redirect targets are read locally from `uddg`. Every recovered target is
+revalidated as external HTTP(S) before admission.
+
+A successful empty search means every attempted provider that reached a normal
+SERP reported no organic results. A challenge, transport failure, SPA shell, or
+page with unextractable candidates remains a diagnostic hint/error; it never
+collapses into `ok: true` with an empty list. The provider that actually supplies
+results is retained in Host details, and fallback use produces a model-visible
+warning without exposing provider telemetry as result data. Search titles and
+snippets are untrusted discovery metadata, not factual evidence; when a result
+supports an answer, the Agent uses `web_fetch` to observe the admitted URL's
+actual final URL, status, and content before citing it. Image discovery
+continues to use Bing Images independently of this web provider chain.
+
 `web_fetch` uses a credential-free Electron `Session.fetch` partition with
 automatic redirect following, then applies its byte, timeout, and extraction
 bounds before returning content. Requests present the configured Chrome user

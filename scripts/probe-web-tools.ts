@@ -1,7 +1,8 @@
-import { app } from 'electron';
+import { app, session as electronSession } from 'electron';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 
 import { createAgentTools } from '../src/main/agent/capabilities/agentTools';
+import { WEB_SEARCH_PARTITION } from '../src/main/agent/capabilities/agentWebConstants';
 import { isToolEnvelope, type ToolEnvelope } from '../src/main/agent/capabilities/agentToolEnvelope';
 
 interface ProbeResult {
@@ -32,6 +33,7 @@ interface WebFetchProbeData {
 
 interface WebSearchProbeData {
   finalUrl?: string;
+  providerName?: string;
   resultCount?: number;
   hint?: {
     type: string;
@@ -53,7 +55,7 @@ interface LocalWebFixture {
 const results: ProbeResult[] = [];
 const tools = createAgentTools();
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
-const SEARCH_TOOL_TIMEOUT_MS = 85_000;
+const SEARCH_TOOL_TIMEOUT_MS = 210_000;
 const EXPECTED_PROBE_NAMES = [
   'local fixture setup',
   'web_fetch read local fixture',
@@ -61,7 +63,8 @@ const EXPECTED_PROBE_NAMES = [
   'web_fetch find local fixture',
   'web_fetch follows local redirect',
   'local fixture teardown',
-  'web_search Google SERP',
+  'web_search provider chain',
+  'web_fetch search result',
   'web_fetch read example.com',
   'web_fetch metadata example.com',
   'web_fetch find example.com',
@@ -72,6 +75,12 @@ async function main(): Promise<number> {
     // Tool-owned windows may close mid-run; this probe exits explicitly after its summary.
   });
   await app.whenReady();
+
+  const searchRequests: string[] = [];
+  electronSession.fromPartition(WEB_SEARCH_PARTITION).webRequest.onBeforeRequest((details, callback) => {
+    searchRequests.push(details.url);
+    callback({});
+  });
 
   const fixtureState: { fixture?: LocalWebFixture } = {};
   await runProbe('local fixture setup', async () => {
@@ -96,21 +105,16 @@ async function main(): Promise<number> {
       });
     }
   }
-  await runProbe('web_search Google SERP', async () => {
+  let discoveredUrl: string | undefined;
+  await runProbe('web_search provider chain', async () => {
     const envelope = await executeTool<WebSearchProbeData>(
       'web_search',
       {
-        query: 'electron BrowserWindow documentation',
+        query: 'site:electronjs.org/docs/latest/api/browser-window BrowserWindow',
         limit: 3,
       },
       SEARCH_TOOL_TIMEOUT_MS,
     );
-    if (!envelope.ok && envelope.error?.code === 'extraction_failed') {
-      return {
-        verdict: 'SKIP' as const,
-        detail: `search provider did not expose a normal SERP: ${envelope.error.message}`,
-      };
-    }
     assertOk(envelope);
     if (envelope.data?.hint) {
       return {
@@ -122,7 +126,33 @@ async function main(): Promise<number> {
       throw new Error('expected at least one search result');
     }
     const first = envelope.data.results?.[0];
-    return `count=${envelope.data.resultCount} first="${preview(first?.title ?? '')}"`;
+    if (!first || !/^https?:\/\//.test(first.url)) {
+      throw new Error(`expected first result to have an http(s) URL; got ${first?.url ?? '<missing>'}`);
+    }
+    const host = new URL(first.url).hostname;
+    if (host !== 'electronjs.org' && !host.endsWith('.electronjs.org')) {
+      throw new Error(`expected an electronjs.org result; got ${first.url}`);
+    }
+    if (searchRequests.some((requestedUrl) => sameResourceUrl(requestedUrl, first.url))) {
+      throw new Error(`search requested result content before web_fetch: ${first.url}`);
+    }
+    discoveredUrl = first.url;
+    return `provider=${envelope.data.providerName ?? '<unknown>'} count=${envelope.data.resultCount} first="${preview(first.title)}"`;
+  });
+
+  await runProbe('web_fetch search result', async () => {
+    if (!discoveredUrl) {
+      return { verdict: 'SKIP' as const, detail: 'search did not yield a URL to fetch' };
+    }
+    const envelope = await executeTool<WebFetchProbeData>('web_fetch', {
+      url: discoveredUrl,
+      max_chars: 10_000,
+    });
+    assertOk(envelope);
+    if (!envelope.data.content?.includes('BrowserWindow')) {
+      throw new Error(`expected fetched result content to include BrowserWindow; got ${preview(envelope.data.content ?? '')}`);
+    }
+    return `status=${envelope.data.statusCode} finalUrl=${envelope.data.finalUrl ?? discoveredUrl}`;
   });
 
   // Keep a non-window probe after web_search so a BrowserWindow close cannot
@@ -398,6 +428,18 @@ function printSummary(): void {
 function preview(value: string, limit = 120): string {
   const compact = value.replace(/\s+/g, ' ').trim();
   return compact.length > limit ? `${compact.slice(0, limit)}...` : compact;
+}
+
+function sameResourceUrl(left: string, right: string): boolean {
+  try {
+    const leftUrl = new URL(left);
+    const rightUrl = new URL(right);
+    const host = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, '');
+    const path = (url: URL) => url.pathname.replace(/\/$/, '') || '/';
+    return host(leftUrl) === host(rightUrl) && path(leftUrl) === path(rightUrl);
+  } catch {
+    return false;
+  }
 }
 
 function flushOutput(stream: NodeJS.WriteStream): Promise<void> {
