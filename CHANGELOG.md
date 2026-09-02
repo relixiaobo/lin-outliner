@@ -12,6 +12,23 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Delegated Agent history now remains factual across later work (PR #614,
+  codex)** — every terminal generation projects an immutable receipt with its
+  exact outcome, bounded error, stop provenance, stable parent Item identity,
+  partial-output evidence, and direct-parent notification state. Historical
+  spawn, resume, and delivery surfaces read that receipt while the stable Agent
+  independently reports current liveness, so a failed or user-stopped run cannot
+  become Working or Finished after a resume and cannot make the active root look
+  failed. Isolated Skills use the same durable terminal pipeline without owing
+  parent delivery, and content-free machine Items remain absent from transcript,
+  spacing, copy, and accessibility output. Gate review found two High terminal-
+  receipt and continuation-anchor defects plus two Medium stop-provenance and
+  deterministic E2E-copy defects; all were fixed before the final no-findings
+  review. Verified with typecheck, `docs:check`, 287 Core/protocol tests, 134
+  targeted renderer tests, two review-relevant Playwright flows, light/dark
+  visual QA, whitespace checks, and five successful GitHub E2E samples whose
+  classifier reported no branch-introduced failures.
+
 - **Failed Agent Turns now offer distinct Continue and Rerun recovery (PR #612,
   codex)** — Continue preserves the failed Turn and appends a linked Turn from
   complete settled canonical evidence without redispatching historical tools;

@@ -2276,3 +2276,22 @@ Regression coverage must drive the real tail hook, not only a mocked completion:
 hold cleanup after the terminal commit, issue the competing mutation, release
 cleanup, prove the idle hook reaches admission, and prove the stale mutation
 rejects while shutdown drains normally.
+
+## Terminal history is independent from delivery obligation
+
+PR #614 first projected historical Agent outcomes exclusively from terminal
+notification rows, while isolated Skills still bypassed terminal settlement
+because their awaiting tool call already owned the result. That correctly
+prevented a redundant parent wake-up, but it also erased the durable generation
+receipt needed after reload or later Agent work.
+
+**Whether a parent is owed notification and whether a generation needs durable
+terminal history are separate decisions.** Every delegated form must settle one
+canonical terminal fact; delivery policy decides only whether that fact starts
+pending or already settled. Do not make presentation truth depend on a transport
+side effect that some valid execution forms intentionally omit.
+
+Regression coverage must cross both dimensions: a notifying background child
+and a non-notifying foreground or isolated child should each retain the same
+terminal outcome, while only the former wakes and enters the parent delivery
+queue.

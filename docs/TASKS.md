@@ -17,9 +17,10 @@ Two draft plan-only claims are open: PR #611 defines the model-visible Agent
 context language, and PR #613 defines model-visible tool-result envelopes. Both
 were scoped against the then-open #612 surfaces and must rebase onto its merged
 Agent baseline and refresh their collision checks before implementation.
-Root-Turn recovery shipped in #612, so delegated failure truth and the managed
-Computer Pilot Skill are eligible under their live collision checks. The public
-Outline CLI, built-in Skill, and shared preview-shell lanes are also clear.
+Root-Turn recovery shipped in #612 and delegated failure truth shipped in #614,
+so the managed Computer Pilot Skill is eligible under its live collision check.
+The public Outline CLI, built-in Skill, and shared preview-shell lanes are also
+clear.
 Startup Window, preview readers, and Skill authoring remain independently
 eligible. The remaining plans from #588/#589 and #591 stay active below until
 their implementation, spec fold, and archive move complete.
@@ -47,13 +48,11 @@ Parallel now eligible:
   file-preview-office
   url-static-reader
   agent-skill-authoring-foundation -> agent-skill-curation-report
-  agent-delegated-failure-truth
   computer-pilot-managed-skill
 ```
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [agent-delegated-failure-truth](plans/agent-delegated-failure-truth.md) | `draft` | **Now; root-Turn recovery shipped in #612**; live collision check required |
 | P2 | [startup-window-first](plans/startup-window-first.md) | `draft` | **Now; Desktop Host shipped in #603** |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
@@ -62,10 +61,10 @@ Parallel now eligible:
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | **Now; Agent resource lifecycle shipped in #607** |
 
 The Host composition, Bash stdin, Outline CLI Skill, Agent resource,
-Cross-Thread Reference, and root-Turn recovery foundations are complete.
-Delegated failure truth and the managed Computer Pilot Skill may proceed in
-parallel, subject to their live collision checks. Build-ready work outside this
-queue remains independently claimable under its own collision boundary.
+Cross-Thread Reference, root-Turn recovery, and delegated-failure-truth
+foundations are complete. The managed Computer Pilot Skill may proceed under
+its live collision check. Build-ready work outside this queue remains
+independently claimable under its own collision boundary.
 
 The split also absorbs three former planless tasks without losing their intent:
 
@@ -87,10 +86,6 @@ Collision lanes remain claim-time constraints, not hidden graph edges:
   lifecycle, canonical-to-renderer projection, preload, and Host transport.
   Internal text remains a private Item dependency and never becomes a file
   resource.
-- Delegated Failure Truth repeats the live file check against the merged #612
-  recovery baseline before claiming shared protocol, projection, and Thread
-  surfaces.
-
 ## Other Active Plans
 
 These plans are outside the primary chain. Any multi-PR aggregate here is
@@ -214,6 +209,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-delegated-failure-truth** (`done`, #614, 2026-09-02) — immutable
+  per-generation receipts now preserve delegated outcomes, stop provenance,
+  direct-parent notification state, and historical anchors while stable Agents
+  continue running; plan archived at
+  [agent-delegated-failure-truth](plans/archive/agent-delegated-failure-truth.md).
 - **agent-root-turn-recovery** (`done`, #612, 2026-09-01) — failed root Turns
   now offer main-authorized Continue and Rerun paths with linked canonical
   continuation, explicit settled-tool replay confirmation, and distinct
