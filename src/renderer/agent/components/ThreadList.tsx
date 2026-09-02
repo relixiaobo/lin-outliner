@@ -154,6 +154,7 @@ export function ThreadList({
         <h2>{t.agent.thread.title}</h2>
         <span className="thread-list-header-actions">
           <IconButton
+            aria-keyshortcuts="Meta+Shift+O"
             disabled={createDisabled}
             icon={AddIcon}
             label={t.agent.thread.new}

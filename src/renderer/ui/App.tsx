@@ -744,6 +744,7 @@ export function App() {
           railState={agentRailState}
           onOpenNodeReference={openNodeReferenceFromAgent}
           onOpenTurnDetails={(threadId, turnId) => openThreadTrajectoryPanel(threadId, { turnId })}
+          onRequestOpen={openAgentRail}
           onResizeKeyDown={resizeAgentWithKeyboard}
           onResizeReset={resetAgentWidth}
           onResizeStart={beginAgentResize}

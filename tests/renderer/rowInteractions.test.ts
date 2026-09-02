@@ -33,6 +33,7 @@ import {
 } from '../../src/renderer/ui/interactions/trashActions';
 import { resolveSelectionKeyboardAction } from '../../src/renderer/ui/interactions/selectionKeyboard';
 import {
+  formatShortcutHint,
   matchesShortcutEvent,
   shortcutDefinitionsForScope,
 } from '../../src/renderer/ui/interactions/shortcutRegistry';
@@ -2263,6 +2264,9 @@ describe('row interaction resolvers', () => {
     expect(matchesShortcutEvent(keyboard('z', { metaKey: true, shiftKey: true }), 'editor.redo')).toBe(true);
     expect(matchesShortcutEvent(keyboard('y', { ctrlKey: true }), 'trailing.redo')).toBe(true);
     expect(matchesShortcutEvent(keyboard('y', { metaKey: true }), 'global.redo')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('o', { metaKey: true, shiftKey: true }), 'global.new_thread')).toBe(true);
+    expect(matchesShortcutEvent(keyboard('o', { metaKey: true }), 'global.new_thread')).toBe(false);
+    expect(formatShortcutHint('global.new_thread')).toBe('⇧⌘O');
     expect(matchesShortcutEvent(keyboard('d', { metaKey: true, shiftKey: true }), 'global.go_to_today')).toBe(true);
     expect(matchesShortcutEvent(keyboard('[', { metaKey: true }), 'global.nav_back')).toBe(true);
     expect(matchesShortcutEvent(keyboard(']', { metaKey: true }), 'global.nav_forward')).toBe(true);
@@ -2328,6 +2332,7 @@ describe('row interaction resolvers', () => {
     ]);
     expect(ids('global')).toEqual([
       'global.open_agent_panel',
+      'global.new_thread',
       'global.go_to_today',
       'global.nav_back',
       'global.nav_forward',
