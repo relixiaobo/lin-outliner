@@ -1356,6 +1356,12 @@ export interface SubagentExecutionProjection {
   readonly notificationCutoff: SubagentNotificationCutoff;
   readonly executionMode: SubagentExecutionMode;
   readonly settlementCoverage: SubagentSettlementCoverage | null;
+  readonly executionSelectionFallback: {
+    readonly requestedModelProvider: string | null;
+    readonly requestedModel: string | null;
+    readonly requestedReasoningEffort: string | null;
+    readonly reason: 'unavailable';
+  } | null;
   /** Present only while a managed worktree is retained for this Agent. */
   readonly worktree: SubagentWorktreeSummary | null;
   readonly createdAt: number;

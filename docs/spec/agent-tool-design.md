@@ -523,11 +523,13 @@ unified stop dispatch, and any behavior without a provenance-bound projection
 remain Tenon-local compatibility contracts.
 
 `agent` requires `description` and `prompt`. It optionally accepts
-`subagent_type`, `model`, `run_in_background`, and `isolation`. Omission selects
-`subagent_type: "general-purpose"` and `run_in_background: true`; these are
-tool-owned argument normalizations before exact admission, not JSON Schema
-defaults. `isolation`, when present, is exactly `"worktree"`. The model enum is
-the active provider catalog, and its precedence is per-call, Role, then parent.
+`subagent_type`, `run_in_background`, `execution`, and `isolation`. Omission
+selects `subagent_type: "general-purpose"` and `run_in_background: true`; these
+are tool-owned argument normalizations before exact admission, not JSON Schema
+defaults. `execution`, when present, is exactly `"read-only"`; `isolation`, when
+present, is exactly `"worktree"`. Model and reasoning selection are absent from
+the model-visible contract: Agent Settings own them, and the schema is byte
+independent of provider catalog size.
 
 The complete `agent` description is a stored constant rather than prose assembled
 at runtime:
@@ -545,7 +547,8 @@ Reach for this when the task matches an available agent type, when you have inde
 
 - The agent's final report is not shown to the user — relay what matters.
 - Use agent_message with the agent's ID to continue a previously spawned agent with its context intact; a new agent call starts fresh.
-- Each agent type's model, reasoning effort, and tools come from its Tenon Role.
+- Each agent type's model and reasoning effort come from Agent Settings and follow the parent by default. Tools come from its Tenon Role.
+- `execution: "read-only"` applies a host-enforced action ceiling. It permits inspection but rejects file, Outline, process, network, and other external mutations; descendants inherit the ceiling.
 - `isolation: "worktree"` gives the agent its own git worktree (auto-cleaned if unchanged).
 - Subagents run in the background by default; you'll be notified when one finishes or stops. Pass `run_in_background: false` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.
 ```
@@ -557,8 +560,8 @@ Its parameter descriptions are:
 | `description` | `A short (3-5 word) description of the task` |
 | `prompt` | `The task for the agent to perform` |
 | `subagent_type` | `The type of specialized agent to use for this task` |
-| `model` | `Optional model override for this agent. Takes precedence over the Role's model. If omitted, uses the Role's model, or inherits from the parent.` |
 | `run_in_background` | `Agents run in the background by default; you will be notified when one finishes or stops. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.` |
+| `execution` | `Optional host-enforced execution ceiling. "read-only" permits inspection but rejects external mutations and is inherited by descendants.` |
 | `isolation` | `Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo.` |
 
 `agent_message` requires `to` and `message`; `summary` is optional. Its complete

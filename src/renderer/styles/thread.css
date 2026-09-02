@@ -1756,6 +1756,56 @@
   white-space: normal;
 }
 
+.thread-agent-execution-warning {
+  display: flex;
+  max-width: min(100%, 520px);
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  color: var(--status-warning);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.thread-agent-chip-block > .thread-agent-execution-warning {
+  padding-left: calc(var(--icon-size-xs) + var(--space-3));
+}
+
+.thread-agent-execution-warning > svg {
+  flex: 0 0 auto;
+}
+
+.thread-agent-execution-warning-content {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.thread-agent-execution-warning-action {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--link);
+  font: inherit;
+  padding: 0;
+  transition: color var(--motion-fast);
+}
+
+.thread-agent-execution-warning-action:hover,
+.thread-agent-execution-warning-action:focus-visible {
+  color: var(--text-strong);
+}
+
+.thread-agent-execution-warning-action:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+
 /* An Agent speaking in the conversation: folded by default, opposite the
    reader's own side, in the quieter fill every non-reader message uses. It is a
    participant's message, not a divider — the delegation graph is a set of

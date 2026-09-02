@@ -44,6 +44,24 @@ describe('settings window query routing', () => {
     expect(settingsOpenTargetFromSearch('?surface=settings&anchor=memory')).toEqual({});
   });
 
+  test('carries a bounded Agent type only for the Agents page', () => {
+    expect(settingsOpenTargetFromSearch(
+      '?surface=settings&category=agent/agents&agent=custom_reviewer',
+    )).toEqual({
+      category: 'agent',
+      page: 'agents',
+      agentType: 'custom_reviewer',
+    });
+    expect(settingsOpenTargetFromSearch(
+      '?surface=settings&category=agent/skills&agent=custom_reviewer',
+    )).toEqual({ category: 'agent', page: 'skills' });
+    for (const agentType of ['', '-leading', 'contains space', 'a'.repeat(65), 'x&category=general']) {
+      expect(settingsOpenTargetFromSearch(
+        `?surface=settings&category=agent/agents&agent=${encodeURIComponent(agentType)}`,
+      )).toEqual({ category: 'agent', page: 'agents' });
+    }
+  });
+
   test('rejects anchors that cannot be used as bounded selector slugs', () => {
     for (const anchor of ['UPPERCASE', '-leading', 'contains space', 'a'.repeat(65), 'x\"] .inset-card']) {
       expect(settingsOpenTargetFromSearch(`?surface=settings&category=agent&anchor=${encodeURIComponent(anchor)}`))

@@ -113,8 +113,6 @@ describe('Agent Core persistence', () => {
       archived: false,
       configuration,
       toolCeiling: null,
-      modelOverride: null,
-      reasoningEffortOverride: null,
     });
     store.create({
       thread: thread(ids[1]!, 200),
@@ -122,8 +120,6 @@ describe('Agent Core persistence', () => {
       archived: false,
       configuration,
       toolCeiling: null,
-      modelOverride: null,
-      reasoningEffortOverride: null,
     });
     store.create({
       thread: thread(ids[2]!, 300, { threadSource: 'memory_consolidation' }),
@@ -131,8 +127,6 @@ describe('Agent Core persistence', () => {
       archived: false,
       configuration,
       toolCeiling: null,
-      modelOverride: null,
-      reasoningEffortOverride: null,
     });
 
     const first = store.list({ limit: 2 });
@@ -154,8 +148,6 @@ describe('Agent Core persistence', () => {
       archived: false,
       configuration,
       toolCeiling: ['file_read'],
-      modelOverride: 'worker-model',
-      reasoningEffortOverride: 'high',
     }, {
       sessionId: firstSessionId,
       parentThreadId: ids[0]!,
@@ -171,8 +163,6 @@ describe('Agent Core persistence', () => {
       createdAt: 400,
     }]);
     expect(store.require(childId).toolCeiling).toEqual(['file_read']);
-    expect(store.require(childId).modelOverride).toBe('worker-model');
-    expect(store.require(childId).reasoningEffortOverride).toBe('high');
 
     const secondSessionId = store.require(ids[1]!).thread.sessionId;
     const secondChildId = uuidV7(450);
@@ -187,8 +177,6 @@ describe('Agent Core persistence', () => {
       archived: false,
       configuration,
       toolCeiling: null,
-      modelOverride: null,
-      reasoningEffortOverride: null,
     }, {
       sessionId: secondSessionId,
       parentThreadId: ids[1]!,
@@ -228,8 +216,6 @@ describe('Agent Core persistence', () => {
       archived: false,
       configuration,
       toolCeiling: null,
-      modelOverride: null,
-      reasoningEffortOverride: null,
     });
 
     let cached = store.require(threadId);
@@ -281,8 +267,6 @@ describe('Agent Core persistence', () => {
       archived: false,
       configuration,
       toolCeiling: null,
-      modelOverride: null,
-      reasoningEffortOverride: null,
     }, {
       sessionId: cached.thread.sessionId,
       parentThreadId: threadId,
@@ -306,8 +290,6 @@ describe('Agent Core persistence', () => {
       archived: false,
       configuration,
       toolCeiling: null,
-      modelOverride: null,
-      reasoningEffortOverride: null,
     });
 
     const cached = store.require(threadId);
@@ -322,8 +304,6 @@ describe('Agent Core persistence', () => {
         archived: false,
         configuration,
         toolCeiling: null,
-        modelOverride: null,
-        reasoningEffortOverride: null,
       });
       store.require(nextId);
     }

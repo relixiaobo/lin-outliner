@@ -246,6 +246,22 @@ describe('Agent registry projection', () => {
     expect(entry).toMatchObject({ status: 'interrupted', stoppedByUser: true });
   });
 
+  test('keeps execution fallback provenance in the stable Agent registry entry', () => {
+    const fallback = {
+      requestedModelProvider: 'anthropic',
+      requestedModel: 'anthropic/retired-model',
+      requestedReasoningEffort: 'high',
+      reason: 'unavailable' as const,
+    };
+    const before = projectSubagentConversation(input());
+    const after = projectSubagentConversation(input({
+      executions: executionMap([execution({ executionSelectionFallback: fallback })]),
+    }), before);
+
+    expect(after.byAgentId.get(CHILD_ID)?.executionSelectionFallback).toEqual(fallback);
+    expect(after.byAgentId.get(CHILD_ID)).not.toBe(before.byAgentId.get(CHILD_ID));
+  });
+
   test('counts live descendants without flattening the tree', () => {
     const projection = projectSubagentConversation(input({
       executions: executionMap([
@@ -521,6 +537,7 @@ function execution(overrides: Partial<SubagentExecutionProjection> = {}): Subage
     notificationCutoff: 'open',
     executionMode: 'ordinary',
     settlementCoverage: null,
+    executionSelectionFallback: null,
     worktree: null,
     createdAt: 10,
     updatedAt: 10,

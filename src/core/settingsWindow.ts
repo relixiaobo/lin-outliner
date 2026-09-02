@@ -25,6 +25,8 @@ export type SettingsPageTarget = 'services' | 'skills' | 'agents' | 'about';
 export interface SettingsOpenTarget {
   category?: SettingsCategoryTarget;
   page?: SettingsPageTarget;
+  /** Agent type whose editor should open when the Agents page is targeted. */
+  agentType?: string;
   /**
    * A group to scroll to and briefly highlight. Landing at the top of a long
    * category is a downgrade for a contextual "open settings" affordance, which is
@@ -35,8 +37,10 @@ export interface SettingsOpenTarget {
 
 export const SETTINGS_CATEGORY_PARAM = 'category';
 export const SETTINGS_ANCHOR_PARAM = 'anchor';
+export const SETTINGS_AGENT_TYPE_PARAM = 'agent';
 export const LIN_SETTINGS_NAVIGATE_CHANNEL = 'lin:settings-navigate';
 const SETTINGS_ANCHOR_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const SETTINGS_AGENT_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 /** Which category owns each page, so a page target routes without being told twice. */
 const PAGE_CATEGORY: Record<SettingsPageTarget, SettingsCategoryTarget> = {
@@ -65,6 +69,10 @@ export function isSettingsAnchorTarget(value: unknown): value is string {
   return typeof value === 'string' && SETTINGS_ANCHOR_PATTERN.test(value);
 }
 
+export function isSettingsAgentTypeTarget(value: unknown): value is string {
+  return typeof value === 'string' && SETTINGS_AGENT_TYPE_PATTERN.test(value);
+}
+
 export function settingsPageCategory(page: SettingsPageTarget): SettingsCategoryTarget {
   return PAGE_CATEGORY[page];
 }
@@ -82,6 +90,7 @@ export function settingsOpenTargetFromSearch(search: string): SettingsOpenTarget
   const params = new URLSearchParams(search);
   const raw = params.get(SETTINGS_CATEGORY_PARAM) ?? '';
   const anchor = params.get(SETTINGS_ANCHOR_PARAM);
+  const agentType = params.get(SETTINGS_AGENT_TYPE_PARAM);
   const [head, tail] = raw.split('/');
   const target: SettingsOpenTarget = {};
 
@@ -98,6 +107,7 @@ export function settingsOpenTargetFromSearch(search: string): SettingsOpenTarget
     target.category = head;
   }
   if ((target.category || target.page) && isSettingsAnchorTarget(anchor)) target.anchor = anchor;
+  if (target.page === 'agents' && isSettingsAgentTypeTarget(agentType)) target.agentType = agentType;
   return target;
 }
 

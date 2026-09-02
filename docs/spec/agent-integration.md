@@ -35,6 +35,9 @@ Agent Core. It is a contract checklist, not project status.
   `task_stop`; do not add a roster, inbox, follow-up, wait, or polling alias.
 - Declare Core scope and action kinds.
 - Apply effective configuration and parent capability ceilings.
+- Keep collaboration Agent model/reasoning choices out of Role definitions and
+  the model-visible `agent` schema. Resolve per-type Settings over the direct
+  parent before admission, and reuse the child snapshot on resume.
 - Return native structured unavailable or failure results.
 - Emit one started and one terminal Item.
 - Mint a fresh UUIDv7 internal identity for every provider tool call. Keep raw provider
@@ -90,6 +93,9 @@ Agent Core. It is a contract checklist, not project status.
 - Cover empty, idle, active, failed, interrupted, and input-request states.
 - Derive Agent rows from canonical lineage, execution generation, child Turn,
   and pending-notification state, never a model wait Item.
+- Render unavailable-selection fallback once at the live chip or delivered
+  report, preserve it across reload, and deep-link its action to the matching
+  Agent editor.
 - Verify light and dark appearance for changed surfaces.
 
 ## Persistence Contract
@@ -108,8 +114,8 @@ Agent Core. It is a contract checklist, not project status.
   reconciliation, and Thread deletion.
 - Keep feature stores explicitly owned and keyed by canonical IDs.
 - Persist Agent identity, recorded configuration, stop provenance, retained
-  worktree metadata, and pending `{agentId, generation}` delivery without adding
-  a second transcript.
+  worktree metadata, bounded execution-selection fallback, and pending
+  `{agentId, generation}` delivery without adding a second transcript.
 - Serialize Automation claims with pause, delete, Start now, and dispatch; keep
   Memory eligibility based on immutable Turn provenance.
 - Test crash recovery and idempotent reconciliation.
@@ -119,6 +125,9 @@ Agent Core. It is a contract checklist, not project status.
 
 - Add protocol codec and invalid-state tests.
 - Add lifecycle and restart tests for persistent behavior.
+- Prove a settings change affects only fresh Agent identities: existing Agents
+  keep their effective provider/model/reasoning snapshot across resume and
+  restart, while nested Agents inherit what their direct parent actually runs.
 - Add renderer tests for each visible canonical state.
 - Add E2E coverage for the user workflow.
 - Verify Thread-reference URI parsing does not expand Outline `ReferenceTarget`,

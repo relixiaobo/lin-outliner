@@ -37,8 +37,6 @@ describe('AgentConfigurationWriter', () => {
       developerInstructions: 'Read the diff and report what is wrong.',
       persona: 'Wren',
       color: 'violet',
-      model: null,
-      reasoningEffort: null,
       tools: null,
       skills: null,
     }]);
@@ -231,17 +229,19 @@ describe('AgentConfigurationWriter', () => {
     });
   });
 
-  test('a save keeps the overrides the editor never shows', async () => {
+  test('a save keeps capability overrides and the sibling execution selection', async () => {
     const { writer, loader, cwd, userData } = await fixture();
-    // Hand-written: a model, a narrowed tool set, and a narrowed Skill set —
-    // none of which the editor renders a field for.
+    // Hand-written capability ceilings and a sibling execution selection.
     await writeJson(userConfigurationPath(userData), {
       roles: {
         auditor: {
           description: 'Audits.',
           developerInstructions: 'Read the diff.',
-          overrides: { model: 'gpt-5', tools: ['file_read'], skills: ['review'] },
+          overrides: { tools: ['file_read'], skills: ['review'] },
         },
+      },
+      agentExecution: {
+        auditor: { modelProvider: 'openai', model: 'openai/gpt-5' },
       },
     });
 
@@ -254,14 +254,69 @@ describe('AgentConfigurationWriter', () => {
     }, 'update');
 
     const written = JSON.parse(await readFile(userConfigurationPath(userData), 'utf8'));
-    // Editing a colour must not silently reset the model and hand the Role the
-    // full tool catalogue on its next spawn.
+    // Editing a colour must not reset either sibling configuration surface.
     expect(written.roles.auditor.overrides).toEqual({
-      model: 'gpt-5',
       tools: ['file_read'],
       skills: ['review'],
     });
-    expect(loader.listEditableRoles(cwd)[0]).toMatchObject({ model: 'gpt-5', color: 'pink' });
+    expect(written.agentExecution.auditor).toEqual({
+      modelProvider: 'openai',
+      model: 'openai/gpt-5',
+    });
+    expect(loader.listEditableRoles(cwd)[0]).toMatchObject({ color: 'pink' });
+  });
+
+  test('writes and clears a built-in execution row with its presentation edit', async () => {
+    const { writer, loader, cwd, userData } = await fixture();
+
+    await writer.writePresentation('user', cwd, 'explore', { persona: 'Scout' }, {
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-opus-5',
+      reasoningEffort: 'high',
+    });
+    expect(loader.listPresentationOverrides(cwd)).toEqual([
+      { agentType: 'explore', layer: 'user', persona: 'Scout', color: null },
+    ]);
+    expect(loader.listAgentExecutionSelections(cwd)).toEqual([{
+      agentType: 'explore',
+      layer: 'user',
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-opus-5',
+      reasoningEffort: 'high',
+    }]);
+
+    await writer.writePresentation('user', cwd, 'explore', {}, {
+      modelProvider: null,
+      model: null,
+      reasoningEffort: null,
+    });
+    expect(loader.listAgentExecutionSelections(cwd)).toEqual([]);
+    expect(JSON.parse(await readFile(userConfigurationPath(userData), 'utf8')))
+      .toEqual({});
+  });
+
+  test('rejects a combined edit atomically when its execution row is invalid', async () => {
+    const { writer, cwd, userData } = await fixture();
+    await writer.writeRole('user', cwd, {
+      name: 'auditor',
+      description: 'Audits.',
+      developerInstructions: 'Read the diff.',
+    }, 'create', {
+      modelProvider: 'openai',
+      model: 'openai/gpt-5.6',
+    });
+    const before = await readFile(userConfigurationPath(userData), 'utf8');
+
+    await expect(writer.writeRole('user', cwd, {
+      name: 'auditor',
+      description: 'This replacement must not land.',
+      developerInstructions: 'Reject the sibling row.',
+    }, 'update', {
+      modelProvider: 'openai',
+      model: 'anthropic/claude-opus-5',
+    })).rejects.toThrow(/qualified by modelProvider/);
+
+    expect(await readFile(userConfigurationPath(userData), 'utf8')).toBe(before);
   });
 
   test('creating over an existing name is refused instead of replacing it', async () => {
@@ -401,6 +456,27 @@ describe('AgentConfigurationWriter', () => {
     // An empty `roles: {}` left behind would read as "the user has an empty
     // collection" instead of "the user has none".
     expect(JSON.parse(await readFile(userConfigurationPath(userData), 'utf8'))).toEqual({});
+  });
+
+  test('deleting a Role removes only its same-layer execution row', async () => {
+    const { writer, loader, cwd } = await fixture();
+    await writer.writeRole('user', cwd, {
+      name: 'a', description: 'A.', developerInstructions: 'A.',
+    }, 'create', { reasoningEffort: 'high' });
+    await writer.writeRole('user', cwd, {
+      name: 'b', description: 'B.', developerInstructions: 'B.',
+    }, 'create', { reasoningEffort: 'low' });
+
+    await writer.deleteRole('user', cwd, 'a');
+
+    expect(loader.listEditableRoles(cwd).map((role) => role.name)).toEqual(['b']);
+    expect(loader.listAgentExecutionSelections(cwd)).toEqual([{
+      agentType: 'b',
+      layer: 'user',
+      modelProvider: null,
+      model: null,
+      reasoningEffort: 'low',
+    }]);
   });
 
   test('names a Thread by its type, and an isolated Skill by its own name', async () => {

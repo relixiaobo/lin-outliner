@@ -12,6 +12,7 @@ import {
   sniffAssetMimeType as sniffMimeType,
 } from '../core/assetMetadata';
 import { resolveRendererThreadStartDefaults } from './agent/rendererThreadStartDefaults';
+import { resolveAgentExecutionSelection } from './agent/agentExecutionSelection';
 import { gitOutput } from './agent/context/AgentStartupContext';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../core/agent/tools';
 import type { ConfigurationLayerTarget } from './agent/AgentConfigurationWriter';
@@ -97,6 +98,7 @@ import {
   DAILY_NOTES_ID,
   type AgentCapabilityCatalog,
   type AgentEditorView,
+  type AgentExecutionSelectionDraft,
   type AgentProfileDraft,
   type AgentRoleDraft,
   type AssetIngestInput,
@@ -410,6 +412,14 @@ const agentHost = createAgentHost({
     ),
     resolveRole: (name, cwd) => configuration.resolveRole(name, cwd),
     resolveAgentType: (name, cwd) => configuration.resolveAgentType(name, cwd),
+    resolveAgentExecution: async (agentType, cwd, parent) => resolveAgentExecutionSelection({
+      selection: configuration.resolveAgentExecution(agentType, cwd),
+      parent,
+      getProviderRuntimeConfig,
+      validateSelection: (selection, provider) => {
+        validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
+      },
+    }),
     resolveRoleCatalog: (cwd, reportFailure) => (
       configuration.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure)
     ),
@@ -419,7 +429,6 @@ const agentHost = createAgentHost({
     resolvePersona: (thread, reportFailure) => (
       configuration.resolveThreadPersona(thread, reportFailure)
     ),
-    resolveProviderModelIds: (providerId) => rankedModels(providerId).map((model) => model.id),
     resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
     resolveSubagentLimits: async () => {
       const settings = await getAgentRuntimeSettings();
@@ -1810,6 +1819,7 @@ async function agentEditorView(cwd: string): Promise<AgentEditorView> {
     entries: agentHost.configuration.resolveIdentityCatalog(cwd),
     roles: agentHost.configuration.listEditableRoles(cwd),
     presentationOverrides: agentHost.configuration.listPresentationOverrides(cwd),
+    executionSelections: agentHost.configuration.listAgentExecutionSelections(cwd),
     profile: agentHost.configuration.resolveEditableProfile(cwd),
     builtInDefinitions: agentHost.configuration.listBuiltInDefinitions(),
     capabilities: await agentCapabilityCatalog(),
@@ -1853,6 +1863,51 @@ function decodeRoleDraft(value: unknown): AgentRoleDraft {
     ...(record.tools === undefined ? {} : { tools: textList(record.tools, 'role.tools') }),
     ...(record.skills === undefined ? {} : { skills: textList(record.skills, 'role.skills') }),
   };
+}
+
+function decodeExecutionSelectionDraft(value: unknown): AgentExecutionSelectionDraft {
+  const record = plainObject(value, 'execution');
+  return {
+    ...(record.modelProvider === undefined
+      ? {}
+      : { modelProvider: nullableText(record.modelProvider, 'execution.modelProvider') }),
+    ...(record.model === undefined
+      ? {}
+      : { model: nullableText(record.model, 'execution.model') }),
+    ...(record.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: nullableText(record.reasoningEffort, 'execution.reasoningEffort') }),
+  };
+}
+
+function nullableText(value: unknown, path: string): string | null {
+  return value === null ? null : requiredText(value, path);
+}
+
+async function validateAgentExecutionDraft(
+  cwd: string,
+  layer: 'user' | 'project',
+  agentType: string,
+  draft: AgentExecutionSelectionDraft | undefined,
+): Promise<void> {
+  if (draft === undefined) return;
+  const existing = agentHost.configuration.listAgentExecutionSelections(cwd)
+    .find((row) => row.agentType === agentType && row.layer === layer);
+  const modelProvider = draft.modelProvider ?? null;
+  const model = draft.model ?? null;
+  const reasoningEffort = draft.reasoningEffort ?? null;
+  if (existing
+    && existing.modelProvider === modelProvider
+    && existing.model === model
+    && existing.reasoningEffort === reasoningEffort) return;
+  if (modelProvider === null || model === null) return;
+  const prefix = `${modelProvider}/`;
+  if (!model.startsWith(prefix)) throw new Error(`Model must be qualified by provider ${modelProvider}`);
+  const provider = await getProviderRuntimeConfig(modelProvider, model.slice(prefix.length));
+  if (!provider) throw new Error('The selected Agent model is unavailable');
+  if (reasoningEffort !== null) {
+    validateAgentModelSelection(model, reasoningEffort as never, provider);
+  }
 }
 
 function decodeProfileDraft(value: unknown): AgentProfileDraft {
@@ -2464,11 +2519,18 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return await agentEditorView(agentEditorCwd(args.cwd));
     case 'agent_write_role': {
       const cwd = agentEditorCwd(args.cwd);
+      const layer = layerTarget(args.layer);
+      const role = decodeRoleDraft(args.role);
+      const execution = args.execution === undefined
+        ? undefined
+        : decodeExecutionSelectionDraft(args.execution);
+      await validateAgentExecutionDraft(cwd, layer, role.name, execution);
       await agentHost.configuration.writeRole(
-        layerTarget(args.layer),
+        layer,
         cwd,
-        decodeRoleDraft(args.role),
+        role,
         args.mode === 'create' ? 'create' : 'update',
+        execution,
       );
       notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
       return await agentEditorView(cwd);
@@ -2500,11 +2562,18 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     }
     case 'agent_write_presentation': {
       const cwd = agentEditorCwd(args.cwd);
+      const layer = layerTarget(args.layer);
+      const agentType = requiredText(args.agentType, 'agentType');
+      const execution = args.execution === undefined
+        ? undefined
+        : decodeExecutionSelectionDraft(args.execution);
+      await validateAgentExecutionDraft(cwd, layer, agentType, execution);
       await agentHost.configuration.writePresentation(
-        layerTarget(args.layer),
+        layer,
         cwd,
-        requiredText(args.agentType, 'agentType'),
+        agentType,
         decodePresentationDraft(args.presentation),
+        execution,
       );
       notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
       return await agentEditorView(cwd);

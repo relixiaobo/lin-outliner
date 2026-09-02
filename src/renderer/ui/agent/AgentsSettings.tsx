@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   IDENTITY_COLORS,
   IDENTITY_COLOR_TINT,
   MAIN_PRESENTATION_KEY,
+  REASONING_EFFORTS,
   type IdentityColor,
 } from '../../../core/agent/configuration';
 import type {
@@ -10,9 +11,11 @@ import type {
   AgentCapabilityCatalog,
   AgentEditableRole,
   AgentEditorView,
+  AgentExecutionSelectionRow,
   AgentIdentityEntry,
   AgentPresentationOverrideRow,
   AgentProfileView,
+  AgentProviderSettingsView,
 } from '../../api/types';
 import { api } from '../../api/client';
 import { AgentMark } from '../../agent/components/AgentMark';
@@ -29,6 +32,7 @@ import { SelectControl } from '../primitives/SelectControl';
 import { Textarea } from '../primitives/Textarea';
 import { AddIcon, ICON_SIZE } from '../icons';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
+import { buildModelChoices, flattenModelChoices } from './modelChoices';
 
 /** Before the view loads there is nothing to narrow; an empty catalogue reads as "no choices yet", not "none allowed". */
 const EMPTY_CAPABILITIES: AgentCapabilityCatalog = { tools: [], skills: [] };
@@ -50,14 +54,17 @@ const DEFINITION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
  * transcript draws from, so this list is never a second opinion about what
  * shipped.
  */
-export function AgentsSettings({ onError, onNotice }: {
+export function AgentsSettings({ initialAgentType, onError, onNotice, settings }: {
+  readonly initialAgentType?: string;
   readonly onError: (message: string | null) => void;
   readonly onNotice: (message: string | null) => void;
+  readonly settings: AgentProviderSettingsView | null;
 }) {
   const t = useT();
   const [view, setView] = useState<AgentEditorView | null>(null);
   const [editing, setEditing] = useState<EditorTarget | null>(null);
   const [busy, setBusy] = useState(false);
+  const openedInitialTarget = useRef(false);
   // A refused write has to report INSIDE the dialog. The pane's shared feedback
   // block is `position: sticky; z-index: 1` and the dialog backdrop is fixed at
   // `--z-modal`, so an error raised while the editor is open landed behind it
@@ -71,6 +78,21 @@ export function AgentsSettings({ onError, onNotice }: {
       .catch((caught: unknown) => { if (active) onError(errorText(caught)); });
     return () => { active = false; };
   }, [onError]);
+
+  useEffect(() => {
+    if (openedInitialTarget.current || view === null || !initialAgentType) return;
+    openedInitialTarget.current = true;
+    const role = view.roles.find((candidate) => candidate.name === initialAgentType);
+    if (role) {
+      setEditing({ kind: 'role', role });
+      return;
+    }
+    const entry = view.entries.find((candidate) => candidate.agentType === initialAgentType);
+    if (!entry) return;
+    setEditing(entry.agentType === MAIN_PRESENTATION_KEY
+      ? { kind: 'main', entry }
+      : { kind: 'presentation', entry });
+  }, [initialAgentType, view]);
 
   const catalog = useMemo(() => identityCatalogFrom(view?.entries ?? []), [view]);
   const roleNames = useMemo(
@@ -129,7 +151,11 @@ export function AgentsSettings({ onError, onNotice }: {
             entry={catalog.get(role.name)}
             name={role.name}
             onSelect={() => setEditing({ kind: 'role', role })}
-            sublabel={role.description || layerLabel(role.layer, t)}
+            sublabel={listSublabel(
+              role.description || layerLabel(role.layer, t),
+              executionModelUnavailable(role.name, view.executionSelections, settings),
+              t.settings.agents.unavailable,
+            )}
           />
         ))}
       </InsetGroup>
@@ -149,7 +175,11 @@ export function AgentsSettings({ onError, onNotice }: {
               : { kind: 'presentation', entry })}
             sublabel={entry.agentType === MAIN_PRESENTATION_KEY
               ? t.settings.agents.mainSublabel
-              : entry.agentType}
+              : listSublabel(
+                  entry.agentType,
+                  executionModelUnavailable(entry.agentType, view?.executionSelections ?? [], settings),
+                  t.settings.agents.unavailable,
+                )}
           />
         ))}
       </InsetGroup>
@@ -169,6 +199,8 @@ export function AgentsSettings({ onError, onNotice }: {
             t.settings.agents.deleted({ name: editing.role.name }),
           )}
           capabilities={view?.capabilities ?? EMPTY_CAPABILITIES}
+          executionSelections={view?.executionSelections ?? []}
+          providerSettings={settings}
           onDuplicate={editing.kind !== 'presentation' ? undefined : () => setEditing({
             kind: 'new',
             seed: view?.builtInDefinitions.find((row) => row.agentType === editing.entry.agentType),
@@ -205,6 +237,7 @@ export function AgentsSettings({ onError, onNotice }: {
                 // and keeps a later change to the built-in default flowing
                 // through.
                 presentation: { persona: draft.persona, color: draft.color },
+                execution: draft.execution,
               })
               : api.agentWriteRole({
                 layer,
@@ -225,6 +258,7 @@ export function AgentsSettings({ onError, onNotice }: {
                   tools: draft.tools,
                   skills: draft.skills,
                 },
+                execution: draft.execution,
               });
             },
             t.settings.agents.saved({
@@ -309,6 +343,11 @@ interface EditorDraft {
    */
   readonly tools: readonly string[] | null;
   readonly skills: readonly string[] | null;
+  readonly execution: {
+    readonly modelProvider: string | null;
+    readonly model: string | null;
+    readonly reasoningEffort: string | null;
+  };
 }
 
 /**
@@ -318,7 +357,7 @@ interface EditorDraft {
  * lands in.
  */
 function AgentEditorDialog({
-  target, override, takenNames, profile, capabilities, busy, error, onSave, onCancel, onDelete, onDuplicate,
+  target, override, takenNames, profile, capabilities, executionSelections, providerSettings, busy, error, onSave, onCancel, onDelete, onDuplicate,
 }: {
   readonly target: EditorTarget;
   /** What is actually written down for this identity, or null when nothing is. */
@@ -328,6 +367,8 @@ function AgentEditorDialog({
   /** The conversation agent's own configuration, for the `main` editor. */
   readonly profile: AgentProfileView | null;
   readonly capabilities: AgentCapabilityCatalog;
+  readonly executionSelections: readonly AgentExecutionSelectionRow[];
+  readonly providerSettings: AgentProviderSettingsView | null;
   readonly busy: boolean;
   /** A refused write, said where the user is looking rather than behind the backdrop. */
   readonly error: string | null;
@@ -358,8 +399,28 @@ function AgentEditorDialog({
     role?.developerInstructions ?? seed?.developerInstructions ?? (isMain ? profile?.developerInstructions ?? '' : ''),
   );
   const [layer, setLayer] = useState<'user' | 'project'>(
-    role?.layer ?? (isMain ? profile?.layer ?? 'user' : 'user'),
+    role?.layer ?? executionSelectionFor(executionSelections, entry?.agentType ?? null)?.layer
+      ?? (isMain ? profile?.layer ?? 'user' : 'user'),
   );
+  const storedExecution = executionSelectionFor(
+    executionSelections,
+    role?.name ?? entry?.agentType ?? null,
+  );
+  const [model, setModel] = useState(storedExecution?.model ?? '');
+  const [reasoningEffort, setReasoningEffort] = useState(storedExecution?.reasoningEffort ?? '');
+  const modelChoices = useMemo(() => buildModelChoices(providerSettings, {
+    modelProvider: storedExecution?.modelProvider
+      ?? providerSettings?.activeProviderId
+      ?? providerSettings?.providers[0]?.providerId
+      ?? '',
+    model,
+  }), [model, providerSettings, storedExecution?.modelProvider]);
+  const flatModelChoices = useMemo(() => flattenModelChoices(modelChoices), [modelChoices]);
+  const selectedModel = flatModelChoices.find((choice) => choice.value === model);
+  const reasoningLevels = model
+    ? selectedModel?.option.supportedThinkingLevels ?? []
+    : REASONING_EFFORTS;
+  const modelUnavailable = Boolean(model && (!selectedModel || selectedModel.option.contextWindow <= 0));
   // What is stored may name things the catalogue does not: an MCP or extension
   // tool, or a Skill declared but not installed. Those rows are RENDERED, so the
   // user can see and keep them — filtering the save against the catalogue alone
@@ -584,6 +645,59 @@ function AgentEditorDialog({
         </InsetGroup>
       ) : null}
 
+      {!isMain ? (
+        <InsetGroup
+          ariaLabel={t.settings.agents.executionAriaLabel}
+          footnote={modelUnavailable ? t.settings.agents.executionUnavailable : t.settings.agents.executionFootnote}
+          label={t.settings.agents.executionGroup}
+        >
+          <InsetRow
+            label={t.settings.agents.executionModel}
+            trailing={(
+              <SelectControl
+                label={t.settings.agents.executionModel}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setModel(next);
+                  const option = flatModelChoices.find((choice) => choice.value === next)?.option;
+                  if (reasoningEffort && option && !option.supportedThinkingLevels.includes(reasoningEffort as never)) {
+                    setReasoningEffort('');
+                  }
+                }}
+                value={model}
+                variant="popup"
+              >
+                <option value="">{t.settings.agents.executionFollowParent}</option>
+                {flatModelChoices.map((choice) => (
+                  <option key={choice.value} value={choice.value}>
+                    {choice.option.name}{modelChoices.showProviderLabel ? ` (${choice.providerId})` : ''}
+                    {choice.option.contextWindow <= 0 ? ` - ${t.settings.agents.unavailable}` : ''}
+                  </option>
+                ))}
+              </SelectControl>
+            )}
+            wrap
+          />
+          <InsetRow
+            label={t.settings.agents.executionReasoning}
+            trailing={(
+              <SelectControl
+                label={t.settings.agents.executionReasoning}
+                onChange={(event) => setReasoningEffort(event.target.value)}
+                value={reasoningEffort}
+                variant="popup"
+              >
+                <option value="">{t.settings.agents.executionFollowParent}</option>
+                {reasoningLevels.map((level) => (
+                  <option key={level} value={level}>{level}</option>
+                ))}
+              </SelectControl>
+            )}
+            wrap
+          />
+        </InsetGroup>
+      ) : null}
+
       <InsetGroup ariaLabel={t.settings.agents.layerAriaLabel}>
         <InsetRow
           label={t.settings.agents.layer}
@@ -628,6 +742,15 @@ function AgentEditorDialog({
             color,
             tools: narrowing(tools, toolKeys),
             skills: narrowing(skills, skillKeys),
+            execution: {
+              modelProvider: model
+                ? flatModelChoices.find((choice) => choice.value === model)?.providerId
+                  ?? storedExecution?.modelProvider
+                  ?? model.slice(0, model.indexOf('/'))
+                : null,
+              model: model || null,
+              reasoningEffort: reasoningEffort || null,
+            },
           }, layer)}
           tone="subtle"
           variant="primary"
@@ -651,6 +774,37 @@ function AgentEditorDialog({
       ) : null}
     </Dialog>
   );
+}
+
+function executionSelectionFor(
+  rows: readonly AgentExecutionSelectionRow[],
+  agentType: string | null,
+): AgentExecutionSelectionRow | null {
+  if (!agentType) return null;
+  const matching = rows.filter((row) => row.agentType === agentType);
+  return matching.find((row) => row.layer === 'project')
+    ?? matching.find((row) => row.layer === 'user')
+    ?? null;
+}
+
+function executionModelUnavailable(
+  agentType: string,
+  rows: readonly AgentExecutionSelectionRow[],
+  settings: AgentProviderSettingsView | null,
+): boolean {
+  if (settings === null) return false;
+  const selection = executionSelectionFor(rows, agentType);
+  if (!selection?.model) return false;
+  const choices = flattenModelChoices(buildModelChoices(settings, {
+    modelProvider: selection.modelProvider ?? '',
+    model: selection.model,
+  }));
+  const selected = choices.find((choice) => choice.value === selection.model);
+  return !selected || selected.option.contextWindow <= 0;
+}
+
+function listSublabel(base: string, unavailable: boolean, unavailableLabel: string): string {
+  return unavailable ? `${base} · ${unavailableLabel}` : base;
 }
 
 function layerLabel(layer: 'user' | 'project', t: ReturnType<typeof useT>): string {

@@ -722,7 +722,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const agentRoles: Array<{
       name: string; layer: string; description: string; developerInstructions: string;
       persona: string | null; color: string | null;
-      model: string | null; reasoningEffort: string | null; tools: string[] | null;
+      tools: string[] | null; skills: string[] | null;
     }> = [{
       name: 'auditor',
       layer: 'user',
@@ -730,12 +730,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       developerInstructions: 'Read the diff and report what is wrong.',
       persona: 'Wren',
       color: 'violet',
-      model: null,
-      reasoningEffort: null,
       tools: null,
+      skills: null,
     }];
     const agentPresentationOverrides: Array<{
       agentType: string; layer: string; persona: string | null; color: string | null;
+    }> = [];
+    const agentExecutionSelections: Array<{
+      agentType: string;
+      layer: 'user' | 'project';
+      modelProvider: string | null;
+      model: string | null;
+      reasoningEffort: string | null;
     }> = [];
     const agentProfile = {
       name: 'default',
@@ -759,6 +765,30 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       { agentType: 'explore', description: 'Fast codebase explorer.', developerInstructions: 'Search, never write.' },
       { agentType: 'plan', description: 'Software architect.', developerInstructions: 'Design, never write.' },
     ];
+    const applyAgentExecution = (agentType: string, layer: 'user' | 'project', value: unknown) => {
+      if (value === undefined) return;
+      const draft = value as {
+        modelProvider?: string | null;
+        model?: string | null;
+        reasoningEffort?: string | null;
+      };
+      const index = agentExecutionSelections.findIndex((row) => (
+        row.agentType === agentType && row.layer === layer
+      ));
+      if (!draft.model && !draft.reasoningEffort) {
+        if (index >= 0) agentExecutionSelections.splice(index, 1);
+        return;
+      }
+      const row = {
+        agentType,
+        layer,
+        modelProvider: draft.modelProvider ?? null,
+        model: draft.model ?? null,
+        reasoningEffort: draft.reasoningEffort ?? null,
+      };
+      if (index >= 0) agentExecutionSelections[index] = row;
+      else agentExecutionSelections.push(row);
+    };
     const agentIdentityView = () => ({
       entries: [
         ...agentIdentityEntries,
@@ -771,6 +801,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       ],
       roles: agentRoles,
       presentationOverrides: agentPresentationOverrides,
+      executionSelections: agentExecutionSelections,
       profile: { ...agentProfile },
       builtInDefinitions: agentBuiltInDefinitions,
       capabilities: agentCapabilityCatalog,
@@ -1112,6 +1143,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         notificationCutoff: 'open',
         executionMode: 'ordinary',
         settlementCoverage: null,
+        executionSelectionFallback: null,
         worktree: null,
         createdAt: thread.createdAt,
         updatedAt: latestTurn?.completedAt ?? thread.updatedAt,
@@ -5571,23 +5603,25 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             developerInstructions: role.developerInstructions,
             persona: role.persona ?? null,
             color: role.color ?? null,
-            // Preserved across a save, like the writer does: the editor shows
-            // no field for these, so it must not be able to erase them.
-            model: clash?.model ?? null,
-            reasoningEffort: clash?.reasoningEffort ?? null,
             tools: role.tools === undefined ? clash?.tools ?? null : role.tools,
             skills: role.skills === undefined ? clash?.skills ?? null : role.skills,
           };
           const index = agentRoles.findIndex((candidate) => candidate.name === role.name);
           if (index >= 0) agentRoles[index] = next;
           else agentRoles.push(next);
+          applyAgentExecution(role.name, layer, args.execution);
           return clone(agentIdentityView()) as T;
         }
         if (cmd === 'agent_delete_role') {
           const name = String(args.name ?? '');
           const index = agentRoles.findIndex((candidate) => candidate.name === name);
           if (index < 0) throw new Error(`No Agent Role named '${name}' in this configuration`);
+          const layer = agentRoles[index]!.layer;
           agentRoles.splice(index, 1);
+          const executionIndex = agentExecutionSelections.findIndex((row) => (
+            row.agentType === name && row.layer === layer
+          ));
+          if (executionIndex >= 0) agentExecutionSelections.splice(executionIndex, 1);
           return clone(agentIdentityView()) as T;
         }
         if (cmd === 'agent_write_profile') {
@@ -5632,6 +5666,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               color: presentation.color || null,
             });
           }
+          applyAgentExecution(agentType, layer, args.execution);
           return clone(agentIdentityView()) as T;
         }
         if (cmd === 'agent_list_all_skills') {

@@ -50,7 +50,7 @@ Reach for this when the task matches an available agent type, when you have inde
 
 - The agent's final report is not shown to the user — relay what matters.
 - Use agent_message with the agent's ID to continue a previously spawned agent with its context intact; a new agent call starts fresh.
-- Each agent type's model, reasoning effort, and tools come from its Tenon Role.
+- Each agent type's model and reasoning effort come from Agent Settings and follow the parent by default. Tools come from its Tenon Role.
 - \`isolation: "worktree"\` gives the agent its own git worktree (auto-cleaned if unchanged).
 - Subagents run in the background by default; you'll be notified when one finishes or stops. Pass \`run_in_background: false\` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.`;
 
@@ -119,7 +119,6 @@ const TENON_TASK_STOP_DESCRIPTION = `
 `;
 
 const MODEL_DESCRIPTION = 'Optional model override for this agent. Takes precedence over the agent definition\'s model frontmatter. If omitted, uses the agent definition\'s model, or inherits from the parent. Ignored for subagent_type: "fork" — forks always inherit the parent model.';
-const TENON_MODEL_DESCRIPTION = "Optional model override for this agent. Takes precedence over the Role's model. If omitted, uses the Role's model, or inherits from the parent.";
 const ISOLATION_DESCRIPTION = 'Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo. "remote" launches the agent in a remote cloud environment (always runs in background; availability is gated).';
 const TENON_ISOLATION_DESCRIPTION = 'Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo.';
 const RUN_IN_BACKGROUND_DESCRIPTION = "Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.";
@@ -129,8 +128,15 @@ const DEFAULT_TOOL_CATALOG_MANIFEST: readonly NormalizerOperation[] = [
   { kind: 'project', path: [], indexes: [0, 3, 4], names: ['Agent', 'SendMessage', 'TaskStop'] },
   { kind: 'replace', path: [0, 'name'], from: 'Agent', to: 'agent' },
   { kind: 'replace', path: [0, 'description'], from: AGENT_DESCRIPTION, to: TENON_AGENT_DESCRIPTION },
-  { kind: 'replace', path: [0, 'input_schema', 'properties', 'model', 'description'], from: MODEL_DESCRIPTION, to: TENON_MODEL_DESCRIPTION },
-  { kind: 'replace', path: [0, 'input_schema', 'properties', 'model', 'enum'], from: ['sonnet', 'opus', 'haiku', 'fable'], to: ['claude-sonnet-test', 'claude-opus-test'] },
+  {
+    kind: 'delete',
+    path: [0, 'input_schema', 'properties', 'model'],
+    from: {
+      description: MODEL_DESCRIPTION,
+      type: 'string',
+      enum: ['sonnet', 'opus', 'haiku', 'fable'],
+    },
+  },
   { kind: 'replace', path: [0, 'input_schema', 'properties', 'run_in_background', 'description'], from: RUN_IN_BACKGROUND_DESCRIPTION, to: TENON_RUN_IN_BACKGROUND_DESCRIPTION },
   { kind: 'replace', path: [0, 'input_schema', 'properties', 'isolation', 'description'], from: ISOLATION_DESCRIPTION, to: TENON_ISOLATION_DESCRIPTION },
   { kind: 'replace', path: [0, 'input_schema', 'properties', 'isolation', 'enum'], from: ['worktree', 'remote'], to: ['worktree'] },

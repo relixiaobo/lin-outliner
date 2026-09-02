@@ -636,6 +636,14 @@ to another generation. When a user-driven resume reuses the original call
 identity, its oldest terminal receipt retains ownership of the historical
 anchor.
 
+An execution record may also carry the bounded fact that its saved Agent model
+was unavailable and this run followed the parent. While the child runs, its
+spawn chip renders that warning with an **Open Agent Settings** action deep-linked
+to the canonical type. Once the result report exists, the warning moves to that
+report and disappears from the chip, so the same durable fact is never shown
+twice in one transcript. It survives reload and settlement; it is not a toast,
+model-authored prose, or a raw provider error.
+
 The conversation is the only narrative, and every lifecycle event leaves an
 ANCHOR in it at the point where it happened:
 
@@ -1444,9 +1452,10 @@ remembered selection; startup reconciliation does the same when it moves the
 persisted active-provider pointer. New Threads then follow the Settings/Profile
 path until another successful composer selection establishes new memory.
 Existing Threads remain unchanged, and forks continue to inherit their source
-Thread. A child Agent Role without its own model or reasoning override continues
-to inherit the effective model and effort of its parent root Thread, including a
-selection applied from this memory.
+Thread. A child Agent with **Follow parent** inherits the complete effective
+provider/model/reasoning selection of its direct parent, including a root
+selection applied from this memory. Per-type child choices live in Settings →
+Agent → Agents rather than in the composer or Role definition.
 
 Model selection is model-first. The list is flat: the model name leads each row,
 and the provider appears only as a secondary origin label, only when more than

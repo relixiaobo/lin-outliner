@@ -1,6 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { IDENTITY_COLORS, type IdentityColor } from '../../core/agent/configuration';
-import type { AgentProfileDraft, AgentRoleDraft } from '../../core/types';
+import type {
+  AgentExecutionSelectionDraft,
+  AgentProfileDraft,
+  AgentRoleDraft,
+} from '../../core/types';
 import { atomicWriteFile } from '../jsonFileStore';
 import {
   RESERVED_AGENT_TYPE_NAMES,
@@ -29,8 +33,8 @@ import {
  * content while reporting success.
  *
  * It also never destroys what it cannot show. The editor writes a Role's
- * description, instructions, and identity; a Role's `overrides` (model,
- * reasoningEffort, tools, skills, plugins, mcpServers) survive a save
+ * description, instructions, and identity; a Role's capability `overrides`
+ * survive a save
  * untouched unless the draft names them.
  */
 
@@ -65,6 +69,7 @@ export class AgentConfigurationWriter {
     cwd: string,
     draft: AgentRoleDraft,
     mode: RoleWriteMode,
+    execution?: AgentExecutionSelectionDraft,
   ): Promise<void> {
     const name = draft.name.trim();
     // `main` addresses the conversation's own agent wherever presentation is
@@ -100,7 +105,7 @@ export class AgentConfigurationWriter {
         ...(Object.keys(presentation).length > 0 ? { presentation } : {}),
         ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
       };
-      return { ...config, roles };
+      return applyExecutionSelection({ ...config, roles }, name, execution);
     });
   }
 
@@ -159,9 +164,14 @@ export class AgentConfigurationWriter {
       const roles = asObject(config.roles);
       if (!(name in roles)) throw new Error(`No Agent Role named '${name}' in this configuration`);
       delete roles[name];
-      return Object.keys(roles).length > 0
+      const withoutRole = Object.keys(roles).length > 0
         ? { ...config, roles }
         : withoutKey(config, 'roles');
+      return applyExecutionSelection(withoutRole, name, {
+        modelProvider: null,
+        model: null,
+        reasoningEffort: null,
+      });
     });
   }
 
@@ -177,8 +187,13 @@ export class AgentConfigurationWriter {
     cwd: string,
     agentType: string,
     draft: PresentationDraft,
+    execution?: AgentExecutionSelectionDraft,
   ): Promise<void> {
-    await this.edit(target, cwd, (config) => applyPresentation(config, agentType, draft));
+    await this.edit(target, cwd, (config) => applyExecutionSelection(
+      applyPresentation(config, agentType, draft),
+      agentType,
+      execution,
+    ));
   }
 
   private layerPath(target: ConfigurationLayerTarget, cwd: string): string {
@@ -233,6 +248,29 @@ export class AgentConfigurationWriter {
     // The loader holds no cache, so the next read sees this write. Resolving
     // the catalog here would only re-read what the caller is about to.
   }
+}
+
+function applyExecutionSelection(
+  config: JsonObject,
+  agentType: string,
+  draft: AgentExecutionSelectionDraft | undefined,
+): JsonObject {
+  if (draft === undefined) return config;
+  const selections = asObject(config.agentExecution);
+  const modelProvider = draft.modelProvider?.trim() || null;
+  const model = draft.model?.trim() || null;
+  const reasoningEffort = draft.reasoningEffort?.trim() || null;
+  if ((modelProvider === null) !== (model === null)) {
+    throw new Error('Model provider and model must be selected together');
+  }
+  if (modelProvider === null && reasoningEffort === null) delete selections[agentType];
+  else selections[agentType] = {
+    ...(modelProvider === null ? {} : { modelProvider, model }),
+    ...(reasoningEffort === null ? {} : { reasoningEffort }),
+  };
+  return Object.keys(selections).length > 0
+    ? { ...config, agentExecution: selections }
+    : withoutKey(config, 'agentExecution');
 }
 
 /**

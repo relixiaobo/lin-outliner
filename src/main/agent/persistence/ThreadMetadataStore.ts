@@ -1,10 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { decodeThread } from '../../../core/agent/codec';
-import {
-  REASONING_EFFORTS,
-  type EffectiveThreadConfiguration,
-} from '../../../core/agent/configuration';
+import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type {
   Thread,
   ThreadId,
@@ -24,8 +21,6 @@ export interface ThreadCatalogRecord {
   readonly archived: boolean;
   readonly configuration: EffectiveThreadConfiguration;
   readonly toolCeiling: readonly string[] | null;
-  readonly modelOverride: string | null;
-  readonly reasoningEffortOverride: EffectiveThreadConfiguration['reasoningEffort'] | null;
 }
 
 export type ThreadNameOrigin = 'none' | 'automatic' | 'manual' | 'derived';
@@ -67,8 +62,6 @@ interface ThreadRow {
   archived: number;
   configuration_json: string;
   tool_ceiling_json: string | null;
-  model_override: string | null;
-  reasoning_effort_override: string | null;
 }
 
 const THREAD_RECORD_CACHE_LIMIT = 256;
@@ -103,8 +96,6 @@ export class ThreadMetadataStore {
         archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
         configuration_json TEXT NOT NULL,
         tool_ceiling_json TEXT,
-        model_override TEXT,
-        reasoning_effort_override TEXT,
         CHECK (NOT (parent_thread_id IS NOT NULL AND forked_from_id IS NOT NULL))
       ) STRICT;
       CREATE INDEX IF NOT EXISTS threads_list_idx ON threads(archived, updated_at DESC, id DESC);
@@ -143,9 +134,8 @@ export class ThreadMetadataStore {
         INSERT INTO threads (
           id, session_id, parent_thread_id, forked_from_id, agent_nickname, agent_role,
           name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
-          created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json,
-          model_override, reasoning_effort_override
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         thread.id,
         thread.sessionId,
@@ -167,8 +157,6 @@ export class ThreadMetadataStore {
         record.archived ? 1 : 0,
         JSON.stringify(record.configuration),
         record.toolCeiling === null ? null : JSON.stringify(record.toolCeiling),
-        record.modelOverride,
-        record.reasoningEffortOverride,
       ));
   }
 
@@ -193,9 +181,8 @@ export class ThreadMetadataStore {
         INSERT INTO threads (
           id, session_id, parent_thread_id, forked_from_id, agent_nickname, agent_role,
           name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
-          created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json,
-          model_override, reasoning_effort_override
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         thread.id, thread.sessionId, thread.parentThreadId, thread.forkedFromId,
         thread.agentNickname, thread.agentRole, thread.name, record.nameOrigin,
@@ -203,7 +190,6 @@ export class ThreadMetadataStore {
         thread.cwd, thread.createdAt, thread.updatedAt, JSON.stringify(thread.status),
         record.archived ? 1 : 0, JSON.stringify(record.configuration),
         record.toolCeiling === null ? null : JSON.stringify(record.toolCeiling),
-        record.modelOverride, record.reasoningEffortOverride,
       ));
   }
 
@@ -572,24 +558,12 @@ function recordFromRow(row: ThreadRow): ThreadCatalogRecord {
     toolCeiling: row.tool_ceiling_json === null
       ? null
       : JSON.parse(row.tool_ceiling_json) as readonly string[],
-    modelOverride: row.model_override,
-    reasoningEffortOverride: decodeReasoningEffortOverride(row.reasoning_effort_override),
   };
 }
 
 function decodeThreadNameOrigin(value: string): ThreadNameOrigin {
   if (value === 'none' || value === 'automatic' || value === 'manual' || value === 'derived') return value;
   throw new Error(`Invalid persisted Thread name origin: ${value}`);
-}
-
-function decodeReasoningEffortOverride(
-  value: string | null,
-): EffectiveThreadConfiguration['reasoningEffort'] | null {
-  if (value === null) return null;
-  if (!(REASONING_EFFORTS as readonly string[]).includes(value)) {
-    throw new Error(`Invalid persisted reasoning effort override: ${value}`);
-  }
-  return value as EffectiveThreadConfiguration['reasoningEffort'];
 }
 
 export interface ThreadListCursor {

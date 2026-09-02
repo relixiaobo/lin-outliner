@@ -316,6 +316,11 @@ export interface ThreadServiceOptions {
   ) => SkillAdmissionResolution | Promise<SkillAdmissionResolution>;
   readonly resolveRole?: (name: string, cwd: string) => AgentRole;
   readonly resolveAgentType?: (name: string | undefined, cwd: string) => ResolvedAgentType;
+  readonly resolveAgentExecution?: (
+    agentType: string,
+    cwd: string,
+    parent: ThreadConfigurationSummary,
+  ) => AgentExecutionResolution | Promise<AgentExecutionResolution>;
   readonly resolveRoleCatalog?: (
     cwd: string,
     reportFailure?: AgentConfigurationReadFailureReporter,
@@ -332,9 +337,6 @@ export interface ThreadServiceOptions {
     thread: Thread,
     reportFailure?: AgentConfigurationReadFailureReporter,
   ) => string;
-  readonly resolveProviderModelIds?: (
-    providerId: string,
-  ) => readonly string[] | Promise<readonly string[]>;
   readonly resolveSubagentTokenBudget?: () => number | null | Promise<number | null>;
   readonly resolveSubagentLimits?: () => {
     readonly maxDepth: number;
@@ -470,6 +472,7 @@ export interface SpawnChildThreadInput {
   readonly role?: string | AgentRole;
   readonly nickname?: string;
   readonly model?: string;
+  readonly modelProvider?: string;
   readonly reasoningEffort?: EffectiveThreadConfiguration['reasoningEffort'];
   /** Additional child-only ceiling. Values absent from the parent/role result are ignored. */
   readonly allowedTools?: readonly string[];
@@ -490,7 +493,17 @@ export interface SpawnChildThreadInput {
     readonly initialWorktreeCwd: string | null;
     readonly toolPolicy: SubagentRecordedToolPolicy;
     readonly startupContext: AgentStartupContextSnapshot | null;
+    readonly executionSelectionFallback: import('./persistence/SubagentExecutionLedger').AgentExecutionSelectionFallback | null;
   };
+}
+
+export interface AgentExecutionResolution extends ThreadConfigurationSummary {
+  readonly fallback: {
+    readonly requestedModelProvider: string | null;
+    readonly requestedModel: string | null;
+    readonly requestedReasoningEffort: EffectiveThreadConfiguration['reasoningEffort'] | null;
+    readonly reason: 'unavailable';
+  } | null;
 }
 
 export interface SpawnChildThreadResult {
@@ -528,7 +541,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ) => Promise<RoleCatalogContextPayload | null>;
   private readonly resolveIdentityCatalog: (cwd: string) => readonly AgentIdentityEntry[];
   private readonly resolvePersona: (thread: Thread) => string | null;
-  private readonly resolveProviderModelIds: (providerId: string) => Promise<readonly string[]>;
   private readonly resolveAgentStartupContext: (
     parent: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
   ) => Promise<AgentStartupContextSnapshot | null>;
@@ -605,9 +617,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
     // before there was a configured name, rather than inventing one.
     this.resolvePersona = (thread) => (
       options.resolvePersona?.(thread, reportConfigurationReadFailure) ?? null
-    );
-    this.resolveProviderModelIds = async (providerId) => (
-      await options.resolveProviderModelIds?.(providerId) ?? []
     );
     const configuredStartupContextResolver = options.resolveAgentStartupContext;
     this.resolveAgentStartupContext = async (parent) => {
@@ -775,6 +784,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
       (threadId) => this.assertStartupThreadAvailable(threadId),
       (message, rendererSubmissionRetryable) => new ThreadBusyError(message, rendererSubmissionRetryable),
       this.transcripts,
+      async (agentType, cwd, parent) => await options.resolveAgentExecution?.(agentType, cwd, parent) ?? {
+        ...parent,
+        fallback: null,
+      },
     );
     this.catalogOps = new ThreadCatalogOps(
       this.core,
@@ -2515,11 +2528,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async collaborationToolContributions(
     turn: { threadId: ThreadId; turnId: string },
   ): Promise<readonly AgentTool[]> {
-    const providerId = this.core.requireThread(turn.threadId).thread.modelProvider;
-    return this.collaboration.collaborationToolContributions(
-      turn,
-      await this.resolveProviderModelIds(providerId),
-    );
+    return this.collaboration.collaborationToolContributions(turn);
   }
   subagentExecution(threadId: ThreadId): SubagentExecutionRecord | null {
     return this.collaboration.execution(threadId);

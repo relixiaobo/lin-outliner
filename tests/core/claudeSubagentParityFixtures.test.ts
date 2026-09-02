@@ -54,8 +54,6 @@ const BUDGET_BREAKER_EXPECTED = fixture('tenon-local/budget-breaker.json') as {
   readonly spawnRefusal: string;
   readonly resumeRefusal: string;
 };
-const MODELS = ['claude-sonnet-test', 'claude-opus-test'] as const;
-
 describe('Claude Code 2.1.227 Subagent parity fixtures', () => {
   test('freezes the complete captured catalogs and projects only the selected three tools', () => {
     expect(toolNames(DEFAULT_CAPTURED)).toEqual(['Agent', 'ListAgents', 'Monitor', 'SendMessage', 'TaskStop']);
@@ -124,7 +122,7 @@ describe('Claude Code 2.1.227 Subagent parity fixtures', () => {
       {
         name: 'agent',
         description: AGENT_TOOL_DESCRIPTION,
-        input_schema: agentInputSchema(MODELS),
+        input_schema: agentInputSchema(),
       },
       {
         name: 'agent_message',
@@ -150,7 +148,6 @@ describe('Claude Code 2.1.227 Subagent parity fixtures', () => {
       'description',
       'prompt',
       'subagent_type',
-      'model',
       'run_in_background',
       'execution',
       'isolation',
@@ -471,7 +468,7 @@ function fileDigest(relativePath: string): string {
 
 function productionAgentTools(): AgentTool[] {
   return [
-    agentTool('agent', AGENT_TOOL_DESCRIPTION, agentInputSchema(MODELS)),
+    agentTool('agent', AGENT_TOOL_DESCRIPTION, agentInputSchema()),
     agentTool('agent_message', AGENT_MESSAGE_TOOL_DESCRIPTION, AGENT_MESSAGE_INPUT_SCHEMA),
     agentTool('task_stop', TASK_STOP_TOOL_DESCRIPTION, TASK_STOP_INPUT_SCHEMA),
   ];

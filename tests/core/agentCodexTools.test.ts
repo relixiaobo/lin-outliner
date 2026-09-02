@@ -87,13 +87,12 @@ describe('Codex Agent Core model-tool contract', () => {
   });
 
   test('freezes the exact Agent task schemas and property ordering', () => {
-    const agent = agentInputSchema(['model-b', 'model-a', 'model-b']);
+    const agent = agentInputSchema();
     expect(Object.keys(agent)).toEqual(['$schema', 'type', 'properties', 'required', 'additionalProperties']);
     expect(Object.keys(agent.properties as object)).toEqual([
       'description',
       'prompt',
       'subagent_type',
-      'model',
       'run_in_background',
       'execution',
       'isolation',
@@ -103,12 +102,11 @@ describe('Codex Agent Core model-tool contract', () => {
       required: ['description', 'prompt'],
       additionalProperties: false,
       properties: {
-        model: { enum: ['model-b', 'model-a'] },
         execution: { enum: ['read-only'] },
       },
     });
-    expect(agentInputSchema([]).properties).not.toHaveProperty('model');
-    expect(() => agentInputSchema([''])).toThrow('only non-empty');
+    expect(agentInputSchema().properties).not.toHaveProperty('model');
+    expect(JSON.stringify(agentInputSchema())).toBe(JSON.stringify(agent));
     expect(Object.keys(AGENT_MESSAGE_INPUT_SCHEMA.properties as object)).toEqual(['to', 'summary', 'message']);
     expect(AGENT_MESSAGE_INPUT_SCHEMA).toMatchObject({
       $schema: 'https://json-schema.org/draft/2020-12/schema',

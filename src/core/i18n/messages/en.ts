@@ -335,6 +335,14 @@ export const en = {
       mainSublabel: 'The agent you talk to',
       createTitle: 'New Agent',
       editTitle: 'Edit Agent',
+      executionGroup: 'Execution',
+      executionAriaLabel: 'How this agent runs',
+      executionFootnote: 'New runs follow their direct parent unless you choose an override here.',
+      executionUnavailable: 'This saved model is unavailable. New runs will follow their parent until you change it.',
+      executionModel: 'Model',
+      executionReasoning: 'Reasoning',
+      executionFollowParent: 'Follow parent',
+      unavailable: 'Unavailable',
       capabilitiesGroup: 'Capabilities',
       capabilitiesAriaLabel: 'What this agent may use',
       capabilitiesFootnote: 'Unchecking removes a capability from this agent. It can never have more than the agent that hands it work.',
@@ -1419,6 +1427,8 @@ export const en = {
         backgroundWork: 'Background Agents',
         clickForDetails: 'Click to see details',
         reportUnavailable: 'This report is no longer available.',
+        executionFallbackWarning: 'Configured model unavailable; this run followed its parent.',
+        openAgentSettings: 'Open Agent Settings',
         stoppedNote: ({ name }: { name: string }) => (
           `You stopped ${name}. Send it a message to resume it.`
         ),

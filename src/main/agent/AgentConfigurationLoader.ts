@@ -9,6 +9,7 @@ import {
   deriveIdentityColor,
   type AgentPresentation,
   type AgentPresentationOverride,
+  type AgentExecutionSelection,
   type IdentityColor,
   type AgentRole,
   type AgentRoleOverrides,
@@ -21,6 +22,7 @@ import type { AgentIdentityEntry, RoleCatalogContextPayload, RoleCatalogEntry } 
 import type { ErrorReport } from '../../core/errorObservability';
 import type {
   AgentBuiltInDefinition,
+  AgentExecutionSelectionRow,
   AgentEditableRole,
   AgentPresentationOverrideRow,
   AgentProfileView,
@@ -41,6 +43,7 @@ interface ConfigurationLayer {
    * override from underneath.
    */
   readonly presentationOverrides: ReadonlyMap<string, AgentPresentationOverride>;
+  readonly agentExecution: ReadonlyMap<string, AgentExecutionSelection>;
 }
 
 export type AgentConfigurationReadFailureReporter = (report: ErrorReport) => void;
@@ -50,6 +53,7 @@ const EMPTY_LAYER: ConfigurationLayer = Object.freeze({
   profiles: new Map(),
   roles: new Map(),
   presentationOverrides: new Map(),
+  agentExecution: new Map(),
 });
 
 const DEFAULT_PROFILE: ConfigurationProfile = Object.freeze({
@@ -467,14 +471,34 @@ export class AgentConfigurationLoader {
           developerInstructions: role.developerInstructions,
           persona: role.presentation?.persona ?? null,
           color: role.presentation?.color ?? null,
-          model: role.overrides?.model ?? null,
-          reasoningEffort: role.overrides?.reasoningEffort ?? null,
           tools: role.overrides?.tools ?? null,
           skills: role.overrides?.skills ?? null,
         });
       }
     }
     return Object.freeze(rows.sort((left, right) => compareStableText(left.name, right.name)));
+  }
+
+  resolveAgentExecution(agentType: string, cwd: string): AgentExecutionSelection | null {
+    return this.loadMerged(cwd).agentExecution.get(agentType) ?? null;
+  }
+
+  listAgentExecutionSelections(cwd: string): readonly AgentExecutionSelectionRow[] {
+    const user = this.readLayerAndClearFailure(userConfigurationPath(this.userDataPath), 'user');
+    const project = this.readLayerAndClearFailure(projectConfigurationPath(cwd), 'project');
+    const rows: AgentExecutionSelectionRow[] = [];
+    for (const [layer, source] of [[user, 'user'], [project, 'project']] as const) {
+      for (const [agentType, selection] of layer.agentExecution) {
+        rows.push({
+          agentType,
+          layer: source,
+          modelProvider: selection.modelProvider ?? null,
+          model: selection.model ?? null,
+          reasoningEffort: selection.reasoningEffort ?? null,
+        });
+      }
+    }
+    return Object.freeze(rows.sort((left, right) => compareStableText(left.agentType, right.agentType)));
   }
 
   /**
@@ -566,6 +590,7 @@ export class AgentConfigurationLoader {
       profiles: new Map([...user.profiles, ...project.profiles]),
       roles: new Map([...user.roles, ...project.roles]),
       presentationOverrides: new Map([...user.presentationOverrides, ...project.presentationOverrides]),
+      agentExecution: new Map([...user.agentExecution, ...project.agentExecution]),
     };
   }
 
@@ -747,7 +772,7 @@ export function decodeConfigurationLayer(
   path: string,
 ): ConfigurationLayer {
   const root = objectValue(value, path);
-  exactKeys(root, ['defaultProfile', 'profiles', 'roles', 'presentationOverrides'], path);
+  exactKeys(root, ['defaultProfile', 'profiles', 'roles', 'presentationOverrides', 'agentExecution'], path);
   const profiles = new Map<string, ConfigurationProfile>();
   for (const [name, profileValue] of Object.entries(optionalObject(root.profiles, `${path}.profiles`))) {
     validateDefinitionName(name, `${path}.profiles`);
@@ -774,6 +799,20 @@ export function decodeConfigurationLayer(
       decodePresentation(overrideValue, `${path}.presentationOverrides.${name}`),
     );
   }
+  const agentExecution = new Map<string, AgentExecutionSelection>();
+  for (const [name, selectionValue] of Object.entries(
+    optionalObject(root.agentExecution, `${path}.agentExecution`),
+  )) {
+    validateDefinitionName(name, `${path}.agentExecution`);
+    const builtIn = BUILT_IN_AGENT_TYPES.some((entry) => entry.canonicalType === name);
+    if (!builtIn && !roles.has(name)) {
+      throw new Error(`${path}.agentExecution.${name} requires a Role in the same layer`);
+    }
+    agentExecution.set(name, decodeAgentExecutionSelection(
+      selectionValue,
+      `${path}.agentExecution.${name}`,
+    ));
+  }
   return {
     defaultProfile: root.defaultProfile === undefined
       ? null
@@ -781,6 +820,7 @@ export function decodeConfigurationLayer(
     profiles,
     roles,
     presentationOverrides,
+    agentExecution,
   };
 }
 
@@ -874,15 +914,30 @@ function decodePresentation(value: unknown, path: string): AgentPresentationOver
 
 function decodeRoleOverrides(value: unknown, path: string): AgentRoleOverrides {
   const record = objectValue(value, path);
-  exactKeys(record, ['model', 'reasoningEffort', 'tools', 'skills', 'plugins', 'mcpServers'], path);
+  exactKeys(record, ['tools', 'skills', 'plugins', 'mcpServers'], path);
   return Object.freeze({
-    ...(optionalString(record.model, `${path}.model`) === undefined
-      ? {}
-      : { model: optionalString(record.model, `${path}.model`) }),
-    ...(record.reasoningEffort === undefined
-      ? {}
-      : { reasoningEffort: reasoningEffort(record.reasoningEffort, `${path}.reasoningEffort`) }),
     ...optionalCapabilities(record, path),
+  });
+}
+
+function decodeAgentExecutionSelection(value: unknown, path: string): AgentExecutionSelection {
+  const record = objectValue(value, path);
+  exactKeys(record, ['modelProvider', 'model', 'reasoningEffort'], path);
+  const modelProvider = optionalString(record.modelProvider, `${path}.modelProvider`);
+  const model = optionalString(record.model, `${path}.model`);
+  if ((modelProvider === undefined) !== (model === undefined)) {
+    throw new Error(`${path}.modelProvider and ${path}.model must be set together`);
+  }
+  if (modelProvider !== undefined && !model!.startsWith(`${modelProvider}/`)) {
+    throw new Error(`${path}.model must be qualified by modelProvider '${modelProvider}'`);
+  }
+  const effort = record.reasoningEffort === undefined
+    ? undefined
+    : reasoningEffort(record.reasoningEffort, `${path}.reasoningEffort`);
+  if (model === undefined && effort === undefined) throw new Error(`${path} must not be empty`);
+  return Object.freeze({
+    ...(modelProvider === undefined ? {} : { modelProvider, model }),
+    ...(effort === undefined ? {} : { reasoningEffort: effort }),
   });
 }
 

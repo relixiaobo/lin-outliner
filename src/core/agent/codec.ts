@@ -2237,7 +2237,7 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
     'currentTurnId', 'parentItemId', 'stopProvenance', 'terminalStatus', 'notificationState', 'worktree',
     'terminalError', 'deliveryTurnId', 'deliveryClass', 'eligibleAfterGeneration',
     'coverageDisposition', 'omittedOutputBytes', 'omittedOutputTokens', 'generationReceipts',
-    'notificationCutoff', 'executionMode', 'settlementCoverage', 'createdAt', 'updatedAt',
+    'notificationCutoff', 'executionMode', 'settlementCoverage', 'executionSelectionFallback', 'createdAt', 'updatedAt',
   ], path);
   return {
     agentId: uuidV7(record.agentId, `${path}.agentId`),
@@ -2297,9 +2297,36 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
       record.settlementCoverage,
       `${path}.settlementCoverage`,
     ),
+    executionSelectionFallback: decodeExecutionSelectionFallback(
+      record.executionSelectionFallback,
+      `${path}.executionSelectionFallback`,
+    ),
     worktree: decodeSubagentWorktree(record.worktree, `${path}.worktree`),
     createdAt: nonNegativeInteger(record.createdAt, `${path}.createdAt`),
     updatedAt: nonNegativeInteger(record.updatedAt, `${path}.updatedAt`),
+  };
+}
+
+function decodeExecutionSelectionFallback(
+  value: unknown,
+  path: string,
+): SubagentExecutionProjection['executionSelectionFallback'] {
+  if (value === null || value === undefined) return null;
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'requestedModelProvider', 'requestedModel', 'requestedReasoningEffort', 'reason',
+  ], path);
+  return {
+    requestedModelProvider: record.requestedModelProvider === null
+      ? null
+      : stringValue(record.requestedModelProvider, `${path}.requestedModelProvider`, true),
+    requestedModel: record.requestedModel === null
+      ? null
+      : stringValue(record.requestedModel, `${path}.requestedModel`, true),
+    requestedReasoningEffort: record.requestedReasoningEffort === null
+      ? null
+      : stringValue(record.requestedReasoningEffort, `${path}.requestedReasoningEffort`, true),
+    reason: enumValue(record.reason, ['unavailable'], `${path}.reason`),
   };
 }
 

@@ -56,6 +56,8 @@ export interface SubagentRegistryEntry {
   readonly settledAt: number | null;
   readonly error: TurnError | null;
   readonly worktree: SubagentWorktreeSummary | null;
+  /** Bounded durable reason this Agent used its parent's execution selection. */
+  readonly executionSelectionFallback: SubagentExecutionProjection['executionSelectionFallback'];
   /** Live Agents below this one, at any depth. */
   readonly liveDescendantCount: number;
 }
@@ -472,6 +474,7 @@ function projectRegistryEntries(input: SubagentProjectionInput): Map<ThreadId, S
       settledAt: live.settledAt,
       error: live.error,
       worktree: execution.worktree,
+      executionSelectionFallback: execution.executionSelectionFallback,
       liveDescendantCount: 0,
     });
   }
@@ -546,6 +549,7 @@ function recordlessChildren(
         notificationCutoff: 'open',
         executionMode: 'ordinary',
         settlementCoverage: null,
+        executionSelectionFallback: null,
         worktree: null,
         createdAt: thread.createdAt,
         updatedAt: thread.updatedAt,
@@ -818,7 +822,25 @@ function entryEqual(left: SubagentRegistryEntry, right: SubagentRegistryEntry): 
     && left.liveDescendantCount === right.liveDescendantCount
     && left.worktree?.branch === right.worktree?.branch
     && left.worktree?.path === right.worktree?.path
+    && executionSelectionFallbackEqual(
+      left.executionSelectionFallback,
+      right.executionSelectionFallback,
+    )
     && turnErrorEqual(left.error, right.error);
+}
+
+function executionSelectionFallbackEqual(
+  left: SubagentRegistryEntry['executionSelectionFallback'],
+  right: SubagentRegistryEntry['executionSelectionFallback'],
+): boolean {
+  return left === right || (
+    left !== null
+    && right !== null
+    && left.requestedModelProvider === right.requestedModelProvider
+    && left.requestedModel === right.requestedModel
+    && left.requestedReasoningEffort === right.requestedReasoningEffort
+    && left.reason === right.reason
+  );
 }
 
 function generationReceiptsEqual(

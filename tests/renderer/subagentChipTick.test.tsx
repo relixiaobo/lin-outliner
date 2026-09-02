@@ -84,6 +84,40 @@ describe('Agent chip elapsed ticking', () => {
     // generation recorded, and it never moves again.
     expect(document.querySelector('.thread-agent-chip-meta')?.textContent).toBe(settled);
   });
+
+  test('shows durable fallback guidance and opens the matching Agent editor', async () => {
+    const { document, root, window } = installDom();
+    const targets: unknown[] = [];
+    Object.assign(window.lin ?? {}, {
+      openSettings: async (target: unknown) => { targets.push(target); },
+    });
+    const entry: SubagentRegistryEntry = {
+      ...runningEntry(Date.now()),
+      executionSelectionFallback: {
+        requestedModelProvider: 'anthropic',
+        requestedModel: 'anthropic/retired-model',
+        requestedReasoningEffort: 'high',
+        reason: 'unavailable',
+      },
+    };
+
+    await render(root, (
+      <SubagentRegistryProvider
+        actions={{ openAgent: () => undefined, stopAgent: null }}
+        byAgentId={new Map<ThreadId, SubagentRegistryEntry>([[entry.agentId, entry]])}
+      >
+        <SubagentChip agentId={entry.agentId} fallbackName="survey" generation={null} kind="spawn" />
+      </SubagentRegistryProvider>
+    ));
+    expect(document.querySelector('.thread-agent-execution-warning')?.textContent)
+      .toContain('this run followed its parent');
+
+    await act(async () => {
+      document.querySelector<HTMLElement>('.thread-agent-execution-warning-action')?.click();
+      await Promise.resolve();
+    });
+    expect(targets).toEqual([{ page: 'agents', agentType: 'general-purpose' }]);
+  });
 });
 
 function TranscriptFixture({ onRender }: { readonly onRender: () => void }) {
@@ -108,6 +142,7 @@ function runningEntry(startedAt: number): SubagentRegistryEntry {
     settledAt: null,
     error: null,
     worktree: null,
+    executionSelectionFallback: null,
     liveDescendantCount: 0,
   };
 }

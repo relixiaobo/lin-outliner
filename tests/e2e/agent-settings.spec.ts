@@ -231,6 +231,39 @@ test.describe('agent settings window', () => {
     await expect(roleDialog.getByRole('button', { name: 'Delete' })).toBeVisible();
   });
 
+  test('stores Agent execution separately and restores it when the editor reopens', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agent/agents');
+    await settings.getByRole('button', { name: /Rena/ }).click();
+    const dialog = page.getByRole('dialog');
+    const execution = dialog.getByRole('list', { name: 'How this agent runs' });
+    const model = execution.getByRole('combobox', { name: 'Model' });
+    const reasoning = execution.getByRole('combobox', { name: 'Reasoning' });
+
+    await expect(model).toHaveValue('');
+    await expect(reasoning).toHaveValue('');
+    await model.selectOption('openai/gpt-5.4');
+    await reasoning.selectOption('high');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_write_presentation')?.args;
+    }).toMatchObject({
+      agentType: 'explore',
+      execution: {
+        modelProvider: 'openai',
+        model: 'openai/gpt-5.4',
+        reasoningEffort: 'high',
+      },
+    });
+
+    await settings.getByRole('button', { name: /Rena/ }).click();
+    const reopened = page.getByRole('dialog');
+    await expect(reopened.getByRole('combobox', { name: 'Model' }))
+      .toHaveValue('openai/gpt-5.4');
+    await expect(reopened.getByRole('combobox', { name: 'Reasoning' })).toHaveValue('high');
+  });
+
   test('renames an agent and answers with the catalog the transcript reads', async ({ page }) => {
     const settings = await openSettings(page, '&category=agent/agents');
     await settings.getByRole('button', { name: /Rena/ }).click();
@@ -254,6 +287,7 @@ test.describe('agent settings window', () => {
     await expect(dialog.getByRole('textbox', { name: 'Instructions' })).toBeVisible();
     await expect(dialog.getByRole('textbox', { name: 'Type' })).toHaveCount(0);
     await expect(dialog.getByText('the ceiling for every agent')).toBeVisible();
+    await expect(dialog.getByRole('list', { name: 'How this agent runs' })).toHaveCount(0);
 
     await dialog.getByRole('textbox', { name: 'Instructions' }).fill('Always answer in Chinese.');
     // Clicking the row, which is what a user does: the native box is visually

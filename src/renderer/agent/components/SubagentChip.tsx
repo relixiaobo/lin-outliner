@@ -13,6 +13,7 @@ import {
   RefreshIcon,
   SkillIcon,
   StopIcon,
+  WarningIcon,
 } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { WorkingText } from '../../ui/primitives/WorkingText';
@@ -78,6 +79,8 @@ export function SubagentChip({
     ? userFacingAgentError(errorRecord, t.agent.thread.resourceLimitReached)
     : null;
   const running = receipt === null && (entry?.status === 'running' || entry?.status === 'pendingInit');
+  const showExecutionFallback = entry?.executionSelectionFallback
+    && receipt?.notificationState !== 'delivered';
   const visibleStatus = [status, delivery, partial].filter(Boolean).join(' · ');
   const KindIcon = kind === 'resume'
     ? RefreshIcon
@@ -142,6 +145,29 @@ export function SubagentChip({
       {/* Its own line, wrapping in full: a failure the chip had to truncate is
           a failure the reader cannot act on. */}
       {error ? <small className="thread-agent-chip-error">{error}</small> : null}
+      {showExecutionFallback ? (
+        <ExecutionFallbackWarning agentType={entry.agentType} />
+      ) : null}
+    </div>
+  );
+}
+
+export function ExecutionFallbackWarning({ agentType }: { readonly agentType: string | null }) {
+  const t = useT();
+  if (!agentType) return null;
+  return (
+    <div className="thread-agent-execution-warning">
+      <WarningIcon aria-hidden size={ICON_SIZE.tiny} />
+      <span className="thread-agent-execution-warning-content">
+        <span>{t.agent.thread.agent.executionFallbackWarning}</span>
+        <button
+          className="thread-agent-execution-warning-action"
+          onClick={() => void window.lin?.openSettings?.({ page: 'agents', agentType })}
+          type="button"
+        >
+          {t.agent.thread.agent.openAgentSettings}
+        </button>
+      </span>
     </div>
   );
 }

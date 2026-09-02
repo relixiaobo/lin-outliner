@@ -17,12 +17,17 @@ export interface ConfigurationProfile {
 }
 
 export interface AgentRoleOverrides {
-  readonly model?: string;
-  readonly reasoningEffort?: ReasoningEffort;
   readonly tools?: readonly string[];
   readonly skills?: readonly string[];
   readonly plugins?: readonly string[];
   readonly mcpServers?: readonly string[];
+}
+
+/** A standing execution preference for fresh collaboration Agents of one type. */
+export interface AgentExecutionSelection {
+  readonly modelProvider?: string;
+  readonly model?: string;
+  readonly reasoningEffort?: ReasoningEffort;
 }
 
 export interface AgentRole {
@@ -144,8 +149,7 @@ export interface EffectiveThreadConfiguration {
 
 export interface ChildConfigurationRequest {
   readonly role: AgentRole;
-  readonly model?: string;
-  readonly reasoningEffort?: ReasoningEffort;
+  readonly execution?: AgentExecutionSelection;
 }
 
 export function resolveChildConfiguration(
@@ -158,8 +162,8 @@ export function resolveChildConfiguration(
   return Object.freeze({
     profileName: parent.profileName,
     developerInstructions: Object.freeze([request.role.developerInstructions]),
-    model: request.model ?? overrides?.model ?? parent.model,
-    reasoningEffort: request.reasoningEffort ?? overrides?.reasoningEffort ?? parent.reasoningEffort,
+    model: request.execution?.model ?? parent.model,
+    reasoningEffort: request.execution?.reasoningEffort ?? parent.reasoningEffort,
     tools: constrainChildCapabilities(parent.tools, overrides?.tools),
     skills: constrainChildCapabilities(parent.skills, overrides?.skills),
     preloadedSkills,
