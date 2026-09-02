@@ -9665,6 +9665,16 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       token_budget: 100,
     });
     expect(createdGoal.details).toMatchObject({ data: { goal: { status: 'active', tokenBudget: 100 } } });
+    const duplicateGoal = await executeTool(tools, 'create_goal', 'goal-create-duplicate', {
+      objective: 'Replace the active Goal',
+    });
+    expect(duplicateGoal).toMatchObject({
+      outcome: {
+        ok: false,
+        error: { code: 'goal_already_exists' },
+      },
+      instructions: expect.stringContaining('get_goal'),
+    });
     await recordCollaborationSpawnBoundary(context, 'spawn-item');
     const spawned = await executeTool(tools, 'agent', 'spawn-item', {
       description: 'helper',

@@ -1,5 +1,5 @@
 import type { AgentTool, AgentToolResult } from './kernel/types';
-import { agentToolResult, successEnvelope, type ToolEnvelope } from '../capabilities/agentToolEnvelope';
+import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from '../capabilities/agentToolEnvelope';
 import type { TSchema } from 'typebox';
 import {
   assembleModelToolRegistry,
@@ -34,6 +34,7 @@ import {
 import { redactSecretLikeJsonAsync } from '../capabilities/agentSecretRedaction';
 import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules';
 import type { ThreadService } from '../ThreadService';
+import { AgentToolFailure } from '../AgentToolFailure';
 import type { TurnExecutionContext } from './types';
 import { compileToolParameters } from './kernel/exactToolArguments';
 import { createToolArtifactSink, type ToolArtifactSink } from './ToolArtifactSink';
@@ -386,7 +387,11 @@ export class ToolRuntime {
         const shellOwnsTask = hasBackgroundShellTask(taskId, threadId);
         const agentOwnsTask = this.service.hasAgentTask(threadId, taskId);
         if (agentOwnsTask && shellOwnsTask) {
-          throw new Error(`Task ID is ambiguous between an Agent and shell task: ${taskId}`);
+          throw new AgentToolFailure(
+            'task_ambiguous',
+            `Task ID is ambiguous between an Agent and shell task: ${taskId}`,
+            'Inspect the active task identifiers and retry task_stop with an unambiguous ID.',
+          );
         }
         const agent = await this.service.stopAgentTask(threadId, turnId, taskId);
         if (agent !== null) return toolResult('task_stop', agent);
@@ -401,7 +406,11 @@ export class ToolRuntime {
               : { persistedTextReplacements: shell.persistedTextReplacements }),
           };
         }
-        throw new Error(`No task found with ID: ${taskId}`);
+        throw new AgentToolFailure(
+          'task_not_found',
+          `No task found with ID: ${taskId}`,
+          'Use a task ID returned by agent or bash. If the task already ended, continue without stopping it.',
+        );
       }, normalizeTaskStopToolInput),
     ];
   }
@@ -619,7 +628,9 @@ function coreTool(
     parameters: contract.inputSchema as TSchema,
     ...(prepareArguments === undefined ? {} : { prepareArguments }),
     executionMode: 'sequential',
-    execute: async (itemId, params, signal) => toolResult(name, await execute(itemId, params, signal)),
+    execute: async (itemId, params, signal) => executeExpectedFailure(name, async () => (
+      toolResult(name, await execute(itemId, params, signal))
+    )),
   };
 }
 
@@ -638,8 +649,22 @@ function coreResultTool(
     parameters: contract.inputSchema as TSchema,
     ...(prepareArguments === undefined ? {} : { prepareArguments }),
     executionMode: 'sequential',
-    execute: async (itemId, params, signal) => await execute(itemId, params, signal),
+    execute: async (itemId, params, signal) => executeExpectedFailure(name, () => execute(itemId, params, signal)),
   };
+}
+
+async function executeExpectedFailure(
+  tool: string,
+  execute: () => AgentToolResult<unknown> | Promise<AgentToolResult<unknown>>,
+): Promise<AgentToolResult<unknown>> {
+  try {
+    return await execute();
+  } catch (error) {
+    if (!(error instanceof AgentToolFailure)) throw error;
+    return agentToolResult(errorEnvelope(tool, error.code, error.message, {
+      instructions: error.instructions,
+    }));
+  }
 }
 
 function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {

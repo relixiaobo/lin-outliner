@@ -29,6 +29,7 @@ export interface ToolEnvelope<TData = unknown> {
 }
 
 export const TOOL_RESULT_VERSION = 1;
+export const MAX_TENON_RESULT_DATA_BYTES = 256 * 1024;
 
 /**
  * The model-visible error carries only what the model can act on. `recoverable`

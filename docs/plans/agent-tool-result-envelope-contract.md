@@ -256,6 +256,21 @@ Host-private details or diagnostics. Expected returned failures remain ordinary
 completed tool results; only Kernel-owned rejection or execution failure sets
 provider-native `isError: true`.
 
+Known domain refusals use one typed `AgentToolFailure` carrying a stable code,
+bounded message, and recovery instruction. Goal, Thread-history, Automation, and
+task-stop producers raise it only for expected business state. ToolRuntime and the
+Automation adapter convert only that type to semantic failure results; aborts and
+ordinary exceptions continue to the Kernel unchanged. This keeps the distinction
+structural and prevents message matching or catch-all normalization from hiding
+real faults.
+
+File mutation projection is completed before the Kernel sees the result. The
+visible structured patch is globally bounded to 4,096 lines and the shared 256
+KiB data ceiling, while the complete patch remains in Host-private details.
+Clipping changes the successful result to `partial`, adds an actionable warning,
+and records a private truncation metric. It never changes the committed file
+mutation into an internal-result failure.
+
 ## Requirements
 
 - **FR-1:** all current and future `MODEL_TOOL_CATALOG` entries use the semantic

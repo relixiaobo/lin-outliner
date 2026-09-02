@@ -39,6 +39,7 @@ import {
 import { uuidV7 } from '../../uuid';
 import { HostToolDenial } from './HostToolDenial';
 import { compileToolParameters, validateExactToolArguments } from './exactToolArguments';
+import { MAX_TENON_RESULT_DATA_BYTES } from '../../capabilities/agentToolEnvelope';
 
 export type KernelEventSink = (event: KernelEvent) => Promise<void> | void;
 
@@ -59,7 +60,6 @@ export interface KernelSteeringMessage {
 }
 
 const MAX_DETERMINISTIC_ADMISSION_FAILURES = 8;
-const MAX_TENON_RESULT_DATA_BYTES = 256 * 1024;
 const MAX_TENON_RESULT_INSTRUCTIONS_LENGTH = 8_000;
 const MAX_TENON_RESULT_WARNINGS = 20;
 const MAX_TENON_RESULT_WARNING_LENGTH = 2_000;

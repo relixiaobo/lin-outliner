@@ -866,6 +866,20 @@ exceptions are Kernel-owned failures with stable bounded codes and
 Owner-native returned success and error content remain byte- and order-preserving;
 only a failure created by Tenon's Kernel uses the common error header.
 
+Expected business refusals are explicit typed failures at the domain boundary,
+not inferred from exception messages. ToolRuntime maps Goal, Thread-history, and
+task-stop refusals, and the Automation adapter maps Automation refusals, into
+semantic error envelopes. Aborts and every untyped exception continue to escape
+to the Kernel as `aborted` or `execution_failed`; adapters never catch all errors.
+
+`file_edit` and `file_write` project their structured patch before Kernel
+validation. The model-visible projection admits at most 4,096 patch lines across
+all hunks and stays within the shared 256 KiB result-data ceiling. If either
+limit clips the projection, the completed mutation returns `status: "partial"`
+with a warning and private `metrics.truncated`; the complete patch remains only
+in Host-private `details.data`. A clipped presentation therefore cannot turn a
+completed filesystem mutation into `invalid_internal_result`.
+
 Durability transforms inspect only the first compiled Tenon header. They preserve
 its exact bytes when no ephemeral path or image fact changes, transform selected
 ephemeral fields without pretty-printing the result, and never parse later

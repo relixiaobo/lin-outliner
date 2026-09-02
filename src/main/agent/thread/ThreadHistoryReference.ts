@@ -23,6 +23,7 @@ import type { ThreadResourceOps } from './ThreadResourceOps';
 import type { ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import type { ThreadHistoryVisibleEntry } from '../persistence/ThreadHistoryProjectionStore';
 import { redactSecretLikeContent } from '../capabilities/agentSecretRedaction';
+import { AgentToolFailure } from '../AgentToolFailure';
 
 const DEFAULT_SEARCH_LIMIT = 8;
 const MAX_SEARCH_LIMIT = 20;
@@ -179,7 +180,13 @@ export class ThreadHistoryReferenceService {
     this.pruneCitations();
     const current = this.requireCurrentRecord(input.currentThreadId);
     const target = this.requireSameProfileTarget(current, input.threadId);
-    if (!this.historyReadable(target.thread.id)) throw new Error('Referenced Thread history is unavailable');
+    if (!this.historyReadable(target.thread.id)) {
+      throw historyFailure(
+        'thread_history_unavailable',
+        'Referenced Thread history is unavailable',
+        'Use thread_search to choose another available Thread.',
+      );
+    }
     const turnLimit = clamp(input.turnLimit ?? DEFAULT_READ_TURNS, 1, MAX_READ_TURNS);
     const cursor = input.cursor ? this.decodeCursor(input.cursor, target.thread.id) : null;
     const page = this.core.history.historyTurnPage(target.thread.id, cursor?.anchorPosition ?? null, turnLimit);
@@ -224,7 +231,11 @@ export class ThreadHistoryReferenceService {
     ));
     const citationSelections = input.citations ?? [];
     if (new Set(citationSelections.map((selection) => selection.citationKey)).size !== citationSelections.length) {
-      throw new Error('Historical file citation selections must be unique');
+      throw historyFailure(
+        'thread_citation_invalid',
+        'Historical file citation selections must be unique',
+        'Retry thread_read with each citation_key included at most once.',
+      );
     }
     const claimedSelections = citationSelections.map((selection) => {
       const claim = this.citations.get(selection.citationKey);
@@ -236,7 +247,13 @@ export class ThreadHistoryReferenceService {
         || claim.oldestPosition !== page.oldestPosition
         || claim.newestPosition !== page.newestPosition
         || !pageResourceReferences(page.turns).some((ref) => resourceReferenceKey(ref) === resourceReferenceKey(claim.ref))
-      ) throw new Error('Historical file citation is stale or does not belong to this read');
+      ) {
+        throw historyFailure(
+          'thread_citation_stale',
+          'Historical file citation is stale or does not belong to this read',
+          'Call thread_read again and use citation keys from the new page only.',
+        );
+      }
       return { claim, selection };
     });
     const selected = [];
@@ -248,7 +265,11 @@ export class ThreadHistoryReferenceService {
         selection.representation,
       );
       if (!resolved) {
-        throw new Error('Historical file citation is unavailable');
+        throw historyFailure(
+          'thread_citation_unavailable',
+          'Historical file citation is unavailable',
+          'Continue without the citation or call thread_read again to obtain current citation options.',
+        );
       }
       selected.push({ ...resolved, representation: selection.representation });
     }
@@ -367,10 +388,28 @@ export class ThreadHistoryReferenceService {
   }
 
   private requireSameProfileTarget(current: ThreadCatalogRecord, threadId: ThreadId): ThreadCatalogRecord {
-    if (threadId === current.thread.id) throw new Error('A Thread cannot read itself through history tools');
+    if (threadId === current.thread.id) {
+      throw historyFailure(
+        'thread_self_read',
+        'A Thread cannot read itself through history tools',
+        'Use the current conversation context directly, or choose another Thread from thread_search.',
+      );
+    }
     const target = this.core.metadata.read(threadId);
-    if (!target) throw new Error('Referenced Thread is unavailable');
-    if (!sameProfile(current, target)) throw new Error('Referenced Thread belongs to another profile');
+    if (!target) {
+      throw historyFailure(
+        'thread_not_found',
+        'Referenced Thread is unavailable',
+        'Call thread_search and retry with an available thread_id.',
+      );
+    }
+    if (!sameProfile(current, target)) {
+      throw historyFailure(
+        'thread_access_denied',
+        'Referenced Thread belongs to another profile',
+        'Choose a Thread returned by thread_search in the current profile.',
+      );
+    }
     return target;
   }
 
@@ -388,17 +427,17 @@ export class ThreadHistoryReferenceService {
 
   private decodeCursor(value: string, expectedThreadId: ThreadId): HistoryCursorPayload {
     const [body, signature, extra] = value.split('.');
-    if (!body || !signature || extra !== undefined) throw new Error('Invalid Thread history cursor');
+    if (!body || !signature || extra !== undefined) throw invalidHistoryCursor();
     const expected = createHmac('sha256', this.cursorSecret).update(body).digest();
     const actual = Buffer.from(signature, 'base64url');
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-      throw new Error('Invalid Thread history cursor');
+      throw invalidHistoryCursor();
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
     } catch {
-      throw new Error('Invalid Thread history cursor');
+      throw invalidHistoryCursor();
     }
     if (
       !parsed
@@ -408,7 +447,13 @@ export class ThreadHistoryReferenceService {
       || (parsed as HistoryCursorPayload).threadId !== expectedThreadId
       || !Number.isSafeInteger((parsed as HistoryCursorPayload).anchorPosition)
       || (parsed as HistoryCursorPayload).anchorPosition < 0
-    ) throw new Error('Stale or mismatched Thread history cursor');
+    ) {
+      throw historyFailure(
+        'thread_cursor_stale',
+        'Stale or mismatched Thread history cursor',
+        'Call thread_read again without a cursor, then continue with a cursor returned for that Thread.',
+      );
+    }
     return parsed as HistoryCursorPayload;
   }
 
@@ -418,6 +463,18 @@ export class ThreadHistoryReferenceService {
       if (claim.expiresAt <= now) this.citations.delete(key);
     }
   }
+}
+
+function invalidHistoryCursor(): AgentToolFailure {
+  return historyFailure(
+    'thread_cursor_invalid',
+    'Invalid Thread history cursor',
+    'Call thread_read again without a cursor and use only a cursor returned by that call.',
+  );
+}
+
+function historyFailure(code: string, message: string, instructions: string): AgentToolFailure {
+  return new AgentToolFailure(code, message, instructions);
 }
 
 async function projectTurn(

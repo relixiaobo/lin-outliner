@@ -10,6 +10,7 @@ import {
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
+import { AgentToolFailure } from '../../src/main/agent/AgentToolFailure';
 
 describe('unified task_stop dispatcher', () => {
   test('rejects an ID owned by both an Agent and a shell task', async () => {
@@ -27,8 +28,16 @@ describe('unified task_stop dispatcher', () => {
     }, true);
 
     try {
-      await expect(executeTaskStop(tools, { task_id: shellId, shell_id: 'ignored-shell-id' }))
-        .rejects.toThrow(`Task ID is ambiguous between an Agent and shell task: ${shellId}`);
+      const result = await executeTaskStop(tools, { task_id: shellId, shell_id: 'ignored-shell-id' });
+      expect(result).toMatchObject({
+        outcome: {
+          ok: false,
+          error: {
+            code: 'task_ambiguous',
+            message: `Task ID is ambiguous between an Agent and shell task: ${shellId}`,
+          },
+        },
+      });
       expect(calls).toEqual([]);
 
       const shell = await stopBackgroundShellTask(shellId);
@@ -116,8 +125,12 @@ describe('unified task_stop dispatcher', () => {
   test('preserves validation and missing-task errors while returning final output for terminal shells', async () => {
     const tools = await runtimeTools(async () => null);
     await expect(executeTaskStop(tools, {})).rejects.toThrow('Missing required parameter: task_id');
-    await expect(executeTaskStop(tools, { task_id: 'missing-task' }))
-      .rejects.toThrow('No task found with ID: missing-task');
+    expect(await executeTaskStop(tools, { task_id: 'missing-task' })).toMatchObject({
+      outcome: {
+        ok: false,
+        error: { code: 'task_not_found', message: 'No task found with ID: missing-task' },
+      },
+    });
 
     const shellId = await startBackgroundShell();
     await stopBackgroundShellTask(shellId, CONTEXT.thread.id);
@@ -143,8 +156,12 @@ describe('unified task_stop dispatcher', () => {
     const shellId = await startBackgroundShell('00000000-0000-7000-8000-000000000099');
     const tools = await runtimeTools(async () => null);
 
-    await expect(executeTaskStop(tools, { task_id: shellId }))
-      .rejects.toThrow(`No task found with ID: ${shellId}`);
+    expect(await executeTaskStop(tools, { task_id: shellId })).toMatchObject({
+      outcome: {
+        ok: false,
+        error: { code: 'task_not_found', message: `No task found with ID: ${shellId}` },
+      },
+    });
     expect(await stopBackgroundShellTask(shellId, '00000000-0000-7000-8000-000000000099'))
       .toMatchObject({ task_id: shellId, status: 'stopped' });
   });
@@ -152,11 +169,22 @@ describe('unified task_stop dispatcher', () => {
   test('does not fall through to shell when an Agent finishes during stop', async () => {
     const agentId = 'terminal-agent-id';
     const tools = await runtimeTools(async (_threadId, _turnId, taskId) => {
-      throw new Error(`Task ${taskId} is not running (status: completed)`);
+      throw new AgentToolFailure(
+        'task_not_running',
+        `Task ${taskId} is not running (status: completed)`,
+        'The task has already ended; continue without stopping it.',
+      );
     }, true);
 
-    await expect(executeTaskStop(tools, { task_id: agentId }))
-      .rejects.toThrow(`Task ${agentId} is not running (status: completed)`);
+    expect(await executeTaskStop(tools, { task_id: agentId })).toMatchObject({
+      outcome: {
+        ok: false,
+        error: {
+          code: 'task_not_running',
+          message: `Task ${agentId} is not running (status: completed)`,
+        },
+      },
+    });
   });
 
   test('exposes one canonical task_stop and no bash_stop alias', async () => {

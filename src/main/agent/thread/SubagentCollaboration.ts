@@ -26,6 +26,7 @@ import {
   type SubagentTerminalRouting,
 } from '../persistence/SubagentExecutionLedger';
 import type { ResolvedAgentType } from '../AgentConfigurationLoader';
+import { AgentToolFailure } from '../AgentToolFailure';
 import { awaitWithAbort, isAbortError, throwIfAborted } from '../capabilities/agentAwaitWithAbort';
 import { filterSubagentToolKeys,subagentToolAllowed } from '../capabilities/subagentToolPolicy';
 import type {
@@ -941,16 +942,30 @@ export class SubagentCollaboration {
     agentId: string,
   ): Promise<JsonValue | null> {
     this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
-    if (agentId === senderThreadId) throw new Error('An Agent cannot stop itself.');
+    if (agentId === senderThreadId) {
+      throw new AgentToolFailure(
+        'task_self_stop',
+        'An Agent cannot stop itself.',
+        'Continue the current task or ask its parent Agent to stop it.',
+      );
+    }
     const execution = this.reachableExecution(senderThreadId, agentId);
     if (!execution) return null;
     const activeTurnId = this.turnLifecycle.activeTurnId(execution.agentId);
     if (!activeTurnId) {
       const status = terminalStatus(this.core.allTurns(execution.agentId).at(-1));
-      throw new Error(`Task ${agentId} is not running (status: ${status})`);
+      throw new AgentToolFailure(
+        'task_not_running',
+        `Task ${agentId} is not running (status: ${status})`,
+        'The task has already ended; continue without stopping it.',
+      );
     }
     if (activeTurnId !== execution.currentTurnId) {
-      throw this.createThreadBusyError(`Task ${agentId} changed while stopping`);
+      throw new AgentToolFailure(
+        'task_changed',
+        `Task ${agentId} changed while stopping`,
+        'Inspect the task state and retry only if it is still running.',
+      );
     }
     this.executions.recordStopIfCurrent({
       agentId: execution.agentId,

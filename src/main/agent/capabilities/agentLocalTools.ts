@@ -30,6 +30,7 @@ import { sha256Buffer, sha256File } from '../../fileHashing';
 import {
   agentToolResult,
   errorEnvelope,
+  MAX_TENON_RESULT_DATA_BYTES,
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
@@ -1379,11 +1380,10 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
               replaceAll: params.replace_all === true,
             };
             await notifySuccessfulFileTouch(workspace, filePath);
-            return agentToolResult(successEnvelope('file_edit', data, {
+            return fileMutationResult('file_edit', data, visibleFileEdit(data), started, {
               status: 'unchanged',
               instructions: 'The requested replacement already appears to be present.',
-              metrics: metrics(started, data),
-            }), visibleFileEdit(data));
+            });
           }
           throw new LocalToolFailure('old_string_not_found', 'old_string was not found in the current file.', 'Call file_read again and copy an exact current fragment.');
         }
@@ -1423,10 +1423,9 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         };
         await notifySuccessfulFileTouch(workspace, filePath);
         await notifySelfDefinitionContentWrite(workspace, filePath, selfDefinitionWrite, current.content);
-        return agentToolResult(successEnvelope('file_edit', data, {
+        return fileMutationResult('file_edit', data, visibleFileEdit(data), started, {
           instructions: selfDefinitionWriteInstructions(selfDefinitionWrite),
-          metrics: metrics(started, data),
-        }), visibleFileEdit(data));
+        });
       } catch (error) {
         return localErrorResult('file_edit', error, started, filePath);
       }
@@ -1464,11 +1463,10 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
         if (originalContent === params.content) {
           const data: FileWriteData = { type: 'update', filePath, content: params.content, structuredPatch: [], originalFile: originalContent };
           await notifySuccessfulFileTouch(workspace, filePath);
-          return agentToolResult(successEnvelope('file_write', data, {
+          return fileMutationResult('file_write', data, visibleFileWrite(data), started, {
             status: 'unchanged',
             instructions: 'The file already has the requested content.',
-            metrics: metrics(started, data),
-          }), visibleFileWrite(data));
+          });
         }
         const selfDefinitionWrite = await validateSelfDefinitionContentWriteOrThrow({
           workspace,
@@ -1500,10 +1498,9 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
         };
         await notifySuccessfulFileTouch(workspace, filePath);
         await notifySelfDefinitionContentWrite(workspace, filePath, selfDefinitionWrite, originalContent);
-        return agentToolResult(successEnvelope('file_write', data, {
+        return fileMutationResult('file_write', data, visibleFileWrite(data), started, {
           instructions: selfDefinitionWriteInstructions(selfDefinitionWrite),
-          metrics: metrics(started, data),
-        }), visibleFileWrite(data));
+        });
       } catch (error) {
         return localErrorResult('file_write', error, started, filePath);
       }
@@ -3740,13 +3737,25 @@ async function readFileSliceText(filePath: string, start: number, length: number
   }
 }
 
-function visibleFileEdit(data: FileEditData) {
-  // `replaceAll` echoes the model's own arg; `userModified` is a constant false.
-  return {
-    filePath: data.filePath,
-    structuredPatch: data.structuredPatch,
-    ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
+interface VisibleFileMutationProjection {
+  readonly data: {
+    readonly type?: 'create' | 'update';
+    readonly filePath: string;
+    readonly structuredPatch: Hunk[];
+    readonly skillWrite?: ReturnType<typeof visibleSkillWrite>;
   };
+  readonly truncated: boolean;
+}
+
+const MAX_VISIBLE_STRUCTURED_PATCH_LINES = 4_096;
+const FILE_PATCH_TRUNCATION_WARNING = 'The file change completed, but the model-visible patch was truncated. The full patch remains available in Host details.';
+
+function visibleFileEdit(data: FileEditData): VisibleFileMutationProjection {
+  // `replaceAll` echoes the model's own arg; `userModified` is a constant false.
+  return visibleFileMutation({
+    filePath: data.filePath,
+    ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
+  }, data.structuredPatch);
 }
 
 // Model-visible projection for every file_read shape. `type` is dropped (the
@@ -3823,13 +3832,67 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
   }
 }
 
-function visibleFileWrite(data: FileWriteData) {
-  return {
+function visibleFileWrite(data: FileWriteData): VisibleFileMutationProjection {
+  return visibleFileMutation({
     type: data.type,
     filePath: data.filePath,
-    structuredPatch: data.structuredPatch,
     ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
-  };
+  }, data.structuredPatch);
+}
+
+function visibleFileMutation(
+  base: Omit<VisibleFileMutationProjection['data'], 'structuredPatch'>,
+  patch: readonly Hunk[],
+): VisibleFileMutationProjection {
+  const structuredPatch: Hunk[] = [];
+  const data = { ...base, structuredPatch };
+  let visibleBytes = jsonByteLength(data);
+  let visibleLines = 0;
+
+  for (const hunk of patch) {
+    if (structuredPatch.length >= MAX_VISIBLE_STRUCTURED_PATCH_LINES) {
+      return { data, truncated: true };
+    }
+    const projectedHunk: Hunk = { ...hunk, lines: [] };
+    const hunkBytes = jsonByteLength(projectedHunk) + (structuredPatch.length === 0 ? 0 : 1);
+    if (visibleBytes + hunkBytes > MAX_TENON_RESULT_DATA_BYTES) {
+      return { data, truncated: true };
+    }
+    structuredPatch.push(projectedHunk);
+    visibleBytes += hunkBytes;
+
+    for (const line of hunk.lines) {
+      if (visibleLines >= MAX_VISIBLE_STRUCTURED_PATCH_LINES) {
+        return { data, truncated: true };
+      }
+      const lineBytes = jsonByteLength(line) + (projectedHunk.lines.length === 0 ? 0 : 1);
+      if (visibleBytes + lineBytes > MAX_TENON_RESULT_DATA_BYTES) {
+        return { data, truncated: true };
+      }
+      projectedHunk.lines.push(line);
+      visibleLines += 1;
+      visibleBytes += lineBytes;
+    }
+  }
+  return { data, truncated: false };
+}
+
+function fileMutationResult<TData>(
+  tool: 'file_edit' | 'file_write',
+  data: TData,
+  visible: VisibleFileMutationProjection,
+  started: number,
+  options: { readonly status?: 'unchanged'; readonly instructions?: string } = {},
+) {
+  return agentToolResult(successEnvelope(tool, data, {
+    status: visible.truncated ? 'partial' : options.status,
+    instructions: options.instructions,
+    warnings: visible.truncated ? [FILE_PATCH_TRUNCATION_WARNING] : undefined,
+    metrics: {
+      ...metrics(started, data),
+      ...(visible.truncated ? { truncated: true } : {}),
+    },
+  }), visible.data);
 }
 
 function visibleSkillWrite(skillWrite: AgentSkillWriteAudit) {

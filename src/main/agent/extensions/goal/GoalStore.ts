@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { decodeThreadGoal } from '../../../../core/agent/codec';
 import type { AgentWritableThreadGoalStatus, ThreadGoal, ThreadGoalStatus } from '../../../../core/agent/goal';
 import type { ThreadId, TurnId, TurnStatus } from '../../../../core/agent/protocol';
+import { AgentToolFailure } from '../../AgentToolFailure';
 import { openSqlite, type SqliteDatabase } from '../../persistence/sqlite';
 
 interface GoalRow {
@@ -107,13 +108,27 @@ export class GoalStore {
 
   create(threadId: ThreadId, objective: string, tokenBudget: number | null, now = Date.now()): GoalRecord {
     const normalized = objective.trim();
-    if (!normalized) throw new Error('Goal objective must be non-empty');
+    if (!normalized) {
+      throw new AgentToolFailure(
+        'invalid_goal',
+        'Goal objective must be non-empty',
+        'Provide a non-empty objective and retry create_goal.',
+      );
+    }
     if (tokenBudget !== null && (!Number.isSafeInteger(tokenBudget) || tokenBudget < 1)) {
-      throw new Error('Goal token budget must be a positive integer');
+      throw new AgentToolFailure(
+        'invalid_goal',
+        'Goal token budget must be a positive integer',
+        'Provide a positive integer token_budget or omit it, then retry create_goal.',
+      );
     }
     const existing = this.read(threadId);
     if (existing && existing.goal.status !== 'complete') {
-      throw new Error('An unfinished Goal already exists for this Thread');
+      throw new AgentToolFailure(
+        'goal_already_exists',
+        'An unfinished Goal already exists for this Thread',
+        'Call get_goal and continue the existing Goal. Complete or block it before creating another Goal.',
+      );
     }
     const generation = (existing?.generation ?? 0) + 1;
     this.transaction(() => {
@@ -155,17 +170,35 @@ export class GoalStore {
     status: AgentWritableThreadGoalStatus,
     now = Date.now(),
   ): GoalRecord {
-    if (status !== 'blocked' && status !== 'complete') throw new Error('Agents may set only blocked or complete');
+    if (status !== 'blocked' && status !== 'complete') {
+      throw new AgentToolFailure(
+        'invalid_goal_status',
+        'Agents may set only blocked or complete',
+        'Retry update_goal with status set to blocked or complete.',
+      );
+    }
     return this.setStatus(threadId, status, now);
   }
 
   setStatus(threadId: ThreadId, status: ThreadGoalStatus, now = Date.now()): GoalRecord {
     const current = this.read(threadId);
-    if (!current) throw new Error(`Goal not found for Thread: ${threadId}`);
+    if (!current) {
+      throw new AgentToolFailure(
+        'goal_not_found',
+        `Goal not found for Thread: ${threadId}`,
+        'Call create_goal before attempting to update the Goal.',
+      );
+    }
     const result = this.db.prepare(`
       UPDATE goals SET status = ?, updated_at = ? WHERE thread_id = ?
     `).run(status, now, threadId);
-    if (result.changes !== 1) throw new Error(`Goal not found for Thread: ${threadId}`);
+    if (result.changes !== 1) {
+      throw new AgentToolFailure(
+        'goal_not_found',
+        `Goal not found for Thread: ${threadId}`,
+        'Call get_goal to refresh the current state, then create a Goal if none exists.',
+      );
+    }
     if (status !== 'active') this.clearDeferral(threadId);
     return this.read(threadId)!;
   }

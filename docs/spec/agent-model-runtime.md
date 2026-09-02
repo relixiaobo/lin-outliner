@@ -553,6 +553,17 @@ stable bounded common error. Demanding success from expected failures turned
 every refusal (an unknown Skill name, a disabled one, an exhausted child budget)
 into a dead Turn, and the guidance never reached the model that needed it.
 
+Domain adapters preserve this split with a typed expected-failure contract.
+Goal creation/update, Thread-history reads, Automation mutations, and task stop
+raise that type only for known recoverable business refusals; their adapters
+compile it to a semantic result with a stable code and recovery instruction.
+Cancellation and untyped implementation, persistence, or runtime exceptions are
+never normalized by those adapters and remain Kernel-owned failures. Result
+producers must also bound their model-visible projection before returning it:
+large file mutations keep their complete patch in private details while a clipped
+visible patch reports partial success instead of failing Kernel validation after
+the write has already committed.
+
 An OPTIONAL string tool argument the model leaves blank means "not specified", and
 is recorded as `null` rather than as an empty string: a Subagent spawn's `model`,
 `reasoningEffort`, and `message`, and a file change's path, which is named

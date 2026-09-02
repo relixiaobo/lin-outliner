@@ -18,6 +18,7 @@ import type {
 } from '../../../../core/agent/protocol';
 import { isSubagentBudgetExhaustedError } from '../../SubagentBudgetExhaustedError';
 import { uuidV7 } from '../../uuid';
+import { AgentToolFailure } from '../../AgentToolFailure';
 import {
   GoalStore,
   type GoalContinuationKind,
@@ -303,7 +304,13 @@ export class GoalExtension implements AgentCoreExtension {
 
   private createEphemeral(threadId: ThreadId, objective: string, tokenBudget: number | null): GoalRecord {
     const existing = this.ephemeralGoals.get(threadId);
-    if (existing && existing.goal.status !== 'complete') throw new Error('An unfinished Goal already exists for this Thread');
+    if (existing && existing.goal.status !== 'complete') {
+      throw new AgentToolFailure(
+        'goal_already_exists',
+        'An unfinished Goal already exists for this Thread',
+        'Call get_goal and continue the existing Goal. Complete or block it before creating another Goal.',
+      );
+    }
     const now = Date.now();
     const record: GoalRecord = {
       generation: (existing?.generation ?? 0) + 1,
@@ -316,7 +323,13 @@ export class GoalExtension implements AgentCoreExtension {
 
   private updateEphemeral(threadId: ThreadId, status: 'blocked' | 'complete'): GoalRecord {
     const current = this.ephemeralGoals.get(threadId);
-    if (!current) throw new Error(`Goal not found for Thread: ${threadId}`);
+    if (!current) {
+      throw new AgentToolFailure(
+        'goal_not_found',
+        `Goal not found for Thread: ${threadId}`,
+        'Call create_goal before attempting to update the Goal.',
+      );
+    }
     const record = {
       generation: current.generation,
       goal: { ...current.goal, status, updatedAt: Date.now() },

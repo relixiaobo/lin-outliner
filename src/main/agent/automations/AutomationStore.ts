@@ -20,6 +20,7 @@ import {
   type AutomationWorktreeMetadata,
 } from '../../../core/agent/automation';
 import { openSqlite, type SqliteDatabase } from '../persistence/sqlite';
+import { AgentToolFailure } from '../AgentToolFailure';
 import { uuidV7 } from '../uuid';
 import { nextAutomationOccurrence } from './AutomationSchedule';
 
@@ -186,7 +187,11 @@ export class AutomationStore {
     const bindingsChanged = input.projectBindings !== undefined
       && json(input.projectBindings) !== json(current.projectBindings);
     if (current.status === 'completed' && input.status !== undefined && !scheduleChanged) {
-      throw new Error('A completed Automation can only be reactivated by changing its schedule');
+      throw new AgentToolFailure(
+        'automation_invalid_state',
+        'A completed Automation can only be reactivated by changing its schedule',
+        'Change the Automation schedule when reactivating it, or create a new Automation.',
+      );
     }
     const status = current.status === 'completed' && scheduleChanged
       ? input.status ?? 'active'
@@ -245,7 +250,11 @@ export class AutomationStore {
     const current = this.require(id, now);
     if (expectedRevision !== undefined && current.revision !== expectedRevision) throw revisionConflict(current);
     if (current.status === 'completed') {
-      throw new Error('A completed Automation can only be reactivated by changing its schedule');
+      throw new AgentToolFailure(
+        'automation_invalid_state',
+        'A completed Automation can only be reactivated by changing its schedule',
+        'Change the Automation schedule when reactivating it, or create a new Automation.',
+      );
     }
     if (current.status === status) return current;
     this.transaction(() => {
@@ -283,7 +292,13 @@ export class AutomationStore {
         SET deleted_at = ?, revision = revision + 1, updated_at = ?
         WHERE id = ? AND deleted_at IS NULL
       `).run(now, now, id);
-      if (result.changes !== 1) throw new Error(`Automation not found: ${id}`);
+      if (result.changes !== 1) {
+        throw new AgentToolFailure(
+          'automation_not_found',
+          `Automation not found: ${id}`,
+          'View the current Automations, then retry with an existing automation_id.',
+        );
+      }
     });
     return true;
   }
@@ -559,7 +574,13 @@ export class AutomationStore {
 
   private require(id: string, now: number): Automation {
     const automation = this.read(id, now);
-    if (!automation) throw new Error(`Automation not found: ${id}`);
+    if (!automation) {
+      throw new AgentToolFailure(
+        'automation_not_found',
+        `Automation not found: ${id}`,
+        'View the current Automations, then retry with an existing automation_id.',
+      );
+    }
     return automation;
   }
 
@@ -845,5 +866,9 @@ function boundedError(value: string): string {
 }
 
 function revisionConflict(current: Automation): Error {
-  return new Error(`Automation revision conflict: expected current revision ${current.revision}`);
+  return new AgentToolFailure(
+    'automation_revision_conflict',
+    `Automation revision conflict: expected current revision ${current.revision}`,
+    'View the Automation to get its current revision, review the latest state, and retry the update.',
+  );
 }

@@ -1,4 +1,7 @@
 import { readFileSync } from 'node:fs';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, spyOn, test } from 'bun:test';
 import {
   createAssistantMessageEventStream,
@@ -20,7 +23,19 @@ import {
   AGENT_MESSAGE_INPUT_SCHEMA,
   normalizeAgentMessageToolInput,
 } from '../../src/core/agent/tools';
-import { agentToolResult, successEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
+import {
+  agentToolResult,
+  MAX_TENON_RESULT_DATA_BYTES,
+  successEnvelope,
+  type ToolEnvelope,
+} from '../../src/main/agent/capabilities/agentToolEnvelope';
+import { createLocalTools } from '../../src/main/agent/capabilities/agentLocalTools';
+import { createAutomationTool } from '../../src/main/agent/automations/AutomationTool';
+import type { AutomationService } from '../../src/main/agent/automations/AutomationService';
+import { AgentToolFailure } from '../../src/main/agent/AgentToolFailure';
+import type { ThreadService } from '../../src/main/agent/ThreadService';
+import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
+import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 import { MAX_MODEL_PROVIDER_THOUGHT_SIGNATURE_BYTES } from '../../src/core/agent/protocol';
 import type {
   AgentEvent,
@@ -281,6 +296,143 @@ describe('native turn kernel parity', () => {
       }],
     });
     expect(runtime.state.messages.at(-1)).toMatchObject({ role: 'assistant', content: [{ text: 'complete' }] });
+  });
+
+  test('bounds a large real file mutation before Kernel validation while retaining the full private patch', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-file-write-'));
+    try {
+      const filePath = path.join(root, 'large.txt');
+      await writeFile(filePath, 'before\n', 'utf8');
+      const tools = createLocalTools({ localRoot: root });
+      const fileRead = tools.find((candidate) => candidate.name === 'file_read')!;
+      const fileWrite = tools.find((candidate) => candidate.name === 'file_write')!;
+      await fileRead.execute('read-large-file', { file_path: filePath });
+      const content = Array.from(
+        { length: 10_000 },
+        (_, index) => `line ${index} ${'x'.repeat(80)}`,
+      ).join('\n');
+
+      const { runtime, gateway } = await executeToolWithArguments(fileWrite, {
+        file_path: filePath,
+        content,
+      });
+      const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+      const providerResult = gateway.requests[1]?.context.messages
+        .find((message) => message.role === 'toolResult');
+      const headerText = (providerResult?.content[0] as { text: string }).text;
+      const header = JSON.parse(headerText) as {
+        status: string;
+        data: { structuredPatch: Array<{ lines: string[] }> };
+        warnings: string[];
+      };
+      const details = result?.details as ToolEnvelope<{
+        structuredPatch: Array<{ lines: string[] }>;
+      }>;
+      expect(result?.isError).toBe(false);
+      expect(details.ok).toBe(true);
+      expect(details.status).toBe('partial');
+      expect(details.metrics?.truncated).toBe(true);
+      expect(details.data?.structuredPatch[0]?.lines.length).toBeGreaterThan(4_096);
+      expect(header.status).toBe('partial');
+      expect(header.data.structuredPatch[0]?.lines.length).toBeLessThanOrEqual(4_096);
+      expect(Buffer.byteLength(JSON.stringify(header.data), 'utf8')).toBeLessThanOrEqual(
+        MAX_TENON_RESULT_DATA_BYTES,
+      );
+      expect(header.warnings).toEqual([
+        'The file change completed, but the model-visible patch was truncated. The full patch remains available in Host details.',
+      ]);
+      expect(await readFile(filePath, 'utf8')).toBe(content);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps expected adapter failures semantic while unexpected exceptions remain Kernel failures', async () => {
+    const context = toolRuntimeContext();
+    const expectedService = toolRuntimeService({
+      createGoalForTurn: async () => {
+        throw new AgentToolFailure(
+          'goal_already_exists',
+          'An unfinished Goal already exists for this Thread',
+          'Call get_goal and continue the existing Goal.',
+        );
+      },
+      readThreadHistoryForAgent: async () => {
+        throw new AgentToolFailure(
+          'thread_cursor_stale',
+          'Stale or mismatched Thread history cursor',
+          'Call thread_read again without a cursor.',
+        );
+      },
+    });
+    const controlTools = await new ToolRuntime(expectedService, {
+      capabilityTools: () => [],
+      capabilityConfig: { blocks: [] },
+    }).createTools(context);
+    const automationTool = createAutomationTool({
+      update: async () => {
+        throw new AgentToolFailure(
+          'automation_revision_conflict',
+          'Automation revision conflict: expected current revision 2',
+          'View the Automation and retry with its current revision.',
+        );
+      },
+    } as unknown as AutomationService);
+    const fixtures = [{
+      tool: controlTools.find((candidate) => candidate.name === 'task_stop')!,
+      arguments: { task_id: 'missing-task' },
+      code: 'task_not_found',
+      instructions: 'Use a task ID returned by agent or bash. If the task already ended, continue without stopping it.',
+    }, {
+      tool: controlTools.find((candidate) => candidate.name === 'create_goal')!,
+      arguments: { objective: 'Existing objective' },
+      code: 'goal_already_exists',
+      instructions: 'Call get_goal and continue the existing Goal.',
+    }, {
+      tool: controlTools.find((candidate) => candidate.name === 'thread_read')!,
+      arguments: {
+        thread_id: '00000000-0000-7000-8000-000000000099',
+        cursor: 'stale.cursor',
+      },
+      code: 'thread_cursor_stale',
+      instructions: 'Call thread_read again without a cursor.',
+    }, {
+      tool: automationTool,
+      arguments: {
+        mode: 'update',
+        automation_id: '01930000-0000-7000-8000-000000000001',
+        expected_revision: 1,
+        patch: { name: 'Renamed' },
+      },
+      code: 'automation_revision_conflict',
+      instructions: 'View the Automation and retry with its current revision.',
+    }];
+
+    for (const fixture of fixtures) {
+      const { runtime } = await executeToolWithArguments(fixture.tool, fixture.arguments);
+      const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+      expect(result?.isError).toBe(false);
+      const text = (result?.content[0] as { text: string }).text;
+      expect(text).toContain(`"code":"${fixture.code}"`);
+      expect(text).toContain(`"instructions":${JSON.stringify(fixture.instructions)}`);
+    }
+
+    const unexpectedTools = await new ToolRuntime(toolRuntimeService({
+      createGoalForTurn: async () => { throw new Error('goal store unavailable'); },
+    }), {
+      capabilityTools: () => [],
+      capabilityConfig: { blocks: [] },
+    }).createTools(context);
+    const { runtime: unexpected } = await executeToolWithArguments(
+      unexpectedTools.find((candidate) => candidate.name === 'create_goal')!,
+      { objective: 'Unexpected failure' },
+    );
+    expect(unexpected.state.messages.find((message) => message.role === 'toolResult')).toMatchObject({
+      isError: true,
+      content: [{
+        text: '{"ok":false,"error":{"code":"execution_failed","message":"goal store unavailable"}}',
+      }],
+    });
   });
 
   test('preserves owner-native results and distinguishes returned failure from Kernel failure', async () => {
@@ -1605,6 +1757,67 @@ async function executeOneTool(
   const runtime = createRuntime(gateway, { tools: [tool(name, undefined, execute)] });
   await runtime.prompt(USER);
   return runtime;
+}
+
+async function executeToolWithArguments(
+  agentTool: AgentTool,
+  args: Record<string, unknown>,
+): Promise<{ readonly runtime: NativeAgentRuntime; readonly gateway: ScriptedGateway }> {
+  const gateway = new ScriptedGateway([
+    () => terminalStream(assistant([{
+      type: 'toolCall',
+      id: `${agentTool.name}-call`,
+      name: agentTool.name,
+      arguments: args,
+    }], 'toolUse')),
+    () => terminalStream(assistant([{ type: 'text', text: 'complete' }])),
+  ]);
+  const runtime = createRuntime(gateway, {
+    tools: [agentTool],
+    admitToolCall: (request) => persistToolCallAdmission(request, async () => ({
+      id: 'a'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: Buffer.byteLength(JSON.stringify(args), 'utf8'),
+      schemaVersion: 1,
+      kind: 'toolCallArguments',
+    })),
+  });
+  await runtime.prompt(USER);
+  return { runtime, gateway };
+}
+
+function toolRuntimeContext(): TurnExecutionContext {
+  return {
+    thread: {
+      id: '00000000-0000-7000-8000-000000000001',
+      parentThreadId: null,
+      cwd: process.cwd(),
+    },
+    turn: { id: '00000000-0000-7000-8000-000000000002' },
+    configuration: {
+      profileName: 'kernel-tool-adapter-test',
+      developerInstructions: [],
+      model: 'test-model',
+      reasoningEffort: 'medium',
+      tools: ['thread_read', 'create_goal', 'task_stop'],
+      skills: [],
+      preloadedSkills: [],
+      plugins: [],
+      mcpServers: [],
+    },
+  } as unknown as TurnExecutionContext;
+}
+
+function toolRuntimeService(overrides: Partial<ThreadService>): ThreadService {
+  return {
+    collaborationToolContributions: async () => [],
+    extensionToolContributions: async () => [],
+    notifyToolStarted: async () => undefined,
+    notifyToolCompleted: async () => undefined,
+    hasAgentTask: () => false,
+    stopAgentTask: async () => null,
+    ...overrides,
+  } as unknown as ThreadService;
 }
 
 function assistant(
