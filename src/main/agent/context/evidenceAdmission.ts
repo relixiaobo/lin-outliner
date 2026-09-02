@@ -18,7 +18,7 @@ import type {
   TurnEnvironmentContextPayload,
   TurnId,
 } from '../../../core/agent/protocol';
-import type { ThreadContextContribution } from '../../../core/agent/extensions';
+import type { AdmittedThreadContextContribution } from '../ExtensionRegistry';
 import {
   admitReferencedResources,
   type ReferencedAssetResolution,
@@ -40,7 +40,7 @@ export async function admitContextEvidence(input: {
   readonly additionalContext?: AdditionalContext;
   readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
   readonly additionalContextSource?: string;
-  readonly extensionContext: readonly ThreadContextContribution[];
+  readonly extensionContext: readonly AdmittedThreadContextContribution[];
   readonly skillCatalog?: SkillCatalogContextPayload | null;
   readonly roleCatalog?: RoleCatalogContextPayload | null;
   readonly preloadedSkillInvocations?: readonly SkillInvocationContextPayload[];
@@ -85,7 +85,6 @@ export async function admitContextEvidence(input: {
     const userView = buildUserViewPayload(
       input.userView,
       input.projection,
-      nodeReferences.map((reference) => reference.nodeId),
     );
     if (userView) await publish(userView, userViewSummary(userView));
     if (input.skillCatalog) {
@@ -180,7 +179,7 @@ function turnEnvironment(input: {
 
 function additionalContextPayload(
   direct: AdditionalContext | undefined,
-  extensions: readonly ThreadContextContribution[],
+  extensions: readonly AdmittedThreadContextContribution[],
   includeThreadState: boolean,
   directSource?: string,
 ): AdditionalContextPayload | null {
@@ -190,15 +189,21 @@ function additionalContextPayload(
     authority: entry.kind,
     purpose: entry.purpose ?? (entry.kind === 'application' ? 'instruction' as const : 'observation' as const),
     text: entry.value,
+    ...(entry.scope === undefined ? {} : { scope: entry.scope }),
   }))
     .sort((left, right) => compareStableText(left.key, right.key));
   const threadState = includeThreadState && extensions.length > 0
     ? extensions.flatMap((contribution) => Object.entries(contribution.additionalContext).map(([key, entry]) => ({
         key: `${contribution.extensionId}:${key}`,
         source: `extension:${contribution.extensionId}`,
-        authority: entry.kind,
-        purpose: entry.kind === 'application' ? 'instruction' as const : 'observation' as const,
+        authority: entry.kind === 'application' && contribution.applicationInstructions === true
+          ? 'application' as const
+          : 'untrusted' as const,
+        purpose: entry.kind === 'application' && contribution.applicationInstructions === true
+          ? entry.purpose ?? 'instruction' as const
+          : 'observation' as const,
         text: entry.value,
+        ...(entry.scope === undefined ? {} : { scope: entry.scope }),
       }))).sort((left, right) => compareStableText(left.key, right.key))
     : null;
   return turnEntries.length > 0 || threadState !== null
@@ -238,8 +243,8 @@ export function contextEvidenceItem(
 }
 
 function userViewSummary(payload: NonNullable<ReturnType<typeof buildUserViewPayload>>): string {
-  const visible = payload.panels.reduce((total, panel) => total + panel.visibleOutline.length, 0);
-  return `User view (${payload.panels.length} panels, ${visible} visible Nodes)`;
+  const visible = payload.suppliedOutline.reduce((total, supplied) => total + supplied.outline.length, 0);
+  return `User view (${payload.panels.length} views, ${visible} supplied Nodes)`;
 }
 
 function executionMode(thread: Thread): TurnEnvironmentContextPayload['executionMode'] {

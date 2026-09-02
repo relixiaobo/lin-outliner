@@ -1044,12 +1044,12 @@ pane's root; Alt/Option-click opens the node in a new pane.
 The agent dock is independent of the canvas layout, but its default tools operate
 against the active-pane context.
 
-The agent can ask:
-
-- Which pane is active?
-- Which panes are open?
-- What is selected in the active pane?
-- What nodes are visible in the active pane?
+At input admission, renderer supplies bounded structural hints for the current Pane
+layout. Main resolves those hints into semantic view targets. Model context names what
+is displayed, not renderer containers: the active target first, then at most three other
+open targets in left-to-right order. A target may be an Outliner Node, local file or
+directory, asset, linked file, URL, or Thread Trajectory. A preview's owner Node is
+supporting provenance and never replaces the preview itself.
 
 The agent can request:
 
@@ -1063,8 +1063,13 @@ The agent should not:
 - Store its transcript in the workspace layout.
 - Directly mutate pane state without going through a tool or UI action.
 
-The agent's view context is pane-centric (`activePanelId`, `focusedPanelId`,
-`nodePanels`); it carries no tab concept.
+Pane IDs, layout flags, selected Trajectory record IDs, and focus-surface mechanics stay
+inside canonical evidence and diagnostics. They are not model language or Agent action
+targets. Distinct focus, selection, and bounded visible Outline content project as
+separate semantic facts. Visible Outline content is supplied data; merely opening any
+view does not supply the displayed resource's bytes. Ordinary layout changes are sampled
+only with a newly admitted Turn-start or steering input and never inject asynchronously
+into an in-flight generation.
 
 When the agent dock is reopened from its collapsed rail state, focus moves to the
 agent composer editor when the normal composer is visible. If a user-question

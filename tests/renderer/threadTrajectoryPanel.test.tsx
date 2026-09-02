@@ -769,7 +769,7 @@ describe('ThreadTrajectoryPanel', () => {
       stepIndex: 1,
       label: { type: 'context', kinds: ['turnEnvironment'] },
       meta: 'application · observation',
-      preview: '<context-evidence kind="turnEnvironment">working_directory=/workspace</context-evidence>',
+      preview: '<context authority="application" purpose="observation">Working directory: /workspace.</context>',
       primaryEvidence: {
         type: 'preparedContextPart',
         threadId: THREAD_ID,
@@ -1007,10 +1007,10 @@ describe('ThreadTrajectoryPanel', () => {
     });
     const modelContextText = [
       '<system-reminder>',
-      '<context-evidence kind="skillCatalog" authority="application" purpose="instruction">',
+      '<context authority="application" purpose="observation">',
       'Use Browser Pilot for signed-in browser work.',
       'Use code-review for local diffs and pull requests.',
-      '</context-evidence>',
+      '</context>',
       '</system-reminder>',
     ].join('\n');
     const rendered = renderPanel(async (method, request) => {
@@ -1031,7 +1031,7 @@ describe('ThreadTrajectoryPanel', () => {
     const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
     expect(inspector?.textContent).toContain('Sourceapplication · instruction');
     expect(inspector?.textContent).toContain('<system-reminder>');
-    expect(inspector?.textContent).toContain('<context-evidence kind="skillCatalog"');
+    expect(inspector?.textContent).toContain('<context authority="application" purpose="observation"');
     expect(inspector?.textContent).toContain('Use Browser Pilot for signed-in browser work.');
     expect(inspector?.textContent).not.toContain('Available Skills (2)');
 

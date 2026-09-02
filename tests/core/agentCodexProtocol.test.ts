@@ -966,24 +966,30 @@ describe('Codex Agent Core protocol codec', () => {
       {
         schemaVersion: 1,
         kind: 'userView',
-        mode: 'interactive',
         activePanelId: 'panel-1',
         focusedPanelId: 'panel-1',
         focusSurface: 'outline',
         focusedNode: { nodeId: 'node-1', title: 'Focus', panelId: 'panel-1', surface: 'outline' },
         selectedNodes: [],
-        referencedNodes: [],
         panels: [{
           panelId: 'panel-1',
-          rootNodeId: 'root',
-          rootTitle: 'Root',
-          rootType: 'outline',
           active: true,
           focused: true,
           order: 0,
-          childCount: 1,
-          breadcrumb: [],
-          visibleOutline: [{
+          target: {
+            kind: 'node',
+            nodeId: 'root',
+            title: 'Root',
+            rootType: 'outline',
+            childCount: 1,
+            breadcrumb: [],
+          },
+        }],
+        suppliedOutline: [{
+          panelId: 'panel-1',
+          sourceNodeId: 'root',
+          sourceTitle: 'Root',
+          outline: [{
             nodeId: 'node-1',
             title: 'Focus',
             depth: 1,
@@ -994,7 +1000,8 @@ describe('Codex Agent Core protocol codec', () => {
           }],
           visibleOutlineTruncated: false,
         }],
-        truncated: false,
+        viewsComplete: true,
+        selectionTruncated: false,
       },
       {
         schemaVersion: 1,
@@ -1421,14 +1428,15 @@ describe('Codex Agent Core protocol codec', () => {
       selectedNodeIds: ['node-1'],
       panels: [{
         panelId: 'panel-1',
-        rootNodeId: 'root',
         order: 1,
         active: true,
         focused: true,
+        target: { kind: 'node', nodeId: 'root' },
         visibleNodes: [{ nodeId: 'node-1', depth: 1, expanded: false }],
         visibleOutlineTruncated: false,
       }],
-      truncated: false,
+      viewsComplete: true,
+      selectionTruncated: false,
     };
     expect(decodeRendererTurnStartRequest({
       threadId: THREAD_ID,

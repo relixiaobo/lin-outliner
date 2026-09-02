@@ -5,6 +5,50 @@ import { LIBRARY_ID, type DocumentProjection, type NodeProjection } from '../../
 import { buildUserViewPayload, outlineText } from '../../src/main/agent/context/userView';
 
 describe('main-owned Agent user view', () => {
+  test('does not synthesize a view from Today when renderer hints are absent', () => {
+    const document = projection([node('root', 'Today')]);
+    expect(buildUserViewPayload(undefined, document)).toBeNull();
+  });
+
+  test('preserves unresolved active-view state instead of promoting a fallback Pane', () => {
+    const hints: RendererUserViewHints = {
+      activePanelId: 'missing-active',
+      focusedPanelId: null,
+      focusSurface: null,
+      focusedNodeId: null,
+      selectedNodeIds: [],
+      panels: [
+        {
+          panelId: 'missing-active',
+          order: 0,
+          active: true,
+          focused: false,
+          target: { kind: 'node', nodeId: 'missing' },
+          visibleNodes: [],
+          visibleOutlineTruncated: false,
+        },
+        {
+          panelId: 'secondary',
+          order: 1,
+          active: false,
+          focused: false,
+          target: { kind: 'node', nodeId: 'root' },
+          visibleNodes: [],
+          visibleOutlineTruncated: false,
+        },
+      ],
+      viewsComplete: true,
+      selectionTruncated: false,
+    };
+
+    const payload = buildUserViewPayload(hints, projection([node('root', 'Root')]));
+    expect(payload).toMatchObject({
+      activePanelId: null,
+      viewsComplete: false,
+      panels: [{ panelId: 'secondary' }],
+    });
+  });
+
   test('derives reference child counts from the resolved displayed parent', () => {
     const hints: RendererUserViewHints = {
       activePanelId: 'panel-1',
@@ -14,10 +58,10 @@ describe('main-owned Agent user view', () => {
       selectedNodeIds: [],
       panels: [{
         panelId: 'panel-1',
-        rootNodeId: 'root',
         order: 1,
         active: true,
         focused: true,
+        target: { kind: 'node', nodeId: 'root' },
         visibleNodes: [
           { nodeId: 'root', depth: 0, expanded: true },
           { nodeId: 'ref', depth: 1, expanded: true },
@@ -25,18 +69,22 @@ describe('main-owned Agent user view', () => {
         ],
         visibleOutlineTruncated: false,
       }],
-      truncated: false,
+      viewsComplete: true,
+      selectionTruncated: false,
     };
     const payload = buildUserViewPayload(hints, projection([
       node('root', 'Root', { children: ['ref'] }),
       node('ref', 'Reference', { parentId: 'root', type: 'reference', targetId: 'target' }),
       node('target', 'Target', { children: ['child'] }),
       node('child', 'Child', { parentId: 'target' }),
-    ]), []);
+    ]));
 
-    expect(payload?.panels[0]).toMatchObject({
+    expect(payload?.panels[0]?.target).toMatchObject({
+      kind: 'node',
       childCount: 1,
-      visibleOutline: [
+    });
+    expect(payload?.suppliedOutline[0]).toMatchObject({
+      outline: [
         { nodeId: 'root', childCount: 1, collapsed: false },
         { nodeId: 'ref', childCount: 1, collapsed: false },
         { nodeId: 'child', childCount: 0, collapsed: false },
@@ -71,22 +119,23 @@ describe('main-owned Agent user view', () => {
       selectedNodeIds: [referenceId],
       panels: [{
         panelId: 'library-panel',
-        rootNodeId: LIBRARY_ID,
         order: 0,
         active: true,
         focused: true,
+        target: { kind: 'node', nodeId: LIBRARY_ID },
         visibleNodes: [{ nodeId: referenceId, depth: 1, expanded: false }],
         visibleOutlineTruncated: false,
       }],
-      truncated: false,
+      viewsComplete: true,
+      selectionTruncated: false,
     };
 
-    const payload = buildUserViewPayload(hints, current, []);
+    const payload = buildUserViewPayload(hints, current);
 
     expect(todayTitle).toBeTruthy();
     expect(payload?.focusedNode?.title).toBe(todayTitle);
     expect(payload?.selectedNodes[0]?.title).toBe(todayTitle);
-    expect(payload?.panels[0]?.visibleOutline[0]?.title).toBe(todayTitle);
+    expect(payload?.suppliedOutline[0]?.outline[0]?.title).toBe(todayTitle);
     expect(JSON.stringify(payload)).not.toContain(todayId);
   });
 });

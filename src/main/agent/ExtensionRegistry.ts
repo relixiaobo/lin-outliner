@@ -13,12 +13,25 @@ import type {
 } from '../../core/agent/extensions';
 import type { AgentCoreRecordedNotification, Thread, Turn } from '../../core/agent/protocol';
 
-export class ExtensionRegistry {
-  private readonly extensions: AgentCoreExtension[] = [];
+export interface ExtensionCapabilities {
+  readonly applicationInstructions?: true;
+}
 
-  register(extension: AgentCoreExtension): void {
+export interface AdmittedThreadContextContribution extends ThreadContextContribution {
+  readonly applicationInstructions: boolean;
+}
+
+interface RegisteredExtension {
+  readonly extension: AgentCoreExtension;
+  readonly applicationInstructions: boolean;
+}
+
+export class ExtensionRegistry {
+  private readonly registrations: RegisteredExtension[] = [];
+
+  register(extension: AgentCoreExtension, capabilities: ExtensionCapabilities = {}): void {
     if (!extension.id.trim()) throw new Error('Agent Core extension id must be non-empty');
-    if (this.extensions.some((candidate) => candidate.id === extension.id)) {
+    if (this.registrations.some((candidate) => candidate.extension.id === extension.id)) {
       throw new Error(`Duplicate Agent Core extension: ${extension.id}`);
     }
     const rollbackHookCount = [
@@ -29,11 +42,14 @@ export class ExtensionRegistry {
     if (rollbackHookCount !== 0 && rollbackHookCount !== 3) {
       throw new Error(`Extension must implement the complete history rollback lifecycle: ${extension.id}`);
     }
-    this.extensions.push(extension);
+    this.registrations.push({
+      extension,
+      applicationInstructions: capabilities.applicationInstructions === true,
+    });
   }
 
   all(): readonly AgentCoreExtension[] {
-    return [...this.extensions];
+    return this.registrations.map(({ extension }) => extension);
   }
 
   async threadStarted(thread: Thread): Promise<void> {
@@ -53,7 +69,7 @@ export class ExtensionRegistry {
   }
 
   historyRollbackExtensions(): readonly AgentCoreExtension[] {
-    return this.extensions.filter((extension) => extension.prepareHistoryRollback);
+    return this.all().filter((extension) => extension.prepareHistoryRollback);
   }
 
   async invokeHistoryRollbackHook(
@@ -94,22 +110,25 @@ export class ExtensionRegistry {
     await this.invoke((extension) => extension.onTurnError?.(thread, turn, error));
   }
 
-  async threadContext(thread: Thread): Promise<readonly ThreadContextContribution[]> {
-    const contributions: ThreadContextContribution[] = [];
-    for (const extension of this.extensions) {
+  async threadContext(thread: Thread): Promise<readonly AdmittedThreadContextContribution[]> {
+    const contributions: AdmittedThreadContextContribution[] = [];
+    for (const { extension, applicationInstructions } of this.registrations) {
       if (!extension.contributeThreadContext) continue;
       const contribution = await extension.contributeThreadContext(thread);
       if (contribution && contribution.extensionId !== extension.id) {
         throw new Error(`Extension context contribution owner mismatch: ${extension.id}`);
       }
-      contributions.push(contribution ?? { extensionId: extension.id, additionalContext: {} });
+      contributions.push({
+        ...(contribution ?? { extensionId: extension.id, additionalContext: {} }),
+        applicationInstructions,
+      });
     }
     return contributions;
   }
 
   async tools(thread: Thread): Promise<readonly ExtensionToolContribution[]> {
     const contributions: ExtensionToolContribution[] = [];
-    for (const extension of this.extensions) {
+    for (const { extension } of this.registrations) {
       const contribution = await extension.contributeTools?.(thread) ?? null;
       if (!contribution) continue;
       if (contribution.extensionId !== extension.id) {
@@ -130,7 +149,7 @@ export class ExtensionRegistry {
 
   async turnItems(thread: Thread, turn: Turn): Promise<readonly OrderedTurnItemContribution[]> {
     const values: OrderedTurnItemContribution[] = [];
-    for (const extension of this.extensions) {
+    for (const { extension } of this.registrations) {
       const contributed = await extension.contributeTurnItems?.(thread, turn);
       if (contributed) values.push(...contributed);
     }
@@ -144,14 +163,14 @@ export class ExtensionRegistry {
   private async invoke(
     operation: (extension: AgentCoreExtension) => void | Promise<void> | undefined,
   ): Promise<void> {
-    for (const extension of this.extensions) await operation(extension);
+    for (const { extension } of this.registrations) await operation(extension);
   }
 
   private async collect<T>(
     operation: (extension: AgentCoreExtension) => T | null | Promise<T | null>,
   ): Promise<readonly T[]> {
     const values: T[] = [];
-    for (const extension of this.extensions) {
+    for (const { extension } of this.registrations) {
       const value = await operation(extension);
       if (value !== null) values.push(value);
     }

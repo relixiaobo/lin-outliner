@@ -810,7 +810,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       (threadId) => this.core.requireThread(threadId).thread,
       (threadId, turnId) => this.core.readTurn(threadId, turnId),
     );
-    this.extensions.register(this.goals);
+    this.extensions.register(this.goals, { applicationInstructions: true });
   }
 
   static open(
