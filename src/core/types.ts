@@ -1133,8 +1133,6 @@ export interface AgentEditableRole {
   readonly developerInstructions: string;
   readonly persona: string | null;
   readonly color: string | null;
-  readonly model: string | null;
-  readonly reasoningEffort: string | null;
   /**
    * Null means "inherit", not "none". A capability list only ever NARROWS what
    * the parent has, so an absent list is the full inherited set and an empty one
@@ -1151,8 +1149,6 @@ export interface AgentRoleDraft {
   readonly developerInstructions: string;
   readonly persona?: string;
   readonly color?: string;
-  readonly model?: string;
-  readonly reasoningEffort?: string;
   /**
    * A capability narrowing has THREE states and the protocol carries all three:
    * `undefined` leaves whatever is on disk (the draft did not mention it),
@@ -1162,6 +1158,22 @@ export interface AgentRoleDraft {
    */
   readonly tools?: readonly string[] | null;
   readonly skills?: readonly string[] | null;
+}
+
+/** One execution preference exactly as stored in a user or project layer. */
+export interface AgentExecutionSelectionRow {
+  readonly agentType: string;
+  readonly layer: 'user' | 'project';
+  readonly modelProvider: string | null;
+  readonly model: string | null;
+  readonly reasoningEffort: string | null;
+}
+
+/** Sibling payload written atomically with an Agent definition or presentation. */
+export interface AgentExecutionSelectionDraft {
+  readonly modelProvider?: string | null;
+  readonly model?: string | null;
+  readonly reasoningEffort?: string | null;
 }
 
 /**
@@ -1237,6 +1249,7 @@ export interface AgentEditorView {
   readonly entries: readonly AgentIdentityEntry[];
   readonly roles: readonly AgentEditableRole[];
   readonly presentationOverrides: readonly AgentPresentationOverrideRow[];
+  readonly executionSelections: readonly AgentExecutionSelectionRow[];
   readonly profile: AgentProfileView;
   readonly builtInDefinitions: readonly AgentBuiltInDefinition[];
   readonly capabilities: AgentCapabilityCatalog;

@@ -7,7 +7,11 @@ import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadTurns } from '../store/threadStore';
 import { subagentSpeakerName, type SubagentDelivery } from '../subagentPresentation';
 import { ThreadMarkdown } from './ThreadMarkdown';
-import { generationReceiptDelivery, generationReceiptStatus } from './SubagentChip';
+import {
+  ExecutionFallbackWarning,
+  generationReceiptDelivery,
+  generationReceiptStatus,
+} from './SubagentChip';
 import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
 
 /**
@@ -78,8 +82,13 @@ export function SubagentReport({
   // already be running again, but that cannot erase who ended this report.
   if (receipt?.stopProvenance === 'user') {
     return (
-      <div className="thread-item thread-agent-note">
-        <span>{t.agent.thread.agent.stoppedNote({ name: entry.displayName })}</span>
+      <div className="thread-item thread-agent-report-shell">
+        <div className="thread-agent-note">
+          <span>{t.agent.thread.agent.stoppedNote({ name: entry.displayName })}</span>
+        </div>
+        {entry.executionSelectionFallback ? (
+          <ExecutionFallbackWarning agentType={entry.agentType} />
+        ) : null}
       </div>
     );
   }
@@ -132,6 +141,9 @@ export function SubagentReport({
           )}
         </div>
       </div>
+      {entry.executionSelectionFallback ? (
+        <ExecutionFallbackWarning agentType={entry.agentType} />
+      ) : null}
       {/* The hint takes the slot the message actions hold everywhere else — the
           same height, the same row — so revealing it on hover moves nothing
           (B7) and a report ends exactly where any other message ends — the same

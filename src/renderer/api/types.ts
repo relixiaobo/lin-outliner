@@ -14,6 +14,8 @@ export type {
   AgentProviderSecretStatus,
   AgentProviderStoredApiKey,
   AgentEditorView,
+  AgentExecutionSelectionDraft,
+  AgentExecutionSelectionRow,
   AgentEditableRole,
   AgentBuiltInDefinition,
   AgentCapabilityCatalog,

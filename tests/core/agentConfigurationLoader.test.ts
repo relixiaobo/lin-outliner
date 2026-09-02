@@ -183,10 +183,15 @@ describe('AgentConfigurationLoader', () => {
           developerInstructions: 'Use the project review policy.',
           presentation: { persona: 'Noether', color: 'pink' },
           overrides: {
-            model: 'review-model',
-            reasoningEffort: 'xhigh',
             tools: ['file_grep'],
           },
+        },
+      },
+      agentExecution: {
+        reviewer: {
+          modelProvider: 'openai',
+          model: 'openai/review-model',
+          reasoningEffort: 'xhigh',
         },
       },
     });
@@ -210,10 +215,13 @@ describe('AgentConfigurationLoader', () => {
       developerInstructions: 'Use the project review policy.',
       presentation: { persona: 'Noether', color: 'pink' },
       overrides: {
-        model: 'review-model',
-        reasoningEffort: 'xhigh',
         tools: ['file_grep'],
       },
+    });
+    expect(loader.resolveAgentExecution('reviewer', cwd)).toEqual({
+      modelProvider: 'openai',
+      model: 'openai/review-model',
+      reasoningEffort: 'xhigh',
     });
     const roleCatalog = loader.buildRoleCatalogSnapshot(cwd);
     expect(roleCatalog.entries.find((entry) => entry.name === 'reviewer')).toMatchObject({
@@ -222,6 +230,162 @@ describe('AgentConfigurationLoader', () => {
       description: 'Review this project.',
     });
     expect(roleCatalog.entries.find((entry) => entry.name === 'reviewer')?.contentHash).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  test('layers Agent execution rows as whole entries and keeps both stored layers editable', async () => {
+    const { userData, cwd } = await fixturePaths();
+    await writeJson(userConfigurationPath(userData), {
+      roles: {
+        auditor: { description: 'Audits.', developerInstructions: 'Inspect the change.' },
+      },
+      agentExecution: {
+        explore: {
+          modelProvider: 'anthropic',
+          model: 'anthropic/claude-opus-5',
+          reasoningEffort: 'medium',
+        },
+        auditor: { reasoningEffort: 'high' },
+      },
+    });
+    await writeJson(projectConfigurationPath(cwd), {
+      agentExecution: { explore: { reasoningEffort: 'xhigh' } },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+
+    // Project replaces the row. It does not inherit the user row's model pair.
+    expect(loader.resolveAgentExecution('explore', cwd)).toEqual({ reasoningEffort: 'xhigh' });
+    expect(loader.resolveAgentExecution('auditor', cwd)).toEqual({ reasoningEffort: 'high' });
+    expect(loader.listAgentExecutionSelections(cwd)).toEqual(expect.arrayContaining([
+      {
+        agentType: 'explore',
+        layer: 'user',
+        modelProvider: 'anthropic',
+        model: 'anthropic/claude-opus-5',
+        reasoningEffort: 'medium',
+      },
+      {
+        agentType: 'explore',
+        layer: 'project',
+        modelProvider: null,
+        model: null,
+        reasoningEffort: 'xhigh',
+      },
+    ]));
+  });
+
+  test('resolves a custom Agent execution row only from the winning Role layer', async () => {
+    const { userData, cwd } = await fixturePaths();
+    await writeJson(userConfigurationPath(userData), {
+      roles: {
+        auditor: { description: 'User auditor.', developerInstructions: 'Use the user workflow.' },
+      },
+      agentExecution: {
+        auditor: {
+          modelProvider: 'openai',
+          model: 'openai/user-model',
+          reasoningEffort: 'high',
+        },
+      },
+    });
+    await writeJson(projectConfigurationPath(cwd), {
+      roles: {
+        auditor: { description: 'Project auditor.', developerInstructions: 'Use the project workflow.' },
+      },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+
+    expect(loader.resolveRole('auditor', cwd)).toMatchObject({
+      source: 'project',
+      description: 'Project auditor.',
+    });
+    expect(loader.resolveAgentExecution('auditor', cwd)).toBeNull();
+    expect(loader.listAgentExecutionSelections(cwd)).toContainEqual({
+      agentType: 'auditor',
+      layer: 'user',
+      modelProvider: 'openai',
+      model: 'openai/user-model',
+      reasoningEffort: 'high',
+    });
+  });
+
+  test('rejects Role execution fields and malformed execution rows at the decode boundary', async () => {
+    const { userData, cwd } = await fixturePaths();
+    const path = userConfigurationPath(userData);
+    await writeJson(path, {
+      roles: {
+        legacy: {
+          description: 'Legacy.',
+          developerInstructions: 'Use a retired field.',
+          overrides: { model: 'gpt-5' },
+        },
+      },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+    expect(() => loader.resolveRole('legacy', cwd)).toThrow('unknown field: model');
+
+    await writeJson(path, {
+      roles: {
+        legacy: {
+          description: 'Legacy.',
+          developerInstructions: 'Use a retired field.',
+          overrides: { reasoningEffort: 'high' },
+        },
+      },
+    });
+    expect(() => loader.resolveRole('legacy', cwd)).toThrow('unknown field: reasoningEffort');
+
+    await writeJson(path, {
+      agentExecution: { explore: { modelProvider: 'openai' } },
+    });
+    expect(() => loader.resolveAgentExecution('explore', cwd)).toThrow('must be set together');
+
+    await writeJson(path, {
+      agentExecution: {
+        explore: { modelProvider: 'openai', model: 'anthropic/claude-opus-5' },
+      },
+    });
+    expect(() => loader.resolveAgentExecution('explore', cwd)).toThrow("qualified by modelProvider 'openai'");
+
+    await writeJson(path, { agentExecution: { explore: {} } });
+    expect(() => loader.resolveAgentExecution('explore', cwd)).toThrow('must not be empty');
+  });
+
+  test('requires a custom Agent execution row and its Role to live in the same layer', async () => {
+    const { userData, cwd } = await fixturePaths();
+    await writeJson(userConfigurationPath(userData), {
+      roles: {
+        auditor: { description: 'Audits.', developerInstructions: 'Inspect the change.' },
+      },
+    });
+    await writeJson(projectConfigurationPath(cwd), {
+      agentExecution: { auditor: { reasoningEffort: 'high' } },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+
+    expect(() => loader.resolveAgentExecution('auditor', cwd)).toThrow(
+      'requires a Role in the same layer',
+    );
+  });
+
+  test('bounds custom Agent type names to the Settings deep-link limit', async () => {
+    const { userData, cwd } = await fixturePaths();
+    const path = userConfigurationPath(userData);
+    const validName = `a${'b'.repeat(63)}`;
+    await writeJson(path, {
+      roles: {
+        [validName]: { description: 'Valid.', developerInstructions: 'Use the bounded name.' },
+      },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+    expect(loader.resolveRole(validName, cwd).name).toBe(validName);
+
+    const invalidName = `a${'b'.repeat(64)}`;
+    await writeJson(path, {
+      roles: {
+        [invalidName]: { description: 'Too long.', developerInstructions: 'Reject this name.' },
+      },
+    });
+    expect(() => loader.resolveRole(invalidName, cwd)).toThrow('at most 64');
   });
 
   test('fails closed on unknown fields and unavailable selections', async () => {
@@ -334,6 +498,16 @@ describe('AgentConfigurationLoader', () => {
     // Renaming an Agent on screen tells the model nothing new, so nothing it
     // was told may move — including the hashes that gate re-announcement.
     expect(after).toEqual(before);
+
+    await writeJson(userConfigurationPath(userData), {
+      agentExecution: {
+        explore: { modelProvider: 'openai', model: 'openai/gpt-5.6', reasoningEffort: 'high' },
+      },
+      roles: {
+        reviewer: { description: 'Review it.', developerInstructions: 'Review it well.' },
+      },
+    });
+    expect(loader.buildRoleCatalogSnapshot(cwd)).toEqual(before);
   });
 
   test('refuses a reserved Role name and an unknown portrait', async () => {

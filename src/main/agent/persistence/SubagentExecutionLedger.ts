@@ -55,6 +55,13 @@ export interface SubagentRecordedToolPolicy extends SubagentToolPolicy {
   readonly requestedTools: readonly string[] | null;
 }
 
+export interface AgentExecutionSelectionFallback {
+  readonly requestedModelProvider: string | null;
+  readonly requestedModel: string | null;
+  readonly requestedReasoningEffort: string | null;
+  readonly reason: 'unavailable';
+}
+
 export interface SubagentExecutionRecord {
   readonly agentId: ThreadId;
   readonly parentThreadId: ThreadId;
@@ -82,6 +89,7 @@ export interface SubagentExecutionRecord {
   readonly worktreeCleanupStartedAt: number | null;
   readonly toolPolicy: SubagentRecordedToolPolicy;
   readonly startupContext: AgentStartupContextSnapshot | null;
+  readonly executionSelectionFallback: AgentExecutionSelectionFallback | null;
   /**
    * `pending` is the cross-store prepare record for a fresh child. The first
    * durable `turn/started` commits it; startup rolls back anything earlier.
@@ -213,6 +221,7 @@ interface ExecutionRow {
   worktree_cleanup_started_at: number | null;
   tool_policy_json: string;
   startup_context_json: string | null;
+  execution_selection_fallback_json: string | null;
   admission_previous_json: string | null;
   initial_admission_state: string;
   initial_worktree_intent_json: string | null;
@@ -381,6 +390,7 @@ export class SubagentExecutionLedger {
         worktree_cleanup_started_at INTEGER,
         tool_policy_json TEXT NOT NULL,
         startup_context_json TEXT,
+        execution_selection_fallback_json TEXT,
         admission_previous_json TEXT,
         initial_admission_state TEXT NOT NULL CHECK (
           initial_admission_state IN ('pending', 'committed')
@@ -534,11 +544,11 @@ export class SubagentExecutionLedger {
         notification_cutoff, notification_delivery_class, execution_mode,
         active_batch_id, settlement_coverage_json, worktree_json,
         worktree_cleanup_started_at, tool_policy_json,
-        startup_context_json, admission_previous_json, initial_admission_state,
+        startup_context_json, execution_selection_fallback_json, admission_previous_json, initial_admission_state,
         initial_worktree_intent_json, created_at, updated_at
       ) VALUES (
         ?, ?, ?, ?, ?, 1, ?, ?, 'none', ?, 0, 0, NULL, NULL,
-        'open', 'ordinary', 'ordinary', NULL, NULL, ?, NULL, ?, ?, NULL, ?, ?, ?, ?
+        'open', 'ordinary', 'ordinary', NULL, NULL, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?
       )
     `).run(
       input.agentId,
@@ -552,6 +562,7 @@ export class SubagentExecutionLedger {
       encodeWorktree(input.worktree),
       JSON.stringify(input.toolPolicy),
       input.startupContext === null ? null : JSON.stringify(input.startupContext),
+      input.executionSelectionFallback == null ? null : JSON.stringify(input.executionSelectionFallback),
       initialAdmissionState,
       initialWorktreeIntent === null ? null : JSON.stringify(initialWorktreeIntent),
       input.createdAt,
@@ -2620,12 +2631,43 @@ function executionFromRow(row: ExecutionRow): SubagentExecutionRecord {
     startupContext: row.startup_context_json === null
       ? null
       : decodeStartupContext(JSON.parse(row.startup_context_json)),
+    executionSelectionFallback: row.execution_selection_fallback_json === null
+      ? null
+      : decodeExecutionSelectionFallback(JSON.parse(row.execution_selection_fallback_json)),
     initialAdmissionState: row.initial_admission_state as SubagentInitialAdmissionState,
     initialWorktreeIntent: row.initial_worktree_intent_json === null
       ? null
       : decodeWorktreeRecoveryIntent(JSON.parse(row.initial_worktree_intent_json)),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function decodeExecutionSelectionFallback(value: unknown): AgentExecutionSelectionFallback {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid persisted Agent execution selection fallback');
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.some((key) => ![
+    'requestedModelProvider',
+    'requestedModel',
+    'requestedReasoningEffort',
+    'reason',
+  ].includes(key)) || record.reason !== 'unavailable') {
+    throw new Error('Invalid persisted Agent execution selection fallback');
+  }
+  const nullableString = (entry: unknown) => entry === null || typeof entry === 'string';
+  if (!nullableString(record.requestedModelProvider)
+    || !nullableString(record.requestedModel)
+    || !nullableString(record.requestedReasoningEffort)) {
+    throw new Error('Invalid persisted Agent execution selection fallback');
+  }
+  return {
+    requestedModelProvider: record.requestedModelProvider as string | null,
+    requestedModel: record.requestedModel as string | null,
+    requestedReasoningEffort: record.requestedReasoningEffort as string | null,
+    reason: 'unavailable',
   };
 }
 

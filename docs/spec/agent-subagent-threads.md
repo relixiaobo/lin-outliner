@@ -186,7 +186,9 @@ exact catalog spelling. Otherwise it trims for matching only, compares
 case-insensitively, and treats runs of spaces, underscores, and hyphens as the
 same separator. One normalized match resolves to its canonical spelling;
 multiple matches are an ambiguity error, and no match reports the available
-types. Diagnostics and persistence use the canonical result.
+types. Custom Agent type identifiers are limited to 64 ASCII letters, digits,
+hyphens, and underscores so every valid type remains addressable by the bounded
+Settings deep link. Diagnostics and persistence use the canonical result.
 
 ### Presentation
 
@@ -271,10 +273,13 @@ spaces cannot collide, and a `color` outside the palette is refused at the
 write boundary; at the read boundary a stale colour degrades to derivation
 rather than drawing nothing.
 
-Both halves are user-editable from Settings → Agent → Agents, which reads the
-whole editable view in one answer — the identity catalog the transcript draws
-from beside the Roles the user may change — and writes through
-`agent_write_role`, `agent_delete_role`, and `agent_write_presentation`. Writing
+Identity, definition, capabilities, and execution selection are user-editable
+from Settings → Agent → Agents, which reads the whole editable view in one
+answer — the identity catalog the transcript draws from beside the Roles and
+execution rows the user may change — and writes through `agent_write_role`,
+`agent_delete_role`, and `agent_write_presentation`. Role and presentation
+writes carry execution selection as a sibling payload when the same Save edits
+both. Writing
 is a boundary and fails closed (A12): each command re-reads one layer, applies
 one change, and validates the candidate **in memory** through the loader's own
 decoder before anything reaches disk, then writes atomically. Nothing is written
@@ -288,10 +293,12 @@ configuration belongs to whoever wrote it; that check is the loader's full
 decode rather than a shape guess, so `{"roles": ["auditor"]}` — valid JSON the
 loader rejects — is refused instead of silently dropped.
 
-A Role write replaces the entry, so two things are explicit. Its `overrides`
-(model, reasoningEffort, tools, skills, plugins, mcpServers) are MERGED rather
-than replaced: the editor shows no field for them, and a surface must not
-destroy what it cannot show. And the write carries a create/update intent, so
+A Role write replaces the entry, so two things are explicit. Its represented
+tool and Skill ceilings are replaced deliberately, while unrepresented
+`plugins` and `mcpServers` fields are merged from the existing Role so a surface
+does not destroy what it cannot show. Model and reasoning fields are not Role
+fields and the exact decoder rejects them. The write also carries a
+create/update intent, so
 creating over an existing name is refused instead of silently replacing a
 definition, with no confirmation and no undo. A Role may not take `main` or a
 built-in canonical type: `agentTypeCandidates` drops a Role colliding with a
@@ -356,16 +363,46 @@ The conversation agent's identity and its Profile are **one** command
 single validated edit: they are two parts of one file, the user pressed Save
 once, and as two sequential writes a refused second one left the first on disk.
 
-The model choice resolves in this order: per-call override, Role override, then
-parent model. Reasoning effort has no model-visible Agent argument; a Role may
-narrow it, otherwise it follows the parent. A successful spawn records the
-selected definition, model, reasoning setting, effective tool policy,
-preloaded Skills, repository/status inputs, and isolation metadata. Resume uses
-that recorded configuration and history rather than re-reading a changed Role
-or recollecting startup context. The persisted startup snapshot is projected for
-the current Turn of every execution generation, including `agent_message`
-resume, user-authored resume, and recovery after host restart. Current explicit
-capability blocks still apply to the resumed operation.
+#### Execution selection
+
+Each configuration layer has a separate `agentExecution` map keyed by canonical
+Agent type, never by hidden backing Role. A row may contain one
+`modelProvider`/provider-qualified `model` pair and an independent
+`reasoningEffort`; project replaces the same user row as a whole entry rather
+than merging individual fields. A custom type's row must live beside its Role
+in the same layer, and only the row beside the winning Role is effective: a
+project Role never inherits a shadowed user Role's execution row. Deleting that
+Role removes its same-layer execution row in the same atomic write.
+
+Every collaboration Agent editor except `main` offers **Follow parent** plus the
+models from currently usable providers. Reasoning choices are filtered to the
+selected model's supported levels. A saved model that later becomes unavailable
+stays visible and marked unavailable until the user changes it; saving another
+field does not erase the row. Definition, presentation, capabilities, and
+execution selection commit in one validated file edit.
+
+A fresh `agent` call resolves the row over its direct parent's complete effective
+provider/model/reasoning selection and validates the result before UUID minting,
+ledger admission, worktree preparation, child Thread creation, or provider I/O.
+If the configured selection is unavailable or incompatible, the child starts on
+the parent's complete selection and records a bounded `unavailable` fallback.
+The inherited parent model is validated by the runtime model resolver over its
+usable provider connection; catalog membership is not required for an arbitrary
+model ID served by a custom OpenAI-compatible endpoint.
+The launch result tells the delegating model, while the chip/report tells the
+user and links to that type's Agent Settings. If the parent selection is also
+unusable, the call fails before creating child artifacts. This availability
+drift never deletes or rewrites the standing row.
+
+A successful spawn records the selected definition, effective provider/model/
+reasoning snapshot, effective tool policy, preloaded Skills, repository/status
+inputs, fallback provenance, and isolation metadata. Resume uses that recorded
+configuration and history rather than re-reading a changed Role, execution row,
+or startup context. The persisted startup snapshot is projected for the current
+Turn of every execution generation, including `agent_message` resume,
+user-authored resume, and recovery after host restart. Current explicit
+capability blocks still apply to the resumed operation. Nested Agents resolve
+against the snapshot their direct parent actually runs.
 
 ## Model Tool Surface
 
@@ -373,7 +410,7 @@ The complete Subagent orchestration surface is three top-level tools:
 
 | Tool | Required fields | Optional fields | Runtime defaults |
 | --- | --- | --- | --- |
-| `agent` | `description`, `prompt` | `subagent_type`, `model`, `run_in_background`, `isolation` | `subagent_type: "general-purpose"`; `run_in_background: true` |
+| `agent` | `description`, `prompt` | `subagent_type`, `run_in_background`, `execution`, `isolation` | `subagent_type: "general-purpose"`; `run_in_background: true` |
 | `agent_message` | `to`, `message` | `summary` | blank or omitted `summary` derives from the first line of `message` |
 | `task_stop` | none in schema | `task_id`, deprecated `shell_id` | runtime requires one ID; `task_id` wins |
 

@@ -4006,7 +4006,7 @@ describe('PiTurnExecutor provider payload', () => {
   test('restores the canonical Agent schemas after the real Anthropic tool conversion', async () => {
     const models = ['claude-sonnet-test', 'claude-opus-test'];
     const tools: AgentTool[] = [
-      parityTool('agent', AGENT_TOOL_DESCRIPTION, agentInputSchema(models)),
+      parityTool('agent', AGENT_TOOL_DESCRIPTION, agentInputSchema()),
       parityTool('agent_message', AGENT_MESSAGE_TOOL_DESCRIPTION, AGENT_MESSAGE_INPUT_SCHEMA),
       parityTool('task_stop', TASK_STOP_TOOL_DESCRIPTION, TASK_STOP_INPUT_SCHEMA),
     ];
@@ -4051,7 +4051,7 @@ describe('PiTurnExecutor provider payload', () => {
       ['name', 'description', 'input_schema', 'eager_input_streaming', 'cache_control'],
     ]);
     expect(restoredTools.map((tool) => tool.input_schema)).toEqual([
-      agentInputSchema(models),
+      agentInputSchema(),
       AGENT_MESSAGE_INPUT_SCHEMA,
       TASK_STOP_INPUT_SCHEMA,
     ]);
@@ -4059,7 +4059,7 @@ describe('PiTurnExecutor provider payload', () => {
       '$schema', 'type', 'properties', 'required', 'additionalProperties',
     ]);
     expect(Object.keys((restoredTools[0]!.input_schema as Record<string, any>).properties)).toEqual([
-      'description', 'prompt', 'subagent_type', 'model', 'run_in_background', 'execution', 'isolation',
+      'description', 'prompt', 'subagent_type', 'run_in_background', 'execution', 'isolation',
     ]);
     expect(Object.keys(restoredTools[2]!.input_schema as object)).toEqual([
       '$schema', 'type', 'properties', 'additionalProperties',

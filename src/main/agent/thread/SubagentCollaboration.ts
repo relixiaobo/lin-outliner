@@ -37,7 +37,7 @@ import type {
 } from '../worktree/AgentWorktree';
 import type { AgentTool,AgentToolResult } from '../runtime/kernel/types';
 import { SubagentDepthLimitError } from '../SubagentStructuralLimitError';
-import type { SpawnChildThreadInput,SpawnChildThreadResult,SpawnIsolatedSkillThreadInput } from '../ThreadService';
+import type { AgentExecutionResolution,SpawnChildThreadInput,SpawnChildThreadResult,SpawnIsolatedSkillThreadInput } from '../ThreadService';
 import { uuidV7 } from '../uuid';
 import { KeyedMutex } from '../Mutex';
 import type { ThreadCatalogOps } from './ThreadCatalogOps';
@@ -122,6 +122,7 @@ interface AgentSpawnResult {
     readonly excerpted: number;
     readonly omitted: number;
   } | null;
+  readonly executionSelectionFallback: import('../persistence/SubagentExecutionLedger').AgentExecutionSelectionFallback | null;
 }
 interface PreparedResumeWorktree {
   readonly previous: AgentWorktreeMetadata | null;
@@ -184,6 +185,11 @@ export class SubagentCollaboration {
     private readonly assertThreadAvailable: (threadId: ThreadId) => void,
     private readonly createThreadBusyError: (message: string, rendererSubmissionRetryable?: boolean) => Error,
     private readonly transcripts: ThreadTranscriptWriter,
+    private readonly resolveAgentExecution: (
+      agentType: string,
+      cwd: string,
+      parent: { readonly modelProvider: string; readonly model: string; readonly reasoningEffort: EffectiveThreadConfiguration['reasoningEffort'] },
+    ) => Promise<AgentExecutionResolution> = async (_agentType, _cwd, parent) => ({ ...parent, fallback: null }),
   ) {}
   execution(threadId: ThreadId): SubagentExecutionRecord | null {
     return this.executions.read(threadId);
@@ -516,7 +522,7 @@ export class SubagentCollaboration {
   collaborationToolContributions(turn: {
     threadId: ThreadId;
     turnId: string;
-  }, modelIds: readonly string[]): readonly AgentTool[] {
+  }): readonly AgentTool[] {
     const threadId = turn.threadId;
     const turnId = turn.turnId;
     return [
@@ -529,21 +535,31 @@ export class SubagentCollaboration {
           description: input.description,
           prompt: input.prompt,
           agentType: input.subagent_type,
-          ...(input.model === undefined ? {} : { model: input.model }),
           runInBackground: input.run_in_background !== false,
           execution: input.execution === 'read-only' ? 'read-only' : null,
           isolation: input.isolation === 'worktree' ? 'worktree' : null,
           signal,
         });
         if (result.runMode === 'background') {
-          return agentResult({ agentId: result.agentId });
+          return agentResult({
+            agentId: result.agentId,
+            ...(result.executionSelectionFallback === null ? {} : {
+              warning: 'Configured model unavailable; this run followed parent.',
+            }),
+          });
         }
         return agentResult(
-          { agentId: result.agentId, coverage: result.coverage },
+          {
+            agentId: result.agentId,
+            coverage: result.coverage,
+            ...(result.executionSelectionFallback === null ? {} : {
+              warning: 'Configured model unavailable; this run followed parent.',
+            }),
+          },
           result.handoff ? result.handoff : 'Agent finished without text output.',
           result.resourceRefs,
         );
-      }, agentInputSchema(modelIds), normalizeAgentToolInput),
+      }, agentInputSchema(), normalizeAgentToolInput),
       agentTool('agent_message', 'Agent Message', async (itemId, params) => {
         const input = normalizeAgentMessageToolInput(params);
         return agentMessageResult(await this.sendAgentMessage(
@@ -577,7 +593,6 @@ export class SubagentCollaboration {
     readonly description: string;
     readonly prompt: string;
     readonly agentType: string;
-    readonly model?: string;
     readonly runInBackground: boolean;
     readonly execution: 'read-only' | null;
     readonly isolation: 'worktree' | null;
@@ -593,7 +608,8 @@ export class SubagentCollaboration {
     if (input.isolation === 'worktree' && (!this.planAgentWorktree || !this.prepareAgentWorktree)) {
       throw new Error('Agent worktree isolation is unavailable');
     }
-    const parent = this.core.requireThread(input.senderThreadId).thread;
+    const parentRecord = this.core.requireThread(input.senderThreadId);
+    const parent = parentRecord.thread;
     const rootThreadId = input.runInBackground ? null : this.rootThreadIdFor(parent.id);
     const inheritedWorktreeIsolation = parent.parentThreadId !== null && (
       this.executions.read(parent.id)?.toolPolicy.worktree === true
@@ -602,6 +618,11 @@ export class SubagentCollaboration {
     const inheritedReadOnly = parent.parentThreadId !== null
       && this.executions.read(parent.id)?.toolPolicy.readOnly === true;
     const selected = this.resolveAgentType(input.agentType, parent.cwd);
+    const resolvedExecution = await this.resolveAgentExecution(selected.canonicalType, parent.cwd, {
+      modelProvider: parent.modelProvider,
+      model: parentRecord.configuration.model,
+      reasoningEffort: parentRecord.configuration.reasoningEffort,
+    });
     const limits = await this.resolveSubagentLimits();
     assertSubagentLimits(limits);
     const startupContext = selected.kind === 'explore' || selected.kind === 'plan'
@@ -632,6 +653,9 @@ export class SubagentCollaboration {
         role: selected.role,
         childKind: 'collaboration',
         cwd: parent.cwd,
+        modelProvider: resolvedExecution.modelProvider,
+        model: resolvedExecution.model,
+        reasoningEffort: resolvedExecution.reasoningEffort,
         turnId,
         execution: {
           description: input.description,
@@ -648,8 +672,8 @@ export class SubagentCollaboration {
             requestedTools: normalizedRequestedTools(selected.role.overrides?.tools),
           },
           startupContext,
+          executionSelectionFallback: resolvedExecution.fallback,
         },
-        ...(input.model === undefined ? {} : { model: input.model }),
         ...(input.signal === undefined ? {} : { parentSignal: input.signal }),
       });
       execution = this.executions.require(result.thread.id);
@@ -670,6 +694,7 @@ export class SubagentCollaboration {
         handoff: null,
         resourceRefs: [],
         coverage: null,
+        executionSelectionFallback: execution.executionSelectionFallback,
       };
     }
     if (!foregroundSettlementKey || !foregroundSettlement || !rootThreadId) {
@@ -753,6 +778,7 @@ export class SubagentCollaboration {
         excerpted: handoff.envelope.coverage.excerpted,
         omitted: handoff.envelope.coverage.omitted,
       },
+      executionSelectionFallback: execution.executionSelectionFallback,
     };
   }
 
@@ -1135,8 +1161,12 @@ export class SubagentCollaboration {
               : input.role ?? this.resolveRole('default', parent.thread.cwd);
             const resolvedConfiguration = resolveChildConfiguration(parent.configuration, {
               role,
-              ...(input.model === undefined ? {} : { model: input.model }),
-              ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
+              ...((input.model === undefined && input.reasoningEffort === undefined) ? {} : {
+                execution: {
+                  ...(input.model === undefined ? {} : { model: input.model }),
+                  ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
+                },
+              }),
             });
             // The model/extension registry is assembled after Thread admission.
             // Persist the selected Role's raw names and let ToolRuntime apply the
@@ -1183,6 +1213,7 @@ export class SubagentCollaboration {
               worktree: input.execution.worktree,
               toolPolicy: input.execution.toolPolicy,
               startupContext: input.execution.startupContext,
+              executionSelectionFallback: input.execution.executionSelectionFallback,
               initialWorktreeIntent,
               createdAt,
               updatedAt: createdAt,
@@ -1213,7 +1244,7 @@ export class SubagentCollaboration {
               ephemeral: parent.thread.ephemeral,
               source: input.childKind === 'isolatedSkill' ? 'agent.skill' : 'collaboration',
               threadSource: 'subagent',
-              modelProvider: parent.thread.modelProvider,
+              modelProvider: input.modelProvider ?? parent.thread.modelProvider,
               cwd: childCwd,
             }, {
               sessionId: parent.thread.sessionId,
@@ -1226,8 +1257,6 @@ export class SubagentCollaboration {
               agentNickname: input.nickname ?? null,
               configuration,
               toolCeiling,
-              modelOverride: input.model ?? null,
-              reasoningEffortOverride: input.reasoningEffort ?? null,
               taskPath: input.taskPath,
             });
             copiedAdditionalContextResourceRefs = await this.copyAdditionalContextResources(
@@ -1372,6 +1401,7 @@ export class SubagentCollaboration {
             requestedTools: normalizedRequestedTools(input.allowedTools),
           },
           startupContext: null,
+          executionSelectionFallback: null,
         },
         ...(input.model === undefined ? {} : { model: input.model }),
         ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),

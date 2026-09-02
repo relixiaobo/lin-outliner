@@ -154,7 +154,6 @@ export interface AgentToolInput {
   readonly description: string;
   readonly prompt: string;
   readonly subagent_type: string;
-  readonly model?: string;
   readonly run_in_background: boolean;
   readonly execution?: 'read-only';
   readonly isolation?: 'worktree';
@@ -722,7 +721,7 @@ Reach for this when the task matches an available agent type, when you have inde
 
 - The agent's final report is not shown to the user — relay what matters.
 - Use agent_message with the agent's ID to continue a previously spawned agent with its context intact; a new agent call starts fresh.
-- Each agent type's model, reasoning effort, and tools come from its Tenon Role.
+- Each agent type's model and reasoning effort come from Agent Settings and follow the parent by default. Tools come from its Tenon Role.
 - \`execution: "read-only"\` applies a host-enforced action ceiling. It permits inspection but rejects file, Outline, process, network, and other external mutations; descendants inherit the ceiling.
 - \`isolation: "worktree"\` gives the agent its own git worktree (auto-cleaned if unchanged).
 - Subagents run in the background by default; you'll be notified when one finishes or stops. Pass \`run_in_background: false\` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.`;
@@ -752,11 +751,7 @@ export const TASK_STOP_TOOL_DESCRIPTION = `
 
 const JSON_SCHEMA_DRAFT_2020_12 = 'https://json-schema.org/draft/2020-12/schema';
 
-export function agentInputSchema(modelIds: readonly string[]): ObjectJsonSchema {
-  const models = [...new Set(modelIds)];
-  if (models.some((modelId) => typeof modelId !== 'string' || !modelId)) {
-    throw new Error('agent model enum accepts only non-empty provider model ids');
-  }
+export function agentInputSchema(): ObjectJsonSchema {
   return {
     $schema: JSON_SCHEMA_DRAFT_2020_12,
     type: 'object',
@@ -773,13 +768,6 @@ export function agentInputSchema(modelIds: readonly string[]): ObjectJsonSchema 
         description: 'The type of specialized agent to use for this task',
         type: 'string',
       },
-      ...(models.length === 0 ? {} : {
-        model: {
-          description: "Optional model override for this agent. Takes precedence over the Role's model. If omitted, uses the Role's model, or inherits from the parent.",
-          type: 'string',
-          enum: models,
-        },
-      }),
       run_in_background: {
         description: "Agents run in the background by default; you will be notified when one finishes or stops. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.",
         type: 'boolean',
@@ -1253,7 +1241,7 @@ export function normalizeAgentToolInput(value: unknown): AgentToolInput {
   if (!isRecord(value)) throw new Error('agent input must be an object');
   exactInputKeys(
     value,
-    ['description', 'prompt', 'subagent_type', 'model', 'run_in_background', 'execution', 'isolation'],
+    ['description', 'prompt', 'subagent_type', 'run_in_background', 'execution', 'isolation'],
     'agent',
   );
   if (value.execution !== undefined && value.execution !== 'read-only') {

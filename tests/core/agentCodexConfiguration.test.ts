@@ -30,8 +30,6 @@ describe('Codex Agent Core configuration and Goal contracts', () => {
       description: 'Read-only repository exploration.',
       developerInstructions: 'Inspect and report.',
       overrides: {
-        model: 'explorer-model',
-        reasoningEffort: 'medium',
         tools: ['file_read', 'file_edit', 'web_search'],
         skills: ['repo-rules', 'role-added-skill'],
         plugins: ['github', 'role-added-plugin'],
@@ -39,7 +37,10 @@ describe('Codex Agent Core configuration and Goal contracts', () => {
       },
     };
 
-    const child = resolveChildConfiguration(parent, { role });
+    const child = resolveChildConfiguration(parent, {
+      role,
+      execution: { model: 'explorer-model', reasoningEffort: 'medium' },
+    });
     expect(child.profileName).toBe('coding');
     expect(child.model).toBe('explorer-model');
     expect(child.tools).toEqual(['file_read', 'file_edit']);

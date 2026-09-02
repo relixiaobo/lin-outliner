@@ -4241,6 +4241,12 @@ test.describe('canonical agent Thread surface', () => {
       target.__LIN_E2E__?.setMockSubagentExecution(childId, {
         description: 'research',
         currentTurnId: childTurnId,
+        executionSelectionFallback: {
+          requestedModelProvider: 'anthropic',
+          requestedModel: 'anthropic/retired-model',
+          requestedReasoningEffort: 'high',
+          reason: 'unavailable',
+        },
       });
       const childProvenance = {
         originThreadId: childId,
@@ -4568,6 +4574,14 @@ test.describe('canonical agent Thread surface', () => {
     // does moves nothing (B7) — and a report ends exactly where any other
     // message ends, which means the same row occupying the same height.
     const shell = deliveryTurn.locator('.thread-agent-report-shell');
+    const fallbackWarning = shell.locator('.thread-agent-execution-warning');
+    await expect(fallbackWarning).toHaveCount(1);
+    await expect(fallbackWarning).toContainText('this run followed its parent');
+    await fallbackWarning.getByRole('button', { name: 'Open Agent Settings' }).click();
+    await expect.poll(async () => (
+      (await commandCalls(page)).findLast((call) => call.cmd === 'open_settings')?.args
+    )).toEqual({ page: 'agents', agentType: 'worker' });
+
     const heightBefore = await shell.evaluate((element) => element.getBoundingClientRect().height);
     await shell.hover();
     await expect(shell.locator('.thread-agent-report-hint')).toBeVisible();

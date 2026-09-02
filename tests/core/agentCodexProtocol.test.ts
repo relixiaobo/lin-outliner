@@ -1592,7 +1592,7 @@ describe('Codex Agent Core protocol codec', () => {
     const changed = {
       type: 'subagent/execution/changed' as const,
       threadId: THREAD_ID,
-      execution: subagentExecution,
+      execution: { ...subagentExecution, executionSelectionFallback: null },
     };
     expect(decodeAgentCoreNotification(changed)).toEqual(changed);
     // The envelope names the conversation the change belongs to, so a record

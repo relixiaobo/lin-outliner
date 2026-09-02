@@ -9403,8 +9403,6 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       description: 'Initial child role.',
       developerInstructions: 'Initial role instructions',
       overrides: {
-        model: 'initial-role-model',
-        reasoningEffort: 'low',
         tools: ['file_grep', 'bash'],
         skills: ['initial-skill'],
         plugins: ['initial-plugin'],
@@ -9435,6 +9433,8 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       role: 'mutable',
       allowedTools: ['file_grep'],
       childKind: 'collaboration',
+      model: 'initial-role-model',
+      reasoningEffort: 'low',
       execution: testChildExecution({ requestedTools: ['file_grep'] }),
     });
     await fixture.executor.waitUntilWaiting(1);
@@ -9457,8 +9457,6 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       ...role,
       developerInstructions: 'Current role instructions',
       overrides: {
-        model: 'current-role-model',
-        reasoningEffort: 'high',
         tools: ['file_grep', 'file_read'],
         skills: ['current-skill'],
         plugins: ['current-plugin'],
@@ -9765,6 +9763,277 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     await fixture.service.close();
   });
 
+  test('resolves fresh Agent execution against the direct parent and persists the effective selection', async () => {
+    const parentSelections: ThreadConfigurationSummary[] = [];
+    const fixture = await createFixture(undefined, {
+      resolveConfiguration: () => ({
+        ...defaultEffectiveThreadConfiguration(),
+        model: 'openai/root-model',
+        reasoningEffort: 'medium',
+      }),
+      resolveAgentExecution: async (agentType, _cwd, parent) => {
+        parentSelections.push(parent);
+        return agentType === 'explore'
+          ? {
+              modelProvider: 'anthropic',
+              model: 'anthropic/claude-opus-5',
+              reasoningEffort: 'high',
+              fallback: null,
+            }
+          : { ...parent, fallback: null };
+      },
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate with a configured model.' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'configured-execution');
+    const rootTools = await fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: rootTurn.turn.id,
+    });
+    const launched = await executeTool(rootTools, 'agent', 'configured-execution', {
+      description: 'configured child',
+      prompt: 'Use the configured execution selection.',
+      subagent_type: 'explore',
+      run_in_background: true,
+    });
+    const childId = (launched.details as { agentId: string }).agentId;
+    await fixture.executor.waitUntilWaiting(1);
+    expect(fixture.executor.contexts[1]).toMatchObject({
+      thread: { id: childId, modelProvider: 'anthropic' },
+      configuration: { model: 'anthropic/claude-opus-5', reasoningEffort: 'high' },
+    });
+    expect(fixture.stores.metadata.require(childId)).toMatchObject({
+      thread: { modelProvider: 'anthropic' },
+      configuration: { model: 'anthropic/claude-opus-5', reasoningEffort: 'high' },
+    });
+
+    const childTurnId = fixture.service.subagentExecution(childId)!.currentTurnId;
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'nested-inheritance');
+    const childTools = await fixture.service.collaborationToolContributions({
+      threadId: childId,
+      turnId: childTurnId,
+    });
+    const nested = await executeTool(childTools, 'agent', 'nested-inheritance', {
+      description: 'nested child',
+      prompt: 'Inherit the model that the parent actually runs.',
+      subagent_type: 'general-purpose',
+      run_in_background: true,
+    });
+    const nestedId = (nested.details as { agentId: string }).agentId;
+    await fixture.executor.waitUntilWaiting(2);
+    expect(parentSelections).toEqual([
+      { modelProvider: 'openai', model: 'openai/root-model', reasoningEffort: 'medium' },
+      { modelProvider: 'anthropic', model: 'anthropic/claude-opus-5', reasoningEffort: 'high' },
+    ]);
+    expect(fixture.stores.metadata.require(nestedId)).toMatchObject({
+      thread: { modelProvider: 'anthropic' },
+      configuration: { model: 'anthropic/claude-opus-5', reasoningEffort: 'high' },
+    });
+  });
+
+  test('keeps a child execution snapshot after restart while fresh Agents use the changed setting', async () => {
+    let configuredSelection: ThreadConfigurationSummary = {
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-opus-5',
+      reasoningEffort: 'high',
+    };
+    const options = {
+      resolveConfiguration: () => ({
+        ...defaultEffectiveThreadConfiguration(),
+        model: 'openai/root-model',
+        reasoningEffort: 'medium' as const,
+      }),
+      resolveAgentExecution: async () => ({ ...configuredSelection, fallback: null }),
+    };
+    const fixture = await createFixture(undefined, options);
+    const root = (await fixture.service.startThread({
+      source: 'app', threadSource: 'user', modelProvider: 'openai', cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create the first configured Agent.' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'snapshot-first-spawn');
+    const first = await executeTool(
+      await fixture.service.collaborationToolContributions({
+        threadId: root.id,
+        turnId: rootTurn.turn.id,
+      }),
+      'agent',
+      'snapshot-first-spawn',
+      {
+        description: 'first configured child',
+        prompt: 'Keep this execution snapshot.',
+        subagent_type: 'explore',
+        run_in_background: true,
+      },
+    );
+    const firstChildId = (first.details as { agentId: string }).agentId;
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(firstChildId);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.executor.waitUntilWaiting(2);
+    fixture.executor.finish(2);
+    await fixture.service.waitForIdle(root.id);
+    await waitUntil(() => (
+      fixture.stores.subagentExecutions.terminalNotification(firstChildId, 1)?.state === 'delivered'
+    ));
+    await fixture.service.close();
+
+    configuredSelection = {
+      modelProvider: 'openai',
+      model: 'openai/new-child-model',
+      reasoningEffort: 'low',
+    };
+    const restartedExecutor = new ControlledExecutor();
+    const reopened = await openFixture(fixture.root, restartedExecutor, fixture.clock, undefined, options);
+    await reopened.service.initialize();
+
+    await reopened.service.startRendererTurn({
+      threadId: firstChildId,
+      input: [{ type: 'text', text: 'Resume with the persisted snapshot.' }],
+    });
+    await restartedExecutor.waitUntilWaiting(0);
+    expect(restartedExecutor.contexts[0]).toMatchObject({
+      thread: { modelProvider: 'anthropic' },
+      configuration: { model: 'anthropic/claude-opus-5', reasoningEffort: 'high' },
+    });
+
+    const nextRootTurn = await reopened.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create an Agent from the changed setting.' }],
+    });
+    await restartedExecutor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(restartedExecutor.contexts[1]!, 'snapshot-second-spawn');
+    const second = await executeTool(
+      await reopened.service.collaborationToolContributions({
+        threadId: root.id,
+        turnId: nextRootTurn.turn.id,
+      }),
+      'agent',
+      'snapshot-second-spawn',
+      {
+        description: 'second configured child',
+        prompt: 'Use the changed execution setting.',
+        subagent_type: 'explore',
+        run_in_background: true,
+      },
+    );
+    const secondChildId = (second.details as { agentId: string }).agentId;
+    await restartedExecutor.waitUntilWaiting(2);
+    expect(restartedExecutor.contexts[2]).toMatchObject({
+      thread: { modelProvider: 'openai' },
+      configuration: { model: 'openai/new-child-model', reasoningEffort: 'low' },
+    });
+
+    restartedExecutor.finish(0);
+    restartedExecutor.finish(2);
+    restartedExecutor.finish(1);
+    await Promise.all([
+      reopened.service.waitForIdle(firstChildId),
+      reopened.service.waitForIdle(secondChildId),
+      reopened.service.waitForIdle(root.id),
+    ]);
+    await reopened.service.close();
+  });
+
+  test('persists unavailable-selection fallback and returns bounded guidance to the parent', async () => {
+    const fallback = {
+      requestedModelProvider: 'anthropic',
+      requestedModel: 'anthropic/retired-model',
+      requestedReasoningEffort: 'xhigh' as const,
+      reason: 'unavailable' as const,
+    };
+    const fixture = await createFixture(undefined, {
+      resolveConfiguration: () => ({
+        ...defaultEffectiveThreadConfiguration(),
+        model: 'openai/root-model',
+        reasoningEffort: 'medium',
+      }),
+      resolveAgentExecution: async (_agentType, _cwd, parent) => ({ ...parent, fallback }),
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app', threadSource: 'user', modelProvider: 'openai', cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Fallback without blocking.' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'fallback-execution');
+    const tools = await fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: rootTurn.turn.id,
+    });
+    const launched = await executeTool(tools, 'agent', 'fallback-execution', {
+      description: 'fallback child',
+      prompt: 'Run with the parent selection.',
+      subagent_type: 'general-purpose',
+      run_in_background: true,
+    });
+    const childId = (launched.details as { agentId: string }).agentId;
+    await fixture.executor.waitUntilWaiting(1);
+
+    expect(launched.details).toMatchObject({
+      warning: 'Configured model unavailable; this run followed parent.',
+    });
+    expect(fixture.stores.subagentExecutions.read(childId)?.executionSelectionFallback)
+      .toEqual(fallback);
+    expect(fixture.service.listThreadSubagents({ threadId: root.id }).data[0])
+      .toMatchObject({ agentId: childId, executionSelectionFallback: fallback });
+    expect(fixture.stores.metadata.require(childId)).toMatchObject({
+      thread: { modelProvider: 'openai' },
+      configuration: { model: 'openai/root-model', reasoningEffort: 'medium' },
+    });
+  });
+
+  test('rejects an unusable parent fallback before creating child artifacts', async () => {
+    const fixture = await createFixture(undefined, {
+      resolveAgentExecution: async () => {
+        throw new Error('Parent provider is not configured: openai');
+      },
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app', threadSource: 'user', modelProvider: 'openai', cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Reject before child admission.' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'unusable-parent');
+    const beforeFiles = await storageFiles(fixture.root);
+    const tools = await fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: rootTurn.turn.id,
+    });
+
+    await expect(executeTool(tools, 'agent', 'unusable-parent', {
+      description: 'must not exist',
+      prompt: 'Do not admit this child.',
+      subagent_type: 'general-purpose',
+      run_in_background: true,
+    })).rejects.toThrow('Parent provider is not configured: openai');
+
+    expect(fixture.service.listThreadDescendants({ threadId: root.id }).data).toEqual([]);
+    expect(fixture.service.listThreadSubagents({ threadId: root.id }).data).toEqual([]);
+    expect(fixture.stores.subagentBudgets.childrenForOriginTurn(rootTurn.turn.id)).toEqual([]);
+    expect(await storageFiles(fixture.root)).toEqual(beforeFiles);
+    expect(fixture.executor.contexts).toHaveLength(1);
+  });
+
   test('projects committed Agent executions to the conversation and announces every change', async () => {
     const fixture = await createFixture();
     const notifications: AgentCoreNotification[] = [];
@@ -9826,8 +10095,8 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     // rendered by accident.
     expect(Object.keys(running[0]!).sort()).toEqual([
       'agentId', 'agentType', 'coverageDisposition', 'createdAt', 'currentTurnId',
-      'deliveryClass', 'deliveryTurnId', 'description', 'eligibleAfterGeneration', 'executionMode', 'generation',
-      'generationReceipts',
+      'deliveryClass', 'deliveryTurnId', 'description', 'eligibleAfterGeneration', 'executionMode',
+      'executionSelectionFallback', 'generation', 'generationReceipts',
       'notificationCutoff', 'notificationState', 'omittedOutputBytes', 'omittedOutputTokens',
       'parentItemId', 'parentThreadId', 'runMode', 'settlementCoverage', 'stopProvenance', 'terminalError',
       'terminalStatus', 'updatedAt', 'worktree',
@@ -13915,6 +14184,7 @@ async function createFixture(
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
     | 'resolveAgentType'
+    | 'resolveAgentExecution'
     | 'resolveAgentStartupContext'
     | 'resolveRoleCatalog'
     | 'resolveIdentityCatalog'
@@ -14004,6 +14274,7 @@ function createTestSubagentExecution(
       requestedTools: null,
     },
     startupContext: input.startupContext ?? null,
+    executionSelectionFallback: null,
     createdAt: 1,
     updatedAt: 1,
   });
@@ -14030,6 +14301,7 @@ function testChildExecution(input: {
       requestedTools: input.requestedTools ?? null,
     },
     startupContext: null,
+    executionSelectionFallback: null,
   } as const;
 }
 
@@ -14047,6 +14319,7 @@ async function openFixture(
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
     | 'resolveAgentType'
+    | 'resolveAgentExecution'
     | 'resolveAgentStartupContext'
     | 'resolveRoleCatalog'
     | 'resolveIdentityCatalog'
@@ -14117,8 +14390,6 @@ function createReverseOrphanThread(
     archived: false,
     configuration: defaultEffectiveThreadConfiguration(),
     toolCeiling: null,
-    modelOverride: null,
-    reasoningEffortOverride: null,
   }, {
     sessionId: parent.sessionId,
     parentThreadId: parent.id,
@@ -14156,6 +14427,7 @@ function beginPendingOrphanExecution(
       requestedTools: null,
     },
     startupContext: null,
+    executionSelectionFallback: null,
     initialWorktreeIntent: input.initialWorktreeIntent,
     createdAt: fixture.clock(),
     updatedAt: fixture.clock(),

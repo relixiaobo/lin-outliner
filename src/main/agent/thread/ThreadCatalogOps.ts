@@ -845,8 +845,6 @@ export class ThreadCatalogOps {
         agentNickname: string | null;
         configuration?: EffectiveThreadConfiguration;
         toolCeiling?: readonly string[] | null;
-        modelOverride?: string | null;
-        reasoningEffortOverride?: EffectiveThreadConfiguration['reasoningEffort'] | null;
         taskPath?: string;
         nameOrigin?: ThreadNameOrigin;
         hidden?: boolean;
@@ -880,8 +878,6 @@ export class ThreadCatalogOps {
         archived: false,
         configuration,
         toolCeiling: lineage.toolCeiling ?? null,
-        modelOverride: lineage.modelOverride ?? null,
-        reasoningEffortOverride: lineage.reasoningEffortOverride ?? null,
       };
       if (thread.ephemeral) {
         this.core.ephemeral.set(thread.id, { record, turns: [], completedItemIds: new Set() });

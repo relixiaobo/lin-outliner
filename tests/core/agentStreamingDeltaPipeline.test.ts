@@ -382,8 +382,6 @@ async function createFixture(
     archived: false,
     configuration,
     toolCeiling: null,
-    modelOverride: null,
-    reasoningEffortOverride: null,
   });
   const provenance = (itemId: string) => ({
     originThreadId: threadId,

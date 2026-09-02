@@ -134,6 +134,7 @@ export interface AgentConfigurationCompositionCapability {
   resolveProfile: AgentConfigurationLoader['resolveProfile'];
   resolveRole: AgentConfigurationLoader['resolveRole'];
   resolveAgentType: AgentConfigurationLoader['resolveAgentType'];
+  resolveAgentExecution: AgentConfigurationLoader['resolveAgentExecution'];
   buildRoleCatalogSnapshotForUserPath: AgentConfigurationLoader['buildRoleCatalogSnapshotForUserPath'];
   resolveIdentityCatalogForUserPath: AgentConfigurationLoader['resolveIdentityCatalogForUserPath'];
   resolveThreadPersona: AgentConfigurationLoader['resolveThreadPersona'];
@@ -143,6 +144,8 @@ export interface AgentConfigurationCapability {
   resolveIdentityCatalog: AgentConfigurationLoader['resolveIdentityCatalog'];
   listEditableRoles: AgentConfigurationLoader['listEditableRoles'];
   listPresentationOverrides: AgentConfigurationLoader['listPresentationOverrides'];
+  listAgentExecutionSelections: AgentConfigurationLoader['listAgentExecutionSelections'];
+  resolveAgentExecution: AgentConfigurationLoader['resolveAgentExecution'];
   resolveEditableProfile: AgentConfigurationLoader['resolveEditableProfile'];
   listBuiltInDefinitions: AgentConfigurationLoader['listBuiltInDefinitions'];
   writeRole: AgentConfigurationWriter['writeRole'];
@@ -255,6 +258,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     resolveProfile: (...args) => configurationLoader.resolveProfile(...args),
     resolveRole: (...args) => configurationLoader.resolveRole(...args),
     resolveAgentType: (...args) => configurationLoader.resolveAgentType(...args),
+    resolveAgentExecution: (...args) => configurationLoader.resolveAgentExecution(...args),
     buildRoleCatalogSnapshotForUserPath: (...args) => (
       configurationLoader.buildRoleCatalogSnapshotForUserPath(...args)
     ),
@@ -397,6 +401,8 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       resolveIdentityCatalog: (...args) => configurationLoader.resolveIdentityCatalog(...args),
       listEditableRoles: (...args) => configurationLoader.listEditableRoles(...args),
       listPresentationOverrides: (...args) => configurationLoader.listPresentationOverrides(...args),
+      listAgentExecutionSelections: (...args) => configurationLoader.listAgentExecutionSelections(...args),
+      resolveAgentExecution: (...args) => configurationLoader.resolveAgentExecution(...args),
       resolveEditableProfile: (...args) => configurationLoader.resolveEditableProfile(...args),
       listBuiltInDefinitions: (...args) => configurationLoader.listBuiltInDefinitions(...args),
       writeRole: (...args) => configurationWriter.writeRole(...args),

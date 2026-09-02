@@ -3,6 +3,16 @@ import { identitySlot } from '../identityHash';
 export const REASONING_EFFORTS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 
+export const MAX_AGENT_TYPE_LENGTH = 64;
+const AGENT_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
+
+/** The identifier grammar shared by configuration, dispatch, and Settings deep links. */
+export function isAgentTypeIdentifier(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length <= MAX_AGENT_TYPE_LENGTH
+    && AGENT_TYPE_PATTERN.test(value);
+}
+
 export interface ConfigurationProfile {
   readonly name: string;
   readonly source: 'builtIn' | 'user' | 'project';
@@ -17,12 +27,17 @@ export interface ConfigurationProfile {
 }
 
 export interface AgentRoleOverrides {
-  readonly model?: string;
-  readonly reasoningEffort?: ReasoningEffort;
   readonly tools?: readonly string[];
   readonly skills?: readonly string[];
   readonly plugins?: readonly string[];
   readonly mcpServers?: readonly string[];
+}
+
+/** A standing execution preference for fresh collaboration Agents of one type. */
+export interface AgentExecutionSelection {
+  readonly modelProvider?: string;
+  readonly model?: string;
+  readonly reasoningEffort?: ReasoningEffort;
 }
 
 export interface AgentRole {
@@ -144,8 +159,7 @@ export interface EffectiveThreadConfiguration {
 
 export interface ChildConfigurationRequest {
   readonly role: AgentRole;
-  readonly model?: string;
-  readonly reasoningEffort?: ReasoningEffort;
+  readonly execution?: AgentExecutionSelection;
 }
 
 export function resolveChildConfiguration(
@@ -158,8 +172,8 @@ export function resolveChildConfiguration(
   return Object.freeze({
     profileName: parent.profileName,
     developerInstructions: Object.freeze([request.role.developerInstructions]),
-    model: request.model ?? overrides?.model ?? parent.model,
-    reasoningEffort: request.reasoningEffort ?? overrides?.reasoningEffort ?? parent.reasoningEffort,
+    model: request.execution?.model ?? parent.model,
+    reasoningEffort: request.execution?.reasoningEffort ?? parent.reasoningEffort,
     tools: constrainChildCapabilities(parent.tools, overrides?.tools),
     skills: constrainChildCapabilities(parent.skills, overrides?.skills),
     preloadedSkills,

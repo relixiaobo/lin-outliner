@@ -259,9 +259,10 @@ or compatibility readers.
 A named `ConfigurationProfile` supplies root Thread defaults. User definitions
 load from `<userData>/agent/config.json`; project definitions load from
 `<cwd>/.tenon/agent.json` and replace same-name user definitions. Both exact-key
-JSON files may define `defaultProfile`, `profiles`, and `roles`. Invalid JSON,
-unknown fields, invalid names, duplicate capability identities, and unsupported
-reasoning effort values fail closed.
+JSON files may define `defaultProfile`, `profiles`, `roles`,
+`presentationOverrides`, and `agentExecution`. Invalid JSON, unknown fields,
+invalid names, duplicate capability identities, mismatched provider-qualified
+models, and unsupported reasoning effort values fail closed.
 
 Root Thread creation resolves its selected Profile into one persisted
 `EffectiveThreadConfiguration` snapshot. Later file edits do not rewrite that
@@ -303,10 +304,14 @@ are `general-purpose`, `explore`, and `plan`, backed respectively by hidden
 `default`, `explorer`, and `plan` Roles. User and project Roles extend the Agent
 type catalog; there is no built-in `worker`. A fresh spawn intersects its
 selected Role and mode policy with the parent's tool, Skill, plugin, and MCP
-ceilings, then persists the resolved definition, model, reasoning setting, and
-tool policy. Resume reuses that recorded configuration and Agent history rather
-than re-resolving a changed Role. The complete context and execution contract is
-owned by [`agent-subagent-threads.md`](agent-subagent-threads.md).
+ceilings. A separate canonical-Agent-type `agentExecution` row may select a
+provider-qualified model and reasoning effort; absent fields follow the direct
+parent. The host validates that complete selection before admission, then
+persists the resolved definition, effective provider/model/reasoning snapshot,
+and tool policy. Resume reuses that recorded configuration and Agent history
+rather than re-resolving a changed Role or execution row. The complete context
+and execution contract is owned by
+[`agent-subagent-threads.md`](agent-subagent-threads.md).
 
 ## Identity And Provenance
 

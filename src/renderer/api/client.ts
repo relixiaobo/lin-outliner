@@ -261,6 +261,7 @@ export const api = {
     /** `create` refuses a name that already exists instead of replacing it. */
     mode: 'create' | 'update';
     role: AgentRoleDraft;
+    execution?: import('../../core/types').AgentExecutionSelectionDraft;
   }) =>
     command<AgentEditorView>('agent_write_role', input),
   agentDeleteRole: (input: { layer: 'user' | 'project'; cwd?: string; name: string }) =>
@@ -283,6 +284,7 @@ export const api = {
     cwd?: string;
     agentType: string;
     presentation: { persona?: string; color?: string };
+    execution?: import('../../core/types').AgentExecutionSelectionDraft;
   }) => command<AgentEditorView>('agent_write_presentation', input),
   agentManagedSkillCatalog: () =>
     managedCommand<ManagedSkillCatalogView>('agent_managed_skill_catalog'),

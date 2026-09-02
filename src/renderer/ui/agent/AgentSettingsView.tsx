@@ -17,6 +17,7 @@ import {
   WarningIcon,
 } from '../icons';
 import {
+  isSettingsAgentTypeTarget,
   isSettingsAnchorTarget,
   settingsPageCategory,
   type SettingsCategoryTarget,
@@ -55,7 +56,12 @@ type SettingsCategory = SettingsCategoryTarget;
  * anything: history could only hold categories that the rail already listed two
  * inches to the left. With real second-level pages the arrows have work.
  */
-type SettingsRoute = { category: SettingsCategory; page?: SettingsPageTarget; anchor?: string };
+type SettingsRoute = {
+  category: SettingsCategory;
+  page?: SettingsPageTarget;
+  anchor?: string;
+  agentType?: string;
+};
 
 /**
  * Not a draft in the commit sense — nothing here waits for a Save. `ProviderDraft`
@@ -93,8 +99,16 @@ const SETTINGS_CATEGORY_ICONS = {
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
   const anchor = isSettingsAnchorTarget(target?.anchor) ? target.anchor : undefined;
+  const agentType = target?.page === 'agents' && isSettingsAgentTypeTarget(target.agentType)
+    ? target.agentType
+    : undefined;
   if (target?.page) {
-    return { category: settingsPageCategory(target.page), page: target.page, ...(anchor ? { anchor } : {}) };
+    return {
+      category: settingsPageCategory(target.page),
+      page: target.page,
+      ...(anchor ? { anchor } : {}),
+      ...(agentType ? { agentType } : {}),
+    };
   }
   if (target?.category && SETTINGS_CATEGORY_IDS.includes(target.category)) {
     return { category: target.category, ...(anchor ? { anchor } : {}) };
@@ -113,7 +127,10 @@ function routeCategory(route: SettingsRoute): SettingsCategory {
 }
 
 function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
-  return left.category === right.category && left.page === right.page && left.anchor === right.anchor;
+  return left.category === right.category
+    && left.page === right.page
+    && left.anchor === right.anchor
+    && left.agentType === right.agentType;
 }
 
 /**
@@ -753,7 +770,13 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                 toggleErrors={providerToggleErrors}
               />
             ) : route.page === 'agents' ? (
-              <AgentsSettings onError={setError} onNotice={setNotice} />
+              <AgentsSettings
+                key={`agents:${targetGeneration}:${route.agentType ?? ''}`}
+                initialAgentType={route.agentType}
+                onError={setError}
+                onNotice={setNotice}
+                settings={settings}
+              />
             ) : route.page === 'about' ? (
               <SettingsAboutSection
                 appUpdate={appUpdate}

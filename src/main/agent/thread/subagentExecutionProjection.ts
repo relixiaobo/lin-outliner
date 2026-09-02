@@ -58,6 +58,7 @@ export function projectSubagentExecution(
     notificationCutoff: record.notificationCutoff,
     executionMode: record.executionMode,
     settlementCoverage: record.settlementCoverage,
+    executionSelectionFallback: record.executionSelectionFallback,
     // A removed worktree is a tombstone, not a retained one: the branch it
     // names no longer exists, so a footer offering to reveal it would point
     // the user at a directory the host has already deleted.

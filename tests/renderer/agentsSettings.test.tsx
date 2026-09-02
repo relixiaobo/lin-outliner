@@ -3,13 +3,14 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
-import type { AgentEditorView } from '../../src/renderer/api/types';
+import type { AgentEditorView, AgentProviderSettingsView } from '../../src/renderer/api/types';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
 const VIEW: AgentEditorView = {
   // Nothing is re-skinned: every built-in identity below is the resolved
   // default, which is exactly the case the editor must not write back.
   presentationOverrides: [],
+  executionSelections: [],
   profile: {
     name: 'default',
     layer: null,
@@ -43,11 +44,67 @@ const VIEW: AgentEditorView = {
     developerInstructions: 'Read the diff.',
     persona: 'Wren',
     color: 'violet',
-    model: null,
-    reasoningEffort: null,
     tools: null,
     skills: null,
   }],
+};
+
+const PROVIDER_SETTINGS: AgentProviderSettingsView = {
+  activeProviderId: 'anthropic',
+  providers: [
+    {
+      providerId: 'anthropic',
+      enabled: true,
+      hasApiKey: true,
+      auth: { authKind: 'api-key', credentialed: true },
+    },
+    {
+      providerId: 'openai',
+      enabled: true,
+      hasApiKey: true,
+      auth: { authKind: 'api-key', credentialed: true },
+    },
+  ],
+  availableProviders: [
+    {
+      providerId: 'anthropic',
+      authKind: 'api-key',
+      hasEnvApiKey: false,
+      envKeyNames: ['ANTHROPIC_API_KEY'],
+      models: [{
+        id: 'claude-opus-5',
+        name: 'Claude Opus 5',
+        reasoning: true,
+        supportedThinkingLevels: ['low', 'medium', 'high'],
+        contextWindow: 200_000,
+        maxTokens: 64_000,
+      }],
+    },
+    {
+      providerId: 'openai',
+      authKind: 'api-key',
+      hasEnvApiKey: false,
+      envKeyNames: ['OPENAI_API_KEY'],
+      models: [{
+        id: 'gpt-5.6',
+        name: 'GPT-5.6',
+        reasoning: true,
+        supportedThinkingLevels: ['medium', 'high', 'xhigh'],
+        contextWindow: 256_000,
+        maxTokens: 64_000,
+      }],
+    },
+  ],
+  agent: {
+    additionalSkillDirectories: [],
+    subagentTokenBudget: null,
+    providerTimeoutMs: null,
+    providerMaxRetries: null,
+    providerMaxRetryDelayMs: null,
+    providerCacheRetention: 'short',
+    disabledSkills: [],
+  },
+  imageGeneration: {},
 };
 
 const mounted: Array<() => void> = [];
@@ -87,6 +144,210 @@ describe('the Agents editor', () => {
     expect(document.querySelector('.agent-editor-delete')).toBeNull();
     // Its behaviour is not editable either: only the identity fields are shown.
     expect(document.querySelector('.agent-editor-dialog textarea')).toBeNull();
+  });
+
+  test('starts every child Agent on Follow parent and keeps Execution off main', async () => {
+    const child = await renderAgents();
+    await child.click(rowByLabel(child.document, 'Rena'));
+    expect((selectByLabel(child.document, 'Model') as HTMLSelectElement).value).toBe('');
+    expect((selectByLabel(child.document, 'Reasoning') as HTMLSelectElement).value).toBe('');
+    expect(selectByLabel(child.document, 'Model').textContent).toContain('Follow parent');
+
+    await child.click(child.document.querySelector('.agent-editor-actions .button-ghost')!);
+    await child.click(rowByLabel(child.document, 'Aspen'));
+    expect(() => selectByLabel(child.document, 'Model')).toThrow();
+    expect(() => selectByLabel(child.document, 'Reasoning')).toThrow();
+  });
+
+  test('offers usable models across providers and filters reasoning by the selected model', async () => {
+    const rendered = await renderAgents();
+    await rendered.click(rowByLabel(rendered.document, 'Rena'));
+    const model = selectByLabel(rendered.document, 'Model');
+    expect(model.textContent).toContain('Claude Opus 5 (anthropic)');
+    expect(model.textContent).toContain('GPT-5.6 (openai)');
+
+    await rendered.changeSelect(model, 'openai/gpt-5.6');
+    expect([...selectByLabel(rendered.document, 'Reasoning').querySelectorAll('option')]
+      .map((option) => option.textContent)).toEqual(['Follow parent', 'medium', 'high', 'xhigh']);
+    await rendered.changeSelect(selectByLabel(rendered.document, 'Reasoning'), 'xhigh');
+    await rendered.changeSelect(model, 'anthropic/claude-opus-5');
+    expect(selectByLabel(rendered.document, 'Reasoning').textContent).not.toContain('xhigh');
+    await rendered.click(rendered.document.querySelector('.agent-editor-actions .button-primary')!);
+    expect((rendered.calls[1]!.args as { execution: { reasoningEffort: unknown } }).execution.reasoningEffort)
+      .toBeNull();
+  });
+
+  test('saves execution as a sibling payload instead of a Role field', async () => {
+    const rendered = await renderAgents();
+    await rendered.click(rowByLabel(rendered.document, 'Wren'));
+    await rendered.changeSelect(selectByLabel(rendered.document, 'Model'), 'openai/gpt-5.6');
+    await rendered.changeSelect(selectByLabel(rendered.document, 'Reasoning'), 'xhigh');
+    await rendered.click(rendered.document.querySelector('.agent-editor-actions .button-primary')!);
+
+    expect(rendered.calls[1]!.args).toMatchObject({
+      role: { name: 'auditor' },
+      execution: {
+        modelProvider: 'openai',
+        model: 'openai/gpt-5.6',
+        reasoningEffort: 'xhigh',
+      },
+    });
+    expect((rendered.calls[1]!.args as { role: Record<string, unknown> }).role.model).toBeUndefined();
+  });
+
+  test('keeps an unavailable saved model visible in the list, editor, and unchanged save', async () => {
+    const rendered = await renderAgents({
+      view: {
+        ...VIEW,
+        executionSelections: [{
+          agentType: 'explore',
+          layer: 'user',
+          modelProvider: 'openai',
+          model: 'openai/retired-model',
+          reasoningEffort: 'high',
+        }],
+      },
+    });
+    expect(rowByLabel(rendered.document, 'Rena').textContent).toContain('Unavailable');
+
+    await rendered.click(rowByLabel(rendered.document, 'Rena'));
+    expect(selectByLabel(rendered.document, 'Model').textContent).toContain('retired-model');
+    expect(selectByLabel(rendered.document, 'Model').textContent).toContain('Unavailable');
+    const executionGroup = [...rendered.document.querySelectorAll('.inset-group')]
+      .find((group) => group.querySelector('.inset-group-header')?.textContent === 'Execution');
+    expect(executionGroup?.querySelector('.inset-group-footnote')?.textContent)
+      .toContain('New runs will follow their parent');
+    await rendered.click(rendered.document.querySelector('.agent-editor-actions .button-primary')!);
+    expect(rendered.calls[1]!.args).toMatchObject({
+      execution: {
+        modelProvider: 'openai',
+        model: 'openai/retired-model',
+        reasoningEffort: 'high',
+      },
+    });
+  });
+
+  test('marks a disabled provider unavailable and exposes only its saved model', async () => {
+    const anthropic = PROVIDER_SETTINGS.availableProviders[0]!;
+    const rendered = await renderAgents({
+      settings: {
+        ...PROVIDER_SETTINGS,
+        providers: PROVIDER_SETTINGS.providers.map((provider) => (
+          provider.providerId === 'anthropic' ? { ...provider, enabled: false } : provider
+        )),
+        availableProviders: [{
+          ...anthropic,
+          models: [
+            ...anthropic.models,
+            {
+              id: 'claude-sonnet-5',
+              name: 'Claude Sonnet 5',
+              reasoning: true,
+              supportedThinkingLevels: ['low', 'medium', 'high'],
+              contextWindow: 200_000,
+              maxTokens: 64_000,
+            },
+          ],
+        }, PROVIDER_SETTINGS.availableProviders[1]!],
+      },
+      view: {
+        ...VIEW,
+        executionSelections: [{
+          agentType: 'explore',
+          layer: 'user',
+          modelProvider: 'anthropic',
+          model: 'anthropic/claude-opus-5',
+          reasoningEffort: 'high',
+        }],
+      },
+    });
+
+    expect(rowByLabel(rendered.document, 'Rena').textContent).toContain('Unavailable');
+    await rendered.click(rowByLabel(rendered.document, 'Rena'));
+    const model = selectByLabel(rendered.document, 'Model');
+    expect(model.textContent).toContain('Claude Opus 5 (anthropic) - Unavailable');
+    expect(model.textContent).not.toContain('Claude Sonnet 5');
+    expect(model.textContent).toContain('GPT-5.6 (openai)');
+  });
+
+  test('edits a custom Role execution row from the Role\'s own layer', async () => {
+    const rendered = await renderAgents({
+      view: {
+        ...VIEW,
+        roles: [
+          VIEW.roles[0]!,
+          { ...VIEW.roles[0]!, layer: 'project', persona: 'Project Wren' },
+        ],
+        executionSelections: [
+          {
+            agentType: 'auditor',
+            layer: 'user',
+            modelProvider: 'openai',
+            model: 'openai/gpt-5.6',
+            reasoningEffort: 'xhigh',
+          },
+          {
+            agentType: 'auditor',
+            layer: 'project',
+            modelProvider: 'anthropic',
+            model: 'anthropic/claude-opus-5',
+            reasoningEffort: 'high',
+          },
+        ],
+      },
+    });
+
+    await rendered.click(rowByLabel(rendered.document, 'Wren'));
+    expect(selectByLabel(rendered.document, 'Model').value).toBe('openai/gpt-5.6');
+    expect(selectByLabel(rendered.document, 'Reasoning').value).toBe('xhigh');
+    await rendered.click(rendered.document.querySelector('.agent-editor-actions .button-primary')!);
+    expect(rendered.calls[1]!.args).toMatchObject({
+      layer: 'user',
+      execution: {
+        modelProvider: 'openai',
+        model: 'openai/gpt-5.6',
+        reasoningEffort: 'xhigh',
+      },
+    });
+  });
+
+  test('opens the requested Agent editor without fetching provider settings again', async () => {
+    const rendered = await renderAgents({ initialAgentType: 'auditor' });
+
+    expect(rendered.document.querySelector('.agent-editor-dialog')).not.toBeNull();
+    expect((fieldByLabel(rendered.document, 'Type') as HTMLInputElement).value).toBe('auditor');
+    expect(rendered.calls.map((call) => call.name)).toEqual(['agent_identity_catalog']);
+  });
+
+  test('a fallback deep link opens the winning project Role and its own execution row', async () => {
+    const rendered = await renderAgents({
+      initialAgentType: 'auditor',
+      view: {
+        ...VIEW,
+        roles: [
+          VIEW.roles[0]!,
+          {
+            ...VIEW.roles[0]!,
+            layer: 'project',
+            description: 'Project audit.',
+            developerInstructions: 'Use the project workflow.',
+            persona: 'Project Wren',
+          },
+        ],
+        executionSelections: [{
+          agentType: 'auditor',
+          layer: 'user',
+          modelProvider: 'openai',
+          model: 'openai/gpt-5.6',
+          reasoningEffort: 'xhigh',
+        }],
+      },
+    });
+
+    expect((fieldByLabel(rendered.document, 'Use it for') as HTMLInputElement).value)
+      .toBe('Project audit.');
+    expect(selectByLabel(rendered.document, 'Model').value).toBe('');
+    expect(selectByLabel(rendered.document, 'Reasoning').value).toBe('');
   });
 
   test('tells the write which agent already exists, so create cannot replace', async () => {
@@ -372,14 +633,24 @@ function fieldByLabel(document: Document, label: string): Element {
   return field;
 }
 
+function selectByLabel(document: Document, label: string): HTMLSelectElement {
+  const field = [...document.querySelectorAll('select')]
+    .find((candidate) => candidate.getAttribute('aria-label') === label);
+  if (!field) throw new Error(`No select labelled ${label}`);
+  return field as HTMLSelectElement;
+}
+
 async function renderAgents(options: {
+  initialAgentType?: string;
   onInvoke?: (name: string) => unknown;
+  settings?: AgentProviderSettingsView | null;
   view?: AgentEditorView;
 } = {}): Promise<{
   readonly document: Document;
   readonly calls: Array<{ name: string; args: unknown }>;
   readonly onError: string[];
   readonly click: (element: Element) => Promise<void>;
+  readonly changeSelect: (element: Element, value: string) => Promise<void>;
 }> {
   const calls: Array<{ name: string; args: unknown }> = [];
   const onError: string[] = [];
@@ -408,8 +679,10 @@ async function renderAgents(options: {
     root.render(
       <I18nProvider>
         <AgentsSettings
+          initialAgentType={options.initialAgentType}
           onError={(message) => { if (message !== null) onError.push(message); }}
           onNotice={() => undefined}
+          settings={options.settings === undefined ? PROVIDER_SETTINGS : options.settings}
         />
       </I18nProvider>,
     );
@@ -430,6 +703,12 @@ async function renderAgents(options: {
       // A click that starts a write settles a tick later; draining here keeps
       // every resulting state update inside act.
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    },
+    changeSelect: async (element, value) => {
+      await act(async () => {
+        Object.defineProperty(element, 'value', { configurable: true, value });
+        element.dispatchEvent(new window.Event('change', { bubbles: true, cancelable: true }));
+      });
     },
   };
 }
