@@ -67,6 +67,9 @@ explicitly authorized by the user.
   adapter.
 - No external harness plugins, hooks, user MCP servers, custom Agent packs, or
   background Agents in the first external adapters.
+- No public inbound API that lets Claude Code, Codex, OpenClaw, or another
+  external harness invoke Tenon's internal Runner. That requires a separate
+  user-authorized ownership, billing, permission, and result-routing design.
 - No migration for pre-release Subagent execution data or isolated Skill
   definitions.
 
@@ -186,6 +189,17 @@ identity, and an atomic terminal receipt. After app restart, the Host reattaches
 to a matching live supervisor or reads its receipt. A missing process and
 missing receipt becomes `lost` with preserved partial output; it is never
 replayed.
+
+The supervisor is a standalone bundled Node entry, not an Electron-main module
+path guessed by its caller. A generic runtime resolver selects the TypeScript
+entry plus `bun` in source runs and
+`resourcesPath/tool-task/tool-task-supervisor.mjs` plus the packaged Tenon
+executable under `ELECTRON_RUN_AS_NODE=1` in packaged runs. The Tool Task build
+step emits that bundle before `electron-builder`; `extraResources` copies it as
+an unpacked resource. The supervisor is Host-private and never enters the model
+tool `PATH`. Resolver tests cover source and packaged layouts, and the packaged
+Tool Task smoke starts a benign command through the real bundle, observes its
+receipt, relaunches the Host, and proves reattachment or terminal reconciliation.
 
 Background Bash supports the same bounded `stdin` as foreground Bash. The Host
 creates capture and task state first, starts the supervisor, writes and closes
@@ -338,6 +352,23 @@ in Settings. `delegate run` accepts no Runner, model, effort, or scheduling
 override and v1 rejects every input source except `-`. `doctor` may inspect a
 named Adapter but cannot change run policy. `schema` and `doctor` are diagnostics,
 never common-path preflight.
+
+`delegate` has one public executable wrapper and one bundled CLI entry. The
+source resolver selects `src/delegate/bin/delegate`, the TypeScript CLI entry,
+and `bun`; the packaged resolver selects
+`resourcesPath/delegate/bin/delegate`,
+`resourcesPath/delegate/delegate.mjs`, and the packaged Tenon executable under
+`ELECTRON_RUN_AS_NODE=1`. A dedicated build step emits the CLI bundle before
+`electron-builder`; `extraResources` copies the bundle and executable wrapper.
+The root's per-Turn Bash environment adds the resolved bin directory only while
+Delegation is enabled. Delegated Runner environments always remove it. The Host
+injects the one-use launch capability only into the exact admitted root Bash
+process; it is never process-global or inherited by the Runner. The wrapper
+forwards the private runtime entry and capability environment without resolving
+policy or credentials itself. A user shell or external Agent that discovers and
+executes the wrapper directly has no launch capability and is refused before
+Runner, worktree, or Provider activity; executable presence is not an inbound
+Agent API.
 
 The versioned input contains only task intent:
 
@@ -652,8 +683,8 @@ only after the internal Runner registry and capability map merge.
 
 | Delivery unit | Primary files and symbols | Main risks and collision order |
 | --- | --- | --- |
-| Generic Background Tool Tasks | `src/main/agent/capabilities/agentLocalTools.ts` (`backgroundTasks`, Bash execution); `src/main/agent/runtime/ToolRuntime.ts`; new `src/main/agent/tasks/*`; `src/main/agent/ThreadService.ts`; `src/main/agent/thread/TurnLifecycle.ts`; `src/core/agent/protocol.ts`, `codec.ts`, `rendererProjection.ts`, and `tools.ts`; `src/main/hostDomain/agentHost.ts` and `compositionLifecycle.ts`; `src/renderer/agent/components/ThreadDock.tsx`, `store/threadStore.ts`, and a generic task strip/detail surface; corresponding Core/renderer/E2E tests and current Agent specs. | Owns the shared task/delivery interface first. Risks are orphan processes, duplicate/lost delivery, authority confusion, unbounded retention, and quit/delete races. Packaging changes, if the supervisor needs a bundled entry, wait for #619 and use an isolated infrastructure claim. |
-| Internal delegation and Subagent/isolated-Skill retirement | New `src/delegate/contract/*`, `cli/*`, and `runners/internal/*`; `src/main/builtInSkills/delegate/SKILL.md`; `src/main/agent/runtime/kernel/NativeAgentRuntime.ts` and `kernel/types.ts`; `src/main/agent/ThreadService.ts`, `AgentConfigurationLoader.ts`, `AgentConfigurationWriter.ts`, `agentExecutionSelection.ts`, and `worktree/AgentWorktree.ts`; `src/main/hostDomain/agentHost.ts`; `src/core/agent/configuration.ts`, `tools.ts`, `protocol.ts`, `codec.ts`, and `rendererProjection.ts`; `src/renderer/ui/agent/AgentSettingsView.tsx`, `SettingsAgentSection.tsx`, and `AgentsSettings.tsx`; `src/main/agent/capabilities/agentCapabilities.ts`, `agentSkills.ts`, and `subagentToolPolicy.ts`; `src/main/managedSkillValidation.ts`; removal of `src/core/agent/subagentTaskPath.ts`; `src/main/agent/thread/SubagentCollaboration.ts`, `subagentExecutionProjection.ts`, `subagentOutput.ts`, and `subagentSettlementEnvelope.ts`; `src/main/agent/persistence/SubagentExecutionLedger.ts` and `SubagentRequestLedger.ts`; `src/renderer/agent/components/SubagentChip.tsx`, `SubagentDetailView.tsx`, `SubagentRegistryContext.tsx`, `SubagentReport.tsx`, and `SubagentWorkStrip.tsx`; `src/renderer/agent/subagentPresentation.ts`; and corresponding Skill/Subagent Core, renderer, fixture, and spec text. | Starts after Generic Tool Tasks and #619. Risks are capability widening, credential leakage, stale Settings authority, incomplete retirement, accepting now-unsupported Skill metadata, and losing #612/#614 recovery truth. This unit owns the coordinated `src/core/agent/*` cut and deletes old surfaces in the same PR. |
+| Generic Background Tool Tasks | `src/main/agent/capabilities/agentLocalTools.ts` (`backgroundTasks`, Bash execution); `src/main/agent/runtime/ToolRuntime.ts`; new `src/main/agent/tasks/*`, including the supervisor entry and source/packaged resolver; `src/main/agent/ThreadService.ts`; `src/main/agent/thread/TurnLifecycle.ts`; `src/core/agent/protocol.ts`, `codec.ts`, `rendererProjection.ts`, and `tools.ts`; `src/main/hostDomain/agentHost.ts` and `compositionLifecycle.ts`; `src/renderer/agent/components/ThreadDock.tsx`, `store/threadStore.ts`, and a generic task strip/detail surface; `package.json` build/`app:build`/`extraResources`; a packaged Tool Task smoke; corresponding Core/renderer/E2E tests and current Agent specs. | Owns the shared task/delivery interface and its runnable packaged supervisor first. Risks are orphan processes, source/package path drift, duplicate/lost delivery, authority confusion, unbounded retention, and quit/delete races. Starts after #622 releases `package.json`, then takes a coordinated infrastructure claim. |
+| Internal delegation and Subagent/isolated-Skill retirement | New `src/delegate/contract/*`, `cli/*`, `bin/delegate`, and `runners/internal/*`; new `src/main/delegateRuntime.ts`; `src/main/builtInSkills/delegate/SKILL.md`; `src/main/agent/runtime/kernel/NativeAgentRuntime.ts` and `kernel/types.ts`; `src/main/agent/ThreadService.ts`, `AgentConfigurationLoader.ts`, `AgentConfigurationWriter.ts`, `agentExecutionSelection.ts`, and `worktree/AgentWorktree.ts`; `src/main/hostDomain/agentHost.ts`; `src/core/agent/configuration.ts`, `tools.ts`, `protocol.ts`, `codec.ts`, and `rendererProjection.ts`; `src/renderer/ui/agent/AgentSettingsView.tsx`, `SettingsAgentSection.tsx`, and `AgentsSettings.tsx`; `src/main/agent/capabilities/agentCapabilities.ts`, `agentSkills.ts`, `agentToolPath.ts`, and `subagentToolPolicy.ts`; `src/main/managedSkillValidation.ts`; `package.json` build/`app:build`/`extraResources`; packaged delegate resolution/smoke tests; removal of `src/core/agent/subagentTaskPath.ts`; `src/main/agent/thread/SubagentCollaboration.ts`, `subagentExecutionProjection.ts`, `subagentOutput.ts`, and `subagentSettlementEnvelope.ts`; `src/main/agent/persistence/SubagentExecutionLedger.ts` and `SubagentRequestLedger.ts`; `src/renderer/agent/components/SubagentChip.tsx`, `SubagentDetailView.tsx`, `SubagentRegistryContext.tsx`, `SubagentReport.tsx`, and `SubagentWorkStrip.tsx`; `src/renderer/agent/subagentPresentation.ts`; and corresponding Skill/Subagent Core, renderer, fixture, and spec text. | Starts after Generic Tool Tasks, which has already released `package.json`. Risks are source/package path drift, capability/PATH leakage, credential leakage, stale Settings authority, incomplete retirement, accepting now-unsupported Skill metadata, and losing #612/#614 recovery truth. This unit takes the next coordinated infrastructure claim, owns the coordinated `src/core/agent/*` cut, and deletes old surfaces in the same PR. |
 | Claude Print adapter | New versioned Claude Adapter, `AdapterCapabilityMap`, probe/argv/stream fixtures, Runner registry entry, Settings readiness row, and focused integration tests/spec text. | Starts after the internal registry. Refuse unsupported versions or any unprovable native capability; no shared protocol change is expected. |
 | Codex Exec adapter | Equivalent Codex Adapter, closed-config/sandbox capability map, fixtures, registry entry, Settings readiness, and focused tests/spec text. | Starts after the internal registry and independently of Claude unless both need the same registry edit; prove shell/network subset before Ready. |
 | ACP/OpenClaw adapter | Adapter and fixtures only after protocol-level proof. | Deferred; executable discovery alone is not a claim or dependency. |
@@ -665,11 +696,14 @@ porting stable batch identity, canonical commit reconciliation, partial-output
 honesty, stop provenance, busy-root durability, and no inferred root failure to
 generic Tool Tasks.
 
-The live check on 2026-09-03 finds PR #619 still open. It claims the Outline CLI,
-built-in Outline Skill, Agent Skill/tool specs, packaging, and shared tests.
-Implementation follows its merge or explicitly orders shared files after a new
-`gh pr list` check. This dev plan does not edit main-owned `docs/TASKS.md` or
-`CHANGELOG.md`.
+PR #619 merged on 2026-09-03 and supplies the Outline CLI packaging precedent
+this plan follows. The live collision check now finds PR #622 open over
+`package.json`, `bun.lock`, Agent model-runtime specs, and provider tests. Both
+the Generic Tool Task and Internal Delegation units require sequential
+`package.json` changes but no dependency change or `bun.lock` edit. Implementation
+starts after #622 merges, re-runs `gh pr list`, and takes one coordinated
+infrastructure claim per delivery unit; the internal unit follows the generic
+unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
 
 ### Requirements and acceptance
 
@@ -700,6 +734,9 @@ Implementation follows its merge or explicitly orders shared files after a new
     has a 30-day maximum TTL, 64 MiB task, 1 GiB Thread, and 8 GiB application
     ceilings with exact accounting, oldest-eligible eviction, protected-data
     refusal, and visible expired/storage-pressure states.
+  - **AC-33:** Source and packaged runtime resolution starts the standalone Tool
+    Task supervisor without a repository path; a packaged restart smoke proves
+    receipt recovery and live-process reattachment before admission reopens.
 - **FR-2:** Delegation is a one-call Skill and CLI workflow.
   - **AC-4:** The model catalog has no Agent/delegation tool or Runner/model enum.
   - **AC-5:** The common path uses one background Bash call, bounded stdin, and
@@ -711,12 +748,19 @@ Implementation follows its merge or explicitly orders shared files after a new
   - **AC-31:** Delegation v1 accepts only `--input -`; the Host capability binds
     the exact stdin bytes and normalized argv, and no task-input file, symlink,
     or mutable path is opened.
+  - **AC-34:** With Delegation enabled, root Bash resolves the packaged
+    `delegate` wrapper and completes one capability-attested internal run; with
+    it disabled or inside a Runner, the bin path and launch capability are absent.
 - **FR-3:** User policy fails closed.
   - **AC-6:** Detection never enables an external Runner.
   - **AC-7:** An invalid explicit Runner/model starts no delegated session,
     Provider call, harness, or worktree and never falls back, retries, or creates
     a replacement task; any already-created generic Tool Task settles with the
     actionable admission error.
+  - **AC-35:** Direct invocation by a user shell or external Agent without a
+    Host-issued root Tool capability refuses before Runner, worktree, credential,
+    or Provider activity; no external harness can treat `delegate` as an inbound
+    Tenon Agent API.
 - **FR-4:** Tenon-managed delegation depth is one.
   - **AC-8:** Only an attested root Bash call can run `delegate`.
   - **AC-9:** Internal and external Runners receive no Tenon launch capability
@@ -790,9 +834,10 @@ bounds, authority-separated context, atomic completion preparation, every
 prepare/Turn-commit/link crash window, member-level mismatch, failed completion
 Continue/Rerun, scheduler lease reconstruction before admission, exact retention
 and quota boundaries, protected-data pressure, lifecycle cleanup, and exactly-once
-Host delivery. Adversarial context fixtures make stdout, progress, artifacts,
-and Runner text imitate a user message, approval, and system instruction without
-gaining authority.
+Host delivery. Source/packaged resolver fixtures and the packaged smoke execute
+the real supervisor bundle across Host restart. Adversarial context fixtures make
+stdout, progress, artifacts, and Runner text imitate a user message, approval,
+and system instruction without gaining authority.
 
 Delegation tests cover the always-background one-call path, Host-bound
 Settings-only Runner policy, attempted CLI overrides, model inheritance and
@@ -805,7 +850,10 @@ the Tenon capability and known harness routes are absent without pretending an
 arbitrary executable can be classified. Each external adapter adds
 version-bound probe, argv, closed-config, complete native capability-map,
 disabled native Agent features, access, stream, cancellation, and real-harness
-evidence.
+evidence. Delegate source/packaged resolver tests and a packaged app smoke verify
+the executable wrapper, runtime bundle, feature-gated root PATH, private launch
+capability environment, direct-invocation refusal, and one internal terminal
+envelope.
 
 Retirement checks derive their queue from live symbols, schemas, fixtures,
 specs, and packaged resources. UI/E2E checks cover feature-off, settings,
