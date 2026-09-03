@@ -7,11 +7,10 @@ import path from 'node:path';
 export interface AtomicWriteFileOptions {
   mode?: number;
   directoryMode?: number;
+  signal?: AbortSignal;
 }
 
-export interface JsonFileStoreOptions {
-  mode?: number;
-  directoryMode?: number;
+export interface JsonFileStoreOptions extends AtomicWriteFileOptions {
   pretty?: boolean;
   trailingNewline?: boolean;
 }
@@ -59,10 +58,15 @@ async function atomicWriteFileUnlocked(
   data: string | Buffer | Uint8Array,
   options: AtomicWriteFileOptions,
 ): Promise<void> {
+  options.signal?.throwIfAborted();
   await prepareParentDirectory(filePath, options);
   const tmpPath = temporaryFilePath(filePath);
   try {
-    await writeFile(tmpPath, data, options.mode === undefined ? undefined : { mode: options.mode });
+    await writeFile(tmpPath, data, {
+      ...(options.mode === undefined ? {} : { mode: options.mode }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    options.signal?.throwIfAborted();
     await rename(tmpPath, filePath);
     if (options.mode !== undefined && process.platform !== 'win32') {
       await chmod(filePath, options.mode);
@@ -78,10 +82,12 @@ function atomicWriteFileSync(
   data: string | Buffer | Uint8Array,
   options: AtomicWriteFileOptions = {},
 ): void {
+  options.signal?.throwIfAborted();
   prepareParentDirectorySync(filePath, options);
   const tmpPath = temporaryFilePath(filePath);
   try {
     writeFileSync(tmpPath, data, options.mode === undefined ? undefined : { mode: options.mode });
+    options.signal?.throwIfAborted();
     renameSync(tmpPath, filePath);
     if (options.mode !== undefined && process.platform !== 'win32') {
       chmodSync(filePath, options.mode);

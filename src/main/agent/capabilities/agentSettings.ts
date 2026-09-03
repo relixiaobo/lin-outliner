@@ -1360,7 +1360,7 @@ async function writePiModelCatalog(
       options?.signal?.throwIfAborted();
       file.catalogs[providerId] = entry;
     },
-    PRIVATE_JSON_FILE_OPTIONS,
+    { ...PRIVATE_JSON_FILE_OPTIONS, signal: options?.signal },
   );
 }
 
@@ -1377,7 +1377,7 @@ async function deletePiModelCatalog(
       options?.signal?.throwIfAborted();
       delete file.catalogs[providerId];
     },
-    PRIVATE_JSON_FILE_OPTIONS,
+    { ...PRIVATE_JSON_FILE_OPTIONS, signal: options?.signal },
   );
 }
 

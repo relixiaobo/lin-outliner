@@ -9,6 +9,7 @@ import {
 } from '@earendil-works/pi-ai';
 import { cloudflareAIGatewayAuth } from '@earendil-works/pi-ai/providers/cloudflare-auth';
 import { cloudflareStreams } from '@earendil-works/pi-ai/providers/cloudflare-stream';
+import { watch } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -151,6 +152,20 @@ function mockFetchJson(body: unknown, options: { status?: number } = {}): () => 
   return () => {
     globalThis.fetch = originalFetch;
   };
+}
+
+async function waitForMissingFile(filePath: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await stat(filePath);
+    } catch (error) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return;
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Timed out waiting for temporary file cleanup: ${filePath}`);
 }
 
 function radiusGatewayConfig() {
@@ -594,6 +609,84 @@ describe('provider credential resolver', () => {
       catalogPath,
       'utf8',
     )) as { catalogs: Record<string, { models: Array<{ id: string }> }> };
+    expect(persisted.catalogs[providerId]).toBeUndefined();
+  });
+
+  test('a superseded catalog write cannot commit after its temporary write starts', async () => {
+    const providerId = 'dynamic-catalog-test';
+    const catalogPath = path.join(currentUserData, 'agent-model-catalogs.json');
+    const catalogModel = (id: string, name = id) => ({
+      id,
+      name,
+      api: 'openai-completions' as const,
+      provider: providerId,
+      baseUrl: 'https://dynamic.example.test/v1',
+      reasoning: false,
+      input: ['text' as const],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 8192,
+    });
+    let attempts = 0;
+    await writeFile(secretPath(), JSON.stringify({
+      credentials: { [providerId]: { type: 'api_key', key: 'dynamic-key' } },
+    }));
+    await writeFile(catalogPath, JSON.stringify({ catalogs: {} }));
+    piModels().setProvider(createProvider({
+      id: providerId,
+      name: 'Dynamic Catalog Commit Test',
+      auth: {
+        apiKey: {
+          name: 'Dynamic catalog key',
+          resolve: async ({ credential }) => credential?.key
+            ? { auth: { apiKey: credential.key }, source: 'stored credential' }
+            : undefined,
+        },
+      },
+      models: [catalogModel('current-model')],
+      fetchModels: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return [catalogModel('stale-model', 'x'.repeat(32 * 1024 * 1024))];
+        }
+        throw new Error('newer catalog refresh failed');
+      },
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: () => { throw new Error('streamSimple should not be called'); },
+      },
+    }));
+
+    let newerRefresh: Promise<void> | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let catalogWatcher: ReturnType<typeof watch> | undefined;
+    const temporaryWriteStarted = new Promise<string>((resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error('catalog temporary write did not start')), 5000);
+      const catalogFileName = path.basename(catalogPath);
+      catalogWatcher = watch(currentUserData, (_event, fileName) => {
+        const observed = fileName?.toString();
+        if (newerRefresh || !observed?.startsWith(`${catalogFileName}.`) || !observed.endsWith('.tmp')) return;
+        newerRefresh = piRefreshProviderModels(providerId);
+        resolve(path.join(currentUserData, observed));
+      });
+      catalogWatcher.unref();
+    });
+
+    const staleRefresh = piRefreshProviderModels(providerId);
+    try {
+      const temporaryPath = await temporaryWriteStarted;
+      await expect(newerRefresh).rejects.toThrow('newer catalog refresh failed');
+      await staleRefresh;
+      await waitForMissingFile(temporaryPath);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      catalogWatcher?.close();
+    }
+
+    expect(piModels().getModels(providerId).map((model) => model.id)).toEqual(['current-model']);
+    const persisted = JSON.parse(await readFile(catalogPath, 'utf8')) as {
+      catalogs: Record<string, { models: Array<{ id: string }> }>;
+    };
     expect(persisted.catalogs[providerId]).toBeUndefined();
   });
 
