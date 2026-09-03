@@ -574,6 +574,28 @@ describe('Agent Core persistence', () => {
       'userMessage',
       'agentMessage',
     ]);
+    const projectedTurn = incrementalTurns.data[0]!;
+    expect(incremental.trajectoryTurnOverview(threadId)).toEqual({
+      completedAt: projectedTurn.completedAt,
+      diagnosticsUnavailable: true,
+      startedAt: projectedTurn.startedAt,
+      turnCount: 1,
+      usage: {
+        input: projectedTurn.execution.usage.input,
+        output: projectedTurn.execution.usage.output,
+        cacheRead: projectedTurn.execution.usage.cacheRead,
+        cacheWrite: projectedTurn.execution.usage.cacheWrite,
+        reasoning: null,
+        totalTokens: projectedTurn.execution.usage.totalTokens,
+        costUsd: projectedTurn.execution.usage.cost?.total ?? null,
+      },
+    });
+    expect(incremental.trajectoryTurnPosition(threadId, projectedTurn.id)).toBe(0);
+    expect(incremental.trajectoryTurnRange(threadId, 0, 1)).toEqual([{
+      ...projectedTurn,
+      items: [],
+      itemsView: 'notLoaded',
+    }]);
     expect(incrementalItems.nextCursor).not.toBeNull();
     const secondItemPage = incremental.listItems({
       threadId,

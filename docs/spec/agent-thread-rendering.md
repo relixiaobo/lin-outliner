@@ -1302,6 +1302,30 @@ order-key range, so two different Turns can never render with the same Turn labe
 The same cursorless refresh treats whole-Thread `summary.turnCount` as the
 canonical suffix boundary and removes loaded records whose `turnIndex` is no
 longer within that boundary after a multi-Turn rollback.
+Relevant lifecycle notifications debounce into one cursorless read. While that
+read is active, later notifications request at most one follow-up read; they do
+not create parallel main-process projection work. Initial focus is still
+consumed only once across that follow-up.
+
+Renderer keeps one contiguous working window of at most three 120-record pages,
+plus structural ancestors required by retained children. Older paging evicts the
+newest edge at the cap; newer paging evicts the oldest edge, and each evicted
+edge receives a cursor derived from its retained canonical boundary. Timeline
+and ledger consume only this same window. A cursorless tail response joins the
+window only when its record IDs or authoritative replacement range overlap the
+loaded coverage, or when the response proves no older page exists. A disjoint
+tail page with an older cursor is deferred rather than displayed across an
+unloaded gap.
+
+Automatic tail following may evict an unselected old edge, but never the page
+containing the selected record. If the join would evict that page, or the user
+is no longer following the tail, renderer applies only authoritative
+replacements inside retained coverage, leaves the suffix unloaded, exposes a
+real `newerCursor`, and stops following. Explicit Load newer may cross the cap;
+if that navigation evicts the selected page, renderer closes the inspector in
+the same update. Once a joined or explicitly loaded page reaches the true tail,
+its null `newerCursor` removes Load newer. Scroll position is not used as a
+substitute for pagination coverage.
 Record labels are a typed semantic union and are localized only in renderer; main
 never emits interface prose.
 
