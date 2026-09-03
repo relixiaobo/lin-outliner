@@ -220,8 +220,10 @@ revision and refuse rather than silently retry when stale.
 Default output is concise human-readable text; `--json` returns the same bounded
 typed result. Complex resource create/update input comes from stdin or a file,
 not shell-escaped prose. List calls have fixed page sizes, stable ordering, exact
-lookup, and opaque cursors. Explicit `--all` streams pages for a human; the
-built-in Skill uses exact lookup or bounded pages unless traversal is required.
+lookup, and opaque cursors. `--all` is not part of the public CLI contract; every
+caller uses cursor pagination, so origin classification or Skill guidance cannot
+turn a bounded read into unbounded stdout. The built-in Skill uses exact lookup
+or bounded pages.
 Scalar `get` returns override, default, accepted, and effective facts for one
 key. `file show` requires exactly one of `--desired`, `--accepted`, `--effective`,
 or `--defaults`, so it never silently substitutes one state for another.
@@ -252,12 +254,15 @@ Every route is one of:
 - **native handoff:** secret entry, OAuth/browser interaction, file/directory
   selection, save panels, or human review outside model-readable I/O.
 
-A confirmed or private native-handoff call remains one CLI invocation. The Host
-admits the normalized request, captures relevant owner state, pauses new
-Tenon-managed Agent Turn/tool admission, and waits for running Tenon-managed
-desktop/Host-capable work to become quiescent before showing UI. The waiting CLI
-call has no second command channel. If quiescence cannot be established, no
-prompt opens.
+A confirmed or private native-handoff call remains one CLI invocation. Admission
+is ordered: the Host consumes the one-use capability, captures relevant owner
+state, parks the originating invocation, and makes that invocation incapable of
+further Turn or tool admission while it waits. The Host then pauses new
+Tenon-managed Agent Turn/tool admission and drains every other running
+Tenon-managed desktop/Host-capable operation. The parked caller is the only item
+exempt from the quiescence count; sibling work is not. Only after that drain does
+the Host show private UI. The parked CLI call has no second command channel. If
+quiescence cannot be established, no prompt opens and the barrier is released.
 
 The main process owns the dialog/window lifecycle. CLI flags, stdin, environment
 values, replayed tokens, renderer messages, Agent messages, and other tool calls
@@ -337,12 +342,12 @@ error, and offers `Open Configuration` and `Copy Diagnostics`.
 
 ### 6. Contextual Translation
 
-Target language, model, automatic behavior, toggle state, and saved-translation
-maintenance belong to the active supported preview's language controller. They
-do not appear in either global file, scalar definitions, or a manager pretending
-there is one application-wide Translation state. Closing the preview destroys
-its transient control state; cached translated content remains domain data, not
-a preference source.
+Target language, model, automatic behavior, toggle state, and scoped
+saved-translation maintenance belong to the active supported preview's language
+controller. They do not appear in either global file, scalar definitions, or a
+manager pretending there is one application-wide Translation preference state.
+Closing the preview destroys its transient control state; cached translated
+content remains domain data, not a preference source.
 
 `tenon settings context translation` resolves the one active preview associated
 with the originating root Turn's window. `show` returns a bounded context
@@ -351,6 +356,15 @@ identity and current values; `set` changes target/model/automatic behavior;
 confirmed deletion only for that preview's cache scope. Zero or multiple
 eligible active previews return `unavailable` and change nothing. Every receipt
 names the resolved context, so no result can be reported as global.
+
+The existing installation-wide translation-cache inventory and purge remain a
+Data capability because they cover saved webpage, caption, and EPUB translations,
+including closed previews. `tenon settings data translations show|clear` and the
+Privacy & Data surface use the translation-cache data owner directly; `clear` is
+confirmed and reports the globally affected cache scope. `show` returns bounded
+aggregate counts, bytes, and media scopes rather than cached entries. This route
+owns no target, model, automatic behavior, or toggle preference and does not
+recreate a global Translation settings owner.
 
 ### 7. Shortcut configuration
 
@@ -437,6 +451,7 @@ can start and await a private human workflow; it does not receive private input.
 | Effective filesystem/tool access | `access show` | inspect runtime fact | permission owner / Access |
 | Persistent capability blocks | `access blocks|block|unblock` | block routine; unblock confirmed | permission owner / Access |
 | Website data status/clear | `data website show|clear` | inspect/confirmed | preview session owner / Privacy & Data |
+| Persistent translation-cache status/global clear | `data translations show|clear` | inspect/confirmed | translation-cache data owner / Privacy & Data |
 | Update status/check/open release | `updates status|check|open` | inspect/routine/native open | update owner / About |
 | App/version/build, changelog, help, issue, license | `updates info` and targeted `open` | inspect/native open | app owner / About/Help |
 | Reveal/export diagnostics | `diagnostics reveal|export` | native open/save handoff | diagnostics owner / Help |
@@ -518,9 +533,11 @@ receipt reports the proven result; invalid, stale, or unavailable work changes
 nothing.
 
 **Agent requests private or dangerous work.** The Host reaches quiescence before
-opening private UI, waits for the person, rechecks authority/state, and settles
-the same invocation. Cancel or stale state commits nothing; connection loss is
-reported as settlement unknown rather than guessed.
+opening private UI: it consumes and parks the incapable originating invocation,
+blocks new admission, and drains all sibling Host-capable work. It then waits for
+the person, rechecks authority/state, and settles the same invocation. Cancel or
+stale state commits nothing; connection loss is reported as settlement unknown
+rather than guessed.
 
 **Agent controls Translation.** The Host resolves exactly one active preview for
 the originating window. Only that context changes; missing or ambiguous context
@@ -548,8 +565,9 @@ runtime matching, menus/hints, and receipt resolve from one accepted binding.
   model-unreadable throughout an Agent-started handoff.
 - **FR-7:** `Settings...` opens the scalar file; every other human workflow opens
   its direct domain manager, context, About, Help, or native handoff.
-- **FR-8:** Translation settings and saved-cache maintenance resolve exactly one
-  active preview and create no global preference authority.
+- **FR-8:** Translation preferences and scoped cache maintenance resolve exactly
+  one active preview; installation-wide translation-cache inspection/clearing is
+  a confirmed Data operation and creates no global preference authority.
 - **FR-9:** `keybindings.jsonc`, the command registry, runtime matching, menus,
   hints, CLI, and Shortcut Manager resolve every configurable binding from one
   accepted shortcut owner.
@@ -559,7 +577,8 @@ runtime matching, menus/hints, and receipt resolve from one accepted binding.
 - **FR-11:** The eight inherited ownership shapes in the clean-cut audit are
   removed rather than hidden behind compatibility adapters.
 - **NFR-1:** Default reads and receipts are bounded; pagination makes every
-  resource reachable without dumping an unbounded collection.
+  resource reachable without dumping an unbounded collection. The CLI exposes no
+  `--all` escape hatch.
 - **NFR-2:** Renderer processes receive only narrow typed owner values/events and
   gain no Node.js, filesystem, authenticated CLI, or private-snapshot access.
 
@@ -585,7 +604,8 @@ runtime matching, menus/hints, and receipt resolve from one accepted binding.
 - **AC-6 (FR-3, FR-4, NFR-1):** CLI tests cover human/JSON output, exact help,
   all command families, pagination, no-change, owner failure, optional stale
   revision, unavailable Host/context, and settlement unknown. Every fixture
-  remains reachable without an unbounded default response.
+  remains reachable without an unbounded response, and `--all` is rejected before
+  owner dispatch for every caller.
 - **AC-7 (FR-3, FR-4):** Agent composition tests load the Skill and complete
   representative scalar, Provider, Agent, Skill, Memory, access, data, update,
   diagnostics, and Translation jobs through one Bash invocation, packaged
@@ -594,16 +614,20 @@ runtime matching, menus/hints, and receipt resolve from one accepted binding.
   and no CLI/stdin/env/replay/renderer/Agent channel can approve. Approve, cancel,
   stale owner state, changed permission, duplicate response, quiescence failure,
   Host loss, and caller disconnect never produce a false success or replay
-  approval.
+  approval. The consumed, parked caller does not block its own quiescence wait and
+  cannot admit more work; any running sibling Host-capable work does block the
+  prompt until it settles.
 - **AC-9 (FR-6):** Secret fixtures and secret-bearing failures never enter command
   schemas, CLI I/O, receipts, Skill context, Thread Items, shared logs, or
   diagnostics. Agent-started edit is write-only; private reveal/copy keeps the
   barrier and removes unchanged handoff clipboard content before resume.
   Completion, cancel, browser/editor failure, and concurrent Provider deletion
   are covered.
-- **AC-10 (FR-8):** Webpage and EPUB tests prove Translation resolves one active
-  preview, changes no global scalar/singleton, clears only that context's saved
-  scope, and returns unavailable for zero or ambiguous contexts.
+- **AC-10 (FR-8):** Webpage, caption, and EPUB tests prove contextual Translation
+  resolves one active preview, changes no global scalar/singleton, clears only
+  that context's saved scope, and returns unavailable for zero or ambiguous
+  contexts. Separate Data tests inspect and confirm clearing the complete
+  persistent translation cache, including entries from closed previews.
 - **AC-11 (FR-9, FR-10):** Shortcut tests classify every current handler/hint,
   round-trip portable bindings, cover alternate/disabled values, overlapping/
   disjoint scopes, reserved chords, conflicts, localization, and fixed IME/editing
