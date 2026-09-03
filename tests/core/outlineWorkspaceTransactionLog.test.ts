@@ -24,13 +24,21 @@ afterAll(async () => {
 });
 
 describe('WorkspaceTransactionLog', () => {
-  test('rejects the superseded workspace format instead of reading or migrating it', async () => {
+  test('rejects a storage-v2 Operation snapshot at the version boundary instead of decoding or migrating it', async () => {
     const root = await makeRoot();
     const core = Core.new({ installationId: crypto.randomUUID() });
     const store = await initializedStore(root, core);
+    const transaction = await createTransaction(core, 1, (candidate) => {
+      candidate.createNode(candidate.projection().todayId, null, 'Storage v2 row');
+    });
+    await store.append(transaction);
+    await store.compact(core.serializeState());
     const snapshot = JSON.parse(await readFile(store.snapshotPath, 'utf8')) as Record<string, unknown>;
+    const operations = snapshot.operations as Array<Record<string, unknown>>;
+    expect(operations).toHaveLength(1);
+    const [{ intentHash: _intentHash, ...storageV2Operation }] = operations;
     const { checksum: _checksum, ...body } = snapshot;
-    const superseded = { ...body, storageVersion: OUTLINE_STORAGE_VERSION - 1 };
+    const superseded = { ...body, storageVersion: 2, operations: [storageV2Operation] };
     await writeFile(store.snapshotPath, JSON.stringify({
       ...superseded,
       checksum: canonicalSha256(superseded),
