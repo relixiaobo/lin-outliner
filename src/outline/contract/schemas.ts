@@ -27,6 +27,20 @@ export const FieldTypeSchema = Type.Union([
   Type.Literal('email'), Type.Literal('checkbox'),
 ]);
 
+export const FieldDefinitionPatchSchema = Type.Object({
+  fieldType: Type.Optional(FieldTypeSchema),
+  sourceSupertag: Type.Optional(Type.Union([Identifier, Type.Null()])),
+  nullable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+  hideField: Type.Optional(Type.Union([
+    Type.Literal('never'), Type.Literal('empty'), Type.Literal('not_empty'),
+    Type.Literal('value_is_default'), Type.Literal('always'), Type.Null(),
+  ])),
+  autoInitialize: Type.Optional(Type.Union([Type.String({ maxLength: 128 }), Type.Null()])),
+  autocollectOptions: Type.Optional(Type.Boolean()),
+  minValue: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+  maxValue: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+}, closed);
+
 export const QueryExpressionSchema = Type.Cyclic({
   QueryExpression: Type.Union([
     QueryRuleSchema,
@@ -374,10 +388,16 @@ export const NodeDraftSchema = Type.Cyclic({
     checkbox: Type.Optional(Type.Boolean()),
     done: Type.Optional(Type.Boolean()),
     tags: Type.Optional(Type.Array(Identifier, { uniqueItems: true, maxItems: 1_024 })),
-    fields: Type.Optional(Type.Array(Type.Object({
-      fieldDefId: Identifier,
-      values: Type.Array(Type.Ref('NodeDraft'), { maxItems: 10_000 }),
-    }, closed), { maxItems: 1_024 })),
+    fields: Type.Optional(Type.Array(Type.Union([
+      Type.Object({
+        fieldDefId: Identifier,
+        values: Type.Array(Type.Ref('NodeDraft'), { maxItems: 10_000 }),
+      }, closed),
+      Type.Object({
+        field: TargetRefSchema,
+        values: Type.Array(Type.Ref('NodeDraft'), { maxItems: 10_000 }),
+      }, closed),
+    ]), { maxItems: 1_024 })),
     referenceTargetId: Type.Optional(Identifier),
     metadata: Type.Optional(NodeDraftMetadataSchema),
     children: Type.Array(Type.Ref('NodeDraft'), { maxItems: 100_000 }),
@@ -408,7 +428,7 @@ const EnsureChangeSchema = Type.Union([
     definitionType: Type.Literal('field'),
     id: Type.Optional(Identifier),
     name: Type.String({ maxLength: 1_024 }),
-    fieldType: Type.Optional(FieldTypeSchema),
+    config: Type.Optional(FieldDefinitionPatchSchema),
     bind: BindingName,
   }, closed),
 ]);
@@ -578,20 +598,6 @@ export const TagDefinitionPatchSchema = Type.Object({
   doneStateEnabled: Type.Optional(Type.Boolean()),
   doneMapChecked: Type.Optional(Type.Array(Identifier, { uniqueItems: true, maxItems: 10_000 })),
   doneMapUnchecked: Type.Optional(Type.Array(Identifier, { uniqueItems: true, maxItems: 10_000 })),
-}, closed);
-
-export const FieldDefinitionPatchSchema = Type.Object({
-  fieldType: Type.Optional(FieldTypeSchema),
-  sourceSupertag: Type.Optional(Type.Union([Identifier, Type.Null()])),
-  nullable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-  hideField: Type.Optional(Type.Union([
-    Type.Literal('never'), Type.Literal('empty'), Type.Literal('not_empty'),
-    Type.Literal('value_is_default'), Type.Literal('always'), Type.Null(),
-  ])),
-  autoInitialize: Type.Optional(Type.Union([Type.String({ maxLength: 128 }), Type.Null()])),
-  autocollectOptions: Type.Optional(Type.Boolean()),
-  minValue: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-  maxValue: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
 }, closed);
 
 const CreateDefinitionChangeSchema = Type.Union([
@@ -873,6 +879,7 @@ export const DiffSchema = Type.Object({
   protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
   kind: Type.Literal('outline.diff'),
   diffHash: Digest,
+  intentHash: Digest,
   changeSetHash: Digest,
   baseRevision: Type.Integer({ minimum: 0 }),
   normalizedChangeSet: ChangeSetSchema,
@@ -947,7 +954,9 @@ export const ViewSummarySchema = Type.Object({
   revision: Type.Integer({ minimum: 0 }),
   ownerId: Identifier,
   title: Type.String({ maxLength: 4_194_304 }),
-  mode: ViewModeSchema,
+  mode: Type.Union([
+    Type.Literal('outline'), Type.Literal('table'), Type.Literal('cards'), Type.Literal('calendar'),
+  ]),
   toolbarVisible: Type.Boolean(),
   itemCount: Type.Integer({ minimum: 0 }),
   displayFieldCount: Type.Integer({ minimum: 0 }),
@@ -984,6 +993,7 @@ export const OperationSchema = Type.Object({
   protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
   kind: Type.Literal('outline.operation'),
   operationId: Identifier,
+  intentHash: Digest,
   changeSetHash: Digest,
   diffHash: Digest,
   origin: Type.Union([
@@ -996,6 +1006,12 @@ export const OperationSchema = Type.Object({
   affectedNodeIds: Type.Array(Identifier, { maxItems: 1_000 }),
   affectedNodeCount: Type.Integer({ minimum: 0 }),
   affectedNodeIdsHash: Digest,
+  effects: Type.Optional(Type.Object({
+    createdNodeCount: Type.Integer({ minimum: 0 }),
+    createdDefinitionCount: Type.Integer({ minimum: 0 }),
+    updatedNodeCount: Type.Integer({ minimum: 0 }),
+    deletedNodeCount: Type.Integer({ minimum: 0 }),
+  }, closed)),
   affectedNodeIdsTruncated: Type.Optional(Type.Literal(true)),
   affectedNodeIdsCursor: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })),
   revisionBefore: Type.Integer({ minimum: 0 }),

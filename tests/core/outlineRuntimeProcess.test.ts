@@ -180,7 +180,7 @@ describe('Outline Runtime process boundary', () => {
     }
   });
 
-  test('serves find, diff, apply, and show through the authenticated process boundary', async () => {
+  test('serves find, preview, apply, and get through the authenticated process boundary', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
@@ -210,7 +210,7 @@ describe('Outline Runtime process boundary', () => {
           bind: 'created',
         }],
       };
-      const preview = await client.request('diff', { changeSet });
+      const preview = await client.request('preview', { changeSet });
       const diff = preview.data as Diff;
       expect(diff.kind).toBe('outline.diff');
       expect(runtime.workspace.revision()).toBe(beforeRevision);
@@ -224,7 +224,7 @@ describe('Outline Runtime process boundary', () => {
 
       const nodeId = diff.bindings.created?.[0];
       expect(nodeId).toBeDefined();
-      const shown = await client.request('show', { selector: { by: 'id', id: nodeId } });
+      const shown = await client.request('get', { selector: { by: 'id', id: nodeId } });
       expect((shown.data as ProjectionResult).nodes).toEqual([
         expect.objectContaining({ id: nodeId, content: expect.objectContaining({ text: 'Created over Runtime socket' }) }),
       ]);
@@ -455,14 +455,14 @@ describe('Outline Runtime process boundary', () => {
       agentAttestation: token,
     });
     try {
-      const firstDiff = (await client.request('diff', {
+      const firstDiff = (await client.request('preview', {
         changeSet: createTodayChangeSet('Attributed Agent write'),
       })).data as Diff;
       const first = (await client.request('apply', { diff: firstDiff })).data as Operation;
       expect(first).toMatchObject({ origin: 'built-in-agent', causation });
 
-      await expect(client.request('show', { selector: { by: 'alias', alias: 'today' } })).resolves.toMatchObject({ ok: true });
-      const replayDiff = (await client.request('diff', {
+      await expect(client.request('get', { selector: { by: 'alias', alias: 'today' } })).resolves.toMatchObject({ ok: true });
+      const replayDiff = (await client.request('preview', {
         changeSet: createTodayChangeSet('Rejected Agent replay'),
       })).data as Diff;
       await expect(client.request('apply', { diff: replayDiff })).rejects.toMatchObject({
@@ -493,7 +493,7 @@ describe('Outline Runtime process boundary', () => {
     });
     try {
       const missing = new OutlineClient(runtime.descriptor, { origin: 'built-in-agent' });
-      const missingDiff = (await missing.request('diff', {
+      const missingDiff = (await missing.request('preview', {
         changeSet: createTodayChangeSet('Missing attestation'),
       })).data as Diff;
       await expect(missing.request('apply', { diff: missingDiff })).rejects.toMatchObject({
@@ -526,10 +526,10 @@ describe('Outline Runtime process boundary', () => {
       });
       expired.close();
 
-      const stale = (await agent.request('diff', {
+      const stale = (await agent.request('preview', {
         changeSet: createTodayChangeSet('Retry after stale failure'),
       })).data as Diff;
-      const concurrent = (await local.request('diff', {
+      const concurrent = (await local.request('preview', {
         changeSet: createTodayChangeSet('Concurrent local write'),
       })).data as Diff;
       await local.request('apply', { diff: concurrent });
@@ -537,7 +537,7 @@ describe('Outline Runtime process boundary', () => {
         outlineError: { code: 'stale_revision' },
       });
 
-      const fresh = (await agent.request('diff', {
+      const fresh = (await agent.request('preview', {
         changeSet: createTodayChangeSet('Retry after stale failure'),
       })).data as Diff;
       const applied = (await agent.request('apply', { diff: fresh })).data as Operation;
@@ -1298,7 +1298,7 @@ describe('Outline Runtime process boundary', () => {
     });
     const client = await supervisor.connect();
     try {
-      await expect(client.request('show', { selector: { by: 'alias', alias: 'today' } })).rejects.toMatchObject({
+      await expect(client.request('get', { selector: { by: 'alias', alias: 'today' } })).rejects.toMatchObject({
         outlineError: { code: 'runtime_unavailable', details: { timeoutMs: 40 } },
       });
     } finally {

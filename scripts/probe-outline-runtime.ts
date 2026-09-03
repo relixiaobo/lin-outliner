@@ -13,6 +13,13 @@ const DATE_COUNT = 100;
 const WARM_READ_SAMPLES = 20;
 const LARGE_TREE_TEXT = 'Runtime probe large node';
 
+interface SettlementCoordinates {
+  readonly kind: 'outline.operation' | 'outline.operation-settlement';
+  readonly operationId: string;
+  readonly revisionBefore: number;
+  readonly revisionAfter: number;
+}
+
 const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'outline-runtime-probe-'));
 const runtimeRoot = path.join(temporaryRoot, 'runtime');
 const contentRoot = path.join(temporaryRoot, 'content');
@@ -48,35 +55,35 @@ try {
     if (!runtime) throw new Error('The probe could not acquire the Runtime writer lock.');
   });
 
-  await cli(['show', '@today', '--kind', 'summary']);
+  await cli(['get', '@today', '--kind', 'summary']);
   const warmReadDurations: number[] = [];
   for (let index = 0; index < WARM_READ_SAMPLES; index += 1) {
-    warmReadDurations.push((await measure(() => cli(['show', '@today', '--kind', 'summary']))).durationMs);
+    warmReadDurations.push((await measure(() => cli(['get', '@today', '--kind', 'summary']))).durationMs);
   }
 
   const porcelain = await measure(() => cli([
-    'add', '--parent', '@today', 'Runtime probe porcelain mutation',
+    'create', '--parent', '@today', 'Runtime probe porcelain mutation',
   ]));
-  const porcelainOperation = responseData<Operation>(porcelain.value.stdout, 'add');
-  assertOperation(porcelainOperation, 'porcelain mutation');
+  const porcelainOperation = responseData<{ settlement: SettlementCoordinates }>(porcelain.value.stdout, 'create').settlement;
+  assertSettlement(porcelainOperation, 'porcelain mutation');
 
   const datesBefore = await runtimeStatus();
   const dateDiff = await measure(() => cli([
-    'diff', '--input', dateChangeSetPath, '--output', dateDiffPath,
+    'preview', '--input', dateChangeSetPath, '--output', dateDiffPath,
   ]));
   const dateApply = await measure(() => cli(['apply', '--input', dateDiffPath]));
   const dateOperation = responseData<Operation>(dateApply.value.stdout, 'apply');
-  assertOperation(dateOperation, '100-date apply');
+  assertSettlement(dateOperation, '100-date apply');
   const datesAfter = await runtimeStatus();
   assertSingleSettlement('100-date apply', datesBefore, datesAfter, dateOperation);
 
   const largeBefore = await runtimeStatus();
   const largeDiff = await measure(() => cli([
-    'diff', '--input', largeChangeSetPath, '--output', largeDiffPath,
+    'preview', '--input', largeChangeSetPath, '--output', largeDiffPath,
   ]));
   const largeApply = await measure(() => cli(['apply', '--input', largeDiffPath]));
   const largeOperation = responseData<Operation>(largeApply.value.stdout, 'apply');
-  assertOperation(largeOperation, 'large-tree apply');
+  assertSettlement(largeOperation, 'large-tree apply');
   const largeAfter = await runtimeStatus();
   assertSingleSettlement('large-tree apply', largeBefore, largeAfter, largeOperation);
 
@@ -279,9 +286,10 @@ function responseData<T>(stdout: string, command: string): T {
   return value.data as T;
 }
 
-function assertOperation(operation: Operation, label: string): void {
-  if (operation.kind !== 'outline.operation' || !operation.operationId) {
-    throw new Error(`${label} did not return a public Operation.`);
+function assertSettlement(settlement: SettlementCoordinates, label: string): void {
+  if (!['outline.operation', 'outline.operation-settlement'].includes(settlement.kind)
+    || !settlement.operationId) {
+    throw new Error(`${label} did not return a public Operation settlement.`);
   }
 }
 
@@ -289,7 +297,7 @@ function assertSingleSettlement(
   label: string,
   before: RuntimeStatus,
   after: RuntimeStatus,
-  operation: Operation,
+  operation: SettlementCoordinates,
 ): void {
   const revisionBefore = statusRevision(before);
   const revisionAfter = statusRevision(after);

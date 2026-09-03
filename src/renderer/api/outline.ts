@@ -92,7 +92,7 @@ export function runDesktopMutation(
       const needsReviewedDiff = options.acknowledgeDestructive === true
         || options.requiresDiff === true;
       const diff = needsReviewedDiff
-        ? await requestOutline<Diff>('diff', { changeSet })
+        ? await requestOutline<Diff>('preview', { changeSet })
         : null;
       const acceptedReceipt = diff ? null : await requestAcceptedDesktopMutation(changeSet, options.undoGroup);
       const accepted = acceptedReceipt as (typeof acceptedReceipt & { readonly update: ProjectionUpdate });
@@ -144,6 +144,7 @@ function directCommitFocusDiff(changeSet: ChangeSet, revision: number): Diff {
     protocolVersion: 1,
     kind: 'outline.diff',
     diffHash: '0'.repeat(64),
+    intentHash: '0'.repeat(64),
     changeSetHash: '0'.repeat(64),
     baseRevision: revision,
     normalizedChangeSet: changeSet,
@@ -161,7 +162,7 @@ export function previewDesktopMutation(build: (revision: number) => ChangeSet): 
     return Promise.reject(new Error('Tenon Outline session has not loaded a document revision.'));
   }
   const input = build(revision);
-  return requestOutline<Diff>('diff', {
+  return requestOutline<Diff>('preview', {
     changeSet: {
       ...input,
       base: { ...input.base, revision },

@@ -93,6 +93,7 @@ export async function diffOutlineChangeSet(
   workspace: OutlineRuntimeWorkspace,
   input: ChangeSet,
 ): Promise<Diff> {
+  const intentHash = changeSetIntentHash(input);
   const normalized = normalizeOutlineChangeSet(workspace.forkCore(), input);
   const changeSetHash = canonicalChangeSetHash(normalized);
   const assetLeases = await resolveChangeSetAssetLeases(workspace, normalized);
@@ -102,7 +103,14 @@ export async function diffOutlineChangeSet(
     execution = await executeOutlineChangeSet(candidate, normalized, assetLeases);
   }, { operationId: `preview:${changeSetHash}`, command: 'outline_diff' });
   assertProtectedMemoryDefinitionPatch(patch);
-  return diffFromPatch(normalized, changeSetHash, execution.bindings, execution.reviewedReplaceTargetIds, patch.nodes);
+  return diffFromPatch(
+    normalized,
+    intentHash,
+    changeSetHash,
+    execution.bindings,
+    execution.reviewedReplaceTargetIds,
+    patch.nodes,
+  );
 }
 
 export async function commitOutlineChangeSet(
@@ -111,11 +119,11 @@ export async function commitOutlineChangeSet(
   context: OutlineRuntimeRequestContext,
   options: CommitOptions = {},
 ): Promise<Operation | NoChangeResult> {
-  const directPayloadHash = directCommitPayloadHash(input);
+  const intentHash = changeSetIntentHash(input);
   return workspace.commitPrepared({
     idempotencyKey: input.idempotencyKey,
-    ...(input.idempotencyKey ? { idempotencyPayloadHash: directPayloadHash } : {}),
-  }, async () => (await prepareDirectCommit(workspace, input, context, options, directPayloadHash)).request);
+    ...(input.idempotencyKey ? { idempotencyPayloadHash: intentHash } : {}),
+  }, async () => (await prepareDirectCommit(workspace, input, context, options, intentHash)).request);
 }
 
 export async function commitOutlineChangeSetAccepted(
@@ -124,13 +132,13 @@ export async function commitOutlineChangeSetAccepted(
   context: OutlineRuntimeRequestContext,
   options: CommitOptions = {},
 ): Promise<AcceptedChangeSetMutation> {
-  const directPayloadHash = directCommitPayloadHash(input);
+  const intentHash = changeSetIntentHash(input);
   let prepared: PreparedDirectCommit | undefined;
   const accepted = await workspace.commitAcceptedPrepared({
     idempotencyKey: input.idempotencyKey,
-    ...(input.idempotencyKey ? { idempotencyPayloadHash: directPayloadHash } : {}),
+    ...(input.idempotencyKey ? { idempotencyPayloadHash: intentHash } : {}),
   }, async () => {
-    prepared = await prepareDirectCommit(workspace, input, context, options, directPayloadHash);
+    prepared = await prepareDirectCommit(workspace, input, context, options, intentHash);
     return prepared.request;
   });
   if (!accepted.diff) throw new Error('Accepted Outline mutation is missing its replayable Diff.');
@@ -146,7 +154,7 @@ async function prepareDirectCommit(
   input: ChangeSet,
   context: OutlineRuntimeRequestContext,
   options: CommitOptions,
-  directPayloadHash: string,
+  intentHash: string,
 ): Promise<PreparedDirectCommit> {
   const baseIndex = workspace.selectionIndex();
   const normalized = normalizeOutlineChangeSetFromSelectionIndex(
@@ -163,11 +171,12 @@ async function prepareDirectCommit(
     origin: context.origin,
     causation: context.causation,
     source: normalized.source,
+    intentHash,
     changeSetHash,
     diffHash: commitHash,
     summary: summarizeChangeSet(normalized),
     idempotencyKey: normalized.idempotencyKey,
-    ...(normalized.idempotencyKey ? { idempotencyPayloadHash: directPayloadHash } : {}),
+    ...(normalized.idempotencyKey ? { idempotencyPayloadHash: intentHash } : {}),
     idFactory: createDeterministicCoreIdFactory(changeSetHash),
     undoGroup: options.undoGroup,
     assetLeases: Object.fromEntries(Object.entries(assetLeases).map(([leaseId, lease]) => [leaseId, lease.assetId])),
@@ -195,6 +204,7 @@ async function prepareDirectCommit(
     }),
     acceptedDiff: (patch) => diffFromPatch(
       normalized,
+      intentHash,
       changeSetHash,
       execution.bindings,
       execution.reviewedReplaceTargetIds,
@@ -257,6 +267,7 @@ export async function applyOutlineDiff(
     origin: context.origin,
     causation: context.causation,
     source: diff.normalizedChangeSet.source,
+    intentHash: diff.intentHash,
     changeSetHash: diff.changeSetHash,
     diffHash: diff.diffHash,
     expectedPatchHash: semanticAffectedDigest(diff.affected),
@@ -515,6 +526,7 @@ async function executeChange(
             copyPath,
             parentIndex === 0,
             assetLeases,
+            bindings,
           ));
         }
       }
@@ -732,7 +744,7 @@ function executeCreateDefinition(
   }
   const children = change.definitionType === 'tag' ? change.template : change.options;
   for (const [childIndex, draft] of (children ?? []).entries()) {
-    createDraft(core, definitionId, null, draft, `${operationIndex}:0:${childIndex}`, true, assetLeases);
+    createDraft(core, definitionId, null, draft, `${operationIndex}:0:${childIndex}`, true, assetLeases, {});
   }
   return [definitionId];
 }
@@ -769,29 +781,80 @@ function executeEnsure(
     if (!nodeId) throw new Error(`Core did not resolve protected definition: ${change.id}`);
     return [nodeId];
   }
-  const existing = core.projection().nodes.find((node) => (
-    node.type === (change.definitionType === 'tag' ? 'tagDef' : 'fieldDef')
+  const definitionNodeType = change.definitionType === 'tag' ? 'tagDef' : 'fieldDef';
+  const projectedNodes = core.projection().nodes;
+  if (change.id) {
+    const exact = projectedNodes.find((node) => node.id === change.id);
+    if (exact) {
+      if (exact.type !== definitionNodeType) throw usageError(`Definition ID is already in use: ${change.id}`);
+      if (exact.content.text.trim().toLocaleLowerCase() !== change.name.trim().toLocaleLowerCase()) {
+        throw usageError(`Definition ID has a different name: ${change.id}`);
+      }
+      assertDefinitionCompatible(core, exact.id, change);
+      return [exact.id];
+    }
+  }
+  const existing = projectedNodes.find((node) => (
+    node.type === definitionNodeType
     && node.content.text.trim().toLocaleLowerCase() === change.name.trim().toLocaleLowerCase()
   ));
   if (existing) {
     if (change.id && existing.id !== change.id) {
       throw usageError(`Definition name is already bound to another ID: ${change.name}`);
     }
+    assertDefinitionCompatible(core, existing.id, change);
     return [existing.id];
-  }
-  if (change.id) {
-    const nodeAtId = core.projection().nodes.find((node) => node.id === change.id);
-    if (nodeAtId) throw usageError(`Definition ID is already in use: ${change.id}`);
   }
   const outcome = change.definitionType === 'tag'
     ? core.createTag(change.name, change.id)
-    : core.createFieldDefinition(change.name, (change.fieldType ?? 'plain') as FieldType, change.id);
+    : core.createFieldDefinition(change.name, (change.config?.fieldType ?? 'plain') as FieldType, change.id);
   if (!outcome.focus?.nodeId) throw new Error(`Core did not create definition: ${change.name}`);
   if (change.definitionType === 'tag' && change.extends) {
     const extendsId = exactlyOne(resolveTargetRef(baseIndex, change.extends, bindings), 'extended tag definition');
     core.setTagConfig(outcome.focus.nodeId, { extends: extendsId });
   }
+  if (change.definitionType === 'field' && change.config && Object.keys(change.config).length > 0) {
+    core.setFieldConfig(outcome.focus.nodeId, change.config);
+  }
   return [outcome.focus.nodeId];
+}
+
+function assertDefinitionCompatible(
+  core: Core,
+  definitionId: string,
+  change: Extract<Change, { op: 'ensure'; resource: 'definition' }>,
+): void {
+  const mismatches = definitionCompatibilityMismatches(core, definitionId, change);
+  if (mismatches.length === 0) return;
+  throw new OutlineContractError(outlineError(
+    'invalid_input',
+    'conflict',
+    `Definition is incompatible with the requested configuration: ${change.name}`,
+    {
+      retryable: true,
+      details: { existingId: definitionId, mismatches },
+      next: [`Use the exact field locator ${definitionId} or choose a different definition name.`],
+    },
+  ));
+}
+
+function definitionCompatibilityMismatches(
+  core: Core,
+  definitionId: string,
+  change: Extract<Change, { op: 'ensure'; resource: 'definition' }>,
+): Array<{ property: string; requested: unknown; actual: unknown }> {
+  if (change.definitionType !== 'field' || !change.config) return [];
+  const current = buildConfigIndex(core.state()).field(definitionId);
+  if (!current) throw new Error(`Definition config is unavailable: ${definitionId}`);
+  const mismatches: Array<{ property: string; requested: unknown; actual: unknown }> = [];
+  for (const [property, requested] of Object.entries(change.config)) {
+    const normalized = normalizedDefinitionConfigValue(property, requested);
+    const actual = (current as unknown as Record<string, unknown>)[property];
+    if (canonicalJson(actual ?? null) !== canonicalJson(normalized ?? null)) {
+      mismatches.push({ property, requested: normalized ?? null, actual: actual ?? null });
+    }
+  }
+  return mismatches;
 }
 
 function createDraft(
@@ -802,6 +865,7 @@ function createDraft(
   copyPath: string,
   preserveId: boolean,
   assetLeases: Readonly<Record<string, AssetLease>>,
+  bindings: Readonly<Record<string, readonly string[]>>,
 ): string {
   const id = preserveId ? draft.id! : deterministicPublicNodeId(draft.id!, copyPath);
   const metadata = isRecord(draft.metadata) ? draft.metadata : {};
@@ -842,10 +906,13 @@ function createDraft(
   for (const tagId of draft.tags ?? []) core.applyTag(id, tagId);
   for (const field of draft.fields ?? []) {
     if (field.values.length === 0) continue;
-    core.updateFieldSlot(id, field.fieldDefId, { kind: 'appendNodes', nodes: field.values.map(toCoreTree) });
+    const fieldDefId = 'fieldDefId' in field
+      ? field.fieldDefId
+      : exactlyOne(resolveTargetRef(createSelectionIndex(core.projection()), field.field, bindings), 'field definition');
+    core.updateFieldSlot(id, fieldDefId, { kind: 'appendNodes', nodes: field.values.map(toCoreTree) });
   }
   for (const [childIndex, child] of draft.children.entries()) {
-    createDraft(core, id, null, child, `${copyPath}:${childIndex}`, preserveId, assetLeases);
+    createDraft(core, id, null, child, `${copyPath}:${childIndex}`, preserveId, assetLeases, bindings);
   }
   return id;
 }
@@ -1444,18 +1511,23 @@ function definitionPatchChanges(
   const current = instruction.definitionType === 'tag' ? config.tag(targetId) : config.field(targetId);
   if (!current) throw new Error(`Definition config is unavailable: ${targetId}`);
   for (const [key, value] of Object.entries(instruction.patch)) {
-    let normalized: unknown = value;
-    if (value === null) {
-      if (key === 'nullable') normalized = true;
-      else if (key === 'hideField') normalized = 'never';
-      else normalized = undefined;
-    }
-    if (key === 'autoInitialize' && typeof value === 'string') {
-      normalized = value.split(/[,+]/).map((entry) => entry.trim()).filter(Boolean);
-    }
+    const normalized = normalizedDefinitionConfigValue(key, value);
     if (canonicalJson((current as unknown as Record<string, unknown>)[key] ?? null) !== canonicalJson(normalized ?? null)) return true;
   }
   return false;
+}
+
+function normalizedDefinitionConfigValue(property: string, value: unknown): unknown {
+  if (property === 'autoInitialize') {
+    if (value === null) return [];
+    if (typeof value === 'string') {
+      return value.split(/[,+]/).map((entry) => entry.trim()).filter(Boolean);
+    }
+  }
+  if (value !== null) return value;
+  if (property === 'nullable') return true;
+  if (property === 'hideField') return 'never';
+  return undefined;
 }
 
 function resolveViewField(
@@ -1479,10 +1551,10 @@ function directCommitHash(changeSetHash: string): string {
   });
 }
 
-function directCommitPayloadHash(input: ChangeSet): string {
+export function changeSetIntentHash(input: ChangeSet): string {
   return canonicalSha256({
     protocolVersion: OUTLINE_PROTOCOL_VERSION,
-    kind: 'outline.direct-commit-payload',
+    kind: 'outline.changeset-intent',
     changeSet: input,
   });
 }
@@ -1498,13 +1570,14 @@ function assertDirectCommitIsNonDestructive(changeSet: ChangeSet): void {
   throw new OutlineContractError(outlineError(
     'confirmation_required',
     'confirmation',
-    'Destructive ChangeSets must be previewed with outline diff and applied as an exact reviewed Diff.',
+    'Destructive ChangeSets must be previewed with outline preview and applied as an exact reviewed Diff.',
     { details: { destructive } },
   ));
 }
 
 function diffFromPatch(
   changeSet: ChangeSet,
+  intentHash: string,
   changeSetHash: string,
   bindings: Readonly<Record<string, readonly string[]>>,
   reviewedReplaceTargetIds: readonly string[],
@@ -1534,6 +1607,7 @@ function diffFromPatch(
     protocolVersion: OUTLINE_PROTOCOL_VERSION,
     kind: 'outline.diff' as const,
     diffHash: '0'.repeat(64),
+    intentHash,
     changeSetHash,
     baseRevision: changeSet.base?.revision ?? 0,
     normalizedChangeSet: changeSet,

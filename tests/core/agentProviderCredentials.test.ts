@@ -20,6 +20,7 @@ import {
   piCustomProviderId,
   piModels,
   piProviders,
+  piRefreshProviderModels,
   piRequestApiKeyOverride,
   piResolveAuthApiKey,
   piStreamSimple,
@@ -34,6 +35,10 @@ import {
   parseCcSwitchModelOptionId,
   setCcSwitchRegistryReaderForTests,
 } from '../../src/main/ccSwitchRegistry';
+import {
+  withAtomicWriteCommitBarrierForTests,
+  withFileWriteLock,
+} from '../../src/main/jsonFileStore';
 
 type StoredOAuth = { refresh: string; access: string; expires: number };
 
@@ -462,6 +467,8 @@ describe('provider credential resolver', () => {
         providerId,
         apiKey: 'persisted-key',
       });
+      await expect(piRefreshProviderModels(providerId)).rejects.toThrow('catalog endpoint is offline');
+      expect(refreshCount).toBe(2);
     } finally {
       piModels().deleteProvider(providerId);
     }
@@ -512,6 +519,158 @@ describe('provider credential resolver', () => {
 
     await refreshProviderModels(target);
     expect(Object.fromEntries(counts)).toEqual({ [target]: 2, [peer]: 1 });
+  });
+
+  test('a newer dynamic catalog refresh supersedes an older late result', async () => {
+    const providerId = 'dynamic-catalog-test';
+    const catalogPath = path.join(currentUserData, 'agent-model-catalogs.json');
+    const catalogModel = (id: string) => ({
+      id,
+      name: id,
+      api: 'openai-completions' as const,
+      provider: providerId,
+      baseUrl: 'https://dynamic.example.test/v1',
+      reasoning: false,
+      input: ['text' as const],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 8192,
+    });
+    let attempts = 0;
+    let markFirstFetched: (() => void) | undefined;
+    let markLockHeld: (() => void) | undefined;
+    let releaseWriteLock: (() => void) | undefined;
+    const firstFetched = new Promise<void>((resolve) => { markFirstFetched = resolve; });
+    const lockHeld = new Promise<void>((resolve) => { markLockHeld = resolve; });
+    const writeGate = new Promise<void>((resolve) => { releaseWriteLock = resolve; });
+    await writeFile(secretPath(), JSON.stringify({
+      credentials: { [providerId]: { type: 'api_key', key: 'dynamic-key' } },
+    }));
+    await writeFile(catalogPath, JSON.stringify({ catalogs: {} }));
+    piModels().setProvider(createProvider({
+      id: providerId,
+      name: 'Dynamic Catalog Test',
+      auth: {
+        apiKey: {
+          name: 'Dynamic catalog key',
+          resolve: async ({ credential }) => credential?.key
+            ? { auth: { apiKey: credential.key }, source: 'stored credential' }
+            : undefined,
+        },
+      },
+      models: [catalogModel('current-model')],
+      fetchModels: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          markFirstFetched?.();
+          return [catalogModel('stale-model')];
+        }
+        throw new Error('newer catalog refresh failed');
+      },
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: () => { throw new Error('streamSimple should not be called'); },
+      },
+    }));
+
+    const blockedWrite = withFileWriteLock(catalogPath, async () => {
+      markLockHeld?.();
+      await writeGate;
+    });
+    await lockHeld;
+    const staleRefresh = piRefreshProviderModels(providerId);
+    await firstFetched;
+    expect(await Promise.race([
+      staleRefresh.then(() => 'settled', () => 'settled'),
+      new Promise((resolve) => setTimeout(() => resolve('pending'), 0)),
+    ])).toBe('pending');
+    try {
+      await expect(piRefreshProviderModels(providerId)).rejects.toThrow('newer catalog refresh failed');
+      await staleRefresh;
+    } finally {
+      releaseWriteLock?.();
+      await blockedWrite;
+    }
+
+    expect(piModels().getModels(providerId).map((model) => model.id)).toEqual(['current-model']);
+    const persisted = JSON.parse(await readFile(
+      catalogPath,
+      'utf8',
+    )) as { catalogs: Record<string, { models: Array<{ id: string }> }> };
+    expect(persisted.catalogs[providerId]).toBeUndefined();
+  });
+
+  test('a superseded catalog write cannot commit after its temporary write starts', async () => {
+    const providerId = 'dynamic-catalog-test';
+    const catalogPath = path.join(currentUserData, 'agent-model-catalogs.json');
+    const catalogModel = (id: string) => ({
+      id,
+      name: id,
+      api: 'openai-completions' as const,
+      provider: providerId,
+      baseUrl: 'https://dynamic.example.test/v1',
+      reasoning: false,
+      input: ['text' as const],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 8192,
+    });
+    let attempts = 0;
+    await writeFile(secretPath(), JSON.stringify({
+      credentials: { [providerId]: { type: 'api_key', key: 'dynamic-key' } },
+    }));
+    await writeFile(catalogPath, JSON.stringify({ catalogs: {} }));
+    piModels().setProvider(createProvider({
+      id: providerId,
+      name: 'Dynamic Catalog Commit Test',
+      auth: {
+        apiKey: {
+          name: 'Dynamic catalog key',
+          resolve: async ({ credential }) => credential?.key
+            ? { auth: { apiKey: credential.key }, source: 'stored credential' }
+            : undefined,
+        },
+      },
+      models: [catalogModel('current-model')],
+      fetchModels: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return [catalogModel('stale-model')];
+        }
+        throw new Error('newer catalog refresh failed');
+      },
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: () => { throw new Error('streamSimple should not be called'); },
+      },
+    }));
+
+    let markCommitBlocked: ((temporaryPath: string) => void) | undefined;
+    let releaseCommit: (() => void) | undefined;
+    const commitBlocked = new Promise<string>((resolve) => { markCommitBlocked = resolve; });
+    const commitGate = new Promise<void>((resolve) => { releaseCommit = resolve; });
+    const staleRefresh = withAtomicWriteCommitBarrierForTests(
+      async (temporaryPath) => {
+        markCommitBlocked?.(temporaryPath);
+        await commitGate;
+      },
+      () => piRefreshProviderModels(providerId),
+    );
+    const temporaryPath = await commitBlocked;
+    try {
+      await expect(piRefreshProviderModels(providerId)).rejects.toThrow('newer catalog refresh failed');
+      await staleRefresh;
+    } finally {
+      releaseCommit?.();
+      await withFileWriteLock(catalogPath, async () => undefined);
+    }
+
+    await expect(stat(temporaryPath)).rejects.toThrow();
+    expect(piModels().getModels(providerId).map((model) => model.id)).toEqual(['current-model']);
+    const persisted = JSON.parse(await readFile(catalogPath, 'utf8')) as {
+      catalogs: Record<string, { models: Array<{ id: string }> }>;
+    };
+    expect(persisted.catalogs[providerId]).toBeUndefined();
   });
 
   test('discovers a direct CC Switch registry provider without exposing its key', async () => {

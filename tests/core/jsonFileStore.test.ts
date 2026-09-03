@@ -7,6 +7,7 @@ import {
   getJsonFileWriteLockCountForTests,
   readJsonOrDefault,
   updateJsonFile,
+  withAtomicWriteCommitBarrierForTests,
   writeJsonFile,
 } from '../../src/main/jsonFileStore';
 
@@ -75,6 +76,33 @@ describe('json file store', () => {
     ]);
 
     expect(['first', 'second', 'third']).toContain(await readFile(filePath, 'utf8'));
+  });
+
+  test('scopes the test commit barrier before atomic rename', async () => {
+    const filePath = path.join(root, 'barrier.txt');
+    const outsidePath = path.join(root, 'outside.txt');
+    await atomicWriteFile(filePath, 'before');
+    let markBlocked: ((temporaryPath: string) => void) | undefined;
+    let releaseCommit: (() => void) | undefined;
+    const blocked = new Promise<string>((resolve) => { markBlocked = resolve; });
+    const commitGate = new Promise<void>((resolve) => { releaseCommit = resolve; });
+
+    const write = withAtomicWriteCommitBarrierForTests(
+      async (temporaryPath) => {
+        markBlocked?.(temporaryPath);
+        await commitGate;
+      },
+      () => atomicWriteFile(filePath, 'after'),
+    );
+    const temporaryPath = await blocked;
+
+    expect(await readFile(filePath, 'utf8')).toBe('before');
+    await expect(atomicWriteFile(outsidePath, 'outside')).resolves.toBeUndefined();
+    releaseCommit?.();
+    await write;
+
+    expect(await readFile(filePath, 'utf8')).toBe('after');
+    await expect(stat(temporaryPath)).rejects.toThrow();
   });
 
   test('releases settled write locks so unique paths do not accumulate permanently', async () => {

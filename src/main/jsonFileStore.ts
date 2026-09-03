@@ -7,11 +7,10 @@ import path from 'node:path';
 export interface AtomicWriteFileOptions {
   mode?: number;
   directoryMode?: number;
+  signal?: AbortSignal;
 }
 
-export interface JsonFileStoreOptions {
-  mode?: number;
-  directoryMode?: number;
+export interface JsonFileStoreOptions extends AtomicWriteFileOptions {
   pretty?: boolean;
   trailingNewline?: boolean;
 }
@@ -23,9 +22,17 @@ export const PRIVATE_JSON_FILE_OPTIONS: JsonFileStoreOptions =
 
 const fileWriteChains = new Map<string, Promise<unknown>>();
 const activeFileWriteLocks = new AsyncLocalStorage<Set<string>>();
+const atomicWriteCommitBarrier = new AsyncLocalStorage<(temporaryPath: string) => Promise<void>>();
 
 export function getJsonFileWriteLockCountForTests(): number {
   return fileWriteChains.size;
+}
+
+export function withAtomicWriteCommitBarrierForTests<T>(
+  barrier: (temporaryPath: string) => Promise<void>,
+  task: () => Promise<T>,
+): Promise<T> {
+  return atomicWriteCommitBarrier.run(barrier, task);
 }
 
 export function withFileWriteLock<T>(filePath: string, task: () => Promise<T>): Promise<T> {
@@ -59,10 +66,17 @@ async function atomicWriteFileUnlocked(
   data: string | Buffer | Uint8Array,
   options: AtomicWriteFileOptions,
 ): Promise<void> {
+  options.signal?.throwIfAborted();
   await prepareParentDirectory(filePath, options);
   const tmpPath = temporaryFilePath(filePath);
   try {
-    await writeFile(tmpPath, data, options.mode === undefined ? undefined : { mode: options.mode });
+    await writeFile(tmpPath, data, {
+      ...(options.mode === undefined ? {} : { mode: options.mode }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    const commitBarrier = atomicWriteCommitBarrier.getStore();
+    if (commitBarrier) await commitBarrier(tmpPath);
+    options.signal?.throwIfAborted();
     await rename(tmpPath, filePath);
     if (options.mode !== undefined && process.platform !== 'win32') {
       await chmod(filePath, options.mode);
@@ -78,10 +92,12 @@ function atomicWriteFileSync(
   data: string | Buffer | Uint8Array,
   options: AtomicWriteFileOptions = {},
 ): void {
+  options.signal?.throwIfAborted();
   prepareParentDirectorySync(filePath, options);
   const tmpPath = temporaryFilePath(filePath);
   try {
     writeFileSync(tmpPath, data, options.mode === undefined ? undefined : { mode: options.mode });
+    options.signal?.throwIfAborted();
     renameSync(tmpPath, filePath);
     if (options.mode !== undefined && process.platform !== 'win32') {
       chmodSync(filePath, options.mode);

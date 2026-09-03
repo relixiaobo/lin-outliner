@@ -57,7 +57,7 @@ async function appliedSourceCreates(page: Parameters<typeof trailingEditor>[0]) 
     };
     const operations = call.cmd === 'outline/apply'
       ? input.diff?.normalizedChangeSet?.operations ?? []
-      : call.cmd === 'outline/commit' ? input.changeSet?.operations ?? [] : [];
+      : call.cmd === 'outline/transact' ? input.changeSet?.operations ?? [] : [];
     return operations.flatMap((operation) => {
       if (operation.op !== 'create' || !operation.bind) return [];
       const sourceAdds = operations.flatMap((candidate) => (

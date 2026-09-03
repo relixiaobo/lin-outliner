@@ -48,7 +48,7 @@ export async function readCompleteDocumentProjection<TNode extends OutlineProjec
   let first: ProjectionResult | null = null;
   let cursor: string | undefined;
   do {
-    const result = await request<ProjectionResult>('show', {
+    const result = await request<ProjectionResult>('get', {
       selector: { by: 'alias', alias: 'home' },
       projection: fullDocumentProjection(cursor),
     });

@@ -16,7 +16,7 @@ afterAll(async () => {
 });
 
 describe('outline mandatory CLI golden flows', () => {
-  test('FLOW-1 creates and verifies the Chengdu weather table in exactly three Provider tool calls', async () => {
+  test('FLOW-1 creates and verifies the Chengdu weather table in one CLI call after Skill load', async () => {
     await withRuntime(async ({ runtime, cli }) => {
       await cli.json(['daily', 'ensure', '2026-09-02']);
       const before = snapshot(runtime);
@@ -29,34 +29,29 @@ describe('outline mandatory CLI golden flows', () => {
       const providerTrace = [{ tool: 'skill', command: 'outline' }];
 
       const mutationReceipt = await cli.summary(
-        ['add', '--input', '-'],
+        ['create', '--input', '-'],
         JSON.stringify(chengduWeatherViewedTree()),
       );
-      providerTrace.push({ tool: 'bash', command: 'outline add --input -' });
-      const ownerId = mutationReceipt.match(/^Owner: (node:[^\s]+)$/mu)?.[1];
+      providerTrace.push({ tool: 'bash', command: 'outline create --input -' });
+      const ownerId = mutationReceipt.match(/^Root: (node:[^\s]+)$/mu)?.[1];
       const operationId = mutationReceipt.match(/^Operation: (operation:[^\s]+)$/mu)?.[1];
       expect(ownerId).toBeDefined();
       expect(operationId).toBeDefined();
 
-      const verificationReceipt = await cli.summary(['view', 'inspect', ownerId!]);
-      providerTrace.push({ tool: 'bash', command: 'outline view inspect OWNER_ID' });
-
       expect(providerTrace).toEqual([
         { tool: 'skill', command: 'outline' },
-        { tool: 'bash', command: 'outline add --input -' },
-        { tool: 'bash', command: 'outline view inspect OWNER_ID' },
+        { tool: 'bash', command: 'outline create --input -' },
       ]);
-      expect(cli.calls - callsBefore).toBe(2);
-      expect(providerTrace).toHaveLength(3);
+      expect(cli.calls - callsBefore).toBe(1);
+      expect(providerTrace).toHaveLength(2);
       expect(providerTrace.some((entry) => /\b(help|schema|example)\b/u.test(entry.command))).toBe(false);
       expect(providerTrace.some((entry) => /\b(file|python|node|bun)\b/u.test(entry.tool))).toBe(false);
       expect(providerTrace.some((entry) => /[|<>]|<<|\$\(/u.test(entry.command))).toBe(false);
       expect(Buffer.byteLength(skill)).toBeLessThanOrEqual(8 * 1024);
       expect(Buffer.byteLength(mutationReceipt)).toBeLessThanOrEqual(4 * 1024);
-      expect(Buffer.byteLength(verificationReceipt)).toBeLessThanOrEqual(4 * 1024);
-      expect(mutationReceipt).toContain('Items: 15');
-      expect(verificationReceipt).toContain('Items: 15');
-      expect(verificationReceipt).toContain('Display fields: 3');
+      expect(mutationReceipt).toContain('items=15; fields=3');
+      expect(mutationReceipt).toContain('View: table');
+      expect(mutationReceipt).toContain('Verification: passed');
       expect(await countOperations(runtime)).toBe(operationsBefore + 1);
 
       const state = runtime.workspace.documentState();
@@ -77,8 +72,8 @@ describe('outline mandatory CLI golden flows', () => {
 
   test('1. creates a complete STRING_MATCH table Search in one invocation and exactly reverts it', async () => {
     await withRuntime(async ({ runtime, cli }) => {
-      await cli.json(['add', '@library', 'module alpha']);
-      await cli.json(['add', '@library', 'unrelated note']);
+      await cli.json(['create', '@library', 'module alpha']);
+      await cli.json(['create', '@library', 'unrelated note']);
       const before = snapshot(runtime);
       const operationCount = await countOperations(runtime);
       const callCount = cli.calls;
@@ -108,14 +103,29 @@ describe('outline mandatory CLI golden flows', () => {
       await cli.json(['daily', 'ensure', '2042-03-04']);
       const before = snapshot(runtime);
       const operationsBefore = await countOperations(runtime);
-      const input = JSON.parse(await readFile(path.resolve(
-        import.meta.dir,
-        '../fixtures/outline/table-view-add.json',
-      ), 'utf8')) as unknown;
+      const input = {
+        at: { parent: '@date:2042-03-04' },
+        fields: [
+          { key: 'inputPrice', name: 'Input price', type: 'number' },
+          { key: 'outputPrice', name: 'Output price', type: 'number' },
+        ],
+        node: {
+          text: 'Model prices',
+          children: [
+            { text: 'Model Alpha', fields: { inputPrice: 1, outputPrice: 2 } },
+            { text: 'Model Beta', fields: { inputPrice: 3, outputPrice: 4 } },
+          ],
+        },
+        view: {
+          mode: 'table', toolbar: true,
+          sort: [{ field: 'inputPrice', direction: 'asc' }],
+          display: ['sys:name', 'inputPrice', 'outputPrice'],
+        },
+      };
       const callsBefore = cli.calls;
-      const operation = operationResult(await cli.json(['add', '--input', '-'], JSON.stringify(input)));
+      const operation = operationResult(await cli.json(['create', '--input', '-'], JSON.stringify(input)));
       const tableId = returnedIds(operation)[0]!;
-      const summary = await cli.json(['view', 'inspect', tableId]) as Record<string, unknown>;
+      const summary = await cli.json(['view', 'get', tableId]) as Record<string, unknown>;
       expect(cli.calls - callsBefore).toBe(2);
       expect(await countOperations(runtime)).toBe(operationsBefore + 1);
       const state = runtime.workspace.documentState();
@@ -143,7 +153,7 @@ describe('outline mandatory CLI golden flows', () => {
 
   test('3. creates definitions and consumes their bindings on new and existing Nodes in one ChangeSet', async () => {
     await withRuntime(async ({ runtime, cli }) => {
-      const existingId = returnedIds(operationResult(await cli.json(['add', '@library', 'Existing target'])))[0]!;
+      const existingId = returnedIds(operationResult(await cli.json(['create', '@library', 'Existing target'])))[0]!;
       const before = snapshot(runtime);
       const changeSet = {
         protocolVersion: 1, kind: 'outline.changeset', operations: [
@@ -202,7 +212,7 @@ describe('outline mandatory CLI golden flows', () => {
       const before = snapshot(runtime);
       const callsBefore = cli.calls;
       const operation = operationResult(await cli.json([
-        'capture', 'add', '--date', '2042-03-04', '--title', 'Captured article',
+        'capture', 'create', '--date', '2042-03-04', '--title', 'Captured article',
         '--metadata', JSON.stringify(captureProvenance()),
         '--tree', JSON.stringify([draft('Captured body', { description: 'Snapshot' })]),
       ]));
@@ -228,7 +238,7 @@ describe('outline mandatory CLI golden flows', () => {
       const operationsBefore = await countOperations(runtime);
       const callsBefore = cli.calls;
       const lease = await cli.json(['asset', 'ingest', imagePath]) as AssetLease;
-      const operation = operationResult(await cli.json(['commit', '--input', '-'], JSON.stringify({
+      const operation = operationResult(await cli.json(['transact', '--input', '-'], JSON.stringify({
         protocolVersion: 1,
         kind: 'outline.changeset',
         operations: [
@@ -257,7 +267,7 @@ describe('outline mandatory CLI golden flows', () => {
 
   test('7. applies done, tag, and field changes to a bounded many query selector', async () => {
     await withRuntime(async ({ runtime, cli }) => {
-      for (const text of ['Batch target A', 'Batch target B', 'Batch target C']) await cli.json(['add', '@library', text]);
+      for (const text of ['Batch target A', 'Batch target B', 'Batch target C']) await cli.json(['create', '@library', text]);
       const before = snapshot(runtime);
       const targets = {
         target: {
@@ -333,20 +343,24 @@ describe('outline mandatory CLI golden flows', () => {
 
   test('10. previews, confirms, and reverts Node/definition merge, purge, and Empty Trash', async () => {
     await withRuntime(async ({ runtime, cli }) => {
-      const nodeSource = returnedIds(operationResult(await cli.json(['add', '@library', 'Merge source'])))[0]!;
-      const nodeTarget = returnedIds(operationResult(await cli.json(['add', '@library', 'Merge target'])))[0]!;
+      const nodeSource = returnedIds(operationResult(await cli.json(['create', '@library', 'Merge source'])))[0]!;
+      const nodeTarget = returnedIds(operationResult(await cli.json(['create', '@library', 'Merge target'])))[0]!;
       await previewApplyRevert(cli, runtime, ['merge', nodeSource, nodeTarget]);
 
-      const defSource = returnedIds(operationResult(await cli.json(['definition', 'create', 'tag', 'Definition source'])))[0]!;
-      const defTarget = returnedIds(operationResult(await cli.json(['definition', 'create', 'tag', 'Definition target'])))[0]!;
-      await previewApplyRevert(cli, runtime, ['definition', 'merge', defSource, defTarget]);
+      const defSource = returnedIds(operationResult(await cli.json(
+        ['define', 'create', '--input', '-'], JSON.stringify({ kind: 'tag', name: 'Definition source' }),
+      )))[0]!;
+      const defTarget = returnedIds(operationResult(await cli.json(
+        ['define', 'create', '--input', '-'], JSON.stringify({ kind: 'tag', name: 'Definition target' }),
+      )))[0]!;
+      await previewApplyRevert(cli, runtime, ['merge', defSource, defTarget]);
 
-      const purgeId = returnedIds(operationResult(await cli.json(['add', '@library', 'Purge target'])))[0]!;
+      const purgeId = returnedIds(operationResult(await cli.json(['create', '@library', 'Purge target'])))[0]!;
       await cli.json(['trash', purgeId]);
       await previewApplyRevert(cli, runtime, ['purge', purgeId]);
 
       for (const text of ['Empty Trash A', 'Empty Trash B']) {
-        const id = returnedIds(operationResult(await cli.json(['add', '@library', text])))[0]!;
+        const id = returnedIds(operationResult(await cli.json(['create', '@library', text])))[0]!;
         await cli.json(['trash', id]);
       }
       await previewApplyRevert(cli, runtime, ['purge', '@trash', '--contents']);
@@ -355,12 +369,14 @@ describe('outline mandatory CLI golden flows', () => {
 
   test('11. repeated configure, set, and ensure calls converge without additional Operations', async () => {
     await withRuntime(async ({ runtime, cli }) => {
-      const definitionId = returnedIds(operationResult(await cli.json(['definition', 'create', 'field', 'Idempotent Field'])))[0]!;
-      const ownerId = returnedIds(operationResult(await cli.json(['add', '@library', 'Idempotent View'])))[0]!;
+      const definitionId = returnedIds(operationResult(await cli.json(
+        ['define', 'create', '--input', '-'], JSON.stringify({ kind: 'field', name: 'Idempotent Field' }),
+      )))[0]!;
+      const ownerId = returnedIds(operationResult(await cli.json(['create', '@library', 'Idempotent View'])))[0]!;
       const cases: readonly [readonly string[], readonly string[]][] = [
         [
-          ['definition', 'configure', definitionId, 'field', '--patch', '{"nullable":false}'],
-          ['definition', 'configure', definitionId, 'field', '--patch', '{"nullable":false}'],
+          ['define', 'edit', '--input', '-'],
+          ['define', 'edit', '--input', '-'],
         ],
         [
           ['view', 'set', ownerId, 'table', '--replace', '{"sort":[{"field":"sys:updatedAt","direction":"desc"}]}'],
@@ -374,9 +390,12 @@ describe('outline mandatory CLI golden flows', () => {
       for (const [firstArgs, repeatedArgs] of cases) {
         const stateBefore = snapshot(runtime);
         const operationsBefore = await countOperations(runtime);
-        const first = operationResult(await cli.json(firstArgs));
+        const stdin = firstArgs[0] === 'define'
+          ? JSON.stringify({ target: definitionId, kind: 'field', config: { nullable: false } })
+          : '';
+        const first = operationResult(await cli.json(firstArgs, stdin));
         expect(await countOperations(runtime)).toBe(operationsBefore + 1);
-        const repeated = noChangeResult(await cli.json(repeatedArgs));
+        const repeated = noChangeResult(await cli.json(repeatedArgs, stdin));
         expect(repeated).toMatchObject({ affectedNodeCount: 0, recovery: { state: 'not-required' } });
         expect(await countOperations(runtime)).toBe(operationsBefore + 1);
         if (firstArgs[0] === 'view') {
@@ -394,13 +413,13 @@ describe('outline mandatory CLI golden flows', () => {
   test('12. exposes Operation ID, affected count, recovery state, returned IDs, and no-change recovery', async () => {
     await withRuntime(async ({ runtime, cli }) => {
       const before = snapshot(runtime);
-      const operation = operationResult(await cli.json(['add', '@library', 'Visible operation result']));
+      const operation = operationResult(await cli.json(['create', '@library', 'Visible operation result']));
       expect(operation.operationId).toMatch(/^operation:/);
       expect(operation.affectedNodeCount).toBeGreaterThan(0);
       expect(operation.recovery.state).toBe('available');
       expect(returnedIds(operation)).toHaveLength(1);
       const nodeId = returnedIds(operation)[0]!;
-      const noChange = noChangeResult(await cli.json(['set', nodeId, '--text', 'Visible operation result']));
+      const noChange = noChangeResult(await cli.json(['edit', nodeId, '--text', 'Visible operation result']));
       expect(noChange).toMatchObject({ affectedNodeCount: 0, recovery: { state: 'not-required' } });
       expect((await runtime.workspace.store.operations()).some((entry) => entry.operationId === operation.operationId)).toBe(true);
       await exactRevert(runtime, operation, before, cli);
@@ -409,7 +428,7 @@ describe('outline mandatory CLI golden flows', () => {
 
   test('13. replaces literal text over one bounded query with one reviewed Operation and exact revert', async () => {
     await withRuntime(async ({ runtime, cli }) => {
-      const referenceId = returnedIds(operationResult(await cli.json(['add', '@library', 'Reference target'])))[0]!;
+      const referenceId = returnedIds(operationResult(await cli.json(['create', '@library', 'Reference target'])))[0]!;
       const setup = await diffApply(cli, {
         protocolVersion: 1, kind: 'outline.changeset', operations: [
           {
@@ -436,8 +455,8 @@ describe('outline mandatory CLI golden flows', () => {
       const operationsBefore = await countOperations(runtime);
       const callsBefore = cli.calls;
       const args = [
-        'text', 'replace', '--matching', 'keyword 1', '--max', '10',
-        '--find', 'keyword 1', '--replace', 'replacement', '--field', 'both',
+        'replace', 'text', '--matching', 'keyword 1', '--max', '10',
+        '--find', 'keyword 1', '--with', 'replacement', '--field', 'both',
         '--case-sensitive', 'false', '--max-replacements', '10',
       ] as const;
 
@@ -493,7 +512,7 @@ async function previewApplyRevert(
 }
 
 async function diffApply(cli: CliHarness, changeSet: unknown): Promise<{ diff: Diff; operation: Operation }> {
-  const diff = diffResult(await cli.json(['diff', '--input', '-'], JSON.stringify(changeSet)));
+  const diff = diffResult(await cli.json(['preview', '--input', '-'], JSON.stringify(changeSet)));
   const operation = operationResult(await cli.json(['apply', '--input', '-'], JSON.stringify(diff)));
   return { diff, operation };
 }
@@ -507,7 +526,7 @@ async function exactRevert(
   const reverted = operationResult(await cli.json(['revert', operation.operationId]));
   expect(reverted.revertsOperationId).toBe(operation.operationId);
   expect(runtime.workspace.documentState()).toEqual(before);
-  const log = await cli.json(['log', '--operation', operation.operationId]);
+  const log = await cli.json(['history', '--operation', operation.operationId]);
   expect((log as { operations: Operation[] }).operations[0]?.recovery.state).toBe('reverted');
 }
 
@@ -568,6 +587,17 @@ async function withRuntime(
 }
 
 function operationResult(value: unknown): Operation {
+  if (value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'outline.create-result') {
+    const created = value as {
+      rootId: string;
+      settlement: Operation;
+    };
+    return {
+      ...created.settlement,
+      kind: 'outline.operation',
+      result: [{ nodes: [{ id: created.rootId }] }],
+    } as Operation;
+  }
   const operation = value as Operation;
   expect(operation.kind).toBe('outline.operation');
   expect(typeof operation.operationId).toBe('string');
@@ -656,16 +686,17 @@ function chengduWeatherViewedTree() {
     ['Dujiangyan', 18, 30, 'Coolest in the region'],
   ];
   return {
-    kind: 'viewed-tree',
-    placement: { kind: 'first', parent: '@date:2026-09-02' },
-    title: 'Chengdu district weather (2026-09-02)',
-    description: 'Sunny throughout, wind below force 3, and UV intensity is very strong across the region. Temperatures generally decrease toward the Longmen Mountains to the northwest and increase toward Jintang to the northeast; diurnal ranges are usually 10-12 C.',
+    at: { parent: '@date:2026-09-02', position: 'first' },
     fields: [
-      { key: 'low', name: 'Night low (C)', config: { fieldType: 'number' } },
-      { key: 'high', name: 'Day high (C)', config: { fieldType: 'number' } },
-      { key: 'note', name: 'Note', config: { fieldType: 'plain' } },
+      { key: 'low', name: 'Night low (C)', type: 'number' },
+      { key: 'high', name: 'Day high (C)', type: 'number' },
+      { key: 'note', name: 'Note', type: 'text' },
     ],
-    items: rows.map(([content, low, high, note]) => ({ content, values: { low, high, note } })),
-    view: { mode: 'table' },
+    node: {
+      text: 'Chengdu district weather (2026-09-02)',
+      description: 'Sunny throughout, wind below force 3, and UV intensity is very strong across the region. Temperatures generally decrease toward the Longmen Mountains to the northwest and increase toward Jintang to the northeast; diurnal ranges are usually 10-12 C.',
+      children: rows.map(([text, low, high, note]) => ({ text, fields: { low, high, note } })),
+    },
+    view: { mode: 'table', display: ['low', 'high', 'note'] },
   };
 }

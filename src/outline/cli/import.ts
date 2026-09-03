@@ -295,7 +295,7 @@ async function planImport(
 
     const client = await supervisor.connect(signal);
     try {
-      const artifact = await client.diffArtifact(createReadStream(changeSetPath), {
+      const artifact = await client.previewArtifact(createReadStream(changeSetPath), {
         inputFormat: 'json',
         idempotencyKey: `cli:${crypto.randomUUID()}`,
         idempotencyKeyMode: 'if-missing',
@@ -381,7 +381,7 @@ async function verifyImport(
 
   const client = await supervisor.connect(signal);
   try {
-    const page = (await client.request('log', { operationId: input.operationId, limit: 1 }, signal)).data;
+    const page = (await client.request('history', { operationId: input.operationId, limit: 1 }, signal)).data;
     const operation = isRecord(page) && Array.isArray(page.operations) ? page.operations[0] : undefined;
     if (!checkOutlineSchema(OperationSchema, operation) || operation.operationId !== input.operationId) {
       throw usageError(`Operation was not found: ${input.operationId}`);
@@ -397,12 +397,12 @@ async function verifyImport(
       const selector = root.kind === 'date'
         ? { by: 'date' as const, date: root.date! }
         : { by: 'id' as const, id: root.nodeId };
-      const projection = (await client.request('show', { selector }, signal)).data;
+      const projection = (await client.request('get', { selector }, signal)).data;
       const shownId = isRecord(projection) && Array.isArray(projection.nodes)
         ? (projection.nodes[0] as { id?: unknown } | undefined)?.id
         : undefined;
       if (shownId !== root.nodeId) {
-        throw verificationError(`Independent show verification failed for ${root.kind === 'date' ? `@date:${root.date}` : root.nodeId}.`);
+        throw verificationError(`Independent get verification failed for ${root.kind === 'date' ? `@date:${root.date}` : root.nodeId}.`);
       }
       verificationReads.push({
         selector: root.kind === 'date' ? `@date:${root.date}` : root.nodeId,

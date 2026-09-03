@@ -201,9 +201,15 @@ async function executeInvocation(
   if (invocation.command === 'example') {
     const split = splitOptionTerminator(invocation.args);
     const tokens = [...split.options, ...split.literals];
-    if (tokens.length < 2) {
+    if (tokens.length < 1) {
       const available = outlineRecipeVariants().map((recipe) => `${recipe.command} ${recipe.variant}`).join(', ');
-      throw usageError(`example requires COMMAND and VARIANT. Available recipes: ${available}.`);
+      throw usageError(`example requires COMMAND and optional VARIANT. Available recipes: ${available}.`);
+    }
+    const exactCommand = tokens.join(' ');
+    const exactRecipes = outlineRecipeVariants(exactCommand);
+    if (exactRecipes.length === 1) return exactRecipes[0]!;
+    if (exactRecipes.length > 1) {
+      throw usageError(`example requires a VARIANT for ${exactCommand}. Available variants: ${exactRecipes.map((entry) => entry.variant).join(', ')}.`);
     }
     const variant = tokens.at(-1)!;
     const command = tokens.slice(0, -1).join(' ');
@@ -226,18 +232,18 @@ async function executeInvocation(
   }
 
   if (!capability.runtimeRequired) throw usageError(`Unsupported local outline command: ${invocation.command}`);
-  if (invocation.command === 'diff') return executeDiffInvocation(invocation, supervisor, io, options.signal);
+  if (invocation.command === 'preview') return executeDiffInvocation(invocation, supervisor, io, options.signal);
   if (invocation.command === 'asset ingest') return executeAssetIngest(invocation, supervisor, io, options.signal);
   if (invocation.command === 'asset export') return executeAssetExport(invocation, supervisor, io, options.signal);
   if (capability.streaming) return executeStreamingInvocation(invocation, supervisor, io, options.signal);
-  if (invocation.command === 'view inspect') {
+  if (invocation.command === 'view get') {
     const split = splitOptionTerminator(invocation.args);
     const targets = [...split.options, ...split.literals];
-    if (targets.length !== 1) throw usageError('view inspect requires exactly one TARGET.');
+    if (targets.length !== 1) throw usageError('view get requires exactly one TARGET.');
     const target = { target: { selector: parseSelectorToken(targets[0]!), cardinality: 'one' as const } };
     const input = { target };
     if (!checkOutlineSchema(capability.requestSchema, input)) {
-      throw schemaUsageError('Input does not match the public schema for command: view inspect', capability.requestSchema, input);
+      throw schemaUsageError('Input does not match the public schema for command: view get', capability.requestSchema, input);
     }
     const client = await supervisor.connect(options.signal);
     try {
@@ -284,10 +290,7 @@ async function executeInvocation(
       capability.kind === 'mutate' && isRecord(input) && input.preview !== true,
       options.signal,
     )).data;
-    const viewedTree = invocation.output === 'summary' && invocation.command === 'add'
-      ? viewedTreeReceipt(input, data)
-      : undefined;
-    return viewedTree ?? data;
+    return data;
   } finally {
     client.close();
   }
@@ -386,27 +389,47 @@ async function runtimeInput(
   supervisor: OutlineClientSupervisor,
   signal?: AbortSignal,
 ): Promise<unknown> {
-  if (invocation.command === 'find' || invocation.command === 'show') {
+  if (invocation.command === 'find' || invocation.command === 'get') {
     return (await parseReadCommand(invocation.command, invocation.args, (source) => readStructuredSource(source, io, signal))).input;
   }
-  if (invocation.command === 'asset show') {
+  if (invocation.command === 'asset get') {
     const split = splitOptionTerminator(invocation.args);
     const assetIds = [...split.options, ...split.literals];
-    if (assetIds.length !== 1) throw usageError('asset show requires exactly one AssetRecord ID.');
+    if (assetIds.length !== 1) throw usageError('asset get requires exactly one AssetRecord ID.');
     return { assetId: assetIds[0] };
   }
-  if (invocation.command === 'log') return parseLogInput(invocation.args);
+  if (invocation.command === 'search run') {
+    const split = splitOptionTerminator(invocation.args);
+    let searchId: string | undefined;
+    let limit: number | undefined;
+    for (let index = 0; index < split.options.length; index += 1) {
+      const argument = split.options[index];
+      if (argument === '--limit') {
+        const value = Number(split.options[++index]);
+        if (!Number.isInteger(value) || value < 1 || value > 10_000) {
+          throw usageError('--limit must be an integer between 1 and 10000.');
+        }
+        limit = value;
+      } else if (argument?.startsWith('-')) {
+        throw usageError(`Unknown search run option: ${argument}`);
+      } else if (!searchId) searchId = argument;
+      else throw usageError('search run accepts exactly one Search ID.');
+    }
+    if (split.literals.length > 0 || !searchId) throw usageError('search run requires exactly one Search ID.');
+    return { searchId, ...(limit ? { limit } : {}) };
+  }
+  if (invocation.command === 'history') return parseLogInput(invocation.args);
   if (invocation.command === 'revert' || invocation.command === 'undo' || invocation.command === 'redo') {
     return parseHistoryMutationInput(invocation.command, invocation.args);
   }
-  if (invocation.command === 'commit') return commitInput(invocation, io, signal);
+  if (invocation.command === 'transact') return commitInput(invocation, io, signal);
   if (invocation.command !== 'apply') {
     return buildPorcelainRequest(invocation.command, invocation.args, {
       read: (source) => readStructuredSource(source, io, signal),
       lookup: async (selector) => {
         const client = await supervisor.connect(signal);
         try {
-          const response = await client.request('show', { selector }, signal);
+          const response = await client.request('get', { selector }, signal);
           const data = response.data as { nodes?: unknown[] };
           const node = data.nodes?.[0];
           if (!isRecord(node)) throw usageError('Porcelain target did not resolve to one Node.');
@@ -444,12 +467,12 @@ async function runtimeInput(
   const raw = parsed.input === '-' ? await io.readStdin(signal) : await readFile(parsed.input, 'utf8');
   const value = parseJsonInput(raw);
   if (parsed.inputFormat !== 'json') throw usageError('apply accepts only --input-format json.');
-  if (parsed.output) throw usageError('--output is only valid for diff.');
+  if (parsed.output) throw usageError('--output is only valid for preview.');
   if (parsed.idempotencyKey) throw usageError('apply cannot change the idempotency key bound into its Diff.');
   if (!isRecord(value)
     || !isRecord(value.normalizedChangeSet)
     || typeof value.normalizedChangeSet.idempotencyKey !== 'string') {
-    throw usageError('apply requires a Diff with an idempotency key; create it with outline diff.');
+    throw usageError('apply requires a Diff with an idempotency key; create it with outline preview.');
   }
   return { diff: value, ...(parsed.yes ? { acknowledgeDestructive: true } : {}) };
 }
@@ -460,11 +483,11 @@ async function commitInput(
   signal?: AbortSignal,
 ): Promise<unknown> {
   const parsed = parseInputOptions(invocation.args);
-  if (!parsed.input) throw usageError('commit requires --input FILE|-.');
-  if (parsed.inputFormat !== 'json') throw usageError('commit accepts only --input-format json.');
-  if (parsed.output) throw usageError('--output is only valid for diff.');
+  if (!parsed.input) throw usageError('transact requires --input FILE|-.');
+  if (parsed.inputFormat !== 'json') throw usageError('transact accepts only --input-format json.');
+  if (parsed.output) throw usageError('--output is only valid for preview.');
   if (parsed.yes) throw usageError('--yes is only valid for apply.');
-  if (parsed.rest.length > 0) throw usageError(`Unexpected commit argument: ${parsed.rest[0]}`);
+  if (parsed.rest.length > 0) throw usageError(`Unexpected transact argument: ${parsed.rest[0]}`);
   const raw = parsed.input === '-' ? await io.readStdin(signal) : await readFile(parsed.input, 'utf8');
   const value = parseJsonInput(raw);
   if (!checkOutlineSchema(ChangeSetSchema, value) || !isRecord(value)) {
@@ -489,16 +512,16 @@ async function executeDiffInvocation(
   signal?: AbortSignal,
 ): Promise<unknown | HandledExecution> {
   const parsed = parseInputOptions(invocation.args);
-  if (!parsed.input) throw usageError('diff requires --input FILE|-.');
-  if (parsed.yes) throw usageError('--yes is not valid for diff.');
-  if (parsed.rest.length > 0) throw usageError(`Unexpected diff argument: ${parsed.rest[0]}`);
+  if (!parsed.input) throw usageError('preview requires --input FILE|-.');
+  if (parsed.yes) throw usageError('--yes is not valid for preview.');
+  if (parsed.rest.length > 0) throw usageError(`Unexpected preview argument: ${parsed.rest[0]}`);
   const inputFile = parsed.input === '-' ? undefined : await open(parsed.input, 'r');
   try {
     const source = inputFile?.createReadStream({ autoClose: false }) ?? io.stdinBytes(signal);
     const client = await supervisor.connect(signal);
     try {
       const idempotencyKey = parsed.idempotencyKey ?? newCliIdempotencyKey();
-      const artifact = await client.diffArtifact(source, {
+      const artifact = await client.previewArtifact(source, {
         inputFormat: parsed.inputFormat,
         idempotencyKey,
         idempotencyKeyMode: parsed.idempotencyKey ? 'exact' : 'if-missing',
@@ -543,42 +566,6 @@ async function executeDiffInvocation(
   } finally {
     await inputFile?.close();
   }
-}
-
-function viewedTreeReceipt(input: unknown, settlement: unknown): Record<string, unknown> | undefined {
-  if (!isRecord(input) || !isRecord(input.changeSet) || !Array.isArray(input.changeSet.operations)) return undefined;
-  const operations = input.changeSet.operations.filter(isRecord);
-  const viewChange = [...operations].reverse().find((operation) => operation.op === 'update'
-    && Array.isArray(operation.changes)
-    && operation.changes.some((change) => isRecord(change)
-      && change.kind === 'view' && change.property === 'configuration' && change.action === 'set'));
-  if (!viewChange || !isRecord(viewChange.targets) || typeof viewChange.targets.binding !== 'string') return undefined;
-  const ownerBinding = viewChange.targets.binding;
-  const ownerCreate = operations.find((operation) => operation.op === 'create' && operation.bind === ownerBinding);
-  if (!ownerCreate || ownerCreate.resource === 'definition') return undefined;
-  const ownerDraft = Array.isArray(ownerCreate.nodes) && isRecord(ownerCreate.nodes[0])
-    ? ownerCreate.nodes[0]
-    : undefined;
-  const itemCount = ownerDraft && Array.isArray(ownerDraft.children) ? ownerDraft.children.length : 0;
-  const instruction = (viewChange.changes as unknown[]).find((change) => isRecord(change)
-    && change.kind === 'view' && change.property === 'configuration') as Record<string, unknown> | undefined;
-  const view = instruction && isRecord(instruction.view) ? instruction.view : {};
-  const replace = isRecord(view.replace) ? view.replace : {};
-  const displayFieldCount = Array.isArray(replace.display) ? replace.display.length : 0;
-  const ownerId = isRecord(settlement) ? returnedRootId(settlement) : undefined;
-  return {
-    kind: 'outline.summary-viewed-tree-receipt', settlement,
-    ownerId, itemCount, displayFieldCount, mode: view.mode,
-  };
-}
-
-function returnedRootId(settlement: Record<string, unknown>): string | undefined {
-  if (!Array.isArray(settlement.result)) return undefined;
-  for (const result of settlement.result) {
-    if (!isRecord(result) || !Array.isArray(result.nodes)) continue;
-    for (const node of result.nodes) if (isRecord(node) && typeof node.id === 'string') return node.id;
-  }
-  return undefined;
 }
 
 async function executeAssetIngest(
@@ -651,7 +638,6 @@ async function executeAssetExport(
 
 function parseLogInput(args: readonly string[]): Record<string, unknown> {
   const split = splitOptionTerminator(args);
-  if (split.literals.length > 0) throw usageError(`Unexpected log argument: ${split.literals[0]}`);
   const result: Record<string, unknown> = {};
   for (let index = 0; index < split.options.length; index += 1) {
     const arg = split.options[index];
@@ -664,7 +650,12 @@ function parseLogInput(args: readonly string[]): Record<string, unknown> {
     else if (arg === '--thread') result.threadId = requiredValue(split.options[++index], '--thread');
     else if (arg === '--turn') result.turnId = requiredValue(split.options[++index], '--turn');
     else if (arg === '--item') result.itemId = requiredValue(split.options[++index], '--item');
-    else throw usageError(`Unknown log option: ${arg}`);
+    else if (!arg?.startsWith('-') && result.operationId === undefined) result.operationId = arg;
+    else throw usageError(`Unknown history option: ${arg}`);
+  }
+  for (const literal of split.literals) {
+    if (result.operationId === undefined) result.operationId = literal;
+    else throw usageError(`Unexpected history argument: ${literal}`);
   }
   return result;
 }
@@ -924,7 +915,7 @@ async function requestWithMutationRecovery(
     return await client.request(command, input, signal);
   } catch (error) {
     if (isKnownMutationFailure(error)) throw error;
-    const nextCommand = `outline log --idempotency-key ${shellArgument(idempotencyKey)}`;
+    const nextCommand = `outline history --idempotency-key ${shellArgument(idempotencyKey)}`;
     throw new OutlineContractError(outlineError(
       'operation_settlement_unknown',
       'durability',
@@ -980,9 +971,18 @@ function schemaResult(args: readonly string[]): unknown {
   const split = splitOptionTerminator(args);
   let part: 'request' | 'result' | 'both' = 'request';
   let partSpecified = false;
+  let path: string | undefined;
   const nameParts: string[] = [];
   for (let index = 0; index < split.options.length; index += 1) {
     const arg = split.options[index]!;
+    if (arg === '--path') {
+      if (path !== undefined) throw usageError('--path may be specified only once.');
+      const value = split.options[index + 1];
+      if (value === undefined || value.startsWith('--')) throw usageError('--path requires a JSON Pointer.');
+      path = value;
+      index += 1;
+      continue;
+    }
     if (arg !== '--part') {
       nameParts.push(arg);
       continue;
@@ -1000,23 +1000,100 @@ function schemaResult(args: readonly string[]): unknown {
   const name = nameParts.join(' ');
   if (!name) {
     if (partSpecified) throw usageError('--part applies only to command schemas.');
-    return Object.fromEntries(Object.entries(OUTLINE_PUBLIC_SCHEMAS).map(([schemaName, schema]) => (
-      [schemaName, compactOutlineSchema(schema)]
-    )));
+    if (path !== undefined) throw usageError('--path requires a named public or command schema.');
+    return {
+      schemas: Object.keys(OUTLINE_PUBLIC_SCHEMAS).sort(),
+      commands: OUTLINE_CAPABILITIES.map((entry) => entry.name).sort(),
+    };
   }
   if (Object.hasOwn(OUTLINE_PUBLIC_SCHEMAS, name)) {
     if (partSpecified) throw usageError('--part applies only to command schemas.');
-    return compactOutlineSchema(OUTLINE_PUBLIC_SCHEMAS[name as keyof typeof OUTLINE_PUBLIC_SCHEMAS]);
+    const schema = compactOutlineSchema(OUTLINE_PUBLIC_SCHEMAS[name as keyof typeof OUTLINE_PUBLIC_SCHEMAS]);
+    return path === undefined ? schema : schemaFragment(schema, path);
   }
   const capability = outlineCapability(name);
   if (capability) {
     const request = compactOutlineSchema(capability.porcelain?.inputSchema ?? capability.requestSchema);
     const result = compactOutlineSchema(capability.resultSchema);
-    if (part === 'request') return request;
-    if (part === 'result') return result;
-    return { request, result };
+    if (part === 'request') return path === undefined ? request : schemaFragment(request, path);
+    if (part === 'result') return path === undefined ? result : schemaFragment(result, path);
+    return {
+      request: path === undefined ? request : schemaFragment(request, path),
+      result: path === undefined ? result : schemaFragment(result, path),
+    };
   }
   throw usageError(`Unknown public schema or command: ${name}`);
+}
+
+function schemaFragment(schema: unknown, pointer: string): unknown {
+  if (pointer !== '' && !pointer.startsWith('/')) {
+    throw usageError('--path must be an RFC 6901 JSON Pointer beginning with /.');
+  }
+  const root = schemaRecord(schema, 'Schema root is not an object.');
+  const definitions = isRecord(root.$defs) ? root.$defs : {};
+  let current: unknown = root;
+  for (const rawSegment of pointer.split('/').slice(1)) {
+    const segment = rawSegment.replaceAll('~1', '/').replaceAll('~0', '~');
+    current = dereferenceSchema(current, definitions);
+    if (Array.isArray(current)) {
+      if (!/^(0|[1-9][0-9]*)$/u.test(segment) || Number(segment) >= current.length) {
+        throw usageError(`Schema path does not exist: ${pointer}`);
+      }
+      current = current[Number(segment)];
+      continue;
+    }
+    if (!isRecord(current) || !Object.hasOwn(current, segment)) {
+      throw usageError(`Schema path does not exist: ${pointer}`);
+    }
+    current = current[segment];
+  }
+  current = dereferenceSchema(current, definitions);
+  if (!isRecord(current)) return current;
+
+  const fragment = structuredClone(current);
+  const reachable: Record<string, unknown> = {};
+  const pending = [...schemaReferences(fragment)];
+  while (pending.length > 0) {
+    const name = pending.pop()!;
+    if (Object.hasOwn(reachable, name) || !Object.hasOwn(definitions, name)) continue;
+    const definition = structuredClone(definitions[name]);
+    reachable[name] = definition;
+    pending.push(...schemaReferences(definition));
+  }
+  return Object.keys(reachable).length > 0 ? { ...fragment, $defs: reachable } : fragment;
+}
+
+function dereferenceSchema(value: unknown, definitions: Record<string, unknown>): unknown {
+  let current = value;
+  const visited = new Set<string>();
+  while (isRecord(current) && typeof current.$ref === 'string' && Object.hasOwn(definitions, current.$ref)) {
+    if (visited.has(current.$ref)) break;
+    visited.add(current.$ref);
+    current = definitions[current.$ref];
+  }
+  return current;
+}
+
+function schemaReferences(value: unknown): Set<string> {
+  const references = new Set<string>();
+  const visit = (candidate: unknown): void => {
+    if (Array.isArray(candidate)) {
+      candidate.forEach(visit);
+      return;
+    }
+    if (!isRecord(candidate)) return;
+    if (typeof candidate.$ref === 'string') references.add(candidate.$ref);
+    Object.entries(candidate).forEach(([key, nested]) => {
+      if (key !== '$defs') visit(nested);
+    });
+  };
+  visit(value);
+  return references;
+}
+
+function schemaRecord(value: unknown, message: string): Record<string, unknown> {
+  if (!isRecord(value)) throw usageError(message);
+  return value;
 }
 
 function longestCommandPrefix(args: readonly string[]): string | undefined {
@@ -1370,7 +1447,7 @@ function requestedOutputMode(argv: readonly string[]): ParsedInvocation['output'
 }
 
 function isRawStdoutInvocation(invocation: ParsedInvocation): boolean {
-  if (!['diff', 'export', 'asset export'].includes(invocation.command)) return false;
+  if (!['preview', 'export', 'asset export'].includes(invocation.command)) return false;
   const split = splitOptionTerminator(invocation.args);
   for (let index = 0; index < split.options.length; index += 1) {
     if (split.options[index] === '--output' && split.options[index + 1] === '-') return true;

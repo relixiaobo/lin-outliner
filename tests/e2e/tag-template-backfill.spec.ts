@@ -36,9 +36,9 @@ async function templateRuntimeCalls(page: Page) {
     return operations.some((operation) => operation.op === 'template' && operation.action === 'apply');
   };
   return {
-    diffs: calls.filter((call) => call.cmd === 'outline/diff' && carriesTemplateChange(call.args)),
+    diffs: calls.filter((call) => call.cmd === 'outline/preview' && carriesTemplateChange(call.args)),
     applies: calls.filter((call) => (
-      call.cmd === 'outline/apply' || call.cmd === 'outline/commit'
+      call.cmd === 'outline/apply' || call.cmd === 'outline/transact'
     ) && carriesTemplateChange(call.args)),
   };
 }

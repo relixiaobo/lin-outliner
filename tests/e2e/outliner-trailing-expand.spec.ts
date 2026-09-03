@@ -35,7 +35,7 @@ async function delayCreateNode(page: Parameters<typeof trailingEditor>[0], delay
       };
       const operations = request.command === 'apply'
         ? input.diff?.normalizedChangeSet?.operations ?? []
-        : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+        : request.command === 'transact' ? input.changeSet?.operations ?? [] : [];
       const createsNode = operations.some((operation) => operation.op === 'create');
       if (createsNode) {
         await new Promise((resolve) => window.setTimeout(resolve, delay));
@@ -69,7 +69,7 @@ async function rejectDraftMaterializations(
       };
       const operations = request.command === 'apply'
         ? input.diff?.normalizedChangeSet?.operations ?? []
-        : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+        : request.command === 'transact' ? input.changeSet?.operations ?? [] : [];
       const createsNode = operations.some((operation) => operation.op === 'create');
       if (createsNode && pending.length > 0) {
         const message = pending.shift()!;

@@ -2,8 +2,6 @@ import Type, { type TSchema } from 'typebox';
 import { outlineRecipeVariants } from './recipes';
 import {
   CaptureProvenanceSchema,
-  FieldDefinitionPatchSchema,
-  FieldTypeSchema,
   FilterOperatorSchema,
   FilterValueLogicSchema,
   IdentifierSchema,
@@ -13,7 +11,6 @@ import {
   QueryExpressionSchema,
   RichTextSchema,
   TagDefinitionPatchSchema,
-  ViewModeSchema,
   ViewSystemFieldSchema,
   SortDirectionSchema,
   DisplayPlacementSchema,
@@ -28,6 +25,195 @@ const ScalarValueSchema = Type.Union([
   Type.Number(),
   Type.Boolean(),
   Type.Null(),
+]);
+
+export const PublicFieldTypeSchema = Type.Union([
+  Type.Literal('text'), Type.Literal('select'), Type.Literal('select-from-tag'),
+  Type.Literal('date'), Type.Literal('number'), Type.Literal('url'),
+  Type.Literal('email'), Type.Literal('checkbox'),
+]);
+
+export const PUBLIC_FIELD_TYPES = Object.freeze({
+  text: 'plain',
+  select: 'options',
+  'select-from-tag': 'options_from_supertag',
+  date: 'date',
+  number: 'number',
+  url: 'uri',
+  email: 'email',
+  checkbox: 'checkbox',
+} as const);
+
+export type PublicFieldType = keyof typeof PUBLIC_FIELD_TYPES;
+
+export function publicFieldTypeFromCore(type: (typeof PUBLIC_FIELD_TYPES)[PublicFieldType]): PublicFieldType {
+  const match = Object.entries(PUBLIC_FIELD_TYPES)
+    .find(([, coreType]) => coreType === type)?.[0];
+  if (!match) throw new Error(`Unknown Core Field type: ${type}`);
+  return match as PublicFieldType;
+}
+
+const PublicFieldConfigSchema = Type.Object({
+  nullable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+  hide: Type.Optional(Type.Union([
+    Type.Literal('never'), Type.Literal('empty'), Type.Literal('not-empty'),
+    Type.Literal('default'), Type.Literal('always'), Type.Null(),
+  ])),
+  autoInitialize: Type.Optional(Type.Union([Type.String({ maxLength: 128 }), Type.Null()])),
+  collectOptions: Type.Optional(Type.Boolean()),
+  min: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+  max: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+  sourceTag: Type.Optional(Type.Union([ExactLocatorInputSchema, Type.Null()])),
+}, closed);
+
+const PublicViewModeSchema = Type.Union([
+  Type.Literal('outline'), Type.Literal('table'), Type.Literal('cards'), Type.Literal('calendar'),
+]);
+
+const CreateFieldKeySchema = Type.String({ pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' });
+
+const CreateNodeSchema = Type.Cyclic({
+  CreateNode: Type.Object({
+    text: Type.Union([Type.String({ maxLength: 4_194_304 }), RichTextSchema]),
+    description: Type.Optional(Type.String({ maxLength: 4_194_304 })),
+    codeLanguage: Type.Optional(Type.String({ maxLength: 128 })),
+    checkbox: Type.Optional(Type.Boolean()),
+    done: Type.Optional(Type.Boolean()),
+    tags: Type.Optional(Type.Array(ExactLocatorInputSchema, { uniqueItems: true, maxItems: 1_024 })),
+    reference: Type.Optional(ExactLocatorInputSchema),
+    fields: Type.Optional(Type.Record(CreateFieldKeySchema, ScalarValueSchema, { maxProperties: 256 })),
+    children: Type.Optional(Type.Array(Type.Ref('CreateNode'), { maxItems: 100_000 })),
+  }, closed),
+}, 'CreateNode');
+
+const CreatePlacementSchema = Type.Union([
+  Type.Object({ parent: ExactLocatorInputSchema, position: Type.Optional(Type.Literal('first')) }, closed),
+  Type.Object({ parent: ExactLocatorInputSchema, position: Type.Optional(Type.Literal('last')) }, closed),
+  Type.Object({ parent: ExactLocatorInputSchema, position: Type.Literal('index'), index: Type.Integer({ minimum: 0 }) }, closed),
+  Type.Object({ sibling: ExactLocatorInputSchema, position: Type.Literal('before') }, closed),
+  Type.Object({ sibling: ExactLocatorInputSchema, position: Type.Literal('after') }, closed),
+]);
+
+const CreateViewFieldSchema = Type.Union([ViewSystemFieldSchema, CreateFieldKeySchema]);
+const CreateViewSchema = Type.Object({
+  mode: Type.Optional(PublicViewModeSchema),
+  toolbar: Type.Optional(Type.Boolean()),
+  group: Type.Optional(Type.Union([CreateViewFieldSchema, Type.Null()])),
+  sort: Type.Optional(Type.Array(Type.Object({
+    field: CreateViewFieldSchema,
+    direction: Type.Optional(SortDirectionSchema),
+  }, closed), { maxItems: 1_000 })),
+  filters: Type.Optional(Type.Array(Type.Object({
+    field: CreateViewFieldSchema,
+    operator: Type.Optional(FilterOperatorSchema),
+    values: Type.Optional(Type.Array(Type.String({ maxLength: 65_536 }), { maxItems: 10_000 })),
+    valueLogic: Type.Optional(FilterValueLogicSchema),
+  }, closed), { maxItems: 1_000 })),
+  display: Type.Optional(Type.Array(Type.Union([
+    CreateViewFieldSchema,
+    Type.Object({
+      field: CreateViewFieldSchema,
+      visible: Type.Optional(Type.Boolean()),
+      width: Type.Optional(Type.Number({ minimum: 0 })),
+      label: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
+      placement: Type.Optional(DisplayPlacementSchema),
+    }, closed),
+  ]), { maxItems: 1_000 })),
+}, closed);
+
+export const CreateInputSchema = Type.Object({
+  at: CreatePlacementSchema,
+  fields: Type.Optional(Type.Array(Type.Union([
+    Type.Object({
+      key: CreateFieldKeySchema,
+      name: Type.String({ minLength: 1, maxLength: 1_024 }),
+      type: Type.Optional(PublicFieldTypeSchema),
+      config: Type.Optional(PublicFieldConfigSchema),
+    }, closed),
+    Type.Object({ key: CreateFieldKeySchema, field: ExactLocatorInputSchema }, closed),
+  ]), { maxItems: 256 })),
+  node: CreateNodeSchema,
+  view: Type.Optional(CreateViewSchema),
+  bind: OptionalBind,
+}, closed);
+
+const EditInputSchema = Type.Object({
+  target: BoundedSelectionInputSchema,
+  node: Type.Optional(Type.Object({
+    text: Type.Optional(Type.String({ maxLength: 4_194_304 })),
+    description: Type.Optional(Type.Union([Type.String({ maxLength: 4_194_304 }), Type.Null()])),
+    codeLanguage: Type.Optional(Type.Union([Type.String({ maxLength: 128 }), Type.Null()])),
+    checkbox: Type.Optional(Type.Boolean()),
+    done: Type.Optional(Type.Boolean()),
+    icon: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
+    iconKind: Type.Optional(Type.String({ maxLength: 128 })),
+  }, { ...closed, minProperties: 1 })),
+  tags: Type.Optional(Type.Object({
+    add: Type.Optional(Type.Array(ExactLocatorInputSchema, { uniqueItems: true, maxItems: 1_024 })),
+    remove: Type.Optional(Type.Array(ExactLocatorInputSchema, { uniqueItems: true, maxItems: 1_024 })),
+  }, { ...closed, minProperties: 1 })),
+  fields: Type.Optional(Type.Array(Type.Union([
+    Type.Object({ field: ExactLocatorInputSchema, action: Type.Optional(Type.Literal('set')), value: ScalarValueSchema }, closed),
+    Type.Object({ field: ExactLocatorInputSchema, action: Type.Union([Type.Literal('clear'), Type.Literal('remove')]) }, closed),
+    Type.Object({ field: ExactLocatorInputSchema, action: Type.Literal('select'), option: ExactLocatorInputSchema }, closed),
+  ]), { maxItems: 1_024 })),
+  references: Type.Optional(Type.Array(Type.Object({
+    action: Type.Union([
+      Type.Literal('add'), Type.Literal('retarget'), Type.Literal('replace'),
+      Type.Literal('inline'), Type.Literal('restore'),
+    ]),
+    target: ExactLocatorInputSchema,
+  }, closed), { maxItems: 1_024 })),
+  sources: Type.Optional(Type.Array(Type.Union([
+    Type.Object({
+      action: Type.Literal('add'),
+      text: Type.String({ maxLength: 32_768 }),
+      id: Type.Optional(NodeIdentifierSchema),
+      after: Type.Optional(Type.Union([ExactLocatorInputSchema, Type.Null()])),
+    }, closed),
+    Type.Object({
+      action: Type.Literal('replace'),
+      value: ExactLocatorInputSchema,
+      text: Type.String({ maxLength: 32_768 }),
+    }, closed),
+    Type.Object({
+      action: Type.Literal('reorder'),
+      value: ExactLocatorInputSchema,
+      after: Type.Union([ExactLocatorInputSchema, Type.Null()]),
+    }, closed),
+    Type.Object({ action: Type.Literal('remove'), value: ExactLocatorInputSchema }, closed),
+    Type.Object({ action: Type.Literal('clear') }, closed),
+  ]), { maxItems: 1_024 })),
+}, { ...closed, minProperties: 2 });
+
+const DefineFieldInputSchema = Type.Object({
+  kind: Type.Literal('field'),
+  name: Type.String({ minLength: 1, maxLength: 1_024 }),
+  type: Type.Optional(PublicFieldTypeSchema),
+  config: Type.Optional(PublicFieldConfigSchema),
+  id: Type.Optional(IdentifierSchema),
+  bind: OptionalBind,
+}, closed);
+const DefineTagInputSchema = Type.Object({
+  kind: Type.Literal('tag'),
+  name: Type.String({ minLength: 1, maxLength: 1_024 }),
+  id: Type.Optional(IdentifierSchema),
+  bind: OptionalBind,
+}, closed);
+const DefineCreateInputSchema = Type.Union([DefineFieldInputSchema, DefineTagInputSchema]);
+const DefineEnsureInputSchema = Type.Union([DefineFieldInputSchema, DefineTagInputSchema]);
+const DefineEditInputSchema = Type.Union([
+  Type.Object({
+    target: ExactLocatorInputSchema,
+    kind: Type.Literal('field'),
+    type: Type.Optional(PublicFieldTypeSchema),
+    config: Type.Optional(PublicFieldConfigSchema),
+  }, { ...closed, minProperties: 3 }),
+  Type.Object({
+    target: ExactLocatorInputSchema,
+    kind: Type.Literal('tag'),
+    config: TagDefinitionPatchSchema,
+  }, closed),
 ]);
 
 const ViewFieldInputSchema = Type.Union([ViewSystemFieldSchema, ExactLocatorInputSchema]);
@@ -50,7 +236,7 @@ export const ViewDisplaySpecSchema = Type.Object({
   placement: Type.Optional(DisplayPlacementSchema),
 }, closed);
 export const ViewCreateSpecSchema = Type.Object({
-  mode: Type.Optional(ViewModeSchema),
+  mode: Type.Optional(PublicViewModeSchema),
   toolbar: Type.Optional(Type.Boolean()),
   group: Type.Optional(Type.Union([ViewFieldInputSchema, Type.Null()])),
   sort: Type.Optional(Type.Array(ViewSortSpecSchema, { maxItems: 1_000 })),
@@ -58,7 +244,7 @@ export const ViewCreateSpecSchema = Type.Object({
   display: Type.Optional(Type.Array(ViewDisplaySpecSchema, { maxItems: 1_000 })),
 }, closed);
 export const ViewSetSpecSchema = Type.Object({
-  mode: Type.Optional(ViewModeSchema),
+  mode: Type.Optional(PublicViewModeSchema),
   toolbar: Type.Optional(Type.Boolean()),
   group: Type.Optional(Type.Union([ViewFieldInputSchema, Type.Null()])),
   replace: Type.Optional(Type.Object({
@@ -70,8 +256,6 @@ export const ViewSetSpecSchema = Type.Object({
 
 const TargetOnlySchema = Type.Object({ target: BoundedSelectionInputSchema }, closed);
 const ExactTargetOnlySchema = Type.Object({ target: ExactLocatorInputSchema }, closed);
-const TargetFieldSchema = Type.Object({ target: BoundedSelectionInputSchema, field: ExactLocatorInputSchema }, closed);
-const TargetTagSchema = Type.Object({ target: BoundedSelectionInputSchema, tag: ExactLocatorInputSchema }, closed);
 
 const ExactDestinationPlacementInputSchema = Type.Union([
   Type.Object({ kind: Type.Literal('first'), parent: ExactLocatorInputSchema }, closed),
@@ -86,74 +270,6 @@ const ExactPlacementInputSchema = Type.Union([
   Type.Object({ kind: Type.Literal('previous') }, closed),
   Type.Object({ kind: Type.Literal('next') }, closed),
 ]);
-
-const TreeAddInputSchema = Type.Object({
-  placement: ExactDestinationPlacementInputSchema,
-  nodes: Type.Array(NodeDraftSchema, { minItems: 1, maxItems: 100_000 }),
-  bind: OptionalBind,
-}, closed);
-
-const FieldKeySchema = Type.String({ pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' });
-const KeyedViewFieldSchema = Type.Union([
-  ViewSystemFieldSchema,
-  Type.Object({ fieldKey: FieldKeySchema }, closed),
-]);
-const ViewedTreeAddInputSchema = Type.Object({
-  kind: Type.Literal('viewed-tree'),
-  placement: ExactDestinationPlacementInputSchema,
-  title: Type.String({ minLength: 1, maxLength: 4_194_304 }),
-  description: Type.Optional(Type.String({ maxLength: 4_194_304 })),
-  fields: Type.Optional(Type.Array(Type.Union([
-    Type.Object({
-      key: FieldKeySchema,
-      name: Type.String({ minLength: 1, maxLength: 1_024 }),
-      config: FieldDefinitionPatchSchema,
-    }, closed),
-    Type.Object({ key: FieldKeySchema, field: ExactLocatorInputSchema }, closed),
-  ]), { maxItems: 256 })),
-  items: Type.Array(Type.Object({
-    content: Type.String({ maxLength: 4_194_304 }),
-    description: Type.Optional(Type.String({ maxLength: 4_194_304 })),
-    values: Type.Optional(Type.Record(FieldKeySchema, ScalarValueSchema, { maxProperties: 256 })),
-    children: Type.Optional(Type.Array(NodeDraftSchema, { maxItems: 100_000 })),
-  }, closed), { maxItems: 10_000 }),
-  view: Type.Object({
-    mode: ViewModeSchema,
-    toolbar: Type.Optional(Type.Boolean()),
-    group: Type.Optional(Type.Union([KeyedViewFieldSchema, Type.Null()])),
-    sort: Type.Optional(Type.Array(Type.Object({
-      field: KeyedViewFieldSchema,
-      direction: Type.Optional(SortDirectionSchema),
-    }, closed), { maxItems: 1_000 })),
-    filters: Type.Optional(Type.Array(Type.Object({
-      field: KeyedViewFieldSchema,
-      operator: Type.Optional(FilterOperatorSchema),
-      values: Type.Optional(Type.Array(Type.String({ maxLength: 65_536 }), { maxItems: 10_000 })),
-      valueLogic: Type.Optional(FilterValueLogicSchema),
-    }, closed), { maxItems: 1_000 })),
-    display: Type.Optional(Type.Array(Type.Object({
-      field: KeyedViewFieldSchema,
-      visible: Type.Optional(Type.Boolean()),
-      width: Type.Optional(Type.Number({ minimum: 0 })),
-      label: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
-      placement: Type.Optional(DisplayPlacementSchema),
-    }, closed), { maxItems: 1_000 })),
-  }, closed),
-  bind: OptionalBind,
-}, closed);
-
-const AddInputSchema = Type.Union([TreeAddInputSchema, ViewedTreeAddInputSchema]);
-
-const SetInputSchema = Type.Object({
-  target: BoundedSelectionInputSchema,
-  content: Type.Optional(RichTextSchema),
-  description: Type.Optional(Type.Union([Type.String({ maxLength: 4_194_304 }), Type.Null()])),
-  codeLanguage: Type.Optional(Type.String({ maxLength: 128 })),
-  checkbox: Type.Optional(Type.Boolean()),
-  icon: Type.Optional(Type.Union([Type.String({ maxLength: 4_096 }), Type.Null()])),
-  iconKind: Type.Optional(Type.String({ maxLength: 128 })),
-  bannerLeaseId: Type.Optional(Type.Union([IdentifierSchema, Type.Null()])),
-}, { ...closed, minProperties: 2 });
 
 const TextReplaceInputSchema = Type.Object({
   target: BoundedSelectionInputSchema,
@@ -179,71 +295,7 @@ const DuplicateInputSchema = Type.Object({
 }, closed);
 
 const MergeInputSchema = Type.Object({ source: BoundedSelectionInputSchema, target: ExactLocatorInputSchema }, closed);
-const DoneSetInputSchema = Type.Object({ target: BoundedSelectionInputSchema, value: Type.Boolean() }, closed);
-const FieldDefineInputSchema = Type.Union([
-  Type.Object({
-    target: BoundedSelectionInputSchema,
-    name: Type.String({ minLength: 1, maxLength: 1_024 }),
-    fieldType: Type.Optional(FieldTypeSchema),
-    value: Type.Optional(ScalarValueSchema),
-    index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
-  }, closed),
-  Type.Object({
-    target: BoundedSelectionInputSchema,
-    field: ExactLocatorInputSchema,
-    value: Type.Optional(ScalarValueSchema),
-    index: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Null()])),
-  }, closed),
-]);
-const FieldSetInputSchema = Type.Object({ target: BoundedSelectionInputSchema, field: ExactLocatorInputSchema, value: ScalarValueSchema }, closed);
-const FieldReuseInputSchema = Type.Object({ target: BoundedSelectionInputSchema, sourceField: ExactLocatorInputSchema, field: ExactLocatorInputSchema }, closed);
-const FieldSelectInputSchema = Type.Object({ target: BoundedSelectionInputSchema, field: ExactLocatorInputSchema, option: ExactLocatorInputSchema }, closed);
-
-const DefinitionCreateInputSchema = Type.Union([
-  Type.Object({
-    definitionType: Type.Literal('tag'),
-    name: Type.String({ minLength: 1, maxLength: 1_024 }),
-    id: Type.Optional(IdentifierSchema),
-    config: Type.Optional(TagDefinitionPatchSchema),
-    template: Type.Optional(Type.Array(NodeDraftSchema, { maxItems: 100_000 })),
-    bind: OptionalBind,
-  }, closed),
-  Type.Object({
-    definitionType: Type.Literal('field'),
-    name: Type.String({ minLength: 1, maxLength: 1_024 }),
-    id: Type.Optional(IdentifierSchema),
-    config: Type.Optional(FieldDefinitionPatchSchema),
-    options: Type.Optional(Type.Array(NodeDraftSchema, { maxItems: 100_000 })),
-    bind: OptionalBind,
-  }, closed),
-]);
-
-const DefinitionConfigureInputSchema = Type.Union([
-  Type.Object({ target: ExactLocatorInputSchema, definitionType: Type.Literal('tag'), patch: TagDefinitionPatchSchema }, closed),
-  Type.Object({ target: ExactLocatorInputSchema, definitionType: Type.Literal('field'), patch: FieldDefinitionPatchSchema }, closed),
-]);
-
-const ReferenceInputSchema = Type.Object({ target: BoundedSelectionInputSchema, reference: ExactLocatorInputSchema }, closed);
-const ExactReferenceInputSchema = Type.Object({ target: ExactLocatorInputSchema, reference: ExactLocatorInputSchema }, closed);
 const ViewSetInputSchema = Type.Object({ target: ExactLocatorInputSchema, view: ViewSetSpecSchema }, closed);
-const ViewGroupInputSchema = Type.Object({ target: ExactLocatorInputSchema, field: Type.Union([ViewFieldInputSchema, Type.Null()]) }, closed);
-const ViewSortAddInputSchema = Type.Object({ target: ExactLocatorInputSchema, sort: ViewSortSpecSchema }, closed);
-const ViewSortSetInputSchema = Type.Object({ target: ExactLocatorInputSchema, ruleId: IdentifierSchema, sort: ViewSortSpecSchema }, closed);
-const ViewRuleInputSchema = Type.Object({ target: ExactLocatorInputSchema, ruleId: IdentifierSchema }, closed);
-const ViewFilterAddInputSchema = Type.Object({ target: ExactLocatorInputSchema, filter: ViewFilterSpecSchema }, closed);
-const ViewFilterSetInputSchema = Type.Object({
-  target: ExactLocatorInputSchema,
-  ruleId: IdentifierSchema,
-  patch: Type.Object({
-    field: Type.Optional(Type.Union([ViewFieldInputSchema, Type.Null()])),
-    operator: Type.Optional(Type.Union([FilterOperatorSchema, Type.Null()])),
-    values: Type.Optional(Type.Union([Type.Array(Type.String({ maxLength: 65_536 }), { maxItems: 10_000 }), Type.Null()])),
-    valueLogic: Type.Optional(Type.Union([FilterValueLogicSchema, Type.Null()])),
-  }, { ...closed, minProperties: 1 }),
-}, closed);
-const ViewDisplayAddInputSchema = Type.Object({ target: ExactLocatorInputSchema, display: ViewDisplaySpecSchema }, closed);
-const ViewDisplaySetInputSchema = Type.Object({ target: ExactLocatorInputSchema, displayFieldId: IdentifierSchema, patch: Type.Partial(ViewDisplaySpecSchema, { minProperties: 1 }) }, closed);
-const ViewDisplayRemoveInputSchema = Type.Object({ target: ExactLocatorInputSchema, displayFieldId: IdentifierSchema }, closed);
 const SearchCreateInputSchema = Type.Union([
   Type.Object({
     parent: Type.Optional(ExactLocatorInputSchema),
@@ -274,7 +326,6 @@ const SearchSetInputSchema = Type.Union([
     view: Type.Optional(ViewSetSpecSchema),
   }, { ...closed, minProperties: 2 }),
 ]);
-const SearchEnsureTagInputSchema = Type.Object({ tag: ExactLocatorInputSchema, bind: OptionalBind }, closed);
 const DailyEnsureInputSchema = Type.Object({ date: LocalDateSchema, bind: OptionalBind }, closed);
 
 const CaptureAddInputSchema = Type.Union([
@@ -295,25 +346,6 @@ const CaptureAddInputSchema = Type.Union([
     bind: OptionalBind,
   }, closed),
 ]);
-
-const SourceAddInputSchema = Type.Object({
-  target: ExactLocatorInputSchema,
-  sourceText: Type.String({ maxLength: 32_768 }),
-  valueId: Type.Optional(NodeIdentifierSchema),
-  after: Type.Optional(Type.Union([ExactLocatorInputSchema, Type.Null()])),
-}, closed);
-const SourceValueInputSchema = Type.Object({
-  target: ExactLocatorInputSchema,
-  value: ExactLocatorInputSchema,
-}, closed);
-const SourceReplaceInputSchema = Type.Object({
-  ...SourceValueInputSchema.properties,
-  sourceText: Type.String({ maxLength: 32_768 }),
-}, closed);
-const SourceReorderInputSchema = Type.Object({
-  ...SourceValueInputSchema.properties,
-  after: Type.Union([ExactLocatorInputSchema, Type.Null()]),
-}, closed);
 
 export interface CommandOptionHelp {
   readonly name: string;
@@ -353,7 +385,6 @@ interface PorcelainBaseContract {
 const target = option('target', 'TARGET', 'Exact ID, semantic alias, or structured bounded target.');
 const parent = option('parent', 'PARENT', 'Exact parent ID, semantic alias, or structured target.');
 const bind = option('bind', 'NAME', 'Bind created or ensured Node IDs in the lowered ChangeSet.');
-const value = option('value', 'VALUE', 'Typed scalar or JSON value.');
 function option(
   name: string,
   valueName: string | undefined,
@@ -388,57 +419,21 @@ function contract(inputSchema: TSchema, usage: string, options: readonly Command
 }
 
 const PORCELAIN_BASE_CONTRACTS = Object.freeze({
-  add: contract(AddInputSchema, 'add PARENT TEXT | add --before|--after SIBLING TEXT | add --input FILE|-', [parent, option('tree', 'FILE|-', 'Create a complete typed Node tree.'), option('type', 'TYPE', 'Set the root Node type.'), option('description', 'TEXT', 'Set the root description.'), option('first', undefined, 'Insert first under PARENT.'), option('last', undefined, 'Insert last under PARENT.', { default: 'true' }), option('index', 'INDEX', 'Insert at a zero-based child index under PARENT.'), option('before', 'SIBLING', 'Insert immediately before one exact sibling; PARENT is not required.'), option('after', 'SIBLING', 'Insert immediately after one exact sibling; PARENT is not required.'), bind]),
-  set: contract(SetInputSchema, 'set TARGET [PROPERTY OPTIONS]', [target, option('text', 'TEXT', 'Replace plain content.'), option('content', 'TEXT', 'Replace plain content.'), option('description', 'TEXT|null', 'Patch the description.'), option('code', 'LANGUAGE', 'Set code-block language.'), option('checkbox', 'BOOLEAN', 'Set checkbox visibility.'), option('icon', 'VALUE|null', 'Set the Node icon.'), option('icon-kind', 'KIND', 'Set the icon kind.'), option('banner', 'LEASE|null', 'Set the banner asset lease.')]),
-  'text replace': contract(TextReplaceInputSchema, 'text replace TARGET --find TEXT --replace TEXT | text replace --matching TEXT --max N --find TEXT --replace TEXT | text replace --input FILE|-', [target, option('matching', 'TEXT', 'Select a bounded many target with STRING_MATCH shorthand.'), option('query', 'JSON|FILE', 'Select with the canonical structured query.'), option('within', 'SELECTOR', 'Bound query selection below one exact Selector.'), option('include-trash', undefined, 'Include trashed Nodes in query selection.'), option('order', 'ORDER', 'Use document, created, updated, or text query order.', { default: 'document' }), option('max', 'N', 'Required maximum Node count for --matching or --query.'), option('find', 'TEXT', 'Literal text to replace.'), option('replace', 'TEXT', 'Replacement text; an empty string deletes matches.'), option('field', 'content|description|both', 'Select transformed fields.', { default: 'content' }), option('occurrence', 'first|all', 'Replace the first or all non-overlapping matches in each selected field.', { default: 'all' }), option('case-sensitive', 'BOOLEAN', 'Use case-sensitive literal matching.', { default: 'true' }), option('max-replacements', 'N', 'Bound total replacements across every selected Node.', { default: '1000' })]),
+  create: contract(CreateInputSchema, 'create PARENT TEXT | create --input FILE|-', [parent, option('first', undefined, 'Insert first under PARENT.'), option('last', undefined, 'Insert last under PARENT.', { default: 'true' }), option('index', 'INDEX', 'Insert at a zero-based child index under PARENT.'), option('before', 'SIBLING', 'Insert immediately before one exact sibling.'), option('after', 'SIBLING', 'Insert immediately after one exact sibling.'), bind]),
+  edit: contract(EditInputSchema, 'edit TARGET --text TEXT | edit --input FILE|-', [target, option('text', 'TEXT', 'Set Node text.'), option('description', 'TEXT|null', 'Set or clear the description.'), option('done', 'BOOLEAN', 'Set completion state.'), option('checkbox', 'BOOLEAN', 'Set checkbox visibility.')]),
+  'replace text': contract(TextReplaceInputSchema, 'replace text TARGET --find TEXT --with TEXT | replace text --input FILE|-', [target, option('matching', 'TEXT', 'Select a bounded many target with text shorthand.'), option('query', 'JSON|FILE', 'Select with the canonical structured query.'), option('within', 'SELECTOR', 'Bound query selection below one exact Selector.'), option('include-trash', undefined, 'Include trashed Nodes.'), option('order', 'ORDER', 'Use document, created, updated, or text query order.', { default: 'document' }), option('max', 'N', 'Required maximum Node count for query selection.'), option('find', 'TEXT', 'Literal text to replace.'), option('with', 'TEXT', 'Replacement text.'), option('field', 'content|description|both', 'Select transformed fields.', { default: 'content' }), option('occurrence', 'first|all', 'Replace the first or all matches.', { default: 'all' }), option('case-sensitive', 'BOOLEAN', 'Use case-sensitive matching.', { default: 'true' }), option('max-replacements', 'N', 'Bound total replacements.', { default: '1000' })]),
+  'define create': contract(DefineCreateInputSchema, 'define create --input FILE|-', []),
+  'define ensure': contract(DefineEnsureInputSchema, 'define ensure --input FILE|-', []),
+  'define edit': contract(DefineEditInputSchema, 'define edit --input FILE|-', []),
+  'search edit': contract(SearchSetInputSchema, 'search edit TARGET [--title TITLE] [--query JSON|FILE]', [target, option('title', 'TITLE', 'Set the Search title.'), option('match', 'TEXT', 'Set a text query.'), option('query', 'JSON|FILE', 'Set the canonical query.'), option('view', 'MODE', 'Set the View mode.'), option('replace', 'JSON|FILE', 'Replace View collections explicitly.')]),
+  'capture create': contract(CaptureAddInputSchema, 'capture create (--parent TARGET | --date YYYY-MM-DD) --title TITLE --metadata FILE', [parent, option('date', 'YYYY-MM-DD', 'Ensure and capture below this local date.'), option('title', 'TITLE', 'Capture title.'), option('description', 'TEXT', 'Capture description.'), option('metadata', 'JSON|FILE', 'Capture provenance.'), option('tree', 'FILE|-', 'Typed captured child tree.'), bind]),
   move: contract(MoveInputSchema, 'move TARGET DESTINATION | move TARGET --before|--after SIBLING | move TARGET --previous|--next', [target, option('destination', 'TARGET', 'Destination parent for first, last, or index placement.'), option('first', undefined, 'Place first under DESTINATION.'), option('last', undefined, 'Place last under DESTINATION.', { default: 'true' }), option('index', 'INDEX', 'Place at a zero-based index under DESTINATION.'), option('before', 'SIBLING', 'Place immediately before one exact sibling.'), option('after', 'SIBLING', 'Place immediately after one exact sibling.'), option('previous', undefined, 'Move the selected sibling block one position earlier.'), option('next', undefined, 'Move the selected sibling block one position later.')]),
   duplicate: contract(DuplicateInputSchema, 'duplicate TARGET DESTINATION | duplicate TARGET --before|--after SIBLING | duplicate TARGET --previous|--next', [target, option('destination', 'TARGET', 'Destination parent for first, last, or index placement.'), option('first', undefined, 'Place copies first under DESTINATION.'), option('last', undefined, 'Place copies last under DESTINATION.', { default: 'true' }), option('index', 'INDEX', 'Place copies at a zero-based index under DESTINATION.'), option('before', 'SIBLING', 'Place copies immediately before one exact sibling.'), option('after', 'SIBLING', 'Place copies immediately after one exact sibling.'), option('previous', undefined, 'Place each copy immediately before its source.'), option('next', undefined, 'Place each copy immediately after its source.'), bind]),
   merge: contract(MergeInputSchema, 'merge SOURCE TARGET', [option('source', 'TARGET', 'Source Node or bounded set.'), target]),
-  indent: contract(ExactTargetOnlySchema, 'indent TARGET', [target]),
-  outdent: contract(ExactTargetOnlySchema, 'outdent TARGET', [target]),
-  'done set': contract(DoneSetInputSchema, 'done set TARGET BOOLEAN', [target, value]),
-  'done cycle': contract(ExactTargetOnlySchema, 'done cycle TARGET', [target]),
-  'tag add': contract(TargetTagSchema, 'tag add TARGET TAG', [target, option('tag', 'TAG', 'Tag definition target.')]),
-  'tag remove': contract(TargetTagSchema, 'tag remove TARGET TAG', [target, option('tag', 'TAG', 'Tag definition target.')]),
-  'field define': contract(FieldDefineInputSchema, 'field define TARGET NAME [--value VALUE]', [target, option('name', 'NAME', 'New field name.'), option('field-type', 'TYPE', 'New field type.'), option('field', 'FIELD', 'Attach an existing field definition.'), value, option('index', 'INDEX', 'Field slot index.')]),
-  'field set': contract(FieldSetInputSchema, 'field set TARGET FIELD VALUE', [target, option('field', 'FIELD', 'Field definition target.'), value]),
-  'field clear': contract(TargetFieldSchema, 'field clear TARGET FIELD', [target, option('field', 'FIELD', 'Field definition target.')]),
-  'field remove': contract(TargetFieldSchema, 'field remove TARGET FIELD', [target, option('field', 'FIELD', 'Field definition target.')]),
-  'field reuse': contract(FieldReuseInputSchema, 'field reuse TARGET SOURCE_FIELD TARGET_FIELD', [target, option('source-field', 'FIELD', 'Existing field slot definition.'), option('field', 'FIELD', 'Replacement field definition.')]),
-  'field select': contract(FieldSelectInputSchema, 'field select TARGET FIELD OPTION', [target, option('field', 'FIELD', 'Field definition target.'), option('option', 'OPTION', 'Option Node target.')]),
-  'definition create': contract(DefinitionCreateInputSchema, 'definition create TYPE NAME | definition create --input FILE|-', [option('type', 'tag|field', 'Definition kind.'), option('name', 'NAME', 'Definition name.'), option('field-type', 'TYPE', 'Field definition type.'), option('id', 'ID', 'Explicit client Node ID.'), option('config', 'JSON|FILE', 'Complete initial definition configuration.'), option('template', 'FILE|-', 'Initial tag template tree.'), option('options', 'FILE|-', 'Initial field option tree.'), bind]),
-  'definition configure': contract(DefinitionConfigureInputSchema, 'definition configure TARGET TYPE --patch JSON|FILE', [target, option('type', 'tag|field', 'Definition kind.'), option('patch', 'JSON|FILE', 'Patch with omitted properties preserved.')]),
-  'definition merge': contract(MergeInputSchema, 'definition merge SOURCE TARGET', [option('source', 'TARGET', 'Source definitions.'), target]),
-  'reference add': contract(ReferenceInputSchema, 'reference add TARGET REFERENCE', [target, option('reference', 'TARGET', 'Referenced Node target.')]),
-  'reference set': contract(ExactReferenceInputSchema, 'reference set TARGET REFERENCE', [target, option('reference', 'TARGET', 'New referenced Node target.')]),
-  'reference replace': contract(ExactReferenceInputSchema, 'reference replace TARGET REFERENCE', [target, option('reference', 'TARGET', 'Referenced Node that replaces the content Node.')]),
-  'reference inline': contract(ExactReferenceInputSchema, 'reference inline TARGET [REFERENCE]', [target, option('reference', 'TARGET', 'Required referenced Node target when TARGET is a content Node; omit only to convert an existing tree reference.')]),
-  'reference restore': contract(ExactReferenceInputSchema, 'reference restore TARGET REFERENCE', [target, option('reference', 'TARGET', 'Referenced Node target.')]),
-  'view set': contract(ViewSetInputSchema, 'view set TARGET MODE | view set --input FILE|-', [target, option('mode', 'MODE', 'Set list, table, cards, or calendar mode.'), option('toolbar', 'BOOLEAN', 'Set toolbar visibility.'), option('group', 'FIELD|null', 'Set the grouping field.'), option('replace', 'JSON|FILE', 'Explicitly replace sort, filter, or display collections.')]),
-  'view group set': contract(ViewGroupInputSchema, 'view group set TARGET FIELD|null', [target, option('field', 'FIELD|null', 'Grouping field.')]),
-  'view sort add': contract(ViewSortAddInputSchema, 'view sort add TARGET --field FIELD', [target, option('field', 'FIELD', 'Sort field.'), option('direction', 'asc|desc', 'Sort direction.', { default: 'asc' })]),
-  'view sort set': contract(ViewSortSetInputSchema, 'view sort set TARGET --rule ID --field FIELD', [target, option('rule', 'ID', 'Sort-rule Node ID.'), option('field', 'FIELD', 'Sort field.'), option('direction', 'asc|desc', 'Sort direction.')]),
-  'view sort remove': contract(ViewRuleInputSchema, 'view sort remove TARGET --rule ID', [target, option('rule', 'ID', 'Sort-rule Node ID.')]),
-  'view sort clear': contract(ExactTargetOnlySchema, 'view sort clear TARGET', [target]),
-  'view filter add': contract(ViewFilterAddInputSchema, 'view filter add TARGET --field FIELD', [target, option('field', 'FIELD', 'Filter field.'), option('operator', 'OP', 'Filter operator.', { default: 'contains' }), option('values', 'JSON', 'Filter value list.', { default: '[]' }), option('logic', 'all|any', 'Filter value logic.', { default: 'any' })]),
-  'view filter set': contract(ViewFilterSetInputSchema, 'view filter set TARGET --rule ID [PATCH OPTIONS]', [target, option('rule', 'ID', 'Filter-rule Node ID.'), option('field', 'FIELD', 'Filter field.'), option('operator', 'OP', 'Filter operator.'), option('values', 'JSON', 'Filter value list.'), option('logic', 'all|any', 'Filter value logic.')]),
-  'view filter remove': contract(ViewRuleInputSchema, 'view filter remove TARGET --rule ID', [target, option('rule', 'ID', 'Filter-rule Node ID.')]),
-  'view filter clear': contract(ExactTargetOnlySchema, 'view filter clear TARGET', [target]),
-  'view display add': contract(ViewDisplayAddInputSchema, 'view display add TARGET --field FIELD', [target, option('field', 'FIELD', 'Display field.')]),
-  'view display set': contract(ViewDisplaySetInputSchema, 'view display set TARGET --display-field ID --value JSON', [target, option('display-field', 'ID', 'Display-field Node ID.'), value]),
-  'view display remove': contract(ViewDisplayRemoveInputSchema, 'view display remove TARGET --display-field ID', [target, option('display-field', 'ID', 'Display-field Node ID.')]),
+  'view set': contract(ViewSetInputSchema, 'view set TARGET MODE | view set --input FILE|-', [target, option('mode', 'MODE', 'Set outline, table, cards, or calendar mode.'), option('toolbar', 'BOOLEAN', 'Set toolbar visibility.'), option('group', 'FIELD|null', 'Set the grouping field.'), option('replace', 'JSON|FILE', 'Explicitly replace sort, filter, or display collections.')]),
   'search create': contract(SearchCreateInputSchema, 'search create [PARENT] TITLE (--match TEXT | --query JSON|FILE) | search create --input FILE|-', [parent, option('title', 'TITLE', 'Saved Search title.'), option('match', 'TEXT', 'Ergonomic STRING_MATCH shorthand.'), option('query', 'JSON|FILE', 'Canonical structured query.'), option('view', 'MODE', 'Initial view mode.'), option('sort', 'FIELD:DIRECTION', 'Append one initial sort rule.'), option('filter', 'JSON', 'Append one initial filter rule.'), option('group', 'FIELD|null', 'Set initial grouping.'), option('display', 'FIELD', 'Append one initial display field.'), option('toolbar', 'BOOLEAN', 'Set initial toolbar visibility.'), bind], ['outline search create --title "Modules" --match "module" --view table --sort sys:updatedAt:desc']),
-  'search ensure-tag': contract(SearchEnsureTagInputSchema, 'search ensure-tag TAG', [option('tag', 'TAG', 'Tag definition target.'), bind]),
-  'search set': contract(SearchSetInputSchema, 'search set TARGET [--title TITLE] [--query JSON|FILE]', [target, option('title', 'TITLE', 'Patch the Search title.'), option('match', 'TEXT', 'Set a STRING_MATCH query.'), option('query', 'JSON|FILE', 'Set the canonical structured query.'), option('view', 'MODE', 'Patch view mode.'), option('replace', 'JSON|FILE', 'Explicitly replace view collections.')]),
-  'search refresh': contract(ExactTargetOnlySchema, 'search refresh TARGET', [target]),
   'template apply': contract(Type.Object({ tag: ExactLocatorInputSchema }, closed), 'template apply TAG', [option('tag', 'TAG', 'Tag definition target.')]),
   'daily ensure': contract(DailyEnsureInputSchema, 'daily ensure YYYY-MM-DD', [option('date', 'YYYY-MM-DD', 'Local calendar date.'), bind]),
-  'capture add': contract(CaptureAddInputSchema, 'capture add (--parent TARGET | --date YYYY-MM-DD) --title TITLE --metadata FILE', [parent, option('date', 'YYYY-MM-DD', 'Ensure and capture below this local date.'), option('title', 'TITLE', 'Capture title.'), option('description', 'TEXT', 'Capture description.'), option('metadata', 'JSON|FILE', 'Capture provenance.'), option('tree', 'FILE|-', 'Typed captured child tree.'), bind]),
-  'source add': contract(SourceAddInputSchema, 'source add TARGET SOURCE [--after VALUE|null]', [target, option('source', 'URI', 'Exact Source text.'), option('value-id', 'ID', 'Explicit Source value Node ID.'), option('after', 'VALUE|null', 'Insert after one direct Source value; null inserts first.')]),
-  'source replace': contract(SourceReplaceInputSchema, 'source replace TARGET VALUE SOURCE', [target, option('value', 'VALUE', 'Direct Source value.'), option('source', 'URI', 'Replacement Source text.')]),
-  'source reorder': contract(SourceReorderInputSchema, 'source reorder TARGET VALUE --after VALUE|null', [target, option('value', 'VALUE', 'Direct Source value.'), option('after', 'VALUE|null', 'Direct Source anchor; null moves first.')]),
-  'source remove': contract(SourceValueInputSchema, 'source remove TARGET VALUE', [target, option('value', 'VALUE', 'Direct Source value.')]),
-  'source clear': contract(ExactTargetOnlySchema, 'source clear TARGET', [target]),
   trash: contract(TargetOnlySchema, 'trash TARGET', [target]),
   restore: contract(TargetOnlySchema, 'restore TARGET', [target]),
   purge: contract(ExactTargetOnlySchema, 'purge TARGET [--contents]', [target, option('contents', undefined, 'Purge the contents of Trash.')]),
@@ -447,150 +442,64 @@ const PORCELAIN_BASE_CONTRACTS = Object.freeze({
 type PorcelainCommandKey = keyof typeof PORCELAIN_BASE_CONTRACTS;
 
 const PORCELAIN_SUMMARIES = {
-  add: 'Create one complete typed Node tree below a parent.',
-  set: 'Patch content, description, code, checkbox, icon, or banner state.',
-  'text replace': 'Replace literal text across one exact or bounded query-selected Node set.',
+  create: 'Create one complete Node tree with optional reusable fields and View.',
+  edit: 'Converge Node content, metadata, tags, fields, and references in one request.',
+  'replace text': 'Replace bounded literal text through exact review.',
+  'define create': 'Create one reusable Field or Tag definition.',
+  'define ensure': 'Reuse or create one compatible reusable Field or Tag definition.',
+  'define edit': 'Converge one reusable Field or Tag definition configuration.',
+  'search edit': 'Converge a Saved Search query, title, and View.',
+  'capture create': 'Create one provenanced capture tree.',
   move: 'Move a bounded Node selection below one destination.',
   duplicate: 'Duplicate a bounded Node selection below one destination.',
   merge: 'Merge source Nodes into one target after exact Diff review.',
-  indent: 'Move one Node below its preceding sibling.',
-  outdent: 'Move one Node after its parent.',
-  'done set': 'Set done state on a bounded Node selection.',
-  'done cycle': 'Cycle done state on one exact Node.',
-  'tag add': 'Apply a tag definition to a bounded Node selection.',
-  'tag remove': 'Remove a tag definition from a bounded Node selection.',
-  'field define': 'Create or reuse a field on a target and optionally set its initial value.',
-  'field set': 'Set one field value on a bounded Node selection.',
-  'field clear': 'Clear one field value while retaining the field slot.',
-  'field remove': 'Remove one field slot from a bounded Node selection.',
-  'field reuse': 'Replace a local field definition with a reusable definition.',
-  'field select': 'Select one option for a field on a bounded Node selection.',
-  'definition create': 'Create a complete tag or field definition.',
-  'definition configure': 'Patch type-specific definition configuration.',
-  'definition merge': 'Merge source definitions into one target after exact Diff review.',
-  'reference add': 'Add a reference from a bounded Node selection.',
-  'reference set': 'Replace the target of an existing reference.',
-  'reference replace': 'Replace one content Node with a tree reference and move the original subtree to Trash.',
-  'reference inline': 'Convert a tree reference to inline form or replace one content Node with an explicit inline reference.',
-  'reference restore': 'Restore an inlined Node to a reference.',
   'view set': 'Apply one complete declarative view patch with explicit collection replacement.',
-  'view group set': 'Set or clear the view grouping field.',
-  'view sort add': 'Append one sort rule to a view.',
-  'view sort set': 'Patch one existing sort rule.',
-  'view sort remove': 'Remove one existing sort rule.',
-  'view sort clear': 'Clear all sort rules from a view.',
-  'view filter add': 'Append one filter rule to a view.',
-  'view filter set': 'Patch one existing filter rule.',
-  'view filter remove': 'Remove one existing filter rule.',
-  'view filter clear': 'Clear all filter rules from a view.',
-  'view display add': 'Append one display field to a view.',
-  'view display set': 'Patch one existing display field.',
-  'view display remove': 'Remove one existing display field.',
   'search create': 'Create a complete Saved Search and its initial materialized view.',
-  'search ensure-tag': 'Ensure the canonical Saved Search for one tag exists.',
-  'search set': 'Atomically patch a Search query, title, and view, then refresh results.',
-  'search refresh': 'Refresh materialized results for a Search.',
   'template apply': 'Preview or apply template backfill to all matching tagged Nodes.',
   'daily ensure': 'Ensure one local-date Daily Note exists.',
-  'capture add': 'Ensure an optional date and create a provenanced typed capture tree.',
-  'source add': 'Append one exact Source value to an ordinary Node.',
-  'source replace': 'Replace one direct Source value without changing its identity.',
-  'source reorder': 'Move one direct Source value within its owner.',
-  'source remove': 'Remove one direct Source value.',
-  'source clear': 'Remove every Source value observed for one owner.',
   trash: 'Move a bounded Node selection to Trash.',
   restore: 'Restore a bounded Node selection from Trash.',
   purge: 'Permanently purge selected Nodes or Empty Trash after exact Diff review.',
 } satisfies Record<PorcelainCommandKey, string>;
 
 const PORCELAIN_EXAMPLES = {
-  add: ['outline add @inbox "Project brief"', 'outline add --input complete-tree.json'],
-  set: ['outline set node:brief --description "Ready for review"', 'outline set --input node-patch.json'],
-  'text replace': ['outline text replace node:brief --find "draft" --replace "final" --preview --idempotency-key cli:review-replace', 'outline text replace --matching "keyword 1" --max 500 --find "keyword 1" --replace "keyword 2" --preview --idempotency-key cli:review-batch-replace', 'outline text replace --input replace.json --idempotency-key cli:review-replace --expect-diff SHA256 --yes'],
+  create: ['outline create @inbox "Project brief"', 'outline example create collection'],
+  edit: ['outline edit node:brief --description "Ready for review"', 'outline example edit complete'],
+  'replace text': ['outline replace text node:brief --find "draft" --with "final" --preview --idempotency-key cli:review-replace', 'outline replace text --input replace.json --idempotency-key cli:review-replace --expect-diff SHA256 --yes'],
+  'define create': ['outline example define create-field', 'outline define create --input definition.json'],
+  'define ensure': ['outline example define ensure-field', 'outline define ensure --input definition.json'],
+  'define edit': ['outline define edit --input definition-patch.json', 'outline example define edit-field'],
+  'search edit': ['outline search edit node:modules --match "runtime"', 'outline search edit --input search.json'],
+  'capture create': ['outline capture create --date 2026-08-24 --title "Reading note" --metadata provenance.json', 'outline capture create --input complete-capture.json'],
   move: ['outline move node:task node:project --index 0', 'outline move --input move.json'],
   duplicate: ['outline duplicate node:template node:project', 'outline duplicate --input duplicate.json'],
   merge: ['outline merge node:duplicate node:canonical --preview --idempotency-key cli:review-merge', 'outline merge node:duplicate node:canonical --idempotency-key cli:review-merge --expect-diff SHA256 --yes'],
-  indent: ['outline indent node:task', 'outline indent --input indent.json'],
-  outdent: ['outline outdent node:task', 'outline outdent --input outdent.json'],
-  'done set': ['outline done set node:task true', 'outline done set --input done-many.json'],
-  'done cycle': ['outline done cycle node:task', 'outline done cycle --input done-cycle.json'],
-  'tag add': ['outline tag add node:task tag:priority', 'outline tag add --input tag-many.json'],
-  'tag remove': ['outline tag remove node:task tag:priority', 'outline tag remove --input untag-many.json'],
-  'field define': ['outline field define node:project Status --field-type select --value Active', 'outline field define --input field-with-value.json'],
-  'field set': ['outline field set node:project field:status Active', 'outline field set --input field-many.json'],
-  'field clear': ['outline field clear node:project field:status', 'outline field clear --input field-clear-many.json'],
-  'field remove': ['outline field remove node:project field:status', 'outline field remove --input field-remove-many.json'],
-  'field reuse': ['outline field reuse node:project field:local field:status', 'outline field reuse --input field-reuse.json'],
-  'field select': ['outline field select node:project field:status option:active', 'outline field select --input field-select-many.json'],
-  'definition create': ['outline definition create field Status --field-type select', 'outline definition create --input complete-definition.json'],
-  'definition configure': ['outline definition configure field:status field --patch \'{"fieldType":"options"}\'', 'outline definition configure --input definition-patch.json'],
-  'definition merge': ['outline definition merge tag:duplicate tag:canonical --preview --idempotency-key cli:review-definition-merge', 'outline definition merge tag:duplicate tag:canonical --idempotency-key cli:review-definition-merge --expect-diff SHA256 --yes'],
-  'reference add': ['outline reference add node:brief node:source', 'outline reference add --input references-many.json'],
-  'reference set': ['outline reference set node:reference node:new-target', 'outline reference set --input reference-retarget.json'],
-  'reference replace': ['outline reference replace node:draft node:canonical', 'outline reference replace --input node-to-reference.json'],
-  'reference inline': ['outline reference inline node:reference', 'outline reference inline node:draft node:canonical', 'outline reference inline --input reference-inline.json'],
-  'reference restore': ['outline reference restore node:inline node:source', 'outline reference restore --input reference-restore.json'],
   'view set': ['outline view set node:projects table --toolbar true --group field:status', 'outline view set --input complete-view.json'],
-  'view group set': ['outline view group set node:projects field:status', 'outline view group set node:projects null'],
-  'view sort add': ['outline view sort add node:projects --field sys:updatedAt --direction desc', 'outline view sort add --input sort-rule.json'],
-  'view sort set': ['outline view sort set node:projects --rule sort:1 --field field:priority --direction asc', 'outline view sort set --input sort-rule-patch.json'],
-  'view sort remove': ['outline view sort remove node:projects --rule sort:1', 'outline view sort remove --input sort-rule-remove.json'],
-  'view sort clear': ['outline view sort clear node:projects', 'outline view sort clear --input sort-clear.json'],
-  'view filter add': ['outline view filter add node:projects --field field:status --values \'["Active"]\'', 'outline view filter add --input filter-rule.json'],
-  'view filter set': ['outline view filter set node:projects --rule filter:1 --operator equals', 'outline view filter set --input filter-rule-patch.json'],
-  'view filter remove': ['outline view filter remove node:projects --rule filter:1', 'outline view filter remove --input filter-rule-remove.json'],
-  'view filter clear': ['outline view filter clear node:projects', 'outline view filter clear --input filter-clear.json'],
-  'view display add': ['outline view display add node:projects --field field:owner', 'outline view display add --input display-field.json'],
-  'view display set': ['outline view display set node:projects --display-field display:owner --value \'{"visible":true}\'', 'outline view display set --input display-field-patch.json'],
-  'view display remove': ['outline view display remove node:projects --display-field display:owner', 'outline view display remove --input display-field-remove.json'],
   'search create': ['outline search create --title "Modules" --match "module" --view table --sort sys:updatedAt:desc', 'outline search create --input complete-search.json'],
-  'search ensure-tag': ['outline search ensure-tag tag:project', 'outline search ensure-tag --input ensure-tag-search.json'],
-  'search set': ['outline search set node:modules --match "runtime" --view table', 'outline search set --input complete-search-patch.json'],
-  'search refresh': ['outline search refresh node:modules', 'outline search refresh --input refresh-search.json'],
   'template apply': ['outline template apply tag:project --preview', 'outline template apply --input template-backfill.json --preview'],
   'daily ensure': ['outline daily ensure 2026-08-24', 'outline daily ensure --input ensure-date.json'],
-  'capture add': ['outline capture add --date 2026-08-24 --title "Reading note" --metadata provenance.json', 'outline capture add --input complete-capture.json'],
-  'source add': ['outline source add node:brief https://example.com', 'outline source add --input source-add.json'],
-  'source replace': ['outline source replace node:brief node:source-value https://example.com/new', 'outline source replace --input source-replace.json'],
-  'source reorder': ['outline source reorder node:brief node:source-value --after null', 'outline source reorder --input source-reorder.json'],
-  'source remove': ['outline source remove node:brief node:source-value', 'outline source remove --input source-remove.json'],
-  'source clear': ['outline source clear node:brief', 'outline source clear --input source-clear.json'],
   trash: ['outline trash node:obsolete', 'outline trash --input trash-many.json'],
   restore: ['outline restore node:obsolete', 'outline restore --input restore-many.json'],
   purge: ['outline purge @trash --contents --preview --idempotency-key cli:review-purge', 'outline purge @trash --contents --idempotency-key cli:review-purge --expect-diff SHA256 --yes'],
 } satisfies Record<PorcelainCommandKey, readonly [string, string, ...string[]]>;
 
 const CREATE_COMMANDS = new Set<PorcelainCommandKey>([
-  'add', 'duplicate', 'field define', 'definition create', 'view sort add', 'view filter add',
-  'view display add', 'search create', 'capture add', 'source add',
+  'create', 'duplicate', 'search create', 'define create', 'capture create',
 ]);
-const ENSURE_COMMANDS = new Set<PorcelainCommandKey>(['search ensure-tag', 'daily ensure']);
-const DESTRUCTIVE_COMMANDS = new Set<PorcelainCommandKey>(['text replace', 'merge', 'definition merge', 'purge']);
-const REPLACE_COMMANDS = new Set<PorcelainCommandKey>(['reference replace']);
+const ENSURE_COMMANDS = new Set<PorcelainCommandKey>(['daily ensure', 'define ensure']);
+const DESTRUCTIVE_COMMANDS = new Set<PorcelainCommandKey>(['replace text', 'merge', 'purge']);
+const REPLACE_COMMANDS = new Set<PorcelainCommandKey>();
 const IDEMPOTENT_COMMANDS = new Set<PorcelainCommandKey>([
-  'set', 'text replace', 'move', 'done set', 'tag add', 'tag remove', 'field define', 'field set', 'field clear',
-  'field remove', 'field reuse', 'field select', 'definition configure', 'reference set', 'view set',
-  'view group set', 'view sort set', 'view sort remove', 'view sort clear', 'view filter set',
-  'view filter remove', 'view filter clear', 'view display set', 'view display remove', 'search ensure-tag',
-  'search set', 'search refresh', 'template apply', 'daily ensure', 'source replace', 'source reorder',
-  'source remove', 'source clear', 'trash', 'restore',
+  'edit', 'replace text', 'move', 'view set', 'template apply', 'daily ensure',
+  'trash', 'restore', 'define ensure', 'define edit', 'search edit',
 ]);
 const EXACT_TARGET_COMMANDS = new Set<PorcelainCommandKey>([
-  'indent', 'outdent', 'done cycle', 'definition configure', 'reference set', 'reference replace',
-  'reference inline', 'reference restore', 'view set', 'view group set', 'view sort add', 'view sort set',
-  'view sort remove', 'view sort clear', 'view filter add', 'view filter set', 'view filter remove',
-  'view filter clear', 'view display add', 'view display set', 'view display remove', 'search ensure-tag',
-  'search set', 'search refresh', 'template apply', 'source add', 'source replace', 'source reorder',
-  'source remove', 'source clear', 'purge',
+  'view set', 'template apply', 'purge', 'define edit', 'search edit',
 ]);
 
 const PORCELAIN_DEFAULTS: Partial<Record<PorcelainCommandKey, readonly string[]>> = {
-  'text replace': ['Field defaults to content, occurrence to all, case-sensitive matching to true, and max replacements to 1000.', 'Matches use UTF-16 offsets. Rich-text marks and references outside replacement ranges are preserved; a replacement that would consume an inline reference is rejected.'],
+  'replace text': ['Field defaults to content, occurrence to all, case-sensitive matching to true, and max replacements to 1000.', 'Matches use UTF-16 offsets. Rich-text marks and references outside replacement ranges are preserved; a replacement that would consume an inline reference is rejected.'],
   'search create': ['Parent defaults to @saved-searches.', 'Omitted view properties use the Saved Search defaults.'],
-  'view sort add': ['Sort direction defaults to asc.'],
-  'view filter add': ['Operator defaults to contains, values to [], and value logic to any.'],
-  'field define': ['Field type defaults to text when a new definition is created.'],
-  'reference inline': ['REFERENCE may be omitted only when TARGET is already a tree reference. Structured input always includes reference.'],
   'daily ensure': ['The local calendar date is interpreted without a timezone conversion.'],
 };
 
@@ -613,6 +522,7 @@ function finalizePorcelainContract<Name extends PorcelainCommandKey>(
   const directExamples = PORCELAIN_EXAMPLES[name].filter((example) => (
     !example.includes('--input') && !/\b[A-Za-z0-9_-]+\.json\b/u.test(example)
   ));
+  const examples = [...new Set([...directExamples, ...recipeExamples])].slice(0, 3);
   return Object.freeze({
     ...base,
     summary: PORCELAIN_SUMMARIES[name],
@@ -630,21 +540,31 @@ function finalizePorcelainContract<Name extends PorcelainCommandKey>(
     defaults: Object.freeze([
       ...(PORCELAIN_DEFAULTS[name] ?? []),
       ...(behavior === 'patch' ? ['Omitted patch properties preserve current state.'] : []),
-      ...(name === 'view set' || name === 'search set' ? ['Only the explicitly named replace object replaces sort, filter, or display collections.'] : []),
+      ...(name === 'view set' || name === 'search edit' ? ['Only the explicitly named replace object replaces sort, filter, or display collections.'] : []),
     ]),
     destructive,
-    examples: Object.freeze([...directExamples, ...recipeExamples].slice(0, 3)),
+    examples: Object.freeze(examples),
   });
 }
 
+const PUBLIC_PORCELAIN_COMMAND_NAMES = [
+  'create', 'edit', 'replace text', 'move', 'duplicate', 'merge',
+  'define create', 'define ensure', 'define edit',
+  'view set', 'search create', 'search edit',
+  'template apply', 'daily ensure', 'capture create', 'trash', 'restore', 'purge',
+] as const;
+
 export const PORCELAIN_CONTRACTS = Object.freeze(Object.fromEntries(
-  Object.entries(PORCELAIN_BASE_CONTRACTS).map(([name, base]) => [
+  PUBLIC_PORCELAIN_COMMAND_NAMES.map((name) => {
+    const base = PORCELAIN_BASE_CONTRACTS[name];
+    return [
     name,
     finalizePorcelainContract(name as PorcelainCommandKey, base),
-  ]),
-) as { readonly [Name in PorcelainCommandKey]: PorcelainContract });
+    ];
+  }),
+) as { readonly [Name in (typeof PUBLIC_PORCELAIN_COMMAND_NAMES)[number]]: PorcelainContract });
 
-export type PorcelainCommandName = keyof typeof PORCELAIN_CONTRACTS;
+export type PorcelainCommandName = (typeof PUBLIC_PORCELAIN_COMMAND_NAMES)[number];
 
 export function porcelainContract(name: string): PorcelainContract | undefined {
   return PORCELAIN_CONTRACTS[name as PorcelainCommandName];

@@ -2410,3 +2410,27 @@ Regression coverage must place same-name owners in both layers, put adjunct
 state only in the losing layer, and assert runtime resolution, editor selection,
 and displayed inherited state together. A test with adjunct rows in both layers
 cannot expose accidental cross-layer inheritance.
+
+## Replay identity is part of the persisted format
+
+PR #619 first rebuilt a mutation Diff before idempotency admission, then derived
+successful replay receipts from mutable current document state. A later fast path
+matched only the key and reviewed Diff while accepting a different semantic
+payload. These variants respectively turned a valid retry into a conflict, made
+an old settlement fail after unrelated edits, and fabricated a receipt for work
+that never ran. Making the submitted-intent hash mandatory without advancing the
+storage version then made existing same-version Operations look corrupt.
+
+**Resolve an existing settlement from immutable submitted intent before reading
+live preconditions or regenerating an execution plan.** Persist separate
+identities for the caller's canonical intent and the normalized execution plan,
+derive replay output only from immutable intent plus persisted operation effects,
+and advance the storage version whenever either identity becomes required. A
+semantic receipt is part of the settlement, not a fresh projection of current
+state.
+
+Regression coverage must replay the same request after restart and after later
+document edits, reject the same key with a changed semantic payload before any
+write, and open the immediately previous storage version through the declared
+fail-closed boundary. Happy-path duplicate calls cannot prove replay remains
+independent of mutable state or persisted-schema evolution.

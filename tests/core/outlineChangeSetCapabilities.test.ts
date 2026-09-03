@@ -72,7 +72,7 @@ describe('outline ChangeSet capability coverage', () => {
       definitionType: 'field' as const,
       id: 'field:url',
       name: 'URL',
-      fieldType: 'uri',
+      config: { fieldType: 'uri' },
       bind: 'urlField',
     };
 
@@ -113,7 +113,7 @@ describe('outline ChangeSet capability coverage', () => {
     const workspace = await makeWorkspace();
     const definitions = await settle(workspace, [
       { op: 'ensure', resource: 'definition', definitionType: 'tag', name: 'Runtime tag', bind: 'tag' },
-      { op: 'ensure', resource: 'definition', definitionType: 'field', name: 'Runtime field', fieldType: 'plain', bind: 'field' },
+      { op: 'ensure', resource: 'definition', definitionType: 'field', name: 'Runtime field', config: { fieldType: 'plain' }, bind: 'field' },
     ]);
     const tagId = definitions.diff.bindings.tag![0]!;
     const fieldId = definitions.diff.bindings.field![0]!;
@@ -243,7 +243,7 @@ describe('outline ChangeSet capability coverage', () => {
     const temporaryEntry = Object.values(stateWithTemporary.nodes)
       .find((node) => node.type === 'fieldEntry' && node.parentId === richId && node.fieldDefId === temporaryDefinition.id)!;
     const replacement = await settle(workspace, [{
-      op: 'ensure', resource: 'definition', definitionType: 'field', name: 'Replacement field', fieldType: 'plain', bind: 'replacement',
+      op: 'ensure', resource: 'definition', definitionType: 'field', name: 'Replacement field', config: { fieldType: 'plain' }, bind: 'replacement',
     }]);
     const replacementId = replacement.diff.bindings.replacement![0]!;
     await settle(workspace, [{
@@ -341,7 +341,7 @@ describe('outline ChangeSet capability coverage', () => {
         definitionType: 'field',
         id: fieldId,
         name: 'Runtime values',
-        fieldType: 'plain',
+        config: { fieldType: 'plain' },
         bind: 'field',
       },
       {
@@ -582,7 +582,7 @@ describe('outline ChangeSet capability coverage', () => {
         resource: 'definition',
         definitionType: 'field',
         name: 'Status',
-        fieldType: 'options',
+        config: { fieldType: 'options' },
         bind: 'field',
       },
       { op: 'create', placement: { kind: 'last', parent: oneAlias('today') }, nodes: [draft('Task')], bind: 'owner' },

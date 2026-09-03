@@ -221,7 +221,7 @@ test.describe('definition configuration parity', () => {
         };
         const operations = request.command === 'apply'
           ? input.diff?.normalizedChangeSet?.operations ?? []
-          : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+          : request.command === 'transact' ? input.changeSet?.operations ?? [] : [];
         const addsSort = operations
           .some((operation) => (operation.changes ?? []).some((change) => (
             change.kind === 'view' && change.property === 'sort' && change.action === 'add'

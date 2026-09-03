@@ -357,7 +357,7 @@ test.describe('table view', () => {
         };
         const operations = request.command === 'apply'
           ? input.diff?.normalizedChangeSet?.operations ?? []
-          : request.command === 'commit' ? input.changeSet?.operations ?? [] : [];
+          : request.command === 'transact' ? input.changeSet?.operations ?? [] : [];
         const appendsFieldText = operations.some((operation) => (
             operation.changes?.some((change) => {
               const mutation = change.mutation as Record<string, unknown> | undefined;

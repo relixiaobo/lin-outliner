@@ -24,20 +24,20 @@ to the same public Change union; only presentation and causation differ.
 
 | Behavior domain | Public contract | Porcelain / capability | Evidence |
 | --- | --- | --- | --- |
-| Deterministic read and discovery | exact ID/ID-list/query/live-search `Selector`, `TargetSpec`, bounded `Projection` | `find`, `show`, `export`; exact and named batch counts; backlinks include | Revisioned `ProjectionResult`, count results, and resumable export records |
-| Tree and content creation | `ensure`, `create`, typed `NodeDraft`, `update` | `add`, `set`, `daily ensure`, `capture add` | Reviewed `Diff`; one durable `Operation` |
+| Deterministic read and discovery | exact ID/ID-list/query/live-search `Selector`, `TargetSpec`, bounded `Projection` | `get`, `find`, `search run`, `export`; exact and named batch counts | Revisioned `ProjectionResult`, count results, and resumable export records |
+| Tree and content creation | `ensure`, `create`, typed `NodeDraft`, `update` | semantic `create`, `edit`, `daily ensure`, `capture create` | Committed-state verified receipt; one durable `Operation` |
 | Structure and batch order | placement-based `create`, `move`, `duplicate`, and `merge` | first/last/index/before/after plus move/duplicate previous/next | Affected before/after digests, one Operation, exact revert, and projection Event |
-| Done, tags, fields, and definitions | typed `update`, `create`, `merge`, `template` instructions | `done *`, `tag *`, `field *`, `definition *`, `template apply` | Schema validation plus atomic Operation |
-| References, views, and searches | typed reference/view/search update instructions and exact executable query-rule union | distinct `reference set`, `reference replace`, and `reference inline`; `view *`; `search *` | Same Diff semantics as desktop intent; registry/schema/executor parity |
-| View-backed collection creation and verification | ordinary owner/items/field values plus declarative view configuration | one mode-neutral viewed-tree `add --input -`; CLI-composed `view inspect` | One atomic Operation, exact direct-item count, bounded display digest, no Runtime-specific route |
+| Done, tags, fields, and definitions | typed `update`, `create`, `merge`, `template` instructions | `edit`, `define create|ensure|edit`, `template apply` | Schema validation plus atomic Operation |
+| References, views, and searches | typed reference/view/search update instructions and exact executable query-rule union | `edit`, `view get|set`, `search create|edit|run` | Same Node identities across every View; registry/schema/executor parity |
+| View-backed collection creation and verification | ordinary owner/items/Field values plus declarative View configuration | one mode-neutral `create --input -`; receipt-backed verification and `view get` when independently requested | One atomic Operation; no table/row/card/event persistence type |
 | Trash and permanent removal | `lifecycle` | `trash`, `restore`, `purge` | Destructive Diff binding; retained recovery patch |
-| History and exact recovery | Operation ID and recovery state | `log`, `revert`, `undo`, `redo` | Reversal is another linked Operation |
-| Asset-backed media | `AssetLease` plus ordinary Node and built-in URI-field mutations | `asset ingest`, `asset show`, `asset export`, `source add`, `source replace`; generic field/tree/text mutations remain valid | Host-verified exact revisions behind opaque anchors; live/lease/recovery reachability |
+| History and exact recovery | Operation ID and recovery state | `history`, `revert`, `undo`, `redo` | Reversal is another linked Operation |
+| Asset-backed media | `AssetLease` plus ordinary Node and built-in URI-Field mutations | `asset ingest`, `asset get`, `asset export`; Source changes use semantic `edit` | Host-verified exact revisions behind opaque anchors; live/lease/recovery reachability |
 | Bulk import | ordinary bindings plus `ensure`/`create`/`update` | `import inspect`, `import plan`, exact `apply`, and `import verify` | Coverage evidence, ChangeSet hash, Diff hash, Operation ID |
 | Complete single resource | typed `NodeDraft` or resource-specific create/update union | one porcelain invocation; complex state uses that command's `--input` | Final-state golden, one mutation invocation, one Operation, returned IDs, exact revert |
-| Dependent or bounded bulk resources | one ChangeSet with bindings and `many + max` | one `diff` and one `apply`; no shell loop or intermediate ID lookup | Golden ChangeSet/Diff/Operation counts and exact revert |
-| Bounded literal text transform | bounded Projection plus ordinary text-patch updates at one base revision | `text replace` with exact target or query `many + max`, replacement bound, and reviewed Diff | Rich marks/reference preservation, stale-plan rejection, convergence, one Operation, exact revert |
-| CLI discovery | per-command capability schema plus help/completion metadata | root, family, exact command help and `schema COMMAND` | Parser/help/completion drift guard and five help goldens |
+| Dependent or bounded bulk resources | one ChangeSet with bindings and `many + max` | one `transact`, or `preview` plus exact `apply` when reviewed; no shell loop or intermediate ID lookup | Golden ChangeSet/Diff/Operation counts and exact revert |
+| Bounded literal text transform | bounded Projection plus ordinary text-patch updates at one base revision | `replace text` with exact target or query `many + max`, replacement bound, and reviewed Diff | Rich marks/reference preservation, stale-plan rejection, convergence, one Operation, exact revert |
+| CLI discovery | per-command capability schema plus help/completion metadata | Skill, matching example, exact help, narrow `schema --path`, full schema only when needed | Parser/help/completion drift guard and bounded disclosure goldens |
 
 `src/outline/contract/capabilities.ts` owns the executable mapping from every
 persisted Core command to one public capability and each command's exact CLI

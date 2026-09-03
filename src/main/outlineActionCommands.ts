@@ -176,7 +176,7 @@ function captureChanges(input: CreateCaptureInput, view: ProjectionView): {
       definitionType: 'field',
       id: field.field.id,
       name: field.field.name,
-      fieldType: field.field.type,
+      config: { fieldType: field.field.type },
       bind: `captureField${index + 1}`,
     } as Change);
   }
@@ -257,7 +257,7 @@ function captureTreeDraft(
       definitionType: type,
       id: definitionId,
       name,
-      ...(type === 'field' ? { fieldType: 'plain' } : {}),
+      ...(type === 'field' ? { config: { fieldType: 'plain' } } : {}),
       bind,
     } as Change);
     return definitionId;

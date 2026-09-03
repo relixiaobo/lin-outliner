@@ -137,7 +137,7 @@ async function delayTextPatchCommands(page: Page, delayMs = 80) {
       const changeSet = input.changeSet && typeof input.changeSet === 'object'
         ? input.changeSet as { operations?: Array<Record<string, unknown>> }
         : undefined;
-      const isTextPatch = request.command === 'commit' && changeSet?.operations?.some((operation) => (
+      const isTextPatch = request.command === 'transact' && changeSet?.operations?.some((operation) => (
         operation.op === 'update'
         && Array.isArray(operation.changes)
         && operation.changes.some((change) => (
