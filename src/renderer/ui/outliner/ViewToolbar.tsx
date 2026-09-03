@@ -214,6 +214,7 @@ type FilterSummaryChip = {
   label: string;
   filterTarget: FilterEditTarget & { ruleId: string };
 };
+type FilterRule = ViewConfig['filterRules'][number];
 
 type FieldRule = { id: string; field: string };
 
@@ -348,16 +349,57 @@ function collectFilterFieldChoices(
 
 // Filter chips remain individual rule shortcuts. Display, Group, and Sort are
 // singular settings whose state belongs on their toolbar controls.
+function summarizeFilterValues(rule: FilterRule, values: string[], t: ViewToolbarMessages): string {
+  if (values.length === 1) return values[0]!;
+  return rule.valueLogic === 'all'
+    ? t.filterChipAllValues({ values })
+    : t.filterChipAnyValues({ values });
+}
+
+function summarizeFilterRule(
+  rule: FilterRule,
+  fieldLabel: string,
+  byId: DocumentIndex['byId'],
+  t: ViewToolbarMessages,
+): string {
+  const values = rule.values.map((value) => value.trim()).filter(Boolean);
+  if (rule.operator === 'is' && filterFieldKind(rule.field, byId) === 'boolean') {
+    const value = values[0]?.toLowerCase();
+    if (value === 'true' || value === 'false') {
+      const enabled = value === 'true';
+      const [enabledLabel, disabledLabel] = rule.field === DONE_FIELD
+        ? [t.booleanDone, t.booleanNotDone]
+        : [t.booleanYes, t.booleanNo];
+      const booleanLabel = enabled ? enabledLabel : disabledLabel;
+      return rule.field === DONE_FIELD
+        ? booleanLabel
+        : t.filterChipFieldValue({ field: fieldLabel, value: booleanLabel });
+    }
+  }
+  const operator = filterOperators(t).find((item) => item.id === rule.operator)?.label ?? rule.operator;
+  if (VALUELESS_OPERATORS.has(rule.operator)) {
+    return t.filterChipCondition({ field: fieldLabel, operator });
+  }
+  if (values.length === 0) return fieldLabel;
+  const value = summarizeFilterValues(rule, values, t);
+  return rule.operator === 'is' || rule.operator === 'contains'
+    ? t.filterChipFieldValue({ field: fieldLabel, value })
+    : t.filterChipConditionValue({ field: fieldLabel, operator, value });
+}
+
 function summarizeFilters(
   view: ViewConfig,
   choices: FieldChoice[],
+  byId: DocumentIndex['byId'],
+  t: ViewToolbarMessages,
 ): FilterSummaryChip[] {
   const labelOf = (fieldId: string) => choices.find((choice) => choice.id === fieldId)?.label ?? fieldId;
   return view.filterRules.flatMap((rule) => {
     if (isNameFilterRule(rule)) return [];
+    const fieldLabel = labelOf(rule.field);
     return [{
       id: `filter:${rule.id}`,
-      label: labelOf(rule.field),
+      label: summarizeFilterRule(rule, fieldLabel, byId, t),
       filterTarget: { field: rule.field, ruleId: rule.id },
     }];
   });
@@ -509,8 +551,8 @@ export function ViewToolbar({
   };
 
   const filterSummaryChips = useMemo(
-    () => summarizeFilters(view, choices),
-    [view, choices],
+    () => summarizeFilters(view, choices, index.byId, tv),
+    [view, choices, index.byId, tv],
   );
   const titles = sectionTitles(tv);
   const viewModeControl = (
@@ -1327,8 +1369,6 @@ function FilterRuleEditor({
     </div>
   );
 }
-
-type FilterRule = ViewConfig['filterRules'][number];
 
 // Boolean / checkbox fields store 'true' | 'false', so they are a binary choice.
 function BooleanFilterBody({ field, rule, run }: { field: string; rule: FilterRule; run: CommandRunner }) {

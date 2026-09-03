@@ -936,6 +936,11 @@ export const en = {
       booleanNotDone: 'Not done',
       booleanYes: 'Yes',
       booleanNo: 'No',
+      filterChipAnyValues: ({ values }: { values: string[] }) => values.join(' or '),
+      filterChipAllValues: ({ values }: { values: string[] }) => values.join(' and '),
+      filterChipFieldValue: ({ field, value }: { field: string; value: string }) => `${field}: ${value}`,
+      filterChipCondition: ({ field, operator }: { field: string; operator: string }) => `${field} · ${operator}`,
+      filterChipConditionValue: ({ field, operator, value }: { field: string; operator: string; value: string }) => `${field} · ${operator} · ${value}`,
       // Displayed field metadata.
       displayedFieldsAriaLabel: 'Displayed fields',
     },

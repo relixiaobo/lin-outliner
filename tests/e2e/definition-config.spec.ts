@@ -78,6 +78,7 @@ async function expectFilterChipPairedWithControl(
   const summaryChip = controlGroup.locator('.view-toolbar-summary-chip', { hasText: summaryText });
   await expect(controlGroup.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
   await expect(summaryChip).toBeVisible();
+  await expect(summaryChip.locator('.view-toolbar-summary-chip-main')).toHaveText(summaryText);
   const childOrder = await controlGroup.evaluate((group) => (
     [...group.children].map((child) => {
       if (child.classList.contains('view-toolbar-pill')) return 'control';
@@ -401,7 +402,7 @@ test.describe('definition configuration parity', () => {
     });
 
     const toolbar = page.locator('.view-toolbar');
-    const filterChip = await expectFilterChipPairedWithControl(toolbar, 'Tags');
+    const filterChip = await expectFilterChipPairedWithControl(toolbar, 'Tags: project');
     await expectToolbarButtonIsConfigured(toolbar, 'Filter by');
     await expectToolbarButtonUsesConfiguredColor(toolbar, 'Filter by');
     await filterChip.locator('.view-toolbar-summary-chip-main').click();
@@ -416,6 +417,29 @@ test.describe('definition configuration parity', () => {
     await expect(toolbar.locator('.view-toolbar-summary-chip', { hasText: 'Tags' })).toHaveCount(0);
     await expectToolbarButtonIsUnconfigured(toolbar, 'Filter by');
     await expect(row(page, ids.alpha)).toBeVisible();
+  });
+
+  test('view toolbar filter rule chip summarizes boolean meaning', async ({ page }) => {
+    await showViewToolbar(page, ids.today);
+    await invokeDocumentCommand(page, 'add_filter_rule', {
+      nodeId: ids.today,
+      field: 'sys:done',
+      operator: 'is',
+      values: ['false'],
+      valueLogic: 'any',
+    });
+    await invokeDocumentCommand(page, 'add_filter_rule', {
+      nodeId: ids.today,
+      field: 'sys:tags',
+      operator: 'contains',
+      values: ['project', 'archive'],
+      valueLogic: 'all',
+    });
+
+    const toolbar = page.locator('.view-toolbar');
+    await expectFilterChipPairedWithControl(toolbar, 'Not done');
+    await expectFilterChipPairedWithControl(toolbar, 'Tags: project and archive');
+    await expectToolbarButtonIsConfigured(toolbar, 'Filter by');
   });
 
   test('view toolbar filter chips edit the exact rule when a field has multiple filters', async ({ page }) => {
@@ -445,6 +469,10 @@ test.describe('definition configuration parity', () => {
     const toolbar = page.locator('.view-toolbar');
     const filterChips = toolbar.locator('.view-toolbar-summary-chip', { hasText: 'Tags' });
     await expect(filterChips).toHaveCount(2);
+    await expect(filterChips.locator('.view-toolbar-summary-chip-main')).toHaveText([
+      'Tags: project',
+      'Tags · Does not contain · archive',
+    ]);
 
     await filterChips.nth(0).locator('.view-toolbar-summary-chip-main').click();
     const dialog = page.getByRole('dialog', { name: 'Filter by' });
@@ -456,6 +484,11 @@ test.describe('definition configuration parity', () => {
     await expect(dialog.getByLabel('Filter operator')).toHaveValue('not_contains');
     await expect(dialog.getByLabel('Filter values')).toHaveValue('archive');
     await dialog.getByLabel('Filter values').blur();
+
+    await expect(filterChips.locator('.view-toolbar-summary-chip-main')).toHaveText([
+      'Tags: stale',
+      'Tags · Does not contain · archive',
+    ]);
 
     await expect.poll(async () => page.evaluate(() => {
       const win = window as typeof window & {

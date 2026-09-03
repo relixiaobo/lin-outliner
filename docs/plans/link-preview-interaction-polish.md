@@ -55,7 +55,8 @@ and interactions across Outline and Table. The bar has no frame or decorative
 separators. Display, Group, Sort, and Filter express configured state on their
 own controls through `--control-on` icon color without a background; the neutral
 fill is reserved for an open popover. Individual Filter rule chips remain beside
-Filter as editable objects and wrap with it. The Outline/Table control remains one
+Filter as editable objects, summarize their effective conditions, and wrap with
+it. The Outline/Table control remains one
 visible two-option segmented control whose pill track and neutral selected
 segment make the grouping and active mode legible. Node type affects only the
 unset visibility default: Search starts open and ordinary Nodes start closed.

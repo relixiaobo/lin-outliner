@@ -215,7 +215,8 @@ on their own icon controls instead of text summaries. A configured control
 uses `--control-on` on its glyph without a background; the pill fill means its
 popover is open.
 Individual Filter rule chips follow the configured Filter control and stay with
-it when the toolbar wraps.
+it when the toolbar wraps. Their labels summarize the effective condition rather
+than repeating only the field name.
 Hidden Table columns remain directly recoverable through Add field. A
 nested table is an unframed indented scope with one
 quiet separating edge, not a card inside the parent table. Each nested scope owns

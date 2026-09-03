@@ -421,8 +421,12 @@ group and open the editor
 for that specific saved `filterRule`, not merely the first rule for that field.
 That matters because advanced states may contain multiple filters against the
 same field. A Filter rule chip reads as the field name with a trailing remove
-control; the operator/value detail lives in the editor pane, matching Tana's
-active-filter chip model.
+control and summarizes the effective condition. Boolean Done filters read
+`Done` / `Not done`; other boolean fields retain the field name with `Yes` /
+`No`; positive equality and containment use `Field: value`; negative,
+comparison, and empty-value rules retain their localized operator. Multiple
+values remain visible subject to the chip's ordinary ellipsis. The editor pane
+remains the complete editing surface, matching Tana's active-filter chip model.
 
 Sort follows Tana's separate state model: an active sort rule is represented on
 the Sort button itself, with the icon direction matching the first rule. Opening

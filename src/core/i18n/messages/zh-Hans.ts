@@ -853,6 +853,11 @@ export const zhHans: PartialMessages = {
       booleanNotDone: '未完成',
       booleanYes: '是',
       booleanNo: '否',
+      filterChipAnyValues: ({ values }: { values: string[] }) => values.join(' 或 '),
+      filterChipAllValues: ({ values }: { values: string[] }) => values.join(' 且 '),
+      filterChipFieldValue: ({ field, value }: { field: string; value: string }) => `${field}：${value}`,
+      filterChipCondition: ({ field, operator }: { field: string; operator: string }) => `${field} · ${operator}`,
+      filterChipConditionValue: ({ field, operator, value }: { field: string; operator: string; value: string }) => `${field} · ${operator} · ${value}`,
       // Displayed field metadata.
       displayedFieldsAriaLabel: '显示字段',
     },
