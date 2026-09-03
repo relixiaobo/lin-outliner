@@ -2244,12 +2244,15 @@ test.describe('file attachments', () => {
     const createdSourceValue = sourceFieldValues(createdProjection, createdId!)[0];
     expect(createdSourceEntry).toBeTruthy();
     expect(createdSourceValue).toBeTruthy();
-    const sourceFieldRow = row(page, createdSourceEntry!.id);
-    const sourceValueRow = row(page, createdSourceValue!.id);
-    const createdRow = row(page, createdId!);
+    const activePanel = page.locator('.outline-panel-surface.active-panel');
+    const sourceFieldRow = activePanel.locator(`[data-node-id="${createdSourceEntry!.id}"]`).first();
+    const sourceValueRow = activePanel.locator(`[data-node-id="${createdSourceValue!.id}"]`).first();
+    const createdRow = activePanel.locator(`[data-node-id="${createdId!}"]`).first();
     const createdLink = createdRow.locator(`a[href="${url}"]`);
     await expect(createdLink).toBeVisible();
-    await expect(createdRow.locator(':scope > .outline-source-preview-row')).toHaveCount(0);
+    await expect(createdRow.locator(
+      ':scope > .outline-source-preview-row > .outline-source-preview',
+    )).toHaveCount(0);
     await createdLink.hover();
     await expect(createdLink).toHaveCSS('cursor', 'pointer');
     await expect(sourceValueRow.locator('.row-inline-content-slot .field-value-open')).toBeVisible();
@@ -2346,6 +2349,7 @@ test.describe('file attachments', () => {
       };
     }).toEqual({ links: ['https://www.example.com/linked'], sourceCount: 0 });
 
+    await page.setViewportSize({ width: 1200, height: 800 });
     const paneCount = await page.locator('.outline-panel-surface').count();
     await createdLink.click();
     await expect(page.locator('.outline-panel-surface')).toHaveCount(paneCount + 1);

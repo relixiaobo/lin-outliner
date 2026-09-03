@@ -114,6 +114,18 @@ test.describe('table view', () => {
         return fontSize;
       };
       const addRect = add.getBoundingClientRect();
+      const fieldAlignment = fields.map((fieldHeader) => {
+        const columnId = fieldHeader.dataset.tableColumnId!;
+        const valueCell = scroll.querySelector<HTMLElement>(
+          `.outliner-table-cell[data-table-column-id="${CSS.escape(columnId)}"]`,
+        )!;
+        return {
+          bulletLeft: valueCell.querySelector<HTMLElement>('.row-bullet-button')!.getBoundingClientRect().left,
+          iconLeft: fieldHeader.querySelector<HTMLElement>('.outliner-table-column-kind')!.getBoundingClientRect().left,
+          labelLeft: fieldHeader.querySelector<HTMLElement>('.outliner-table-column-label')!.getBoundingClientRect().left,
+          textLeft: valueCell.querySelector<HTMLElement>('.row-content-line')!.getBoundingClientRect().left,
+        };
+      });
       return {
         addBorderBottom: getComputedStyle(add).borderBottomWidth,
         addRight: addRect.right,
@@ -122,6 +134,7 @@ test.describe('table view', () => {
         contentFontSize: getComputedStyle(firstCell).fontSize,
         contentFontToken: resolveFontSize('--font-content'),
         fieldWidths: fields.map((field) => field.getBoundingClientRect().width),
+        fieldAlignment,
         firstBulletLeft: firstBulletRect.left,
         firstCellBackground: getComputedStyle(firstCell).backgroundColor,
         firstCellBorderRight: getComputedStyle(firstCell).borderRightWidth,
@@ -156,6 +169,10 @@ test.describe('table view', () => {
     expect(geometry.firstChevronLeft).toBeGreaterThanOrEqual(geometry.scrollLeft);
     expect(geometry.firstChevronRight).toBeLessThan(geometry.firstBulletLeft);
     expect(geometry.firstTitleWrapRight).toBeCloseTo(geometry.firstCellRight, 1);
+    for (const alignment of geometry.fieldAlignment) {
+      expect(alignment.iconLeft).toBeCloseTo(alignment.bulletLeft, 1);
+      expect(alignment.labelLeft).toBeCloseTo(alignment.textLeft, 1);
+    }
     expect(geometry.headerFontFamily).toBe(geometry.rootFontFamily);
     expect(geometry.contentFontFamily).toBe(geometry.rootFontFamily);
     expect(geometry.headerFontSize).toBe(geometry.headerFontToken);

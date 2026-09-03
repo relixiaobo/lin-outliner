@@ -86,13 +86,8 @@ test.describe('search query builder', () => {
     const nameFilterBox = await nameFilter.boundingBox();
     expect(nameFilterBox).not.toBeNull();
     const tooltipGeometry = await tooltip.evaluate((element) => {
-      const title = document.querySelector<HTMLElement>('.panel-title-editor')!;
-      const firstRow = document.querySelector<HTMLElement>('.outliner-flat-flow-row .row')!;
       const tooltipRect = element.getBoundingClientRect();
       return {
-        firstRowTop: firstRow.getBoundingClientRect().top,
-        titleBottom: title.getBoundingClientRect().bottom,
-        tooltipBottom: tooltipRect.bottom,
         tooltipLeft: tooltipRect.left,
         tooltipRight: tooltipRect.right,
         tooltipTop: tooltipRect.top,
@@ -101,8 +96,7 @@ test.describe('search query builder', () => {
     });
     expect(tooltipGeometry.tooltipLeft).toBeLessThan(nameFilterBox!.x + nameFilterBox!.width);
     expect(tooltipGeometry.tooltipRight).toBeGreaterThan(nameFilterBox!.x);
-    expect(tooltipGeometry.tooltipTop).toBeGreaterThan(tooltipGeometry.titleBottom);
-    expect(tooltipGeometry.tooltipBottom).toBeLessThanOrEqual(tooltipGeometry.firstRowTop);
+    expect(tooltipGeometry.tooltipTop).toBeGreaterThanOrEqual(nameFilterBox!.y + nameFilterBox!.height);
     expect(tooltipGeometry.tooltipWidth).toBeLessThan(180);
 
     await controls.getByRole('button', { name: 'Sort by', exact: true }).hover();

@@ -55,6 +55,10 @@ anchor below their individual controls and never cover a sibling control. The
 same component remains present in Outline and Table modes and keeps its current
 accessible names and pressed states.
 
+Table field headers reuse the row leading grid instead of maintaining separate
+padding. A reserved chevron slot precedes the field-kind icon, aligning header
+icons with value bullets and header labels with value text at every column width.
+
 ### Structural editing focus
 
 Tab and Shift+Tab relocation keep the same row in text-editing mode through both
@@ -80,6 +84,8 @@ unclaimed Electron/DOM focus loss self-heals without a direct DOM focus shortcut
   hit testing.
 - The compact Outline/Table selector has one visible pill track, one neutral
   selected segment, and a tooltip that does not intersect either mode button.
+- Table field header icons align with value bullets, labels align with value
+  text, and a stable chevron slot precedes both.
 - Tab and Shift+Tab preserve the editing caret through optimistic relocation,
   text-patch settlement, and authoritative projection reconciliation; a focus
   that moved to another control is never reclaimed.
@@ -104,7 +110,8 @@ Expected implementation files are `src/renderer/api/outlineIntents.ts`,
 `src/renderer/ui/focus/focusRequestDom.ts`, shared editor/control focus
 consumers, `src/renderer/ui/outliner/OutlinerItem.tsx`,
 `optimisticStructuralEdit.ts`,
-`ViewToolbar.tsx`, `src/renderer/ui/preview/NodeSourcesSection.tsx`,
+`OutlinerTableView.tsx`, `ViewToolbar.tsx`,
+`src/renderer/ui/preview/NodeSourcesSection.tsx`,
 `nodeSources.ts`, `sourceViewState.ts`, outliner/preview styles, focused renderer
 and Playwright tests including `outliner-row-editing.spec.ts`,
 `docs/spec/ui-behavior.md`, and

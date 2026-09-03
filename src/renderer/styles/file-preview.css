@@ -1684,6 +1684,12 @@
   padding-bottom: 0;
 }
 
+.file-node-preview--url:not(.file-node-preview--reader) {
+  width: min(720px, 100%);
+  max-width: 100%;
+  height: min(520px, 60vh);
+}
+
 .file-node-preview--youtube {
   display: block;
   width: 100%;

@@ -1479,19 +1479,27 @@ function TableColumnHeader({
   };
 
   return (
-    <div className="outliner-table-column-header" role="columnheader" aria-colindex={index + 2}>
-      {onOpenField ? (
-        <ButtonControl
-          aria-label={openFieldLabel}
-          className="outliner-table-column-kind"
-          onClick={onOpenField}
-          title={openFieldLabel}
-        >
-          {fieldIcon}
-        </ButtonControl>
-      ) : (
-        <span className="outliner-table-column-kind" aria-hidden="true">{fieldIcon}</span>
-      )}
+    <div
+      className="outliner-table-column-header"
+      data-table-column-id={column.id}
+      role="columnheader"
+      aria-colindex={index + 2}
+    >
+      <span className="row-leading outliner-table-column-leading">
+        <span className="row-chevron-spacer" aria-hidden="true" />
+        {onOpenField ? (
+          <ButtonControl
+            aria-label={openFieldLabel}
+            className="outliner-table-column-kind"
+            onClick={onOpenField}
+            title={openFieldLabel}
+          >
+            {fieldIcon}
+          </ButtonControl>
+        ) : (
+          <span className="outliner-table-column-kind" aria-hidden="true">{fieldIcon}</span>
+        )}
+      </span>
       <span className="outliner-table-column-label">{label}</span>
       <ButtonControl
         aria-label={tt.columnMenu({ label })}
