@@ -1004,6 +1004,12 @@ export const OperationSchema = Type.Object({
   affectedNodeIds: Type.Array(Identifier, { maxItems: 1_000 }),
   affectedNodeCount: Type.Integer({ minimum: 0 }),
   affectedNodeIdsHash: Digest,
+  effects: Type.Optional(Type.Object({
+    createdNodeCount: Type.Integer({ minimum: 0 }),
+    createdDefinitionCount: Type.Integer({ minimum: 0 }),
+    updatedNodeCount: Type.Integer({ minimum: 0 }),
+    deletedNodeCount: Type.Integer({ minimum: 0 }),
+  }, closed)),
   affectedNodeIdsTruncated: Type.Optional(Type.Literal(true)),
   affectedNodeIdsCursor: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })),
   revisionBefore: Type.Integer({ minimum: 0 }),

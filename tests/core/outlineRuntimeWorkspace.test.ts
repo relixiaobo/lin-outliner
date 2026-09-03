@@ -688,12 +688,25 @@ describe('OutlineRuntimeWorkspace', () => {
     const nodeId = `node:${crypto.randomUUID()}`;
     const workspace = await openWorkspace(root, { instanceId: 'runtime:revert' });
     const created = await workspace.mutate(createRequest('Reversible row', { nodeId }));
+    expect(created.effects).toEqual({
+      createdNodeCount: 1,
+      createdDefinitionCount: 0,
+      updatedNodeCount: 1,
+      deletedNodeCount: 0,
+    });
     const createdState = workspace.documentState();
 
     const reverted = await workspace.revert(created.operationId, { origin: 'local-user' });
+    expect(reverted.effects).toEqual({
+      createdNodeCount: 0,
+      createdDefinitionCount: 0,
+      updatedNodeCount: 1,
+      deletedNodeCount: 1,
+    });
     expect(workspace.documentState().nodes[nodeId]).toBeUndefined();
     expect(reverted.revertsOperationId).toBe(created.operationId);
     const redone = await workspace.revert(reverted.operationId, { origin: 'local-user' });
+    expect(redone.effects).toEqual(created.effects);
 
     expect(workspace.documentState()).toEqual(createdState);
     expect(redone.revertsOperationId).toBe(reverted.operationId);
@@ -705,6 +718,7 @@ describe('OutlineRuntimeWorkspace', () => {
     ]);
     const restarted = await openWorkspace(root);
     expect(restarted.documentState()).toEqual(createdState);
+    expect((await restarted.store.operation(created.operationId))?.effects).toEqual(created.effects);
   });
 
   test('reconstructs consecutive undo and redo history across Runtime restart', async () => {

@@ -149,6 +149,10 @@ shape:
 }
 ```
 
+Field keys are local column handles within one create request. Each key must
+resolve to a different persisted Field definition; declarations whose names are
+equal after trimming and case normalization are rejected before mutation.
+
 Node text accepts plain text or the public rich-text object. Nodes may include
 description, code language, checkbox/done state, tags, one explicit reference,
 typed Field values, and recursively nested children. A Node cannot be both a
@@ -404,9 +408,12 @@ failure leaves document state, projections, history, and asset reachability
 unchanged.
 
 An Operation records origin, optional trusted causation, source, summary,
-bounded affected IDs plus complete-set count/hash, before/after revisions,
-recovery state, optional text-edit undo-group metadata, and requested bounded
-result Projections. `revert` checks one retained recovery patch and current
+bounded affected IDs plus complete-set count/hash, immutable created-definition
+and created/updated/deleted Node counts, before/after revisions, recovery state,
+optional text-edit undo-group metadata, and requested bounded result Projections.
+Semantic receipts are derived from the submitted intent and this immutable
+Operation record; replay never inspects mutable current document state.
+`revert` checks one retained recovery patch and current
 affected state; a conflict returns a typed
 `RevertConflictDiff` in `revert_conflict.error.details.conflictDiff` and writes
 nothing. The Diff identifies each changed Node precondition by its expected

@@ -22,11 +22,13 @@ describe('outline porcelain CLI', () => {
       const args = ['create', '@today', 'Idempotent create', '--idempotency-key', 'test:create-retry'];
       const operationsBefore = (await runtime.workspace.store.operations()).length;
       const first = await jsonCommand(root, args);
+      expect(first.code).toBe(0);
+      const rootId = (first.data as { rootId: string }).rootId;
+      expect((await jsonCommand(root, ['create', rootId, 'Later child'])).code).toBe(0);
       const retry = await jsonCommand(root, args);
 
-      expect(first.code).toBe(0);
       expect(retry).toMatchObject({ code: 0, command: 'create', data: first.data });
-      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 1);
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 2);
       expect(Object.values(runtime.workspace.documentState().nodes)
         .filter((node) => node.content.text === 'Idempotent create')).toHaveLength(1);
     } finally {
@@ -57,6 +59,8 @@ describe('outline porcelain CLI', () => {
       const operationsBefore = (await runtime.workspace.store.operations()).length;
       const first = await jsonCommand(root, ['create', '--input', '-'], payload('Weather A', 'number'));
       expect(first.code).toBe(0);
+      expect(first.data).toMatchObject({ fieldCount: 2, definitions: { created: 2, reused: 0 } });
+      expect((await runtime.workspace.store.operations()).at(-1)?.effects?.createdDefinitionCount).toBe(2);
       expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 1);
       const firstId = (first.data as { rootId: string }).rootId;
       const state = runtime.workspace.documentState();
@@ -67,6 +71,8 @@ describe('outline porcelain CLI', () => {
 
       const second = await jsonCommand(root, ['create', '--input', '-'], payload('Weather B', 'number'));
       expect(second.code).toBe(0);
+      expect(second.data).toMatchObject({ fieldCount: 2, definitions: { created: 0, reused: 2 } });
+      expect((await runtime.workspace.store.operations()).at(-1)?.effects?.createdDefinitionCount).toBe(0);
       expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 2);
       expect(Object.values(runtime.workspace.documentState().nodes)
         .filter((node) => node.type === 'fieldDef' && node.content.text === 'Night low (C)')).toHaveLength(1);
@@ -80,6 +86,37 @@ describe('outline porcelain CLI', () => {
       expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 2);
       expect(Object.values(runtime.workspace.documentState().nodes)
         .some((node) => node.content.text === 'Weather C')).toBe(false);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('rejects duplicate normalized Field definitions before create admission', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const operationsBefore = (await runtime.workspace.store.operations()).length;
+      const rejected = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@today' },
+        fields: [
+          { key: 'first', name: 'Shared definition', type: 'text' },
+          { key: 'second', name: '  SHARED DEFINITION  ', type: 'text' },
+        ],
+        node: { text: 'Duplicate Field owner' },
+      }));
+
+      expect(rejected.code).toBe(2);
+      expect(rejected.error).toMatchObject({
+        code: 'invalid_input',
+        message: expect.stringContaining('same Field definition'),
+      });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore);
+      expect(Object.values(runtime.workspace.documentState().nodes)
+        .some((node) => node.content.text === 'Duplicate Field owner')).toBe(false);
+      expect(Object.values(runtime.workspace.documentState().nodes)
+        .some((node) => node.type === 'fieldDef' && node.content.text.trim().toLowerCase() === 'shared definition')).toBe(false);
     } finally {
       await runtime.stop();
     }
@@ -257,13 +294,18 @@ describe('outline porcelain CLI', () => {
       expect(direct.code).toBe(0);
       expect(direct.data).toEqual(diff);
 
-      const applied = await jsonCommand(root, [
+      const reviewedArgs = [
         'create', '@today', 'Porcelain item', '--bind', 'created', '--expect-diff', diff.diffHash,
         '--idempotency-key', diff.normalizedChangeSet.idempotencyKey!,
-      ]);
+      ];
+      const applied = await jsonCommand(root, reviewedArgs);
       expect(applied.code).toBe(0);
       expect(applied.data).toMatchObject({ kind: 'outline.create-result', settlement: { diffHash: diff.diffHash } });
       expect(runtime.workspace.documentState().nodes[nodeId!]?.content.text).toBe('Porcelain item');
+      const operationsAfterApply = (await runtime.workspace.store.operations()).length;
+      const replayed = await jsonCommand(root, reviewedArgs);
+      expect(replayed).toMatchObject({ code: 0, command: 'create', data: applied.data });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsAfterApply);
 
       expect((await jsonCommand(root, ['edit', nodeId!, '--description', 'Reviewed'])).code).toBe(0);
       expect(runtime.workspace.documentState().nodes[nodeId!]?.description).toBe('Reviewed');

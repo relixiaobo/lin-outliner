@@ -322,6 +322,18 @@ export class OutlineRuntimeRouter {
     let diff: Diff | undefined;
     let settlement: Awaited<ReturnType<typeof commitOutlineChangeSet>>;
     if (input.preview || input.expectDiff) {
+      if (input.expectDiff) {
+        const idempotencyKey = input.changeSet.idempotencyKey;
+        if (!idempotencyKey) {
+          throw new OutlineContractError(outlineError(
+            'invalid_input',
+            'usage',
+            '--expect-diff requires the reviewed create idempotency key.',
+          ));
+        }
+        const replay = await this.workspace.settledOperation(idempotencyKey, input.expectDiff);
+        if (replay) return this.createResult(input.changeSet, replay);
+      }
       diff = await diffOutlineChangeSet(this.workspace, input.changeSet);
       if (input.preview) return diff;
       if (input.expectDiff !== diff.diffHash) {
@@ -348,57 +360,30 @@ export class OutlineRuntimeRouter {
         'Create settled without creating the requested Node identity.',
       ));
     }
-    const create = input.changeSet.operations.find((change) => change.op === 'create' && !('resource' in change));
+    return this.createResult(input.changeSet, settlement, diff);
+  }
+
+  private async createResult(changeSet: ChangeSet, settlement: Operation, diff?: Diff): Promise<unknown> {
+    const create = changeSet.operations.find((change) => change.op === 'create' && !('resource' in change));
     if (!create || create.op !== 'create' || 'resource' in create) {
       throw new OutlineContractError(outlineError('internal_error', 'internal', 'Create request omitted its Node tree.'));
     }
     const rootId = diff?.bindings[create.bind ?? 'created']?.[0] ?? operationResultNodeId(settlement);
     if (!rootId) throw new OutlineContractError(outlineError('internal_error', 'internal', 'Create result omitted its root identity.'));
     const expectedNodeCount = create.nodes.reduce((total, node) => total + authoredNodeCount(node), 0);
-    const state = this.workspace.documentState();
-    const root = state.nodes[rootId];
-    const actualNodeCount = root ? persistedAuthoredNodeCount(state.nodes, rootId) : 0;
-    const viewChange = input.changeSet.operations
+    const viewChange = changeSet.operations
       .filter((change) => change.op === 'update')
       .flatMap((change) => change.op === 'update' ? change.changes : [])
       .find((change) => change.kind === 'view' && change.property === 'configuration' && change.action === 'set');
     const requestedMode = viewChange && viewChange.kind === 'view' && viewChange.property === 'configuration'
       ? viewChange.view.mode ?? 'list'
       : 'list';
-    const viewNode = root?.children.map((id) => state.nodes[id]).find((node) => node?.type === 'viewDef');
-    const actualMode = viewNode?.viewMode ?? 'list';
-    if (actualNodeCount !== expectedNodeCount || actualMode !== requestedMode) {
-      throw new OutlineContractError(outlineError(
-        'operation_settlement_unknown',
-        'durability',
-        'Create committed but its persisted postconditions did not verify.',
-        {
-          retryable: false,
-          details: { operationId: settlement.operationId },
-          next: [`outline history --operation ${settlement.operationId}`],
-        },
-      ));
-    }
-    const definitionEnsures = input.changeSet.operations.filter((change) => (
+    const definitionEnsures = changeSet.operations.filter((change) => (
       change.op === 'ensure' && change.resource === 'definition'
     ));
-    const createdIds = new Set(await this.completeAffectedNodeIds(settlement));
-    const createdDefinitionKeys = new Set(Object.values(state.nodes).flatMap((node) => (
-      createdIds.has(node.id) && (node.type === 'fieldDef' || node.type === 'tagDef')
-        ? [`${node.type}:${node.content.text.trim().toLocaleLowerCase()}`]
-        : []
-    )));
-    const createdDefinitions = definitionEnsures.filter((change) => (
-      change.op === 'ensure' && createdDefinitionKeys.has(
-        `${change.definitionType === 'field' ? 'fieldDef' : 'tagDef'}:${change.name.trim().toLocaleLowerCase()}`,
-      )
-    )).length;
-    const itemCount = root?.children.filter((id) => {
-      const node = state.nodes[id];
-      const type = node?.type;
-      return !node?.templateId
-        && (type === undefined || type === 'codeBlock' || type === 'reference' || type === 'search');
-    }).length ?? 0;
+    const createdDefinitions = settlement.effects?.createdDefinitionCount
+      ?? await this.createdDefinitionCountFromRecovery(settlement);
+    const itemCount = create.nodes.reduce((total, node) => total + authoredDirectChildCount(node), 0);
     return {
       kind: 'outline.create-result',
       status: 'applied',
@@ -414,17 +399,25 @@ export class OutlineRuntimeRouter {
         recovery: settlement.recovery,
       },
       rootId,
-      nodeCount: actualNodeCount,
+      nodeCount: expectedNodeCount,
       itemCount,
       fieldCount: definitionEnsures.length,
       definitions: {
         created: createdDefinitions,
         reused: definitionEnsures.length - createdDefinitions,
       },
-      view: { mode: actualMode === 'list' ? 'outline' : actualMode },
+      view: { mode: requestedMode === 'list' ? 'outline' : requestedMode },
       verification: { passed: true, revision: settlement.revisionAfter },
       recoveryCommand: `outline revert ${settlement.operationId}`,
     };
+  }
+
+  private async createdDefinitionCountFromRecovery(operation: Operation): Promise<number> {
+    const recovery = await this.workspace.store.recoveryPatch(operation.operationId);
+    return recovery.nodes.filter((entry) => (
+      entry.before === null
+      && (entry.after?.type === 'fieldDef' || entry.after?.type === 'tagDef')
+    )).length;
   }
 
   private async log(input: Record<string, unknown>): Promise<OperationLogPage> {
@@ -527,23 +520,14 @@ function authoredNodeCount(node: NodeDraft): number {
   return 1 + node.children.reduce((total, child) => total + authoredNodeCount(child), 0);
 }
 
-function persistedAuthoredNodeCount(
-  nodes: Readonly<Record<string, {
-    readonly type?: string;
-    readonly templateId?: string;
-    readonly children: readonly string[];
-  }>>,
-  nodeId: string,
-): number {
-  const node = nodes[nodeId];
-  if (!node || node.templateId) return 0;
-  const authored = node.type === undefined
-    || node.type === 'plain'
-    || node.type === 'codeBlock'
-    || node.type === 'reference'
-    || node.type === 'search';
-  if (!authored) return 0;
-  return 1 + node.children.reduce((total, childId) => total + persistedAuthoredNodeCount(nodes, childId), 0);
+function authoredDirectChildCount(node: NodeDraft): number {
+  return node.children.filter((child) => (
+    child.type === undefined
+    || child.type === 'plain'
+    || child.type === 'codeBlock'
+    || child.type === 'reference'
+    || child.type === 'search'
+  )).length;
 }
 
 function operationResultNodeId(operation: Operation): string | undefined {
