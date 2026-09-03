@@ -1045,8 +1045,6 @@ test.describe('table view', () => {
         controlsBackground: controlsStyle.backgroundColor,
         controlsBottom: controlsRect.bottom,
         controlsLeft: controlsRect.left,
-        controlsPseudoAfter: getComputedStyle(tableControls, '::after').display,
-        controlsPseudoBefore: getComputedStyle(tableControls, '::before').display,
         controlsTop: controlsRect.top,
         directToolbarCount: panel.querySelectorAll('.outliner-table-scope > .view-toolbar').length,
         headerLeft: headerRect.left,
@@ -1061,8 +1059,6 @@ test.describe('table view', () => {
     expect(searchTableGeometry.controlsBottom).toBeLessThanOrEqual(searchTableGeometry.headerTop);
     expect(searchTableGeometry.controlsLeft).toBeCloseTo(searchTableGeometry.titleLabelLeft, 1);
     expect(searchTableGeometry.controlsBackground).toBe('rgba(0, 0, 0, 0)');
-    expect(searchTableGeometry.controlsPseudoBefore).not.toBe('none');
-    expect(searchTableGeometry.controlsPseudoAfter).not.toBe('none');
     expect(searchTableGeometry.titleTop).toBe(searchTableGeometry.headerTop);
     expect(searchTableGeometry.titleBottom).toBeGreaterThan(searchTableGeometry.titleTop);
     expect(searchTableGeometry.titleLabelLeft).toBeGreaterThan(searchTableGeometry.headerLeft);

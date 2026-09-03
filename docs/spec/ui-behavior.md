@@ -398,8 +398,8 @@ cards. They remain logically inside the expanded child subtree, while their
 visual indent aligns with the owning node's title/content column, derived from
 the same row geometry tokens instead of the bullet or selection gutter. The
 expanded parent guide line spans the toolbar and
-descendants. The toolbar itself carries only subtle top/bottom separators; the
-hierarchy line is the main visual divider.
+descendants. The toolbar itself has no frame or separator; hierarchy guides and
+Table row separators provide structure where the current projection needs it.
 
 The leading search icon is a Tana-style **Filter by name** shortcut. Clicking it
 turns the icon into an inline editable chip. Non-empty text is written as a real

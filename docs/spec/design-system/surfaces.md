@@ -156,6 +156,8 @@ column boundary fixed across leaf, expanded, hover, and selection states.
 `ViewToolbar` owns one stable presentation and control order rather than deriving
 a variant from owner type or renderer. Every Node uses the same full bar in
 Outline and Table, including the same labels, summaries, popovers, and tooltips.
+The toolbar has no frame or decorative separators; spacing and control grouping
+carry its hierarchy.
 Name search expands inline only while active. A single two-option Outline/Table
 selector remains visible in both modes with one neutral pill track and one
 clearly filled current segment. The context menu is its secondary text entry

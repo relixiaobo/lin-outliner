@@ -51,7 +51,8 @@ not intercept input, and does not alter layout.
 `ViewToolbar` owns its presentation and capability decisions. Renderers provide
 the owner and view state but cannot select an independent toolbar variant.
 Every Node therefore uses the same full bar, control order, labels, summaries,
-and interactions across Outline and Table. The Outline/Table control remains one
+and interactions across Outline and Table. The bar has no frame or decorative
+separators. The Outline/Table control remains one
 visible two-option segmented control whose pill track and neutral selected
 segment make the grouping and active mode legible. Node type affects only the
 unset visibility default: Search starts open and ordinary Nodes start closed.

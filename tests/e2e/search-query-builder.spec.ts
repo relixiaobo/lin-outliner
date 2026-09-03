@@ -90,15 +90,11 @@ test.describe('search query builder', () => {
         background: style.backgroundColor,
         firstContentLeft: firstContent.getBoundingClientRect().left,
         left: rect.left,
-        pseudoAfter: getComputedStyle(toolbar, '::after').display,
-        pseudoBefore: getComputedStyle(toolbar, '::before').display,
         resolvedMarginLeft: Number.parseFloat(style.marginLeft),
         scopeLeft: scopeRect.left,
       };
     });
     expect(geometry.background).toBe('rgba(0, 0, 0, 0)');
-    expect(geometry.pseudoBefore).not.toBe('none');
-    expect(geometry.pseudoAfter).not.toBe('none');
     expect(geometry.left).toBeCloseTo(geometry.firstContentLeft, 1);
     expect(geometry.left).toBeCloseTo(geometry.scopeLeft + geometry.resolvedMarginLeft, 1);
     expect(await controls.evaluate((toolbar, result) => (
