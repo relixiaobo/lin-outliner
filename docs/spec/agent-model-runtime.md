@@ -916,13 +916,17 @@ only provider IDs and credential types. A separate `agent-model-catalogs.json`
 store persists validated dynamic text catalogs. Startup restores these catalogs
 without network access before Thread and Automation initialization; settings and
 runtime-config reads await the same memoized restore as a defensive boundary.
-Saving a pasted key and login best-effort fetch and persist only the target
-provider's current catalog; a catalog warm failure does not turn a successful
-credential write into a failed save. The explicit provider refresh command still
-reports failures. Connection validation uses an isolated provider collection and
-in-memory catalog store, so testing an unsaved key cannot mutate live model
-choices or durable state. Refreshability is provider-level metadata even while
-the model list is empty; capability rows list only models that actually exist.
+Saving a pasted key and login best-effort refresh exactly the target provider
+through `Models.refresh({ providers: [providerId] })`; a catalog warm failure does
+not turn a successful credential write into a failed save. The collection owns
+refresh cancellation, generation ordering, stored snapshots, and publication, so
+an older stalled request cannot overwrite a newer in-memory or persisted catalog.
+The explicit provider refresh command rethrows the target provider's returned
+error. Connection validation uses an isolated provider collection with in-memory
+credential and catalog stores, then runs the same provider-scoped collection
+refresh, so testing an unsaved key cannot mutate live model choices or durable
+state. Refreshability is provider-level metadata even while the model list is
+empty; capability rows list only models that actually exist.
 
 Provider auth resolution is provider-scoped. Custom OpenAI-compatible local and
 remote endpoints use separate internal provider identities, so registering a
@@ -1133,7 +1137,8 @@ so inspection-only relay metadata cannot invalidate the Turn's complete diagnost
 
 An assistant `message_end` closes the latest open Provider Call with its provider-neutral
 normalized assistant message, real usage, stop reason, error details, and receive time.
-A `pending` stop reason is streaming-only; if one appears on an impossible
+`pending` and `deferred` stop reasons are non-terminal provider states. Tenon does
+not request deferred provider execution; if either state appears on an unexpected
 `message_end`, diagnostics skips it rather than widening the durable terminal
 response union or failing the Turn.
 A failed or retried call may legitimately have no response. The collector also appends one

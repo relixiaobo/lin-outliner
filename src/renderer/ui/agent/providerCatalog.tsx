@@ -20,6 +20,7 @@ export { PROVIDER_DISPLAY_NAMES, formatProviderName, providerInitial } from './p
 // providers simply drop the helper link.
 export const PROVIDER_DOCS_URL: Record<string, string> = {
   anthropic: 'https://console.anthropic.com/settings/keys',
+  baseten: 'https://app.baseten.co/settings/api_keys',
   openai: 'https://platform.openai.com/api-keys',
   google: 'https://aistudio.google.com/app/apikey',
   openrouter: 'https://openrouter.ai/keys',
@@ -27,6 +28,7 @@ export const PROVIDER_DOCS_URL: Record<string, string> = {
   xai: 'https://console.x.ai',
   groq: 'https://console.groq.com/keys',
   mistral: 'https://console.mistral.ai/api-keys',
+  'qwen-token-plan-individual': 'https://chat.qwen.ai/',
 };
 
 // Presentation copy for providers that don't take a pasteable API key. The auth

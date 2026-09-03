@@ -1,6 +1,7 @@
 import {
   createAssistantMessageEventStream,
   createProvider,
+  InMemoryCredentialStore,
   type Api,
   type AssistantMessage,
   type AssistantMessageEvent,
@@ -98,15 +99,14 @@ export function piProviderModelsRefreshable(providerId: string): boolean {
 export async function piRefreshProviderModels(providerId: string, signal?: AbortSignal): Promise<void> {
   const provider = piModels().getProvider(providerId);
   if (!provider?.refreshModels) return;
-  const credential = await piResolveProviderRefreshCredential(providerId);
-  if (!credential) return;
-  await provider.refreshModels({
-    credential,
+  const result = await piModels().refresh({
+    providers: [providerId],
     allowNetwork: true,
     force: true,
     signal,
-    store: providerModelsStore(providerId),
   });
+  const error = result.errors.get(providerId);
+  if (error) throw error;
 }
 
 /**
@@ -118,22 +118,19 @@ export async function piFetchProviderModelsWithCredential(
   credential: Credential,
   signal?: AbortSignal,
 ): Promise<Model<Api>[]> {
-  const probeModels = builtinModels();
-  const provider = probeModels.getProvider(providerId);
-  if (!provider?.refreshModels) return [];
-  let entry: ModelsStoreEntry | undefined;
-  await provider.refreshModels({
-    credential,
+  const credentials = new InMemoryCredentialStore();
+  await credentials.modify(providerId, async () => credential);
+  const probeModels = builtinModels({ credentials });
+  if (!probeModels.getProvider(providerId)?.refreshModels) return [];
+  const result = await probeModels.refresh({
+    providers: [providerId],
     allowNetwork: true,
     force: true,
     signal,
-    store: {
-      read: async () => entry,
-      write: async (next) => { entry = next; },
-      delete: async () => { entry = undefined; },
-    },
   });
-  return [...provider.getModels()] as Model<Api>[];
+  const error = result.errors.get(providerId);
+  if (error) throw error;
+  return [...probeModels.getModels(providerId)] as Model<Api>[];
 }
 
 /** Resolve the effective credential shape expected by provider catalog refresh. */
@@ -498,12 +495,4 @@ const credentialStoreAdapter: CredentialStore = {
 function requireCredentialStorage(): PiCredentialStorage {
   if (!credentialStorage) throw new Error('pi credential storage is not configured');
   return credentialStorage;
-}
-
-function providerModelsStore(providerId: string) {
-  return {
-    read: () => modelsStorage?.read(providerId) ?? Promise.resolve(undefined),
-    write: (entry: Parameters<ModelsStore['write']>[1]) => modelsStorage?.write(providerId, entry) ?? Promise.resolve(),
-    delete: () => modelsStorage?.delete(providerId) ?? Promise.resolve(),
-  };
 }

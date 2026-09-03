@@ -35,7 +35,7 @@
     "probe:preview-translation-cache": "bun scripts/probe-preview-translation-cache.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.83.0",
+    "@earendil-works/pi-ai": "0.84.4",
     "@secretlint/secretlint-rule-preset-recommend": "13.0.4",
     "defuddle": "0.18.1",
     "foliate-js": "^1.0.1",
