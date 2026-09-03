@@ -184,16 +184,15 @@ function ViewModeControl({ viewMode, labels, compact = false, onChange }: ViewMo
         const classes = [
           'view-toolbar-mode-button',
           selected ? 'is-active' : '',
-          compact ? 'view-toolbar-tooltip-anchor' : '',
         ].filter(Boolean).join(' ');
         return (
           <ButtonControl
             aria-pressed={selected}
             aria-label={text}
             className={classes}
-            data-tooltip={compact ? text : undefined}
             key={mode}
             onClick={() => onChange(mode)}
+            title={compact ? text : undefined}
           >
             <Icon size={ICON_SIZE.menu} />
             {!compact && <span>{text}</span>}

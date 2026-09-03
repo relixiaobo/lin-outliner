@@ -694,8 +694,9 @@ complete units instead of shrinking or clipping.
 Each compact-control tooltip anchors to the control that currently owns hover or
 keyboard focus, including after the controls wrap. Moving directly between
 controls remeasures the new label's intrinsic width, so a short tooltip never
-inherits the width or location of the previous control. It anchors below its
-control and never intersects a sibling segment.
+inherits the width or location of the previous control. The Outline/Table
+segments instead use their accessible names and native delayed titles, avoiding
+an immediate custom overlay over the Table header or adjacent content.
 
 ## NodePanel References Footer
 

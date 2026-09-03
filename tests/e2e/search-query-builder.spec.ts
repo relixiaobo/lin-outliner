@@ -105,20 +105,9 @@ test.describe('search query builder', () => {
     expect(shortTooltipWidth).toBeLessThan(tooltipGeometry.tooltipWidth);
 
     await outlineMode.hover();
-    await expect(tooltip).toHaveText('Outline');
-    await expect.poll(async () => tooltip.evaluate((element) => {
-      const tooltipRect = element.getBoundingClientRect();
-      const segments = Array.from(document.querySelectorAll<HTMLElement>(
-        '.view-toolbar.is-compact-controls .view-toolbar-mode-button',
-      ));
-      return segments.every((segment) => {
-        const rect = segment.getBoundingClientRect();
-        return tooltipRect.right <= rect.left
-          || tooltipRect.left >= rect.right
-          || tooltipRect.bottom <= rect.top
-          || tooltipRect.top >= rect.bottom;
-      });
-    })).toBe(true);
+    await expect(outlineMode).toHaveAttribute('title', 'Outline');
+    await expect(tableMode).toHaveAttribute('title', 'Table');
+    await expect(tooltip).toHaveCount(0);
 
     await page.setViewportSize({ width: 760, height: originalViewport.height });
     const narrowGeometry = await controls.evaluate((toolbar) => {

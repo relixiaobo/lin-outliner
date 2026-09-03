@@ -50,9 +50,10 @@ not intercept input, and does not alter layout.
 
 The compact Outline/Table control remains one visible two-option segmented
 control. Its pill track and neutral selected segment make the grouping and active
-mode legible without adding text to the dense result band. Hover/focus tooltips
-anchor below their individual controls and never cover a sibling control. The
-same component remains present in Outline and Table modes and keeps its current
+mode legible without adding text to the dense result band. Each compact mode
+button keeps its accessible name and uses a native delayed title instead of an
+immediate custom tooltip that can cover adjacent content. The same component
+remains present in Outline and Table modes and keeps its current
 accessible names and pressed states.
 
 Table field headers reuse the row leading grid instead of maintaining separate
@@ -83,7 +84,7 @@ unclaimed Electron/DOM focus loss self-heals without a direct DOM focus shortcut
   preview and title/content without covering its Source field or changing media
   hit testing.
 - The compact Outline/Table selector has one visible pill track, one neutral
-  selected segment, and a tooltip that does not intersect either mode button.
+  selected segment, and no immediate custom tooltip over adjacent content.
 - Table field header icons align with value bullets, labels align with value
   text, and a stable chevron slot precedes both.
 - Tab and Shift+Tab preserve the editing caret through optimistic relocation,

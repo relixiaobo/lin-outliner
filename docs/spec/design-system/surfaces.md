@@ -158,16 +158,18 @@ while active. A single two-option Outline/Table mode selector remains visible in
 both modes and reuses the ordinary Outline toolbar's mode component. In the
 compact band it retains one neutral pill track and one clearly filled current
 segment, so the two icons read as one choice instead of unrelated actions;
-per-option tooltips anchor below their own segment and never cover either
-segment. The context menu is its secondary text entry point. Outline aligns the band with its result
+each option keeps an accessible name and a native delayed title instead of an
+immediate custom tooltip over adjacent content. The context menu is its
+secondary text entry point. Outline aligns the band with its result
 text axis derived from the shared row geometry; Table places it between the
 owner heading and field header on the Title label axis. The band has no fill,
 frame, summary chips, result count, manual refresh, or decorative separators.
 Its icon controls retain the token control size and wrap as complete units when
 the available pane is narrower than one row; the two mode options never split
-across lines. Tooltips follow the hovered or keyboard-focused control across
-wrapped rows and remeasure each label's intrinsic width when focus moves, so
-their anchor and box never carry over from a sibling control. The Table field header
+across lines. Custom tooltips on the remaining compact controls follow the
+hovered or keyboard-focused control across wrapped rows and remeasure each
+label's intrinsic width when focus moves, so their anchor and box never carry
+over from a sibling control. The Table field header
 therefore remains pure column semantics, and header and row separators provide
 its only horizontal structure.
 
