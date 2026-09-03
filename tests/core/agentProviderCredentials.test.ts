@@ -20,6 +20,7 @@ import {
   piCustomProviderId,
   piModels,
   piProviders,
+  piRefreshProviderModels,
   piRequestApiKeyOverride,
   piResolveAuthApiKey,
   piStreamSimple,
@@ -462,6 +463,8 @@ describe('provider credential resolver', () => {
         providerId,
         apiKey: 'persisted-key',
       });
+      await expect(piRefreshProviderModels(providerId)).rejects.toThrow('catalog endpoint is offline');
+      expect(refreshCount).toBe(2);
     } finally {
       piModels().deleteProvider(providerId);
     }
@@ -512,6 +515,70 @@ describe('provider credential resolver', () => {
 
     await refreshProviderModels(target);
     expect(Object.fromEntries(counts)).toEqual({ [target]: 2, [peer]: 1 });
+  });
+
+  test('a newer dynamic catalog refresh supersedes an older late result', async () => {
+    const providerId = 'dynamic-catalog-test';
+    const catalogModel = (id: string) => ({
+      id,
+      name: id,
+      api: 'openai-completions' as const,
+      provider: providerId,
+      baseUrl: 'https://dynamic.example.test/v1',
+      reasoning: false,
+      input: ['text' as const],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 8192,
+    });
+    let attempts = 0;
+    let markFirstStarted: (() => void) | undefined;
+    let releaseFirst: (() => void) | undefined;
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    await writeFile(secretPath(), JSON.stringify({
+      credentials: { [providerId]: { type: 'api_key', key: 'dynamic-key' } },
+    }));
+    piModels().setProvider(createProvider({
+      id: providerId,
+      name: 'Dynamic Catalog Test',
+      auth: {
+        apiKey: {
+          name: 'Dynamic catalog key',
+          resolve: async ({ credential }) => credential?.key
+            ? { auth: { apiKey: credential.key }, source: 'stored credential' }
+            : undefined,
+        },
+      },
+      models: [],
+      fetchModels: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          markFirstStarted?.();
+          await firstGate;
+          return [catalogModel('stale-model')];
+        }
+        return [catalogModel('current-model')];
+      },
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: () => { throw new Error('streamSimple should not be called'); },
+      },
+    }));
+
+    const staleRefresh = piRefreshProviderModels(providerId);
+    await firstStarted;
+    await piRefreshProviderModels(providerId);
+    await staleRefresh;
+    releaseFirst?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(piModels().getModels(providerId).map((model) => model.id)).toEqual(['current-model']);
+    const persisted = JSON.parse(await readFile(
+      path.join(currentUserData, 'agent-model-catalogs.json'),
+      'utf8',
+    )) as { catalogs: Record<string, { models: Array<{ id: string }> }> };
+    expect(persisted.catalogs[providerId]?.models.map((model) => model.id)).toEqual(['current-model']);
   });
 
   test('discovers a direct CC Switch registry provider without exposing its key', async () => {

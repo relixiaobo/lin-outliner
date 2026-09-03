@@ -173,6 +173,10 @@ describe('Turn diagnostics', () => {
       type: 'message_end',
       message: { ...assistantMessage('Still streaming'), stopReason: 'pending' },
     } as AgentEvent);
+    collector.captureEvent({
+      type: 'message_end',
+      message: { ...assistantMessage('Deferred upstream'), stopReason: 'deferred' },
+    } as AgentEvent);
 
     const payload = collector.payload();
     expect(payload.stablePrompt?.blocks.map((block) => block.layer)).toEqual(['L0', 'L1', 'L2']);
@@ -304,7 +308,7 @@ describe('Turn diagnostics', () => {
       estimatedInputTokens: 160,
       commonPrefixMessageCount: 1,
       transportResponse: null,
-      // `pending` is a partial-stream state and must not become a durable response.
+      // Non-terminal `pending` and `deferred` states must not become a durable response.
       response: null,
     });
     expect(payload.activities).toEqual([
