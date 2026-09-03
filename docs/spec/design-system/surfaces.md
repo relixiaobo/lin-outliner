@@ -162,10 +162,11 @@ carry its hierarchy.
 Name search expands inline only while active. A single two-option Outline/Table
 selector remains visible in both modes with one neutral pill track and one
 clearly filled current segment. The context menu is its secondary text entry
-point. Toolbar controls retain the token control size and wrap as complete units
-when the available pane is narrower than one row; the two mode options never
-split across lines. Custom tooltips follow the hovered or keyboard-focused
-control across wrapped rows and remeasure each label's intrinsic width when
+point, with **View as** opening a side submenu on hover, click, or `ArrowRight`.
+Toolbar controls retain the token control size and stay on one line; when the
+available pane is narrower, the toolbar owns native horizontal overflow and the
+two mode options remain intact. Custom tooltips follow the hovered or
+keyboard-focused control across the scroller and remeasure each label's intrinsic width when
 focus moves, so their anchor and box never carry over from a sibling control.
 The Table field header therefore remains pure column semantics, and header and
 row separators provide its only horizontal structure.
@@ -215,7 +216,7 @@ on their own icon controls instead of text summaries. A configured control
 uses `--control-on` on its glyph without a background; the pill fill means its
 popover is open.
 Individual Filter rule chips follow the configured Filter control and stay with
-it when the toolbar wraps. Their labels summarize the effective condition rather
+it in the toolbar's single line. Their labels summarize the effective condition rather
 than repeating only the field name.
 Hidden Table columns remain directly recoverable through Add field. A
 nested table is an unframed indented scope with one

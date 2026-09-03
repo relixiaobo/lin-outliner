@@ -55,8 +55,8 @@ and interactions across Outline and Table. The bar has no frame or decorative
 separators. Display, Group, Sort, and Filter express configured state on their
 own controls through `--control-on` icon color without a background; the neutral
 fill is reserved for an open popover. Individual Filter rule chips remain beside
-Filter as editable objects, summarize their effective conditions, and wrap with
-it. The Outline/Table control remains one
+Filter as editable objects, summarize their effective conditions, and stay with
+it on the toolbar's single horizontally scrollable line. The Outline/Table control remains one
 visible two-option segmented control whose pill track and neutral selected
 segment make the grouping and active mode legible. Node type affects only the
 unset visibility default: Search starts open and ordinary Nodes start closed.
@@ -112,13 +112,15 @@ unclaimed Electron/DOM focus loss self-heals without a direct DOM focus shortcut
   disclosure state, while content insertion remains ordered after field entries.
 - The Outline/Table selector has one visible pill track and one neutral selected
   segment.
+- The context-menu **View as** entry opens a side submenu on hover, click, or
+  `ArrowRight` without pointer hover stealing keyboard focus.
 - Table Title and field header icons align with row bullets, labels align with
   row text, and a stable chevron slot precedes both.
 - Tab and Shift+Tab preserve the editing caret through optimistic relocation,
   text-patch settlement, and authoritative projection reconciliation; a focus
   that moved to another control is never reclaimed.
-- Narrow layouts keep every mode segment intact and wrap toolbar controls only as
-  complete units; light, dark, keyboard, pointer, reduced-motion, and
+- Narrow layouts keep every mode segment intact and keep toolbar controls on one
+  horizontally scrollable line; light, dark, keyboard, pointer, reduced-motion, and
   reduced-transparency behavior remain valid.
 
 ## Verification

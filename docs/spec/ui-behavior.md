@@ -380,8 +380,11 @@ mode selector followed by name search, then Display, Group, Sort, and Filter.
 The active mode and configured controls have `aria-pressed="true"`. Display
 configures title metadata in Outline and visible columns in Table, while Group
 applies to the current row projection in both modes. Activating name search
-expands its inline input. The node context menu's **View as** subview remains a
-secondary text entry point rather than the only discoverable mode control.
+expands its inline input. The node context menu's **View as** flyout remains a
+secondary text entry point rather than the only discoverable mode control. It
+opens on pointer hover as well as click or `ArrowRight`; pointer opening does not
+move focus, while keyboard opening focuses the flyout and `ArrowLeft` returns to
+its parent item.
 These controls all read and write `viewDef` child nodes
 (`displayField`, `sortRule`, `filterRule`, plus the view's `groupField`) rather
 than storing renderer-local state.
@@ -416,8 +419,8 @@ do not use link, brand, or status color.
 
 Each non-name Filter rule additionally appears as a compact neutral chip because
 it is an independently editable and removable object, not only a status summary.
-Filter chips sit immediately after the configured Filter control in one wrap-aware
-group and open the editor
+Filter chips sit immediately after the configured Filter control in one
+single-line group and open the editor
 for that specific saved `filterRule`, not merely the first rule for that field.
 That matters because advanced states may contain multiple filters against the
 same field. A Filter rule chip reads as the field name with a trailing remove
@@ -705,10 +708,11 @@ Search Outline and Table therefore use the same ViewToolbar as ordinary Nodes
 rather than stacking a query summary and a second Search-specific control band.
 Both modes keep Outline/Table, name search, Display, Group, Sort, and Filter in
 the same functional order. At narrow pane widths controls keep the shared fixed
-control size; the Filter control and its rule chips wrap as one functional group
-instead of shrinking, clipping, or separating. Each
+control size and remain on one line; the toolbar owns native horizontal overflow,
+while the Filter control and its rule chips stay together instead of shrinking or
+separating. Each
 custom tooltip anchors to the control that currently owns hover or keyboard
-focus, including after controls wrap. Moving directly between controls
+focus, including after horizontal scrolling. Moving directly between controls
 remeasures the new label's intrinsic width, so a short tooltip never inherits the
 width or location of the previous control.
 

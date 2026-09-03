@@ -39,10 +39,14 @@ export interface FlyoutPlacementInput {
    * Feeding it the current height instead is what makes a growing flyout move.
    */
   readonly placementHeight: number;
+  /** Side to try first; the opposite side is used when only it fits. */
+  readonly preferredSide?: FlyoutSide;
   readonly viewportHeight: number;
   readonly viewportWidth: number;
   readonly width: number;
 }
+
+export type FlyoutSide = 'left' | 'right';
 
 export interface FlyoutPlacement {
   readonly left: number;
@@ -53,14 +57,15 @@ export interface FlyoutPlacement {
 export function resolveFlyoutPlacement(input: FlyoutPlacementInput): FlyoutPlacement {
   const {
     anchorLeft, anchorRight, anchorTop, gap, margin, placementHeight,
+    preferredSide = 'left',
     viewportHeight, viewportWidth, width,
   } = input;
-  // The reading side first: a submenu that would hang off the right edge opens
-  // to the left of its row instead of being clamped on top of it.
   const fitsLeft = anchorLeft - gap - width >= margin;
-  const left = fitsLeft
-    ? anchorLeft - gap - width
-    : clamp(anchorRight + gap, margin, Math.max(margin, viewportWidth - width - margin));
+  const fitsRight = anchorRight + gap + width <= viewportWidth - margin;
+  const leftTarget = preferredSide === 'left'
+    ? (fitsLeft || !fitsRight ? anchorLeft - gap - width : anchorRight + gap)
+    : (fitsRight || !fitsLeft ? anchorRight + gap : anchorLeft - gap - width);
+  const left = clamp(leftTarget, margin, Math.max(margin, viewportWidth - width - margin));
   const top = clamp(
     anchorTop - margin,
     margin,

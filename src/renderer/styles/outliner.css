@@ -281,16 +281,17 @@
   align-items: center;
   gap: var(--space-2);
   min-height: var(--control-size-xl);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .view-toolbar-control-group {
   display: inline-flex;
   min-width: 0;
-  max-width: 100%;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--space-2);
 }
 
@@ -833,10 +834,11 @@ button.outliner-table-column-kind:focus-visible {
    configured Filter control. Singular view settings use their control state only. */
 .view-toolbar-summary {
   display: flex;
-  max-width: min(520px, 100%);
+  max-width: 520px;
   min-width: 0;
+  flex: 0 0 auto;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--space-1);
   padding: 0;
   color: var(--text-tertiary);
@@ -920,6 +922,7 @@ button.outliner-table-column-kind:focus-visible {
   display: inline-flex;
   width: var(--control-size-xl);
   height: var(--control-size-xl);
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
@@ -3214,9 +3217,14 @@ button.outliner-table-column-kind:focus-visible {
   text-align: left;
 }
 
-.node-context-item:hover {
+.node-context-item:hover,
+.node-context-item.is-open {
   background: var(--control-hover);
   color: var(--text-primary);
+}
+
+.node-context-submenu {
+  min-width: 0;
 }
 
 .node-context-item.is-danger {

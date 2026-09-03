@@ -39,6 +39,7 @@ import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
+import { useFlyoutOverlay } from '../primitives/useFlyoutOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { resolveTagColor } from '../tags/tagColors';
 import type { NavigateRootOptions } from '../shared';
@@ -69,8 +70,9 @@ interface NodeContextMenuProps {
 
 type MenuMode =
   | { kind: 'main' }
-  | { kind: 'viewMode' }
   | { kind: 'parameter'; slot: ArgumentSlot; title: string; inputLabel: string; placeholder: string };
+
+type ViewModeMenuState = 'closed' | 'pointer' | 'keyboard';
 
 const CANDIDATE_DEBOUNCE_MS = 120;
 
@@ -80,6 +82,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const tc = t.outliner.contextMenu;
   const [opening, setOpening] = useState<InvocationOpened | null>(null);
   const [mode, setMode] = useState<MenuMode>({ kind: 'main' });
+  const [viewModeMenuState, setViewModeMenuState] = useState<ViewModeMenuState>('closed');
   const [query, setQuery] = useState('');
   // The query the candidates were resolved FOR. Enter must never commit a list
   // that belongs to older text: the picker is debounced and answered over IPC,
@@ -93,6 +96,8 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const inFlightRef = useRef(0);
   const unmountedRef = useRef(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const viewModeItemRef = useRef<HTMLButtonElement | null>(null);
+  const viewModeMenuRef = useRef<HTMLDivElement | null>(null);
   const menuAnchor = useMemo(() => overlayAnchorFromPoint(props.x, props.y), [props.x, props.y]);
   const menuStyle = useAnchoredOverlay(menuRef, {
     anchorRect: menuAnchor,
@@ -101,6 +106,17 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     placement: 'bottom-start',
     width: mode.kind === 'main' ? 240 : 280,
   });
+  const viewModeMenuOpen = viewModeMenuState !== 'closed';
+  const viewModeMenuStyle = useFlyoutOverlay(
+    viewModeMenuRef,
+    viewModeItemRef,
+    viewModeMenuOpen,
+    180,
+    `view-mode:${props.targetId}`,
+    currentViewMode(props),
+    'right',
+  );
+  const dismissIgnoreRefs = useMemo(() => [viewModeMenuRef], []);
 
   // The seed carries renderer FACTS only. Main validates the ids, derives each
   // node's row/content/canonical-surface facets plus the selection roots,
@@ -217,7 +233,10 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     };
   }, [seed]);
 
-  useDismissibleOverlay(menuRef, props.onClose, { escape: false });
+  useDismissibleOverlay(menuRef, props.onClose, {
+    escape: false,
+    ignoreRefs: dismissIgnoreRefs,
+  });
   const { onKeyDown } = useMenuKeyboard({
     surfaceRef: menuRef,
     onClose: props.onClose,
@@ -226,6 +245,15 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     // effect must re-run then — otherwise the menu never takes focus and Escape
     // is never captured.
     focusKey: opening ? mode.kind : 'pending',
+  });
+  const closeViewModeMenu = () => setViewModeMenuState('closed');
+  const { onKeyDown: onViewModeMenuKeyDown } = useMenuKeyboard({
+    surfaceRef: viewModeMenuRef,
+    onClose: closeViewModeMenu,
+    kind: 'menu',
+    active: viewModeMenuState === 'keyboard',
+    getRestoreTarget: () => viewModeItemRef.current,
+    focusKey: `${viewModeMenuState}:${currentViewMode(props)}`,
   });
 
   const runRequest = async (presentation: ActionPresentation, args: unknown) => {
@@ -320,11 +348,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const menuActions = opening?.menuActions ?? [];
   const viewModeActions = menuActions.filter((action) => action.actionId === 'setViewMode');
 
-  const modeLabel = mode.kind === 'main'
-    ? tc.nodeActions
-    : mode.kind === 'viewMode'
-      ? nameFor(ACTION_FAMILY_NAMES.setViewMode, locale)
-      : mode.title;
+  const modeLabel = mode.kind === 'main' ? tc.nodeActions : mode.title;
 
   if (!opening) return null;
 
@@ -344,11 +368,31 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         rendered.push(
           <MenuItem
             key="setViewMode"
+            active={viewModeMenuOpen}
+            activeClassName="is-open"
+            aria-expanded={viewModeMenuOpen}
+            aria-haspopup="menu"
             className="node-context-item"
             icon={actionIcon(activeViewModeIcon(viewModeActions, props, props.index))}
             label={nameFor(ACTION_FAMILY_NAMES.setViewMode, locale)}
             meta={<ChevronRightIcon size={ICON_SIZE.menu} />}
-            onClick={() => setMode({ kind: 'viewMode' })}
+            onClick={() => setViewModeMenuState('keyboard')}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowLeft' && viewModeMenuOpen) {
+                event.preventDefault();
+                event.stopPropagation();
+                closeViewModeMenu();
+                return;
+              }
+              if (event.key !== 'ArrowRight') return;
+              event.preventDefault();
+              event.stopPropagation();
+              setViewModeMenuState('keyboard');
+            }}
+            onMouseEnter={() => {
+              setViewModeMenuState((current) => current === 'keyboard' ? current : 'pointer');
+            }}
+            ref={viewModeItemRef}
             role="menuitem"
           />,
         );
@@ -367,6 +411,8 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
           icon={actionIcon(action.iconId)}
           label={nameFor(action.names, locale)}
           onClick={() => activate(action)}
+          onFocus={closeViewModeMenu}
+          onMouseEnter={closeViewModeMenu}
           role="menuitem"
         />,
       );
@@ -374,12 +420,31 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     return <>{rendered}</>;
   };
 
-  const renderViewMode = () => (
-    <>
-      <div className="node-context-subhead">
-        <Button onClick={() => setMode({ kind: 'main' })} size="sm" variant="ghost">{tc.back}</Button>
-        <span>{nameFor(ACTION_FAMILY_NAMES.setViewMode, locale)}</span>
-      </div>
+  const renderViewModeMenu = () => (
+    <MenuSurface
+      ref={viewModeMenuRef}
+      aria-label={nameFor(ACTION_FAMILY_NAMES.setViewMode, locale)}
+      className="node-context-menu node-context-submenu"
+      preserveSelection
+      role="menu"
+      style={viewModeMenuStyle}
+      onKeyDown={(event) => {
+        if (event.key === 'Tab') {
+          event.preventDefault();
+          props.onClose();
+          return;
+        }
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault();
+          event.stopPropagation();
+          closeViewModeMenu();
+          viewModeItemRef.current?.focus({ preventScroll: true });
+          return;
+        }
+        onViewModeMenuKeyDown(event);
+      }}
+      onMouseDown={(event) => event.stopPropagation()}
+    >
       {viewModeActions.map((action) => {
         const mode_ = action.binding.state === 'ready'
           ? (action.binding.arguments as { mode: 'outline' | 'table' }).mode
@@ -389,15 +454,17 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
           <MenuItem
             key={mode_}
             active={active}
+            aria-checked={active}
             className="node-context-item"
             icon={actionIcon(action.iconId)}
             label={nameFor(action.names, locale)}
             meta={active ? <CheckIcon size={ICON_SIZE.menu} /> : null}
             onClick={() => activate(action)}
+            role="menuitemradio"
           />
         );
       })}
-    </>
+    </MenuSurface>
   );
 
   const pickCandidate = (candidate: ObjectPresentation) => {
@@ -470,10 +537,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       >
         {mode.kind === 'main'
           ? renderMain()
-          : mode.kind === 'viewMode'
-            ? renderViewMode()
-            : renderParameter(mode)}
+          : renderParameter(mode)}
       </MenuSurface>
+      {mode.kind === 'main' && viewModeMenuOpen ? renderViewModeMenu() : null}
     </>,
     document.body,
   );
@@ -548,4 +614,3 @@ function candidateIcon(
     </span>
   );
 }
-

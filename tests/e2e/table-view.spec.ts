@@ -58,8 +58,10 @@ async function configureRootTable(page: Page) {
 
 async function switchRootFromContextMenu(page: Page, mode: 'Outline' | 'Table') {
   await page.locator('.panel-title-editor').first().click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'View as', exact: true }).click();
-  await page.getByRole('dialog', { name: 'View as' }).getByRole('button', { name: mode, exact: true }).click();
+  await page.getByRole('menuitem', { name: 'View as', exact: true }).hover();
+  await page.getByRole('menu', { name: 'View as' })
+    .getByRole('menuitemradio', { name: mode, exact: true })
+    .click();
 }
 
 function rootGrid(page: Page) {
@@ -69,6 +71,38 @@ function rootGrid(page: Page) {
 test.describe('table view', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page, { dateField: true });
+  });
+
+  test('opens View as as a hover, click, and keyboard submenu', async ({ page }) => {
+    await page.locator('.panel-title-editor').first().click({ button: 'right' });
+    const parentMenu = page.getByRole('menu', { name: 'Node actions' });
+    const viewAs = parentMenu.getByRole('menuitem', { name: 'View as', exact: true });
+    const submenu = page.getByRole('menu', { name: 'View as' });
+
+    await viewAs.hover();
+    await expect(submenu).toBeVisible();
+    await expect(viewAs).toHaveAttribute('aria-expanded', 'true');
+    await submenu.getByRole('menuitemradio', { name: 'Outline', exact: true }).hover();
+    await expect(submenu).toBeVisible();
+    await expect(parentMenu).toBeVisible();
+
+    await viewAs.focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(submenu).toHaveCount(0);
+
+    await viewAs.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(submenu.getByRole('menuitemradio').first()).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await expect(submenu).toHaveCount(0);
+    await expect(viewAs).toBeFocused();
+
+    await viewAs.click();
+    await expect(submenu).toBeVisible();
+    await expect(submenu.getByRole('menuitemradio').first()).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(submenu).toHaveCount(0);
+    await expect(viewAs).toBeFocused();
   });
 
   test('switches the same children through View as and preserves the saved group rule', async ({ page }) => {

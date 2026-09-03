@@ -141,37 +141,44 @@ test.describe('search query builder', () => {
       const contentStart = Number.parseFloat(getComputedStyle(toolbar).marginLeft);
       const modeWidth = toolbar.querySelector<HTMLElement>('.view-toolbar-mode')!.getBoundingClientRect().width;
       scope.style.width = `${modeWidth + controlSize + contentStart}px`;
-      const toolbarRect = toolbar.getBoundingClientRect();
+      const row = toolbar.querySelector<HTMLElement>('.view-toolbar-button-row')!;
       const controls = [...toolbar.querySelectorAll<HTMLElement>(
         '.view-toolbar-button-row .view-toolbar-pill, .view-toolbar-mode-button',
       )];
       const modeButtons = [...toolbar.querySelectorAll<HTMLElement>('.view-toolbar-mode-button')];
       const modeGroup = toolbar.querySelector<HTMLElement>('.view-toolbar-mode')!;
       const modeButtonTop = modeButtons[0]!.getBoundingClientRect().top;
+      const controlCenter = (() => {
+        const rect = controls[0]!.getBoundingClientRect();
+        return rect.top + rect.height / 2;
+      })();
+      const fixedControls = [...toolbar.querySelectorAll<HTMLElement>('.view-toolbar-pill')];
       const modeButtonsWidth = modeButtons.reduce((width, button) => (
         width + button.getBoundingClientRect().width
       ), 0);
       const geometry = {
-        controlsContained: controls.every((control) => {
-          const rect = control.getBoundingClientRect();
-          return rect.left >= toolbarRect.left - 0.5
-            && rect.right <= toolbarRect.right + 0.5
-            && rect.width >= controlSize - 0.5;
-        }),
+        controlsUnshrunk: fixedControls.every((control) => (
+          control.getBoundingClientRect().width >= controlSize - 0.5
+        )),
         modeGroupIntact: modeButtons.every((button) => (
           Math.abs(button.getBoundingClientRect().top - modeButtonTop) < 0.5
         )) && modeGroup.getBoundingClientRect().width >= modeButtonsWidth - 0.5,
-        overflowFree: toolbar.scrollWidth <= toolbar.clientWidth + 1,
-        wrapped: toolbarRect.height > controlSize + 0.5,
+        ownsHorizontalOverflow: getComputedStyle(row).overflowX === 'auto'
+          && row.scrollWidth > row.clientWidth + 1,
+        singleLine: getComputedStyle(row).flexWrap === 'nowrap'
+          && controls.every((control) => {
+            const rect = control.getBoundingClientRect();
+            return Math.abs(rect.top + rect.height / 2 - controlCenter) < 0.5;
+          }),
       };
       scope.style.removeProperty('width');
       return geometry;
     });
     expect(narrowGeometry).toEqual({
-      controlsContained: true,
+      controlsUnshrunk: true,
       modeGroupIntact: true,
-      overflowFree: true,
-      wrapped: true,
+      ownsHorizontalOverflow: true,
+      singleLine: true,
     });
     await page.setViewportSize(originalViewport);
 
