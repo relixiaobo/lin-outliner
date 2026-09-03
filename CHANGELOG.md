@@ -478,6 +478,17 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Fixed
 
+- **Development builds start correctly under the Electron main-process ESM
+  bundle** — Desktop Host window composition now uses the module directory
+  already resolved by the bootstrap entry, and optional macOS native addons
+  derive their development path from `import.meta.url` instead of unavailable
+  CommonJS globals. A source guard prevents either path from reintroducing bare
+  `__dirname`. Verified with typecheck, `docs:check`, focused Host composition
+  tests, and a real `dev:main` launch through Outline Runtime and launcher
+  hotkey registration. The complete Core suite retained eight unrelated
+  load-sensitive failures; seven passed when isolated, while the existing
+  ordinary-write SIGINT timing case remained independently reproducible.
+
 - **The standalone Outliner Runtime again carries the complete mature desktop
   experience (PR #592, codex)** — coalesced and optimistic text, structural, and
   field editing now preserve first-frame focus, editor identity, IME continuity,

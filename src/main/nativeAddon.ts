@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Shared loader for optional macOS native addons (the `window_corner` and
 // `browser_tab` .node files). Both have identical packaged-vs-dev path resolution,
@@ -28,8 +29,9 @@ function appIsPackaged(): boolean {
  * own result), since the validated type differs per addon.
  *
  * Packaged: electron-builder copies the .node into `Resources/native/<fileName>`.
- * Dev/build-from-source: `__dirname` is `<repo>/out/main`, so the compiled addon
- * sits two levels up under `native/<devSubdir>/build/Release/<fileName>`.
+ * Dev/build-from-source: this module's directory is `<repo>/out/main`, so the
+ * compiled addon sits two levels up under
+ * `native/<devSubdir>/build/Release/<fileName>`.
  */
 export function loadOptionalMacAddon<T>(args: {
   fileName: string;
@@ -38,9 +40,10 @@ export function loadOptionalMacAddon<T>(args: {
 }): T | null {
   if (process.platform !== 'darwin') return null;
   try {
+    const moduleDir = fileURLToPath(new URL('.', import.meta.url));
     const candidates = appIsPackaged()
       ? [join(process.resourcesPath, 'native', args.fileName)]
-      : [join(__dirname, `../../native/${args.devSubdir}/build/Release/${args.fileName}`)];
+      : [join(moduleDir, `../../native/${args.devSubdir}/build/Release/${args.fileName}`)];
     const found = candidates.find((path) => existsSync(path));
     if (!found) return null;
     const mod = createRequire(import.meta.url)(found) as unknown;

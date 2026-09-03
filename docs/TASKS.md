@@ -212,6 +212,9 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **electron-main-esm-startup** (`done`, fast-track, 2026-09-03) — development
+  startup and optional macOS native addon resolution now use ESM-compatible
+  module-directory paths, with a source guard covering both call sites.
 - **pi-ai-0-84-upgrade** (`done`, #622, 2026-09-03) — provider-scoped dynamic
   catalogs now use generation-safe publication through durable cancellation,
   isolated credential probes, and current Baseten/Qwen provider metadata; plan
