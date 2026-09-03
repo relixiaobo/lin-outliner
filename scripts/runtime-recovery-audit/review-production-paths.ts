@@ -102,7 +102,7 @@ add([
 ], 'confirmed-regression-fixed', 'Public outline capability parser', 'tests/core/agentCapabilities.test.ts', 'classifies outline shell commands from the public capability registry', 'The recovered parser recognizes one direct public outline invocation, including bounded global options and output mode, without reviving the retired private Agent document tools.');
 add([
   'src/main/agent/extensions/memory/MemoryExtension.ts',
-], 'confirmed-regression-fixed', 'Memory citation accounting through public outline show', 'tests/core/agentMemory.test.ts', 'routes Memory lookup without injecting prose and counts only an inline citation of an exact show', 'Memory usage accounting is reattached to successful public outline show results and completed inline Node citations while failed, unrelated, uncited, or non-final evidence remains excluded.');
+], 'confirmed-regression-fixed', 'Memory citation accounting through public outline get', 'tests/core/agentMemory.test.ts', 'routes Memory lookup without injecting prose and counts only an inline citation of an exact get', 'Memory usage accounting is reattached to successful public outline get results and completed inline Node citations while failed, unrelated, uncited, or non-final evidence remains excluded.');
 add([
   'src/main/agent/extensions/memory/TimelineMemoryStore.ts',
 ], 'confirmed-regression-fixed', 'TimelineMemoryStore through OutlineDocumentService planning', 'tests/core/outlineDocumentService.test.ts', 'plans Memory publication after earlier document mutations have updated the projection', 'Memory planning is again serialized behind already-admitted document work and deterministic definitions settle durably through the Runtime.');

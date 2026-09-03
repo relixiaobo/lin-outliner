@@ -58,9 +58,9 @@ describe('agent capabilities', () => {
   test('classifies stdin consumers from command structure without inspecting payload text', async () => {
     expect(classifyBashStdinConsumer('printf input', false)).toBe('absent');
     for (const command of [
-      'outline add --input -',
-      'outline --json commit --input - --message exact',
-      'env OUTLINE_SOCKET=/tmp/outline.sock outline --no-start diff --input - --selector root',
+      'outline create --input -',
+      'outline --json transact --input -',
+      'env OUTLINE_SOCKET=/tmp/outline.sock outline --no-start preview --input -',
     ]) expect(classifyBashStdinConsumer(command, true), command).toBe('registered-data');
 
     for (const command of [
@@ -79,25 +79,25 @@ describe('agent capabilities', () => {
 
     for (const command of [
       'capture-input',
-      'sh -c "outline add --input -"',
-      'outline add --input - | cat',
-      'outline add --input - && true',
-      'outline add --input - --input other',
-      'outline add --input - --file other.json',
-      'outline add --input - --input=other',
-      'outline add --input - --file=other.json',
-      'outline show --selector -',
-      'outline show --projection -',
+      'sh -c "outline create --input -"',
+      'outline create --input - | cat',
+      'outline create --input - && true',
+      'outline create --input - --input other',
+      'outline create --input - --file other.json',
+      'outline create --input - --input=other',
+      'outline create --input - --file=other.json',
+      'outline get --selector -',
+      'outline get --projection -',
       'outline apply --input -',
       'outline asset ingest -',
-      'outline add --input $(printf -- -)',
+      'outline create --input $(printf -- -)',
     ]) expect(classifyBashStdinConsumer(command, true), command).toBe('unknown');
 
     const payloads = ['safe data', '$(touch /tmp/never)', '-----BEGIN PRIVATE KEY-----'];
     for (const stdin of payloads) {
       const decision = evaluateAgentToolCapability({
         toolName: 'bash',
-        args: { command: 'outline add --input -', stdin },
+        args: { command: 'outline create --input -', stdin },
         policy: { workspaceRoot: (await workspaceFixture()).workspace },
       });
       expect(decision.descriptors.map((entry) => entry.actionKind)).toEqual(['outline.edit']);
@@ -167,9 +167,9 @@ describe('agent capabilities', () => {
   test('classifies outline shell commands from the public capability registry', async () => {
     const { workspace } = await workspaceFixture();
     const cases = [
-      ['outline --json show @today', ['outline.read']],
-      ['outline --timeout 300000 --json show @today', ['outline.read']],
-      ['TENON_TEST=1 command outline diff --file changes.json', ['outline.read']],
+      ['outline --json get @today', ['outline.read']],
+      ['outline --timeout 300000 --json get @today', ['outline.read']],
+      ['TENON_TEST=1 command outline preview --file changes.json', ['outline.read']],
       ['/Applications/Tenon.app/Contents/Resources/outline apply --file diff.json', ['outline.edit', 'outline.delete']],
       ['outline --timeout 300000 apply --file diff.json', ['outline.edit', 'outline.delete']],
       ['outline daily ensure --date 2026-08-24', ['outline.edit']],
@@ -184,19 +184,19 @@ describe('agent capabilities', () => {
       });
       expect(decision.descriptors.map((descriptor) => descriptor.actionKind), command).toEqual(actionKinds);
     }
-    expect(directOutlineShellInvocation('outline --timeout 300000 show @today')).toEqual({
-      command: 'show',
+    expect(directOutlineShellInvocation('outline --timeout 300000 get @today')).toEqual({
+      command: 'get',
       args: ['@today'],
       output: 'summary',
     });
-    expect(directOutlineShellInvocation('outline --human show @today')).toBeNull();
-    expect(directOutlineShellInvocation('outline show @today && echo done')).toBeNull();
+    expect(directOutlineShellInvocation('outline --human get @today')).toBeNull();
+    expect(directOutlineShellInvocation('outline get @today && echo done')).toBeNull();
   });
 
   test('applies outline Action blocks to shell commands', async () => {
     const { workspace } = await workspaceFixture();
     for (const [actionKind, command] of [
-      ['outline.edit', 'outline add --parent @today --text Note'],
+      ['outline.edit', 'outline create --parent @today --text Note'],
       ['outline.delete', 'outline apply --file diff.json'],
     ] as const) {
       expect(evaluateAgentToolCapability({
@@ -346,7 +346,7 @@ describe('agent capabilities', () => {
         subagentPolicy: policy(kind),
       })).rejects.toMatchObject({ code: 'operation_unavailable' });
       await expect(executeAgentSkillShellCommand({
-        command: 'outline add --parent @today --text changed',
+        command: 'outline create --parent @today --text changed',
         localRoot: workspace,
         capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
         subagentPolicy: policy(kind),

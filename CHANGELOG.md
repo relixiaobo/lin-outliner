@@ -12,6 +12,27 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Outline Agent authoring now uses one semantic interface from intent through
+  durable receipt (PR #619, codex-2)** — direct creation, exact reads, bounded
+  edits, reusable Fields, Views, Saved Searches, lifecycle operations, imports,
+  exports, history, and recovery share one public Node/Field/View/Operation
+  vocabulary, while Outline, Table, Cards, and Calendar remain projections over
+  the same document state. Registry-derived help, recipes, schemas, permission
+  classification, the built-in Skill, and compact receipts now keep common
+  workflows executable without storage-shaped traversal or speculative schema
+  discovery. Reviewed mutations persist distinct submitted-intent and normalized
+  execution identities, replay immutable effect summaries before consulting
+  current state, and resolve exact Field identities ahead of same-name lookup.
+  The required Operation intent identity advances the Outline workspace to
+  storage version 3; pre-#619 v2 workspaces follow the pre-release manual-reset
+  policy rather than a compatibility reader. Gate review found three High and
+  ten Medium idempotency, receipt, Field-resolution, lowering, probe, and storage-
+  boundary defects across four rounds; all were fixed before the final no-
+  findings review. Verified with typecheck, `docs:check`, 60 focused tests,
+  2,833 passing Core tests with 6 skipped, 1,486 renderer tests, a real 10,000-
+  Node Runtime probe, a main-to-PR storage-boundary A/B, whitespace checks, and
+  five successful GitHub E2E samples plus baseline subtraction.
+
 - **Child Agent model choices now live in Agent Settings (PR #618, codex-4)**
   — every collaboration Agent type starts by following its direct parent's
   provider, model, and reasoning effort, while an optional user/project setting

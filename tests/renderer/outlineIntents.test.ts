@@ -333,7 +333,7 @@ describe('renderer Outline intents', () => {
         resource: 'definition',
         definitionType: 'field',
         name: 'Estimate',
-        fieldType: 'number',
+        config: { fieldType: 'number' },
         bind: 'field',
       },
       {
@@ -712,13 +712,13 @@ async function createHarness(
       };
     },
     request: async (request) => {
-      if (request.command === 'show') {
+      if (request.command === 'get') {
         return success(request, {
           ...projectionResult(projection, revision),
           ...(backlinks.length > 0 ? { backlinks } : {}),
         });
       }
-      if (request.command === 'diff') {
+      if (request.command === 'preview') {
         const changeSet = (request.input as { changeSet: ChangeSet }).changeSet;
         changeSets.push(changeSet);
         return success(request, diffFor(changeSet, revision));
@@ -798,6 +798,7 @@ function diffFor(changeSet: ChangeSet, revision: number): Diff {
     protocolVersion: 1,
     kind: 'outline.diff',
     diffHash: HASH,
+    intentHash: HASH,
     changeSetHash: HASH,
     baseRevision: revision,
     normalizedChangeSet: changeSet,
@@ -814,6 +815,7 @@ function operationFor(revisionAfter: number, sequence: number): Operation {
     protocolVersion: 1,
     kind: 'outline.operation',
     operationId: `operation:${sequence}`,
+    intentHash: HASH,
     changeSetHash: HASH,
     diffHash: HASH,
     origin: 'desktop',

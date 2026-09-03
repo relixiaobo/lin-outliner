@@ -392,7 +392,7 @@ export class MemoryExtension implements AgentCoreExtension {
   onToolCompleted(context: ToolLifecycleResult): void {
     const usage = this.turnMemoryUsage.get(context.turnId);
     if (!usage || usage.threadId !== context.threadId) return;
-    const returnedNodeIds = outlineShowNodeIds(context);
+    const returnedNodeIds = outlineGetNodeIds(context);
     if (returnedNodeIds.size === 0) return;
     let visible: Map<string, CanonicalMemoryNode>;
     try {
@@ -654,7 +654,7 @@ function isMemoryPublication(operation: Operation | undefined): boolean {
     && operation.source.label?.startsWith('Memory publication generation ') === true;
 }
 
-function outlineShowNodeIds(context: ToolLifecycleResult): ReadonlySet<string> {
+function outlineGetNodeIds(context: ToolLifecycleResult): ReadonlySet<string> {
   if (
     context.identity.namespace !== null
     || context.identity.name !== 'bash'
@@ -663,7 +663,7 @@ function outlineShowNodeIds(context: ToolLifecycleResult): ReadonlySet<string> {
     || typeof context.arguments.command !== 'string'
   ) return new Set();
   const invocation = directOutlineShellInvocation(context.arguments.command);
-  if (!invocation || invocation.command !== 'show' || invocation.output !== 'json') return new Set();
+  if (!invocation || invocation.command !== 'get' || invocation.output !== 'json') return new Set();
   const stdout = successfulBashStdout(context.result);
   if (stdout === null) return new Set();
   let parsed: unknown;
@@ -675,7 +675,7 @@ function outlineShowNodeIds(context: ToolLifecycleResult): ReadonlySet<string> {
   if (
     !checkOutlineSchema(OutlineResponseSchema, parsed)
     || !parsed.ok
-    || parsed.command !== 'show'
+    || parsed.command !== 'get'
     || !checkOutlineSchema(ProjectionResultSchema, parsed.data)
   ) return new Set();
   const projection: ProjectionResult = parsed.data;
@@ -724,7 +724,7 @@ function rollbackMatchesMarker(
 
 const MEMORY_OPERATION_CONTEXT = `Durable Memory is stored as ordinary editable Nodes under source-date Daily Notes.
 The canonical hierarchy is one direct #d-memory container under a Daily Note, direct #d-episode children, and optional #d-belief, #d-question, or #d-guidance descendants.
-When prior preferences, decisions, commitments, unresolved questions, or recurring workflow facts could materially improve the response, use outline find to locate relevant Memory and inspect only the one or two most relevant results with outline --json show before relying on them. Skip Memory lookup for self-contained requests such as the current date or time, simple formatting or transformation, and questions fully answerable from the current Turn.
+When prior preferences, decisions, commitments, unresolved questions, or recurring workflow facts could materially improve the response, use outline find to locate relevant Memory and inspect only the one or two most relevant results with outline --json get before relying on them. Skip Memory lookup for self-contained requests such as the current date or time, simple formatting or transformation, and questions fully answerable from the current Turn.
 When a final answer relies on an ordinary Memory Node you read, cite it inline next to the relevant claim as [[node://UUID]], removing the internal node: prefix. Do not add a separate sources or used-memory section.
 Use the public outline workflow only when the user explicitly asks to remember, update, or forget durable information. Reuse a same-date canonical container when present, apply the fixed tag IDs tag:d-memory, tag:d-episode, tag:d-belief, tag:d-question, and tag:d-guidance, and keep the hierarchy valid.
 Do not create unsolicited Memory, do not treat routine transcript narration as Memory, and do not modify stray reserved-tag Nodes outside the canonical hierarchy.`;

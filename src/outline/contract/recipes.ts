@@ -16,40 +16,74 @@ export const OutlineRecipeSchema = Type.Object({
 
 export type OutlineRecipe = Static<typeof OutlineRecipeSchema>;
 
-const viewedTreeInput = {
-  kind: 'viewed-tree',
-  placement: { kind: 'first', parent: '@today' },
-  title: 'Prices',
-  fields: [
-    { key: 'price', name: 'Price', config: { fieldType: 'number' } },
-  ],
-  items: [
-    { content: 'Item A', values: { price: 12 } },
-  ],
-  view: { mode: 'table' },
-};
-
 const recipes = [
   {
-    command: 'add',
-    variant: 'viewed-tree',
-    intent: 'Create one native view-backed collection below one exact destination.',
-    invocation: 'outline add --input -',
-    stdin: JSON.stringify(viewedTreeInput, null, 2),
-    receipt: 'mutation',
-    verify: 'outline view inspect OWNER_ID',
-  },
-  {
-    command: 'add',
-    variant: 'typed-tree',
-    intent: 'Create one complete typed Node tree below one exact destination.',
-    invocation: 'outline add --input -',
+    command: 'create',
+    variant: 'collection',
+    intent: 'Create one Node tree with reusable typed fields and an optional View.',
+    invocation: 'outline create --input -',
     stdin: JSON.stringify({
-      placement: { kind: 'last', parent: '@inbox' },
-      nodes: [{ type: 'plain', content: { text: 'Project', marks: [], inlineRefs: [] }, children: [] }],
+      at: { parent: '@today', position: 'first' },
+      fields: [
+        { key: 'weather', name: 'Weather', type: 'text' },
+        { key: 'low', name: 'Night low (C)', type: 'number' },
+      ],
+      node: {
+        text: 'Chengdu district weather',
+        description: 'Sunny throughout.',
+        children: [
+          { text: 'Central districts', fields: { weather: 'Sunny', low: 21 } },
+        ],
+      },
+      view: { mode: 'table', display: ['weather', 'low'] },
     }, null, 2),
     receipt: 'mutation',
-    verify: 'outline show CREATED_NODE_ID',
+  },
+  {
+    command: 'edit',
+    variant: 'complete',
+    intent: 'Converge content, completion, tags, fields, and references in one request.',
+    invocation: 'outline edit --input -',
+    stdin: JSON.stringify({
+      target: 'node:replace-me',
+      node: { description: 'Ready for review', done: true },
+      tags: { add: ['tag:priority'] },
+      fields: [{ field: 'field:status', value: 'Active' }],
+      references: [{ action: 'add', target: 'node:reference-target' }],
+    }, null, 2),
+    receipt: 'mutation',
+  },
+  {
+    command: 'define ensure',
+    variant: 'field',
+    intent: 'Reuse or create one compatible typed Field definition.',
+    invocation: 'outline define ensure --input -',
+    stdin: JSON.stringify({ kind: 'field', name: 'Priority', type: 'select' }, null, 2),
+    receipt: 'mutation',
+  },
+  {
+    command: 'view set',
+    variant: 'complete',
+    intent: 'Replace one effective View configuration without changing scoped Nodes.',
+    invocation: 'outline view set --input -',
+    stdin: JSON.stringify({
+      target: 'node:replace-me',
+      view: {
+        mode: 'table',
+        toolbar: true,
+        group: 'field:status',
+        replace: {
+          sort: [{ field: 'field:score', direction: 'desc' }],
+          filters: [{ field: 'field:status', operator: 'is', values: ['Active'] }],
+          display: [
+            { field: 'sys:name' },
+            { field: 'field:status' },
+            { field: 'field:score' },
+          ],
+        },
+      },
+    }, null, 2),
+    receipt: 'mutation',
   },
   {
     command: 'find',
@@ -66,10 +100,10 @@ const recipes = [
     receipt: 'count',
   },
   {
-    command: 'done set',
+    command: 'edit',
     variant: 'bounded-query',
-    intent: 'Set done state on a query-selected Node set with an explicit maximum.',
-    invocation: 'outline done set --input -',
+    intent: 'Converge a bounded query-selected Node set in one Operation.',
+    invocation: 'outline edit --input -',
     stdin: JSON.stringify({
       target: {
         selector: {
@@ -81,16 +115,15 @@ const recipes = [
         cardinality: 'many',
         max: 25,
       },
-      value: true,
+      node: { done: true },
     }, null, 2),
     receipt: 'mutation',
-    verify: 'outline find "Project task" --limit 25',
   },
   {
-    command: 'commit',
+    command: 'transact',
     variant: 'dependent-change',
     intent: 'Apply one non-destructive multi-resource change with bindings.',
-    invocation: 'outline commit --input -',
+    invocation: 'outline transact --input -',
     stdin: JSON.stringify({
       protocolVersion: 1,
       kind: 'outline.changeset',
@@ -104,20 +137,19 @@ const recipes = [
           bind: 'project',
         },
         {
-          op: 'update',
-          targets: { binding: 'project' },
-          changes: [{ kind: 'description', value: 'Created atomically.' }],
+          op: 'move',
+          targets: { target: { selector: { by: 'id', id: 'node:existing-task' }, cardinality: 'one' } },
+          placement: { kind: 'last', parent: { binding: 'project' } },
         },
       ],
     }, null, 2),
     receipt: 'mutation',
-    verify: 'outline show CREATED_NODE_ID',
   },
   {
-    command: 'diff',
+    command: 'preview',
     variant: 'reviewed-change',
     intent: 'Preview a ChangeSet and persist the immutable Diff for exact application.',
-    invocation: 'outline diff --input - --output reviewed-diff.json',
+    invocation: 'outline preview --input - --output reviewed-diff.json',
     stdin: JSON.stringify({
       protocolVersion: 1,
       kind: 'outline.changeset',
@@ -145,13 +177,25 @@ const recipes = [
       view: { mode: 'table' },
     }, null, 2),
     receipt: 'mutation',
-    verify: 'outline show CREATED_SEARCH_ID --include view',
   },
   {
-    command: 'capture add',
+    command: 'search edit',
+    variant: 'complete',
+    intent: 'Converge one Saved Search title, query, and View in one request.',
+    invocation: 'outline search edit --input -',
+    stdin: JSON.stringify({
+      target: 'node:replace-me',
+      title: 'Active modules',
+      match: 'active module',
+      view: { mode: 'cards' },
+    }, null, 2),
+    receipt: 'mutation',
+  },
+  {
+    command: 'capture create',
     variant: 'complete',
     intent: 'Create one provenanced capture tree below an exact destination.',
-    invocation: 'outline capture add --input -',
+    invocation: 'outline capture create --input -',
     stdin: JSON.stringify({
       parent: '@inbox',
       title: 'Captured item',
@@ -170,7 +214,6 @@ const recipes = [
       },
     }, null, 2),
     receipt: 'mutation',
-    verify: 'outline show CREATED_NODE_ID',
   },
   {
     command: 'import plan',

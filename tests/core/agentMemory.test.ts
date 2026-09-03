@@ -278,15 +278,15 @@ describe('Codex Memory contracts', () => {
     expect(extension.settings().status.strayTaggedNodeCount).toBe(1);
   });
 
-  test('routes Memory lookup without injecting prose and counts only an inline citation of an exact show', () => {
+  test('routes Memory lookup without injecting prose and counts only an inline citation of an exact get', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
     const context = extension.contributeThreadContext(targetThread);
     expect(context?.additionalContext?.memory?.value).toContain('use outline find');
-    expect(context?.additionalContext?.memory?.value).toContain('outline --json show');
+    expect(context?.additionalContext?.memory?.value).toContain('outline --json get');
     expect(context?.additionalContext?.memory?.value).toContain('[[node://UUID]]');
     expect(context?.additionalContext?.memory?.value).not.toContain('Belief');
 
-    completeOutlineShow(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID]);
+    completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID]);
     completeMemoryTurn(
       extension,
       targetThread,
@@ -295,11 +295,11 @@ describe('Codex Memory contracts', () => {
     expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(1);
   });
 
-  test('ignores a default summary show for citation accounting', () => {
+  test('ignores a default summary get for citation accounting', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
     extension.contributeThreadContext(targetThread);
-    completeOutlineShow(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], {
-      command: `outline show ${MEMORY_NODE_ID}`,
+    completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], {
+      command: `outline get ${MEMORY_NODE_ID}`,
     });
     completeMemoryTurn(
       extension,
@@ -309,15 +309,15 @@ describe('Codex Memory contracts', () => {
     expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(0);
   });
 
-  test('does not count find results, ordinary Nodes, failed shows, or uncited Memory reads', () => {
+  test('does not count find results, ordinary Nodes, failed gets, or uncited Memory reads', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
     extension.contributeThreadContext(targetThread);
-    completeOutlineShow(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], {
+    completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], {
       command: `outline find ${MEMORY_NODE_ID}`,
     });
-    completeOutlineShow(extension, targetThread, activeTurn, projection, ['ordinary:1']);
-    completeOutlineShow(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], { ok: false });
-    completeOutlineShow(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID]);
+    completeOutlineGet(extension, targetThread, activeTurn, projection, ['ordinary:1']);
+    completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID], { ok: false });
+    completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID]);
 
     completeMemoryTurn(extension, targetThread, completedResponseTurn(activeTurn));
     expect(store.usageForNode(MEMORY_NODE_ID).count).toBe(0);
@@ -326,7 +326,7 @@ describe('Codex Memory contracts', () => {
   test('does not count literal Memory markers in code or existing Markdown links', () => {
     const { extension, store, targetThread, activeTurn, projection } = memoryUsageHarness();
     extension.contributeThreadContext(targetThread);
-    completeOutlineShow(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID]);
+    completeOutlineGet(extension, targetThread, activeTurn, projection, [MEMORY_NODE_ID]);
     const marker = formatNodeReferenceMarker(MEMORY_NODE_ID);
     const response = [
       `Inline code: \`${marker}\``,
@@ -343,8 +343,8 @@ describe('Codex Memory contracts', () => {
     const { extension, store, targetThread, activeTurn } = memoryUsageHarness(projection);
     const memoryNodeIds = canonicalMemoryGraph(projection).nodes.map((entry) => entry.node.id);
     extension.contributeThreadContext(targetThread);
-    completeOutlineShow(extension, targetThread, activeTurn, projection, memoryNodeIds);
-    completeOutlineShow(extension, targetThread, activeTurn, projection, memoryNodeIds);
+    completeOutlineGet(extension, targetThread, activeTurn, projection, memoryNodeIds);
+    completeOutlineGet(extension, targetThread, activeTurn, projection, memoryNodeIds);
 
     completeMemoryTurn(
       extension,
@@ -2164,7 +2164,7 @@ function memoryUsageHarness(projection = memoryProjection()) {
   return { activeTurn, extension, projection, store, targetThread };
 }
 
-function completeOutlineShow(
+function completeOutlineGet(
   extension: MemoryExtension,
   thread: Thread,
   turn: Turn,
@@ -2200,20 +2200,20 @@ function completeOutlineShow(
     nodes: nodeIds.map((nodeId) => projection.nodes.find((entry) => entry.id === nodeId))
       .filter((entry): entry is NodeProjection => entry !== undefined),
   };
-  const command = options.command ?? `outline --json show ${nodeIds.join(' ')}`;
+  const command = options.command ?? `outline --json get ${nodeIds.join(' ')}`;
   const stdout = command.includes('--json')
     ? JSON.stringify({
         protocolVersion: OUTLINE_PROTOCOL_VERSION,
         requestId: 'cli:memory-citation-test',
         ok: true,
-        command: 'show',
+        command: 'get',
         data,
       })
     : JSON.stringify(data);
   extension.onToolCompleted({
     threadId: thread.id,
     turnId: turn.id,
-    itemId: `item:show:${nodeIds.join(':')}`,
+    itemId: `item:get:${nodeIds.join(':')}`,
     identity: { namespace: null, name: 'bash' },
     arguments: { command },
     result: options.ok === false

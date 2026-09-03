@@ -13,14 +13,14 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-One implementation claim is open: Draft PR #619 rewrites the public Outline
-Agent interface. Agent execution-selection settings shipped in #618; Thread
-interaction polish shipped in #616; Agent context language shipped in #611
-after rebasing onto #613's tool-result protocol; root-Turn recovery shipped in
-#612, and delegated failure truth shipped in #614, so the managed Computer Pilot
-Skill remains eligible under its live collision check.
-The public Outline CLI, built-in Skill, and shared preview-shell lanes are also
-clear.
+Three claims are open: PR #620 is the ready design-only Agent delegation plan;
+Draft PR #621 owns link/preview interaction polish and the shared preview-shell
+lane; Draft PR #622 owns the pi-ai 0.84 dependency and provider-runtime surface.
+The public Outline Agent interface shipped in #619, Agent execution-selection
+settings shipped in #618, and the earlier Thread, context, recovery, and
+delegated-failure foundations remain complete, so the managed Computer Pilot
+Skill remains eligible under its live collision check. The public Outline CLI
+and built-in Skill lanes are clear.
 Startup Window, preview readers, and Skill authoring remain independently
 eligible. The remaining plans from #588/#589 and #591 stay active below until
 their implementation, spec fold, and archive move complete.
@@ -109,13 +109,14 @@ contract or user-visible decision.
 
 ### Release gates
 
-- **Agent persisted-schema cutover verification** (release gate) — before the
-  next packaged train, stop every Tenon process, manually reset installed and
-  clone-scoped pre-#607 Agent stores, and verify fresh packaged/dev first launch.
-  This covers the input-author, context dependency-manifest, unified Agent
-  resource-reference, whole-Turn `history/rerun` event-name, and #611 user-view /
-  additional-context payload-shape cuts; no migration or automatic deletion
-  ships.
+- **Persisted-schema cutover verification** (release gate) — before the next
+  packaged train, stop every Tenon process, manually reset installed and clone-
+  scoped pre-#607 Agent stores plus pre-#619 Outline storage-v2 workspaces, and
+  verify fresh packaged/dev first launch. This covers the input-author, context
+  dependency-manifest, unified Agent resource-reference, whole-Turn
+  `history/rerun` event-name, #611 user-view/additional-context payload-shape,
+  and #619 required Operation-intent identity cuts; no migration or automatic
+  deletion ships.
 - **Launcher NSPanel packaged verification** — one `.dmg` pass for Cmd+Tab,
   fullscreen floating, focus, dock icon, and light/dark behavior.
 
@@ -210,6 +211,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **outline-agent-first-interface** (`done`, #619, 2026-09-03) — Outline Agent
+  authoring now uses one semantic Node/Field/View/Operation interface with
+  verified compact receipts, immutable replay identity, and a storage-v3
+  boundary; plan archived at
+  [outline-agent-first-interface](plans/archive/outline-agent-first-interface.md).
 - **agent-execution-selection-settings** (`done`, #618, 2026-09-03) — child
   Agent model and reasoning choices now live in Settings, resolve over the
   direct parent's effective selection, and retain visible runtime fallback;

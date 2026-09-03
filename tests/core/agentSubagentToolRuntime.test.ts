@@ -303,7 +303,7 @@ describe('Subagent ToolRuntime policy', () => {
       'python3 -c "open(\'tracked.txt\', \'w\').write(\'changed\')"',
       'node -e "require(\'fs\').writeFileSync(\'tracked.txt\', \'changed\')"',
       'curl -X POST https://example.test/items -d value=changed',
-      'outline add @today changed',
+      'outline create @today changed',
     ]) {
       const denial = await expectedHostDenial(bash.execute('blocked', { command }));
       expect(denial.denial.details).toMatchObject({

@@ -50,7 +50,7 @@ async function inspectViewOnce(
   target: OneTargetRef,
   signal?: AbortSignal,
 ): Promise<ViewSummary> {
-  if ('binding' in target) throw invalidView('view inspect cannot resolve a ChangeSet binding.');
+  if ('binding' in target) throw invalidView('view get cannot resolve a transaction binding.');
   const ownerPage = await show(client, {
     kind: 'node', targets: target, include: ['children'], page: { limit: 1 },
   }, signal);
@@ -62,8 +62,26 @@ async function inspectViewOnce(
   }, revision, signal);
   const directChildren = ownerTree.filter((node) => node.parentId === ownerId);
   const viewDefs = directChildren.filter((node) => node.type === 'viewDef');
-  if (viewDefs.length !== 1) {
-    throw invalidView(`view inspect requires exactly one view definition; found ${viewDefs.length}.`);
+  if (viewDefs.length === 0) {
+    const displayFields: ViewSummary['displayFields'] = [];
+    return {
+      kind: 'outline.view-summary',
+      revision,
+      ownerId,
+      title: nodeText(owner),
+      mode: 'outline',
+      toolbarVisible: false,
+      itemCount: directChildren.filter(isOrdinaryViewItem).length,
+      displayFieldCount: 0,
+      displayDigest: canonicalSha256(displayFields),
+      displayFields,
+      group: null,
+      sortCount: 0,
+      filterCount: 0,
+    };
+  }
+  if (viewDefs.length > 1) {
+    throw invalidView(`view get requires at most one persisted View; found ${viewDefs.length}.`);
   }
   const viewDef = viewDefs[0]!;
   const viewId = string(viewDef.id, 'view definition ID');
@@ -136,7 +154,7 @@ async function showAll(
 }
 
 async function show(client: ReadClient, projection: Projection, signal?: AbortSignal): Promise<ProjectionResult> {
-  const data = (await client.request('show', { projection }, signal)).data;
+  const data = (await client.request('get', { projection }, signal)).data;
   if (!checkOutlineSchema(ProjectionResultSchema, data)) {
     throw new OutlineContractError(outlineError(
       'protocol_incompatible', 'protocol', 'Outline Runtime returned an invalid ProjectionResult.',
@@ -172,10 +190,17 @@ export function renderFailureSummary(error: OutlineError): string {
   }
   if (validation?.truncated === true) lines.push('  Additional validation issues omitted; fix the listed paths first.');
   if (details) {
-    for (const key of ['expected', 'actual', 'idempotencyKey', 'operationId', 'settlementKey', 'cause'] as const) {
+    for (const key of ['expected', 'actual', 'existingId', 'idempotencyKey', 'operationId', 'settlementKey', 'cause'] as const) {
       if (details[key] !== undefined && !isRecord(details[key]) && !Array.isArray(details[key])) {
         lines.push(`  ${failureLabel(key)}: ${summaryScalar(details[key], 1_024)}`);
       }
+    }
+    if (Array.isArray(details.mismatches)) {
+      for (const mismatch of details.mismatches.slice(0, 8)) {
+        if (!isRecord(mismatch)) continue;
+        lines.push(`  Mismatch ${summaryScalar(mismatch.property, 128)}: requested=${summaryScalar(mismatch.requested, 256)}; actual=${summaryScalar(mismatch.actual, 256)}`);
+      }
+      if (details.mismatches.length > 8) lines.push(`  Omitted mismatches: ${details.mismatches.length - 8}`);
     }
     for (const key of ['missingIds', 'candidateIds', 'nodeIds'] as const) {
       if (!Array.isArray(details[key])) continue;
@@ -254,13 +279,21 @@ function summaryLines(command: string, data: unknown): string[] {
       ? `${summaryScalar(entry.name, 128)}\t${summaryScalar(entry.summary)}`
       : summaryScalar(entry));
   }
-  if (isRecord(data) && data.kind === 'outline.summary-viewed-tree-receipt' && isRecord(data.settlement)) {
+  if (isRecord(data) && data.kind === 'outline.create-result' && isRecord(data.settlement)) {
+    const definitions = isRecord(data.definitions) ? data.definitions : {};
+    const verification = isRecord(data.verification) ? data.verification : {};
+    const view = isRecord(data.view) ? data.view : {};
     return [
-      ...summaryLines(command, data.settlement),
-      `Owner: ${summaryScalar(data.ownerId)}`,
-      `Items: ${summaryScalar(data.itemCount)}`,
-      `Display fields: ${summaryScalar(data.displayFieldCount)}`,
-      `Persisted view mode: ${summaryScalar(data.mode)}`,
+      `Command: ${summaryScalar(command)}`,
+      `Status: ${summaryScalar(data.status)}; Committed: ${summaryScalar(data.committed)}`,
+      `Operation: ${summaryScalar(data.settlement.operationId)}`,
+      `Revision: ${summaryScalar(data.settlement.revisionBefore)} -> ${summaryScalar(data.settlement.revisionAfter)}`,
+      `Root: ${summaryScalar(data.rootId)}`,
+      `Nodes: ${summaryScalar(data.nodeCount)}; items=${summaryScalar(data.itemCount)}; fields=${summaryScalar(data.fieldCount)}`,
+      `Definitions: created=${summaryScalar(definitions.created)}; reused=${summaryScalar(definitions.reused)}`,
+      `View: ${summaryScalar(view.mode)}`,
+      `Verification: ${verification.passed === true ? 'passed' : 'failed'}; revision=${summaryScalar(verification.revision)}`,
+      `Recovery: ${summaryScalar(data.recoveryCommand, 1_024)}`,
     ];
   }
   if (isRecord(data) && data.kind === 'outline.summary-diff-receipt' && isRecord(data.diff)) {
@@ -358,7 +391,7 @@ function summaryLines(command: string, data: unknown): string[] {
           : []),
       ] : []),
       ...shown.map((operation) => isRecord(operation)
-        ? `  ${summaryScalar(operation.operationId, 256)}\trevision=${summaryScalar(operation.revisionBefore)}->${summaryScalar(operation.revisionAfter)}\t${summaryScalar(operation.summary, 512)}`
+        ? `  ${summaryScalar(operation.operationId, 256)}\trevision=${summaryScalar(operation.revisionBefore)}->${summaryScalar(operation.revisionAfter)}\trecovery=${isRecord(operation.recovery) ? summaryScalar(operation.recovery.state, 64) : 'unknown'}\t${summaryScalar(operation.summary, 512)}`
         : `  ${summaryScalar(operation)}`),
     ];
   }
@@ -519,13 +552,34 @@ function nodeSummaryLine(value: unknown, index: number): string {
   const text = isRecord(value.content) && typeof value.content.text === 'string'
     ? value.content.text
     : value.text;
+  const done = typeof value.done === 'boolean'
+    ? value.done
+    : typeof value.completedAt === 'number'
+      ? value.completedAt > 0
+      : undefined;
   const fields = [
     value.id !== undefined ? `id=${summaryScalar(value.id, 128)}` : undefined,
     value.type !== undefined ? `type=${summaryScalar(value.type, 64)}` : undefined,
     value.parentId !== undefined ? `parent=${summaryScalar(value.parentId, 128)}` : undefined,
     text !== undefined ? `text=${summaryScalar(text, 256)}` : undefined,
+    value.description !== undefined ? `description=${summaryScalar(value.description, 512)}` : undefined,
+    done !== undefined ? `done=${summaryScalar(done, 16)}` : undefined,
+    Array.isArray(value.fields) && value.fields.length > 0
+      ? `fields=${summaryLogicalFields(value.fields)}`
+      : undefined,
   ].filter((field): field is string => field !== undefined);
   return `  Node ${index + 1}: ${fields.join('; ') || 'no common fields'}; digest=${canonicalSha256(value)}`;
+}
+
+function summaryLogicalFields(fields: readonly unknown[]): string {
+  return fields.slice(0, 8).map((field) => {
+    if (!isRecord(field)) return summaryScalar(field, 128);
+    const name = summaryScalar(field.name ?? field.id ?? 'Field', 96);
+    const values = Array.isArray(field.values)
+      ? field.values.map((value) => summaryScalar(value, 96)).join(', ')
+      : '';
+    return `${name}: ${values || '(empty)'}`;
+  }).join(' | ') + (fields.length > 8 ? ` | +${fields.length - 8} more` : '');
 }
 
 function isProjectionResult(value: unknown): value is Record<string, unknown> & {
@@ -581,8 +635,8 @@ function nodeText(node: Record<string, unknown>): string {
 }
 
 function viewMode(value: unknown): ViewSummary['mode'] {
-  if (value === 'list' || value === 'table' || value === 'cards' || value === 'calendar') return value;
-  return 'list';
+  if (value === 'table' || value === 'cards' || value === 'calendar') return value;
+  return 'outline';
 }
 
 function systemFieldLabel(fieldId: string): string {
@@ -629,7 +683,7 @@ function revisionConflict(): OutlineContractError {
 
 function invalidView(message: string): OutlineContractError {
   return new OutlineContractError(outlineError('invalid_input', 'selection', message, {
-    next: ['Run outline schema view inspect --part result for the exact summary contract.'],
+    next: ['Run outline schema view get --part result for the exact summary contract.'],
   }));
 }
 

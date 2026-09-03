@@ -98,6 +98,7 @@ export interface OutlineRuntimeMutationRequest {
   readonly origin: Operation['origin'];
   readonly causation?: Operation['causation'];
   readonly source?: Operation['source'];
+  readonly intentHash?: string;
   readonly changeSetHash: string;
   readonly diffHash: string;
   readonly expectedPatchHash?: string;
@@ -867,6 +868,7 @@ export class OutlineRuntimeWorkspace {
             protocolVersion: OUTLINE_PROTOCOL_VERSION,
             kind: 'outline.operation',
             operationId,
+            intentHash: request.intentHash ?? request.changeSetHash,
             changeSetHash: request.changeSetHash,
             diffHash: request.diffHash,
             origin: request.origin,
@@ -876,6 +878,7 @@ export class OutlineRuntimeWorkspace {
             affectedNodeIds: affectedNodeIdsSample,
             affectedNodeCount: affectedNodeIds.length,
             affectedNodeIdsHash: canonicalSha256(affectedNodeIds),
+            effects: operationEffects(patch.nodes),
             ...(affectedNodeIds.length > MAX_AFFECTED_NODE_ID_SAMPLE ? {
               affectedNodeIdsTruncated: true,
               affectedNodeIdsCursor: encodeOperationLogCursor({
@@ -1221,6 +1224,26 @@ export class OutlineRuntimeWorkspace {
     this.mutationChain = next.then(() => undefined, () => undefined);
     return next;
   }
+}
+
+function operationEffects(
+  nodes: readonly { readonly before: Readonly<Node> | null; readonly after: Readonly<Node> | null }[],
+): NonNullable<Operation['effects']> {
+  let createdNodeCount = 0;
+  let createdDefinitionCount = 0;
+  let updatedNodeCount = 0;
+  let deletedNodeCount = 0;
+  for (const entry of nodes) {
+    if (entry.before === null && entry.after !== null) {
+      createdNodeCount += 1;
+      if (entry.after.type === 'fieldDef' || entry.after.type === 'tagDef') createdDefinitionCount += 1;
+    } else if (entry.before !== null && entry.after === null) {
+      deletedNodeCount += 1;
+    } else if (entry.before !== null && entry.after !== null) {
+      updatedNodeCount += 1;
+    }
+  }
+  return { createdNodeCount, createdDefinitionCount, updatedNodeCount, deletedNodeCount };
 }
 
 function operationEvent(

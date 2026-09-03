@@ -94,9 +94,10 @@ Runtime and ContentStore roots are derived independently from the same explicit
 userData authority; neither root is inferred from `cwd` or from the other root.
 Both Host processes use the same WAL/busy-retry and per-digest publication
 protocol. There is no workspace asset blob directory, sidecar reader, migration,
-dual write, or automatic startup deletion path. The shared-content-aligned
-Runtime workspace and ContentStore are storage version 2; earlier formats fail
-closed until the documented manual userData reset is completed.
+dual write, or automatic startup deletion path. The Outline Runtime workspace is
+storage version 3, where every persisted Operation carries its immutable submitted
+intent identity; the independent ContentStore remains schema version 2. Earlier
+formats fail closed until the documented manual userData reset is completed.
 
 Asset admission publishes or verifies bytes under an admission lease. Runtime
 then holds its Outline namespace mutation/reconciliation barrier from before

@@ -565,7 +565,10 @@ function addDisplayField(nodeId: string, field: string): Promise<CommandResult> 
 
 function createDisplayField(nodeId: string, name: string, fieldType: FieldType): Promise<CommandResult> {
   return mutate(() => [
-    { op: 'ensure', resource: 'definition', definitionType: 'field', name, fieldType, bind: 'field' },
+    {
+      op: 'ensure', resource: 'definition', definitionType: 'field', name,
+      config: { fieldType }, bind: 'field',
+    },
     {
       op: 'update',
       targets: oneId(nodeId),
@@ -1185,7 +1188,7 @@ function refreshSearchNodeResults(nodeId: string): Promise<CommandResult> {
 }
 
 async function backlinks(targetId: string): Promise<Backlink[]> {
-  const projection: ProjectionResult = await requestOutline('show', {
+  const projection: ProjectionResult = await requestOutline('get', {
     selector: { by: 'id', id: targetId },
     projection: {
       kind: 'backlinks',
@@ -1485,7 +1488,7 @@ function definitionEnsureOperations(definitions: DefinitionBindings): Change[] {
       op: 'ensure', resource: 'definition', definitionType: 'tag', name, bind,
     })),
     ...[...definitions.fields].map(([name, bind]): Change => ({
-      op: 'ensure', resource: 'definition', definitionType: 'field', name, fieldType: 'plain', bind,
+      op: 'ensure', resource: 'definition', definitionType: 'field', name, config: { fieldType: 'plain' }, bind,
     })),
   ];
 }

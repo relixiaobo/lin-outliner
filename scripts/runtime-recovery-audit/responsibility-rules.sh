@@ -757,7 +757,7 @@ classify_responsibility() {
       elif [[ "$title" == *"path ingest"* ]]; then
         evidence_test "stronger-replacement" \
           "tests/core/outlineCli.test.ts" \
-          "streams asset ingest, show, and verified export through the Runtime" \
+          "streams asset ingest, get, and verified export through the Runtime" \
           "The public Runtime path-ingest workflow preserves filename MIME inference, logical identity, and verified bytes."
       elif [[ "$title" == *"delete removes"* ]]; then
         evidence_retirement \
@@ -1012,8 +1012,8 @@ classify_responsibility() {
       elif [[ "$title" == *"routes Memory lookup"* ]]; then
         evidence_test "confirmed-regression-fixed" \
           "tests/core/agentMemory.test.ts" \
-          "routes Memory lookup without injecting prose and counts only an inline citation of an exact show" \
-          "The cutover removed the production read/citation hooks; the public outline show path now restores exact cited-read accounting."
+          "routes Memory lookup without injecting prose and counts only an inline citation of an exact get" \
+          "The cutover removed the production read/citation hooks; the public outline get path now restores exact cited-read accounting."
       elif [[ "$title" == *"deduplicates actually read Memory Nodes"* ]]; then
         evidence_test "confirmed-regression-fixed" \
           "tests/core/agentMemory.test.ts" \
@@ -1025,7 +1025,7 @@ classify_responsibility() {
         || "$title" == *"read Memory"* ]]; then
         evidence_test "confirmed-regression-fixed" \
           "tests/core/agentMemory.test.ts" \
-          "does not count find results, ordinary Nodes, failed shows, or uncited Memory reads" \
+          "does not count find results, ordinary Nodes, failed gets, or uncited Memory reads" \
           "The restored production hook retains negative filtering while retrieval uses the public CLI."
       elif [[ "$title" == *"Reset"* ]]; then
         evidence_test "stronger-replacement" \
