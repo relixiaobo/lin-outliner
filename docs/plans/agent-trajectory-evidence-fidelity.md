@@ -1,9 +1,10 @@
 # Agent Trajectory Evidence Fidelity
 
 **Shape:** (b) A SET of two complete features. First ship truthful live paging,
-bounded inspection work, and streaming export as one independently measurable
-PR. Then ship exact-or-unavailable capture/projection as one complete PR on that
-foundation; lossy paths are deleted only after the exact path is covered.
+and bounded inspection work as one independently measurable PR. Then ship
+exact-or-unavailable capture/projection and retire the unreachable legacy export
+as one complete PR on that foundation; lossy paths are deleted only after the
+exact path is covered.
 
 ## Goal
 
@@ -14,8 +15,8 @@ the exact retained value from its named runtime boundary or explicitly
 unavailable. It is never a redacted, truncated, or inferred approximation.
 
 The minimum outcome is that the reported 8,087-character System Reminder
-appears byte-for-byte in Context Preview, Raw, copy, restart, fork, and export
-after more than 64,000 earlier characters. The same rule applies to provider
+appears byte-for-byte in Context Preview, Raw, copy, restart, and fork after more
+than 64,000 earlier characters. The same rule applies to provider
 requests/responses and Tool evidence.
 
 ## Non-goals
@@ -139,46 +140,52 @@ up in main. Completed cached Turns are not reread or reprojected for every
 streaming delta in the active Turn.
 
 Renderer owns one contiguous working window capped at three 120-record pages,
-plus structural ancestors required by those covered records. Paging or a live
-tail join evicts the opposite distant edge and creates the corresponding stable
-cursor, so every record remains reachable without retaining an ever-growing
-array. Ledger virtualization stays fixed-row. Timeline renders only that same
-bounded window; it never creates one DOM control per record in total Thread
-history. Selection is not silently evicted: navigation first moves the working
-window around it. Automatic refresh never evicts its page; if an explicit paging
-action would cross the three-page bound, that user action closes the inspector
-before evicting the selected page.
+plus structural ancestors required by those covered records. A selected page
+takes priority over automatic tail following at the cap. When a live tail join
+fits without evicting that page, `followingTail` joins it, evicts an unpinned
+oldest edge if necessary, and clears `newerCursor` only after the tail is actually
+covered. If the join would evict the selected page, renderer switches
+`followingTail` to false, applies authoritative replacements inside retained
+coverage, defers the new suffix, and keeps a truthful `newerCursor`. The same
+defer rule applies when the user already scrolled into history.
 
-Exact export is the deliberate all-history operation. It streams canonical
-Turn summaries and diagnostics only after the user selects a destination, then
-atomically publishes the completed file; it does not construct an all-Thread
-JSON bundle or send that bundle through renderer IPC. Cancel performs no history
-read, and write failure removes the incomplete temporary file. Export may take
-time, but it cannot make ordinary inspection do all-history work.
+`Load newer` is the explicit navigation back toward that deferred tail. If this
+action crosses the cap and would evict the selected page, it closes the inspector
+before eviction. No disjoint pinned page or detached detail state is introduced.
 
-### Export, renderer, and cleanup
+Ledger virtualization stays fixed-row. Timeline renders only the same bounded
+window; it never creates one DOM control per record in total Thread history.
+Every record remains reachable through the two stable cursors without retaining
+an ever-growing renderer array.
 
-`thread/trajectory/export` writes exact retained diagnostics plus explicitly
-non-authoritative bounded record summaries, without another mutation pass. The
-existing save dialog remains the outward action; renderer receives only status,
-file name, and byte length. Renderer keeps lazy mounting, exact copy, wrapping,
-pretty-printing, unavailable/corrupt states, and audited image reads; remove only
-the now-dead `partialCoverage` handling and copy.
+### Renderer and cleanup
+
+Retire `thread/trajectory/export` end to end. It has no renderer caller and the
+current spec explicitly excludes it from the Trajectory UI; preserving or
+redesigning an unreachable second evidence path is dead pre-release machinery,
+not a user capability. Delete the protocol method, codec branches, projection
+bundle builder, service/desktop writer, mocks, tests, messages, and current-spec
+contract. Do not add a replacement export control.
+
+Renderer keeps lazy mounting, exact copy, wrapping, pretty-printing,
+unavailable/corrupt states, and audited image reads; remove only the now-dead
+`partialCoverage` handling and copy.
 
 Production scope:
 
 - `TurnDiagnostics.ts`: direct exact capture and exact configured URL.
-- `ThreadTrajectoryProjection.ts`: exact selection/export; delete sanitizers,
-  budgets, collection caps, and evidence fallbacks; make record-window reads
-  adaptive and cache bounded completed-Turn summaries.
+- `ThreadTrajectoryProjection.ts`: exact selection; delete sanitizers, budgets,
+  collection caps, evidence fallbacks, and the export bundle; make record-window
+  reads adaptive and cache bounded completed-Turn summaries.
 - `ThreadCore.ts` and `ThreadHistoryProjectionStore.ts`: provide the lightweight
   Turn metadata/paging reads used by Trajectory summary and window discovery.
-- `ThreadService.ts` and `desktopHost.ts`: choose the export destination before
-  projection and replace the all-history in-memory bundle with an atomic stream.
+- `ThreadService.ts` and `desktopHost.ts`: delete the unreachable export service
+  and writer.
 - `agentSecretRedaction.ts` and `sseResilientFetch.ts`: delete the generic
   diagnostic API; isolate the transport-noise snippet scrub.
 - `protocol.ts`, `codec.ts`, and English/Simplified Chinese Agent messages:
-  retire `partialCoverage`. This shared interface is one isolated claim.
+  retire `partialCoverage` and `thread/trajectory/export`. This shared interface
+  is one isolated claim.
 - `ThreadTrajectoryPanel.tsx`: replace action-history-based cursor updates with
   one coverage reconciliation path for initial, older, newer, and cursorless
   live reads; coalesce refreshes and bound the contiguous renderer window.
@@ -198,9 +205,9 @@ means no retired live symbol or marker outside historical archive/changelog text
 
 ### Risks and accepted tradeoffs
 
-- **TRD-1:** Trajectory `userData` and user-selected exports may contain
-  credentials that entered execution. This PM-selected tradeoff protects
-  forensic fidelity through local ownership and explicit export, not mutation.
+- **TRD-1:** Trajectory `userData` may contain credentials that entered
+  execution. This PM-selected tradeoff protects forensic fidelity through local
+  ownership, not mutation.
 - **TRD-2:** A selected detail can be large. Keep reads lazy and record-scoped;
   measure the maximum fixture and the reported long Turn without reintroducing
   a content budget.
@@ -218,9 +225,9 @@ means no retired live symbol or marker outside historical archive/changelog text
 ## Verification
 
 - The 64,000-plus-8,087 fixture is exact in Context Preview, Raw, copy, fork,
-  restart, and export, with no omission marker.
+  and restart, with no omission marker.
 - Sentinel credentials survive prepared context, request, response, configured
-  URL, Tool Input, Tool Output, detail, and export. A separate regression proves
+  URL, Tool Input, Tool Output, and detail. A separate regression proves
   canonical replay redaction and error-log policy are unchanged.
 - Strings over 20,000 characters, collections over 100 entries, deep valid JSON,
   and a large call ID remain exact; only the opaque record key may hash the ID.
@@ -228,9 +235,9 @@ means no retired live symbol or marker outside historical archive/changelog text
   largest supported text context fits the admission limit or drives same-PR
   digest-pool deduplication.
 - A focused historical page may initially expose `Load newer`. When a new Turn
-  triggers a cursorless refresh whose tail window overlaps the loaded coverage,
-  the new records appear automatically and `Load newer` disappears. A disjoint
-  historical window keeps one working control until its real gap is loaded.
+  triggers a cursorless refresh, a following window joins the tail and removes
+  `Load newer`; a non-following window accepts in-range replacements but defers
+  any suffix that would evict the inspected page and keeps one working control.
 - Instrumented 10,000-Turn and 100,000-record fixtures prove that an ordinary
   tail read/refresh materializes only enough Turns for 120 covered records plus
   one predecessor, keeps at most one read active plus one coalesced follow-up,
@@ -240,21 +247,21 @@ means no retired live symbol or marker outside historical archive/changelog text
   baseline before accepting any cache or window tradeoff.
 - A many-page paging test traverses beyond the renderer cap in both directions,
   proving evicted records remain reachable, cursors have no gaps or duplicates,
-  automatic refresh preserves selection, explicit bound-crossing navigation
-  closes it before eviction, and live tail joining remains truthful.
-- A large exact export test observes bounded process memory, byte-for-byte
-  output, atomic completion, and incomplete-file cleanup after cancellation or
-  write failure.
+  following refresh joins the tail when it fits, a cap-crossing refresh yields
+  follow to the selected page and keeps a real `newerCursor`, and explicit
+  bound-crossing navigation closes the inspector before eviction.
+- Protocol, codec, service, desktop-host, mock, test, message, and current-spec
+  sweeps find no remaining `thread/trajectory/export` route.
 - Stream-noise tests keep its bounded scrub isolated from execution evidence.
 - Run `bun run typecheck`, `bun run test:core`, `bun run test:renderer`, focused
   Trajectory E2E, `bun run docs:check`, and `git diff --check`.
 - Manually verify the reported research Thread in light/dark mode across
-  Context, Request, Assistant, Tool, Raw, copy, restart, fork, and export.
+  Context, Request, Assistant, Tool, Raw, copy, restart, and fork.
 
 ## Acceptance Criteria
 
 - **AC-1:** Every retained model/tool execution value is exact across detail,
-  Raw, copy, restart, fork, and export.
+  Raw, copy, restart, and fork.
 - **AC-2:** No Trajectory capture/projection invokes Secretlint, filters keys,
   or emits redaction, truncation, or diagnostic-budget markers.
 - **AC-3:** Bounded summaries never become evidence; unavailable evidence is
@@ -268,25 +275,25 @@ means no retired live symbol or marker outside historical archive/changelog text
   reachable through stable pagination.
 - **AC-7:** Ordinary Trajectory reads and refreshes have bounded diagnostics
   reads, projection work, in-flight requests, renderer records, and timeline /
-  ledger DOM independent of total Thread history; exact export streams outside
-  renderer IPC.
+  ledger DOM independent of total Thread history; the unreachable legacy export
+  route no longer exists.
 
 ## Collision Result
 
 The board has no active Trajectory claim. PR #622 is merged and this plan is
 rebased onto it. This design-only PR touches no file claimed by open PRs. For
 implementation, PR #623 claims `ThreadService.ts` plus core protocol/codec for
-Generic Background Tool Tasks: the paging/performance unit overlaps its export
-service boundary, and the exact-evidence unit overlaps that boundary plus
-protocol/codec. Land those edits behind #623 or coordinate a separate
-interface-only claim after it rebases; do not develop both shared surfaces in
-parallel. The remaining Trajectory projection, renderer, diagnostics, and spec
-files do not overlap #620, #621, or #623 at this check.
+Generic Background Tool Tasks. The paging/performance unit has no overlap and
+can ship independently; the exact-evidence/legacy-export-removal unit overlaps
+`ThreadService.ts` and protocol/codec. Land those edits behind #623 or coordinate
+a separate interface-only claim after it rebases; do not develop both shared
+surfaces in parallel. The remaining Trajectory projection, renderer,
+diagnostics, and spec files do not overlap #620, #621, or #623 at this check.
 
 ## Open questions
 
-None. Exact-or-unavailable evidence, raw local/exported values, no sanitized
-mode, and no migration are PM-ratified product decisions.
+None. Exact-or-unavailable evidence, raw local values, no sanitized mode, no
+replacement export UI, and no migration are PM-ratified product decisions.
 
 ## Implementation checklist
 
@@ -295,19 +302,19 @@ Paging/performance unit:
 - [ ] Reconcile live tail coverage and delete stale action-based cursor state.
 - [ ] Make record paging adaptive, cache bounded immutable summaries, coalesce
       notification reads, and cap the renderer working window.
-- [ ] Stream the current export projection with destination-first, atomic,
-      bounded-memory output.
-- [ ] Update the rendering/core specs and run paging, scale, export, renderer,
+- [ ] Update the rendering/core specs and run paging, scale, renderer,
       E2E, type, docs, and whitespace verification.
 
 Exact-evidence unit:
 
 - [ ] Regenerate the edit queue from retired symbols on the merged #622 base.
 - [ ] Capture exact boundary values and prove the diagnostics admission ceiling.
-- [ ] Make detail, copy, and streamed export exact; retain only bounded summaries
-      and audited binary references.
+- [ ] Make detail and copy exact; retain only bounded summaries and audited
+      binary references.
 - [ ] Delete diagnostic redaction/budgets and retire `partialCoverage`.
+- [ ] Delete `thread/trajectory/export` across protocol, main, tests, messages,
+      mocks, and current specs.
 - [ ] Update specs and replace redaction tests with fidelity, unavailability,
       and non-interference coverage.
-- [ ] Run automated, long-Turn, fork/restart/export, manual, and empty-`rg`
+- [ ] Run automated, long-Turn, fork/restart, manual, and empty-`rg`
       verification.
