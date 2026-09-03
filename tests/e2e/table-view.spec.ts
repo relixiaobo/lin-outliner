@@ -251,7 +251,7 @@ test.describe('table view', () => {
     const tableButtonLabels = await tableControls.locator('button').evaluateAll((buttons) => (
       buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '')
     ));
-    await tableControls.getByRole('button', { name: 'Outline', exact: true }).click();
+    await switchRootFromContextMenu(page, 'Outline');
     await expect(rootGrid(page)).toHaveCount(0);
     const outlineToolbar = page.locator('.view-toolbar').first();
     await expect(outlineToolbar.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
@@ -275,7 +275,7 @@ test.describe('table view', () => {
     }, ids.today);
     expect(groupField).toBe('sys:done');
 
-    await outlineToolbar.getByRole('button', { name: 'Table', exact: true }).click();
+    await switchRootFromContextMenu(page, 'Table');
     await expect(rootGrid(page)).toBeVisible();
   });
 
@@ -1056,7 +1056,8 @@ test.describe('table view', () => {
     const summary = page.locator('.search-query-summary-bar');
     await expect(grid.locator('.view-toolbar')).toHaveCount(0);
     await expect(tableControls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
-    await expect(tableControls.getByRole('button', { name: 'Outline', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Outline', exact: true })).toHaveCount(0);
+    await expect(tableControls.getByRole('button', { name: 'Table', exact: true })).toHaveCount(0);
     await expect(tableControls.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
     await expect(tableControls.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
     await expect(summary).toHaveCount(0);

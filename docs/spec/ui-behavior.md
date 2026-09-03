@@ -375,13 +375,12 @@ The node-level `ViewToolbar` is the single presentation control for Outline chil
 rows and saved-search results. Renderers provide its owner and view state but do
 not select a toolbar variant. Every Node uses the same full bar in Outline and
 Table with the same structure, labels, filter chips, and interactions. The bar
-keeps **Outline** (persisted as `list`) and **Table** visible as one two-option
-mode selector followed by name search, then Display, Group, Sort, and Filter.
-The active mode and configured controls have `aria-pressed="true"`. Display
+contains name search followed by Display, Group, Sort, and Filter. Configured
+controls have `aria-pressed="true"`. Display
 configures title metadata in Outline and visible columns in Table, while Group
 applies to the current row projection in both modes. Activating name search
-expands its inline input. The node context menu's **View as** flyout remains a
-secondary text entry point rather than the only discoverable mode control. It
+expands its inline input. The node context menu's **View as** flyout is the single
+view-mode entry point rather than being duplicated in the configuration bar. It
 opens on pointer hover as well as click or `ArrowRight`; pointer opening does not
 move focus, while keyboard opening focuses the flyout and `ArrowLeft` returns to
 its parent item.
@@ -706,8 +705,8 @@ projection is never writable over the complete query.
 
 Search Outline and Table therefore use the same ViewToolbar as ordinary Nodes
 rather than stacking a query summary and a second Search-specific control band.
-Both modes keep Outline/Table, name search, Display, Group, Sort, and Filter in
-the same functional order. At narrow pane widths controls keep the shared fixed
+Both modes keep name search, Display, Group, Sort, and Filter in the same
+functional order. At narrow pane widths controls keep the shared fixed
 control size and remain on one line; the toolbar owns native horizontal overflow,
 while the Filter control and its rule chips stay together instead of shrinking or
 separating. Each

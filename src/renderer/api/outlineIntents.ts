@@ -36,7 +36,6 @@ import type {
   SplitNodeOptions,
   TagConfigPatch,
   TagTemplateBackfillPreview,
-  ViewMode,
 } from './types';
 import { parseSearchQueryOutline } from '../../core/searchQueryOutline';
 import { nextCompletedAt } from '../../core/doneState';
@@ -102,7 +101,6 @@ export const outlineDocumentApi = {
   clearSources,
   ingestAssetFromData,
   setViewToolbarVisible,
-  setViewMode,
   addSortRule,
   updateSortRule,
   removeSortRule,
@@ -492,10 +490,6 @@ async function ingestAssetFromData(
 
 function setViewToolbarVisible(nodeId: string, visible: boolean): Promise<CommandResult> {
   return update(nodeId, [{ kind: 'view', property: 'toolbar', action: 'set', visible }]);
-}
-
-function setViewMode(nodeId: string, mode: ViewMode): Promise<CommandResult> {
-  return update(nodeId, [{ kind: 'view', property: 'mode', action: 'set', mode }]);
 }
 
 function addSortRule(nodeId: string, field: string, direction: SortDirection = 'asc'): Promise<CommandResult> {

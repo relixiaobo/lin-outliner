@@ -882,9 +882,6 @@ export const en = {
     // rules, and the progressive filter editor.
     viewToolbar: {
       toolbarAriaLabel: 'View toolbar',
-      viewMode: 'View mode',
-      outline: 'Outline',
-      table: 'Table',
       filterByName: 'Filter by name',
       nameFilterPlaceholder: 'Name',
       clearNameFilter: 'Clear name filter',

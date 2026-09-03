@@ -799,9 +799,6 @@ export const zhHans: PartialMessages = {
     // 节点子项上方的视图工具栏：显示字段、分组、排序规则与渐进式筛选编辑器。
     viewToolbar: {
       toolbarAriaLabel: '视图工具栏',
-      viewMode: '视图模式',
-      outline: '大纲',
-      table: '表格',
       filterByName: '按名称筛选',
       nameFilterPlaceholder: '名称',
       clearNameFilter: '清除名称筛选',

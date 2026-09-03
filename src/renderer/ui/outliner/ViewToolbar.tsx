@@ -32,11 +32,9 @@ import {
   ICON_SIZE,
   OptionsIcon,
   PlainTextIcon,
-  NodeReadToolIcon,
   SearchIcon,
   SortAscIcon,
   SortDescIcon,
-  TableIcon,
 } from '../icons';
 import type { ComponentType } from 'react';
 import { resolveFieldOptions, type FieldOption } from '../interactions/fieldOptions';
@@ -68,7 +66,6 @@ import {
 } from '../../../core/systemFields';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
-import { RENDERABLE_VIEW_MODES, type RenderableViewMode } from '../../../core/viewConfig';
 
 type ViewToolbarMessages = Messages['outliner']['viewToolbar'];
 
@@ -146,62 +143,7 @@ interface ViewToolbarProps {
   onDropdownRequestConsumed: (request: ToolbarDropdownRequest) => void;
 }
 
-type ViewMode = RenderableViewMode;
-
-interface ViewModeControlProps {
-  viewMode: ViewMode;
-  labels: Pick<ViewToolbarMessages, 'viewMode' | 'outline' | 'table'>;
-  onChange: (mode: ViewMode) => void;
-}
-
-const VIEW_MODE_PRESENTATION: Record<ViewMode, {
-  icon: IconComponent;
-  label: keyof Pick<ViewToolbarMessages, 'outline' | 'table'>;
-}> = {
-  list: { icon: NodeReadToolIcon, label: 'outline' },
-  table: { icon: TableIcon, label: 'table' },
-};
-
-const VIEW_MODE_OPTIONS = RENDERABLE_VIEW_MODES.map((mode) => ({
-  mode,
-  ...VIEW_MODE_PRESENTATION[mode],
-}));
-
-// Keep mode selection visibly two-state. The context menu remains a secondary
-// text entry point for users who discover configuration through node actions.
-function ViewModeControl({ viewMode, labels, onChange }: ViewModeControlProps) {
-  return (
-    <div
-      aria-label={labels.viewMode}
-      className="view-toolbar-mode"
-      role="group"
-    >
-      {VIEW_MODE_OPTIONS.map(({ mode, icon: Icon, label }) => {
-        const selected = viewMode === mode;
-        const text = labels[label];
-        const classes = [
-          'view-toolbar-mode-button',
-          selected ? 'is-active' : '',
-        ].filter(Boolean).join(' ');
-        return (
-          <ButtonControl
-            aria-pressed={selected}
-            aria-label={text}
-            className={classes}
-            key={mode}
-            onClick={() => onChange(mode)}
-          >
-            <Icon size={ICON_SIZE.menu} />
-            <span>{text}</span>
-          </ButtonControl>
-        );
-      })}
-    </div>
-  );
-}
-
-// Configuration dropdowns remain separate from the mode selector above; each
-// section maps to one persisted view operation.
+// Each toolbar section maps to one persisted view-configuration operation.
 type ToolbarSection = ToolbarDropdownSection;
 type OpenSection = ToolbarSection | null;
 type FieldChoice = { id: string; label: string; section: 'System fields' | 'Fields' };
@@ -555,14 +497,6 @@ export function ViewToolbar({
     [view, choices, index.byId, tv],
   );
   const titles = sectionTitles(tv);
-  const viewModeControl = (
-    <ViewModeControl
-      key="view-mode"
-      labels={tv}
-      onChange={(mode) => void run(() => api.setViewMode(node.id, mode))}
-      viewMode={view.viewMode === 'table' ? 'table' : 'list'}
-    />
-  );
   const nameFilterControl = (
     <NameFilterControl
       clearLabel={tv.clearNameFilter}
@@ -574,7 +508,6 @@ export function ViewToolbar({
       run={run}
     />
   );
-  const leadingControls = [viewModeControl, nameFilterControl];
   const renderFilterChip = (chip: FilterSummaryChip) => (
     <span className="view-toolbar-summary-chip is-filter has-remove" key={chip.id}>
       <ButtonControl
@@ -606,7 +539,7 @@ export function ViewToolbar({
       onPointerOver={showTooltipFromEvent}
     >
       <div className="view-toolbar-button-row">
-        {leadingControls}
+        {nameFilterControl}
         <ToolbarButton
           ref={displayRef}
           configured={hasVisibleDisplayFields}

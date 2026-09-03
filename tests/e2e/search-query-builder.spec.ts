@@ -1,5 +1,15 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { openMockedApp } from './outlinerMock';
+
+async function switchCurrentViewFromContextMenu(page: Page, mode: 'Outline' | 'Table') {
+  await page.locator('.panel-title-editor').first().click({ button: 'right' });
+  const viewAs = page.getByRole('menu', { name: 'Node actions' })
+    .getByRole('menuitem', { name: 'View as', exact: true });
+  await viewAs.hover();
+  await page.getByRole('menu', { name: 'View as' })
+    .getByRole('menuitemradio', { name: mode, exact: true })
+    .click();
+}
 
 test.describe('search query builder', () => {
   test.beforeEach(async ({ page }) => {
@@ -52,7 +62,7 @@ test.describe('search query builder', () => {
     await expect(toolbar).toBeVisible();
   });
 
-  test('search outline and table use the same full view toolbar', async ({ page }) => {
+  test('search outline and table use the same configuration toolbar', async ({ page }) => {
     const originalViewport = page.viewportSize()!;
     await page.locator('.sidebar-primary-nav')
       .getByRole('button', { name: 'Recents', exact: true })
@@ -60,22 +70,18 @@ test.describe('search query builder', () => {
 
     const controls = page.locator('.view-toolbar');
     const firstResult = page.locator('.outliner-flat-flow-row .row').first();
-    const viewMode = controls.getByRole('group', { name: 'View mode', exact: true });
-    const outlineMode = viewMode.getByRole('button', { name: 'Outline', exact: true });
-    const tableMode = viewMode.getByRole('button', { name: 'Table', exact: true });
     await expect(controls).toHaveCount(1);
     await expect(firstResult).toBeVisible();
     await expect(page.locator('.search-query-summary-bar')).toHaveCount(0);
     await expect(controls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
-    await expect(outlineMode).toHaveAttribute('aria-pressed', 'true');
-    await expect(tableMode).toHaveAttribute('aria-pressed', 'false');
+    await expect(controls.getByRole('button', { name: 'Outline', exact: true })).toHaveCount(0);
+    await expect(controls.getByRole('button', { name: 'Table', exact: true })).toHaveCount(0);
     await expect(controls.getByRole('button', { name: 'Display', exact: true })).toHaveAttribute('aria-pressed', 'false');
     await expect(controls.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
-    await expect(viewMode).not.toHaveCSS('box-shadow', 'none');
     const outlineButtonLabels = await controls.locator(
-      '.view-toolbar-mode-button, .view-toolbar-button-row .view-toolbar-pill',
+      '.view-toolbar-button-row .view-toolbar-pill',
     ).evaluateAll((buttons) => (
       buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '')
     ));
@@ -126,43 +132,25 @@ test.describe('search query builder', () => {
     const shortTooltipWidth = await tooltip.evaluate((element) => element.getBoundingClientRect().width);
     expect(shortTooltipWidth).toBeLessThan(tooltipGeometry.tooltipWidth);
 
-    await outlineMode.hover();
-    await expect(outlineMode).toContainText('Outline');
-    await expect(tableMode).toContainText('Table');
-    await expect(outlineMode).not.toHaveAttribute('title');
-    await expect(tableMode).not.toHaveAttribute('title');
-    await expect(tooltip).toHaveCount(0);
-
     await page.setViewportSize({ width: 760, height: originalViewport.height });
     const narrowGeometry = await controls.evaluate((toolbar) => {
       const scope = toolbar.parentElement!;
       const controlSize = Number.parseFloat(getComputedStyle(document.documentElement)
         .getPropertyValue('--control-size-xl'));
       const contentStart = Number.parseFloat(getComputedStyle(toolbar).marginLeft);
-      const modeWidth = toolbar.querySelector<HTMLElement>('.view-toolbar-mode')!.getBoundingClientRect().width;
-      scope.style.width = `${modeWidth + controlSize + contentStart}px`;
+      scope.style.width = `${2 * controlSize + contentStart}px`;
       const row = toolbar.querySelector<HTMLElement>('.view-toolbar-button-row')!;
       const controls = [...toolbar.querySelectorAll<HTMLElement>(
-        '.view-toolbar-button-row .view-toolbar-pill, .view-toolbar-mode-button',
+        '.view-toolbar-button-row .view-toolbar-pill',
       )];
-      const modeButtons = [...toolbar.querySelectorAll<HTMLElement>('.view-toolbar-mode-button')];
-      const modeGroup = toolbar.querySelector<HTMLElement>('.view-toolbar-mode')!;
-      const modeButtonTop = modeButtons[0]!.getBoundingClientRect().top;
       const controlCenter = (() => {
         const rect = controls[0]!.getBoundingClientRect();
         return rect.top + rect.height / 2;
       })();
-      const fixedControls = [...toolbar.querySelectorAll<HTMLElement>('.view-toolbar-pill')];
-      const modeButtonsWidth = modeButtons.reduce((width, button) => (
-        width + button.getBoundingClientRect().width
-      ), 0);
       const geometry = {
-        controlsUnshrunk: fixedControls.every((control) => (
+        controlsUnshrunk: controls.every((control) => (
           control.getBoundingClientRect().width >= controlSize - 0.5
         )),
-        modeGroupIntact: modeButtons.every((button) => (
-          Math.abs(button.getBoundingClientRect().top - modeButtonTop) < 0.5
-        )) && modeGroup.getBoundingClientRect().width >= modeButtonsWidth - 0.5,
         ownsHorizontalOverflow: getComputedStyle(row).overflowX === 'auto'
           && row.scrollWidth > row.clientWidth + 1,
         singleLine: getComputedStyle(row).flexWrap === 'nowrap'
@@ -176,20 +164,18 @@ test.describe('search query builder', () => {
     });
     expect(narrowGeometry).toEqual({
       controlsUnshrunk: true,
-      modeGroupIntact: true,
       ownsHorizontalOverflow: true,
       singleLine: true,
     });
     await page.setViewportSize(originalViewport);
 
-    await tableMode.click();
+    await switchCurrentViewFromContextMenu(page, 'Table');
     const tableControls = page.locator('.outliner-table-scope > .view-toolbar');
-    const tableViewMode = tableControls.getByRole('group', { name: 'View mode', exact: true });
     await expect(tableControls).toBeVisible();
-    await expect(tableViewMode.getByRole('button', { name: 'Outline', exact: true })).toHaveAttribute('aria-pressed', 'false');
-    await expect(tableViewMode.getByRole('button', { name: 'Table', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(tableControls.getByRole('button', { name: 'Outline', exact: true })).toHaveCount(0);
+    await expect(tableControls.getByRole('button', { name: 'Table', exact: true })).toHaveCount(0);
     const tableButtonLabels = await tableControls.locator(
-      '.view-toolbar-mode-button, .view-toolbar-button-row .view-toolbar-pill',
+      '.view-toolbar-button-row .view-toolbar-pill',
     ).evaluateAll((buttons) => (
       buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '')
     ));

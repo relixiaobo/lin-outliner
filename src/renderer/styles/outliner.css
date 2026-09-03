@@ -295,36 +295,6 @@
   gap: var(--space-2);
 }
 
-.view-toolbar-mode {
-  display: inline-flex;
-  min-height: var(--control-size-xl);
-  flex: 0 0 auto;
-  align-items: center;
-  border-radius: var(--radius-pill);
-  box-shadow: var(--segmented-track-shadow);
-  padding: var(--space-hairline);
-}
-
-.view-toolbar-mode-button {
-  display: inline-flex;
-  min-height: calc(var(--control-size-xl) - 2 * var(--space-hairline));
-  align-items: center;
-  gap: var(--space-2);
-  border-radius: var(--radius-pill);
-  color: var(--text-secondary);
-  font-size: var(--font-ui-sm);
-  padding: 0 var(--space-3);
-}
-
-.view-toolbar-mode-button:hover {
-  color: var(--text-primary);
-}
-
-.view-toolbar-mode-button.is-active {
-  background: var(--control-active);
-  color: var(--text-primary);
-}
-
 /* Table is a dense presentation of the same child nodes, not a framed card.
    The owner supplies one column template to every header/body row so virtualized
    rows cannot drift out of alignment. */

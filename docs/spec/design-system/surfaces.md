@@ -159,15 +159,14 @@ Outline and Table, including the same labels, Filter rule chips, popovers, and
 tooltips.
 The toolbar has no frame or decorative separators; spacing and control grouping
 carry its hierarchy.
-Name search expands inline only while active. A single two-option Outline/Table
-selector remains visible in both modes with one neutral pill track and one
-clearly filled current segment. The context menu is its secondary text entry
-point, with **View as** opening a side submenu on hover, click, or `ArrowRight`.
+Name search expands inline only while active. View mode is not duplicated in the
+configuration bar; the Node context menu is its single entry point, with
+**View as** opening a side submenu on hover, click, or `ArrowRight`.
 Toolbar controls retain the token control size and stay on one line; when the
-available pane is narrower, the toolbar owns native horizontal overflow and the
-two mode options remain intact. Custom tooltips follow the hovered or
-keyboard-focused control across the scroller and remeasure each label's intrinsic width when
-focus moves, so their anchor and box never carry over from a sibling control.
+available pane is narrower, the toolbar owns native horizontal overflow. Custom
+tooltips follow the hovered or keyboard-focused control across the scroller and
+remeasure each label's intrinsic width when focus moves, so their anchor and box
+never carry over from a sibling control.
 The Table field header therefore remains pure column semantics, and header and
 row separators provide its only horizontal structure.
 
@@ -210,8 +209,8 @@ reduced-transparency fallback. Column headers use Hide as their only removal
 action. Add column groups current-record custom fields first, other Schema custom
 fields second, and system fields last; the Outline Display editor likewise places
 custom Fields before System fields. Section labels remain compact metadata, not
-selectable rows. Search Outline and Table share the same mode, name, Display,
-Group, Sort, and Filter controls. Singular settings use the neutral active state
+selectable rows. Search Outline and Table share the same name, Display, Group,
+Sort, and Filter controls. Singular settings use the neutral active state
 on their own icon controls instead of text summaries. A configured control
 uses `--control-on` on its glyph without a background; the pill fill means its
 popover is open.
