@@ -567,6 +567,13 @@ describe('outline CLI', () => {
     })).toBe(0);
     expect(inferred.stdout).toBe(explicit.stdout);
     expect(inferred.stdout).toContain('Command: outline search create --input -');
+
+    const edit = captureIo();
+    expect(await runOutlineCli(['example', 'search', 'edit'], {
+      runtimeRoot: root,
+      io: edit.io,
+    })).toBe(0);
+    expect(edit.stdout).toContain('Command: outline search edit --input -');
     expect(await readdir(root)).toEqual([]);
   });
 

@@ -36,6 +36,30 @@ describe('Outline Agent interface contract', () => {
     }
   });
 
+  test('keeps complete recipes complete across compound Agent workflows', () => {
+    const edit = JSON.parse(outlineRecipe('edit', 'complete')!.stdin!) as {
+      references?: Array<{ action?: string; target?: string }>;
+    };
+    expect(edit.references).toEqual([{ action: 'add', target: 'node:reference-target' }]);
+
+    const view = JSON.parse(outlineRecipe('view set', 'complete')!.stdin!) as {
+      view?: { group?: string; replace?: { sort?: unknown[]; filters?: unknown[]; display?: unknown[] } };
+    };
+    expect(view.view?.group).toBe('field:status');
+    expect(view.view?.replace?.sort).toHaveLength(1);
+    expect(view.view?.replace?.filters).toHaveLength(1);
+    expect(view.view?.replace?.display).toHaveLength(3);
+
+    const transaction = JSON.parse(outlineRecipe('transact', 'dependent-change')!.stdin!) as {
+      operations?: Array<{ op?: string; placement?: { parent?: { binding?: string } } }>;
+    };
+    expect(transaction.operations?.[1]).toMatchObject({
+      op: 'move',
+      placement: { parent: { binding: 'project' } },
+    });
+    expect(outlineRecipe('search edit', 'complete')).toBeDefined();
+  });
+
   test('reports bounded schema sizes and keeps exact authoring schemas free of recursive selectors', () => {
     const schemaReport = OUTLINE_CAPABILITIES.map((capability) => {
       const schema = compactOutlineSchema(capability.porcelain?.inputSchema ?? capability.requestSchema);

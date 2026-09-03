@@ -1207,11 +1207,17 @@ describe('agent skills', () => {
     expect(instructions).toContain('outline daily ensure YYYY-MM-DD');
     expect(instructions).toContain('outline trash TARGET');
     expect(instructions).toContain('outline restore TARGET');
+    expect(instructions).toContain('outline export TARGET --format markdown --output FILE');
+    expect(instructions).toContain('outline search edit TARGET --title "TITLE" --match "TEXT" --view cards');
+    expect(instructions).toContain('outline example transact dependent-change');
+    expect(instructions).toContain('outline import verify OPERATION_ID --diff DIFF --evidence EVIDENCE');
+    expect(instructions).toContain('An export receipt already proves its path, byte count, and SHA-256');
     expect(instructions).toContain('explicit `max`');
     expect(instructions).toContain('When the task fits the Common Create shape above, run it directly');
     expect(instructions).toContain('Do not issue a separate verification read');
     expect(instructions).toContain('Bash\'s separate `stdin` field');
     expect(instructions).toContain('outline view get|set');
+    expect(instructions).toContain('Do not read the current View before a fully specified `view set`');
   });
 
   test('loads bundled built-in skills with real resource directories', async () => {

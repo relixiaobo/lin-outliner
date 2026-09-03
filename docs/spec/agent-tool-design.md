@@ -96,11 +96,24 @@ Sources. `define create|ensure|edit` is reserved for explicit reusable
 definition work. `view get|set` changes projection only; `search
 create|edit|run` owns saved and transient query behavior. Public Field and View
 terms are translated at the CLI boundary and never expose Core tokens.
+An exact, fully specified `view set` converges without a current-View read.
 
 Discovery is progressive: Skill, then one matching `example`, then exact
 command help, then a narrow `schema --path` fragment. Bare schema discovery
 returns only a compact catalog. Full schema bodies are for integrations or a
 concrete diagnosis, not routine task planning.
+
+Routine exact export and Saved Search convergence remain direct Skill forms.
+An export receipt proves the destination, byte count, and digest, so artifact
+existence and hashing do not require follow-up shell commands. Normalized import
+keeps its four meaningful stages explicit: inspect, plan with Diff and evidence,
+exact apply, and verification. These stages are not collapsed because each owns
+a distinct review or correctness boundary.
+
+Recipes cover the complete semantics advertised by their intent. The complete
+edit recipe includes references, complete View configuration includes grouping,
+sorting, filtering, and display replacement, and the dependent transaction
+recipe shows a later structural operation consuming an earlier binding.
 
 An exact `get` includes the Node description and logical Fields by default. A
 Field projection contains the reusable definition ID, public name and type,

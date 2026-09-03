@@ -352,7 +352,11 @@ remain registry-owned.
 
 Every common recipe is byte-checked against the production request schema and
 forward-tested as an Agent task. A failed common recipe is a CLI contract bug,
-not a reason to enlarge `SKILL.md`.
+not a reason to enlarge `SKILL.md`. A recipe named `complete` must exercise
+every public facet named by its intent: compound edits include references,
+complete View configuration includes grouping, sorting, filtering, and display,
+and dependent transactions demonstrate a binding consumed by a later structural
+operation.
 
 **FR-6:** Each disclosure level adds only information unavailable at the
 preceding level. Ordinary passing tasks do not load lower levels preemptively.
@@ -384,6 +388,7 @@ The corpus covers at least:
 | Move or duplicate | one structural command when targets are exact |
 | Declarative View switch/configuration | one `view set`; Node data unchanged |
 | Saved Search creation/update | one corresponding search command |
+| Full-tree export | one `export`; its receipt is sufficient artifact evidence |
 | Daily Note ensure | one `daily ensure`; no pre-read |
 | Trash or restore | one corresponding lifecycle command |
 | Bounded query edit | one matching recipe, one `edit`; no ID enumeration |

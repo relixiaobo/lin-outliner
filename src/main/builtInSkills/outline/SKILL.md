@@ -57,16 +57,22 @@ outline move TARGET PARENT --last
 outline duplicate TARGET PARENT
 outline view set TARGET MODE
 outline search create --title "TITLE" --match "TEXT" --view table
+outline search edit TARGET --title "TITLE" --match "TEXT" --view cards
 outline daily ensure YYYY-MM-DD
 outline trash TARGET
 outline restore TARGET
 outline history OPERATION_ID
 outline revert OPERATION_ID
+outline export TARGET --format markdown --output FILE
+outline merge SOURCE TARGET --preview --idempotency-key KEY
+outline merge SOURCE TARGET --expect-diff SHA256 --yes --idempotency-key KEY
 outline purge TARGET --preview --idempotency-key KEY
 outline purge TARGET --expect-diff SHA256 --yes --idempotency-key KEY
 ```
 
 View `MODE` is `outline`, `table`, `cards`, or `calendar`.
+Do not read the current View before a fully specified `view set` on an exact
+target; the command converges presentation without changing scoped Nodes.
 Run `daily ensure` directly without a pre-read. When the intent applies one
 change to every query match, do not find or enumerate IDs first; use `outline
 example edit bounded-query`, then one bounded `outline edit --input -`.
@@ -130,6 +136,8 @@ A successful semantic mutation receipt is derived from committed state and
 contains the Operation ID, result handles, verification result, and recovery
 command. Treat it as completion proof. Do not issue a separate verification
 read unless the user asks to inspect content not covered by the receipt.
+An export receipt already proves its path, byte count, and SHA-256; do not
+reread or hash the file unless the user asks to inspect its contents.
 
 ## Disclosure And Recovery
 
@@ -145,8 +153,9 @@ If validation fails, follow the returned path and corrective command once. Do
 not search broadly or inspect the full schema when the error already identifies
 the invalid property and accepted vocabulary.
 
-Use `transact` only when one intent spans dependent resources; bind resources
-inside its ChangeSet instead of querying intermediate IDs. For destructive or
+Use `transact` only when one intent spans dependent resources; start with
+`outline example transact dependent-change` and bind resources inside its
+ChangeSet instead of querying intermediate IDs. For destructive or
 explicitly reviewed semantic work (`replace text`, `merge`, or `purge`), run the
 same command first with `--preview --idempotency-key KEY`, inspect its Diff, then
 once with `--expect-diff SHA256 --yes --idempotency-key KEY`. For an advanced
@@ -158,9 +167,17 @@ If settlement is unknown, do not retry the write. Run the exact
 `outline history --idempotency-key KEY` command from the failure receipt. Revert
 only a known completed Operation.
 
-Use `import inspect`, `import plan`, exact `apply`, then `import verify` for
-external datasets. Use `asset ingest|get|export` for retained bytes and
-`capture create` for provenanced captures.
+For a normalized external dataset, use these exact stages:
+
+```text
+outline import inspect SOURCE
+outline import plan SOURCE --format normalized --output DIFF --evidence-output EVIDENCE
+outline apply --input DIFF
+outline import verify OPERATION_ID --diff DIFF --evidence EVIDENCE
+```
+
+Use `asset ingest|get|export` for retained bytes and `capture create` for
+provenanced captures.
 
 In the final response, link an ordinary persisted `node:UUID` as
 `[[node://UUID]]`, omitting the internal `node:` prefix.
