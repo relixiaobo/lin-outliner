@@ -11,6 +11,7 @@ import type {
   Turn,
   TurnDiagnosticsPayload,
   TurnDiagnosticsPayloadReference,
+  TurnItemsView,
 } from '../../src/core/agent/protocol';
 import { ThreadCore } from '../../src/main/agent/thread/ThreadCore';
 import { ThreadTrajectoryProjection } from '../../src/main/agent/thread/ThreadTrajectoryProjection';
@@ -204,6 +205,27 @@ describe('ThreadTrajectoryProjection', () => {
     };
     delete wire.records[toolIndex]!.primaryEvidence.callId;
     expect(() => decodeAgentCoreResponse('thread/trajectory/read', wire)).toThrow(/callId/);
+  });
+
+  test('keeps retained diagnostics in export after a cached list read', async () => {
+    let diagnosticsReads = 0;
+    const projection = trajectoryProjection({
+      onReadDiagnostics: () => { diagnosticsReads += 1; },
+    });
+
+    await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const exported = await projection.exportBundle(THREAD_ID);
+
+    expect(exported.diagnostics).toHaveLength(1);
+    expect(exported.diagnostics[0]).toMatchObject({
+      turnId: TURN_ID,
+      ref: DIAGNOSTICS_REF,
+      payload: {
+        schemaVersion: 1,
+        providerCalls: [{ index: 0 }],
+      },
+    });
+    expect(diagnosticsReads).toBe(2);
   });
 
   test('uses the captured provider-context prompt instead of stable-prompt source blocks', async () => {
@@ -1064,9 +1086,14 @@ describe('ThreadTrajectoryProjection', () => {
         response: null,
       }],
     };
+    let activeReads = 0;
     const projection = trajectoryProjection({
       turn: activeTurn,
-      activeDiagnostics: (_threadId, turnId) => turnId === activeTurn.id ? activeDiagnostics : null,
+      activeDiagnostics: (_threadId, turnId) => {
+        activeReads += 1;
+        if (turnId !== activeTurn.id) return null;
+        return activeReads === 1 ? activeDiagnostics : trajectoryDiagnostics();
+      },
     });
 
     const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
@@ -1077,6 +1104,28 @@ describe('ThreadTrajectoryProjection', () => {
       label: { type: 'assistantCall', callIndex: 0 },
     });
     expect(response.records.some((record) => record.kind === 'tool')).toBe(true);
+
+    const refreshed = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    expect(activeReads).toBe(2);
+    expect(refreshed.records.find((record) => record.kind === 'assistant')?.state).toBe('completed');
+  });
+
+  test('does not cache unavailable diagnostics after their retained payload recovers', async () => {
+    const diagnosticsByRef = new Map<string, TurnDiagnosticsPayload>();
+    let diagnosticsReads = 0;
+    const projection = trajectoryProjection({
+      diagnosticsByRef,
+      onReadDiagnostics: () => { diagnosticsReads += 1; },
+    });
+
+    const unavailable = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    expect(unavailable.summary.availability).toContainEqual({ reason: 'diagnosticsUnavailable' });
+    expect(unavailable.records.some((record) => record.kind === 'assistant')).toBeFalse();
+
+    diagnosticsByRef.set(DIAGNOSTICS_REF.id, trajectoryDiagnostics());
+    const recovered = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    expect(diagnosticsReads).toBe(2);
+    expect(recovered.records.some((record) => record.kind === 'assistant')).toBeTrue();
   });
 
   test('projects prepared system context for each consumed Provider Call without duplicating identical context', async () => {
@@ -1302,6 +1351,42 @@ describe('ThreadTrajectoryProjection', () => {
     }
   });
 
+  test('retains an empty predecessor catalog as the known boundary state', async () => {
+    const turns = Array.from({ length: 2 }, (_, index) => trajectoryTurnWithDiagnosticsRef(index));
+    const emptyCatalog = trajectoryDiagnostics();
+    const diagnosticsByRef = new Map([
+      [turns[0]!.execution.diagnosticsRef!.id, {
+        ...emptyCatalog,
+        configuration: { ...emptyCatalog.configuration, tools: [] },
+        toolSchemas: [],
+        providerCalls: [{
+          ...emptyCatalog.providerCalls[0]!,
+          preparedContext: {
+            ...emptyCatalog.providerCalls[0]!.preparedContext,
+            toolNames: [],
+          },
+        }],
+      }],
+      [turns[1]!.execution.diagnosticsRef!.id, trajectoryDiagnostics()],
+    ]);
+    const projection = trajectoryProjection({ turns, diagnosticsByRef });
+
+    const focused = await projection.read({
+      threadId: THREAD_ID,
+      limit: 1,
+      focus: { turnId: turns[1]!.id },
+    });
+    const toolCatalog = focused.records.find((record) => record.primaryEvidence.type === 'toolCatalog');
+
+    expect(toolCatalog?.turnId).toBe(turns[1]!.id);
+    expect(toolCatalog?.label).toEqual({
+      type: 'toolCatalog',
+      change: 'updated',
+      requestIndex: 0,
+      toolCount: 2,
+    });
+  });
+
   test('expands only required ancestors without returning structural siblings beyond the limit', async () => {
     const base = trajectoryDiagnostics();
     const batch = base.activities.find((activity) => activity.type === 'toolExecutionBatch');
@@ -1479,6 +1564,53 @@ describe('ThreadTrajectoryProjection', () => {
     expect(response.records.length).toBeGreaterThan(0);
     expect(diagnosticsReads).toBeLessThanOrEqual(2);
   });
+
+  test('scales tail refresh by covered records and reuses completed Turn summaries', async () => {
+    const turns = Array.from({ length: 10_000 }, (_, index) => trajectoryTurnWithDiagnosticsRef(index));
+    const diagnosticsByRef = new Map(turns.map((turn) => [
+      turn.execution.diagnosticsRef!.id,
+      trajectoryDiagnostics(),
+    ]));
+    const turnViews: TurnItemsView[] = [];
+    let diagnosticsReads = 0;
+    let fullTurnReads = 0;
+    let rangedTurnHeaders = 0;
+    const projection = trajectoryProjection({
+      turns,
+      diagnosticsByRef,
+      onAllTurns: (itemsView) => { turnViews.push(itemsView); },
+      onReadDiagnostics: () => { diagnosticsReads += 1; },
+      onReadTurn: () => { fullTurnReads += 1; },
+      onTrajectoryTurnRange: (start, end) => { rangedTurnHeaders += end - start; },
+    });
+
+    const first = await projection.read({ threadId: THREAD_ID, limit: 120 });
+    const coldDiagnosticsReads = diagnosticsReads;
+    const coldTurnReads = fullTurnReads;
+
+    expect(first.records.length).toBeGreaterThanOrEqual(120);
+    expect(turnViews).toEqual([]);
+    expect(coldDiagnosticsReads).toBeLessThan(50);
+    expect(coldTurnReads).toBe(coldDiagnosticsReads);
+    expect(rangedTurnHeaders).toBeLessThan(50);
+
+    const refreshed = await projection.read({ threadId: THREAD_ID, limit: 120 });
+
+    expect(refreshed.records.map((record) => record.id)).toEqual(first.records.map((record) => record.id));
+    expect(diagnosticsReads).toBe(coldDiagnosticsReads);
+    expect(fullTurnReads).toBe(coldTurnReads);
+
+    const selected = refreshed.records.find((record) => record.kind === 'assistant');
+    if (!selected) throw new Error('Expected an Assistant record');
+    for (let index = 0; index < 300; index += 1) {
+      await projection.readDetail({ threadId: THREAD_ID, recordId: selected.id });
+    }
+    expect(diagnosticsReads).toBeGreaterThan(coldDiagnosticsReads);
+    const readsAfterDetail = diagnosticsReads;
+
+    await projection.read({ threadId: THREAD_ID, limit: 120 });
+    expect(diagnosticsReads).toBe(readsAfterDetail);
+  });
 });
 
 function replacementRangeForRecords(
@@ -1497,7 +1629,10 @@ function trajectoryProjection(overrides: {
   readonly toolOutput?: string | null;
   readonly turn?: Turn;
   readonly turns?: readonly Turn[];
+  readonly onAllTurns?: (itemsView: TurnItemsView) => void;
   readonly onReadDiagnostics?: (ref: TurnDiagnosticsPayloadReference) => void;
+  readonly onReadTurn?: (turnId: string) => void;
+  readonly onTrajectoryTurnRange?: (start: number, end: number) => void;
 } = {}): ThreadTrajectoryProjection {
   const thread = trajectoryThread();
   const turns = overrides.turns ?? [overrides.turn ?? trajectoryTurn()];
@@ -1509,9 +1644,64 @@ function trajectoryProjection(overrides: {
       if (threadId !== THREAD_ID) throw new Error('Unknown Thread');
       return { thread };
     },
-    allTurns: (threadId: string) => {
+    allTurns: (threadId: string, itemsView: TurnItemsView = 'full') => {
       if (threadId !== THREAD_ID) throw new Error('Unknown Thread');
-      return turns;
+      overrides.onAllTurns?.(itemsView);
+      return itemsView === 'notLoaded'
+        ? turns.map((turn) => ({ ...turn, items: [], itemsView }))
+        : turns;
+    },
+    trajectoryTurnOverview: (threadId: string) => {
+      if (threadId !== THREAD_ID) throw new Error('Unknown Thread');
+      const usage = turns.reduce((total, turn) => ({
+        input: total.input + turn.execution.usage.input,
+        output: total.output + turn.execution.usage.output,
+        cacheRead: total.cacheRead + turn.execution.usage.cacheRead,
+        cacheWrite: total.cacheWrite + turn.execution.usage.cacheWrite,
+        reasoning: null,
+        totalTokens: total.totalTokens + turn.execution.usage.totalTokens,
+        costUsd: total.costUsd === null || turn.execution.usage.cost === null
+          ? null
+          : total.costUsd + turn.execution.usage.cost.total,
+      }), {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        reasoning: null,
+        totalTokens: 0,
+        costUsd: turns.length === 0 ? null : 0,
+      });
+      return {
+        completedAt: turns.length === 0 || turns.some((turn) => turn.completedAt === null)
+          ? null
+          : Math.max(...turns.map((turn) => turn.completedAt ?? turn.startedAt)),
+        diagnosticsUnavailable: turns.some((turn) => (
+          turn.status !== 'inProgress' && turn.execution.diagnosticsRef === null
+        )),
+        startedAt: turns.length === 0 ? null : Math.min(...turns.map((turn) => turn.startedAt)),
+        turnCount: turns.length,
+        usage: turns.length === 0 ? null : usage,
+      };
+    },
+    trajectoryTurnPosition: (threadId: string, turnId: string) => {
+      if (threadId !== THREAD_ID) throw new Error('Unknown Thread');
+      const position = turns.findIndex((turn) => turn.id === turnId);
+      return position < 0 ? null : position;
+    },
+    trajectoryTurnRange: (threadId: string, start: number, end: number) => {
+      if (threadId !== THREAD_ID) throw new Error('Unknown Thread');
+      overrides.onTrajectoryTurnRange?.(start, end);
+      return turns.slice(start, end).map((turn) => ({
+        ...turn,
+        items: [],
+        itemsView: 'notLoaded' as const,
+      }));
+    },
+    readTurn: (threadId: string, turnId: string) => {
+      if (threadId !== THREAD_ID) throw new Error('Unknown Thread');
+      overrides.onReadTurn?.(turnId);
+      return turns.find((turn) => turn.id === turnId) ?? null;
     },
     payloads: {
       readTurnDiagnostics: async (threadId: string, ref: TurnDiagnosticsPayloadReference) => {
