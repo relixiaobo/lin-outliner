@@ -60,6 +60,10 @@ ThreadReferenceSearchRequest,
 ThreadReferenceSearchResponse,
 ThreadSubagentsRequest,
 ThreadSubagentsResponse,
+ThreadToolTasksRequest,
+ThreadToolTasksResponse,
+ToolTaskReadRequest,
+ToolTaskReadResponse,
 SubagentExecutionProjection,
 ThreadImageArtifactReference,
 ThreadResourceReference,
@@ -167,6 +171,14 @@ import { ThreadTranscriptIndex } from './thread/ThreadTranscriptIndex';
 import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
 import type { TranscriptSubject } from './thread/TranscriptRenderer';
 import { TurnLifecycle,type CanonicalTurnRerunInputBatch } from './thread/TurnLifecycle';
+import { ToolTaskService } from './tasks/ToolTaskService';
+import { ToolTaskStore } from './tasks/ToolTaskStore';
+import type { ToolTaskSupervisorRuntime } from './tasks/toolTaskRuntime';
+import {
+  collectDeclaredOutputArtifacts,
+  decodeDeclaredOutputArtifactPlan,
+} from './capabilities/agentDeclaredOutputArtifacts';
+import type { ToolArtifactSink } from './runtime/ToolArtifactSink';
 
 const THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS = 2_000;
 
@@ -261,6 +273,7 @@ export interface AgentCorePaths {
   readonly resourceReferences: string;
   /** Thread transcript artifacts. A sibling of `agent/`, directly under userData. */
   readonly transcripts: string;
+  readonly toolTasks: string;
 }
 
 export interface ThreadServiceStores {
@@ -273,6 +286,7 @@ export interface ThreadServiceStores {
   readonly agentStartupContexts: AgentStartupContextStore;
   readonly payloads: ToolPayloadStore;
   readonly resources: AgentResourceStore;
+  readonly toolTasks: ToolTaskStore;
 }
 
 export interface ThreadServiceOptions {
@@ -373,6 +387,8 @@ export interface ThreadServiceOptions {
   }) => Promise<ThreadTrajectoryExportResponse>;
   readonly normalizeOutputImage?: OutputImageObservationNormalizer;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
+  readonly toolTaskSupervisorRuntime?: ToolTaskSupervisorRuntime;
+  readonly toolTaskDetailRoot?: string;
   readonly now?: () => number;
 }
 
@@ -550,6 +566,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly goalStore: GoalStore;
   private readonly subagentBudgets: SubagentRequestLedger;
   private readonly subagentExecutions: SubagentExecutionLedger;
+  private readonly toolTasks: ToolTaskService;
   private readonly recoverAgentWorktree: ThreadServiceOptions['recoverAgentWorktree'];
   private readonly cleanupResidualAgentWorktree: ThreadServiceOptions['cleanupResidualAgentWorktree'];
   private readonly settleAgentWorktree: ThreadServiceOptions['settleAgentWorktree'];
@@ -664,6 +681,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.cleanupResidualAgentWorktree = options.cleanupResidualAgentWorktree;
     this.settleAgentWorktree = options.settleAgentWorktree;
     this.writeTrajectoryExport = options.writeTrajectoryExport;
+    this.toolTasks = new ToolTaskService(
+      options.stores.toolTasks,
+      options.toolTaskDetailRoot ?? join(options.transcriptRoot, '..', 'tool-tasks'),
+      options.toolTaskSupervisorRuntime,
+      this.now,
+    );
     this.resourceOps = new ThreadResourceOps(
       this.core,
       options.stores.resources,
@@ -805,7 +828,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
       () => this.closing,
       this.turnLifecycle,
       this.collaboration,
-      (threadId) => options.stores.subagentExecutions.hasUndeliveredWork(threadId),
+      (threadId) => options.stores.subagentExecutions.hasUndeliveredWork(threadId)
+        || options.stores.toolTasks.hasBlockingWork(threadId),
       {
         delete: (threadId) => this.transcripts.delete(threadId),
         forgetExclusions: (sessionIds) => this.transcriptExclusions.forget(sessionIds),
@@ -824,6 +848,88 @@ export class ThreadService implements ThreadServiceExtensionHost {
       (threadId, turnId) => this.core.readTurn(threadId, turnId),
     );
     this.extensions.register(this.goals, { applicationInstructions: true });
+    this.toolTasks.bindHost({
+      ownerExists: (threadId) => this.core.metadata.read(threadId) !== null || this.core.ephemeral.has(threadId),
+      readDeliveryAdmission: async (threadId, turnId) => {
+        const rollout = await this.core.rollout.read(threadId);
+        for (const entry of [...rollout].reverse()) {
+          const event = entry.event.type === 'history/rerun' ? entry.event.replacement : entry.event;
+          if (event.type === 'turn/started' && event.turnId === turnId) {
+            return event.toolTaskAdmission ?? null;
+          }
+        }
+        return null;
+      },
+      startCompletionTurn: async (input) => Boolean(await this.turnLifecycle.tryStartTurnIfIdle({
+        threadId: input.threadId,
+        turnId: input.turnId,
+        input: [],
+        clientUserMessageId: input.clientId,
+        additionalContext: input.additionalContext,
+        additionalContextResourceRefs: input.additionalContextResourceRefs,
+        additionalContextSource: `tool-task-delivery:${input.admission.batchId}`,
+        author: { kind: 'host' },
+        trigger: { kind: 'feature', feature: 'tool-task-completion', ref: input.admission.batchId },
+        toolTaskAdmission: input.admission,
+      })),
+      settleTask: async (task, producerContext, maxArtifactBytes) => {
+        const plan = decodeDeclaredOutputArtifactPlan(producerContext);
+        if (!plan) {
+          return producerContext === null
+            ? { artifacts: [], warnings: [] }
+            : { artifacts: [], warnings: ['Background task artifact metadata was invalid.'] };
+        }
+        const artifactSink: ToolArtifactSink = {
+          persistBytes: async (input) => {
+            const ref = await this.writeThreadResource(
+              task.ownerThreadId,
+              input.bytes,
+              input.mimeType,
+              input.fileName,
+            );
+            const resolved = await this.resolveThreadResourceFile(task.ownerThreadId, ref);
+            return { ref, readablePath: resolved?.path ?? null };
+          },
+          persistFile: async (input) => {
+            const ref = await this.captureThreadLocalFile(
+              task.ownerThreadId,
+              input.path,
+              input.mimeType,
+              input.fileName,
+            );
+            const resolved = await this.resolveThreadResourceFile(task.ownerThreadId, ref);
+            return { ref, readablePath: resolved?.path ?? null };
+          },
+        };
+        return collectDeclaredOutputArtifacts(
+          plan.roots,
+          plan.snapshot,
+          artifactSink,
+          { maxTotalBytes: maxArtifactBytes },
+        );
+      },
+      taskDetailsExpired: async (threadId) => {
+        if (!this.core.metadata.read(threadId) && !this.core.ephemeral.has(threadId)) return;
+        const canonical = this.resourceOps.threadStorageReferences(threadId).resources;
+        await this.core.resources.setThreadReferences(
+          threadId,
+          [...canonical, ...this.toolTasks.store.artifactReferences(threadId)],
+        );
+      },
+      taskChanged: (task) => {
+        if (!this.core.metadata.read(task.ownerThreadId) && !this.core.ephemeral.has(task.ownerThreadId)) return;
+        this.core.emitTransientNotification({
+          type: 'toolTask/changed',
+          threadId: task.ownerThreadId,
+          task,
+        });
+      },
+    });
+    this.core.subscribe((notification) => {
+      if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
+        this.toolTasks.wakeDelivery(notification.threadId);
+      }
+    });
   }
 
   static open(
@@ -853,6 +959,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         goals: new GoalStore(paths.goals, goalsDatabase),
         subagentBudgets: new SubagentRequestLedger(goalsDatabase),
         subagentExecutions: new SubagentExecutionLedger(goalsDatabase),
+        toolTasks: new ToolTaskStore(goalsDatabase),
         agentStartupContexts,
         payloads: new ToolPayloadStore(paths.payloads),
         resources: new AgentResourceStore(
@@ -862,6 +969,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           options.now ?? Date.now,
         ),
       },
+      toolTaskDetailRoot: paths.toolTasks,
     });
   }
   async initialize(): Promise<void> {
@@ -936,7 +1044,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         continue;
       }
       try {
-        liveResourceReferences.set(threadId, this.resourceOps.threadResourceReferences(threadId));
+        liveResourceReferences.set(threadId, [
+          ...this.resourceOps.threadResourceReferences(threadId),
+          ...this.toolTasks.store.artifactReferences(threadId),
+        ]);
       } catch (error) {
         resourceSnapshotComplete = false;
         console.warn(`[agent] Resource reference reconciliation deferred for Thread ${threadId}`, error);
@@ -995,6 +1106,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       }
     }
     await this.collaboration.recoverPendingNotifications();
+    await this.toolTasks.initialize();
     await this.beforeInitialTurnAdmission();
     this.initialized = true;
     for (const thread of resumableThreads) {
@@ -1471,6 +1583,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async close(drainTimeoutMs = THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS): Promise<void> {
     this.closing = true;
     this.collaboration.beginClose();
+    await this.toolTasks.close(drainTimeoutMs);
     const drainDeadline = Date.now() + Math.max(0, drainTimeoutMs);
     const pendingNames = this.catalogOps.pendingNameShutdownHandles();
     for (const pending of pendingNames) pending.abort();
@@ -1626,8 +1739,27 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return this.listThreadSubagents(
           decoded as AgentCoreRequestByMethod['thread/subagents/list'],
         ) as AgentCoreResponseByMethod[Method];
+      case 'thread/tasks/list':
+        return this.listThreadToolTasks(
+          decoded as AgentCoreRequestByMethod['thread/tasks/list'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'thread/read':
         return this.readThread(decoded as AgentCoreRequestByMethod['thread/read']) as AgentCoreResponseByMethod[Method];
+      case 'task/read': {
+        const request = decoded as AgentCoreRequestByMethod['task/read'];
+        return await this.readToolTask(request) as AgentCoreResponseByMethod[Method];
+      }
+      case 'task/stop': {
+        const request = decoded as AgentCoreRequestByMethod['task/stop'];
+        const task = await this.toolTasks.stop(request.taskId, request.threadId);
+        if (!task) throw new Error(`Tool Task not found: ${request.taskId}`);
+        return { task: this.toolTasks.read(task.taskId, request.threadId)! } as AgentCoreResponseByMethod[Method];
+      }
+      case 'task/details/clear': {
+        const request = decoded as AgentCoreRequestByMethod['task/details/clear'];
+        const result = await this.toolTasks.clearEligibleDetails(request.threadId);
+        return { data: result.tasks, reclaimedBytes: result.reclaimedBytes } as AgentCoreResponseByMethod[Method];
+      }
       case 'thread/start':
         return await this.startThread(decoded as AgentCoreRequestByMethod['thread/start']) as AgentCoreResponseByMethod[Method];
       case 'thread/resume':
@@ -2005,6 +2137,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (request.includeTurns) this.assertThreadHistoryReadable(request.threadId);
     return this.catalogOps.readThread(request);
   }
+  listThreadToolTasks(request: ThreadToolTasksRequest): ThreadToolTasksResponse {
+    this.core.requireThread(request.threadId);
+    return { data: this.toolTasks.list(request.threadId) };
+  }
+  async readToolTask(request: ToolTaskReadRequest): Promise<ToolTaskReadResponse> {
+    this.core.requireThread(request.threadId);
+    const task = this.toolTasks.read(request.taskId, request.threadId);
+    if (!task) throw new Error(`Tool Task not found: ${request.taskId}`);
+    return { task, output: await this.toolTasks.output(request.taskId, request.threadId) };
+  }
+  toolTaskService(): ToolTaskService { return this.toolTasks; }
   getThreadConfiguration(threadId: ThreadId): ThreadConfigurationResponse { return this.catalogOps.getThreadConfiguration(threadId); }
   async setThreadConfiguration(request: ThreadConfigurationSetRequest): Promise<ThreadConfigurationResponse> { return this.catalogOps.setThreadConfiguration(request); }
   async startThread(requestInput: AgentCoreRequestByMethod['thread/start']): Promise<ThreadStartResponse> {
@@ -2033,10 +2176,28 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.transcriptIndex.schedule();
   }
   async setThreadArchived(threadId: ThreadId, archived: boolean): Promise<void> {
+    const subtreeIds = this.threadSubtreeIds(threadId);
+    if (archived && subtreeIds.some((candidate) => this.toolTasks.store.hasBlockingWork(candidate))) {
+      throw new ThreadBusyError('Cannot archive a Thread with active or undelivered Tool Tasks');
+    }
     await this.catalogOps.setThreadArchived(threadId, archived);
     this.transcriptIndex.schedule();
   }
-  async deleteThread(threadId: ThreadId): Promise<void> { return this.catalogOps.deleteThread(threadId); }
+  async deleteThread(threadId: ThreadId): Promise<void> {
+    const subtreeIds = this.threadSubtreeIds(threadId);
+    if (subtreeIds.some((candidate) => this.toolTasks.store.hasBlockingWork(candidate))) {
+      throw new ThreadBusyError('Cannot delete a Thread with active or undelivered Tool Tasks');
+    }
+    await this.catalogOps.deleteThread(threadId);
+    for (const candidate of subtreeIds) await this.toolTasks.deleteOwner(candidate);
+  }
+
+  private threadSubtreeIds(threadId: ThreadId): readonly ThreadId[] {
+    return [
+      threadId,
+      ...this.core.metadata.childEdges(threadId, true).map((edge) => edge.childThreadId),
+    ];
+  }
   async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> {
     this.assertStartupThreadAvailable(request.threadId);
     return this.collaboration.startRendererTurn(request);
@@ -2594,6 +2755,7 @@ export function agentCorePaths(userDataPath: string): AgentCorePaths {
     payloads: join(root, 'payloads'),
     resourceReferences: join(root, 'resource_references.sqlite'),
     transcripts: threadTranscriptRoot(userDataPath),
+    toolTasks: join(root, 'tool-tasks'),
   };
 }
 

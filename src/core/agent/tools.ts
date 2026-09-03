@@ -71,6 +71,7 @@ export interface ModelToolSchemaContribution {
 export const AGENT_TASK_TOOL_NAMES = [
   'agent',
   'agent_message',
+  'task_status',
   'task_stop',
 ] as const satisfies readonly AgentTaskToolName[];
 
@@ -110,6 +111,8 @@ export const MODEL_TOOL_ACTION_KINDS = [
   'shell.background_process',
   'shell.unknown',
   'shell.stop',
+  'task.inspect',
+  'task.stop',
   'git.publish_remote',
   'deploy.publish_remote',
   'external.message.send',
@@ -138,6 +141,7 @@ const READ_ONLY_ACTION_KINDS = new Set<ModelToolActionKind>([
   'web.fetch',
   'shell.read_search',
   'agent.goal.read',
+  'task.inspect',
   'thread.history.search',
   'thread.history.read',
 ]);
@@ -168,6 +172,10 @@ export interface AgentMessageToolInput {
 export interface TaskStopToolInput {
   readonly task_id?: string;
   readonly shell_id?: string;
+}
+
+export interface TaskStatusToolInput {
+  readonly task_id: string;
 }
 
 export type UpdatePlanToolStep = TurnPlanStep;
@@ -749,6 +757,9 @@ export const TASK_STOP_TOOL_DESCRIPTION = `
 - Use this tool when you need to terminate a long-running task
 `;
 
+export const TASK_STATUS_TOOL_DESCRIPTION = `Read one background Tool Task owned by this Thread.
+Completion is delivered automatically; use this only for an explicit status request or recovery, not polling.`;
+
 const JSON_SCHEMA_DRAFT_2020_12 = 'https://json-schema.org/draft/2020-12/schema';
 
 export function agentInputSchema(): ObjectJsonSchema {
@@ -827,6 +838,20 @@ export const TASK_STOP_INPUT_SCHEMA: ObjectJsonSchema = {
   additionalProperties: false,
 };
 
+export const TASK_STATUS_INPUT_SCHEMA: ObjectJsonSchema = {
+  $schema: JSON_SCHEMA_DRAFT_2020_12,
+  type: 'object',
+  properties: {
+    task_id: {
+      description: 'The Tool Task ID returned by a background-producing tool.',
+      type: 'string',
+      minLength: 1,
+    },
+  },
+  required: ['task_id'],
+  additionalProperties: false,
+};
+
 const agentTaskToolContracts: readonly StaticModelToolContract[] = [
   {
     identity: { namespace: null, name: 'agent' },
@@ -853,6 +878,52 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
     actionKinds: ['agent.subagent.send'],
   },
   {
+    identity: { namespace: null, name: 'task_status' },
+    description: TASK_STATUS_TOOL_DESCRIPTION,
+    scope: 'anyThread',
+    schemaOwner: 'core',
+    inputSchema: TASK_STATUS_INPUT_SCHEMA,
+    outputSchema: objectSchema({
+      taskId: stringSchema('Tool Task identity.'),
+      state: enumSchema(['running', 'settling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'lost']),
+      progress: nullableSchema(objectSchema({
+        phase: nullableSchema(outputStringSchema()),
+        message: nullableSchema(outputStringSchema()),
+        fraction: nullableSchema(numberSchema()),
+      }, ['phase', 'message', 'fraction'])),
+      result: nullableSchema(objectSchema({
+        exitCode: nullableSchema(integerSchema()),
+        signal: nullableSchema(outputStringSchema()),
+        reason: nullableSchema(outputStringSchema()),
+        error: nullableSchema(outputStringSchema()),
+        output: nullableSchema(outputStringSchema('Bounded untrusted task output.')),
+        outputTruncated: booleanSchema(),
+        detailState: enumSchema(['available', 'expired', 'cleared', 'storage_pressure']),
+        artifacts: outputArraySchema(objectSchema({
+          id: outputStringSchema(),
+          label: outputStringSchema(),
+          fileName: outputStringSchema(),
+          mimeType: outputStringSchema(),
+          byteLength: integerSchema(),
+        }, ['id', 'label', 'fileName', 'mimeType', 'byteLength']), 16),
+        storagePressure: nullableSchema(objectSchema({
+          scope: enumSchema(['thread', 'application']),
+          limitBytes: integerSchema(),
+          usedBytes: integerSchema(),
+          requiredBytes: integerSchema(),
+          reclaimableBytes: integerSchema(),
+          protectedBytes: integerSchema(),
+        }, [
+          'scope', 'limitBytes', 'usedBytes', 'requiredBytes', 'reclaimableBytes', 'protectedBytes',
+        ])),
+      }, [
+        'exitCode', 'signal', 'reason', 'error', 'output', 'outputTruncated', 'detailState',
+        'artifacts', 'storagePressure',
+      ])),
+    }, ['taskId', 'state', 'progress', 'result']),
+    actionKinds: ['task.inspect'],
+  },
+  {
     identity: { namespace: null, name: 'task_stop' },
     description: TASK_STOP_TOOL_DESCRIPTION,
     scope: 'anyThread',
@@ -861,9 +932,9 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
     outputSchema: objectSchema({
       taskId: stringSchema('Stopped task identity.'),
       taskType: stringSchema('Task owner family.'),
-      state: enumSchema(['stopped']),
+      state: enumSchema(['running', 'settling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'lost', 'stopped']),
     }, ['taskId', 'taskType', 'state']),
-    actionKinds: ['agent.subagent.interrupt', 'shell.stop'],
+    actionKinds: ['agent.subagent.interrupt', 'shell.stop', 'task.stop'],
   },
 ];
 
@@ -1274,6 +1345,15 @@ export function normalizeTaskStopToolInput(value: unknown): TaskStopToolInput {
       : null;
   if (!taskId) throw new Error('Missing required parameter: task_id');
   return Object.freeze({ ...value, task_id: taskId }) as TaskStopToolInput;
+}
+
+export function normalizeTaskStatusToolInput(value: unknown): TaskStatusToolInput {
+  if (!isRecord(value)) throw new Error('task_status input must be an object');
+  exactInputKeys(value, ['task_id'], 'task_status');
+  if (typeof value.task_id !== 'string' || !value.task_id.trim()) {
+    throw new Error('Missing required parameter: task_id');
+  }
+  return Object.freeze({ task_id: value.task_id.trim() });
 }
 
 export function normalizeUpdatePlanToolInput(value: unknown): UpdatePlanToolInput {

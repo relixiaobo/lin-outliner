@@ -8,6 +8,7 @@ import {
   MODEL_TOOL_CATALOG,
   MODEL_TOOL_ACTION_KINDS,
   modelToolContract,
+  normalizeTaskStatusToolInput,
   normalizeTaskStopToolInput,
   providerToolSchemaFailure,
   type ModelToolContract,
@@ -66,6 +67,9 @@ export class ToolRuntime {
 
   async createTools(context: TurnExecutionContext): Promise<readonly AgentTool[]> {
     const artifactSink = createToolArtifactSink(context);
+    const toolTaskService = typeof this.service.toolTaskService === 'function'
+      ? this.service.toolTaskService()
+      : undefined;
     const subagentPolicy = this.subagentPolicy(context);
     const skillRuntime = await this.skillRuntime(context);
     const workspace = typeof this.options.localWorkspace === 'function'
@@ -83,6 +87,8 @@ export class ToolRuntime {
           ...(skillRuntime === undefined ? {} : { skillRuntime }),
           ...(imageGeneration === undefined ? {} : { imageGeneration }),
           artifactSink,
+          ...(toolTaskService === undefined ? {} : { toolTaskService }),
+          turnId: context.turn.id,
         });
     const dynamicTools = await this.options.dynamicTools?.(context) ?? [];
     const collaborationTools = await this.service.collaborationToolContributions({
@@ -381,9 +387,60 @@ export class ToolRuntime {
         }
         return this.service.updateGoalForTurn(threadId, turnId, status);
       }),
+      coreResultTool('task_status', 'Task Status', async (_itemId, params) => {
+        const input = normalizeTaskStatusToolInput(params);
+        const toolTasks = typeof this.service.toolTaskService === 'function'
+          ? this.service.toolTaskService()
+          : null;
+        const task = toolTasks?.readOwned(input.task_id, threadId);
+        if (!toolTasks || !task) {
+          throw new AgentToolFailure(
+            'task_not_found',
+            `No Tool Task found with ID: ${input.task_id}`,
+            'Use a task_id returned by a background-producing tool in this Thread.',
+          );
+        }
+        const output = await toolTasks.output(task.taskId, threadId);
+        const combined = [output?.stdout, output?.stderr].filter(Boolean).join('\n');
+        return toolResult('task_status', {
+          taskId: task.taskId,
+          producer: task.producer,
+          description: task.description,
+          state: task.state,
+          progress: task.progress,
+          exitCode: task.exitCode,
+          signal: task.signal,
+          reason: task.outcomeReason,
+          error: task.error,
+          output: combined || null,
+          outputTruncated: Boolean(output?.stdoutTruncated || output?.stderrTruncated),
+          detailState: task.detailState,
+          artifacts: task.artifacts.map((artifact) => ({
+            id: artifact.ref.id,
+            label: artifact.label,
+            fileName: artifact.ref.fileName,
+            mimeType: artifact.ref.mimeType,
+            byteLength: artifact.ref.byteLength,
+          })),
+          storagePressure: task.storagePressure,
+          startedAt: task.startedAt,
+          completedAt: task.completedAt,
+        });
+      }, normalizeTaskStatusToolInput),
       coreResultTool('task_stop', 'Task Stop', async (_itemId, params) => {
         const input = normalizeTaskStopToolInput(params);
         const taskId = input.task_id!;
+        const toolTasks = typeof this.service.toolTaskService === 'function'
+          ? this.service.toolTaskService()
+          : null;
+        const toolTask = await toolTasks?.stop(taskId, threadId) ?? null;
+        if (toolTask) {
+          return toolResult('task_stop', {
+            taskId: toolTask.taskId,
+            taskType: toolTask.producer,
+            state: toolTask.state,
+          });
+        }
         const shellOwnsTask = hasBackgroundShellTask(taskId, threadId);
         const agentOwnsTask = this.service.hasAgentTask(threadId, taskId);
         if (agentOwnsTask && shellOwnsTask) {
@@ -692,7 +749,34 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
     return agentToolResult(successEnvelope(tool, details), {
       taskId,
       taskType,
-      state: 'stopped',
+      state: typeof details.state === 'string' ? details.state : 'stopped',
+    });
+  }
+  if (tool === 'task_status' && isRecord(details)) {
+    const terminal = details.state !== 'running' && details.state !== 'settling';
+    return agentToolResult(successEnvelope(tool, details, {
+      instructions: details.state === 'running' || details.state === 'settling'
+        ? 'The task is still active. Do not poll; completion will be delivered automatically.'
+        : undefined,
+    }), {
+      taskId: details.taskId,
+      state: details.state,
+      progress: details.progress && isRecord(details.progress) ? {
+        phase: details.progress.phase ?? null,
+        message: details.progress.message ?? null,
+        fraction: details.progress.fraction ?? null,
+      } : null,
+      result: terminal ? {
+        exitCode: details.exitCode ?? null,
+        signal: details.signal ?? null,
+        reason: details.reason ?? null,
+        error: details.error ?? null,
+        output: details.output ?? null,
+        outputTruncated: Boolean(details.outputTruncated),
+        detailState: details.detailState,
+        artifacts: Array.isArray(details.artifacts) ? details.artifacts : [],
+        storagePressure: details.storagePressure ?? null,
+      } : null,
     });
   }
   return agentToolResult(successEnvelope(tool, details), details);

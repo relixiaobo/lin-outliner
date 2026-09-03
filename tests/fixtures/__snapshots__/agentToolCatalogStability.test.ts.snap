@@ -522,6 +522,25 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
     }
   },
   {
+    "name": "task_status",
+    "description": "Read one background Tool Task owned by this Thread.\\nCompletion is delivered automatically; use this only for an explicit status request or recovery, not polling.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "description": "The Tool Task ID returned by a background-producing tool.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "task_stop",
     "description": "\\n- Stops a running background task by its ID\\n- Takes a task_id parameter identifying the task to stop\\n- To stop a background agent, pass its agent ID as task_id\\n- Returns a success or failure status\\n- Use this tool when you need to terminate a long-running task\\n",
     "parameters": {

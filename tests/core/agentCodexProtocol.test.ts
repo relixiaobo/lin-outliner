@@ -124,6 +124,47 @@ const projectionContextRef = {
   kind: 'toolOutputProjection' as const,
 };
 
+const toolTask = {
+  taskId: 'task-1',
+  ownerThreadId: THREAD_ID,
+  sourceTurnId: TURN_ID,
+  sourceItemId: 'item-5',
+  producer: 'video',
+  description: 'Render clip',
+  state: 'failed' as const,
+  deliveryState: 'pending' as const,
+  progress: { phase: 'render', message: 'frame 12', fraction: 0.5, updatedAt: 120 },
+  exitCode: 1,
+  signal: null,
+  outcomeReason: 'storage_limit',
+  error: 'Not enough managed storage.',
+  detailState: 'storage_pressure' as const,
+  artifacts: [{
+    ref: {
+      id: 'resource:00000000-0000-4000-8000-000000000010',
+      mimeType: 'video/mp4',
+      byteLength: 12,
+      fileName: 'clip.mp4',
+    },
+    readablePath: '/tmp/clip.mp4',
+    label: 'Rendered clip',
+  }],
+  artifactWarnings: ['Preview unavailable'],
+  outputBytes: 12,
+  detailBytes: 24,
+  storagePressure: {
+    scope: 'thread' as const,
+    limitBytes: 1_024,
+    usedBytes: 900,
+    requiredBytes: 256,
+    reclaimableBytes: 100,
+    protectedBytes: 800,
+  },
+  startedAt: 100,
+  completedAt: 130,
+  deliveryTurnId: null,
+};
+
 const itemProvenance = createLocalItemProvenance(THREAD_ID, TURN_ID, 'item-1');
 const turnProvenance = createLocalTurnProvenance(THREAD_ID, TURN_ID, { kind: 'user' });
 
@@ -1616,6 +1657,28 @@ describe('Codex Agent Core protocol codec', () => {
     expect(decodeAgentCoreTransientNotification(changed)).toEqual(changed);
   });
 
+  test('validates Tool Task notifications as bounded, owner-addressed transient state', () => {
+    const changed = { type: 'toolTask/changed' as const, threadId: THREAD_ID, task: toolTask };
+    expect(decodeAgentCoreNotification(changed)).toEqual(changed);
+    expect(decodeAgentCoreTransientNotification(changed)).toEqual(changed);
+    expect(() => decodeAgentCoreRecordedNotification(changed))
+      .toThrow('cannot record transient notification toolTask/changed');
+    expect(() => decodeAgentCoreNotification({ ...changed, threadId: CHILD_THREAD_ID }))
+      .toThrow('must match threadId');
+    expect(() => decodeAgentCoreNotification({
+      ...changed,
+      task: { ...toolTask, artifacts: Array.from({ length: 17 }, () => toolTask.artifacts[0]) },
+    })).toThrow('exceeds the artifact count limit');
+    expect(() => decodeAgentCoreNotification({
+      ...changed,
+      task: { ...toolTask, error: '界'.repeat(2_049) },
+    })).toThrow('exceeds the UTF-8 byte budget');
+    expect(() => decodeAgentCoreNotification({
+      ...changed,
+      task: { ...toolTask, storagePressure: { ...toolTask.storagePressure, scope: 'runner' } },
+    })).toThrow('notification.task.storagePressure.scope');
+  });
+
   test('validates canonical Thread name update notifications', () => {
     expect(decodeAgentCoreNotification({
       type: 'thread/name/updated',
@@ -1776,6 +1839,7 @@ describe('Codex Agent Core protocol codec', () => {
       'thread/references/resolve': { currentThreadId: THREAD_ID, threadIds: [CHILD_THREAD_ID] },
       'thread/descendants': { threadId: THREAD_ID },
       'thread/subagents/list': { threadId: THREAD_ID },
+      'thread/tasks/list': { threadId: THREAD_ID },
       'thread/read': { threadId: THREAD_ID, includeTurns: true },
       'thread/start': {},
       'thread/resume': { threadId: THREAD_ID },
@@ -1836,6 +1900,9 @@ describe('Codex Agent Core protocol codec', () => {
       'turn/recovery/read': { threadId: THREAD_ID, turnId: TURN_ID },
       'turn/continue': { threadId: THREAD_ID, turnId: TURN_ID },
       'turn/rerun': { threadId: THREAD_ID, turnId: TURN_ID, confirmToolReplay: false },
+      'task/read': { threadId: THREAD_ID, taskId: toolTask.taskId },
+      'task/stop': { threadId: THREAD_ID, taskId: toolTask.taskId },
+      'task/details/clear': { threadId: THREAD_ID },
       'goal/get': { threadId: THREAD_ID },
       'goal/create': { threadId: THREAD_ID, objective: 'Replace Agent Core' },
       'goal/update': { threadId: THREAD_ID, status: 'complete' },
@@ -1870,6 +1937,7 @@ describe('Codex Agent Core protocol codec', () => {
       },
       'thread/descendants': { data: [thread], queuedWorkThreadIds: [] },
       'thread/subagents/list': { data: [subagentExecution] },
+      'thread/tasks/list': { data: [toolTask] },
       'thread/read': { thread },
       'thread/start': { thread },
       'thread/resume': { thread },
@@ -1943,6 +2011,12 @@ describe('Codex Agent Core protocol codec', () => {
       },
       'turn/continue': { thread, turn: completedTurn, sourceTurnId: TURN_ID },
       'turn/rerun': { thread, turn: completedTurn, replacedTurnId: TURN_ID },
+      'task/read': {
+        task: toolTask,
+        output: { stdout: 'partial output', stderr: '', stdoutTruncated: false, stderrTruncated: false },
+      },
+      'task/stop': { task: toolTask },
+      'task/details/clear': { data: [{ ...toolTask, detailState: 'cleared' }], reclaimedBytes: 12 },
       'goal/get': { goal: null },
       'goal/create': { goal },
       'goal/update': { goal: { ...goal, status: 'complete' } },

@@ -6,6 +6,7 @@ import {
 } from '../runtime/ToolArtifactSink';
 import {
   collectDeclaredOutputArtifacts,
+  encodeDeclaredOutputArtifactPlan,
   snapshotDeclaredOutputRoots,
   type AgentShellOutputRoot,
   type DeclaredOutputArtifactObservation,
@@ -60,6 +61,8 @@ import {
 } from '../../../core/agentAttachmentLimits';
 import { officeOwnershipFileInfo } from '../../../core/officeFiles';
 import { ingestPptxAsMarkdown, type PptxIngestionResult } from './agentPptxIngestion';
+import type { ToolTaskService } from '../tasks/ToolTaskService';
+import type { ToolTaskExecutionState } from '../../../core/agent/protocol';
 
 export { buildAgentLocalToolProcessEnv } from './agentToolProcess';
 
@@ -89,6 +92,8 @@ export interface LocalToolOptions {
   imageNormalizer?: AgentFileReadImageNormalizer;
   processEnvironment?: AgentShellProcessEnvironmentProvider;
   artifactSink?: ToolArtifactSink;
+  toolTaskService?: ToolTaskService;
+  turnId?: string;
 }
 
 export interface AgentShellProcessEnvironment {
@@ -341,7 +346,7 @@ export interface BashData {
   artifactWarnings?: string[];
   outputLimitExceeded?: boolean;
   command?: string;
-  taskStatus?: BackgroundTaskStatus;
+  taskStatus?: BackgroundTaskStatus | ToolTaskExecutionState;
   exitCode?: number | null;
   startedAt?: string;
   completedAt?: string;
@@ -367,7 +372,7 @@ export interface LocalBashRunResult {
   artifactWarnings?: string[];
   outputLimitExceeded?: boolean;
   command?: string;
-  taskStatus?: BackgroundTaskStatus;
+  taskStatus?: BackgroundTaskStatus | ToolTaskExecutionState;
   exitCode?: number | null;
   startedAt?: string;
   completedAt?: string;
@@ -718,7 +723,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
     createFileEditTool(workspace),
     createFileWriteTool(workspace),
     createFileDeleteTool(workspace),
-    createBashTool(workspace, options.artifactSink),
+    createBashTool(workspace, options.artifactSink, options.toolTaskService, options.turnId),
   ];
 }
 
@@ -1565,6 +1570,8 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
 function createBashTool(
   workspace: WorkspaceContext,
   artifactSink?: ToolArtifactSink,
+  toolTaskService?: ToolTaskService,
+  turnId?: string,
 ): AgentTool<any, ToolEnvelope<BashData>> {
   return {
     name: 'bash',
@@ -1595,13 +1602,46 @@ function createBashTool(
       try {
         const params = normalizeBashParams(rawParams);
         if (params.run_in_background) {
-          const data = await startBackgroundCommand(workspace, params, toolCallId);
-          return agentToolResult(successEnvelope('bash', data, {
-            instructions: `Command is running in the background as ${data.backgroundTaskId}. Use task_stop with task_id if it needs to be stopped.`,
-            metrics: metrics(started, data),
-          }), visibleBash(data));
+          if (params.stdin !== undefined && (!toolTaskService || !workspace.threadId || !turnId)) {
+            throw new LocalToolFailure(
+              'invalid_args',
+              'Background stdin requires the supervised Tool Task runtime.',
+            );
+          }
+          const data = toolTaskService && workspace.threadId && turnId
+            ? await startSupervisedBackgroundCommand(
+                toolTaskService,
+                workspace,
+                params,
+                turnId,
+                toolCallId,
+              )
+            : await startBackgroundCommand(workspace, params, toolCallId);
+          const admissionFailed = data.taskStatus === 'failed' && data.exitCode == null
+            && data.returnCodeInterpretation !== undefined;
+          const envelope = admissionFailed
+            ? errorEnvelope<BashData>('bash', 'command_failed', data.returnCodeInterpretation!, {
+              data,
+              instructions: 'Resolve the reported local admission limit or failure before retrying.',
+              metrics: metrics(started, data),
+            })
+            : successEnvelope('bash', data, {
+              instructions: `Command is running in the background as ${data.backgroundTaskId}. Use task_stop with task_id if it needs to be stopped.`,
+              metrics: metrics(started, data),
+            });
+          return agentToolResult(envelope, visibleBash(data));
         }
-        const execution = await runForegroundCommand(workspace, params, signal, toolCallId, artifactSink);
+        const execution = toolTaskService && workspace.threadId && turnId
+          ? await runSupervisedForegroundCommand(
+              toolTaskService,
+              workspace,
+              params,
+              turnId,
+              toolCallId,
+              signal,
+              artifactSink,
+            )
+          : await runForegroundCommand(workspace, params, signal, toolCallId, artifactSink);
         const { persistedTextReplacements, ...result } = execution;
         const interpretation = interpretCommandResult(result.command ?? params.command, result.exitCode);
         const ok = result.backgroundTaskId !== undefined
@@ -1609,7 +1649,7 @@ function createBashTool(
         const envelope = ok
           ? successEnvelope('bash', result, {
             instructions: result.backgroundTaskId
-              ? `Command is still running in the background as ${result.backgroundTaskId}. Its temporary output path is ${result.temporaryOutputPath}; use task_stop to finalize durable output.`
+              ? `Command is still running in the background as ${result.backgroundTaskId}. Use task_stop if it needs to be stopped.`
               : undefined,
             status: result.artifactWarnings?.length ? 'partial' : undefined,
             warnings: result.artifactWarnings,
@@ -1850,9 +1890,6 @@ function normalizeBashParams(rawParams: unknown): BashParams {
     }
     if (Buffer.byteLength(input.stdin, 'utf8') > 64 * 1024 * 1024) {
       throw new LocalToolFailure('invalid_args', 'stdin exceeds the 64 MiB UTF-8 limit.');
-    }
-    if (input.run_in_background === true) {
-      throw new LocalToolFailure('invalid_args', 'stdin is available only for foreground commands.');
     }
   }
   return {
@@ -2353,6 +2390,176 @@ async function startBackgroundCommand(workspace: WorkspaceContext, params: BashP
     backgroundedByUser: true,
     ...(toolCallId !== undefined ? { toolCallId } : {}),
   });
+}
+
+async function startSupervisedBackgroundCommand(
+  service: ToolTaskService,
+  workspace: WorkspaceContext,
+  params: BashParams,
+  turnId: string,
+  toolCallId: string,
+): Promise<BashData> {
+  const shellEnvironment = await resolveWorkspaceShellProcessEnvironment(workspace, {
+    toolCallId,
+    command: params.command,
+  });
+  const declaredOutputRoots = shellEnvironment?.declaredOutputRoots ?? [];
+  const declaredOutputSnapshot = await snapshotDeclaredOutputRoots(declaredOutputRoots);
+  const task = await service.start({
+    ownerThreadId: workspace.threadId!,
+    sourceTurnId: turnId,
+    sourceItemId: toolCallId,
+    producer: 'bash',
+    description: params.description ?? 'Background command',
+    command: params.command,
+    cwd: workspace.root,
+    ...(params.stdin === undefined ? {} : { stdin: params.stdin }),
+    timeoutMs: params.timeout ?? BASH_DEFAULT_TIMEOUT_MS,
+    env: buildWorkspaceShellProcessEnv(shellEnvironment),
+    sandbox: workspaceShellSandbox(workspace),
+    producerContext: encodeDeclaredOutputArtifactPlan(declaredOutputRoots, declaredOutputSnapshot),
+  });
+  const admissionFailed = task.state === 'failed'
+    && task.childPid === null
+    && ['storage_limit', 'queue_limit', 'admission_failed'].includes(task.outcomeReason ?? '');
+  return {
+    stdout: '',
+    stderr: '',
+    interrupted: false,
+    backgroundTaskId: task.taskId,
+    backgroundedByUser: true,
+    command: params.command,
+    taskStatus: task.state,
+    startedAt: new Date(task.startedAt).toISOString(),
+    ...(task.completedAt === null ? {} : { completedAt: new Date(task.completedAt).toISOString() }),
+    ...(task.exitCode === null ? {} : { exitCode: task.exitCode }),
+    ...(admissionFailed
+      ? { returnCodeInterpretation: task.error ?? `Background command admission failed: ${task.outcomeReason}.` }
+      : {}),
+    noOutputExpected: isSilentCommand(params.command),
+  };
+}
+
+async function runSupervisedForegroundCommand(
+  service: ToolTaskService,
+  workspace: WorkspaceContext,
+  params: BashParams,
+  turnId: string,
+  toolCallId: string,
+  signal?: AbortSignal,
+  artifactSink?: ToolArtifactSink,
+): Promise<ForegroundBashResult> {
+  const shellEnvironment = await resolveWorkspaceShellProcessEnvironment(workspace, {
+    toolCallId,
+    command: params.command,
+  });
+  const declaredOutputRoots = shellEnvironment?.declaredOutputRoots ?? [];
+  const declaredOutputSnapshot = await snapshotDeclaredOutputRoots(declaredOutputRoots);
+  const timeoutMs = params.timeout ?? BASH_DEFAULT_TIMEOUT_MS;
+  const autoBackground = params.stdin === undefined
+    && timeoutMs > BASH_AUTO_BACKGROUND_MS
+    && shouldAutoBackground(params.command);
+  const task = await service.start({
+    ownerThreadId: workspace.threadId!,
+    sourceTurnId: turnId,
+    sourceItemId: toolCallId,
+    producer: 'bash',
+    description: params.description ?? 'Background command',
+    command: params.command,
+    cwd: workspace.root,
+    ...(params.stdin === undefined ? {} : { stdin: params.stdin }),
+    timeoutMs,
+    env: buildWorkspaceShellProcessEnv(shellEnvironment),
+    sandbox: workspaceShellSandbox(workspace),
+    backgroundEnabled: false,
+    // Cancellation can leave teardown settling after the foreground wait, at
+    // which point the task is promoted so the Turn can return without hiding it.
+    reserveForBackground: true,
+    producerContext: encodeDeclaredOutputArtifactPlan(declaredOutputRoots, declaredOutputSnapshot),
+  });
+  const foregroundWaitMs = autoBackground ? BASH_AUTO_BACKGROUND_MS : timeoutMs + 4_000;
+  let settled = await service.waitForTerminal(task.taskId, workspace.threadId!, foregroundWaitMs, signal);
+  if (!settled) throw new Error(`Tool Task disappeared before foreground settlement: ${task.taskId}`);
+  if (!isToolTaskTerminalState(settled.state) && autoBackground && !signal?.aborted) {
+    settled = service.promote(settled.taskId, workspace.threadId!)!;
+    return {
+      stdout: '',
+      stderr: '',
+      interrupted: false,
+      backgroundTaskId: settled.taskId,
+      assistantAutoBackgrounded: true,
+      command: params.command,
+      taskStatus: settled.state,
+      startedAt: new Date(settled.startedAt).toISOString(),
+      noOutputExpected: isSilentCommand(params.command),
+    };
+  }
+  if (!isToolTaskTerminalState(settled.state)) {
+    settled = await service.stop(settled.taskId, workspace.threadId!) ?? settled;
+  }
+  if (!isToolTaskTerminalState(settled.state)) {
+    settled = service.promote(settled.taskId, workspace.threadId!)!;
+    return {
+      stdout: '',
+      stderr: '',
+      interrupted: true,
+      backgroundTaskId: settled.taskId,
+      assistantAutoBackgrounded: true,
+      command: params.command,
+      taskStatus: settled.state,
+      startedAt: new Date(settled.startedAt).toISOString(),
+      returnCodeInterpretation: 'Command teardown is still settling in the background.',
+      noOutputExpected: isSilentCommand(params.command),
+    };
+  }
+  const output = await service.output(settled.taskId, workspace.threadId!);
+  const outputLimitExceeded = settled.outcomeReason === 'output_limit';
+  const combinedPath = !outputLimitExceeded && settled.outputBytes > BASH_INLINE_OUTPUT_LIMIT
+    ? await service.materializeCombinedOutput(settled.taskId, workspace.threadId!)
+    : null;
+  try {
+    const persisted = combinedPath
+      ? await persistShellSavedOutput(combinedPath, settled.outputBytes, artifactSink, false)
+      : {};
+    const artifactWarnings = mergeArtifactWarnings(persisted.artifactWarnings, settled.artifactWarnings);
+    const interrupted = settled.state === 'cancelled'
+      || settled.state === 'timed_out'
+      || settled.state === 'lost'
+      || !isToolTaskTerminalState(settled.state);
+    const interpretation = settled.state === 'succeeded'
+      ? { message: undefined }
+      : settled.state === 'timed_out'
+        ? { message: `Command timed out after ${timeoutMs}ms.` }
+        : settled.state === 'cancelled'
+          ? { message: 'Command was interrupted.' }
+          : settled.state === 'lost'
+            ? { message: 'Command supervisor was lost before a final result could be proven.' }
+            : outputLimitExceeded
+              ? { message: `Command killed: output exceeded ${formatBytes(BASH_MAX_OUTPUT_BYTES)}.` }
+              : { message: settled.error ?? `Command failed: ${settled.outcomeReason ?? 'unknown failure'}.` };
+    return {
+      stdout: output?.stdout ?? '',
+      stderr: output?.stderr ?? '',
+      interrupted,
+      exitCode: settled.exitCode,
+      command: params.command,
+      returnCodeInterpretation: interpretation.message,
+      noOutputExpected: isSilentCommand(params.command),
+      ...persisted,
+      ...(settled.artifacts.length > 0 ? { artifacts: settled.artifacts } : {}),
+      ...(artifactWarnings.length > 0 ? { artifactWarnings } : {}),
+      ...(outputLimitExceeded ? { outputLimitExceeded: true } : {}),
+      ...(declaredOutputRoots.length > 0
+        ? { persistedTextReplacements: outputRootTextReplacements(declaredOutputRoots) }
+        : {}),
+    };
+  } finally {
+    await service.consumeForeground(settled.taskId, workspace.threadId!);
+  }
+}
+
+function isToolTaskTerminalState(state: ToolTaskExecutionState): boolean {
+  return state !== 'running' && state !== 'settling';
 }
 
 async function registerBackgroundTask(

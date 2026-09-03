@@ -4,6 +4,7 @@ import type {
   AgentIdentityEntry,
   Thread,
   ThreadItem,
+  ToolTaskProjection,
   Turn,
 } from '../../src/core/agent/protocol';
 import { ThreadStore, mergeLoadedTurns } from '../../src/renderer/agent/store/threadStore';
@@ -344,6 +345,60 @@ describe('renderer Thread store', () => {
     });
     expect(store.getSnapshot().subagentExecutionsByAgentId.get('thread-child'))
       .toMatchObject({ stopProvenance: 'user' });
+  });
+
+  test('keeps Tool Tasks durable across cold load, realtime races, reads, stops, and Thread deletion', async () => {
+    const owner = thread('thread-1', 1);
+    const staleList = deferred<{ data: ToolTaskProjection[] }>();
+    const running = toolTask('task-1', owner.id, 'running');
+    const finished = { ...running, state: 'succeeded' as const, completedAt: 20, outputBytes: 4, detailBytes: 4 };
+    const stopped = { ...running, taskId: 'task-2', state: 'cancelled' as const, completedAt: 21 };
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    const requests: string[] = [];
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        requests.push(method);
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/tasks/list') return staleList.promise;
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'thread/descendants') return { data: [], queuedWorkThreadIds: [] };
+        if (method === 'thread/subagents/list') return { data: [] };
+        if (method === 'identities/get') return { entries: [] };
+        if (method === 'task/read') return {
+          task: finished,
+          output: { stdout: 'done', stderr: '', stdoutTruncated: false, stderrTruncated: false },
+        };
+        if (method === 'task/stop') return { task: stopped };
+        if (method === 'task/details/clear') return {
+          data: [{ ...finished, detailState: 'cleared' }],
+          reclaimedBytes: 4,
+        };
+        if (method === 'thread/delete') return {};
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    notify({ type: 'toolTask/changed', threadId: owner.id, task: finished });
+    staleList.resolve({ data: [running] });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(store.getSnapshot().toolTasksById.get(running.taskId)?.state).toBe('succeeded');
+    expect((await store.readToolTask(owner.id, running.taskId)).output?.stdout).toBe('done');
+    await store.stopToolTask(owner.id, stopped.taskId);
+    expect(store.getSnapshot().toolTasksById.get(stopped.taskId)?.state).toBe('cancelled');
+    expect(await store.clearToolTaskDetails(owner.id)).toBe(4);
+    expect(store.getSnapshot().toolTasksById.get(finished.taskId)?.detailState).toBe('cleared');
+    await store.deleteThread(owner.id);
+    expect(store.getSnapshot().toolTasksById.size).toBe(0);
+    expect(requests).toContain('thread/tasks/list');
   });
 
   test('applies an atomic completed Item batch in one renderer snapshot', async () => {
@@ -1590,6 +1645,37 @@ function thread(id: string, updatedAt: number): Thread {
     updatedAt,
     status: { type: 'idle' },
     historyMode: 'paginated',
+  };
+}
+
+function toolTask(
+  taskId: string,
+  ownerThreadId: string,
+  state: ToolTaskProjection['state'],
+): ToolTaskProjection {
+  return {
+    taskId,
+    ownerThreadId,
+    sourceTurnId: 'turn-source',
+    sourceItemId: 'item-source',
+    producer: 'bash',
+    description: 'Background command',
+    state,
+    deliveryState: 'pending',
+    progress: null,
+    exitCode: null,
+    signal: null,
+    outcomeReason: null,
+    error: null,
+    detailState: 'available',
+    artifacts: [],
+    artifactWarnings: [],
+    outputBytes: 0,
+    detailBytes: 0,
+    storagePressure: null,
+    startedAt: 10,
+    completedAt: null,
+    deliveryTurnId: null,
   };
 }
 

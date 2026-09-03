@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
@@ -40,6 +41,13 @@ import { buildStoredZip, pptxFixtureEntries } from '../helpers/pptxFixture';
 import type { ToolArtifactSink } from '../../src/main/agent/runtime/ToolArtifactSink';
 import { BrowserPilotHost } from '../../src/main/browserPilotHost';
 import { ManagedSkillShellEnvironmentRegistry } from '../../src/main/managedSkillShellEnvironment';
+import {
+  collectDeclaredOutputArtifacts,
+  decodeDeclaredOutputArtifactPlan,
+} from '../../src/main/agent/capabilities/agentDeclaredOutputArtifacts';
+import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
+import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
+import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
 
@@ -331,6 +339,145 @@ posixBashProcessTest('foreground bash and task_stop admit files from typed manag
         ref: expect.objectContaining({ fileName: 'background.txt' }),
       }),
     ]);
+  });
+});
+
+posixBashProcessTest('supervised background bash settles declared output artifacts before terminal state', async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const ownerThreadId = '00000000-0000-7000-8000-000000000011';
+    const turnId = '00000000-0000-7000-8000-000000000012';
+    const declaredPath = path.join(workspaceRoot, 'supervised-output');
+    const detailRoot = path.join(workspaceRoot, 'tool-task-details');
+    await mkdir(declaredPath);
+    const outputRoot = await realpath(declaredPath);
+    const artifactSink = testArtifactSink(workspaceRoot);
+    const database = new Database(path.join(workspaceRoot, 'tool-tasks.sqlite'), { create: true });
+    const store = new ToolTaskStore(database as unknown as SqliteDatabase);
+    const service = new ToolTaskService(store, detailRoot);
+    service.bindHost({
+      ownerExists: (threadId) => threadId === ownerThreadId,
+      readDeliveryAdmission: async () => null,
+      startCompletionTurn: async () => false,
+      settleTask: async (_task, producerContext, maxArtifactBytes) => {
+        const plan = decodeDeclaredOutputArtifactPlan(producerContext);
+        if (!plan) throw new Error('Expected a declared output artifact plan');
+        return collectDeclaredOutputArtifacts(
+          plan.roots,
+          plan.snapshot,
+          artifactSink,
+          { maxTotalBytes: maxArtifactBytes },
+        );
+      },
+      taskChanged: () => undefined,
+    });
+    await service.initialize();
+    try {
+      const workspace = createAgentLocalWorkspaceContext(
+        workspaceRoot,
+        undefined,
+        undefined,
+        async () => ({
+          env: { SUPERVISED_OUTPUT_DIR: outputRoot },
+          declaredOutputRoots: [{
+            id: 'supervised-output',
+            skillId: 'fixture',
+            path: outputRoot,
+            label: 'Supervised output',
+          }],
+        }),
+        undefined,
+        ownerThreadId,
+      );
+      const bash = createLocalTools({
+        workspace,
+        artifactSink,
+        toolTaskService: service,
+        turnId,
+      }).find((tool) => tool.name === 'bash')!;
+      const result = await bash.execute('supervised-background', {
+        command: 'printf artifact > "$SUPERVISED_OUTPUT_DIR/result.txt"',
+        run_in_background: true,
+      });
+      const taskId = (result.details as ToolEnvelope<BashData>).data?.backgroundTaskId;
+      expect(taskId).toBeDefined();
+      expect(await waitForCondition(() => {
+        const state = service.readOwned(taskId!, ownerThreadId)?.state;
+        return state !== undefined && state !== 'running' && state !== 'settling';
+      }, 5_000)).toBe(true);
+      expect(service.readOwned(taskId!, ownerThreadId)).toMatchObject({
+        state: 'succeeded',
+        artifactsSettled: true,
+        artifacts: [{
+          ref: expect.objectContaining({ fileName: 'result.txt', byteLength: 8 }),
+          label: 'Supervised output/result.txt',
+        }],
+      });
+    } finally {
+      await service.close(2_000);
+      database.close(false);
+    }
+  });
+});
+
+posixBashProcessTest('supervised background bash reports admission refusal instead of claiming it is running', async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const ownerThreadId = '00000000-0000-7000-8000-000000000021';
+    const turnId = '00000000-0000-7000-8000-000000000022';
+    const database = new Database(path.join(workspaceRoot, 'tool-tasks.sqlite'), { create: true });
+    const store = new ToolTaskStore(database as unknown as SqliteDatabase);
+    const service = new ToolTaskService(
+      store,
+      path.join(workspaceRoot, 'tool-task-details'),
+      undefined,
+      Date.now,
+      {
+        detailTtlMs: 30 * 24 * 60 * 60_000,
+        taskDetailBytes: 64,
+        threadDetailBytes: 32,
+        applicationDetailBytes: 32,
+      },
+    );
+    service.bindHost({
+      ownerExists: (threadId) => threadId === ownerThreadId,
+      readDeliveryAdmission: async () => null,
+      startCompletionTurn: async () => false,
+      taskChanged: () => undefined,
+    });
+    await service.initialize();
+    try {
+      const workspace = createAgentLocalWorkspaceContext(
+        workspaceRoot,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        ownerThreadId,
+      );
+      const bash = createLocalTools({ workspace, toolTaskService: service, turnId })
+        .find((tool) => tool.name === 'bash')!;
+      const result = await bash.execute('refused-background', {
+        command: "printf 'must not run'",
+        run_in_background: true,
+      });
+      const envelope = result.details as ToolEnvelope<BashData>;
+
+      expect(envelope.ok).toBe(false);
+      expect(envelope.error).toMatchObject({ code: 'command_failed' });
+      expect(envelope.error?.message).toContain('storage reservation was refused');
+      expect(envelope.instructions).toContain('admission');
+      expect(envelope.data).toMatchObject({
+        backgroundTaskId: expect.any(String),
+        taskStatus: 'failed',
+      });
+      expect(store.list(ownerThreadId)[0]).toMatchObject({
+        state: 'failed',
+        outcomeReason: 'storage_limit',
+        childPid: null,
+      });
+    } finally {
+      await service.close(2_000);
+      database.close(false);
+    }
   });
 });
 

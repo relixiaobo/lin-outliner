@@ -1,6 +1,7 @@
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { ThreadResourceReference } from '../../../core/agent/protocol';
+import type { JsonValue } from '../../../core/agent/protocol';
 import {
   MAX_TOOL_ARTIFACT_BYTES,
   type ToolArtifactSink,
@@ -43,8 +44,70 @@ export interface CollectedDeclaredOutputArtifacts {
   readonly warnings: readonly string[];
 }
 
+export interface DeclaredOutputArtifactPlan {
+  readonly roots: readonly AgentShellOutputRoot[];
+  readonly snapshot: DeclaredOutputSnapshot;
+}
+
 const MAX_SKILL_OUTPUT_FILES = 16;
 const MAX_SKILL_OUTPUT_ENTRIES = 512;
+
+export function encodeDeclaredOutputArtifactPlan(
+  roots: readonly AgentShellOutputRoot[],
+  snapshot: DeclaredOutputSnapshot,
+): JsonValue {
+  return {
+    version: 1,
+    kind: 'declared-output-artifacts',
+    roots: roots.map((root) => ({ ...root })),
+    entries: [...snapshot.entries],
+    unavailableRoots: [...snapshot.unavailableRoots],
+  };
+}
+
+export function decodeDeclaredOutputArtifactPlan(value: unknown): DeclaredOutputArtifactPlan | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record.version !== 1 || record.kind !== 'declared-output-artifacts'
+    || !Array.isArray(record.roots) || !Array.isArray(record.entries)
+    || !Array.isArray(record.unavailableRoots) || record.roots.length > 32
+    || record.entries.length > MAX_SKILL_OUTPUT_ENTRIES * 32
+    || record.unavailableRoots.length > 32) return null;
+  const roots: AgentShellOutputRoot[] = [];
+  for (const candidate of record.roots) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+    const root = candidate as Record<string, unknown>;
+    if (Object.keys(root).some((key) => !['id', 'skillId', 'path', 'label'].includes(key))
+      || !boundedString(root.id, 512) || !boundedString(root.skillId, 512)
+      || !boundedString(root.path, 32_768) || !boundedString(root.label, 1_000)) return null;
+    roots.push({ id: root.id, skillId: root.skillId, path: root.path, label: root.label });
+  }
+  const entries = decodeStringPairs(record.entries, MAX_SKILL_OUTPUT_ENTRIES * 32);
+  const unavailableRoots = decodeStringPairs(record.unavailableRoots, 32);
+  if (!entries || !unavailableRoots) return null;
+  return {
+    roots,
+    snapshot: {
+      entries: new Map(entries),
+      unavailableRoots: new Map(unavailableRoots),
+    },
+  };
+}
+
+function decodeStringPairs(value: readonly unknown[], limit: number): Array<[string, string]> | null {
+  if (value.length > limit) return null;
+  const result: Array<[string, string]> = [];
+  for (const candidate of value) {
+    if (!Array.isArray(candidate) || candidate.length !== 2
+      || !boundedString(candidate[0], 32_768) || !boundedString(candidate[1], 32_768)) return null;
+    result.push([candidate[0], candidate[1]]);
+  }
+  return result;
+}
+
+function boundedString(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength;
+}
 
 export async function snapshotDeclaredOutputRoots(
   roots: readonly AgentShellOutputRoot[],
@@ -76,9 +139,11 @@ export async function collectDeclaredOutputArtifacts(
   roots: readonly AgentShellOutputRoot[],
   before: DeclaredOutputSnapshot,
   artifactSink: ToolArtifactSink | undefined,
+  options: { readonly maxTotalBytes?: number } = {},
 ): Promise<CollectedDeclaredOutputArtifacts> {
   const artifacts: DeclaredOutputArtifactObservation[] = [];
   const warnings: string[] = [];
+  let admittedBytes = 0;
   for (const root of roots) {
     const unavailable = before.unavailableRoots.get(outputRootKey(root));
     if (unavailable) {
@@ -109,6 +174,10 @@ export async function collectDeclaredOutputArtifacts(
         warnings.push(`${root.label}/${entry.relativePath} exceeds the artifact byte limit.`);
         continue;
       }
+      if (entry.size > (options.maxTotalBytes ?? Number.POSITIVE_INFINITY) - admittedBytes) {
+        warnings.push(`${root.label}/${entry.relativePath} exceeds the remaining task detail budget.`);
+        continue;
+      }
       if (artifacts.length >= MAX_SKILL_OUTPUT_FILES) {
         warnings.push(`Additional files under ${root.label} were skipped after ${MAX_SKILL_OUTPUT_FILES} artifacts.`);
         break;
@@ -129,6 +198,7 @@ export async function collectDeclaredOutputArtifacts(
           readablePath: persisted.readablePath,
           label: `${root.label}/${entry.relativePath}`,
         });
+        admittedBytes += persisted.ref.byteLength;
         if (!persisted.readablePath) {
           warnings.push(`${root.label}/${entry.relativePath} is stored but has no current readable path.`);
         }

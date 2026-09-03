@@ -20,6 +20,9 @@ import type {
   ThreadListResponse as CanonicalThreadListResponse,
   SubagentExecutionProjection,
   ThreadSubagentsResponse,
+  ThreadToolTasksResponse,
+  ToolTaskReadResponse,
+  ToolTaskProjection,
   TurnPlanSnapshot,
   TurnId,
   ThreadUserContent,
@@ -75,6 +78,7 @@ export interface ThreadStoreSnapshot {
    * many Turns, so its lifecycle cannot be read off the Turn that spawned it.
    */
   readonly subagentExecutionsByAgentId: ReadonlyMap<ThreadId, SubagentExecutionProjection>;
+  readonly toolTasksById: ReadonlyMap<string, ToolTaskProjection>;
   /**
    * Who each Thread's participants are and what they look like, keyed first by
    * Thread and then by Agent type. A Thread owns the cwd that resolves its
@@ -96,6 +100,7 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
   providerRetryByThread: new Map(),
   planByThread: new Map(),
   subagentExecutionsByAgentId: new Map(),
+  toolTasksById: new Map(),
   identityCatalogByThread: new Map(),
   loading: true,
   error: null,
@@ -114,6 +119,8 @@ export class ThreadStore {
   private unsubscribeSettings: (() => void) | null = null;
   private initializePromise: Promise<void> | null = null;
   private readonly loadGenerations = new Map<ThreadId, number>();
+  private readonly toolTaskLoadGenerations = new Map<ThreadId, number>();
+  private toolTaskRealtimeRevision = 0;
   private readonly identityCatalogGenerations = new Map<ThreadId, number>();
   private readonly historyRevisions = new Map<ThreadId, number>();
   private readonly configurationRevisions = new Map<ThreadId, number>();
@@ -250,6 +257,7 @@ export class ThreadStore {
       // until these land.
       void this.listDescendants(selected).catch(() => undefined);
       void this.loadSubagentExecutions(selected).catch(() => undefined);
+      void this.loadToolTasks(selected).catch(() => undefined);
       await this.loadTurns(selected);
     }
   }
@@ -263,6 +271,7 @@ export class ThreadStore {
     // this conversation needs, and prunes children the server no longer has.
     void this.listDescendants(threadId).catch(() => undefined);
     void this.loadSubagentExecutions(threadId).catch(() => undefined);
+    void this.loadToolTasks(threadId).catch(() => undefined);
     // A different conversation can mean a different working directory, and a
     // project layer names its own participants.
     void this.reloadIdentityCatalog(threadId);
@@ -285,6 +294,55 @@ export class ThreadStore {
     const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
     for (const execution of response.data) subagentExecutionsByAgentId.set(execution.agentId, execution);
     this.patch({ subagentExecutionsByAgentId });
+  }
+
+  async loadToolTasks(threadId: ThreadId): Promise<void> {
+    const generation = (this.toolTaskLoadGenerations.get(threadId) ?? 0) + 1;
+    this.toolTaskLoadGenerations.set(threadId, generation);
+    const realtimeRevision = this.toolTaskRealtimeRevision;
+    const response: ThreadToolTasksResponse = await this.client.agentCoreRequest(
+      'thread/tasks/list',
+      { threadId },
+    );
+    if (this.toolTaskLoadGenerations.get(threadId) !== generation) return;
+    const toolTasksById = new Map(this.snapshot.toolTasksById);
+    if (realtimeRevision === this.toolTaskRealtimeRevision) {
+      for (const [taskId, task] of toolTasksById) {
+        if (task.ownerThreadId === threadId) toolTasksById.delete(taskId);
+      }
+    }
+    for (const task of response.data) {
+      if (realtimeRevision === this.toolTaskRealtimeRevision || !toolTasksById.has(task.taskId)) {
+        toolTasksById.set(task.taskId, task);
+      }
+    }
+    this.patch({ toolTasksById });
+  }
+
+  async stopToolTask(threadId: ThreadId, taskId: string): Promise<void> {
+    const response = await this.client.agentCoreRequest('task/stop', { threadId, taskId });
+    const toolTasksById = new Map(this.snapshot.toolTasksById);
+    toolTasksById.set(response.task.taskId, response.task);
+    this.toolTaskRealtimeRevision += 1;
+    this.patch({ toolTasksById });
+  }
+
+  async readToolTask(threadId: ThreadId, taskId: string): Promise<ToolTaskReadResponse> {
+    const response = await this.client.agentCoreRequest('task/read', { threadId, taskId });
+    const toolTasksById = new Map(this.snapshot.toolTasksById);
+    toolTasksById.set(response.task.taskId, response.task);
+    this.toolTaskRealtimeRevision += 1;
+    this.patch({ toolTasksById });
+    return response;
+  }
+
+  async clearToolTaskDetails(threadId: ThreadId): Promise<number> {
+    const response = await this.client.agentCoreRequest('task/details/clear', { threadId });
+    const toolTasksById = new Map(this.snapshot.toolTasksById);
+    for (const task of response.data) toolTasksById.set(task.taskId, task);
+    this.toolTaskRealtimeRevision += 1;
+    this.patch({ toolTasksById });
+    return response.reclaimedBytes;
   }
 
   async openThreadById(threadId: ThreadId): Promise<void> {
@@ -380,9 +438,11 @@ export class ThreadStore {
     const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
     const planByThread = new Map(this.snapshot.planByThread);
     const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
+    const toolTasksById = new Map(this.snapshot.toolTasksById);
     const identityCatalogByThread = new Map(this.snapshot.identityCatalogByThread);
     for (const deletedId of deletedIds) {
       this.loadGenerations.set(deletedId, (this.loadGenerations.get(deletedId) ?? 0) + 1);
+      this.toolTaskLoadGenerations.set(deletedId, (this.toolTaskLoadGenerations.get(deletedId) ?? 0) + 1);
       this.identityCatalogGenerations.delete(deletedId);
       turnsByThread.delete(deletedId);
       latestTurnByThread.delete(deletedId);
@@ -392,6 +452,9 @@ export class ThreadStore {
       providerRetryByThread.delete(deletedId);
       planByThread.delete(deletedId);
       subagentExecutionsByAgentId.delete(deletedId);
+      for (const [taskId, task] of toolTasksById) {
+        if (task.ownerThreadId === deletedId) toolTasksById.delete(taskId);
+      }
       identityCatalogByThread.delete(deletedId);
     }
     const selectedThreadWasDeleted = Boolean(
@@ -413,6 +476,7 @@ export class ThreadStore {
       providerRetryByThread,
       planByThread,
       subagentExecutionsByAgentId,
+      toolTasksById,
       identityCatalogByThread,
       selectedThreadId: replacementThreadId,
     });
@@ -954,6 +1018,15 @@ export class ThreadStore {
         const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
         subagentExecutionsByAgentId.set(notification.execution.agentId, notification.execution);
         this.patch({ subagentExecutionsByAgentId });
+        return;
+      }
+      case 'toolTask/changed': {
+        const current = this.snapshot.toolTasksById.get(notification.task.taskId);
+        if (current && JSON.stringify(current) === JSON.stringify(notification.task)) return;
+        const toolTasksById = new Map(this.snapshot.toolTasksById);
+        toolTasksById.set(notification.task.taskId, notification.task);
+        this.toolTaskRealtimeRevision += 1;
+        this.patch({ toolTasksById });
         return;
       }
     }

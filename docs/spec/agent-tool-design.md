@@ -162,6 +162,7 @@ settlement contract.
 - `file_read`, `file_glob`, and `file_grep`
 - `file_edit`, `file_write`, and `file_delete`
 - `bash`
+- `task_status`
 - `task_stop`, shared with Agent orchestration
 
 Relative paths resolve from the Thread working directory. Full Access permits
@@ -218,43 +219,69 @@ when an exact same-directory sibling is verified; local search and recent-file
 suggestions omit them. Raw `file_glob` and `bash` remain complete filesystem
 views and do not hide these files.
 
-`bash` executes through the host shell, streams bounded output, records process
-identity, and may return a background task handle. `task_stop` dispatches that
-handle through the shared background-task registry; it also accepts a running
-Agent ID. A shell task belongs to the Thread that launched it, while an Agent
-target must be reachable through the caller's collaboration lineage. The owner
-is resolved exactly, and an ambiguous Agent/shell identity is rejected rather
-than guessed. Shell stop success and failure both return the native structured
-local-tool envelope, so status, error code, recovery guidance, and metrics remain
-available to canonical history. Native command exit and filesystem errors remain
-visible to the model.
+`bash` executes foreground, explicit-background, and auto-background commands through
+one durable Tool Task service. Each command has a Host task ID, owning Thread, source
+Turn and Tool Item, command digest, supervisor nonce, bounded output, declared artifacts,
+progress, factual exit result, and delivery state. The command text is not duplicated in
+task storage. `task_status` reads an owned task for an explicit status or recovery request;
+completion is pushed, so it is not a polling primitive. `task_stop` stops an owned running
+or settling task by `task_id`. During the temporary coexistence with Subagents it also
+retains the existing Agent-ID compatibility route, rejecting ambiguous ownership rather
+than guessing.
 
-`bash.stdin` is an optional JSON string delivered only to a foreground child. Its child
-bytes are exactly `Buffer.from(stdin, 'utf8')`: empty is distinct from omitted, and the
-host adds no newline, quoting, expansion, delimiter, or normalization. Admission rejects
-non-strings, unpaired UTF-16 surrogates, more than 64 MiB of UTF-8, and any explicit
-background combination before spawn. The writer attaches output, child, and stdin error
-listeners before sending 64 KiB chunks, honors backpressure, closes stdin after the final
-byte, and settles writer failure, early close, abort, timeout, and process termination
-through the same foreground lifecycle. A stdin-bearing call never auto-backgrounds.
+`bash.stdin` is an optional JSON string for both foreground and explicit-background
+commands. Its child bytes are exactly `Buffer.from(stdin, 'utf8')`: empty is distinct from
+omitted, and the Host adds no newline, quoting, expansion, delimiter, or normalization.
+Admission rejects non-strings, unpaired UTF-16 surrogates, and more than 64 MiB of UTF-8.
+The Host creates task state and capture first, writes with backpressure, and closes stdin;
+early exit or write failure settles that same Tool Task. A stdin-bearing foreground call
+does not auto-background.
 
-Final shell logs use the Thread artifact sink. A foreground saved log and the final log
-returned by `task_stop` retain `persistedOutput` with a stable `resourceRef` in Host-only
-result state. Their model-visible projection contains safe file name, MIME, byte length,
-and current readable `filePath` when available, never the opaque reference ID. A running background task exposes only
-`temporaryOutputPath`; it becomes durable when it completes and `task_stop` observes it,
-or when it is stopped. Capture is bounded by the same maximum 64 MiB artifact ceiling.
-Crossing it kills the command and returns `output_limit_exceeded` without claiming a
-durable output. Calling `task_stop` on an already terminal shell returns its real terminal
-status and final artifact rather than claiming the task was stopped again.
-The exit-time size check is authoritative even when a fast command finishes before the
-watchdog's next poll. Stable command history strips structured artifact handles and
-replaces any repeated `filePath` or `temporaryOutputPath` inside instructions and warnings
-with stable markers. Typed managed-output roots are replaced with their root ids in
-stdout, stderr, instructions, and warnings. `task_stop` uses the background task's
-launch-time roots for this replacement even when terminal collection reports that a root
-has disappeared. The same stabilization applies to `outputRef`, command aggregation, and
-dynamic tool content; the live result alone contains the current paths.
+The standalone supervisor owns the process group, nonce-bound identity, heartbeat,
+bounded stdout/stderr files, stop request, and atomic quiescent final receipt. A Tool Task
+does not become terminal or deliverable until declared artifacts settle, the main process
+and descendants are absent, and the final receipt is durable. `settling` remains
+nonterminal and cancellable when teardown or reconciliation is incomplete. A restart
+reattaches to a matching live supervisor or consumes its receipt; authenticated process
+absence without one becomes `lost`, while ambiguous identity remains occupied rather
+than being treated as free capacity. Orderly Quit requests process-group teardown and
+bounded drain. No command is replayed during recovery.
+
+Admission uses durable `queued`, `active`, and `released` leases. Product limits bound
+global and per-Thread execution plus producer/pool occupancy and queue length. Saturated
+capacity records public queued progress. A background-capable caller receives that queued
+task handle immediately while admission continues independently; foreground execution
+waits for capacity. Queue overflow settles the same task before spawn. Initialization
+reconstructs nonterminal occupancy before opening admission, and terminal commit releases
+the lease in the same transaction. Queue wait time does not consume the command's process
+timeout.
+
+Producer-controlled stdout, stderr, progress text, artifact content, and future Runner
+text are untrusted observations. Host task identity, state, timestamps, exit facts, and
+resource references are application observations; only fixed Host handling rules are
+application instructions. Terminal background results are atomically claimed in bounded
+batches. The canonical `turn/started` event, keyed by stable batch, member, Turn, client,
+terminal-digest, and envelope-digest identity, commits delivery. Startup rolls an
+uncommitted batch back, links a matching committed Turn, and blocks only mismatched
+members. A completion Turn that later fails remains the sole delivery and uses ordinary
+Continue/Rerun recovery.
+
+Captured output and Tenon-managed artifacts share a 64 MiB per-task detail ceiling.
+Logical detail is capped at 1 GiB per owner Thread and content-addressed physical detail
+at 8 GiB per application. New background-capable work reserves its ceiling before spawn.
+Delivered detail has a 30-day TTL and is pressure-evicted oldest-first; undelivered or
+blocked evidence is protected. A storage refusal records required, reclaimable, and
+protected bytes without spawning. The task detail UI offers a confirmed Host-owned clear
+for eligible delivered details; this action is not a model tool and preserves compact
+terminal and delivery truth. Thread archive/delete and missing-owner recovery refuse or
+tear down work rather than creating orphan processes or completion Turns.
+
+Typed managed-output roots are snapshotted at launch and settled before terminal commit.
+Every execution receives a distinct root, so concurrent commands cannot claim each
+other's files. Artifact collection accepts physical regular files within the original
+root, observes count and byte limits, records bounded warnings, and uses remaining task
+detail capacity. Stable command history replaces current readable paths with durable
+markers; native command exit and filesystem errors remain visible to the model.
 
 Browser Pilot remains a managed Skill workflow over this same shell surface:
 

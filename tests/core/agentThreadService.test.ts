@@ -66,6 +66,7 @@ import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/T
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { AgentResourceStore } from '../../src/main/agent/persistence/AgentResourceStore';
 import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
+import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import type {
   ThreadNameGenerationContext,
@@ -9690,6 +9691,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       'get_goal',
       'create_goal',
       'update_goal',
+      'task_status',
       'task_stop',
       'agent',
       'agent_message',
@@ -14565,6 +14567,7 @@ function createStores(
     goals: new GoalStore(goalsPath, goalsDatabase),
     subagentBudgets: new SubagentRequestLedger(goalsDatabase),
     subagentExecutions: new SubagentExecutionLedger(goalsDatabase),
+    toolTasks: new ToolTaskStore(goalsDatabase),
     agentStartupContexts: new AgentStartupContextStore(goalsDatabase),
     payloads: new ToolPayloadStore(join(root, 'agent', 'payloads'), payloadOptions),
     resources: new AgentResourceStore(

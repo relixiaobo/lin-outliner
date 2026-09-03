@@ -1424,6 +1424,9 @@ function collaborationAct(
   switch (item.tool) {
     case 'agent': return running ? labels.startingAgent : labels.startedAgent;
     case 'agent_message': return running ? labels.messagingAgent : labels.messagedAgent;
+    case 'task_status': return running
+      ? labels.usingTool({ name: 'task status' })
+      : labels.usedTool({ name: 'task status' });
     case 'task_stop': return running ? labels.stoppingTask : labels.stoppedTask;
     default: return assertNever(item.tool);
   }

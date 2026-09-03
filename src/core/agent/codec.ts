@@ -120,6 +120,8 @@ const SHA_256_PATTERN = /^[0-9a-f]{64}$/;
 const ITEM_EXECUTION_STATUSES = new Set(['inProgress', 'completed', 'failed', 'interrupted']);
 const MAX_TURN_DIAGNOSTICS_STREAM_FRAME_TYPE_BYTES = 256;
 const MAX_TURN_DIAGNOSTICS_STREAM_NOISE_SNIPPET_BYTES = 8 * 1024;
+const MAX_TOOL_TASK_TEXT_BYTES = 4 * 1024;
+const MAX_TOOL_TASK_OUTPUT_BYTES = 30_000;
 export function decodeThreadSource(value: unknown, path = 'threadSource'): ThreadSource {
   const source = stringValue(value, path);
   if (source.startsWith('feature:')) fail(path, 'feature sources use their plain app-owned label');
@@ -640,7 +642,7 @@ export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurn
   exactKeys(record, [
     'threadId', 'turnId', 'input', 'clientUserMessageId', 'additionalContext', 'additionalContextSource',
     'additionalContextResourceRefs',
-    'userView', 'author', 'trigger',
+    'userView', 'author', 'trigger', 'toolTaskAdmission',
   ], 'privilegedTurnStart');
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'privilegedTurnStart.threadId'),
@@ -667,6 +669,9 @@ export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurn
     ...(record.userView === undefined ? {} : { userView: decodeRendererUserViewHints(record.userView) }),
     author: decodePrivilegedThreadInputAuthor(record.author, 'privilegedTurnStart.author'),
     trigger: decodeTurnTrigger(record.trigger),
+    ...(record.toolTaskAdmission === undefined
+      ? {}
+      : { toolTaskAdmission: decodeToolTaskTurnAdmission(record.toolTaskAdmission) }),
   });
 }
 
@@ -875,6 +880,7 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
     'goal/updated',
     'goal/cleared',
     'subagent/execution/changed',
+    'toolTask/changed',
   ], 'notification.type');
   let result: AgentCoreNotification;
   switch (type) {
@@ -911,7 +917,7 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       exactKeys(
         record,
         type === 'turn/started'
-          ? ['type', 'threadId', 'turnId', 'turn', 'subagentAdmission']
+          ? ['type', 'threadId', 'turnId', 'turn', 'subagentAdmission', 'toolTaskAdmission']
           : ['type', 'threadId', 'turnId', 'turn'],
         'notification',
       );
@@ -930,13 +936,25 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       const subagentAdmission = type === 'turn/started' && record.subagentAdmission !== undefined
         ? decodeSubagentTurnAdmission(record.subagentAdmission)
         : undefined;
+      const toolTaskAdmission = type === 'turn/started' && record.toolTaskAdmission !== undefined
+        ? decodeToolTaskTurnAdmission(record.toolTaskAdmission)
+        : undefined;
       result = {
         type,
         threadId: uuidV7(record.threadId, 'notification.threadId'),
         turnId,
         turn,
         ...(subagentAdmission === undefined ? {} : { subagentAdmission }),
+        ...(toolTaskAdmission === undefined ? {} : { toolTaskAdmission }),
       };
+      break;
+    }
+    case 'toolTask/changed': {
+      exactKeys(record, ['type', 'threadId', 'task'], 'notification');
+      const threadId = uuidV7(record.threadId, 'notification.threadId');
+      const task = decodeToolTaskProjection(record.task, 'notification.task');
+      if (task.ownerThreadId !== threadId) fail('notification.task.ownerThreadId', 'must match threadId');
+      result = { type, threadId, task };
       break;
     }
     case 'turn/providerRetry/changed': {
@@ -1129,6 +1147,19 @@ function decodeSubagentTurnAdmission(value: unknown): import('./protocol').Subag
   };
 }
 
+function decodeToolTaskTurnAdmission(value: unknown): import('./protocol').ToolTaskTurnAdmission {
+  const record = recordValue(value, 'notification.toolTaskAdmission');
+  exactKeys(record, ['batchId', 'envelopeDigest'], 'notification.toolTaskAdmission');
+  const envelopeDigest = stringValue(record.envelopeDigest, 'notification.toolTaskAdmission.envelopeDigest');
+  if (!/^[0-9a-f]{64}$/u.test(envelopeDigest)) {
+    fail('notification.toolTaskAdmission.envelopeDigest', 'expected a lowercase SHA-256 digest');
+  }
+  return {
+    batchId: stringValue(record.batchId, 'notification.toolTaskAdmission.batchId'),
+    envelopeDigest,
+  };
+}
+
 export function decodeAgentCoreRecordedNotification(value: unknown): AgentCoreRecordedNotification {
   const notification = decodeAgentCoreNotification(value);
   switch (notification.type) {
@@ -1136,6 +1167,7 @@ export function decodeAgentCoreRecordedNotification(value: unknown): AgentCoreRe
     case 'turn/providerRetry/changed':
     case 'turn/plan/updated':
     case 'subagent/execution/changed':
+    case 'toolTask/changed':
       fail('notification.type', `cannot record transient notification ${notification.type}`);
     default:
       return notification;
@@ -1149,6 +1181,7 @@ export function decodeAgentCoreTransientNotification(value: unknown): AgentCoreT
     case 'turn/providerRetry/changed':
     case 'turn/plan/updated':
     case 'subagent/execution/changed':
+    case 'toolTask/changed':
       return notification;
     default:
       fail('notification.type', `expected transient notification, received ${notification.type}`);
@@ -1284,6 +1317,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/subagents/list':
       decoded = decodeThreadSubagentsRequest(value);
       break;
+    case 'thread/tasks/list':
+      decoded = decodeThreadToolTasksRequest(value);
+      break;
     case 'thread/read':
       decoded = decodeThreadReadRequest(value);
       break;
@@ -1364,6 +1400,15 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'turn/rerun':
       decoded = decodeTurnRerunRequest(value);
       break;
+    case 'task/read':
+      decoded = decodeToolTaskReadRequest(value);
+      break;
+    case 'task/stop':
+      decoded = decodeToolTaskStopRequest(value);
+      break;
+    case 'task/details/clear':
+      decoded = decodeThreadIdentityRequest(value);
+      break;
     case 'goal/get':
       decoded = decodeGoalGetInput(value);
       break;
@@ -1409,6 +1454,9 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       break;
     case 'thread/subagents/list':
       decoded = decodeThreadSubagentsResponse(value);
+      break;
+    case 'thread/tasks/list':
+      decoded = decodeThreadToolTasksResponse(value);
       break;
     case 'thread/read':
     case 'thread/start':
@@ -1476,6 +1524,15 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       break;
     case 'turn/rerun':
       decoded = decodeTurnRerunResponse(value);
+      break;
+    case 'task/read':
+      decoded = decodeToolTaskReadResponse(value);
+      break;
+    case 'task/stop':
+      decoded = decodeToolTaskStopResponse(value);
+      break;
+    case 'task/details/clear':
+      decoded = decodeToolTaskDetailsClearResponse(value);
       break;
     case 'turn/steer':
       decoded = decodeTurnSteerResponse(value);
@@ -1761,6 +1818,30 @@ function decodeThreadSubagentsRequest(value: unknown): AgentCoreRequestByMethod[
   const record = recordValue(value, 'thread/subagents/list');
   exactKeys(record, ['threadId'], 'thread/subagents/list');
   return deepFreeze({ threadId: uuidV7(record.threadId, 'thread/subagents/list.threadId') });
+}
+
+function decodeThreadToolTasksRequest(value: unknown): AgentCoreRequestByMethod['thread/tasks/list'] {
+  const record = recordValue(value, 'thread/tasks/list');
+  exactKeys(record, ['threadId'], 'thread/tasks/list');
+  return deepFreeze({ threadId: uuidV7(record.threadId, 'thread/tasks/list.threadId') });
+}
+
+function decodeToolTaskStopRequest(value: unknown): AgentCoreRequestByMethod['task/stop'] {
+  const record = recordValue(value, 'task/stop');
+  exactKeys(record, ['threadId', 'taskId'], 'task/stop');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'task/stop.threadId'),
+    taskId: stringValue(record.taskId, 'task/stop.taskId'),
+  });
+}
+
+function decodeToolTaskReadRequest(value: unknown): AgentCoreRequestByMethod['task/read'] {
+  const record = recordValue(value, 'task/read');
+  exactKeys(record, ['threadId', 'taskId'], 'task/read');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'task/read.threadId'),
+    taskId: stringValue(record.taskId, 'task/read.taskId'),
+  });
 }
 
 function decodeThreadReadRequest(value: unknown): AgentCoreRequestByMethod['thread/read'] {
@@ -2228,6 +2309,152 @@ function decodeThreadSubagentsResponse(value: unknown): AgentCoreResponseByMetho
     data: arrayValue(record.data, 'thread/subagents/list response.data')
       .map((entry, index) => decodeSubagentExecution(entry, `thread/subagents/list response.data[${index}]`)),
   });
+}
+
+function decodeThreadToolTasksResponse(value: unknown): AgentCoreResponseByMethod['thread/tasks/list'] {
+  const record = recordValue(value, 'thread/tasks/list response');
+  exactKeys(record, ['data'], 'thread/tasks/list response');
+  return deepFreeze({
+    data: arrayValue(record.data, 'thread/tasks/list response.data')
+      .map((entry, index) => decodeToolTaskProjection(entry, `thread/tasks/list response.data[${index}]`)),
+  });
+}
+
+function decodeToolTaskStopResponse(value: unknown): AgentCoreResponseByMethod['task/stop'] {
+  const record = recordValue(value, 'task/stop response');
+  exactKeys(record, ['task'], 'task/stop response');
+  return deepFreeze({ task: decodeToolTaskProjection(record.task, 'task/stop response.task') });
+}
+
+function decodeToolTaskReadResponse(value: unknown): AgentCoreResponseByMethod['task/read'] {
+  const record = recordValue(value, 'task/read response');
+  exactKeys(record, ['task', 'output'], 'task/read response');
+  let output: AgentCoreResponseByMethod['task/read']['output'] = null;
+  if (record.output !== null) {
+    const candidate = recordValue(record.output, 'task/read response.output');
+    exactKeys(candidate, ['stdout', 'stderr', 'stdoutTruncated', 'stderrTruncated'], 'task/read response.output');
+    output = {
+      stdout: boundedOptionalUtf8String(
+        candidate.stdout,
+        'task/read response.output.stdout',
+        MAX_TOOL_TASK_OUTPUT_BYTES,
+      ),
+      stderr: boundedOptionalUtf8String(
+        candidate.stderr,
+        'task/read response.output.stderr',
+        MAX_TOOL_TASK_OUTPUT_BYTES,
+      ),
+      stdoutTruncated: booleanValue(candidate.stdoutTruncated, 'task/read response.output.stdoutTruncated'),
+      stderrTruncated: booleanValue(candidate.stderrTruncated, 'task/read response.output.stderrTruncated'),
+    };
+  }
+  return deepFreeze({ task: decodeToolTaskProjection(record.task, 'task/read response.task'), output });
+}
+
+function decodeToolTaskDetailsClearResponse(
+  value: unknown,
+): AgentCoreResponseByMethod['task/details/clear'] {
+  const record = recordValue(value, 'task/details/clear response');
+  exactKeys(record, ['data', 'reclaimedBytes'], 'task/details/clear response');
+  return deepFreeze({
+    data: arrayValue(record.data, 'task/details/clear response.data')
+      .map((entry, index) => decodeToolTaskProjection(entry, `task/details/clear response.data[${index}]`)),
+    reclaimedBytes: nonNegativeInteger(
+      record.reclaimedBytes,
+      'task/details/clear response.reclaimedBytes',
+    ),
+  });
+}
+
+function decodeToolTaskProjection(value: unknown, path: string): import('./protocol').ToolTaskProjection {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'taskId', 'ownerThreadId', 'sourceTurnId', 'sourceItemId', 'producer', 'description',
+    'state', 'deliveryState', 'progress', 'exitCode', 'signal', 'outcomeReason', 'error',
+    'detailState', 'artifacts', 'artifactWarnings', 'outputBytes', 'detailBytes', 'storagePressure',
+    'startedAt', 'completedAt', 'deliveryTurnId',
+  ], path);
+  let progress: import('./protocol').ToolTaskProgress | null = null;
+  if (record.progress !== null) {
+    const candidate = recordValue(record.progress, `${path}.progress`);
+    exactKeys(candidate, ['phase', 'message', 'fraction', 'updatedAt'], `${path}.progress`);
+    const fraction = nullableNumber(candidate.fraction, `${path}.progress.fraction`);
+    if (fraction !== null && (fraction < 0 || fraction > 1)) {
+      fail(`${path}.progress.fraction`, 'must be between 0 and 1');
+    }
+    progress = {
+      phase: nullableString(candidate.phase, `${path}.progress.phase`, true),
+      message: nullableString(candidate.message, `${path}.progress.message`, true),
+      fraction,
+      updatedAt: finiteNumber(candidate.updatedAt, `${path}.progress.updatedAt`),
+    };
+  }
+  const artifacts = arrayValue(record.artifacts, `${path}.artifacts`);
+  if (artifacts.length > 16) fail(`${path}.artifacts`, 'exceeds the artifact count limit');
+  const artifactWarnings = arrayValue(record.artifactWarnings, `${path}.artifactWarnings`)
+    .map((warning, index) => stringValue(warning, `${path}.artifactWarnings[${index}]`));
+  if (artifactWarnings.length > 32) fail(`${path}.artifactWarnings`, 'exceeds the warning count limit');
+  let storagePressure: import('./protocol').ToolTaskStoragePressure | null = null;
+  if (record.storagePressure !== null) {
+    const candidate = recordValue(record.storagePressure, `${path}.storagePressure`);
+    exactKeys(candidate, [
+      'scope', 'limitBytes', 'usedBytes', 'requiredBytes', 'reclaimableBytes', 'protectedBytes',
+    ], `${path}.storagePressure`);
+    storagePressure = {
+      scope: enumValue(candidate.scope, ['thread', 'application'], `${path}.storagePressure.scope`),
+      limitBytes: nonNegativeInteger(candidate.limitBytes, `${path}.storagePressure.limitBytes`),
+      usedBytes: nonNegativeInteger(candidate.usedBytes, `${path}.storagePressure.usedBytes`),
+      requiredBytes: nonNegativeInteger(candidate.requiredBytes, `${path}.storagePressure.requiredBytes`),
+      reclaimableBytes: nonNegativeInteger(candidate.reclaimableBytes, `${path}.storagePressure.reclaimableBytes`),
+      protectedBytes: nonNegativeInteger(candidate.protectedBytes, `${path}.storagePressure.protectedBytes`),
+    };
+  }
+  return {
+    taskId: boundedUtf8String(record.taskId, `${path}.taskId`, 256),
+    ownerThreadId: uuidV7(record.ownerThreadId, `${path}.ownerThreadId`),
+    sourceTurnId: uuidV7(record.sourceTurnId, `${path}.sourceTurnId`),
+    sourceItemId: boundedUtf8String(record.sourceItemId, `${path}.sourceItemId`, 256),
+    producer: boundedUtf8String(record.producer, `${path}.producer`, 256),
+    description: boundedUtf8String(record.description, `${path}.description`, MAX_TOOL_TASK_TEXT_BYTES),
+    state: enumValue(record.state, [
+      'running', 'settling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'lost',
+    ], `${path}.state`),
+    deliveryState: enumValue(record.deliveryState, [
+      'pending', 'delivering', 'delivered', 'blocked',
+    ], `${path}.deliveryState`),
+    progress,
+    exitCode: nullableInteger(record.exitCode, `${path}.exitCode`),
+    signal: nullableBoundedUtf8String(record.signal, `${path}.signal`, 256),
+    outcomeReason: nullableBoundedUtf8String(record.outcomeReason, `${path}.outcomeReason`, 256),
+    error: nullableBoundedUtf8String(record.error, `${path}.error`, MAX_TOOL_TASK_TEXT_BYTES),
+    detailState: enumValue(record.detailState, [
+      'available', 'expired', 'cleared', 'storage_pressure',
+    ], `${path}.detailState`),
+    artifacts: artifacts.map((artifact, index) => {
+      const candidate = recordValue(artifact, `${path}.artifacts[${index}]`);
+      exactKeys(candidate, ['ref', 'readablePath', 'label'], `${path}.artifacts[${index}]`);
+      return {
+        ref: decodeThreadResourceReference(candidate.ref, `${path}.artifacts[${index}].ref`),
+        readablePath: nullableBoundedUtf8String(
+          candidate.readablePath,
+          `${path}.artifacts[${index}].readablePath`,
+          MAX_TOOL_TASK_TEXT_BYTES,
+        ),
+        label: boundedUtf8String(candidate.label, `${path}.artifacts[${index}].label`, 1_024),
+      };
+    }),
+    artifactWarnings: artifactWarnings.map((warning, index) => boundedUtf8String(
+      warning,
+      `${path}.artifactWarnings[${index}]`,
+      MAX_TOOL_TASK_TEXT_BYTES,
+    )),
+    outputBytes: nonNegativeInteger(record.outputBytes, `${path}.outputBytes`),
+    detailBytes: nonNegativeInteger(record.detailBytes, `${path}.detailBytes`),
+    storagePressure,
+    startedAt: finiteNumber(record.startedAt, `${path}.startedAt`),
+    completedAt: record.completedAt === null ? null : finiteNumber(record.completedAt, `${path}.completedAt`),
+    deliveryTurnId: nullableUuidV7(record.deliveryTurnId, `${path}.deliveryTurnId`),
+  };
 }
 
 function decodeSubagentExecution(value: unknown, path: string): SubagentExecutionProjection {
@@ -5780,6 +6007,17 @@ function boundedUtf8String(value: unknown, path: string, maxBytes: number): stri
   const decoded = stringValue(value, path);
   if (new TextEncoder().encode(decoded).byteLength > maxBytes) fail(path, 'exceeds the UTF-8 byte budget');
   return decoded;
+}
+
+function boundedOptionalUtf8String(value: unknown, path: string, maxBytes: number): string {
+  const decoded = stringValue(value, path, true);
+  if (new TextEncoder().encode(decoded).byteLength > maxBytes) fail(path, 'exceeds the UTF-8 byte budget');
+  return decoded;
+}
+
+function nullableBoundedUtf8String(value: unknown, path: string, maxBytes: number): string | null {
+  if (value === null) return null;
+  return boundedOptionalUtf8String(value, path, maxBytes);
 }
 
 function serializedJsonBytes(value: JsonValue): number {

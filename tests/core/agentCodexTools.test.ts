@@ -367,7 +367,7 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(MODEL_TOOL_ACTION_KINDS.some((kind) => kind.includes('.session.'))).toBe(false);
     expect(modelToolActionKinds('agent')).toEqual(['agent.subagent.spawn']);
     expect(modelToolActionKinds('agent_message')).toEqual(['agent.subagent.send']);
-    expect(modelToolActionKinds('task_stop')).toEqual(['agent.subagent.interrupt', 'shell.stop']);
+    expect(modelToolActionKinds('task_stop')).toEqual(['agent.subagent.interrupt', 'shell.stop', 'task.stop']);
     expect(modelToolActionKindFromRule('Action(agent.subagent.read)')).toBeNull();
     expect(modelToolActionKindFromRule('Action(agent.session.read)')).toBeNull();
     expect(modelToolActionKindFromRule('agent.subagent.read')).toBeNull();

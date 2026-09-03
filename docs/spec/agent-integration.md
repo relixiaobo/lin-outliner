@@ -5,7 +5,7 @@ Agent Core. It is a contract checklist, not project status.
 
 ## Core Contract
 
-- Use Thread, Turn, Item, Goal, Role, and Subagent as the product vocabulary.
+- Use Thread, Turn, Item, Goal, Role, Subagent, and Tool Task as the product vocabulary.
 - Cross the strict request/response codecs; do not add parallel IPC.
 - Persist execution history only through canonical notifications and rollouts.
 - Give every completed fact immutable provenance.
@@ -14,7 +14,8 @@ Agent Core. It is a contract checklist, not project status.
 - Represent each Agent as a child Thread plus one stable Agent execution ID;
   deliver background completion only to its direct parent.
 - Route scheduled work through Automation claims and canonical feature Turn
-  provenance; do not add another execution scheduler.
+  provenance; do not confuse scheduled product work with the generic local
+  admission leases that bound processes Tool Tasks start.
 
 ## Tool Contract
 
@@ -39,6 +40,15 @@ Agent Core. It is a contract checklist, not project status.
   unknown settlement through exact idempotency history rather than retrying.
 - Keep the Agent orchestration surface to `agent`, `agent_message`, and unified
   `task_stop`; do not add a roster, inbox, follow-up, wait, or polling alias.
+- Run background-capable Bash through durable Tool Tasks. Keep producer tools
+  responsible for creating domain work and reserve `task_status` / `task_stop`
+  for inspecting or cancelling a returned task handle; do not add `task_start`.
+- Persist nonce-bound supervisor identity, quiescent final receipts, admission
+  leases, delivery batches, bounded detail, and artifact references. Reconcile
+  them before reopening admission after restart, without replaying a command.
+- Keep producer output and artifacts untrusted, Host facts observational, and
+  fixed completion handling rules instructional. Commit exactly-once delivery
+  at canonical `turn/started`, not at an IPC return or model response.
 - Declare Core scope and action kinds.
 - Apply effective configuration and parent capability ceilings.
 - Keep collaboration Agent model/reasoning choices out of Role definitions and
@@ -93,6 +103,10 @@ Agent Core. It is a contract checklist, not project status.
 - Store identity and pagination state in `threadStore`.
 - Decode notifications before state mutation.
 - Use shared dialogs, menus, icons, tokens, and i18n.
+- Present all background producers through the generic Tool Task strip and
+  detail surface. Use transient change notifications plus a cold list read;
+  require confirmation for Host-owned detail cleanup and keep it outside the
+  model catalog.
 - Store Composer Thread mentions as structured UUIDv7 content; resolve current titles
   for menu, transcript, copy, and history presentation without putting titles in the
   canonical URI. Keep missing/current/corrupt/denied targets non-fatal.
@@ -119,6 +133,10 @@ Agent Core. It is a contract checklist, not project status.
   its reachability through fork, child inheritance, rollback, prune, startup
   reconciliation, and Thread deletion.
 - Keep feature stores explicitly owned and keyed by canonical IDs.
+- Separate compact Tool Task truth from expandable detail. Preserve terminal
+  and delivery facts until Thread deletion; apply per-task, per-Thread, and
+  application detail ceilings, delivery-based TTL, reference-aware GC, and
+  visible storage-pressure refusal.
 - Persist Agent identity, recorded configuration, stop provenance, retained
   worktree metadata, bounded execution-selection fallback, and pending
   `{agentId, generation}` delivery without adding a second transcript.
@@ -131,6 +149,10 @@ Agent Core. It is a contract checklist, not project status.
 
 - Add protocol codec and invalid-state tests.
 - Add lifecycle and restart tests for persistent behavior.
+- For Tool Tasks, test exact stdin, queue/lease recovery, process-group stop,
+  quiescent receipt races, artifact settlement, output limits, retention,
+  storage pressure, owner deletion, exactly-once delivery, and source/packaged
+  supervisor resolution.
 - Prove a settings change affects only fresh Agent identities: existing Agents
   keep their effective provider/model/reasoning snapshot across resume and
   restart, while nested Agents inherit what their direct parent actually runs.
