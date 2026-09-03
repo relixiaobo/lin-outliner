@@ -207,6 +207,27 @@ describe('ThreadTrajectoryProjection', () => {
     expect(() => decodeAgentCoreResponse('thread/trajectory/read', wire)).toThrow(/callId/);
   });
 
+  test('keeps retained diagnostics in export after a cached list read', async () => {
+    let diagnosticsReads = 0;
+    const projection = trajectoryProjection({
+      onReadDiagnostics: () => { diagnosticsReads += 1; },
+    });
+
+    await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const exported = await projection.exportBundle(THREAD_ID);
+
+    expect(exported.diagnostics).toHaveLength(1);
+    expect(exported.diagnostics[0]).toMatchObject({
+      turnId: TURN_ID,
+      ref: DIAGNOSTICS_REF,
+      payload: {
+        schemaVersion: 1,
+        providerCalls: [{ index: 0 }],
+      },
+    });
+    expect(diagnosticsReads).toBe(2);
+  });
+
   test('uses the captured provider-context prompt instead of stable-prompt source blocks', async () => {
     const base = trajectoryDiagnostics();
     const diagnostics: TurnDiagnosticsPayload = {
@@ -1328,6 +1349,42 @@ describe('ThreadTrajectoryProjection', () => {
       expect(detail.record?.id).toBe(record.id);
       expect(detail.detail).not.toBeNull();
     }
+  });
+
+  test('retains an empty predecessor catalog as the known boundary state', async () => {
+    const turns = Array.from({ length: 2 }, (_, index) => trajectoryTurnWithDiagnosticsRef(index));
+    const emptyCatalog = trajectoryDiagnostics();
+    const diagnosticsByRef = new Map([
+      [turns[0]!.execution.diagnosticsRef!.id, {
+        ...emptyCatalog,
+        configuration: { ...emptyCatalog.configuration, tools: [] },
+        toolSchemas: [],
+        providerCalls: [{
+          ...emptyCatalog.providerCalls[0]!,
+          preparedContext: {
+            ...emptyCatalog.providerCalls[0]!.preparedContext,
+            toolNames: [],
+          },
+        }],
+      }],
+      [turns[1]!.execution.diagnosticsRef!.id, trajectoryDiagnostics()],
+    ]);
+    const projection = trajectoryProjection({ turns, diagnosticsByRef });
+
+    const focused = await projection.read({
+      threadId: THREAD_ID,
+      limit: 1,
+      focus: { turnId: turns[1]!.id },
+    });
+    const toolCatalog = focused.records.find((record) => record.primaryEvidence.type === 'toolCatalog');
+
+    expect(toolCatalog?.turnId).toBe(turns[1]!.id);
+    expect(toolCatalog?.label).toEqual({
+      type: 'toolCatalog',
+      change: 'updated',
+      requestIndex: 0,
+      toolCount: 2,
+    });
   });
 
   test('expands only required ancestors without returning structural siblings beyond the limit', async () => {

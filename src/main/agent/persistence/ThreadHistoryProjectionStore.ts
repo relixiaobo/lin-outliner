@@ -468,9 +468,15 @@ export class ThreadHistoryProjectionStore {
 
   trajectoryTurnPosition(threadId: ThreadId, turnId: string): number | null {
     const row = this.db.prepare(`
-      SELECT position FROM thread_turns WHERE thread_id = ? AND turn_id = ?
-    `).get(threadId, turnId) as { position: number } | undefined;
-    return row?.position ?? null;
+      SELECT COUNT(preceding.turn_id) AS turn_rank
+      FROM thread_turns AS target
+      LEFT JOIN thread_turns AS preceding
+        ON preceding.thread_id = target.thread_id
+        AND preceding.position < target.position
+      WHERE target.thread_id = ? AND target.turn_id = ?
+      GROUP BY target.position
+    `).get(threadId, turnId) as { turn_rank: number } | undefined;
+    return row?.turn_rank ?? null;
   }
 
   trajectoryTurnRange(
@@ -482,9 +488,10 @@ export class ThreadHistoryProjectionStore {
     if (end <= start) return [];
     const rows = this.db.prepare(`
       SELECT * FROM thread_turns
-      WHERE thread_id = ? AND position >= ? AND position < ?
+      WHERE thread_id = ?
       ORDER BY position
-    `).all(threadId, start, end) as unknown as TurnRow[];
+      LIMIT ? OFFSET ?
+    `).all(threadId, end - start, start) as unknown as TurnRow[];
     return rows.map((row) => this.turnFromRow(row, itemsView));
   }
 

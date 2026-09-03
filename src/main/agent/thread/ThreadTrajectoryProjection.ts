@@ -137,6 +137,7 @@ interface ProjectedTrajectoryRecords {
 interface TurnProjectionCandidate {
   readonly availability: readonly ThreadTrajectoryAvailability[];
   readonly diagnosticsAvailable: boolean;
+  readonly finalToolCatalogFingerprint: string | undefined;
   readonly records: readonly ThreadTrajectoryRecordSummary[];
   readonly stablePromptFingerprint: string | null;
   readonly toolCatalogs: ReadonlyMap<string, {
@@ -339,7 +340,11 @@ export class ThreadTrajectoryProjection {
     const thread = this.core.requireThread(threadId).thread;
     const allTurns = this.core.allTurns(threadId);
     const overview = this.core.trajectoryTurnOverview(threadId);
-    const turns = await this.loadTurns(threadId, allTurns.map((turn, turnIndex) => ({ turn, turnIndex })));
+    const turns = await this.loadTurns(
+      threadId,
+      allTurns.map((turn, turnIndex) => ({ turn, turnIndex })),
+      false,
+    );
     const records = this.projectRecords(turns, initialProjectionState()).records;
     return {
       thread,
@@ -836,6 +841,10 @@ function turnProjectionCandidate(loaded: LoadedTurn): TurnProjectionCandidate {
   appendToolCatalogRecords(records, loaded);
   appendTurnRecords(records, loaded);
   const payload = loaded.diagnostics?.payload ?? null;
+  const finalCall = payload?.providerCalls.at(-1) ?? null;
+  const finalToolCatalog = payload && finalCall
+    ? toolCatalogRecord(payload, finalCall.index)
+    : null;
   const toolCatalogs = new Map<string, { readonly empty: boolean; readonly fingerprint: string }>();
   if (payload) {
     for (const record of records) {
@@ -852,6 +861,7 @@ function turnProjectionCandidate(loaded: LoadedTurn): TurnProjectionCandidate {
   return {
     availability: loaded.availability,
     diagnosticsAvailable: loaded.diagnostics !== null,
+    finalToolCatalogFingerprint: finalToolCatalog?.fingerprint,
     records,
     stablePromptFingerprint: payload?.stablePrompt?.fingerprints.complete ?? null,
     toolCatalogs,
@@ -900,6 +910,9 @@ function projectTurnCandidate(
       });
     }
   }
+  if (candidate.finalToolCatalogFingerprint !== undefined) {
+    toolCatalogFingerprint = candidate.finalToolCatalogFingerprint;
+  }
   if (!candidate.diagnosticsAvailable) {
     stablePromptFingerprint = undefined;
     toolCatalogFingerprint = undefined;
@@ -914,10 +927,9 @@ function projectionBoundaryState(candidate: TurnProjectionCandidate): Trajectory
   if (!candidate.diagnosticsAvailable) {
     return { stablePromptFingerprint: undefined, toolCatalogFingerprint: undefined };
   }
-  const finalCatalog = [...candidate.toolCatalogs.values()].at(-1) ?? null;
   return {
     stablePromptFingerprint: candidate.stablePromptFingerprint,
-    toolCatalogFingerprint: finalCatalog?.fingerprint,
+    toolCatalogFingerprint: candidate.finalToolCatalogFingerprint,
   };
 }
 

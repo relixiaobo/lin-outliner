@@ -625,6 +625,36 @@ describe('Agent Core persistence', () => {
     rebuilt.close();
   });
 
+  test('exposes dense Trajectory Turn ranks over sparse rollout ordinals', async () => {
+    const root = await tempRoot();
+    const threadId = uuidV7(2_700);
+    const rollout = trackedRolloutStore(join(root, 'dense-trajectory-ranks-rollouts'));
+    const path = join(root, 'thread_history.sqlite');
+    const db = testDatabase(path);
+    const store = new ThreadHistoryProjectionStore(path, db);
+    const firstLifecycle = lifecycle(threadId, 4_000);
+    const secondLifecycle = lifecycle(threadId, 5_000);
+    for (const notification of [...firstLifecycle, ...secondLifecycle]) {
+      await rollout.append(threadId, notification);
+    }
+    store.applyMany(await rollout.read(threadId));
+    const turns = store.listTurns({ threadId, itemsView: 'notLoaded' }).data;
+    const rolloutPositions = db.prepare(`
+      SELECT position FROM thread_turns WHERE thread_id = ? ORDER BY position
+    `).all(threadId) as Array<{ position: number }>;
+
+    expect(rolloutPositions.map((row) => row.position)).toEqual([0, firstLifecycle.length]);
+    expect(store.trajectoryTurnPosition(threadId, turns[0]!.id)).toBe(0);
+    expect(store.trajectoryTurnPosition(threadId, turns[1]!.id)).toBe(1);
+    expect(store.trajectoryTurnPosition(threadId, uuidV7(6_000))).toBeNull();
+    expect(store.trajectoryTurnRange(threadId, 0, 2).map((turn) => turn.id))
+      .toEqual(turns.map((turn) => turn.id));
+    expect(store.trajectoryTurnRange(threadId, 1, 2).map((turn) => turn.id))
+      .toEqual([turns[1]!.id]);
+    expect(store.trajectoryTurnRange(threadId, 2, 3)).toEqual([]);
+    store.close();
+  });
+
   test('shares bounded visible-history search rows fairly across candidate Threads', async () => {
     const root = await tempRoot();
     const rollout = trackedRolloutStore(join(root, 'fair-history-rollouts'));
