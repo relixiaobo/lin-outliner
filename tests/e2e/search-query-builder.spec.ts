@@ -51,6 +51,8 @@ test.describe('search query builder', () => {
     await expect(controls.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
+    await expect(viewMode).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(viewMode).not.toHaveCSS('box-shadow', 'none');
 
     const geometry = await controls.evaluate((toolbar) => {
       const rect = toolbar.getBoundingClientRect();
@@ -92,11 +94,13 @@ test.describe('search query builder', () => {
         titleBottom: title.getBoundingClientRect().bottom,
         tooltipBottom: tooltipRect.bottom,
         tooltipLeft: tooltipRect.left,
+        tooltipRight: tooltipRect.right,
         tooltipTop: tooltipRect.top,
         tooltipWidth: tooltipRect.width,
       };
     });
-    expect(tooltipGeometry.tooltipLeft).toBeGreaterThan(nameFilterBox!.x + nameFilterBox!.width);
+    expect(tooltipGeometry.tooltipLeft).toBeLessThan(nameFilterBox!.x + nameFilterBox!.width);
+    expect(tooltipGeometry.tooltipRight).toBeGreaterThan(nameFilterBox!.x);
     expect(tooltipGeometry.tooltipTop).toBeGreaterThan(tooltipGeometry.titleBottom);
     expect(tooltipGeometry.tooltipBottom).toBeLessThanOrEqual(tooltipGeometry.firstRowTop);
     expect(tooltipGeometry.tooltipWidth).toBeLessThan(180);
@@ -105,6 +109,22 @@ test.describe('search query builder', () => {
     await expect(tooltip).toHaveText('Sort by');
     const shortTooltipWidth = await tooltip.evaluate((element) => element.getBoundingClientRect().width);
     expect(shortTooltipWidth).toBeLessThan(tooltipGeometry.tooltipWidth);
+
+    await outlineMode.hover();
+    await expect(tooltip).toHaveText('Outline');
+    await expect.poll(async () => tooltip.evaluate((element) => {
+      const tooltipRect = element.getBoundingClientRect();
+      const segments = Array.from(document.querySelectorAll<HTMLElement>(
+        '.view-toolbar.is-compact-controls .view-toolbar-mode-button',
+      ));
+      return segments.every((segment) => {
+        const rect = segment.getBoundingClientRect();
+        return tooltipRect.right <= rect.left
+          || tooltipRect.left >= rect.right
+          || tooltipRect.bottom <= rect.top
+          || tooltipRect.top >= rect.bottom;
+      });
+    })).toBe(true);
 
     await page.setViewportSize({ width: 760, height: originalViewport.height });
     const narrowGeometry = await controls.evaluate((toolbar) => {

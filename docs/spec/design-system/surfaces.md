@@ -155,8 +155,11 @@ selection states.
 Search Outline and Table share one compact icon-first result-view band and never
 stack a query-summary row with a full toolbar. Name search expands inline only
 while active. A single two-option Outline/Table mode selector remains visible in
-both modes and reuses the ordinary Outline toolbar's mode component; the context
-menu is its secondary text entry point. Outline aligns the band with its result
+both modes and reuses the ordinary Outline toolbar's mode component. In the
+compact band it retains one neutral pill track and one clearly filled current
+segment, so the two icons read as one choice instead of unrelated actions;
+per-option tooltips anchor below their own segment and never cover either
+segment. The context menu is its secondary text entry point. Outline aligns the band with its result
 text axis derived from the shared row geometry; Table places it between the
 owner heading and field header on the Title label axis. The band has no fill,
 frame, summary chips, result count, manual refresh, or decorative separators.

@@ -412,6 +412,7 @@ function createSourceNode(
     assetId?: string;
     sourceText?: string;
     name?: string | null;
+    content?: RichText;
     id?: string;
   },
 ): Promise<CommandResult> {
@@ -422,7 +423,7 @@ function createSourceNode(
   return mutate(() => [{
     op: 'create',
     placement: structuralPlacement(oneId(parentId), index),
-    nodes: [draft({ text: options.name ?? '', marks: [], inlineRefs: [] }, id)],
+    nodes: [draft(options.content ?? { text: options.name ?? '', marks: [], inlineRefs: [] }, id)],
     bind: 'sourceOwner',
   }, {
     op: 'update',

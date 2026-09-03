@@ -43,6 +43,7 @@ import {
 } from './nodeLineView';
 import { resolveNodeLineTrigger } from './nodeLineTrigger';
 import { focusTargetMatches } from '../focus/focusModel';
+import { focusElementForRequest } from '../focus/focusRequestDom';
 import { compositionAnchorTransaction } from './imeCompositionAnchor';
 import {
   beginComposition,
@@ -168,8 +169,8 @@ function lastTextblockInlineEnd(doc: PMNode): number | null {
   return pos;
 }
 
-function focusEditorDom(view: EditorView) {
-  view.dom.focus({ preventScroll: true });
+function focusEditorDom(view: EditorView): boolean {
+  return focusElementForRequest(view.dom);
 }
 
 function isEditableSurface(props: RichTextEditorProps) {
@@ -448,7 +449,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
   };
 
   const applyFocusRequest = (view: EditorView, request: FocusRequest) => {
-    focusEditorDom(view);
+    if (!focusEditorDom(view)) return;
     applyCursorPlacement(view, request.placement);
     updateToolbar(view);
     if (!composingRef.current && !view.composing) updateTrigger(view);
@@ -1302,7 +1303,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
     ) return;
 
     imeTrace('pendingInput:apply', props.nodeId, 'text:', JSON.stringify(input.char));
-    focusEditorDom(view);
+    if (!focusEditorDom(view)) return;
     const insertFrom = view.state.selection.from;
     let tr = view.state.tr.insertText(input.char);
     const maxPos = tr.doc.content.size - 1;

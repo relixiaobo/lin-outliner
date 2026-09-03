@@ -14,6 +14,7 @@ import type {
   PendingInputChar,
 } from '../../state/document';
 import { focusTargetMatches } from '../focus/focusModel';
+import { focusElementForRequest } from '../focus/focusRequestDom';
 import { isCompositionLive } from '../editor/compositionRelay';
 import {
   insertTextIntoControlValue,
@@ -151,7 +152,7 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
     // A live IME composition parks the request (issue #176); the composing
     // editor relays it at compositionend.
     if (isCompositionLive()) return;
-    textarea.focus({ preventScroll: true });
+    if (!focusElementForRequest(textarea)) return;
     setTextControlCursor(textarea, request.placement);
     props.onFocusRequestConsumed?.(request);
   }, [props.focusRequest, props.focusTarget, props.onFocusRequestConsumed]);
@@ -162,7 +163,7 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
     const target = props.focusTarget;
     if (!textarea || !input || !target || props.readOnly) return;
     if (!focusTargetMatches(input.target, target)) return;
-    textarea.focus({ preventScroll: true });
+    if (!focusElementForRequest(textarea)) return;
     const next = insertTextIntoControlValue({
       value: textarea.value,
       selectionStart: textarea.selectionStart,

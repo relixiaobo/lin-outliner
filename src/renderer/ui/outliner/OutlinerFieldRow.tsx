@@ -32,6 +32,7 @@ import {
   selectFocusState,
 } from '../focus/focusModel';
 import { isCompositionLive } from '../editor/compositionRelay';
+import { focusElementForRequest } from '../focus/focusRequestDom';
 import {
   insertTextIntoControlValue,
   setTextControlCursor,
@@ -228,7 +229,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     if (isCompositionLive()) return;
     const target = nameInputRef.current;
     if (!target) return;
-    target.focus();
+    if (!focusElementForRequest(target)) return;
     setTextControlCursor(target, request.placement);
     props.setUi((prev) => clearFocusRequestState(prev, request));
   }, [fieldNameFocusTarget, props.setUi, props.ui.focusRequest]);
@@ -238,7 +239,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     if (!input || !focusTargetMatches(input.target, fieldNameFocusTarget)) return;
     const target = nameInputRef.current;
     if (!target) return;
-    target.focus();
+    if (!focusElementForRequest(target)) return;
     const next = insertTextIntoControlValue({
       value: target.value,
       selectionStart: target.selectionStart,

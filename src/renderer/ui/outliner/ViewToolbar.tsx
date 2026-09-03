@@ -451,10 +451,9 @@ export function ViewToolbar({
   const tooltipStyle = useAnchoredOverlay(tooltipRef, {
     anchorRect: tooltip?.anchorRect ?? null,
     disabled: !tooltip,
-    gap: 0,
     layoutKey: tooltip?.label,
     maxHeight: 80,
-    placement: 'bottom-start',
+    placement: 'bottom-center',
     width: 'content',
   });
 
@@ -527,15 +526,14 @@ export function ViewToolbar({
       return;
     }
     const rect = element.getBoundingClientRect();
-    const left = rect.right + 8;
     setTooltip({
       label,
       anchorRect: {
-        bottom: rect.top,
-        left,
-        right: left,
+        bottom: rect.bottom,
+        left: rect.left,
+        right: rect.right,
         top: rect.top,
-        width: 0,
+        width: rect.width,
       },
     });
   };

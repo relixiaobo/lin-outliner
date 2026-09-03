@@ -872,6 +872,12 @@ test.describe('outliner row editing parity', () => {
       (window as Window & { __movingEditor?: Element }).__movingEditor === element
     ))).toBe(true);
 
+    // Electron can occasionally drop focus to <body> while the optimistic row
+    // is reconciled with the authoritative projection. No newer control claimed
+    // focus, so settlement must re-issue the row's focus request.
+    await betaEditor.evaluate((element) => (element as HTMLElement).blur());
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+
     await observeNextRowMoveAnimation(page, ids.beta);
     await releaseRelocation();
     await expectRowMoveAnimationObserved(page, ids.beta);
@@ -885,6 +891,35 @@ test.describe('outliner row editing parity', () => {
     await expectRowMoveAnimationObserved(page, ids.beta);
     await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
     await expect(rowEditor(page, ids.beta)).toBeFocused();
+  });
+
+  test('Tab relocation keeps the live editor focused while text patches settle', async ({ page }) => {
+    await placeCursor(page, ids.beta, 'end');
+    const betaEditor = rowEditor(page, ids.beta);
+    await betaEditor.evaluate((element) => {
+      const events: string[] = [];
+      (window as Window & { __tabFocusEvents?: string[] }).__tabFocusEvents = events;
+      element.addEventListener('blur', () => events.push('blur'));
+      element.addEventListener('focus', () => events.push('focus'));
+    });
+
+    await page.keyboard.type('!');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('?');
+
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.alpha);
+    await expect(betaEditor).toBeFocused();
+    await expect(betaEditor).toHaveText('Beta!?');
+
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.type('.');
+
+    await expect.poll(async () => (await nodeById(page, ids.beta))?.parentId).toBe(ids.today);
+    await expect(betaEditor).toBeFocused();
+    await expect(betaEditor).toHaveText('Beta!?.');
+    expect(await page.evaluate(() => (
+      (window as Window & { __tabFocusEvents?: string[] }).__tabFocusEvents
+    ))).toEqual([]);
   });
 
   test('Shift+Tab while editing a panel-root row is a no-op', async ({ page }) => {

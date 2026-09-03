@@ -8,6 +8,7 @@ import {
 } from '../../api/types';
 import type {
   CursorPlacement,
+  FocusTarget,
   PendingStructuralChange,
   PendingStructuralPresentation,
   UiState,
@@ -18,10 +19,33 @@ import {
   rowFocusTarget,
   selectFocusState,
 } from '../focus/focusModel';
+import { focusIsUnclaimed } from '../focus/focusRequestDom';
 import type { Dispatch, SetStateAction } from 'react';
 import { concatRichText } from '../editor/richTextCodec';
 
 type UiStateSetter = Dispatch<SetStateAction<UiState>>;
+
+function uiFocusOwnsTarget(state: UiState, target: FocusTarget): boolean {
+  return state.focusedId === target.nodeId
+    && state.focusedParentId === target.parentId
+    && state.focusedPanelId === target.panelId
+    && state.focusSurface === target.surface;
+}
+
+function repairUnclaimedRelocationFocus(
+  setUi: UiStateSetter,
+  target: FocusTarget,
+  placement: CursorPlacement,
+): void {
+  if (!focusIsUnclaimed(document.activeElement, document.body)) return;
+  flushSync(() => {
+    setUi((previous) => (
+      uiFocusOwnsTarget(previous, target)
+        ? requestFocusState(previous, target, placement)
+        : previous
+    ));
+  });
+}
 
 export function optimisticReplacementAnchors(
   siblingIds: readonly NodeId[],
@@ -297,7 +321,7 @@ export function startOptimisticRelocation<Result>(params: {
   const collapsedWereActive = new Set(
     [...(params.collapseIds ?? [])].filter((id) => params.currentUi.expanded.has(id)),
   );
-  return startOptimisticStructuralEdit({
+  const relocation = startOptimisticStructuralEdit({
     panelId: params.panelId,
     setUi: params.setUi,
     input: {
@@ -337,6 +361,23 @@ export function startOptimisticRelocation<Result>(params: {
       });
     },
   });
+  if (params.preserveFocus) return relocation;
+
+  const target = params.presentation === 'field'
+    ? focusTarget(params.id, params.targetParentId, params.panelId, 'field-name')
+    : rowFocusTarget(params.id, params.targetParentId, params.panelId);
+  const repairFocus = () => repairUnclaimedRelocationFocus(
+    params.setUi,
+    target,
+    params.placement,
+  );
+  window.requestAnimationFrame(repairFocus);
+  void relocation.settlement
+    .then((accepted) => {
+      if (accepted) repairFocus();
+    })
+    .catch(() => undefined);
+  return relocation;
 }
 
 export function clearOptimisticStructuralEdit(

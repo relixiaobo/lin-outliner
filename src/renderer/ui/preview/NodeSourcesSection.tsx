@@ -28,6 +28,7 @@ import { dispatchPreviewTargetOpen } from './previewEvents';
 import {
   applyHostSourceResolution,
   nodeSourceValues,
+  sourcePreviewVisibleByDefault,
   type NodeSourceDescriptor,
 } from './nodeSources';
 import { useNodeSourceViewState } from './sourceViewState';
@@ -53,8 +54,11 @@ export function NodeSourcesSection({
     () => nodeSourceValues(ownerId, index.byId),
     [index.byId, index.revision, ownerId],
   );
-  const valueIds = useMemo(() => values.map((value) => value.sourceValueId), [values]);
-  const view = useNodeSourceViewState(ownerId, valueIds);
+  const viewValues = useMemo(() => values.map((value) => ({
+    id: value.sourceValueId,
+    previewVisibleByDefault: sourcePreviewVisibleByDefault(value),
+  })), [values]);
+  const view = useNodeSourceViewState(ownerId, viewValues);
   const [resolutionGeneration, setResolutionGeneration] = useState(0);
   const resolvedValues = useResolvedNodeSources(values, resolutionGeneration);
   const selected = resolvedValues.find((value) => value.sourceValueId === view.selectedValueId)
@@ -146,8 +150,11 @@ export function OutlineSourcePreview({
     () => nodeSourceValues(ownerId, index.byId),
     [index.byId, index.revision, ownerId],
   );
-  const valueIds = useMemo(() => values.map((value) => value.sourceValueId), [values]);
-  const view = useNodeSourceViewState(ownerId, valueIds);
+  const viewValues = useMemo(() => values.map((value) => ({
+    id: value.sourceValueId,
+    previewVisibleByDefault: sourcePreviewVisibleByDefault(value),
+  })), [values]);
+  const view = useNodeSourceViewState(ownerId, viewValues);
   if (!view.previewVisible || !view.selectedValueId) return null;
 
   return (
@@ -177,8 +184,11 @@ export function SourcePreviewAffordance({
     () => nodeSourceValues(ownerId, index.byId),
     [index.byId, index.revision, ownerId],
   );
-  const valueIds = useMemo(() => values.map((value) => value.sourceValueId), [values]);
-  const view = useNodeSourceViewState(ownerId, valueIds);
+  const viewValues = useMemo(() => values.map((value) => ({
+    id: value.sourceValueId,
+    previewVisibleByDefault: sourcePreviewVisibleByDefault(value),
+  })), [values]);
+  const view = useNodeSourceViewState(ownerId, viewValues);
   const selected = view.selectedValueId === valueId;
   if (selected && view.previewVisible) return null;
   const label = selected ? labels.showPreview : labels.previewThisSource;

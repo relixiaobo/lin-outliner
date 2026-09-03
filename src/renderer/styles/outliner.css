@@ -318,8 +318,8 @@
   flex: 0 0 calc(2 * var(--control-size-xl));
   gap: 0;
   border-radius: var(--radius-pill);
-  background: transparent;
-  box-shadow: none;
+  background: var(--fill-1);
+  box-shadow: var(--segmented-track-shadow);
   padding: 0;
 }
 
@@ -340,6 +340,14 @@
   min-height: var(--control-size-xl);
   gap: 0;
   padding: 0;
+}
+
+.view-toolbar-mode.is-compact .view-toolbar-mode-button:first-child {
+  border-radius: var(--radius-pill) var(--radius-xs) var(--radius-xs) var(--radius-pill);
+}
+
+.view-toolbar-mode.is-compact .view-toolbar-mode-button:last-child {
+  border-radius: var(--radius-xs) var(--radius-pill) var(--radius-pill) var(--radius-xs);
 }
 
 .view-toolbar-mode-button:hover {
@@ -1633,6 +1641,43 @@ button.outliner-table-column-kind:focus-visible {
   pointer-events: none;
 }
 
+/* A Source preview and its owner title are one selectable Node composition.
+   Two adjoining paint planes retain the direct-row DOM required by editing and
+   drag logic while presenting one uninterrupted frame around that composition. */
+.row-wrap:has(> .row.selected:not(.drop-before):not(.drop-after))
+  > .outline-source-preview-row {
+  isolation: isolate;
+}
+
+.row-wrap:has(> .row.selected:not(.drop-before):not(.drop-after))
+  > .outline-source-preview-row::before {
+  position: absolute;
+  top: 1px;
+  right: 6px;
+  bottom: 0;
+  left: var(--row-selection-start);
+  z-index: 0;
+  border: 1px solid color-mix(in srgb, var(--row-selection-border) 34%, transparent);
+  border-bottom: 0;
+  border-radius: var(--radius-row) var(--radius-row) 0 0;
+  background: var(--row-selected);
+  content: "";
+  pointer-events: none;
+}
+
+.row-wrap:has(> .row.selected:not(.drop-before):not(.drop-after))
+  > .outline-source-preview-row > * {
+  position: relative;
+  z-index: 1;
+}
+
+.row-wrap:has(> .outline-source-preview-row)
+  > .row.selected:not(.drop-before):not(.drop-after)::before {
+  top: 0;
+  border-top: 0;
+  border-radius: 0 0 var(--radius-row) var(--radius-row);
+}
+
 .row.selected > * {
   position: relative;
   z-index: 1;
@@ -2885,6 +2930,18 @@ button.outliner-table-column-kind:focus-visible {
   font-weight: inherit;
   padding: 0 var(--space-hairline);
   text-decoration: none;
+}
+
+.row-editor .ProseMirror a[href] {
+  color: var(--link);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.12em;
+}
+
+.row-editor .ProseMirror a[href]:hover {
+  color: var(--link-hover);
+  cursor: pointer;
 }
 
 .row-editor .inline-ref:hover {

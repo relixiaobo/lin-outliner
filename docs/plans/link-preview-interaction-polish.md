@@ -2,9 +2,10 @@
 
 ## Goal
 
-Make pasted links, Source preview defaults, attachment selection, and saved-search
-view controls communicate their behavior consistently. This is ONE complete
-user-visible feature in one PR; the implementation steps do not ship separately.
+Make pasted links, Source preview defaults, attachment selection, saved-search
+view controls, and structural editing focus communicate their behavior
+consistently. This is ONE complete user-visible feature in one PR; the
+implementation steps do not ship separately.
 
 ## Non-goals
 
@@ -54,6 +55,15 @@ anchor below their individual controls and never cover a sibling control. The
 same component remains present in Outline and Table modes and keeps its current
 accessible names and pressed states.
 
+### Structural editing focus
+
+Tab and Shift+Tab relocation keep the same row in text-editing mode through both
+the optimistic move and authoritative projection settlement. The renderer
+re-issues the existing row focus request only when focus has fallen to the
+document body and UI focus ownership still names that row, parent, panel, and
+surface. A newer pointer or keyboard focus owner therefore wins, while an
+unclaimed Electron/DOM focus loss self-heals without a direct DOM focus shortcut.
+
 ## Acceptance Criteria
 
 - A bare generic webpage URL pasted into an empty Node creates one linked-title
@@ -70,6 +80,9 @@ accessible names and pressed states.
   hit testing.
 - The compact Outline/Table selector has one visible pill track, one neutral
   selected segment, and a tooltip that does not intersect either mode button.
+- Tab and Shift+Tab preserve the editing caret through optimistic relocation,
+  text-patch settlement, and authoritative projection reconciliation; a focus
+  that moved to another control is never reclaimed.
 - Narrow layouts keep every mode segment intact and wrap toolbar controls only as
   complete units; light, dark, keyboard, pointer, reduced-motion, and
   reduced-transparency behavior remain valid.
@@ -79,7 +92,8 @@ accessible names and pressed states.
 - Renderer tests cover linked bare-URL content and derived/explicit preview
   visibility.
 - Playwright covers generic URL, YouTube, attachment selection, cursor behavior,
-  and Outline/Table geometry in wide and narrow layouts.
+  Outline/Table geometry in wide and narrow layouts, and Tab/Shift+Tab focus
+  continuity across structural settlement.
 - Visual screenshots cover the affected surfaces in light and dark appearances.
 - Run `bun run typecheck`, `bun run test:renderer`, the relevant Playwright specs,
   `bun run docs:check`, and `git diff --check`.
@@ -87,16 +101,14 @@ accessible names and pressed states.
 ## Files And Collision Boundary
 
 Expected implementation files are `src/renderer/api/outlineIntents.ts`,
-`src/renderer/ui/outliner/OutlinerItem.tsx`, `OutlinerRowShell.tsx`,
+`src/renderer/ui/focus/focusRequestDom.ts`, shared editor/control focus
+consumers, `src/renderer/ui/outliner/OutlinerItem.tsx`,
+`optimisticStructuralEdit.ts`,
 `ViewToolbar.tsx`, `src/renderer/ui/preview/NodeSourcesSection.tsx`,
 `nodeSources.ts`, `sourceViewState.ts`, outliner/preview styles, focused renderer
-and Playwright tests, `docs/spec/ui-behavior.md`, and
+and Playwright tests including `outliner-row-editing.spec.ts`,
+`docs/spec/ui-behavior.md`, and
 `docs/spec/design-system/surfaces.md`.
-
-Open PRs #619 and #620 do not overlap this renderer UI or specification surface.
-The plan does share preview-shell files with `url-static-reader`,
-`file-preview-office`, and preview units in `interaction-jank-cleanups`; this
-Draft PR claims that lane until merge or close.
 
 ## Risks
 
@@ -108,6 +120,9 @@ Draft PR claims that lane until merge or close.
   selection; constrain the composite frame to the preview and owner row.
 - Tooltip placement can escape short panes; reuse the shared anchored-overlay
   bounds rather than fixed coordinates.
+- A delayed focus repair could steal focus after the user moves elsewhere;
+  require both an unclaimed document-body focus and unchanged row-level UI focus
+  ownership before re-issuing the request.
 
 ## Open questions
 

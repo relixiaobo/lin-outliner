@@ -1345,7 +1345,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
 
   const handlePasteBareUrl = (url: string) => {
-    const content = plainText(url);
+    const content: RichText = {
+      text: url,
+      marks: [{ start: 0, end: url.length, type: 'link', attrs: { href: url } }],
+      inlineRefs: [],
+    };
     if (props.draft && !realNode) {
       startOptimisticDraftMaterialization({
         content,
@@ -1362,7 +1366,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         command: () => api.createSourceNode(
           props.parentId,
           currentDraftCreateIndex(),
-          { sourceText: url, name: url, id: props.nodeId },
+          { sourceText: url, content, id: props.nodeId },
         ),
       });
       return;

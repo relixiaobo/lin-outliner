@@ -1731,6 +1731,30 @@ test.describe('file attachments', () => {
     await expect(pastedActions.getByRole('button', { name: 'Hide preview' })).toBeVisible();
     await expect(pastedActions).toHaveCSS('opacity', '0');
 
+    await rowEditor(page, pastedId!).click();
+    await page.keyboard.press('Escape');
+    await expect(pastedRow.locator(':scope > .row')).toHaveClass(/selected/);
+    await expect.poll(async () => pastedRow.evaluate((ownerRow) => {
+      const previewRow = ownerRow.querySelector<HTMLElement>(':scope > .outline-source-preview-row');
+      const titleRow = ownerRow.querySelector<HTMLElement>(':scope > .row');
+      if (!previewRow || !titleRow) return null;
+      const previewSelection = getComputedStyle(previewRow, '::before');
+      const titleSelection = getComputedStyle(titleRow, '::before');
+      return {
+        sameFill: previewSelection.backgroundColor === titleSelection.backgroundColor,
+        previewBorderBottom: previewSelection.borderBottomWidth,
+        previewBottomRadius: previewSelection.borderBottomLeftRadius,
+        titleBorderTop: titleSelection.borderTopWidth,
+        titleTopRadius: titleSelection.borderTopLeftRadius,
+      };
+    })).toEqual({
+      sameFill: true,
+      previewBorderBottom: '0px',
+      previewBottomRadius: '0px',
+      titleBorderTop: '0px',
+      titleTopRadius: '0px',
+    });
+
     const calls = await commandCalls(page);
     expect(calls.some((call) => call.cmd === 'outline/asset ingest')).toBe(true);
     expect(await appliedSourceCreates(page)).toContainEqual(expect.objectContaining({
@@ -2202,9 +2226,12 @@ test.describe('file attachments', () => {
       const created = projection.nodes.find((node) => node.id === createdId);
       return {
         content: created?.content.text ?? null,
+        links: created?.content.marks
+          .filter((mark) => mark.type === 'link')
+          .map((mark) => mark.attrs?.href) ?? [],
         sources: sourceFieldValues(projection, createdId!).map((source) => source.content.text),
       };
-    }).toEqual({ content: url, sources: [url] });
+    }).toEqual({ content: url, links: [url], sources: [url] });
 
     const sourceCreate = (await appliedSourceCreates(page)).find((entry) => entry.draft.id === createdId);
     expect(sourceCreate).toMatchObject({
@@ -2219,8 +2246,15 @@ test.describe('file attachments', () => {
     expect(createdSourceValue).toBeTruthy();
     const sourceFieldRow = row(page, createdSourceEntry!.id);
     const sourceValueRow = row(page, createdSourceValue!.id);
+    const createdRow = row(page, createdId!);
+    const createdLink = createdRow.locator(`a[href="${url}"]`);
+    await expect(createdLink).toBeVisible();
+    await expect(createdRow.locator(':scope > .outline-source-preview-row')).toHaveCount(0);
+    await createdLink.hover();
+    await expect(createdLink).toHaveCSS('cursor', 'pointer');
     await expect(sourceValueRow.locator('.row-inline-content-slot .field-value-open')).toBeVisible();
-    await expect(sourceValueRow.locator('.row-inline-content-slot .source-preview-affordance')).toHaveCount(0);
+    const showPreview = sourceValueRow.locator('.row-inline-content-slot .source-preview-affordance');
+    await expect(showPreview).toBeVisible();
     await expect.poll(async () => sourceValueRow.evaluate((valueRow) => {
       const editor = valueRow.querySelector<HTMLElement>('.row-editor');
       const paragraph = editor?.querySelector<HTMLElement>('.ProseMirror p');
@@ -2296,6 +2330,9 @@ test.describe('file attachments', () => {
       );
     }, ids.today)).toBe(true);
 
+    await showPreview.click();
+    await expect(createdRow.locator(':scope > .outline-source-preview-row .file-node-preview--url')).toBeVisible();
+
     const alphaEditor = rowEditor(page, ids.alpha);
     await alphaEditor.click();
     await page.keyboard.press('End');
@@ -2308,6 +2345,11 @@ test.describe('file attachments', () => {
         sourceCount: sourceFieldValues(projection, ids.alpha).length,
       };
     }).toEqual({ links: ['https://www.example.com/linked'], sourceCount: 0 });
+
+    const paneCount = await page.locator('.outline-panel-surface').count();
+    await createdLink.click();
+    await expect(page.locator('.outline-panel-surface')).toHaveCount(paneCount + 1);
+    await expect(page.locator('.outline-panel-surface.active-panel .file-preview-url-webview')).toBeVisible();
   });
 
   test('a YouTube Source uses a bounded click-to-play player', async ({ page }) => {
