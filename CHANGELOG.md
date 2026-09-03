@@ -12,6 +12,22 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Dynamic model catalogs now publish through generation-safe pi-ai 0.84
+  collections (PR #622, codex)** — provider-scoped refreshes carry cancellation
+  through the durable JSON store to the final atomic commit, so an older request
+  cannot overwrite memory or disk after a newer generation supersedes it.
+  Unsaved-credential probes use isolated credential and catalog stores, explicit
+  refresh failures remain observable, and unsupported pending/deferred provider
+  responses stay out of inspection-only Turn diagnostics. The updated catalog
+  adds Baseten and Qwen Token Plan Individual with stable Settings names and
+  credential links while retaining Tenon's existing retry, Turn, and transport
+  ownership. Gate review found three Medium cancellation-window and regression-
+  determinism defects across three rounds; all were fixed before the final no-
+  findings review. Verified with typecheck, `docs:check`, build, 2,857 passing
+  Core tests with 6 skipped, 1,498 renderer tests, 49 focused tests, 50 repeated
+  catalog-race passes, 50 repeated JSON-store barrier passes, and whitespace
+  checks; the non-gating five-sample GitHub E2E signal remained running at merge.
+
 - **Outline Agent authoring now uses one semantic interface from intent through
   durable receipt (PR #619, codex-2)** — direct creation, exact reads, bounded
   edits, reusable Fields, Views, Saved Searches, lifecycle operations, imports,

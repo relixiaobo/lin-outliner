@@ -13,14 +13,14 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-Three claims are open: PR #620 is the ready design-only Agent delegation plan;
+Two claims are open: PR #620 is the ready design-only Agent delegation plan, and
 Draft PR #621 owns link/preview interaction polish and the shared preview-shell
-lane; Draft PR #622 owns the pi-ai 0.84 dependency and provider-runtime surface.
-The public Outline Agent interface shipped in #619, Agent execution-selection
-settings shipped in #618, and the earlier Thread, context, recovery, and
-delegated-failure foundations remain complete, so the managed Computer Pilot
-Skill remains eligible under its live collision check. The public Outline CLI
-and built-in Skill lanes are clear.
+lane. The pi-ai 0.84 provider-runtime upgrade shipped in #622, the public Outline
+Agent interface shipped in #619, Agent execution-selection settings shipped in
+#618, and the earlier Thread, context, recovery, and delegated-failure
+foundations remain complete, so the managed Computer Pilot Skill remains
+eligible under its live collision check. The public Outline CLI and built-in
+Skill lanes are clear.
 Startup Window, preview readers, and Skill authoring remain independently
 eligible. The remaining plans from #588/#589 and #591 stay active below until
 their implementation, spec fold, and archive move complete.
@@ -211,6 +211,10 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **pi-ai-0-84-upgrade** (`done`, #622, 2026-09-03) — provider-scoped dynamic
+  catalogs now use generation-safe publication through durable cancellation,
+  isolated credential probes, and current Baseten/Qwen provider metadata; plan
+  archived at [pi-ai-0-84-upgrade](plans/archive/pi-ai-0-84-upgrade.md).
 - **outline-agent-first-interface** (`done`, #619, 2026-09-03) — Outline Agent
   authoring now uses one semantic Node/Field/View/Operation interface with
   verified compact receipts, immutable replay identity, and a storage-v3
