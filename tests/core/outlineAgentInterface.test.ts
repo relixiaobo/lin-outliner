@@ -142,6 +142,35 @@ describe('Outline Agent interface contract', () => {
       target: { selector: { by: 'id', id: 'field:priority' }, cardinality: 'one' },
     });
     expect(change.changes[0]!.view.replace.display[0]!.field).toBe('sys:updatedAt');
+
+    for (const command of ['view set', 'search edit'] as const) {
+      const direct = await buildPorcelainRequest(command, [
+        'node:owner', '--replace', '-',
+      ], {
+        read: async () => JSON.stringify({
+          sort: [{ field: 'field:priority', direction: 'desc' }],
+          display: [{ field: 'sys:updatedAt', visible: true }],
+        }),
+        lookup: async () => { throw new Error('lookup should not run'); },
+        project: async () => { throw new Error('projection should not run'); },
+        ingestAsset: async () => { throw new Error('asset ingest should not run'); },
+      });
+      const update = direct.changeSet.operations[0] as {
+        changes: Array<{ view: { replace: { sort: Array<{ field: unknown }>; display: Array<{ field: unknown }> } } }>;
+      };
+      expect(update.changes[0]!.view.replace.sort[0]!.field, command).toEqual({
+        target: { selector: { by: 'id', id: 'field:priority' }, cardinality: 'one' },
+      });
+      expect(update.changes[0]!.view.replace.display[0]!.field, command).toBe('sys:updatedAt');
+    }
+  });
+
+  test('keeps the Runtime performance probe on the public replacement commands', async () => {
+    const source = await readFile(path.join(root, 'scripts', 'probe-outline-runtime.ts'), 'utf8');
+    expect(source).not.toMatch(/cli\(\[\s*'(?:show|add|diff)'/u);
+    for (const command of ['get', 'create', 'preview', 'apply', 'export']) {
+      expect(source, command).toMatch(new RegExp(`cli\\(\\[\\s*'${command}'`, 'u'));
+    }
   });
 
   test('requires a receipt family and never emits the retired generic rerun response', () => {

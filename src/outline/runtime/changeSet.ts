@@ -821,15 +821,7 @@ function definitionCompatibilityMismatches(
   if (!current) throw new Error(`Definition config is unavailable: ${definitionId}`);
   const mismatches: Array<{ property: string; requested: unknown; actual: unknown }> = [];
   for (const [property, requested] of Object.entries(change.config)) {
-    let normalized: unknown = requested;
-    if (requested === null) {
-      if (property === 'nullable') normalized = true;
-      else if (property === 'hideField') normalized = 'never';
-      else normalized = undefined;
-    }
-    if (property === 'autoInitialize' && typeof requested === 'string') {
-      normalized = requested.split(/[,+]/).map((entry) => entry.trim()).filter(Boolean);
-    }
+    const normalized = normalizedDefinitionConfigValue(property, requested);
     const actual = (current as unknown as Record<string, unknown>)[property];
     if (canonicalJson(actual ?? null) !== canonicalJson(normalized ?? null)) {
       mismatches.push({ property, requested: normalized ?? null, actual: actual ?? null });
@@ -1492,18 +1484,23 @@ function definitionPatchChanges(
   const current = instruction.definitionType === 'tag' ? config.tag(targetId) : config.field(targetId);
   if (!current) throw new Error(`Definition config is unavailable: ${targetId}`);
   for (const [key, value] of Object.entries(instruction.patch)) {
-    let normalized: unknown = value;
-    if (value === null) {
-      if (key === 'nullable') normalized = true;
-      else if (key === 'hideField') normalized = 'never';
-      else normalized = undefined;
-    }
-    if (key === 'autoInitialize' && typeof value === 'string') {
-      normalized = value.split(/[,+]/).map((entry) => entry.trim()).filter(Boolean);
-    }
+    const normalized = normalizedDefinitionConfigValue(key, value);
     if (canonicalJson((current as unknown as Record<string, unknown>)[key] ?? null) !== canonicalJson(normalized ?? null)) return true;
   }
   return false;
+}
+
+function normalizedDefinitionConfigValue(property: string, value: unknown): unknown {
+  if (property === 'autoInitialize') {
+    if (value === null) return [];
+    if (typeof value === 'string') {
+      return value.split(/[,+]/).map((entry) => entry.trim()).filter(Boolean);
+    }
+  }
+  if (value !== null) return value;
+  if (property === 'nullable') return true;
+  if (property === 'hideField') return 'never';
+  return undefined;
 }
 
 function resolveViewField(

@@ -319,22 +319,28 @@ export class OutlineRuntimeRouter {
     input: { changeSet: ChangeSet; preview?: boolean; expectDiff?: string; acknowledgeDestructive?: boolean },
     context: OutlineRuntimeRequestContext,
   ): Promise<unknown> {
-    const diff = await diffOutlineChangeSet(this.workspace, input.changeSet);
-    if (input.preview) return diff;
-    if (input.expectDiff && input.expectDiff !== diff.diffHash) {
-      throw new OutlineContractError(outlineError(
-        'diff_mismatch',
-        'conflict',
-        'The current normalized Diff does not match --expect-diff.',
-        { details: { expected: input.expectDiff, actual: diff.diffHash } },
-      ));
+    let diff: Diff | undefined;
+    let settlement: Awaited<ReturnType<typeof commitOutlineChangeSet>>;
+    if (input.preview || input.expectDiff) {
+      diff = await diffOutlineChangeSet(this.workspace, input.changeSet);
+      if (input.preview) return diff;
+      if (input.expectDiff !== diff.diffHash) {
+        throw new OutlineContractError(outlineError(
+          'diff_mismatch',
+          'conflict',
+          'The current normalized Diff does not match --expect-diff.',
+          { details: { expected: input.expectDiff, actual: diff.diffHash } },
+        ));
+      }
+      settlement = await applyOutlineDiff(
+        this.workspace,
+        diff,
+        context,
+        input.acknowledgeDestructive === true,
+      );
+    } else {
+      settlement = await commitOutlineChangeSet(this.workspace, input.changeSet, context);
     }
-    const settlement = await applyOutlineDiff(
-      this.workspace,
-      diff,
-      context,
-      input.acknowledgeDestructive === true,
-    );
     if (settlement.kind !== 'outline.operation') {
       throw new OutlineContractError(outlineError(
         'internal_error',
@@ -346,7 +352,7 @@ export class OutlineRuntimeRouter {
     if (!create || create.op !== 'create' || 'resource' in create) {
       throw new OutlineContractError(outlineError('internal_error', 'internal', 'Create request omitted its Node tree.'));
     }
-    const rootId = diff.bindings[create.bind ?? 'created']?.[0];
+    const rootId = diff?.bindings[create.bind ?? 'created']?.[0] ?? operationResultNodeId(settlement);
     if (!rootId) throw new OutlineContractError(outlineError('internal_error', 'internal', 'Create result omitted its root identity.'));
     const expectedNodeCount = create.nodes.reduce((total, node) => total + authoredNodeCount(node), 0);
     const state = this.workspace.documentState();
@@ -376,13 +382,22 @@ export class OutlineRuntimeRouter {
     const definitionEnsures = input.changeSet.operations.filter((change) => (
       change.op === 'ensure' && change.resource === 'definition'
     ));
-    const createdIds = new Set(diff.affected.filter((entry) => entry.effect === 'create').map((entry) => entry.id));
+    const createdIds = new Set(await this.completeAffectedNodeIds(settlement));
+    const createdDefinitionKeys = new Set(Object.values(state.nodes).flatMap((node) => (
+      createdIds.has(node.id) && (node.type === 'fieldDef' || node.type === 'tagDef')
+        ? [`${node.type}:${node.content.text.trim().toLocaleLowerCase()}`]
+        : []
+    )));
     const createdDefinitions = definitionEnsures.filter((change) => (
-      change.op === 'ensure' && createdIds.has(diff.bindings[change.bind]?.[0] ?? '')
+      change.op === 'ensure' && createdDefinitionKeys.has(
+        `${change.definitionType === 'field' ? 'fieldDef' : 'tagDef'}:${change.name.trim().toLocaleLowerCase()}`,
+      )
     )).length;
     const itemCount = root?.children.filter((id) => {
-      const type = state.nodes[id]?.type;
-      return type === undefined || type === 'codeBlock' || type === 'reference' || type === 'search';
+      const node = state.nodes[id];
+      const type = node?.type;
+      return !node?.templateId
+        && (type === undefined || type === 'codeBlock' || type === 'reference' || type === 'search');
     }).length ?? 0;
     return {
       kind: 'outline.create-result',
@@ -513,11 +528,15 @@ function authoredNodeCount(node: NodeDraft): number {
 }
 
 function persistedAuthoredNodeCount(
-  nodes: Readonly<Record<string, { readonly type?: string; readonly children: readonly string[] }>>,
+  nodes: Readonly<Record<string, {
+    readonly type?: string;
+    readonly templateId?: string;
+    readonly children: readonly string[];
+  }>>,
   nodeId: string,
 ): number {
   const node = nodes[nodeId];
-  if (!node) return 0;
+  if (!node || node.templateId) return 0;
   const authored = node.type === undefined
     || node.type === 'plain'
     || node.type === 'codeBlock'
@@ -525,6 +544,14 @@ function persistedAuthoredNodeCount(
     || node.type === 'search';
   if (!authored) return 0;
   return 1 + node.children.reduce((total, childId) => total + persistedAuthoredNodeCount(nodes, childId), 0);
+}
+
+function operationResultNodeId(operation: Operation): string | undefined {
+  for (const projection of operation.result ?? []) {
+    const node = projection.nodes[0];
+    if (isRecord(node) && typeof node.id === 'string') return node.id;
+  }
+  return undefined;
 }
 
 function historyMutationOptions(

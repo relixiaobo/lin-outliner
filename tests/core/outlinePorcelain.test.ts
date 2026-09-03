@@ -13,6 +13,27 @@ afterAll(async () => {
 });
 
 describe('outline porcelain CLI', () => {
+  test('replays direct create idempotently from the original request identity', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const args = ['create', '@today', 'Idempotent create', '--idempotency-key', 'test:create-retry'];
+      const operationsBefore = (await runtime.workspace.store.operations()).length;
+      const first = await jsonCommand(root, args);
+      const retry = await jsonCommand(root, args);
+
+      expect(first.code).toBe(0);
+      expect(retry).toMatchObject({ code: 0, command: 'create', data: first.data });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 1);
+      expect(Object.values(runtime.workspace.documentState().nodes)
+        .filter((node) => node.content.text === 'Idempotent create')).toHaveLength(1);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('creates one field-backed Node tree and reuses only compatible definitions', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
@@ -59,6 +80,113 @@ describe('outline porcelain CLI', () => {
       expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 2);
       expect(Object.values(runtime.workspace.documentState().nodes)
         .some((node) => node.content.text === 'Weather C')).toBe(false);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('reports explicit Field dependencies and reuses null auto-initialize configuration', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      expect((await jsonCommand(root, ['define', 'create', '--input', '-'], JSON.stringify({
+        kind: 'field', name: 'Explicit dependency', type: 'text',
+      }))).code).toBe(0);
+      const fieldId = Object.values(runtime.workspace.documentState().nodes)
+        .find((node) => node.type === 'fieldDef' && node.content.text === 'Explicit dependency')!.id;
+      const explicit = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@today' },
+        fields: [{ key: 'dependency', field: fieldId }],
+        node: { text: 'Explicit Field owner' },
+      }));
+      expect(explicit).toMatchObject({
+        code: 0,
+        data: { fieldCount: 1, definitions: { created: 0, reused: 1 } },
+      });
+
+      const nullableConfigPayload = (title: string) => JSON.stringify({
+        at: { parent: '@today' },
+        fields: [{
+          key: 'schedule',
+          name: 'Nullable auto initialize',
+          type: 'date',
+          config: { autoInitialize: null },
+        }],
+        node: { text: title, fields: { schedule: null } },
+      });
+      expect((await jsonCommand(root, ['create', '--input', '-'], nullableConfigPayload('Auto init A'))).code).toBe(0);
+      const reused = await jsonCommand(root, ['create', '--input', '-'], nullableConfigPayload('Auto init B'));
+      expect(reused).toMatchObject({
+        code: 0,
+        data: { fieldCount: 1, definitions: { created: 0, reused: 1 } },
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('verifies authored create Nodes independently from attached Tag templates', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const definition = await jsonCommand(root, ['transact', '--input', '-'], JSON.stringify({
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        operations: [{ op: 'ensure', resource: 'definition', definitionType: 'tag', name: 'Templated', bind: 'tag' }],
+      }));
+      expect(definition.code).toBe(0);
+      const tagId = Object.values(runtime.workspace.documentState().nodes)
+        .find((node) => node.type === 'tagDef' && node.content.text === 'Templated')!.id;
+      const template = await jsonCommand(root, ['transact', '--input', '-'], JSON.stringify({
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        operations: [{
+          op: 'create',
+          placement: { kind: 'last', parent: { target: { selector: { by: 'id', id: tagId }, cardinality: 'one' } } },
+          nodes: [{ content: { text: 'Default child', marks: [], inlineRefs: [] }, children: [] }],
+        }],
+      }));
+      expect(template.code, JSON.stringify(template)).toBe(0);
+      const created = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@today' },
+        node: { text: 'Templated owner', tags: [tagId] },
+      }));
+
+      expect(created).toMatchObject({
+        code: 0,
+        data: { nodeCount: 1, itemCount: 0, verification: { passed: true } },
+      });
+      const ownerId = (created.data as { rootId: string }).rootId;
+      expect(runtime.workspace.documentState().nodes[ownerId]!.children
+        .map((id) => runtime.workspace.documentState().nodes[id]?.content.text)).toContain('Default child');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('clears an admitted code language without changing the Node resource type', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const created = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@today' },
+        node: { text: 'Code sample', codeLanguage: 'typescript' },
+      }));
+      const nodeId = (created.data as { rootId: string }).rootId;
+      const edited = await jsonCommand(root, ['edit', '--input', '-'], JSON.stringify({
+        target: nodeId,
+        node: { codeLanguage: null },
+      }));
+
+      expect(edited.code).toBe(0);
+      expect(runtime.workspace.documentState().nodes[nodeId]).toMatchObject({ type: 'codeBlock' });
+      expect(runtime.workspace.documentState().nodes[nodeId]?.codeLanguage).toBeUndefined();
     } finally {
       await runtime.stop();
     }
@@ -194,6 +322,37 @@ describe('outline porcelain CLI', () => {
       expect(runtime.workspace.projection().nodes).toContainEqual(
         expect.objectContaining({ content: expect.objectContaining({ text: 'Structured parent' }) }),
       );
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('rejects a bounded many placement before direct create can fan out', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      expect((await jsonCommand(root, ['create', '@today', 'Bounded parent A'])).code).toBe(0);
+      expect((await jsonCommand(root, ['create', '@today', 'Bounded parent B'])).code).toBe(0);
+      const targetPath = path.join(root, 'many-parents.json');
+      await Bun.write(targetPath, JSON.stringify({
+        selector: {
+          by: 'query',
+          query: { kind: 'rule', op: 'STRING_MATCH', text: 'Bounded parent' },
+          order: 'document',
+          limit: 2,
+        },
+        cardinality: 'many',
+        max: 2,
+      }));
+      const operationsBefore = (await runtime.workspace.store.operations()).length;
+      const result = await jsonCommand(root, ['create', '--parent', targetPath, 'Hidden fan-out']);
+
+      expect(result).toMatchObject({ code: 2, error: { code: 'invalid_input' } });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore);
+      expect(Object.values(runtime.workspace.documentState().nodes)
+        .some((node) => node.content.text === 'Hidden fan-out')).toBe(false);
     } finally {
       await runtime.stop();
     }

@@ -244,7 +244,9 @@ function editChangeFromInput(input: Record<string, unknown>): Change {
   if (node) {
     if (Object.hasOwn(node, 'text')) instructions.push({ kind: 'content', value: richText(String(node.text)) });
     if (Object.hasOwn(node, 'description')) instructions.push({ kind: 'description', value: node.description as string | null });
-    if (typeof node.codeLanguage === 'string') instructions.push({ kind: 'code', language: node.codeLanguage });
+    if (Object.hasOwn(node, 'codeLanguage')) {
+      instructions.push({ kind: 'code', language: node.codeLanguage === null ? '' : String(node.codeLanguage) });
+    }
     if (typeof node.checkbox === 'boolean') instructions.push({ kind: 'checkbox', visible: node.checkbox });
     if (typeof node.done === 'boolean') instructions.push({ kind: 'done', value: node.done });
     if (Object.hasOwn(node, 'icon')) instructions.push({
@@ -339,7 +341,19 @@ async function buildCreateChanges(
       if (node.type !== 'fieldDef') {
         throw usageError(`create.fields/${index}/field does not resolve to a field definition.`);
       }
-      fieldRefs.set(key, reference);
+      const bind = nextInternalBinding('field', usedBindings);
+      changes.push({
+        op: 'ensure',
+        resource: 'definition',
+        definitionType: 'field',
+        id: requiredString(node.id, `create.fields/${index}/field ID`),
+        name: requiredString(
+          isRecord(node.content) ? node.content.text : node.text,
+          `create.fields/${index}/field name`,
+        ),
+        bind,
+      });
+      fieldRefs.set(key, { binding: bind });
       continue;
     }
     const bind = nextInternalBinding('field', usedBindings);
@@ -1006,6 +1020,7 @@ async function buildCreateArgv(parsed: ParsedOptions, context: PorcelainBuildCon
   const anchored = parsed.options.has('before') || parsed.options.has('after');
   const parentToken = option(parsed, 'parent') ?? (!anchored ? parsed.positional.shift() : undefined);
   const placement = await placementFromParsed(parsed, context, parentToken, false);
+  await validateExactPlacement(placement as DestinationPlacement, context);
   const text = parsed.positional.splice(0).join(' ');
   if (!text) throw usageError('create requires text or --input FILE|-.');
   return {
@@ -1090,10 +1105,11 @@ async function buildView(parsed: ParsedOptions, context: PorcelainBuildContext):
   const toolbar = option(parsed, 'toolbar');
   const group = option(parsed, 'group');
   const replacementSource = option(parsed, 'replace');
-  const replacement = replacementSource
+  const parsedReplacement = replacementSource
     ? parseJson(await context.read(replacementSource), '--replace')
     : undefined;
-  if (replacement !== undefined && !isRecord(replacement)) throw usageError('--replace must be an object.');
+  if (parsedReplacement !== undefined && !isRecord(parsedReplacement)) throw usageError('--replace must be an object.');
+  const replacement = isRecord(parsedReplacement) ? structuredViewConfiguration(parsedReplacement) : undefined;
   if (parsed.positional.length > 0) throw usageError(`Unexpected view set argument: ${parsed.positional[0]}`);
   const view = {
     ...(mode !== undefined ? { mode: viewMode(mode) } : {}),
@@ -1164,9 +1180,11 @@ async function buildSearch(
   const match = option(parsed, 'match');
   const mode = option(parsed, 'view');
   const replaceSource = option(parsed, 'replace');
+  const parsedReplacement = replaceSource ? parseJson(await context.read(replaceSource), '--replace') : undefined;
+  if (parsedReplacement !== undefined && !isRecord(parsedReplacement)) throw usageError('--replace must be an object.');
   const view = mode || replaceSource ? {
     ...(mode ? { mode: viewMode(mode) } : {}),
-    ...(replaceSource ? { replace: parseJson(await context.read(replaceSource), '--replace') } : {}),
+    ...(isRecord(parsedReplacement) ? { replace: structuredViewConfiguration(parsedReplacement) } : {}),
   } : undefined;
   return [searchSetChange({
     target: await targetRef(target, context.read),
