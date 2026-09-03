@@ -39,7 +39,7 @@ describe('agent tool envelope', () => {
   });
 
   test('requires an explicit output-data contract for every Tenon tool', () => {
-    expect(MODEL_TOOL_CATALOG).toHaveLength(22);
+    expect(MODEL_TOOL_CATALOG).toHaveLength(23);
     expect(MODEL_TOOL_CATALOG.every((contract) => 'outputSchema' in contract)).toBe(true);
     expect(MODEL_TOOL_CATALOG.find((contract) => contract.identity.name === 'update_plan')?.outputSchema)
       .toBeNull();
