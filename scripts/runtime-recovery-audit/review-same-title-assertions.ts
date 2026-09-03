@@ -32,7 +32,7 @@ at('tests/core/outlineRuntimeProcess.test.ts', [
 ], 'stronger-current', 'The Runtime ownership and retirement assertions now include the independent ContentStore root and contract-digest-shaped lifecycle request.');
 at('tests/core/outlineCli.test.ts', [
   'serves exact named public and command schemas locally',
-  'streams asset ingest, show, and verified export through the Runtime',
+  'streams asset ingest, get, and verified export through the Runtime',
   'queries history by idempotency key and runs guarded revert, undo, and redo',
   'reports exact Runtime, transaction-log, and recovery health without starting another Runtime',
   'renders purge help with exact destructive review requirements',

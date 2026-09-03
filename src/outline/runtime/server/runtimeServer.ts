@@ -418,7 +418,7 @@ export class OutlineRuntimeServer {
         });
         return;
       }
-      if (request.method === 'POST' && url.pathname === '/v1/diff') {
+      if (request.method === 'POST' && url.pathname === '/v1/preview') {
         const requestId = requiredHeader(request, 'x-outline-request-id');
         const format = requiredHeader(request, 'x-outline-input-format');
         if (format !== 'json' && format !== 'jsonl') throw new Error('Invalid ChangeSet upload format.');
@@ -438,7 +438,7 @@ export class OutlineRuntimeServer {
         const result = await this.router.handle({
           protocolVersion: OUTLINE_PROTOCOL_VERSION,
           requestId,
-          command: 'diff',
+          command: 'preview',
           input: { changeSet },
         }, authorization.context);
         authorization.complete(false);

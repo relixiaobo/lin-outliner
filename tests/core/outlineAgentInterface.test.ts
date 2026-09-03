@@ -36,6 +36,30 @@ describe('Outline Agent interface contract', () => {
     }
   });
 
+  test('keeps complete recipes complete across compound Agent workflows', () => {
+    const edit = JSON.parse(outlineRecipe('edit', 'complete')!.stdin!) as {
+      references?: Array<{ action?: string; target?: string }>;
+    };
+    expect(edit.references).toEqual([{ action: 'add', target: 'node:reference-target' }]);
+
+    const view = JSON.parse(outlineRecipe('view set', 'complete')!.stdin!) as {
+      view?: { group?: string; replace?: { sort?: unknown[]; filters?: unknown[]; display?: unknown[] } };
+    };
+    expect(view.view?.group).toBe('field:status');
+    expect(view.view?.replace?.sort).toHaveLength(1);
+    expect(view.view?.replace?.filters).toHaveLength(1);
+    expect(view.view?.replace?.display).toHaveLength(3);
+
+    const transaction = JSON.parse(outlineRecipe('transact', 'dependent-change')!.stdin!) as {
+      operations?: Array<{ op?: string; placement?: { parent?: { binding?: string } } }>;
+    };
+    expect(transaction.operations?.[1]).toMatchObject({
+      op: 'move',
+      placement: { parent: { binding: 'project' } },
+    });
+    expect(outlineRecipe('search edit', 'complete')).toBeDefined();
+  });
+
   test('reports bounded schema sizes and keeps exact authoring schemas free of recursive selectors', () => {
     const schemaReport = OUTLINE_CAPABILITIES.map((capability) => {
       const schema = compactOutlineSchema(capability.porcelain?.inputSchema ?? capability.requestSchema);
@@ -44,18 +68,13 @@ describe('Outline Agent interface contract', () => {
     expect(new Set(schemaReport.map((entry) => entry.command)).size).toBe(OUTLINE_CAPABILITIES.length);
     expect(schemaReport.reduce((total, entry) => total + entry.bytes, 0)).toBeLessThanOrEqual(1_500_000);
     for (const entry of schemaReport) {
-      const budget = ['diff', 'commit', 'apply'].includes(entry.command) ? 128 * 1024 : 64 * 1024;
+      const budget = ['preview', 'transact', 'apply'].includes(entry.command) ? 128 * 1024 : 64 * 1024;
       expect(entry.bytes, entry.command).toBeLessThanOrEqual(budget);
     }
 
     const exactCommands = [
-      'indent', 'outdent', 'done cycle', 'definition configure', 'reference set',
-      'reference replace', 'reference inline', 'reference restore', 'view set',
-      'view group set', 'view sort add', 'view sort set', 'view sort remove',
-      'view sort clear', 'view filter add', 'view filter set', 'view filter remove',
-      'view filter clear', 'view display add', 'view display set', 'view display remove',
-      'search ensure-tag', 'search refresh', 'template apply', 'source add',
-      'source replace', 'source reorder', 'source remove', 'source clear', 'purge',
+      'define create', 'define ensure', 'define edit', 'view set',
+      'template apply', 'daily ensure', 'purge',
     ];
     for (const command of exactCommands) {
       const schema = compactOutlineSchema(outlineCapability(command)!.porcelain!.inputSchema);
@@ -65,10 +84,13 @@ describe('Outline Agent interface contract', () => {
       expect(encoded, command).not.toContain('Selector');
       expect(Buffer.byteLength(encoded), command).toBeLessThanOrEqual(4 * 1024);
     }
-    const add = JSON.stringify(compactOutlineSchema(outlineCapability('add')!.porcelain!.inputSchema));
-    expect(add).not.toContain('TargetRef');
-    expect(add).not.toContain('Selector');
-    const bulk = JSON.stringify(compactOutlineSchema(outlineCapability('done set')!.porcelain!.inputSchema));
+    const create = JSON.stringify(compactOutlineSchema(outlineCapability('create')!.porcelain!.inputSchema));
+    expect(create).not.toContain('TargetRef');
+    expect(create).not.toContain('Selector');
+    for (const internalToken of ['viewed-tree', 'fieldType', 'options_from_supertag', '"list"']) {
+      expect(create, internalToken).not.toContain(internalToken);
+    }
+    const bulk = JSON.stringify(compactOutlineSchema(outlineCapability('edit')!.porcelain!.inputSchema));
     expect(bulk).toContain('BoundedSelectionInput');
     expect(bulk).toContain('QueryExpression');
   });
@@ -79,10 +101,10 @@ describe('Outline Agent interface contract', () => {
       query: { kind: 'rule', op: 'STRING_MATCH', text: 'Task' },
       limit: 25,
     };
-    for (const command of ['done set', 'text replace']) {
+    for (const command of ['edit', 'replace text']) {
       const schema = outlineCapability(command)!.porcelain!.inputSchema;
-      const input = command === 'done set'
-        ? { target: { selector, cardinality: 'many' }, value: true }
+      const input = command === 'edit'
+        ? { target: { selector, cardinality: 'many' }, node: { done: true } }
         : { target: { selector, cardinality: 'many' }, find: 'old', replacement: 'new', maxReplacements: 25 };
       expect(checkOutlineSchema(schema, input), command).toBe(false);
       expect(checkOutlineSchema(schema, {
@@ -120,11 +142,40 @@ describe('Outline Agent interface contract', () => {
       target: { selector: { by: 'id', id: 'field:priority' }, cardinality: 'one' },
     });
     expect(change.changes[0]!.view.replace.display[0]!.field).toBe('sys:updatedAt');
+
+    for (const command of ['view set', 'search edit'] as const) {
+      const direct = await buildPorcelainRequest(command, [
+        'node:owner', '--replace', '-',
+      ], {
+        read: async () => JSON.stringify({
+          sort: [{ field: 'field:priority', direction: 'desc' }],
+          display: [{ field: 'sys:updatedAt', visible: true }],
+        }),
+        lookup: async () => { throw new Error('lookup should not run'); },
+        project: async () => { throw new Error('projection should not run'); },
+        ingestAsset: async () => { throw new Error('asset ingest should not run'); },
+      });
+      const update = direct.changeSet.operations[0] as {
+        changes: Array<{ view: { replace: { sort: Array<{ field: unknown }>; display: Array<{ field: unknown }> } } }>;
+      };
+      expect(update.changes[0]!.view.replace.sort[0]!.field, command).toEqual({
+        target: { selector: { by: 'id', id: 'field:priority' }, cardinality: 'one' },
+      });
+      expect(update.changes[0]!.view.replace.display[0]!.field, command).toBe('sys:updatedAt');
+    }
+  });
+
+  test('keeps the Runtime performance probe on the public replacement commands', async () => {
+    const source = await readFile(path.join(root, 'scripts', 'probe-outline-runtime.ts'), 'utf8');
+    expect(source).not.toMatch(/cli\(\[\s*'(?:show|add|diff)'/u);
+    for (const command of ['get', 'create', 'preview', 'apply', 'export']) {
+      expect(source, command).toMatch(new RegExp(`cli\\(\\[\\s*'${command}'`, 'u'));
+    }
   });
 
   test('requires a receipt family and never emits the retired generic rerun response', () => {
     for (const capability of OUTLINE_CAPABILITIES) expect(capability.receipt, capability.name).toBeTruthy();
-    const diff = renderSummaryResult('diff', {
+    const diff = renderSummaryResult('preview', {
       kind: 'outline.diff',
       diffHash: 'a'.repeat(64),
       changeSetHash: 'b'.repeat(64),
@@ -143,7 +194,7 @@ describe('Outline Agent interface contract', () => {
     const output = renderFailureSummary({
       code: 'invalid_input',
       category: 'usage',
-      message: 'Input does not match the add schema.',
+      message: 'Input does not match the create schema.',
       retryable: false,
       details: {
         validation: {
@@ -152,15 +203,15 @@ describe('Outline Agent interface contract', () => {
         },
         rejectedInput: secret,
       },
-      next: ['outline example add viewed-tree'],
+      next: ['outline example create collection'],
     });
     expect(output).toContain('At /placement/parent: must be string');
-    expect(output).toContain('Next: outline example add viewed-tree');
+    expect(output).toContain('Next: outline example create collection');
     expect(output).not.toContain(secret);
     expect(Buffer.byteLength(output)).toBeLessThanOrEqual(4 * 1024);
   });
 
-  test('keeps the packaged Skill self-contained and byte-checks its viewed-tree example', async () => {
+  test('keeps the packaged Skill self-contained and byte-checks its collection example', async () => {
     const skillRoot = path.join(root, 'src', 'main', 'builtInSkills', 'outline');
     expect((await readdir(skillRoot)).sort()).toEqual(['SKILL.md']);
     const skill = await readFile(path.join(skillRoot, 'SKILL.md'), 'utf8');
@@ -168,6 +219,34 @@ describe('Outline Agent interface contract', () => {
     expect(skill).not.toContain('references/');
     const block = skill.match(/```json\n([\s\S]*?)\n```/u)?.[1];
     expect(block).toBeDefined();
-    expect(JSON.parse(block!)).toEqual(JSON.parse(outlineRecipe('add', 'viewed-tree')!.stdin!));
+    expect(JSON.parse(block!)).toEqual(JSON.parse(outlineRecipe('create', 'collection')!.stdin!));
+  });
+
+  test('keeps retired public command paths out of live Agent guidance', async () => {
+    const surfaces = [
+      'src/main/builtInSkills/outline/SKILL.md',
+      'src/outline/contract/porcelain.ts',
+      'src/outline/contract/recipes.ts',
+      'docs/spec/commands.md',
+      'docs/spec/agent-tool-design.md',
+      'docs/spec/agent-skills.md',
+      'docs/spec/outliner-parity-matrix.md',
+      'docs/spec/agent-integration.md',
+      'docs/spec/agent-tool-permissions.md',
+    ];
+    const retired = [
+      /outline (?:add|set|show|diff|commit|log)(?:\s|`|$)/u,
+      /outline (?:view inspect|asset show|text replace|search set|search refresh|capture add)(?:\s|`|$)/u,
+      /outline (?:source (?:add|replace|reorder|remove|clear)|field (?:set|clear)|tag (?:add|remove))(?:\s|`|$)/u,
+      /outline (?:reference (?:set|replace|inline|restore)|definition (?:create|configure|merge))(?:\s|`|$)/u,
+    ];
+    const failures: string[] = [];
+    for (const surface of surfaces) {
+      const content = await readFile(path.join(root, surface), 'utf8');
+      for (const pattern of retired) {
+        if (pattern.test(content)) failures.push(`${surface}: ${pattern.source}`);
+      }
+    }
+    expect(failures).toEqual([]);
   });
 });

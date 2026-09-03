@@ -227,7 +227,7 @@ describe('outline ChangeSet kernel', () => {
           targets: oneId(ownerId),
           changes: [{ kind: 'field', action: 'define', name: '', fieldType: 'plain' }],
         },
-        { op: 'ensure', resource: 'definition', definitionType: 'field', name: 'Outer', fieldType: 'plain', bind: 'outer' },
+        { op: 'ensure', resource: 'definition', definitionType: 'field', name: 'Outer', config: { fieldType: 'plain' }, bind: 'outer' },
         {
           op: 'update',
           targets: oneId(ownerId),
@@ -264,7 +264,7 @@ describe('outline ChangeSet kernel', () => {
       kind: 'outline.changeset',
       idempotencyKey: 'test:field-value-paste-metadata',
       operations: [
-        { op: 'ensure', resource: 'definition', definitionType: 'field', name: 'Slot', fieldType: 'plain', bind: 'slot' },
+        { op: 'ensure', resource: 'definition', definitionType: 'field', name: 'Slot', config: { fieldType: 'plain' }, bind: 'slot' },
         {
           op: 'update',
           targets: oneId(ownerId),
@@ -409,11 +409,11 @@ describe('outline ChangeSet kernel', () => {
             definitionType: 'field',
             id: 'field:invalid',
             name: 'Invalid field',
-            fieldType: 'currency',
+            config: { fieldType: 'currency' },
             bind: 'field',
           }],
         },
-        path: '/operations/0/fieldType',
+        path: '/operations/0/config/fieldType',
         secret: 'currency',
       },
       {

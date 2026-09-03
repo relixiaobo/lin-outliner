@@ -31,7 +31,7 @@ const reviews = new Map<string, Review>([
     disposition: 'stronger-current',
     currentPath: 'docs/spec/agent-memory.md',
     evidenceLabel: 'Citation ranking records only a bounded set',
-    rationale: 'The current Memory spec adds protected-definition repair, exact public-show citation accounting, and main-process planning serialization over the recovered Runtime boundary.',
+    rationale: 'The current Memory spec adds protected-definition repair, exact public-get citation accounting, and main-process planning serialization over the recovered Runtime boundary.',
   }],
   ['docs/spec/agent-thread-rendering.md', {
     disposition: 'stronger-current',

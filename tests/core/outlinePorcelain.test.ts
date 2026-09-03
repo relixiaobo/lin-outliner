@@ -13,36 +13,374 @@ afterAll(async () => {
 });
 
 describe('outline porcelain CLI', () => {
+  test('replays direct create idempotently from the original request identity', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const args = ['create', '@today', 'Idempotent create', '--idempotency-key', 'test:create-retry'];
+      const operationsBefore = (await runtime.workspace.store.operations()).length;
+      const first = await jsonCommand(root, args);
+      expect(first.code).toBe(0);
+      const rootId = (first.data as { rootId: string }).rootId;
+      expect((await jsonCommand(root, ['create', rootId, 'Later child'])).code).toBe(0);
+      const retry = await jsonCommand(root, args);
+
+      expect(retry).toMatchObject({ code: 0, command: 'create', data: first.data });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 2);
+      expect(Object.values(runtime.workspace.documentState().nodes)
+        .filter((node) => node.content.text === 'Idempotent create')).toHaveLength(1);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('creates one field-backed Node tree and reuses only compatible definitions', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const payload = (title: string, fieldType: 'text' | 'number') => JSON.stringify({
+        at: { parent: '@today', position: 'first' },
+        fields: [
+          { key: 'weather', name: 'Weather', type: 'text' },
+          { key: 'low', name: 'Night low (C)', type: fieldType },
+        ],
+        node: {
+          text: title,
+          description: 'Sunny throughout.',
+          children: [{ text: 'Central districts', fields: { weather: 'Sunny', low: 21 } }],
+        },
+        view: { mode: 'table', display: ['weather', 'low'] },
+      });
+
+      const operationsBefore = (await runtime.workspace.store.operations()).length;
+      const first = await jsonCommand(root, ['create', '--input', '-'], payload('Weather A', 'number'));
+      expect(first.code).toBe(0);
+      expect(first.data).toMatchObject({ fieldCount: 2, definitions: { created: 2, reused: 0 } });
+      expect((await runtime.workspace.store.operations()).at(-1)?.effects?.createdDefinitionCount).toBe(2);
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 1);
+      const firstId = (first.data as { rootId: string }).rootId;
+      const state = runtime.workspace.documentState();
+      expect(state.nodes[firstId]).toMatchObject({ content: { text: 'Weather A' }, description: 'Sunny throughout.' });
+      expect(state.nodes[firstId]!.children.map((id) => state.nodes[id]?.type)).toContain('viewDef');
+      expect(Object.values(state.nodes).filter((node) => node.type === 'fieldDef' && node.content.text === 'Weather')).toHaveLength(1);
+      expect(Object.values(state.nodes).filter((node) => node.type === 'fieldDef' && node.content.text === 'Night low (C)')).toHaveLength(1);
+
+      const second = await jsonCommand(root, ['create', '--input', '-'], payload('Weather B', 'number'));
+      expect(second.code).toBe(0);
+      expect(second.data).toMatchObject({ fieldCount: 2, definitions: { created: 0, reused: 2 } });
+      expect((await runtime.workspace.store.operations()).at(-1)?.effects?.createdDefinitionCount).toBe(0);
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 2);
+      expect(Object.values(runtime.workspace.documentState().nodes)
+        .filter((node) => node.type === 'fieldDef' && node.content.text === 'Night low (C)')).toHaveLength(1);
+
+      const rejected = await jsonCommand(root, ['create', '--input', '-'], payload('Weather C', 'text'));
+      expect(rejected.code).toBe(3);
+      expect(rejected.error).toMatchObject({
+        code: 'invalid_input',
+        details: { existingId: expect.any(String), mismatches: [{ property: 'fieldType', requested: 'plain', actual: 'number' }] },
+      });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 2);
+      expect(Object.values(runtime.workspace.documentState().nodes)
+        .some((node) => node.content.text === 'Weather C')).toBe(false);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('rejects duplicate normalized Field definitions before create admission', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const operationsBefore = (await runtime.workspace.store.operations()).length;
+      const rejected = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@today' },
+        fields: [
+          { key: 'first', name: 'Shared definition', type: 'text' },
+          { key: 'second', name: '  SHARED DEFINITION  ', type: 'text' },
+        ],
+        node: { text: 'Duplicate Field owner' },
+      }));
+
+      expect(rejected.code).toBe(2);
+      expect(rejected.error).toMatchObject({
+        code: 'invalid_input',
+        message: expect.stringContaining('same Field definition'),
+      });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore);
+      expect(Object.values(runtime.workspace.documentState().nodes)
+        .some((node) => node.content.text === 'Duplicate Field owner')).toBe(false);
+      expect(Object.values(runtime.workspace.documentState().nodes)
+        .some((node) => node.type === 'fieldDef' && node.content.text.trim().toLowerCase() === 'shared definition')).toBe(false);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('keeps exact same-name Field definitions distinct by identity', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      let firstFieldId = '';
+      let secondFieldId = '';
+      await runtime.workspace.mutate({
+        origin: 'local-user',
+        changeSetHash: '1'.repeat(64),
+        diffHash: '2'.repeat(64),
+        summary: 'Created same-name Field fixtures.',
+        execute: (core) => {
+          const firstTagId = core.createTag('Project schema').focus!.nodeId;
+          const firstEntryId = core.createFieldDef(firstTagId, 'Status', 'plain').focus!.nodeId;
+          firstFieldId = core.state().nodes[firstEntryId]!.fieldDefId!;
+          const secondTagId = core.createTag('Issue schema').focus!.nodeId;
+          const secondEntryId = core.createFieldDef(secondTagId, 'Status', 'plain').focus!.nodeId;
+          secondFieldId = core.state().nodes[secondEntryId]!.fieldDefId!;
+        },
+      });
+      expect(firstFieldId).not.toBe(secondFieldId);
+
+      const created = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@today' },
+        fields: [
+          { key: 'projectStatus', field: firstFieldId },
+          { key: 'issueStatus', field: secondFieldId },
+        ],
+        node: {
+          text: 'Exact same-name Fields',
+          fields: { projectStatus: 'Planned', issueStatus: 'Active' },
+        },
+      }));
+
+      expect(created).toMatchObject({
+        code: 0,
+        data: { fieldCount: 2, definitions: { created: 0, reused: 2 } },
+      });
+      const ownerId = (created.data as { rootId: string }).rootId;
+      const state = runtime.workspace.documentState();
+      const selectedFieldIds = state.nodes[ownerId]!.children.flatMap((id) => {
+        const node = state.nodes[id];
+        return node?.type === 'fieldEntry' && node.fieldDefId ? [node.fieldDefId] : [];
+      });
+      expect(new Set(selectedFieldIds)).toEqual(new Set([firstFieldId, secondFieldId]));
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('reports explicit Field dependencies and reuses null auto-initialize configuration', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      expect((await jsonCommand(root, ['define', 'create', '--input', '-'], JSON.stringify({
+        kind: 'field', name: 'Explicit dependency', type: 'text',
+      }))).code).toBe(0);
+      const fieldId = Object.values(runtime.workspace.documentState().nodes)
+        .find((node) => node.type === 'fieldDef' && node.content.text === 'Explicit dependency')!.id;
+      const explicit = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@today' },
+        fields: [{ key: 'dependency', field: fieldId }],
+        node: { text: 'Explicit Field owner' },
+      }));
+      expect(explicit).toMatchObject({
+        code: 0,
+        data: { fieldCount: 1, definitions: { created: 0, reused: 1 } },
+      });
+
+      const nullableConfigPayload = (title: string) => JSON.stringify({
+        at: { parent: '@today' },
+        fields: [{
+          key: 'schedule',
+          name: 'Nullable auto initialize',
+          type: 'date',
+          config: { autoInitialize: null },
+        }],
+        node: { text: title, fields: { schedule: null } },
+      });
+      expect((await jsonCommand(root, ['create', '--input', '-'], nullableConfigPayload('Auto init A'))).code).toBe(0);
+      const reused = await jsonCommand(root, ['create', '--input', '-'], nullableConfigPayload('Auto init B'));
+      expect(reused).toMatchObject({
+        code: 0,
+        data: { fieldCount: 1, definitions: { created: 0, reused: 1 } },
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('verifies authored create Nodes independently from attached Tag templates', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const definition = await jsonCommand(root, ['transact', '--input', '-'], JSON.stringify({
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        operations: [{ op: 'ensure', resource: 'definition', definitionType: 'tag', name: 'Templated', bind: 'tag' }],
+      }));
+      expect(definition.code).toBe(0);
+      const tagId = Object.values(runtime.workspace.documentState().nodes)
+        .find((node) => node.type === 'tagDef' && node.content.text === 'Templated')!.id;
+      const template = await jsonCommand(root, ['transact', '--input', '-'], JSON.stringify({
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        operations: [{
+          op: 'create',
+          placement: { kind: 'last', parent: { target: { selector: { by: 'id', id: tagId }, cardinality: 'one' } } },
+          nodes: [{ content: { text: 'Default child', marks: [], inlineRefs: [] }, children: [] }],
+        }],
+      }));
+      expect(template.code, JSON.stringify(template)).toBe(0);
+      const created = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@today' },
+        node: { text: 'Templated owner', tags: [tagId] },
+      }));
+
+      expect(created).toMatchObject({
+        code: 0,
+        data: { nodeCount: 1, itemCount: 0, verification: { passed: true } },
+      });
+      const ownerId = (created.data as { rootId: string }).rootId;
+      expect(runtime.workspace.documentState().nodes[ownerId]!.children
+        .map((id) => runtime.workspace.documentState().nodes[id]?.content.text)).toContain('Default child');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('clears an admitted code language without changing the Node resource type', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const created = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@today' },
+        node: { text: 'Code sample', codeLanguage: 'typescript' },
+      }));
+      const nodeId = (created.data as { rootId: string }).rootId;
+      const edited = await jsonCommand(root, ['edit', '--input', '-'], JSON.stringify({
+        target: nodeId,
+        node: { codeLanguage: null },
+      }));
+
+      expect(edited.code).toBe(0);
+      expect(runtime.workspace.documentState().nodes[nodeId]).toMatchObject({ type: 'codeBlock' });
+      expect(runtime.workspace.documentState().nodes[nodeId]?.codeLanguage).toBeUndefined();
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('creates rich, tagged, and referenced Nodes without introducing presentation-specific data types', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      expect((await jsonCommand(root, ['define', 'create', '--input', '-'], JSON.stringify({
+        kind: 'tag', name: 'Research',
+      }))).code).toBe(0);
+      const reference = await jsonCommand(root, ['create', '@library', 'Canonical source']);
+      const referenceId = (reference.data as { rootId: string }).rootId;
+      const tagId = Object.values(runtime.workspace.documentState().nodes)
+        .find((node) => node.type === 'tagDef' && node.content.text === 'Research')!.id;
+
+      const result = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@library' },
+        node: {
+          text: {
+            text: 'Rich research note',
+            marks: [{ start: 0, end: 4, type: 'bold' }],
+            inlineRefs: [{ offset: 5, target: { kind: 'node', nodeId: referenceId } }],
+          },
+          tags: [tagId],
+          children: [{ text: 'Source reference', reference: referenceId }],
+        },
+        view: { mode: 'cards' },
+      }));
+      expect(result.code).toBe(0);
+      const ownerId = (result.data as { rootId: string }).rootId;
+      const state = runtime.workspace.documentState();
+      expect(state.nodes[ownerId]).toMatchObject({
+        content: {
+          text: 'Rich research note',
+          marks: [{ start: 0, end: 4, type: 'bold' }],
+          inlineRefs: [{ offset: 5, target: { kind: 'node', nodeId: referenceId } }],
+        },
+        tags: [tagId],
+      });
+      const referenceNode = state.nodes[ownerId]!.children.map((id) => state.nodes[id])
+        .find((node) => node?.type === 'reference');
+      expect(referenceNode).toMatchObject({ targetId: referenceId });
+      expect(state.nodes[ownerId]!.children.map((id) => state.nodes[id]))
+        .toContainEqual(expect.objectContaining({ type: 'viewDef', viewMode: 'cards' }));
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('uses one normalized Diff/apply kernel across content and lifecycle commands', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
-      const preview = await jsonCommand(root, ['add', '@today', 'Porcelain item', '--bind', 'created', '--preview']);
+      const preview = await jsonCommand(root, ['create', '@today', 'Porcelain item', '--bind', 'created', '--preview']);
       expect(preview.code).toBe(0);
       const diff = preview.data as Diff;
       const nodeId = diff.bindings.created?.[0];
       expect(nodeId).toBeDefined();
       expect(runtime.workspace.documentState().nodes[nodeId!]).toBeUndefined();
 
-      const direct = await jsonCommand(root, ['diff', '--input', '-'], JSON.stringify(diff.normalizedChangeSet));
+      const direct = await jsonCommand(root, ['preview', '--input', '-'], JSON.stringify(diff.normalizedChangeSet));
       expect(direct.code).toBe(0);
-      expect(direct.data).toEqual(diff);
+      expect(direct.data).toMatchObject({
+        changeSetHash: diff.changeSetHash,
+        normalizedChangeSet: diff.normalizedChangeSet,
+        bindings: diff.bindings,
+        affected: diff.affected,
+      });
+      expect((direct.data as Diff).intentHash).not.toBe(diff.intentHash);
+      expect((direct.data as Diff).diffHash).not.toBe(diff.diffHash);
 
-      const applied = await jsonCommand(root, [
-        'add', '@today', 'Porcelain item', '--bind', 'created', '--expect-diff', diff.diffHash,
+      const reviewedArgs = [
+        'create', '@today', 'Porcelain item', '--bind', 'created', '--expect-diff', diff.diffHash,
         '--idempotency-key', diff.normalizedChangeSet.idempotencyKey!,
-      ]);
+      ];
+      const applied = await jsonCommand(root, reviewedArgs);
       expect(applied.code).toBe(0);
-      expect(applied.data).toMatchObject({ kind: 'outline.operation', diffHash: diff.diffHash });
+      expect(applied.data).toMatchObject({ kind: 'outline.create-result', settlement: { diffHash: diff.diffHash } });
       expect(runtime.workspace.documentState().nodes[nodeId!]?.content.text).toBe('Porcelain item');
+      const operationsAfterApply = (await runtime.workspace.store.operations()).length;
+      const replayed = await jsonCommand(root, reviewedArgs);
+      expect(replayed).toMatchObject({ code: 0, command: 'create', data: applied.data });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsAfterApply);
+      const conflictingReplay = await jsonCommand(root, [
+        'create', '--input', '-', '--expect-diff', diff.diffHash,
+        '--idempotency-key', diff.normalizedChangeSet.idempotencyKey!,
+      ], JSON.stringify({
+        at: { parent: '@today' },
+        node: { text: 'Different reviewed payload', children: [{ text: 'Extra child' }] },
+        view: { mode: 'cards' },
+      }));
+      expect(conflictingReplay).toMatchObject({ code: 3, error: { code: 'idempotency_conflict' } });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsAfterApply);
 
-      expect((await jsonCommand(root, ['set', nodeId!, '--description', 'Reviewed'])).code).toBe(0);
+      expect((await jsonCommand(root, ['edit', nodeId!, '--description', 'Reviewed'])).code).toBe(0);
       expect(runtime.workspace.documentState().nodes[nodeId!]?.description).toBe('Reviewed');
-      expect((await jsonCommand(root, ['done', 'set', nodeId!, 'true'])).code).toBe(0);
+      expect((await jsonCommand(root, ['edit', nodeId!, '--done', 'true'])).code).toBe(0);
       expect(runtime.workspace.documentState().nodes[nodeId!]?.completedAt).toBeGreaterThan(0);
-      expect((await jsonCommand(root, ['done', 'cycle', nodeId!])).code).toBe(0);
+      expect((await jsonCommand(root, ['edit', nodeId!, '--done', 'false'])).code).toBe(0);
       expect(runtime.workspace.documentState().nodes[nodeId!]?.completedAt ?? 0).toBe(0);
 
       expect((await jsonCommand(root, ['trash', nodeId!])).code).toBe(0);
@@ -89,12 +427,43 @@ describe('outline porcelain CLI', () => {
         selector: { by: 'alias', alias: 'today' },
         cardinality: 'one',
       }));
-      const result = await jsonCommand(root, ['add', '--parent', targetPath, 'Structured parent']);
+      const result = await jsonCommand(root, ['create', '--parent', targetPath, 'Structured parent']);
       expect(result.code).toBe(0);
-      expect(result.data).toMatchObject({ kind: 'outline.operation' });
+      expect(result.data).toMatchObject({ kind: 'outline.create-result', verification: { passed: true } });
       expect(runtime.workspace.projection().nodes).toContainEqual(
         expect.objectContaining({ content: expect.objectContaining({ text: 'Structured parent' }) }),
       );
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('rejects a bounded many placement before direct create can fan out', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      expect((await jsonCommand(root, ['create', '@today', 'Bounded parent A'])).code).toBe(0);
+      expect((await jsonCommand(root, ['create', '@today', 'Bounded parent B'])).code).toBe(0);
+      const targetPath = path.join(root, 'many-parents.json');
+      await Bun.write(targetPath, JSON.stringify({
+        selector: {
+          by: 'query',
+          query: { kind: 'rule', op: 'STRING_MATCH', text: 'Bounded parent' },
+          order: 'document',
+          limit: 2,
+        },
+        cardinality: 'many',
+        max: 2,
+      }));
+      const operationsBefore = (await runtime.workspace.store.operations()).length;
+      const result = await jsonCommand(root, ['create', '--parent', targetPath, 'Hidden fan-out']);
+
+      expect(result).toMatchObject({ code: 2, error: { code: 'invalid_input' } });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore);
+      expect(Object.values(runtime.workspace.documentState().nodes)
+        .some((node) => node.content.text === 'Hidden fan-out')).toBe(false);
     } finally {
       await runtime.stop();
     }
@@ -122,7 +491,7 @@ describe('outline porcelain CLI', () => {
 
       const staleId = await createTrashedNode(root, runtime, 'TTY stale purge');
       const stale = await humanCommand(root, ['purge', staleId], async () => {
-        expect((await jsonCommand(root, ['add', '@today', 'Concurrent TTY write'])).code).toBe(0);
+        expect((await jsonCommand(root, ['create', '@today', 'Concurrent TTY write'])).code).toBe(0);
         return true;
       });
       expect(stale.code).toBe(3);
@@ -139,49 +508,46 @@ describe('outline porcelain CLI', () => {
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
-      const reference = await jsonCommand(root, ['add', '@library', 'Reference target']);
-      const referenceId = returnedIds(reference.data)[0]!;
-      const rich = await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
-        placement: {
-          kind: 'last',
-          parent: '@library',
-        },
-        nodes: [{
-          content: {
-            text: 'alpha keyword omega',
-            marks: [],
-            inlineRefs: [{ offset: 10, target: { kind: 'node', nodeId: referenceId } }],
-          },
-          children: [],
+      const reference = await jsonCommand(root, ['create', '@library', 'Reference target']);
+      const referenceId = (reference.data as { rootId: string }).rootId;
+      const rich = await jsonCommand(root, ['transact', '--input', '-'], JSON.stringify({
+        protocolVersion: 1,
+        kind: 'outline.changeset',
+        operations: [{
+          op: 'create',
+          placement: { kind: 'last', parent: { target: { selector: { by: 'alias', alias: 'library' }, cardinality: 'one' } } },
+          nodes: [{ content: { text: 'alpha keyword omega', marks: [], inlineRefs: [{ offset: 10, target: { kind: 'node', nodeId: referenceId } }] }, children: [] }],
+          bind: 'created',
         }],
+        return: [{ kind: 'node', targets: { binding: 'created' }, page: { limit: 1 } }],
       }));
       const richId = returnedIds(rich.data)[0]!;
       const consumedReference = await jsonCommand(root, [
-        'text', 'replace', richId, '--find', 'keyword', '--replace', 'term', '--preview',
+        'replace', 'text', richId, '--find', 'keyword', '--with', 'term', '--preview',
       ]);
       expect(consumedReference.code).toBe(2);
       expect(consumedReference.error).toMatchObject({ code: 'invalid_input' });
       expect(JSON.stringify(consumedReference.error)).toContain('inline reference');
       expect(runtime.workspace.documentState().nodes[richId]?.content.text).toBe('alpha keyword omega');
 
-      const repeated = await jsonCommand(root, ['add', '@library', 'x x x']);
-      const repeatedId = returnedIds(repeated.data)[0]!;
+      const repeated = await jsonCommand(root, ['create', '@library', 'x x x']);
+      const repeatedId = (repeated.data as { rootId: string }).rootId;
       const overBound = await jsonCommand(root, [
-        'text', 'replace', repeatedId, '--find', 'x', '--replace', 'y',
+        'replace', 'text', repeatedId, '--find', 'x', '--with', 'y',
         '--max-replacements', '2', '--preview',
       ]);
       expect(overBound.code).toBe(2);
       expect(JSON.stringify(overBound.error)).toContain('exceeding maxReplacements 2');
 
       const preview = await jsonCommand(root, [
-        'text', 'replace', repeatedId, '--find', 'x', '--replace', 'y', '--preview',
+        'replace', 'text', repeatedId, '--find', 'x', '--with', 'y', '--preview',
       ]);
       expect(preview.code).toBe(0);
       expect((preview.data as Diff).destructive).toEqual([{ kind: 'replace', targetCount: 1 }]);
       expect(JSON.stringify((preview.data as Diff).normalizedChangeSet.operations)).toContain('"review":{"destructive":"replace"}');
-      expect((await jsonCommand(root, ['add', '@library', 'Concurrent write'])).code).toBe(0);
+      expect((await jsonCommand(root, ['create', '@library', 'Concurrent write'])).code).toBe(0);
       const stale = await jsonCommand(root, [
-        'text', 'replace', repeatedId, '--find', 'x', '--replace', 'y',
+        'replace', 'text', repeatedId, '--find', 'x', '--with', 'y',
         '--expect-diff', (preview.data as Diff).diffHash, '--yes',
         '--idempotency-key', (preview.data as Diff).normalizedChangeSet.idempotencyKey!,
       ]);
@@ -199,15 +565,15 @@ describe('outline porcelain CLI', () => {
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
-      expect((await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
-        placement: {
-          kind: 'last',
-          parent: '@library',
+      expect((await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@library' },
+        node: {
+          text: 'Placement fixture',
+          children: [
+            semanticTree('Placement source', [semanticTree('A'), semanticTree('B'), semanticTree('C')]),
+            semanticTree('Placement destination', [semanticTree('X'), semanticTree('Y')]),
+          ],
         },
-        nodes: [
-          tree('Placement source', [tree('A'), tree('B'), tree('C')]),
-          tree('Placement destination', [tree('X'), tree('Y')]),
-        ],
       }))).code).toBe(0);
       const sourceId = nodeIdByText(runtime, 'Placement source');
       const destinationId = nodeIdByText(runtime, 'Placement destination');
@@ -215,13 +581,11 @@ describe('outline porcelain CLI', () => {
       const bId = nodeIdByText(runtime, 'B');
       const cId = nodeIdByText(runtime, 'C');
 
-      await mutateAndRevert(root, runtime, ['add', '--before', bId, 'Before B'], (operation) => {
+      await mutateAndRevert(root, runtime, ['create', '--before', bId, 'Before B'], (operation) => {
         expect(childTexts(runtime, sourceId)).toEqual(['A', 'Before B', 'B', 'C']);
-        expect(returnedIds(operation)).toHaveLength(1);
       });
-      await mutateAndRevert(root, runtime, ['add', '--after', bId, 'After B'], (operation) => {
+      await mutateAndRevert(root, runtime, ['create', '--after', bId, 'After B'], (operation) => {
         expect(childTexts(runtime, sourceId)).toEqual(['A', 'B', 'After B', 'C']);
-        expect(returnedIds(operation)).toHaveLength(1);
       });
       await mutateAndRevert(root, runtime, ['move', bId, '--previous'], () => {
         expect(childTexts(runtime, sourceId)).toEqual(['B', 'A', 'C']);
@@ -257,15 +621,15 @@ describe('outline porcelain CLI', () => {
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
-      expect((await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
-        placement: {
-          kind: 'last',
-          parent: '@library',
+      expect((await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@library' },
+        node: {
+          text: 'Reference fixture',
+          children: [
+            semanticTree('Reference replacement parent', [semanticTree('Original subtree', [semanticTree('Original child')])]),
+            semanticTree('Canonical reference target'),
+          ],
         },
-        nodes: [
-          tree('Reference replacement parent', [tree('Original subtree', [tree('Original child')])]),
-          tree('Canonical reference target'),
-        ],
       }))).code).toBe(0);
       const parentId = nodeIdByText(runtime, 'Reference replacement parent');
       const originalId = nodeIdByText(runtime, 'Original subtree');
@@ -273,29 +637,32 @@ describe('outline porcelain CLI', () => {
       const canonicalId = nodeIdByText(runtime, 'Canonical reference target');
       const operationCount = (await runtime.workspace.store.operations()).length;
 
-      const invalidRetarget = await jsonCommand(root, ['reference', 'set', originalId, canonicalId]);
+      const invalidRetarget = await jsonCommand(root, ['edit', '--input', '-'], JSON.stringify({
+        target: originalId,
+        references: [{ action: 'retarget', target: canonicalId }],
+      }));
       expect(invalidRetarget).toMatchObject({ code: 3, error: { code: 'precondition_failed' } });
       expect((await runtime.workspace.store.operations()).length).toBe(operationCount);
       expect(runtime.workspace.documentState().nodes[originalId]?.parentId).toBe(parentId);
 
-      await mutateAndRevert(root, runtime, ['reference', 'replace', originalId, canonicalId], () => {
+      await mutateAndRevert(root, runtime, ['edit', '--input', '-'], () => {
         const state = runtime.workspace.documentState();
         expect(state.nodes[originalId]).toMatchObject({ parentId: 'trash', trashedFromParentId: parentId });
         expect(state.nodes[originalChildId]?.parentId).toBe(originalId);
         expect(state.nodes[parentId]?.children.map((id) => state.nodes[id])).toContainEqual(
           expect.objectContaining({ type: 'reference', targetId: canonicalId }),
         );
-      });
+      }, JSON.stringify({ target: originalId, references: [{ action: 'replace', target: canonicalId }] }));
 
-      const invalidInline = await jsonCommand(root, ['reference', 'inline', originalId]);
-      expect(invalidInline).toMatchObject({
-        code: 2,
-        error: { code: 'invalid_input', message: expect.stringContaining('requires REFERENCE') },
-      });
+      const invalidInline = await jsonCommand(root, ['edit', '--input', '-'], JSON.stringify({
+        target: originalId,
+        references: [{ action: 'inline', target: 'node:missing' }],
+      }));
+      expect(invalidInline.code).not.toBe(0);
       expect((await runtime.workspace.store.operations()).length).toBe(operationCount + 2);
       expect(runtime.workspace.documentState().nodes[originalId]?.parentId).toBe(parentId);
 
-      await mutateAndRevert(root, runtime, ['reference', 'inline', originalId, canonicalId], () => {
+      await mutateAndRevert(root, runtime, ['edit', '--input', '-'], () => {
         const state = runtime.workspace.documentState();
         expect(state.nodes[originalId]).toMatchObject({ parentId: 'trash', trashedFromParentId: parentId });
         expect(state.nodes[parentId]?.children.map((id) => state.nodes[id])).toContainEqual(
@@ -305,76 +672,144 @@ describe('outline porcelain CLI', () => {
             }),
           }),
         );
-      });
+      }, JSON.stringify({ target: originalId, references: [{ action: 'inline', target: canonicalId }] }));
 
-      expect((await jsonCommand(root, ['reference', 'add', parentId, canonicalId])).code).toBe(0);
-      const referenceId = Object.values(runtime.workspace.documentState().nodes).find((node) => (
-        node.type === 'reference' && node.parentId === parentId && node.targetId === canonicalId
-      ))?.id;
-      expect(referenceId).toBeDefined();
-      await mutateAndRevert(root, runtime, ['reference', 'inline', referenceId!], () => {
-        const state = runtime.workspace.documentState();
-        expect(state.nodes[referenceId!]).toBeUndefined();
-        expect(state.nodes[parentId]?.children.map((id) => state.nodes[id])).toContainEqual(
-          expect.objectContaining({
-            content: expect.objectContaining({
-              inlineRefs: [expect.objectContaining({ target: { kind: 'node', nodeId: canonicalId } })],
-            }),
-          }),
-        );
-      });
+      expect((await jsonCommand(root, ['edit', '--input', '-'], JSON.stringify({
+        target: parentId,
+        references: [{ action: 'add', target: canonicalId }],
+      }))).code).toBe(0);
+      expect(Object.values(runtime.workspace.documentState().nodes)).toContainEqual(
+        expect.objectContaining({ type: 'reference', parentId, targetId: canonicalId }),
+      );
     } finally {
       await runtime.stop();
     }
   });
 
-  test('rejects invalid viewed-tree keys and non-view inspection without writing', async () => {
+  test('rejects undeclared Field keys and returns the effective Outline View without writing', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
       const before = JSON.parse(JSON.stringify(runtime.workspace.documentState())) as unknown;
-      const invalid = await jsonCommand(root, ['add', '--input', '-'], JSON.stringify({
-        kind: 'viewed-tree',
-        placement: { kind: 'last', parent: '@library' },
-        title: 'Invalid table',
-        fields: [{ key: 'known', name: 'Known', config: { fieldType: 'plain' } }],
-        items: [{ content: 'Item', values: { missing: 'value' } }],
-        view: { mode: 'table', display: [{ field: { fieldKey: 'known' } }] },
+      const invalid = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@library' },
+        fields: [{ key: 'known', name: 'Known', type: 'text' }],
+        node: { text: 'Invalid table', children: [{ text: 'Item', fields: { missing: 'value' } }] },
+        view: { mode: 'table', display: ['known'] },
       }));
       expect(invalid.code).toBe(2);
-      expect(JSON.stringify(invalid.error)).toContain('unknown field key: missing');
+      expect(JSON.stringify(invalid.error)).toContain('undeclared field key: missing');
       expect(runtime.workspace.documentState()).toEqual(before);
 
-      const plain = await jsonCommand(root, ['add', '@library', 'Plain owner']);
-      const inspection = await jsonCommand(root, ['view', 'inspect', returnedIds(plain.data)[0]!]);
-      expect(inspection.code).toBe(3);
-      expect(JSON.stringify(inspection.error)).toContain('exactly one view definition');
+      const plain = await jsonCommand(root, ['create', '@library', 'Plain owner']);
+      const inspection = await jsonCommand(root, ['view', 'get', (plain.data as { rootId: string }).rootId]);
+      expect(inspection.code).toBe(0);
+      expect(inspection.data).toMatchObject({ mode: 'outline', displayFieldCount: 0 });
     } finally {
       await runtime.stop();
     }
   });
 
-  test('accepts a 10,000-item viewed tree through stdin beyond argv size', async () => {
+  test('switches every View mode without changing Node identity, tree structure, or Field values', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const created = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@library' },
+        fields: [{ key: 'status', name: 'View invariant status', type: 'text' }],
+        node: { text: 'View invariant owner', children: [{ text: 'Stable item', fields: { status: 'Ready' } }] },
+        view: { mode: 'table', display: ['status'] },
+      }));
+      const ownerId = (created.data as { rootId: string }).rootId;
+      const dataSnapshot = () => {
+        const state = runtime.workspace.documentState();
+        const viewTypes = new Set(['viewDef', 'sortRule', 'filterRule', 'displayField']);
+        return Object.values(state.nodes)
+          .filter((node) => !viewTypes.has(node.type))
+          .map((node) => ({
+            id: node.id,
+            parentId: node.parentId,
+            type: node.type,
+            content: node.content,
+            fieldDefId: node.fieldDefId,
+            children: node.children.filter((id) => !viewTypes.has(state.nodes[id]?.type ?? '')),
+          }))
+          .sort((left, right) => left.id.localeCompare(right.id));
+      };
+      const before = dataSnapshot();
+      for (const mode of ['cards', 'calendar', 'outline', 'table'] as const) {
+        const result = await jsonCommand(root, ['view', 'set', ownerId, mode]);
+        expect(result.code).toBe(0);
+        expect(dataSnapshot()).toEqual(before);
+        expect((await jsonCommand(root, ['view', 'get', ownerId])).data).toMatchObject({ mode });
+      }
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('converges Source membership through edit without exposing storage choreography', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      const created = await jsonCommand(root, ['create', '@library', 'Source owner']);
+      const ownerId = (created.data as { rootId: string }).rootId;
+      expect((await jsonCommand(root, ['edit', '--input', '-'], JSON.stringify({
+        target: ownerId,
+        sources: [
+          { action: 'add', text: 'https://example.com/a' },
+          { action: 'add', text: 'https://example.com/b' },
+        ],
+      }))).code).toBe(0);
+      const sourceValues = () => Object.values(runtime.workspace.documentState().nodes)
+        .filter((node) => node.parentId !== undefined && node.content.text.startsWith('https://example.com/'));
+      expect(sourceValues().map((node) => node.content.text).sort()).toEqual([
+        'https://example.com/a', 'https://example.com/b',
+      ]);
+      const first = sourceValues().find((node) => node.content.text.endsWith('/a'))!;
+      expect((await jsonCommand(root, ['edit', '--input', '-'], JSON.stringify({
+        target: ownerId,
+        sources: [{ action: 'replace', value: first.id, text: 'https://example.com/c' }],
+      }))).code).toBe(0);
+      expect(sourceValues().map((node) => node.content.text).sort()).toEqual([
+        'https://example.com/b', 'https://example.com/c',
+      ]);
+      expect((await jsonCommand(root, ['edit', '--input', '-'], JSON.stringify({
+        target: ownerId, sources: [{ action: 'clear' }],
+      }))).code).toBe(0);
+      expect(sourceValues()).toHaveLength(0);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('creates 10,000 Nodes with one Operation and a bounded semantic receipt', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
     expect(runtime).not.toBeNull();
     if (!runtime) return;
     try {
       const input = JSON.stringify({
-        kind: 'viewed-tree',
-        placement: { kind: 'last', parent: '@library' },
-        title: 'Large viewed tree',
-        items: Array.from({ length: 10_000 }, (_, index) => ({ content: `Item ${index} "quoted" \\ slash` })),
-        view: { mode: 'table', display: [{ field: 'sys:name', label: 'Item' }] },
+        at: { parent: '@library' },
+        node: {
+          text: 'Large Node tree',
+          children: Array.from({ length: 10_000 }, (_, index) => ({ text: `Item ${index} "quoted" \\ slash` })),
+        },
+        view: { mode: 'table', display: ['sys:name'] },
       });
       expect(Buffer.byteLength(input)).toBeGreaterThan(256 * 1024);
       const operationsBefore = (await runtime.workspace.store.operations()).length;
-      const result = await jsonCommand(root, ['add', '--input', '-'], input);
+      const result = await jsonCommand(root, ['create', '--input', '-'], input);
       expect(result.code).toBe(0);
       expect((await runtime.workspace.store.operations()).length).toBe(operationsBefore + 1);
-      const ownerId = returnedIds(result.data)[0]!;
+      const ownerId = (result.data as { rootId: string }).rootId;
+      expect(Buffer.byteLength(JSON.stringify(result.data))).toBeLessThan(4 * 1024);
       const state = runtime.workspace.documentState();
       const itemCount = state.nodes[ownerId]!.children.filter((id) => state.nodes[id]?.type !== 'viewDef').length;
       expect(itemCount).toBe(10_000);
@@ -385,7 +820,8 @@ describe('outline porcelain CLI', () => {
 });
 
 function returnedIds(value: unknown): string[] {
-  const result = (value as { result?: Array<{ nodes?: unknown[] }> } | undefined)?.result;
+  const record = value as { settlement?: { result?: Array<{ nodes?: unknown[] }> }; result?: Array<{ nodes?: unknown[] }> } | undefined;
+  const result = record?.settlement?.result ?? record?.result;
   return (result?.[0]?.nodes ?? []).flatMap((node) => (
     node && typeof node === 'object' && typeof (node as { id?: unknown }).id === 'string'
       ? [(node as { id: string }).id]
@@ -398,16 +834,17 @@ async function mutateAndRevert(
   runtime: OutlineRuntimeServer,
   args: readonly string[],
   assertApplied: (operation: Operation) => void,
+  stdin = '',
 ): Promise<void> {
   const before = JSON.parse(JSON.stringify(runtime.workspace.documentState())) as unknown;
   const operationCount = (await runtime.workspace.store.operations()).length;
-  const result = await jsonCommand(root, args);
+      const result = await jsonCommand(root, args, stdin);
   expect(result.code).toBe(0);
-  const operation = result.data as Operation;
+  const operation = ((result.data as { settlement?: Operation } | undefined)?.settlement ?? result.data) as Operation;
   const operationId = operation.operationId;
   expect(typeof operationId).toBe('string');
   expect(operation).toMatchObject({
-    kind: 'outline.operation',
+    kind: expect.stringMatching(/^outline\.operation(?:-settlement)?$/),
     operationId: expect.any(String),
     affectedNodeCount: expect.any(Number),
     recovery: { state: 'available' },
@@ -437,13 +874,13 @@ function nodeIdByText(runtime: OutlineRuntimeServer, text: string): string {
   return nodeId!;
 }
 
-interface TestTree {
-  readonly content: { readonly text: string; readonly marks: readonly []; readonly inlineRefs: readonly [] };
-  readonly children: readonly TestTree[];
+interface SemanticTree {
+  readonly text: string;
+  readonly children?: readonly SemanticTree[];
 }
 
-function tree(text: string, children: readonly TestTree[] = []): TestTree {
-  return { content: { text, marks: [], inlineRefs: [] }, children };
+function semanticTree(text: string, children: readonly SemanticTree[] = []): SemanticTree {
+  return { text, ...(children.length > 0 ? { children } : {}) };
 }
 
 async function createTrashedNode(
@@ -451,7 +888,7 @@ async function createTrashedNode(
   runtime: OutlineRuntimeServer,
   text: string,
 ): Promise<string> {
-  expect((await jsonCommand(root, ['add', '@today', text])).code).toBe(0);
+  expect((await jsonCommand(root, ['create', '@today', text])).code).toBe(0);
   const nodeId = Object.values(runtime.workspace.documentState().nodes)
     .find((node) => node.content.text === text)?.id;
   expect(nodeId).toBeDefined();

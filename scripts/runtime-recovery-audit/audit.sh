@@ -338,7 +338,7 @@ while IFS=$'\t' read -r baseline status historical_source historical_path title 
     tests/core/agentMemory.test.ts)
       if [[ "$title" == *"does not count literal Memory markers"* ]]; then
         review="confirmed-regression-fixed"
-        rationale="The negative citation assertion now executes through the restored public outline show completion path."
+        rationale="The negative citation assertion now executes through the public outline get completion path."
       else
         review="equivalent-current"
         rationale="The original Memory assertions are unchanged; stable Runtime Node IDs and the queued planning host replace legacy test literals."

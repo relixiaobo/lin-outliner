@@ -62,96 +62,101 @@ contribute tools through this seam rather than adding domain logic to runtime.
 
 ### Outline
 
-The Agent catalog has no document-native model tools. A model reaches the
-Outliner through `bash` and the public `outline` executable. The built-in
-`outline` Skill teaches deterministic selection, bounded reads, ChangeSet
-composition, complete-resource porcelain, Diff review, Operation inspection,
-and guarded recovery. Public schemas and exact root/family/command help come from
-the executable registry; the Skill does not reimplement parsing, selection,
-projection, validation, mutation, or command schemas.
+The Agent catalog has no document-native model tools. Persisted document work
+uses `bash` and the public `outline` executable. The same capability registry
+serves users, built-in Agents, external Agents, and desktop adapters; Host policy
+classifies an admitted segment as `outline.read`, `outline.edit`, or
+`outline.delete`.
 
-`SKILL.md` is a self-contained policy router rather than a compressed command
-manual. The executable registry provides bounded validated recipes through
-`outline example COMMAND VARIANT`; exact runtime help is the fallback and full
-`schema COMMAND` output is reserved for integrations, debugging, and recipe
-gaps. Skill text contains one byte-checked viewed-tree example and no packaged
-reference manual, so the Agent does not load a second hand-maintained CLI
-contract.
+The public model is independent of presentation and storage choreography:
 
-The executable has the same capability registry for a user shell, built-in
-Agent, external Agent, and desktop adapter. Agent execution does not receive a
-reduced Selector, Projection, or Change union. Host capability policy classifies
-the shell segment as `outline.read`, `outline.edit`, or `outline.delete`; ordinary
-shell admission and explicit blocks still apply.
+- Node is the only content and tree identity.
+- Field is a reusable typed definition; values belong to Nodes.
+- Outline, Table, Cards, and Calendar are Views over the same Nodes.
+- Operation is the atomic settlement and recovery identity.
 
-An Agent spawned with `execution: "read-only"` retains the same discoverable
-public schemas but receives a Host-enforced action ceiling. Direct mutation
-tools are removed, dynamically classified Bash/extension actions are checked at
-execution, and every nested Agent or isolated Skill inherits the ceiling.
-Outline reads remain available while `outline.edit` and `outline.delete` are
-rejected before process launch. This is an orchestration policy, not a reduced
-Runtime schema or a model-authored request convention.
+The built-in Skill is a compact decision router. It teaches this model, the
+narrowest semantic command, exact and bounded selection, direct syntax for
+routine one-call work, one common `create` shape, destructive review, and
+uncertain-settlement recovery. Exact schemas, uncommon options, structured
+examples, accepted vocabulary, and receipt formatting remain executable registry
+data. Routine syntax belongs in the Skill when omitting it predictably causes a
+metadata round trip.
 
-For a built-in Agent shell call, main injects a short-lived attestation bound to
-the Runtime descriptor and exact Thread, Turn, and tool-call Item. Runtime
-validates it before a mutation and records immutable `built-in-agent` causation
-on the Operation. Request-body causation is untrusted. A declared built-in Agent
-mutation without valid attestation is rejected rather than downgraded to an
-unattributed local-user write.
+Reads use `outline get`, `outline find`, `outline export`, and
+`outline watch`. One complete resource uses one semantic invocation; complex
+state for that resource uses the same command with `--input -`. Dependent
+resources use one `transact` ChangeSet with bindings. The Agent never replaces
+either form with a shell mutation loop or intermediate identity lookup.
 
-Reads use `outline find`, `outline show`, and `outline export`. The Agent routes
-writes by resource boundary: one complete resource uses one porcelain invocation;
-complex state for that resource uses the same command's `--input FILE|-`; multiple
-resources, dependencies, cross-date work, or bounded bulk changes use one
-ChangeSet with bindings. It never substitutes a shell mutation loop or an
-intermediate created-ID query.
+`create` owns complete Node-tree creation plus optional Field declarations and
+View configuration. Same-name compatible Fields are ensured automatically.
+`edit` owns convergent Node properties, tags, Field values, references, and
+Sources. `define create|ensure|edit` is reserved for explicit reusable
+definition work. `view get|set` changes projection only; `search
+create|edit|run` owns saved and transient query behavior. Public Field and View
+terms are translated at the CLI boundary and never expose Core tokens.
+An exact, fully specified `view set` converges without a current-View read.
 
-The schema exposes the built-in `URI` field through stable ID `field:source`.
-Its entries and RichText value Nodes are ordinary, lazily created, editable, and
-deletable through generic field and tree operations. The public CLI and
-ChangeSet surface also exposes `source add`, `source replace`, `source reorder`,
-`source remove`, and `source clear` as convenience adapters for resource
-workflows. Replace preserves value identity and position, reorder/removal resolve
-an owner-local direct value, and clear removes the observed values plus an entry
-that becomes empty. Add and reorder follow the aggregate owner-local value order
-across any converged entries. Parent deletion and concurrent editing follow
-normal Loro tree semantics. Agents may use either generic field operations or
-the convenience family; both must produce the same ordinary field shape.
-Projection carries the exact URI in each value Node's
-`content.text`. Preview, media search, local-file authorization, and asset
-reachability recognize the definition ID, never the visible label.
+Discovery is progressive: Skill, then one matching `example`, then exact
+command help, then a narrow `schema --path` fragment. Bare schema discovery
+returns only a compact catalog. Full schema bodies are for integrations or a
+concrete diagnosis, not routine task planning.
 
-The Skill distinguishes explicit create/add from convergent set/configure/ensure,
-patch omission from explicit `replace`, and common STRING_MATCH shorthand from
-canonical structured query input. It uses `@library`, `@saved-searches`, and
-other stable aliases instead of discovering internal system IDs. It consults
-exact command help for selector/cardinality and ownership boundaries:
-`definition create` creates reusable definitions, `field define` attaches or
-creates a target field with an optional initial value, `tag add` applies an
-existing tag, root `set` patches generic Node state, and media/search set forms
-own their resource-specific state.
+Routine exact export and Saved Search convergence remain direct Skill forms.
+An export receipt proves the destination, byte count, and digest, so artifact
+existence and hashing do not require follow-up shell commands. Normalized import
+keeps its four meaningful stages explicit: inspect, plan with Diff and evidence,
+exact apply, and verification. These stages are not collapsed because each owns
+a distinct review or correctness boundary.
 
-For a common literal replacement, the model uses `text replace` rather than
-inventing a shell loop or query language. One exact target needs no query; a
-bulk transform uses STRING_MATCH or the canonical query with `many + max`, plus
-the independent total replacement bound. The model previews and reviews the
-affected set, applies the exact Diff, and relies on the base revision, rich-text
-reference guard, semantic no-change, and exact revert supplied by the ordinary
-ChangeSet path.
+Recipes cover the complete semantics advertised by their intent. The complete
+edit recipe includes references, complete View configuration includes grouping,
+sorting, filtering, and display replacement, and the dependent transaction
+recipe shows a later structural operation consuming an earlier binding.
 
-The model reviews a Diff, applies that exact artifact, records the returned
-Operation ID/affected count/recovery state, and verifies consequential writes
-with an independent read. Destructive porcelain uses preview plus the same
-command's `--expect-diff HASH --yes`; `--yes` alone is invalid. Recovery names
-the exact Operation with `outline revert`; it never guesses from renderer undo
-state or issues an unrelated compensating edit.
+An exact `get` includes the Node description and logical Fields by default. A
+Field projection contains the reusable definition ID, public name and type,
+typed values, and whether the value is inherited. It is attached to the owning
+Node; storage `fieldEntry` Nodes are not part of the Agent's read model. The
+bounded summary shows content, description, completion state, and compact Field
+values needed for an ordinary read. An exact Operation lookup accepts `history
+OPERATION_ID`; history summaries show recovery state. Recipe lookup recognizes
+multi-word commands and infers the variant when exactly one recipe exists.
 
-Memory adds no parallel tools and no Agent-specific document projection filter.
-Eligible root Turns receive compact routing context for ordinary CLI reads.
-Runtime mutation observation uses trusted Operation causation, while Memory
-publication and control-store settlement use idempotency receipts as specified
-in [`agent-memory.md`](agent-memory.md).
+Idempotent Daily Note ensure and exact Trash or restore operations use their
+semantic command directly without a pre-read. A user intent that applies one
+change to every query match lowers to one bounded query target and one Operation;
+it does not discover IDs and loop over them. The `edit bounded-query` recipe is
+the progressive-disclosure entry for that shape.
 
+A successful semantic mutation returns a compact committed-state verified
+receipt with Operation ID, bounded handles, affected-set evidence, and recovery
+command. That receipt is completion proof for covered postconditions; a separate
+read is only for facts it does not cover. Unknown settlement is never retried:
+the Agent follows the receipt's exact `history --idempotency-key` command.
+
+Destructive or explicitly reviewed work uses one immutable preview and exact
+apply. A semantic command such as `replace text`, `merge`, or `purge` is invoked
+first with `--preview` and then once with the returned `--expect-diff` hash and
+same idempotency key. Advanced ChangeSets use the lower-level `outline preview`
+and `outline apply` artifact pair. The Diff hash, base revision, idempotency key,
+and acknowledgement remain bound in both forms.
+
+The built-in Source definition remains stable ID `field:source`. Source values
+are ordinary Field value Nodes; public `edit.sources` hides that storage
+orchestration without creating a parallel resource type. Asset leases remain the
+specialized byte boundary and become reachable only through ordinary document
+state.
+
+Read-only delegated execution retains schema discovery and reads while Host
+policy rejects `outline.edit` and `outline.delete` before process launch.
+Built-in Agent mutations require the existing short-lived host attestation;
+request-body causation remains untrusted.
+
+Memory adds no alternate document tool or projection. Agent causation is attached
+to the Runtime Operation, while memory publication uses the normal idempotent
+settlement contract.
 ### Local Files And Commands
 
 - `file_read`, `file_glob`, and `file_grep`
@@ -922,7 +927,7 @@ coordinates needed by their next documented command. Structured `--input -` byte
 separate stdin transport; the command string contains only `outline` and its
 arguments. Complete `--json` responses and exact Diff artifacts remain
 available when machine fidelity is explicitly required.
-Memory citation accounting accepts only explicit `outline --json show` output,
+Memory citation accounting accepts only explicit `outline --json get` output,
 so bounded presentation changes cannot silently alter durable usage evidence.
 
 ## Thread History Tools

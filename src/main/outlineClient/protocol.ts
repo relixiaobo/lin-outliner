@@ -41,8 +41,8 @@ export type OutlineDesktopCommitResponse = AcceptedDesktopChangeSetMutation;
 
 const DESKTOP_REQUEST_COMMANDS = new Set([
   'find',
-  'show',
-  'diff',
+  'get',
+  'preview',
   'apply',
   'undo',
   'redo',

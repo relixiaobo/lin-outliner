@@ -15,11 +15,11 @@ describe('desktop Outline client', () => {
   test('decodes the narrow renderer-owned identifiers without accepting transport details', () => {
     expect(decodeOutlineDesktopRequest({
       requestId: 'request:1',
-      command: 'show',
+      command: 'get',
       input: { selector: { by: 'alias', alias: 'today' } },
     })).toEqual({
       requestId: 'request:1',
-      command: 'show',
+      command: 'get',
       input: { selector: { by: 'alias', alias: 'today' } },
     });
     expect(decodeOutlineDesktopSubscription({ subscriptionId: 'watch:1', input: {} }))
@@ -27,7 +27,7 @@ describe('desktop Outline client', () => {
     expect(decodeOutlineDesktopId('request:1')).toBe('request:1');
     expect(() => decodeOutlineDesktopRequest({
       requestId: '../runtime.json',
-      command: 'show',
+      command: 'get',
       input: {},
       socketPath: '/tmp/private.sock',
     })).toThrow('Invalid desktop Outline request');
@@ -46,7 +46,7 @@ describe('desktop Outline client', () => {
       { command: 'asset ingest', input: { source: 'stdin' } },
       { command: 'asset export', input: { assetId: 'asset:private' } },
       { command: 'export', input: { selector: { by: 'alias', alias: 'today' } } },
-      { command: 'log', input: {} },
+      { command: 'history', input: {} },
       { command: 'status', input: {} },
     ]) {
       expect(() => decodeOutlineDesktopRequest({
@@ -91,7 +91,7 @@ describe('desktop Outline client', () => {
     const response = {
       protocolVersion: 1,
       requestId: 'runtime:1',
-      command: 'show',
+      command: 'get',
       ok: false,
       error: {
         code: 'not_found',
@@ -103,7 +103,7 @@ describe('desktop Outline client', () => {
     const transport = new FakeTransport(response);
     const client = new DesktopOutlineClient({ connect: async () => transport });
 
-    await expect(client.request(1, 'request:1', 'show', {})).resolves.toEqual(response);
+    await expect(client.request(1, 'request:1', 'get', {})).resolves.toEqual(response);
     client.close();
   });
 });

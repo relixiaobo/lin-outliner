@@ -237,7 +237,7 @@ export class OutlineDocumentService {
       ? null
       : await (await this.connectRequestClient()).commitDesktopChangeSet(changeSet, options.undoGroup);
     const accepted = acceptedReceipt as (typeof acceptedReceipt & { readonly update: ProjectionUpdate });
-    const diff = accepted?.diff ?? await this.request<Diff>('diff', { changeSet });
+    const diff = accepted?.diff ?? await this.request<Diff>('preview', { changeSet });
     const settlement = accepted?.settlement ?? await this.request<Operation | NoChangeResult>('apply', {
       diff,
       ...(options.acknowledgeDestructive ? { acknowledgeDestructive: true } : {}),
@@ -297,7 +297,7 @@ export class OutlineDocumentService {
     readonly idempotencyKey?: string;
     readonly limit?: number;
   }): Promise<readonly Operation[]> {
-    return (await this.request<OperationLogPage>('log', input)).operations;
+    return (await this.request<OperationLogPage>('history', input)).operations;
   }
 
   freezeMutationAdmission(): void {

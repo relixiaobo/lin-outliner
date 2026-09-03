@@ -31,14 +31,14 @@ export type BashStdinConsumer = 'absent' | 'registered-data' | 'executable' | 'u
 
 export interface StdinConsumerContract {
   readonly executable: string;
-  readonly command: 'add' | 'commit' | 'diff';
+  readonly command: 'create' | 'transact' | 'preview';
   readonly classification: 'registered-data';
 }
 
 export const BASH_STDIN_CONSUMER_CONTRACTS: readonly StdinConsumerContract[] = Object.freeze([
-  Object.freeze({ executable: 'outline', command: 'add', classification: 'registered-data' }),
-  Object.freeze({ executable: 'outline', command: 'commit', classification: 'registered-data' }),
-  Object.freeze({ executable: 'outline', command: 'diff', classification: 'registered-data' }),
+  Object.freeze({ executable: 'outline', command: 'create', classification: 'registered-data' }),
+  Object.freeze({ executable: 'outline', command: 'transact', classification: 'registered-data' }),
+  Object.freeze({ executable: 'outline', command: 'preview', classification: 'registered-data' }),
 ]);
 
 export interface AgentCapabilityPolicy {
@@ -471,7 +471,7 @@ function classifyOutlineActions(words: readonly string[]): readonly AgentToolAct
   if (!invocation) return null;
   const capability = OUTLINE_CAPABILITIES.find((entry) => entry.name === invocation.command);
   if (!capability) return null;
-  if (capability.name === 'diff' || capability.kind === 'local' || capability.kind === 'read' || capability.kind === 'observe') {
+  if (capability.name === 'preview' || capability.kind === 'local' || capability.kind === 'read' || capability.kind === 'observe') {
     return ['outline.read'];
   }
   if (capability.name === 'apply' || capability.name === 'revert' || capability.destructive) {

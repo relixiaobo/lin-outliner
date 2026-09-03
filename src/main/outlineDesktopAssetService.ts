@@ -89,7 +89,7 @@ export class OutlineDesktopAssetService {
   private async record(assetId: string): Promise<AssetRecord | null> {
     const client = await this.supervisor.connect();
     try {
-      const response = await client.request('asset show', { assetId });
+      const response = await client.request('asset get', { assetId });
       if (!Value.Check(AssetRecordSchema, response.data)) {
         throw new Error('Outline Runtime returned invalid AssetRecord metadata.');
       }

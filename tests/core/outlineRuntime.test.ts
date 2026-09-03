@@ -152,12 +152,16 @@ describe('Outline CLI runtime', () => {
       expect(inspected).toMatchObject({ ok: true, command: 'import inspect', data: { kind: 'tana' } });
 
       const applied = JSON.parse((await runLauncher([
-        '--json', 'add', '--parent', '@today', 'Packaged launcher smoke',
+        '--json', 'create', '--parent', '@today', 'Packaged launcher smoke',
       ])).stdout);
       expect(applied).toMatchObject({
         ok: true,
-        command: 'add',
-        data: { kind: 'outline.operation', origin: 'local-user' },
+        command: 'create',
+        data: {
+          kind: 'outline.create-result', committed: true,
+          settlement: { kind: 'outline.operation-settlement' },
+          verification: { passed: true },
+        },
       });
       expect((await stat(path.join(contentRoot, 'state.sqlite'))).isFile()).toBe(true);
 

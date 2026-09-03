@@ -40,7 +40,7 @@ test.describe('userData isolation', () => {
         if (!response.ok) throw new Error(response.error?.message ?? `Outline ${command} failed`);
         return response.data;
       };
-      const diff = await request('diff', {
+      const diff = await request('preview', {
         changeSet: {
           protocolVersion: 1,
           kind: 'outline.changeset',
