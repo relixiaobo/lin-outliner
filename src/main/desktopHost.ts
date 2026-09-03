@@ -644,7 +644,7 @@ const agentHost = createAgentHost({
 });
 const windowApplicationHost = createWindowApplicationHost({
   userDataDir: resolvedUserDataDir,
-  moduleDir: __dirname,
+  moduleDir: environment.moduleDir,
   appIconPath: APP_ICON_PNG_PATH,
   rendererDevUrl: resourcePreviewHost.rendererDevUrl,
   hardenWebContents: resourcePreviewHost.hardenWebContents,

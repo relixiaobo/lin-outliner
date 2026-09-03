@@ -13,14 +13,14 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-Three claims are open: PR #620 is the ready design-only Agent delegation plan;
+Two claims are open: PR #620 is the ready design-only Agent delegation plan, and
 Draft PR #621 owns link/preview interaction polish and the shared preview-shell
-lane; Draft PR #622 owns the pi-ai 0.84 dependency and provider-runtime surface.
-The public Outline Agent interface shipped in #619, Agent execution-selection
-settings shipped in #618, and the earlier Thread, context, recovery, and
-delegated-failure foundations remain complete, so the managed Computer Pilot
-Skill remains eligible under its live collision check. The public Outline CLI
-and built-in Skill lanes are clear.
+lane. The pi-ai 0.84 provider-runtime upgrade shipped in #622, the public Outline
+Agent interface shipped in #619, Agent execution-selection settings shipped in
+#618, and the earlier Thread, context, recovery, and delegated-failure
+foundations remain complete, so the managed Computer Pilot Skill remains
+eligible under its live collision check. The public Outline CLI and built-in
+Skill lanes are clear.
 Startup Window, preview readers, and Skill authoring remain independently
 eligible. The remaining plans from #588/#589 and #591 stay active below until
 their implementation, spec fold, and archive move complete.
@@ -94,8 +94,9 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
+| P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Unit 1 follows #623 and `agent-skill-authoring-foundation`; Unit 2 follows Unit 1, absorbs `semantic-working-state`, and must serialize with #620's future Settings consumer. |
 | P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | Definition-cache and Runtime-index units are eligible after #598; preview units use the live preview-shell lane. |
-| P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Build-ready Settings-only tail. Thread/Plan `WorkingText` shipped in #531; this plan contains only Provider and managed-Skill consumers. |
+| P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Paused: `settings-control-plane` Unit 2 absorbs its Provider/managed-Skill behavior into the final resource pages; do not implement against the outgoing Settings surface. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
 | P3 | [icon-semantics](plans/icon-semantics.md) | `draft` | Build-ready renderer mapping cleanup. Update action menu, launcher, picker, and attachment mappings together; status color is out of scope. |
 | P3 | [performance-optimization](plans/performance-optimization.md) | `draft` | Three measured tails only. Core mutation indexes are eligible after #598; filename-fallback reuse and text normalization are independent. |
@@ -211,6 +212,13 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **electron-main-esm-startup** (`done`, fast-track, 2026-09-03) — development
+  startup and optional macOS native addon resolution now use ESM-compatible
+  module-directory paths, with a source guard covering both call sites.
+- **pi-ai-0-84-upgrade** (`done`, #622, 2026-09-03) — provider-scoped dynamic
+  catalogs now use generation-safe publication through durable cancellation,
+  isolated credential probes, and current Baseten/Qwen provider metadata; plan
+  archived at [pi-ai-0-84-upgrade](plans/archive/pi-ai-0-84-upgrade.md).
 - **outline-agent-first-interface** (`done`, #619, 2026-09-03) — Outline Agent
   authoring now uses one semantic Node/Field/View/Operation interface with
   verified compact receipts, immutable replay identity, and a storage-v3

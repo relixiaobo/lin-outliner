@@ -2434,3 +2434,23 @@ document edits, reject the same key with a changed semantic payload before any
 write, and open the immediately previous storage version through the declared
 fail-closed boundary. Happy-path duplicate calls cannot prove replay remains
 independent of mutable state or persisted-schema evolution.
+
+## Cancellation must reach the commit point
+
+PR #622 first adopted a generation-safe provider refresh while its durable store
+ignored the operation signal. A follow-up checked cancellation after acquiring
+the JSON lock but still allowed supersession during the asynchronous temporary
+write to reach `rename()`. Its first regression inferred that boundary from
+`fs.watch`, whose callback could run only after the commit had already finished.
+
+**A cancellable mutation is protected only when cancellation is revalidated at
+its final irreversible boundary.** Carry the signal through every queued and
+asynchronous layer, write speculative output to a disposable target, then check
+immediately before the atomic commit. Cleanup belongs to the same failure path;
+an early admission check does not protect a later write.
+
+Regression coverage for a concurrency boundary must expose an explicit,
+async-context-scoped phase barrier at the exact pre-commit point. Hold that
+barrier, supersede the operation, release it, drain the owning lock, and assert
+both durable state and temporary cleanup. File notifications, large payloads,
+polling, and scheduler luck cannot prove ordering and must not become the gate.

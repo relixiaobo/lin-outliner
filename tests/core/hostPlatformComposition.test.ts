@@ -13,6 +13,7 @@ const RESOURCE_HOST_SRC = readMainSource('hostPlatform/resourcePreviewHost.ts');
 const LOCAL_FILE_HOST_SRC = readMainSource('hostPlatform/nativeLocalFileHost.ts');
 const LOCAL_FILE_PROCESS_TRACKER_SRC = readMainSource('hostPlatform/localFileProcessTracker.ts');
 const WINDOW_HOST_SRC = readMainSource('hostPlatform/windowApplicationHost.ts');
+const NATIVE_ADDON_SRC = readMainSource('nativeAddon.ts');
 
 describe('Host platform composition', () => {
   test('main delegates one static composition root without constructing concrete services', () => {
@@ -31,6 +32,13 @@ describe('Host platform composition', () => {
       expect(source).not.toContain('new LocalFilePreviewStreamRegistry(');
       expect(source).not.toContain('new LinkedFileGrantStore(');
     }
+  });
+
+  test('ESM main-process sources resolve module directories without CommonJS globals', () => {
+    expect(DESKTOP_HOST_SRC).toContain('moduleDir: environment.moduleDir,');
+    expect(NATIVE_ADDON_SRC).toContain("fileURLToPath(new URL('.', import.meta.url))");
+    expect(DESKTOP_HOST_SRC).not.toContain('__dirname');
+    expect(NATIVE_ADDON_SRC).not.toContain('__dirname');
   });
 
   test('resource preview host owns services, local-file state, sessions, and cleanup', () => {
