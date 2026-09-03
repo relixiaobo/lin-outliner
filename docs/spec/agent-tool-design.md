@@ -219,8 +219,8 @@ when an exact same-directory sibling is verified; local search and recent-file
 suggestions omit them. Raw `file_glob` and `bash` remain complete filesystem
 views and do not hide these files.
 
-`bash` executes foreground, explicit-background, and auto-background commands through
-one durable Tool Task service. Each command has a Host task ID, owning Thread, source
+`bash` executes foreground and explicit-background commands through one durable Tool
+Task service. Each command has a Host task ID, owning Thread, source
 Turn and Tool Item, command digest, supervisor nonce, bounded output, declared artifacts,
 progress, factual exit result, and delivery state. The command text is not duplicated in
 task storage. `task_status` reads an owned task for an explicit status or recovery request;
@@ -234,8 +234,15 @@ commands. Its child bytes are exactly `Buffer.from(stdin, 'utf8')`: empty is dis
 omitted, and the Host adds no newline, quoting, expansion, delimiter, or normalization.
 Admission rejects non-strings, unpaired UTF-16 surrogates, and more than 64 MiB of UTF-8.
 The Host creates task state and capture first, writes with backpressure, and closes stdin;
-early exit or write failure settles that same Tool Task. A stdin-bearing foreground call
-does not auto-background.
+early exit or write failure settles that same Tool Task.
+
+Background execution is explicit. When `run_in_background` is omitted or false, the
+`bash` Tool call waits for terminal settlement regardless of elapsed wall-clock time;
+duration never changes the control flow because subsequent Agent work may depend on the
+result. True returns the durable task handle immediately. If cancellation leaves a
+foreground process group nonterminal in `settling`, the Host promotes that same task to
+background visibility so teardown remains observable and controllable. This safeguard
+does not background an ordinary successful foreground command.
 
 The standalone supervisor owns the process group, nonce-bound identity, heartbeat,
 bounded stdout/stderr files, stop request, and atomic quiescent final receipt. A Tool Task

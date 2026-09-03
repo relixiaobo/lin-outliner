@@ -419,6 +419,79 @@ posixBashProcessTest('supervised background bash settles declared output artifac
   });
 });
 
+test('supervised foreground bash waits for its terminal boundary instead of elapsed-time promotion', async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const ownerThreadId = '00000000-0000-7000-8000-000000000031';
+    const turnId = '00000000-0000-7000-8000-000000000032';
+    const startedAt = Date.now();
+    let startInput: Record<string, unknown> | undefined;
+    let waitTimeoutMs: number | undefined;
+    let consumed = false;
+    let promoted = false;
+    const service = {
+      start: async (input: Record<string, unknown>) => {
+        startInput = input;
+        return { taskId: 'task-foreground-wait', state: 'running', startedAt };
+      },
+      waitForTerminal: async (_taskId: string, _ownerThreadId: string, timeoutMs: number) => {
+        waitTimeoutMs = timeoutMs;
+        return {
+          taskId: 'task-foreground-wait',
+          state: 'succeeded',
+          startedAt,
+          outputBytes: 4,
+          outcomeReason: 'exit_zero',
+          artifacts: [],
+          artifactWarnings: [],
+          exitCode: 0,
+        };
+      },
+      output: async () => ({
+        stdout: 'done',
+        stderr: '',
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      }),
+      consumeForeground: async () => { consumed = true; },
+      promote: () => {
+        promoted = true;
+        throw new Error('Foreground execution must not be promoted by elapsed time');
+      },
+      stop: async () => { throw new Error('Terminal foreground execution must not be stopped'); },
+    } as unknown as ToolTaskService;
+    const workspace = createAgentLocalWorkspaceContext(
+      workspaceRoot,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ownerThreadId,
+    );
+    const bash = createLocalTools({ workspace, toolTaskService: service, turnId })
+      .find((tool) => tool.name === 'bash')!;
+
+    const result = await bash.execute('foreground-wait', {
+      command: 'long-running-dependent-command',
+      timeout: 60_000,
+    });
+    const envelope = result.details as ToolEnvelope<BashData>;
+
+    expect(startInput).toMatchObject({
+      backgroundEnabled: false,
+      reserveForBackground: true,
+      timeoutMs: 60_000,
+    });
+    expect(waitTimeoutMs).toBe(64_000);
+    expect(envelope).toMatchObject({
+      ok: true,
+      data: { stdout: 'done', stderr: '', interrupted: false },
+    });
+    expect(envelope.data?.backgroundTaskId).toBeUndefined();
+    expect(promoted).toBe(false);
+    expect(consumed).toBe(true);
+  });
+});
+
 posixBashProcessTest('supervised background bash reports admission refusal instead of claiming it is running', async () => {
   await withWorkspace(async (workspaceRoot) => {
     const ownerThreadId = '00000000-0000-7000-8000-000000000021';
@@ -1218,7 +1291,9 @@ describe('agent local tools', () => {
     expect(JSON.stringify(bash.parameters)).toContain('Do not use vague words');
     expect(JSON.stringify(bash.parameters)).not.toContain('dangerouslyDisableSandbox');
     expect(JSON.stringify(bash.parameters).toLowerCase()).not.toContain('sandbox');
-    expect(bash.description).toContain('use task_stop if the task needs to be stopped');
+    expect(bash.description).toContain('next useful action does not depend');
+    expect(JSON.stringify(bash.parameters)).toContain('regardless of expected duration');
+    expect(bash.description).toContain('use task_stop if a background task needs to be stopped');
     expect(tools.some((tool) => tool.name === 'bash_stop' || tool.name === 'task_stop')).toBe(false);
   });
 

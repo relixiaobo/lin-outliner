@@ -336,7 +336,6 @@ export interface BashData {
   isImage?: boolean;
   backgroundTaskId?: string;
   backgroundedByUser?: boolean;
-  assistantAutoBackgrounded?: boolean;
   returnCodeInterpretation?: string;
   noOutputExpected?: boolean;
   structuredContent?: unknown[];
@@ -362,7 +361,6 @@ export interface LocalBashRunResult {
   isImage?: boolean;
   backgroundTaskId?: string;
   backgroundedByUser?: boolean;
-  assistantAutoBackgrounded?: boolean;
   returnCodeInterpretation?: string;
   noOutputExpected?: boolean;
   structuredContent?: unknown[];
@@ -555,7 +553,6 @@ const HARD_GREP_OUTPUT_LIMIT = 5000;
 const GREP_STDERR_CAPTURE_CHARS = 60_000;
 const BASH_DEFAULT_TIMEOUT_MS = 120_000;
 const BASH_MAX_TIMEOUT_MS = 600_000;
-const BASH_AUTO_BACKGROUND_MS = 15_000;
 const BASH_INLINE_OUTPUT_LIMIT = 30_000;
 const BASH_MAX_OUTPUT_BYTES = MAX_TOOL_ARTIFACT_BYTES;
 const BASH_OUTPUT_WATCHDOG_INTERVAL_MS = 5_000;
@@ -610,7 +607,6 @@ const IMAGE_MEDIA_TYPES = new Map<string, FileReadImageData['file']['type']>([
   ['.webp', 'image/webp'],
 ]);
 const SILENT_COMMANDS = new Set(['mv', 'cp', 'rm', 'mkdir', 'rmdir', 'chmod', 'chown', 'chgrp', 'touch', 'ln', 'cd', 'export', 'unset', 'wait']);
-const DISALLOWED_AUTO_BACKGROUND_COMMANDS = new Set(['sleep']);
 
 const FILE_READ_PARAMETERS = {
   type: 'object',
@@ -704,7 +700,7 @@ const BASH_PARAMETERS = {
       ].join('\n'),
     },
     timeout: { type: 'integer', minimum: 1, maximum: BASH_MAX_TIMEOUT_MS, description: `Optional timeout in milliseconds. Maximum ${BASH_MAX_TIMEOUT_MS}.` },
-    run_in_background: { type: 'boolean', description: 'Set to true to run this command in the background. You do not need to append "&"; use task_stop to finalize its durable output.' },
+    run_in_background: { type: 'boolean', description: 'Set to true only when the next useful action does not depend on this command result. Otherwise leave it false and wait for completion regardless of expected duration. You do not need to append "&"; use task_stop to finalize durable background output.' },
   },
 };
 
@@ -1580,7 +1576,8 @@ function createBashTool(
       'Executes a shell command in the Thread working directory with the current OS account authority.',
       'Use file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.',
       'For document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).',
-      'Use run_in_background for long-running commands. You do not need to append "&"; use task_stop if the task needs to be stopped.',
+      'Set run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.',
+      'You do not need to append "&"; use task_stop if a background task needs to be stopped.',
       'Commands should include a clear description of what they do in active voice.',
     ].join('\n'),
     parameters: BASH_PARAMETERS,
@@ -2252,27 +2249,10 @@ async function runForegroundCommand(
     const onStdinError = (error: Error) => { recordStdinFailure(error); };
     childStdin?.on('error', onStdinError);
     let stdinWriter = Promise.resolve<Error | null>(null);
-    const autoBackgroundTimer = setTimeout(() => {
-      if (params.stdin !== undefined || resolved || interrupted || !shouldAutoBackground(params.command)) return;
-      resolved = true;
-      clearTimeout(timeoutTimer);
-      clearOutputWatchdog(foregroundOutputWatchdog);
-      signal?.removeEventListener('abort', onAbort);
-      void registerBackgroundTask(workspace, params, {
-        process: processHandle,
-        foregroundCapture: capture,
-        assistantAutoBackgrounded: true,
-        shellEnvironment,
-        declaredOutputRoots,
-        declaredOutputSnapshot,
-      }).then((data) => resolve(data), reject);
-    }, BASH_AUTO_BACKGROUND_MS);
-
     processHandle.child.once('error', (error) => {
       if (resolved) return;
       resolved = true;
       clearTimeout(timeoutTimer);
-      clearTimeout(autoBackgroundTimer);
       clearOutputWatchdog(foregroundOutputWatchdog);
       clearBashKillEscalation(processHandle);
       signal?.removeEventListener('abort', onAbort);
@@ -2282,7 +2262,6 @@ async function runForegroundCommand(
       if (resolved) return;
       resolved = true;
       clearTimeout(timeoutTimer);
-      clearTimeout(autoBackgroundTimer);
       clearOutputWatchdog(foregroundOutputWatchdog);
       clearBashKillEscalation(processHandle);
       signal?.removeEventListener('abort', onAbort);
@@ -2456,9 +2435,6 @@ async function runSupervisedForegroundCommand(
   const declaredOutputRoots = shellEnvironment?.declaredOutputRoots ?? [];
   const declaredOutputSnapshot = await snapshotDeclaredOutputRoots(declaredOutputRoots);
   const timeoutMs = params.timeout ?? BASH_DEFAULT_TIMEOUT_MS;
-  const autoBackground = params.stdin === undefined
-    && timeoutMs > BASH_AUTO_BACKGROUND_MS
-    && shouldAutoBackground(params.command);
   const task = await service.start({
     ownerThreadId: workspace.threadId!,
     sourceTurnId: turnId,
@@ -2477,23 +2453,13 @@ async function runSupervisedForegroundCommand(
     reserveForBackground: true,
     producerContext: encodeDeclaredOutputArtifactPlan(declaredOutputRoots, declaredOutputSnapshot),
   });
-  const foregroundWaitMs = autoBackground ? BASH_AUTO_BACKGROUND_MS : timeoutMs + 4_000;
-  let settled = await service.waitForTerminal(task.taskId, workspace.threadId!, foregroundWaitMs, signal);
+  let settled = await service.waitForTerminal(
+    task.taskId,
+    workspace.threadId!,
+    timeoutMs + 4_000,
+    signal,
+  );
   if (!settled) throw new Error(`Tool Task disappeared before foreground settlement: ${task.taskId}`);
-  if (!isToolTaskTerminalState(settled.state) && autoBackground && !signal?.aborted) {
-    settled = service.promote(settled.taskId, workspace.threadId!)!;
-    return {
-      stdout: '',
-      stderr: '',
-      interrupted: false,
-      backgroundTaskId: settled.taskId,
-      assistantAutoBackgrounded: true,
-      command: params.command,
-      taskStatus: settled.state,
-      startedAt: new Date(settled.startedAt).toISOString(),
-      noOutputExpected: isSilentCommand(params.command),
-    };
-  }
   if (!isToolTaskTerminalState(settled.state)) {
     settled = await service.stop(settled.taskId, workspace.threadId!) ?? settled;
   }
@@ -2504,7 +2470,6 @@ async function runSupervisedForegroundCommand(
       stderr: '',
       interrupted: true,
       backgroundTaskId: settled.taskId,
-      assistantAutoBackgrounded: true,
       command: params.command,
       taskStatus: settled.state,
       startedAt: new Date(settled.startedAt).toISOString(),
@@ -2569,7 +2534,6 @@ async function registerBackgroundTask(
     process?: BashProcessHandle;
     foregroundCapture?: ForegroundOutputCapture;
     backgroundedByUser?: boolean;
-    assistantAutoBackgrounded?: boolean;
     toolCallId?: string;
     shellEnvironment?: AgentShellProcessEnvironment;
     declaredOutputRoots?: readonly AgentShellOutputRoot[];
@@ -2659,7 +2623,6 @@ async function registerBackgroundTask(
     interrupted: false,
     backgroundTaskId: taskId,
     backgroundedByUser: options.backgroundedByUser,
-    assistantAutoBackgrounded: options.assistantAutoBackgrounded,
     command: params.command,
     taskStatus: task.status,
     startedAt: new Date(task.startedAt).toISOString(),
@@ -4665,9 +4628,4 @@ function escapeRegExp(value: string): string {
 function isSilentCommand(command: string): boolean {
   const first = command.trim().split(/\s+/)[0];
   return first ? SILENT_COMMANDS.has(first) : false;
-}
-
-function shouldAutoBackground(command: string): boolean {
-  const first = command.trim().split(/\s+/)[0];
-  return Boolean(first && !DISALLOWED_AUTO_BACKGROUND_COMMANDS.has(first));
 }
