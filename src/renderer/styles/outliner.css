@@ -270,7 +270,7 @@
 .view-toolbar {
   position: relative;
   display: block;
-  width: min(100%, 760px);
+  width: auto;
   margin: 2px 0 6px var(--outliner-row-content-start);
   padding: var(--space-1) 0;
   color: var(--text-secondary);
@@ -284,6 +284,11 @@
   flex-wrap: nowrap;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.view-toolbar-button-row::-webkit-scrollbar {
+  display: none;
 }
 
 .view-toolbar-control-group {
@@ -804,7 +809,6 @@ button.outliner-table-column-kind:focus-visible {
    configured Filter control. Singular view settings use their control state only. */
 .view-toolbar-summary {
   display: flex;
-  max-width: 520px;
   min-width: 0;
   flex: 0 0 auto;
   align-items: center;

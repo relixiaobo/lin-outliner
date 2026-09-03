@@ -163,7 +163,10 @@ Name search expands inline only while active. View mode is not duplicated in the
 configuration bar; the Node context menu is its single entry point, with
 **View as** opening a side submenu on hover, click, or `ArrowRight`.
 Toolbar controls retain the token control size and stay on one line; when the
-available pane is narrower, the toolbar owns native horizontal overflow. Custom
+available pane is narrower, the toolbar owns native horizontal overflow without
+painting a scrollbar. It consumes the remaining pane width before overflowing;
+trackpads scroll natively, while a vertical wheel moves the row horizontally
+until it reaches an edge. Custom
 tooltips follow the hovered or keyboard-focused control across the scroller and
 remeasure each label's intrinsic width when focus moves, so their anchor and box
 never carry over from a sibling control.
@@ -216,7 +219,8 @@ uses `--control-on` on its glyph without a background; the pill fill means its
 popover is open.
 Individual Filter rule chips follow the configured Filter control and stay with
 it in the toolbar's single line. Their labels summarize the effective condition rather
-than repeating only the field name.
+than repeating only the field name; presence rules and timestamp system fields
+use compact labels while their editor keeps the complete wording.
 Hidden Table columns remain directly recoverable through Add field. A
 nested table is an unframed indented scope with one
 quiet separating edge, not a card inside the parent table. Each nested scope owns

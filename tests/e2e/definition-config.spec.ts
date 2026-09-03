@@ -419,7 +419,7 @@ test.describe('definition configuration parity', () => {
     await expect(row(page, ids.alpha)).toBeVisible();
   });
 
-  test('view toolbar filter rule chip summarizes boolean meaning', async ({ page }) => {
+  test('view toolbar filter chips use compact labels and scroll overflow', async ({ page }) => {
     await showViewToolbar(page, ids.today);
     await invokeDocumentCommand(page, 'add_filter_rule', {
       nodeId: ids.today,
@@ -435,11 +435,32 @@ test.describe('definition configuration parity', () => {
       values: ['project', 'archive'],
       valueLogic: 'all',
     });
+    await invokeDocumentCommand(page, 'add_filter_rule', {
+      nodeId: ids.today,
+      field: 'sys:createdAt',
+      operator: 'is',
+      values: ['2026-09-03'],
+      valueLogic: 'any',
+    });
+    await invokeDocumentCommand(page, 'add_filter_rule', {
+      nodeId: ids.today,
+      field: 'sys:updatedAt',
+      operator: 'is_not_empty',
+      values: [],
+      valueLogic: 'any',
+    });
 
     const toolbar = page.locator('.view-toolbar');
     await expectFilterChipPairedWithControl(toolbar, 'Not done');
     await expectFilterChipPairedWithControl(toolbar, 'Tags: project and archive');
+    await expectFilterChipPairedWithControl(toolbar, 'Created: 2026-09-03');
+    await expectFilterChipPairedWithControl(toolbar, 'Edited: Set');
     await expectToolbarButtonIsConfigured(toolbar, 'Filter by');
+    const toolbarRow = toolbar.locator('.view-toolbar-button-row');
+    await expect.poll(() => toolbarRow.evaluate((row) => row.scrollWidth > row.clientWidth)).toBe(true);
+    await toolbarRow.hover();
+    await page.mouse.wheel(0, 240);
+    await expect.poll(() => toolbarRow.evaluate((row) => row.scrollLeft)).toBeGreaterThan(0);
   });
 
   test('view toolbar filter chips edit the exact rule when a field has multiple filters', async ({ page }) => {

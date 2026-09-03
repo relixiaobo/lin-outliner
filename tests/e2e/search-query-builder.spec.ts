@@ -98,11 +98,14 @@ test.describe('search query builder', () => {
         left: rect.left,
         resolvedMarginLeft: Number.parseFloat(style.marginLeft),
         scopeLeft: scopeRect.left,
+        right: rect.right,
+        scopeRight: scopeRect.right,
       };
     });
     expect(geometry.background).toBe('rgba(0, 0, 0, 0)');
     expect(geometry.left).toBeCloseTo(geometry.firstContentLeft, 1);
     expect(geometry.left).toBeCloseTo(geometry.scopeLeft + geometry.resolvedMarginLeft, 1);
+    expect(geometry.right).toBeCloseTo(geometry.scopeRight, 1);
     expect(await controls.evaluate((toolbar, result) => (
       Boolean(toolbar.compareDocumentPosition(result as Node) & Node.DOCUMENT_POSITION_FOLLOWING)
     ), await firstResult.elementHandle())).toBe(true);
@@ -153,6 +156,7 @@ test.describe('search query builder', () => {
         )),
         ownsHorizontalOverflow: getComputedStyle(row).overflowX === 'auto'
           && row.scrollWidth > row.clientWidth + 1,
+        scrollbarHidden: getComputedStyle(row).scrollbarWidth === 'none',
         singleLine: getComputedStyle(row).flexWrap === 'nowrap'
           && controls.every((control) => {
             const rect = control.getBoundingClientRect();
@@ -165,6 +169,7 @@ test.describe('search query builder', () => {
     expect(narrowGeometry).toEqual({
       controlsUnshrunk: true,
       ownsHorizontalOverflow: true,
+      scrollbarHidden: true,
       singleLine: true,
     });
     await page.setViewportSize(originalViewport);

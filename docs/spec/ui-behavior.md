@@ -426,9 +426,12 @@ same field. A Filter rule chip reads as the field name with a trailing remove
 control and summarizes the effective condition. Boolean Done filters read
 `Done` / `Not done`; other boolean fields retain the field name with `Yes` /
 `No`; positive equality and containment use `Field: value`; negative,
-comparison, and empty-value rules retain their localized operator. Multiple
-values remain visible subject to the chip's ordinary ellipsis. The editor pane
-remains the complete editing surface, matching Tana's active-filter chip model.
+and comparison rules retain their localized operator. Presence rules use the
+short `Field: Empty` / `Field: Set` form, and timestamp system fields use compact
+field names such as `Created` and `Edited`; the editor retains their full labels.
+Multiple values remain visible subject to the chip's ordinary ellipsis. The
+editor pane remains the complete editing surface, matching Tana's active-filter
+chip model.
 
 Sort follows Tana's separate state model: an active sort rule is represented on
 the Sort button itself, with the icon direction matching the first rule. Opening
@@ -708,6 +711,9 @@ rather than stacking a query summary and a second Search-specific control band.
 Both modes keep name search, Display, Group, Sort, and Filter in the same
 functional order. At narrow pane widths controls keep the shared fixed
 control size and remain on one line; the toolbar owns native horizontal overflow,
+uses all remaining pane width before overflowing, and hides the scrollbar while
+retaining native trackpad scrolling and mapping a vertical wheel gesture to the
+overflowing row until it reaches either edge,
 while the Filter control and its rule chips stay together instead of shrinking or
 separating. Each
 custom tooltip anchors to the control that currently owns hover or keyboard

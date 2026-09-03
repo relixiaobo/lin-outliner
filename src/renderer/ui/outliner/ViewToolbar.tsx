@@ -235,6 +235,16 @@ function sectionTitles(t: ViewToolbarMessages): Record<ToolbarSection, string> {
   };
 }
 
+function scrollToolbarHorizontally(row: HTMLDivElement, event: WheelEvent) {
+  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+  const maxScrollLeft = row.scrollWidth - row.clientWidth;
+  if (maxScrollLeft <= 0) return;
+  const nextScrollLeft = Math.max(0, Math.min(maxScrollLeft, row.scrollLeft + event.deltaY));
+  if (nextScrollLeft === row.scrollLeft) return;
+  row.scrollLeft = nextScrollLeft;
+  event.preventDefault();
+}
+
 // Field pickers and option lists stay compact; the rule editors (sort/filter)
 // need room for the field/operator/value controls.
 const SECTION_WIDTHS: Record<ToolbarSection, number> = {
@@ -298,12 +308,19 @@ function summarizeFilterValues(rule: FilterRule, values: string[], t: ViewToolba
     : t.filterChipAnyValues({ values });
 }
 
+function filterSummaryFieldLabel(fieldId: string, fallback: string, t: ViewToolbarMessages): string {
+  if (fieldId === CREATED_FIELD) return t.filterChipCreated;
+  if (fieldId === UPDATED_FIELD) return t.filterChipUpdated;
+  return fallback;
+}
+
 function summarizeFilterRule(
   rule: FilterRule,
   fieldLabel: string,
   byId: DocumentIndex['byId'],
   t: ViewToolbarMessages,
 ): string {
+  const summaryFieldLabel = filterSummaryFieldLabel(rule.field, fieldLabel, t);
   const values = rule.values.map((value) => value.trim()).filter(Boolean);
   if (rule.operator === 'is' && filterFieldKind(rule.field, byId) === 'boolean') {
     const value = values[0]?.toLowerCase();
@@ -315,18 +332,17 @@ function summarizeFilterRule(
       const booleanLabel = enabled ? enabledLabel : disabledLabel;
       return rule.field === DONE_FIELD
         ? booleanLabel
-        : t.filterChipFieldValue({ field: fieldLabel, value: booleanLabel });
+        : t.filterChipFieldValue({ field: summaryFieldLabel, value: booleanLabel });
     }
   }
+  if (rule.operator === 'is_empty') return t.filterChipEmpty({ field: summaryFieldLabel });
+  if (rule.operator === 'is_not_empty') return t.filterChipSet({ field: summaryFieldLabel });
+  if (values.length === 0) return summaryFieldLabel;
   const operator = filterOperators(t).find((item) => item.id === rule.operator)?.label ?? rule.operator;
-  if (VALUELESS_OPERATORS.has(rule.operator)) {
-    return t.filterChipCondition({ field: fieldLabel, operator });
-  }
-  if (values.length === 0) return fieldLabel;
   const value = summarizeFilterValues(rule, values, t);
   return rule.operator === 'is' || rule.operator === 'contains'
-    ? t.filterChipFieldValue({ field: fieldLabel, value })
-    : t.filterChipConditionValue({ field: fieldLabel, operator, value });
+    ? t.filterChipFieldValue({ field: summaryFieldLabel, value })
+    : t.filterChipConditionValue({ field: summaryFieldLabel, operator, value });
 }
 
 function summarizeFilters(
@@ -363,6 +379,7 @@ export function ViewToolbar({
   const referenceSummary = useMemo(() => referenceSummaryForIndex(index), [index]);
   const choices = useMemo(() => collectViewFieldChoices(node, index.byId, referenceSummary), [node, index.byId, referenceSummary]);
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const buttonRowRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const displayRef = useRef<HTMLButtonElement>(null);
@@ -402,6 +419,14 @@ export function ViewToolbar({
     setOpen(dropdownRequest.section);
     onDropdownRequestConsumed(dropdownRequest);
   }, [dropdownRequest, node.id, onDropdownRequestConsumed]);
+
+  useEffect(() => {
+    const row = buttonRowRef.current;
+    if (!row) return undefined;
+    const onWheel = (event: WheelEvent) => scrollToolbarHorizontally(row, event);
+    row.addEventListener('wheel', onWheel, { passive: false });
+    return () => row.removeEventListener('wheel', onWheel);
+  }, []);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -538,7 +563,7 @@ export function ViewToolbar({
       onPointerOut={hideTooltipFromEvent}
       onPointerOver={showTooltipFromEvent}
     >
-      <div className="view-toolbar-button-row">
+      <div className="view-toolbar-button-row" ref={buttonRowRef}>
         {nameFilterControl}
         <ToolbarButton
           ref={displayRef}

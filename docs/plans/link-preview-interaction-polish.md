@@ -56,8 +56,11 @@ separators. Display, Group, Sort, and Filter express configured state on their
 own controls through `--control-on` icon color without a background; the neutral
 fill is reserved for an open popover. Individual Filter rule chips remain beside
 Filter as editable objects, summarize their effective conditions, and stay with
-it on the toolbar's single horizontally scrollable line. View mode is absent
-from the configuration bar; the Node context menu's **View as** submenu is its
+it on the toolbar's single horizontally scrollable line. The line consumes the
+available pane width and hides its scrollbar, while trackpad and mouse-wheel
+gestures retain access to overflowed controls. Presence rules and timestamp system
+fields use compact chip labels while editors retain complete wording.
+View mode is absent from the configuration bar; the Node context menu's **View as** submenu is its
 single entry point. Node type affects only the unset visibility default: Search
 starts open and ordinary Nodes start closed.
 An explicit `viewDef.toolbarVisible` value wins in both directions, so every Node

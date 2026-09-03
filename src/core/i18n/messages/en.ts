@@ -935,8 +935,11 @@ export const en = {
       booleanNo: 'No',
       filterChipAnyValues: ({ values }: { values: string[] }) => values.join(' or '),
       filterChipAllValues: ({ values }: { values: string[] }) => values.join(' and '),
+      filterChipCreated: 'Created',
+      filterChipUpdated: 'Edited',
+      filterChipEmpty: ({ field }: { field: string }) => `${field}: Empty`,
+      filterChipSet: ({ field }: { field: string }) => `${field}: Set`,
       filterChipFieldValue: ({ field, value }: { field: string; value: string }) => `${field}: ${value}`,
-      filterChipCondition: ({ field, operator }: { field: string; operator: string }) => `${field} · ${operator}`,
       filterChipConditionValue: ({ field, operator, value }: { field: string; operator: string; value: string }) => `${field} · ${operator} · ${value}`,
       // Displayed field metadata.
       displayedFieldsAriaLabel: 'Displayed fields',
