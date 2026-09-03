@@ -13,14 +13,18 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-Two claims are open: PR #620 is the ready design-only Agent delegation plan, and
-Draft PR #621 owns link/preview interaction polish and the shared preview-shell
-lane. The pi-ai 0.84 provider-runtime upgrade shipped in #622, the public Outline
-Agent interface shipped in #619, Agent execution-selection settings shipped in
-#618, and the earlier Thread, context, recovery, and delegated-failure
-foundations remain complete, so the managed Computer Pilot Skill remains
-eligible under its live collision check. The public Outline CLI and built-in
-Skill lanes are clear.
+Four claims are open: ready PR #620 owns Agent delegation runtime, Draft PR #621
+owns link/preview interaction polish and the shared preview-shell lane, ready PR
+#623 owns generic background tool tasks, and Draft PR #626 owns the file-first
+Settings control-plane design. Trajectory paging and bounded live inspection
+shipped in #625, while the same plan's exact-or-unavailable evidence unit remains
+in progress with codex-2; no current claim may treat its bounded summaries as
+forensic evidence authority. The pi-ai 0.84 provider-runtime upgrade shipped in
+#622, the public Outline Agent interface shipped in #619, Agent execution-
+selection settings shipped in #618, and the earlier Thread, context, recovery,
+and delegated-failure foundations remain complete, so the managed Computer Pilot
+Skill remains eligible under its live collision check. The public Outline CLI
+and built-in Skill lanes are clear.
 Startup Window, preview readers, and Skill authoring remain independently
 eligible. The remaining plans from #588/#589 and #591 stay active below until
 their implementation, spec fold, and archive move complete.
@@ -94,6 +98,7 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
+| P1 | [agent-trajectory-evidence-fidelity](plans/agent-trajectory-evidence-fidelity.md) | `in-progress` | Paging/performance Unit 1 shipped in #625; codex-2 owns the remaining exact-or-unavailable Unit 2, which must serialize with Agent diagnostics and Trajectory projection changes. |
 | P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Unit 1 follows #623 and `agent-skill-authoring-foundation`; Unit 2 follows Unit 1, absorbs `semantic-working-state`, and must serialize with #620's future Settings consumer. |
 | P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | Definition-cache and Runtime-index units are eligible after #598; preview units use the live preview-shell lane. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Paused: `settings-control-plane` Unit 2 absorbs its Provider/managed-Skill behavior into the final resource pages; do not implement against the outgoing Settings surface. |
@@ -212,6 +217,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-trajectory-evidence-fidelity Unit 1** (`done`, #625, 2026-09-03) —
+  Trajectory now pages real dense Turn ranks, coalesces live tail refreshes, and
+  retains at most three renderer pages while cache-independent detail/export
+  reads and exact catalog boundaries preserve the scoped window contract; the
+  active plan remains open for the exact-or-unavailable evidence unit.
 - **electron-main-esm-startup** (`done`, fast-track, 2026-09-03) — development
   startup and optional macOS native addon resolution now use ESM-compatible
   module-directory paths, with a source guard covering both call sites.

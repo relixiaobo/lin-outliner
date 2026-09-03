@@ -12,6 +12,21 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Trajectory inspection now pages live history through a bounded, truthful
+  window (PR #625, codex-2)** — main reads only the Turn ranges needed to cover a
+  record page, caches bounded completed-Turn summaries, and coalesces live tail
+  refreshes; renderer retains at most three contiguous pages without hiding an
+  unloaded gap or evicting the selected page. Gate review found one High sparse-
+  ordinal paging defect and two Medium cache/export and empty-catalog boundary
+  defects; all were fixed with dense Turn ranks, cache-independent authoritative
+  export reads, and an explicit final catalog fingerprint. Verified with
+  typecheck, `docs:check`, 2,862 passing Core tests with 6 skipped, 57 focused
+  Core tests, the targeted Electron Trajectory E2E, two additional light/dark
+  visual passes, and five GitHub E2E samples with green baseline subtraction.
+  This ships only the plan's paging/performance unit: exact Context, Request,
+  Assistant, Tool Input/Output, Raw, copy, restart, and fork evidence remains the
+  active exact-or-unavailable unit and is not claimed complete.
+
 - **Dynamic model catalogs now publish through generation-safe pi-ai 0.84
   collections (PR #622, codex)** — provider-scoped refreshes carry cancellation
   through the durable JSON store to the final atomic commit, so an older request

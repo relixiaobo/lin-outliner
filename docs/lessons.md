@@ -2454,3 +2454,21 @@ async-context-scoped phase barrier at the exact pre-commit point. Hold that
 barrier, supersede the operation, release it, drain the owning lock, and assert
 both durable state and temporary cleanup. File notifications, large payloads,
 polling, and scheduler luck cannot prove ordering and must not become the gate.
+
+## A bounded summary is not evidence authority
+
+PR #625 completed Trajectory's paging and performance unit, but its retained
+model/provider values still pass through capture rewriting and bounded detail
+projection. Treating the foundation as completion of the whole fidelity goal
+would turn a truthful window over altered data into a false forensic claim.
+
+**Track acceptance at the product boundary, not the last merged mechanism.** A
+summary cache may locate records and accelerate navigation, but only the named
+runtime boundary may authorize forensic evidence. When a plan has independent
+delivery units, record the shipped unit precisely and keep the product goal
+active until every evidence surface is exact or explicitly unavailable.
+
+Regression coverage must compare retained and displayed values byte-for-byte
+across Context, Request, Assistant, Tool Input/Output, Raw, copy, restart, and
+fork. Pagination, cache, and screenshot tests prove window behavior; they cannot
+prove evidence fidelity.
