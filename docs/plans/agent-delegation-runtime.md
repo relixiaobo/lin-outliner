@@ -205,24 +205,29 @@ running -> settling -> succeeded | failed | cancelled | timed_out | lost
 running -----------> succeeded | failed | cancelled | timed_out | lost
 ```
 
-`settling` is optional and domain-neutral: process evidence is durably prepared,
-but a cooperative producer's application commit has not reconciled yet. Plain
-commands normally move directly from `running` to a terminal state. A prepared
-result cannot be cancelled or replaced; `task_stop` reports that settlement is
-already in progress. Terminal state and result are immutable. Delivery is separately
-`pending | delivering | delivered | blocked`; it never means handled, accepted,
-or used.
+`settling` is optional and domain-neutral: a producer result is prepared, the
+process has exited, or teardown/reconciliation is pending, but process-group
+quiescence and the final receipt are not both committed yet. Plain commands
+normally move directly from `running` to a terminal state after quiescence. A
+prepared result cannot be replaced; `task_stop` during `settling` forces process
+group teardown without erasing that evidence. Terminal state and result are
+immutable. Delivery is separately `pending | delivering | delivered | blocked`;
+it never means handled, accepted, or used.
 
 The Host runs each background command through a generic supervisor wrapper. The
 supervisor owns the process group, durable output files, a nonce-bound process
-identity, and atomic prepared/final receipts. `ToolTaskService.prepareTerminal`
-stores immutable process evidence, opaque bounded producer-envelope bytes, and
-their digest before a coordinated consumer commit; `commitTerminal` alone moves
-the Tool Task to its immutable terminal state. Plain Bash performs both
-operations without an intervening consumer commit. After app restart, the Host
-reattaches to a matching live supervisor or reads its receipts. A missing
-process and missing receipt becomes `lost` with preserved partial output; it is
-never replayed.
+identity, and atomic prepared-result/final-process receipts. A cooperative
+producer may call `ToolTaskService.prepareResult` to store opaque bounded result
+bytes and their digest while its process is still alive. The supervisor writes
+the final receipt only after the main PID and every descendant in the owned
+process group are absent or have been terminated; it records exit code or
+signal, timeout/stop provenance, quiescence time, and the prepared-result digest.
+`commitTerminal` refuses without that quiescent final receipt and alone moves the
+Tool Task to its immutable terminal state. Plain Bash needs no prepared result
+and reaches the same final-receipt boundary directly. After app restart, the
+Host reattaches to a matching live supervisor or reads its receipts. Authenticated
+process absence without a final receipt becomes one `lost` final receipt with
+preserved partial output; the command is never replayed.
 
 The supervisor is a standalone bundled Node entry, not an Electron-main module
 path guessed by its caller. A generic runtime resolver selects the TypeScript
@@ -233,7 +238,8 @@ step emits that bundle before `electron-builder`; `extraResources` copies it as
 an unpacked resource. The supervisor is Host-private and never enters the model
 tool `PATH`. Resolver tests cover source and packaged layouts, and the packaged
 Tool Task smoke starts a benign command through the real bundle, observes its
-receipt, relaunches the Host, and proves reattachment or terminal reconciliation.
+quiescent final receipt, relaunches the Host, and proves reattachment or terminal
+reconciliation.
 
 Background Bash supports the same bounded `stdin` as foreground Bash. The Host
 creates capture and task state first, starts the supervisor, writes and closes
@@ -269,10 +275,14 @@ status request or recovery. `task_stop` remains the generic cancellation tool,
 accepts only required `task_id`, and drops Agent-ID routing and deprecated
 `shell_id`.
 
-Stopping a running task terminates its process group. A race with natural exit
-preserves the first committed terminal result. Stopping a terminal task returns
-its factual result without rewriting it. These semantics apply equally to a
-delegated review, video generation, a build, or a plain shell script.
+Stopping a running or settling task terminates its process group. A race with
+natural exit preserves the first quiescent final receipt and its provenance.
+Stopping a terminal task returns its factual result without rewriting it. If
+the supervisor cannot prove process-group quiescence, the task remains
+`settling`, retains its scheduler lease, stays ineligible for delivery, and
+reports the teardown problem through `task_status`; uncertainty is never called
+terminal. These semantics apply equally to a delegated review, video generation,
+a build, or a plain shell script.
 
 At the owning root Thread's next idle boundary, the Host selects one bounded,
 ordered batch of pending terminal results. A durable `ToolTaskDeliveryBatch`
@@ -307,9 +317,9 @@ Tool Task lifecycle is explicit:
 | Event | Running process | Delivery and retained data |
 | --- | --- | --- |
 | Window close, navigation, or renderer reload | Continues. | State remains visible when the owner Thread returns. |
-| Unexpected Host crash | Supervisor continues when its nonce-bound identity remains valid. | Startup reattaches or reads the terminal receipt; otherwise records `lost`. |
-| Orderly application Quit | Host closes admission, terminates every process group, and drains a bounded terminal receipt. | Records `cancelled` with app-Quit provenance; internal and external runs follow the same rule. |
-| Archive owner Thread | Refused while a task is running, delivering, or awaiting delivery. | After delivery, archive keeps terminal history and artifacts under normal retention. |
+| Unexpected Host crash | Supervisor continues ordinary work when its nonce-bound identity remains valid; delegated work follows the broker-loss teardown rule. | Startup reattaches or reads the quiescent final receipt; authenticated process absence creates one `lost` receipt, while ambiguous identity remains `settling` and occupied. |
+| Orderly application Quit | Host closes admission and asks every supervisor to terminate its process group. A supervisor that exceeds the bounded drain continues teardown, not domain work. | Records `cancelled` only after a quiescent final receipt; otherwise the task remains `settling` for startup reconciliation. Internal and external runs follow the same rule. |
+| Archive owner Thread | Refused while a task is nonterminal, delivering, or awaiting delivery. | After delivery, archive keeps terminal history and artifacts under normal retention. |
 | Delete owner Thread | Refused while a task is active or a changed worktree is retained. | After explicit stop/cleanup, deletion releases task-owned resource references and terminal records with the Thread. |
 | Owner missing during recovery | Terminates any matching process and blocks delivery. | Retains bounded diagnostics and changed worktrees for explicit recovery; never starts an orphan Turn. |
 
@@ -388,10 +398,11 @@ user cancellation never start that continuation automatically.
 Every delegated Turn preallocates one durable `DelegationExecutionSettlement`
 identity. The coordination record contains the Session ID, hidden Turn ID, Tool
 Task ID, ordered request/message-sequence digest, prepared terminal-envelope
-digest, and `awaiting_result | prepared | committed | blocked` state. It contains
-no transcript content, process result, or copied terminal status. The same
-identity and request digest are committed on hidden `turn/started`, so replay
-cannot attach a Tool Task to a different Turn or message prefix.
+digest, final process-receipt digest, and
+`awaiting_result | prepared | context_committed | committed | blocked` state. It
+contains no transcript content, process result, or copied terminal status. The
+same identity and request digest are committed on hidden `turn/started`, so
+replay cannot attach a Tool Task to a different Turn or message prefix.
 
 Delegated termination is a prepare/commit/reconcile protocol:
 
@@ -402,32 +413,59 @@ Delegated termination is a prepare/commit/reconcile protocol:
    prepared envelope, then appends hidden `turn/completed` carrying the settlement
    identity, request/message digest, and terminal-envelope digest. This rollout
    append is the canonical Session-context commit.
-3. Only a matching canonical completion lets `ToolTaskService.commitTerminal`
-   commit the immutable Tool Task result and make root delivery eligible. The
-   later CLI exit and final supervisor receipt add process facts but cannot
-   rewrite either commit.
+3. The Host acknowledges that context commit to the CLI. The CLI closes its
+   Runner and exits; the supervisor enforces a bounded exit grace, terminates a
+   hung CLI or remaining descendants, and writes the final process receipt only
+   after proving process-group quiescence.
+4. Only a matching canonical completion plus that quiescent final receipt lets
+   `ToolTaskService.commitTerminal` commit the immutable Tool Task result and
+   make root delivery eligible.
+
+A clean expected CLI exit preserves the prepared envelope's normalized outcome.
+A nonzero exit, signal, exit-grace timeout, forced descendant teardown, or broker
+loss after the hidden Turn commit makes the Tool Task `failed`, `timed_out`, or
+`cancelled` according to factual provenance; it never reports `succeeded`.
+Already committed Session content is retained as partial evidence rather than
+rolled back. Explicit continuation remains admissible only after quiescence and
+digest reconciliation prove the canonical context is intact, and still obeys a
+user-stop fence. Inability to prove quiescence keeps the Tool Task `settling`,
+holds its lease, blocks delivery, and blocks Session continuation.
 
 Startup keeps Session continuation and Tool Task delivery closed while it
 reconciles both evidence stores. A prepared receipt without `turn/completed` is
 replayed into that same preallocated Turn commit, never through another Runner
-call. A matching completion with a nonterminal Tool Task finishes the original
-Tool Task commit. If neither process nor prepared result survives, the Host
-prepares one factual `lost` envelope and commits the original hidden Turn as
-failed. A canonical completion without its matching prepared receipt, a
+call. A matching completion with a live process waits for the supervisor's
+quiescence proof; a matching final receipt with a nonterminal Tool Task finishes
+the original Tool Task commit. If neither process nor prepared result survives,
+the Host records one factual `lost` final receipt and commits the original hidden
+Turn as failed. A canonical completion without its matching prepared receipt, a
 duplicate identity, or a digest mismatch marks only that settlement `blocked`,
 preserves the Thread and supervisor evidence, reports an invariant failure
-rather than success, terminalizes the Tool Task as a Host coordination failure,
-and refuses continuation of that Session until it is explicitly closed or
-repaired. There is no reachable successful Tool Task whose hidden Turn is
-incomplete.
+rather than success, and refuses continuation. After process-group quiescence is
+proven, it terminalizes the Tool Task as a Host coordination failure; before
+then, it remains `settling` and occupied. There is no reachable terminal Tool
+Task whose process group may still be alive, and no successful Tool Task whose
+hidden Turn is incomplete.
+
+The recovery matrix has one action per durable boundary:
+
+| Last verified boundary | Recovery action |
+| --- | --- |
+| No prepared result; delegated process still exists | Treat broker loss as failure, terminate the process group, and wait for its quiescent final receipt. |
+| Prepared result; no matching hidden completion | Commit the same preallocated `turn/completed`; never rerun the Runner. |
+| Hidden completion; process or descendants still exist | Keep `settling`, retain the lease, and finish or force teardown without delivery. |
+| Quiescent final receipt; Tool Task nonterminal | Validate both digests and commit the original Tool Task with the receipt's factual outcome. |
+| Tool Task terminal; delivery uncommitted | Use only the generic delivery-batch reconciliation path. |
+| Any identity/digest mismatch | Preserve both evidence sets, block Session continuation, prove teardown, then fail the Tool Task without success delivery. |
 
 A delegated CLI and its Runner require the Host broker for canonical history.
 Unlike an ordinary background command, they do not continue unattended after
 broker loss. The surviving supervisor terminates their process group. If a
-prepared result already exists, restart completes the protocol above; otherwise
-the supervisor prepares a `host_broker_lost` failure envelope, and the restarted
-Host commits the same hidden Turn as failed before terminalizing the Tool Task.
-An external harness never outlives the only authority able to commit its Session.
+prepared result already exists, restart completes or recognizes the original
+hidden Turn commit and waits for a quiescent `host_broker_lost` final receipt
+before failing the Tool Task; otherwise the supervisor prepares the failure
+envelope first. An external harness never outlives the only authority able to
+commit its Session, and broker loss never makes its task terminal before teardown.
 
 `delegate run` creates the hidden Thread and first execution idempotently from
 the source Tool Item, Tool Task, request digest, and preallocated Session ID. A
@@ -661,9 +699,10 @@ Tenon does not claim to classify every executable as Agent software.
 Provider calls use a Host broker scoped by the launch capability, so credentials
 never enter the shell environment. Broker disconnect cancels the active internal
 call and causes the supervisor to terminate the full delegated process group.
-The prepared-result protocol either commits an already durable result or records
-the same Turn and Tool Task as `host_broker_lost`; no hidden app-side or external
-run continues after broker loss.
+The prepared-result protocol preserves any already committed hidden Turn, while
+the quiescent final receipt records the Tool Task as `host_broker_lost`; no hidden
+app-side or external run continues after broker loss, and no Tool Task
+terminalizes before teardown.
 
 The model and effort default to **Inherit parent**. Settings may pin a currently
 available model and supported effort. If an explicit choice disappears or loses
@@ -782,15 +821,16 @@ matches Provider reality.
 Every acquired lease is a durable record bound to its Tool Task ID, supervisor
 nonce, Runner, Thread, pool, and configuration revision. Startup keeps all new
 admission closed while Tool Task recovery authenticates every nonterminal
-supervisor or terminal receipt. It then reconstructs global, Thread, Runner, and
-pool occupancy in one transaction before reopening admission. A matching live
-supervisor consumes its reconstructed lease; a committed terminal receipt or
-`lost` settlement releases it exactly once. An identity-ambiguous process remains
-occupied and blocks capacity until recovery terminates or settles it; restart
-never treats uncertainty as a free slot. Root provider work cannot survive its
-Host broker, so only a newly admitted recovery Turn acquires root occupancy.
-An idle Agent Session owns no scheduler lease; every continued execution
-reacquires admission without changing the Session's pinned Runner policy.
+supervisor or final process receipt. It then reconstructs global, Thread, Runner,
+and pool occupancy in one transaction before reopening admission. A matching live
+supervisor consumes its reconstructed lease; a committed quiescent final receipt,
+including authenticated `lost`, releases it exactly once. An identity-ambiguous
+process remains occupied and blocks capacity until recovery terminates or settles
+it; restart never treats uncertainty as a free slot. Root provider work cannot
+survive its Host broker, so only a newly admitted recovery Turn acquires root
+occupancy. An idle Agent Session owns no scheduler lease; every continued
+execution reacquires admission without changing the Session's pinned Runner
+policy.
 
 A saturated local limit waits and reports a generic public phase. A full bounded
 Thread or global queue refuses before Runner start. Tenon cannot observe use by
@@ -823,10 +863,11 @@ worktree and patch available and produces no integration claim.
 Admission refusal starts no Runner, provider call, harness, worktree, retry, or
 fallback. Once an execution starts, success, failure, timeout, cancellation,
 malformed output, auth/rate-limit failure, or process loss produces one CLI
-envelope and one generic prepared/final receipt pair. The envelope includes the
-stable Session handle, Turn identity, committed root-message sequence, and
-whether continuation remains admissible; it never rewrites an earlier Tool Task
-result.
+envelope, an optional prepared-result receipt, and one final process receipt.
+The envelope includes the stable Session handle, Turn identity, committed
+root-message sequence, and whether continuation remains admissible; it never
+rewrites an earlier Tool Task result. The Tool Task is terminal and deliverable
+only after the final receipt proves process-group quiescence.
 
 The result includes terminal status, Runner/version, effective model when
 reported, duration, bounded final text or actionable error, partial-evidence
@@ -851,6 +892,11 @@ appears in a generic Tool Task strip shared by delegation, video generation,
 builds, and other commands. Each row has description, running/terminal state,
 elapsed time, public progress when supplied, cancel, and failure indication.
 Details show bounded output, artifacts, diagnostics, and retained worktree.
+After a producer result is prepared, the row remains nonterminal as `Finishing`
+until process-group teardown is proven; cancel remains available and no root
+completion is emitted. An abnormal post-result exit shows a failed task with the
+prepared answer retained as partial evidence and states whether the Session may
+be continued.
 
 There is no Agent roster, child tree, generation count, peer-message UI,
 Agent-specific resume control, or child Thread navigation. Internal and external
@@ -1118,10 +1164,12 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
     Session under the defined Thread/task retention and deletion rules.
   - **AC-43:** Every delegated Turn has one stable Session/Turn/Tool-Task/message
     settlement identity. A prepared supervisor envelope must digest-match the
-    canonical hidden `turn/completed` before the Tool Task can terminalize or
-    deliver; every crash window reconciles the original identities, and a
-    mismatch blocks only that Session Turn without reporting success or losing
-    either evidence set.
+    canonical hidden `turn/completed`, and a final receipt must prove process-group
+    quiescence, before the Tool Task can terminalize or deliver. A hang, nonzero
+    exit, forced descendant teardown, or broker loss after the hidden commit
+    cannot report success; every crash window preserves both evidence sets and
+    blocks only the affected Session Turn while process identity remains
+    uncertain.
   - **AC-44:** A user stop durably fences the Session before process termination.
     Only a fresh renderer-authored root Turn accepted after that boundary can
     authorize continuation; automatic completion, recovery, Continue/Rerun,
@@ -1165,8 +1213,11 @@ safe-boundary consumption, active/terminal races, blocked failure/cancellation,
 restart idempotence, foreign/stale/closed refusal, idle expiry, and no duplicated
 Session/Tool Task truth. Settlement fixtures crash before and after the prepared
 supervisor receipt, hidden `turn/completed`, Tool Task terminal commit, and CLI
-exit; restart with a live external Runner proves broker loss terminates it and
-either commits its prepared result or the single `host_broker_lost` failure.
+exit. They also cover a post-commit CLI hang, nonzero exit, descendant leak,
+forced timeout/stop, crash before and after the final receipt, and refusal to
+deliver or release a lease before quiescence. Restart with a live external Runner
+proves broker loss terminates it, preserves any prepared Session result, and
+records the single `host_broker_lost` Tool Task failure only after teardown.
 Direct-name, child-`PATH`, and absolute-path fixtures
 prove that Tenon command capabilities and known harness routes are absent without
 pretending an arbitrary executable can be classified. Each external adapter adds
