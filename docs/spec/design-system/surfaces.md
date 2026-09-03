@@ -155,7 +155,8 @@ column boundary fixed across leaf, expanded, hover, and selection states.
 
 `ViewToolbar` owns one stable presentation and control order rather than deriving
 a variant from owner type or renderer. Every Node uses the same full bar in
-Outline and Table, including the same labels, summaries, popovers, and tooltips.
+Outline and Table, including the same labels, Filter rule chips, popovers, and
+tooltips.
 The toolbar has no frame or decorative separators; spacing and control grouping
 carry its hierarchy.
 Name search expands inline only while active. A single two-option Outline/Table
@@ -208,11 +209,15 @@ reduced-transparency fallback. Column headers use Hide as their only removal
 action. Add column groups current-record custom fields first, other Schema custom
 fields second, and system fields last; the Outline Display editor likewise places
 custom Fields before System fields. Section labels remain compact metadata, not
-selectable rows. Search Outline adds Display and Group to the shared mode, name,
-Sort, and Filter controls; Search Table keeps the same mode selector, name search,
-Sort, and Filter while hidden columns remain directly recoverable through Add
-field. A nested table is
-an unframed indented scope with one
+selectable rows. Search Outline and Table share the same mode, name, Display,
+Group, Sort, and Filter controls. Singular settings use the neutral active state
+on their own icon controls instead of text summaries. A configured control
+uses `--control-on` on its glyph without a background; the pill fill means its
+popover is open.
+Individual Filter rule chips follow the configured Filter control and stay with
+it when the toolbar wraps.
+Hidden Table columns remain directly recoverable through Add field. A
+nested table is an unframed indented scope with one
 quiet separating edge, not a card inside the parent table. Each nested scope owns
 its own column template and local horizontal overflow.
 

@@ -209,12 +209,10 @@ type FilterEditTarget = {
   field: string;
   ruleId?: string;
 };
-type ViewSummaryChip = {
+type FilterSummaryChip = {
   id: string;
   label: string;
-  section: ToolbarSection;
-  tone: 'display' | 'filter' | 'group' | 'sort';
-  filterTarget?: FilterEditTarget;
+  filterTarget: FilterEditTarget & { ruleId: string };
 };
 
 type FieldRule = { id: string; field: string };
@@ -348,57 +346,21 @@ function collectFilterFieldChoices(
   return [...systemChoices, ...customChoices];
 }
 
-// Compact chips restate what the view is currently doing, so the active state is
-// legible without opening each menu. Empty when the view is default.
-function summarizeView(
+// Filter chips remain individual rule shortcuts. Display, Group, and Sort are
+// singular settings whose state belongs on their toolbar controls.
+function summarizeFilters(
   view: ViewConfig,
   choices: FieldChoice[],
-  t: ViewToolbarMessages,
-  options: { includeDisplay: boolean; includeGroup: boolean; includeSort: boolean },
-): ViewSummaryChip[] {
+): FilterSummaryChip[] {
   const labelOf = (fieldId: string) => choices.find((choice) => choice.id === fieldId)?.label ?? fieldId;
-  const chips: ViewSummaryChip[] = [];
-  const visibleDisplayCount = new Set(
-    visibleDisplayFieldsForView(view).map((field) => field.field),
-  ).size;
-  if (options.includeDisplay && visibleDisplayCount > 0) {
-    chips.push({
-      id: 'display',
-      label: t.summaryDisplayCount(visibleDisplayCount),
-      section: 'display',
-      tone: 'display',
-    });
-  }
-  if (options.includeGroup && view.groupField) {
-    chips.push({
-      id: 'group',
-      label: t.summaryGroupedBy({ field: labelOf(view.groupField) }),
-      section: 'group',
-      tone: 'group',
-    });
-  }
-  if (options.includeSort && view.sortRules.length > 0) {
-    const [first] = view.sortRules;
-    const arrow = first.direction === 'desc' ? '↓' : '↑';
-    const more = view.sortRules.length > 1 ? ` +${view.sortRules.length - 1}` : '';
-    chips.push({
-      id: 'sort',
-      label: t.summarySortedBy({ field: labelOf(first.field), arrow: `${arrow}${more}` }),
-      section: 'sort',
-      tone: 'sort',
-    });
-  }
-  for (const rule of view.filterRules) {
-    if (isNameFilterRule(rule)) continue;
-    chips.push({
+  return view.filterRules.flatMap((rule) => {
+    if (isNameFilterRule(rule)) return [];
+    return [{
       id: `filter:${rule.id}`,
       label: labelOf(rule.field),
-      section: 'filter',
-      tone: 'filter',
       filterTarget: { field: rule.field, ruleId: rule.id },
-    });
-  }
-  return chips;
+    }];
+  });
 }
 
 export function ViewToolbar({
@@ -424,6 +386,8 @@ export function ViewToolbar({
   const sortRef = useRef<HTMLButtonElement>(null);
   const filterRef = useRef<HTMLButtonElement>(null);
   const nameFilter = view.filterRules.find(isNameFilterRule);
+  const hasVisibleDisplayFields = visibleDisplayFieldsForView(view).length > 0;
+  const hasFilterRules = view.filterRules.some((rule) => !isNameFilterRule(rule));
   const firstSortRule = view.sortRules[0];
   const SortStateIcon = firstSortRule?.direction === 'desc' ? SortDescIcon : SortAscIcon;
   const buttonRefs: Record<ToolbarSection, RefObject<HTMLButtonElement | null>> = {
@@ -498,9 +462,9 @@ export function ViewToolbar({
     setOpen((current) => (current === section ? null : section));
   };
 
-  const openSummaryChip = (chip: ViewSummaryChip) => {
-    setRequestedFilterTarget(chip.filterTarget ?? null);
-    setOpen(chip.section);
+  const openFilterChip = (chip: FilterSummaryChip) => {
+    setRequestedFilterTarget(chip.filterTarget);
+    setOpen('filter');
   };
 
   const showTooltipFor = (element: HTMLElement) => {
@@ -544,14 +508,9 @@ export function ViewToolbar({
     setTooltip(null);
   };
 
-  const includeSortSummary = open === 'sort';
-  const summaryChips = useMemo(
-    () => summarizeView(view, choices, tv, {
-      includeDisplay: true,
-      includeGroup: true,
-      includeSort: includeSortSummary,
-    }),
-    [view, choices, tv, includeSortSummary],
+  const filterSummaryChips = useMemo(
+    () => summarizeFilters(view, choices),
+    [view, choices],
   );
   const titles = sectionTitles(tv);
   const viewModeControl = (
@@ -574,37 +533,24 @@ export function ViewToolbar({
     />
   );
   const leadingControls = [viewModeControl, nameFilterControl];
-  const renderSummaryChip = (chip: ViewSummaryChip) => {
-    if (chip.filterTarget?.ruleId) {
-      return (
-        <span className={`view-toolbar-summary-chip is-${chip.tone} has-remove`} key={chip.id}>
-          <ButtonControl
-            className="view-toolbar-summary-chip-main"
-            onClick={() => openSummaryChip(chip)}
-          >
-            <span className="view-toolbar-summary-chip-label">{chip.label}</span>
-          </ButtonControl>
-          <ButtonControl
-            aria-label={tv.removeFilterRule}
-            className="view-toolbar-summary-chip-remove view-toolbar-tooltip-anchor"
-            data-tooltip={tv.removeFilterRule}
-            onClick={() => void run(() => api.removeFilterRule(chip.filterTarget!.ruleId!))}
-          >
-            <CloseIcon size={ICON_SIZE.tiny} />
-          </ButtonControl>
-        </span>
-      );
-    }
-    return (
+  const renderFilterChip = (chip: FilterSummaryChip) => (
+    <span className="view-toolbar-summary-chip is-filter has-remove" key={chip.id}>
       <ButtonControl
-        className={`view-toolbar-summary-chip is-${chip.tone}`}
-        key={chip.id}
-        onClick={() => openSummaryChip(chip)}
+        className="view-toolbar-summary-chip-main"
+        onClick={() => openFilterChip(chip)}
       >
         <span className="view-toolbar-summary-chip-label">{chip.label}</span>
       </ButtonControl>
-    );
-  };
+      <ButtonControl
+        aria-label={tv.removeFilterRule}
+        className="view-toolbar-summary-chip-remove view-toolbar-tooltip-anchor"
+        data-tooltip={tv.removeFilterRule}
+        onClick={() => void run(() => api.removeFilterRule(chip.filterTarget.ruleId))}
+      >
+        <CloseIcon size={ICON_SIZE.tiny} />
+      </ButtonControl>
+    </span>
+  );
 
   return (
     <div
@@ -621,6 +567,7 @@ export function ViewToolbar({
         {leadingControls}
         <ToolbarButton
           ref={displayRef}
+          configured={hasVisibleDisplayFields}
           label={tv.display}
           open={open === 'display'}
           onClick={() => toggle('display')}
@@ -629,6 +576,7 @@ export function ViewToolbar({
         </ToolbarButton>
         <ToolbarButton
           ref={groupRef}
+          configured={Boolean(view.groupField)}
           label={tv.groupBy}
           open={open === 'group'}
           onClick={() => toggle('group')}
@@ -637,26 +585,29 @@ export function ViewToolbar({
         </ToolbarButton>
         <ToolbarButton
           ref={sortRef}
-          active={view.sortRules.length > 0}
+          configured={view.sortRules.length > 0}
           label={tv.sortBy}
           open={open === 'sort'}
           onClick={() => toggle('sort')}
         >
           <SortStateIcon size={ICON_SIZE.menu} />
         </ToolbarButton>
-        {summaryChips.length > 0 && (
-          <div className="view-toolbar-summary" aria-label={tv.summaryAriaLabel}>
-            {summaryChips.map(renderSummaryChip)}
-          </div>
-        )}
-        <ToolbarButton
-          ref={filterRef}
-          label={tv.filterBy}
-          open={open === 'filter'}
-          onClick={() => toggle('filter')}
-        >
-          <FilterIcon size={ICON_SIZE.menu} />
-        </ToolbarButton>
+        <div className="view-toolbar-control-group" data-toolbar-section="filter">
+          <ToolbarButton
+            ref={filterRef}
+            configured={hasFilterRules}
+            label={tv.filterBy}
+            open={open === 'filter'}
+            onClick={() => toggle('filter')}
+          >
+            <FilterIcon size={ICON_SIZE.menu} />
+          </ToolbarButton>
+          {filterSummaryChips.length > 0 ? (
+            <div className="view-toolbar-summary">
+              {filterSummaryChips.map(renderFilterChip)}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {open && createPortal(
@@ -884,16 +835,16 @@ function NameFilterControl({
 }
 
 const ToolbarButton = forwardRef<HTMLButtonElement, {
-  active?: boolean;
+  configured?: boolean;
   label: string;
   open: boolean;
   onClick: () => void;
   children: ReactNode;
-}>(function ToolbarButton({ active = false, label, open, onClick, children }, ref) {
+}>(function ToolbarButton({ configured = false, label, open, onClick, children }, ref) {
   const classes = [
     'view-toolbar-pill',
     'view-toolbar-tooltip-anchor',
-    active ? 'is-active' : '',
+    configured ? 'is-configured' : '',
     open ? 'is-open' : '',
   ].filter(Boolean).join(' ');
   return (
@@ -901,6 +852,7 @@ const ToolbarButton = forwardRef<HTMLButtonElement, {
       ref={ref}
       aria-expanded={open}
       aria-label={label}
+      aria-pressed={configured}
       className={classes}
       data-tooltip={label}
       onClick={onClick}

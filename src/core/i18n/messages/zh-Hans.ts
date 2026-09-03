@@ -853,12 +853,8 @@ export const zhHans: PartialMessages = {
       booleanNotDone: '未完成',
       booleanYes: '是',
       booleanNo: '否',
-      // 当前视图状态摘要 chips 与显示字段元数据。
-      summaryAriaLabel: '当前视图设置',
+      // Displayed field metadata.
       displayedFieldsAriaLabel: '显示字段',
-      summaryDisplayCount: (count: number) => `${count} 个显示字段`,
-      summaryGroupedBy: ({ field }: { field: string }) => `按 ${field} 分组`,
-      summarySortedBy: ({ field, arrow }: { field: string; arrow: string }) => `按 ${field} 排序 ${arrow}`,
     },
     table: {
       ariaLabel: ({ title }: { title: string }) => `${title}表格`,

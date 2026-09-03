@@ -50,9 +50,12 @@ not intercept input, and does not alter layout.
 
 `ViewToolbar` owns its presentation and capability decisions. Renderers provide
 the owner and view state but cannot select an independent toolbar variant.
-Every Node therefore uses the same full bar, control order, labels, summaries,
+Every Node therefore uses the same full bar, control order, labels, Filter chips,
 and interactions across Outline and Table. The bar has no frame or decorative
-separators. The Outline/Table control remains one
+separators. Display, Group, Sort, and Filter express configured state on their
+own controls through `--control-on` icon color without a background; the neutral
+fill is reserved for an open popover. Individual Filter rule chips remain beside
+Filter as editable objects and wrap with it. The Outline/Table control remains one
 visible two-option segmented control whose pill track and neutral selected
 segment make the grouping and active mode legible. Node type affects only the
 unset visibility default: Search starts open and ordinary Nodes start closed.
@@ -101,7 +104,7 @@ unclaimed Electron/DOM focus loss self-heals without a direct DOM focus shortcut
   preview and title/content without covering its Source field or changing media
   hit testing.
 - Every Node toolbar keeps one full-bar structure, control order, labels,
-  summaries, and interaction model across Outline and Table.
+  Filter rule chips, and interaction model across Outline and Table.
 - Table-defaulted and Table-added columns do not render as Outline title metadata;
   an explicit Outline Display selection does.
 - A Node whose only children are field entries exposes the parent marker and

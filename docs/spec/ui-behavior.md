@@ -374,15 +374,15 @@ longer derives candidates from nodes carrying that deleted tag.
 The node-level `ViewToolbar` is the single presentation control for Outline child
 rows and saved-search results. Renderers provide its owner and view state but do
 not select a toolbar variant. Every Node uses the same full bar in Outline and
-Table with the same structure, labels, summaries, and interactions. The bar
+Table with the same structure, labels, filter chips, and interactions. The bar
 keeps **Outline** (persisted as `list`) and **Table** visible as one two-option
-mode selector followed by name search, Display, Group, Sort, summaries, and
-Filter; the active mode has `aria-pressed="true"`. Display configures title
-metadata in Outline and visible columns in Table, while Group applies to the
-current row projection in both modes. Activating name search expands its inline
-input. The node context menu's **View as** subview remains a secondary text
-entry point rather than the only discoverable mode control. These controls all
-read and write `viewDef` child nodes
+mode selector followed by name search, then Display, Group, Sort, and Filter.
+The active mode and configured controls have `aria-pressed="true"`. Display
+configures title metadata in Outline and visible columns in Table, while Group
+applies to the current row projection in both modes. Activating name search
+expands its inline input. The node context menu's **View as** subview remains a
+secondary text entry point rather than the only discoverable mode control.
+These controls all read and write `viewDef` child nodes
 (`displayField`, `sortRule`, `filterRule`, plus the view's `groupField`) rather
 than storing renderer-local state.
 
@@ -405,24 +405,28 @@ The leading search icon is a Tana-style **Filter by name** shortcut. Clicking it
 turns the icon into an inline editable chip. Non-empty text is written as a real
 `sys:name contains <text>` `filterRule`; clearing the chip removes that rule.
 The name rule is owned by this shortcut and is not repeated in the generic
-Filter summary chips or on the generic Filter icon.
+Filter rule chips or on the generic Filter icon.
 
-The toolbar shows compact neutral summary chips for active Display fields, Group
-by, and each non-name Filter rule. These chips sit inline in the same toolbar row
-as the icon controls rather than forming a separate summary row. Each chip is
-also a shortcut into the matching toolbar popover; Filter chips open the editor
+Display, Group, Sort, and Filter express configured state on their own icon
+controls rather than duplicating singular settings as text summaries. The Sort
+icon also reflects the first rule's direction. A configured, closed control
+uses `--control-on` on its icon without a background; the neutral pill fill and
+primary icon color are reserved for the open popover state. Configured controls
+do not use link, brand, or status color.
+
+Each non-name Filter rule additionally appears as a compact neutral chip because
+it is an independently editable and removable object, not only a status summary.
+Filter chips sit immediately after the configured Filter control in one wrap-aware
+group and open the editor
 for that specific saved `filterRule`, not merely the first rule for that field.
 That matters because advanced states may contain multiple filters against the
-same field. A Filter summary chip reads as the field name with a trailing remove
+same field. A Filter rule chip reads as the field name with a trailing remove
 control; the operator/value detail lives in the editor pane, matching Tana's
-active-filter chip model. Filter state is not duplicated on the generic Filter
-icon.
+active-filter chip model.
 
 Sort follows Tana's separate state model: an active sort rule is represented on
-the Sort button itself, with the icon direction matching the first rule. While
-the Sort popover is open, the toolbar can also show a `Sorted by ...` summary
-chip beside the active button as editable context. Closing the popover leaves the
-directional icon state, not a persistent text chip.
+the Sort button itself, with the icon direction matching the first rule. Opening
+or closing the popover does not add a separate text summary.
 
 Toolbar popovers follow Tana's field-first shape. Display is a direct checklist
 of fields. Group is a single-select field list because it has no per-field
@@ -695,9 +699,10 @@ projection is never writable over the complete query.
 
 Search Outline and Table therefore use the same ViewToolbar as ordinary Nodes
 rather than stacking a query summary and a second Search-specific control band.
-Both modes keep Outline/Table, name search, Display, Group, Sort, summaries, and
-Filter in the same order. At narrow pane widths controls keep the shared fixed
-control size and wrap as complete units instead of shrinking or clipping. Each
+Both modes keep Outline/Table, name search, Display, Group, Sort, and Filter in
+the same functional order. At narrow pane widths controls keep the shared fixed
+control size; the Filter control and its rule chips wrap as one functional group
+instead of shrinking, clipping, or separating. Each
 custom tooltip anchors to the control that currently owns hover or keyboard
 focus, including after controls wrap. Moving directly between controls
 remeasures the new label's intrinsic width, so a short tooltip never inherits the

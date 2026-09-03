@@ -160,7 +160,8 @@ carry the detailed form.
 2. **Dark mode is OS-driven.** Use `@media (prefers-color-scheme)` and
    `color-scheme: light dark`; the app override drives `nativeTheme.themeSource`.
 3. **Functional state is neutral.** Selection, hover, active, focus, and ordinary
-   controls use the neutral ladder, never brand or status colour.
+   controls use the neutral ladder, never brand or status colour. Persistent
+   configured/on indicators may use `--control-on` without a filled surface.
 4. **One rose accent, one native-blue link.** Rose is sparse brand activity; links
    use `--link` and never status or accent colour.
    **Identity is its own category.** One shared `--identity-tint-*` palette

@@ -47,16 +47,46 @@ async function invokeDocumentCommand(page: Page, cmd: string, args: Record<strin
   }, { cmd, args });
 }
 
-async function expectToolbarButtonHasNoPersistentState(toolbar: Locator, name: string) {
+async function expectToolbarButtonIsUnconfigured(toolbar: Locator, name: string) {
   const button = toolbar.getByRole('button', { name, exact: true });
   await expect(button.locator('.view-toolbar-pill-count')).toHaveCount(0);
-  await expect(button).not.toHaveClass(/is-active/);
+  await expect(button).not.toHaveClass(/is-configured/);
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
 }
 
-async function expectToolbarButtonHasPersistentState(toolbar: Locator, name: string) {
+async function expectToolbarButtonIsConfigured(toolbar: Locator, name: string) {
   const button = toolbar.getByRole('button', { name, exact: true });
   await expect(button.locator('.view-toolbar-pill-count')).toHaveCount(0);
-  await expect(button).toHaveClass(/is-active/);
+  await expect(button).toHaveClass(/is-configured/);
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+}
+
+async function expectToolbarButtonUsesConfiguredColor(toolbar: Locator, name: string) {
+  const button = toolbar.getByRole('button', { name, exact: true });
+  await expect(button).toHaveAttribute('aria-expanded', 'false');
+  await expect(button).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(button).toHaveCSS('color', 'rgb(63, 158, 106)');
+}
+
+async function expectFilterChipPairedWithControl(
+  toolbar: Locator,
+  summaryText: string,
+): Promise<Locator> {
+  const controlGroup = toolbar.locator(
+    '.view-toolbar-control-group[data-toolbar-section="filter"]',
+  );
+  const summaryChip = controlGroup.locator('.view-toolbar-summary-chip', { hasText: summaryText });
+  await expect(controlGroup.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
+  await expect(summaryChip).toBeVisible();
+  const childOrder = await controlGroup.evaluate((group) => (
+    [...group.children].map((child) => {
+      if (child.classList.contains('view-toolbar-pill')) return 'control';
+      if (child.classList.contains('view-toolbar-summary')) return 'summary';
+      return 'unknown';
+    })
+  ));
+  expect(childOrder).toEqual(['control', 'summary']);
+  return summaryChip;
 }
 
 test.describe('definition configuration parity', () => {
@@ -186,16 +216,16 @@ test.describe('definition configuration parity', () => {
     await dialog.getByRole('button', { name: /Created time/ }).click();
     await expect(dialog.locator('.view-toolbar-filter-back')).toContainText('Created time');
     await expect(dialog.getByRole('radio', { name: 'Old → New' })).toBeVisible();
-    await expect(toolbar.locator('.view-toolbar-summary-chip', { hasText: 'Sorted by Created time ↑' })).toBeVisible();
-    await expectToolbarButtonHasPersistentState(toolbar, 'Sort by');
+    await expect(toolbar.locator('.view-toolbar-summary-chip')).toHaveCount(0);
+    await expectToolbarButtonIsConfigured(toolbar, 'Sort by');
 
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
-    await expect(toolbar.locator('.view-toolbar-summary-chip', { hasText: 'Sorted by Created time ↑' })).toHaveCount(0);
-    await expectToolbarButtonHasPersistentState(toolbar, 'Sort by');
+    await expectToolbarButtonIsConfigured(toolbar, 'Sort by');
+    await expectToolbarButtonUsesConfiguredColor(toolbar, 'Sort by');
     await toolbar.getByRole('button', { name: 'Sort by' }).click();
     await expect(dialog).toBeVisible();
-    await expect(toolbar.locator('.view-toolbar-summary-chip', { hasText: 'Sorted by Created time ↑' })).toBeVisible();
+    await expect(toolbar.locator('.view-toolbar-summary-chip')).toHaveCount(0);
     await expect(dialog.locator('.view-toolbar-filter-back')).toHaveCount(0);
     await expect(dialog.locator('.view-toolbar-option', { hasText: 'Created time' })).toContainText('1. Old → New');
   });
@@ -254,7 +284,7 @@ test.describe('definition configuration parity', () => {
       const win = window as typeof window & { __LIN_E2E_SORT_DELAY__?: { release: () => void } };
       win.__LIN_E2E_SORT_DELAY__?.release();
     });
-    await expect(toolbar.locator('.view-toolbar-summary-chip', { hasText: 'Sorted by Created time ↑' })).toBeVisible();
+    await expectToolbarButtonIsConfigured(toolbar, 'Sort by');
   });
 
   test('row context menu expands a collapsed node when revealing its view toolbar', async ({ page }) => {
@@ -268,7 +298,7 @@ test.describe('definition configuration parity', () => {
     await expect(row(page, ids.alpha).getByRole('button', { name: 'Collapse' })).toBeVisible();
   });
 
-  test('nested view toolbar aligns with its owner row content column', async ({ page }) => {
+  test('nested view toolbar aligns with its owner row content column and stays frameless', async ({ page }) => {
     await showViewToolbar(page, ids.today);
     await invokeDocumentCommand(page, 'set_view_toolbar_visible', { nodeId: ids.alpha, visible: true });
 
@@ -291,33 +321,25 @@ test.describe('definition configuration parity', () => {
         nestedLeft: nestedRect?.left ?? 0,
         beforeContent: before?.content ?? '',
         afterContent: after?.content ?? '',
-        beforeHeight: before?.height ?? '',
-        afterHeight: after?.height ?? '',
-        beforeBackground: before?.backgroundColor ?? '',
-        afterBackground: after?.backgroundColor ?? '',
       };
     });
 
     expect(Math.abs(geometry.nestedLeft - geometry.rootLeft)).toBeLessThan(2);
-    expect(geometry.beforeContent).not.toBe('none');
-    expect(geometry.afterContent).not.toBe('none');
-    expect(geometry.beforeHeight).toBe('1px');
-    expect(geometry.afterHeight).toBe('1px');
-    expect(geometry.beforeBackground).not.toBe('rgba(0, 0, 0, 0)');
-    expect(geometry.afterBackground).not.toBe('rgba(0, 0, 0, 0)');
+    expect(geometry.beforeContent).toBe('none');
+    expect(geometry.afterContent).toBe('none');
   });
 
-  test('view toolbar display fields render as active chips and row metadata', async ({ page }) => {
+  test('view toolbar display fields activate the control and render row metadata', async ({ page }) => {
     await showViewToolbar(page, ids.today);
     await invokeDocumentCommand(page, 'apply_tag', { nodeId: ids.alpha, tagId: ids.projectTag });
     await invokeDocumentCommand(page, 'add_display_field', { nodeId: ids.today, field: 'sys:tags' });
 
     const toolbar = page.locator('.view-toolbar');
     await expect(toolbar).toBeVisible();
-    const displayChip = toolbar.locator('.view-toolbar-summary-chip', { hasText: '1 displayed field' });
-    await expect(displayChip).toBeVisible();
-    await expectToolbarButtonHasNoPersistentState(toolbar, 'Display');
-    await displayChip.click();
+    await expectToolbarButtonIsConfigured(toolbar, 'Display');
+    await expectToolbarButtonUsesConfiguredColor(toolbar, 'Display');
+    await expect(toolbar.locator('.view-toolbar-summary-chip')).toHaveCount(0);
+    await toolbar.getByRole('button', { name: 'Display', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Display' });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText('Created time')).toBeVisible();
@@ -353,22 +375,22 @@ test.describe('definition configuration parity', () => {
     await expect(marker).toHaveClass(/expanded/);
   });
 
-  test('view toolbar group state is represented by the inline chip only', async ({ page }) => {
+  test('view toolbar group state activates the control without a summary chip', async ({ page }) => {
     await showViewToolbar(page, ids.today);
     await invokeDocumentCommand(page, 'set_group_field', { nodeId: ids.today, field: 'sys:done' });
 
     const toolbar = page.locator('.view-toolbar');
-    const groupChip = toolbar.locator('.view-toolbar-summary-chip', { hasText: 'Grouped by Done' });
-    await expect(groupChip).toBeVisible();
-    await expectToolbarButtonHasNoPersistentState(toolbar, 'Group by');
+    await expectToolbarButtonIsConfigured(toolbar, 'Group by');
+    await expectToolbarButtonUsesConfiguredColor(toolbar, 'Group by');
+    await expect(toolbar.locator('.view-toolbar-summary-chip')).toHaveCount(0);
 
-    await groupChip.click();
+    await toolbar.getByRole('button', { name: 'Group by', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Group by' });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole('radio', { name: 'Done', exact: true })).toHaveAttribute('aria-checked', 'true');
   });
 
-  test('view toolbar filter summary chip opens the matching rule editor', async ({ page }) => {
+  test('view toolbar filter rule chip opens the matching rule editor', async ({ page }) => {
     await showViewToolbar(page, ids.today);
     await invokeDocumentCommand(page, 'add_filter_rule', {
       nodeId: ids.today,
@@ -379,8 +401,9 @@ test.describe('definition configuration parity', () => {
     });
 
     const toolbar = page.locator('.view-toolbar');
-    const filterChip = toolbar.locator('.view-toolbar-summary-chip', { hasText: 'Tags' });
-    await expect(filterChip).toBeVisible();
+    const filterChip = await expectFilterChipPairedWithControl(toolbar, 'Tags');
+    await expectToolbarButtonIsConfigured(toolbar, 'Filter by');
+    await expectToolbarButtonUsesConfiguredColor(toolbar, 'Filter by');
     await filterChip.locator('.view-toolbar-summary-chip-main').click();
 
     const dialog = page.getByRole('dialog', { name: 'Filter by' });
@@ -391,6 +414,7 @@ test.describe('definition configuration parity', () => {
 
     await filterChip.getByRole('button', { name: 'Remove filter rule' }).click();
     await expect(toolbar.locator('.view-toolbar-summary-chip', { hasText: 'Tags' })).toHaveCount(0);
+    await expectToolbarButtonIsUnconfigured(toolbar, 'Filter by');
     await expect(row(page, ids.alpha)).toBeVisible();
   });
 
@@ -458,22 +482,15 @@ test.describe('definition configuration parity', () => {
     });
 
     const toolbar = page.locator('.view-toolbar');
-    const filterChip = toolbar.locator('.view-toolbar-summary-chip', { hasText: 'Done' });
-    await expect(filterChip).toBeVisible();
+    const filterChip = await expectFilterChipPairedWithControl(toolbar, 'Done');
     await expect(filterChip.locator('.view-toolbar-summary-chip-remove')).toBeVisible();
-    await expectToolbarButtonHasNoPersistentState(toolbar, 'Filter by');
-    const inlineGeometry = await page.evaluate(() => {
-      const chip = document.querySelector<HTMLElement>('.view-toolbar .view-toolbar-summary-chip');
-      const filterButton = [...document.querySelectorAll<HTMLElement>('.view-toolbar .view-toolbar-pill')]
-        .find((button) => button.getAttribute('aria-label') === 'Filter by');
-      const chipRect = chip?.getBoundingClientRect();
-      const filterRect = filterButton?.getBoundingClientRect();
-      return {
-        sameRow: chipRect && filterRect ? Math.abs(chipRect.top - filterRect.top) < 2 : false,
-        chipBeforeFilter: chipRect && filterRect ? chipRect.right <= filterRect.left : false,
-      };
-    });
-    expect(inlineGeometry).toEqual({ sameRow: true, chipBeforeFilter: true });
+    await expectToolbarButtonIsConfigured(toolbar, 'Filter by');
+    const filterButton = toolbar.getByRole('button', { name: 'Filter by', exact: true });
+    const [filterBox, chipBox] = await Promise.all([filterButton.boundingBox(), filterChip.boundingBox()]);
+    expect(filterBox).not.toBeNull();
+    expect(chipBox).not.toBeNull();
+    expect(Math.abs(filterBox!.y - chipBox!.y)).toBeLessThan(2);
+    expect(filterBox!.x + filterBox!.width).toBeLessThanOrEqual(chipBox!.x);
 
     await expect(row(page, ids.alpha)).toBeVisible();
     await expect(row(page, ids.beta)).toHaveCount(0);
@@ -551,7 +568,7 @@ test.describe('definition configuration parity', () => {
     await expect(row(page, ids.beta)).toHaveCount(0);
     await expect(row(page, ids.gamma)).toHaveCount(0);
     await expect(toolbar.getByLabel('Filter by name')).toHaveValue('Al');
-    await expectToolbarButtonHasNoPersistentState(toolbar, 'Filter by');
+    await expectToolbarButtonIsUnconfigured(toolbar, 'Filter by');
 
     await toolbar.getByRole('button', { name: 'Clear name filter' }).click();
     await expect(row(page, ids.beta)).toBeVisible();

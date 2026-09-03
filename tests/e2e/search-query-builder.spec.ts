@@ -69,13 +69,13 @@ test.describe('search query builder', () => {
     await expect(controls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
     await expect(outlineMode).toHaveAttribute('aria-pressed', 'true');
     await expect(tableMode).toHaveAttribute('aria-pressed', 'false');
-    await expect(controls.getByRole('button', { name: 'Display', exact: true })).toBeVisible();
+    await expect(controls.getByRole('button', { name: 'Display', exact: true })).toHaveAttribute('aria-pressed', 'false');
     await expect(controls.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
     await expect(viewMode).not.toHaveCSS('box-shadow', 'none');
     const outlineButtonLabels = await controls.locator(
-      '.view-toolbar-mode-button, .view-toolbar-button-row > .view-toolbar-pill',
+      '.view-toolbar-mode-button, .view-toolbar-button-row .view-toolbar-pill',
     ).evaluateAll((buttons) => (
       buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '')
     ));
@@ -143,7 +143,7 @@ test.describe('search query builder', () => {
       scope.style.width = `${modeWidth + controlSize + contentStart}px`;
       const toolbarRect = toolbar.getBoundingClientRect();
       const controls = [...toolbar.querySelectorAll<HTMLElement>(
-        '.view-toolbar-button-row > .view-toolbar-pill, .view-toolbar-mode-button',
+        '.view-toolbar-button-row .view-toolbar-pill, .view-toolbar-mode-button',
       )];
       const modeButtons = [...toolbar.querySelectorAll<HTMLElement>('.view-toolbar-mode-button')];
       const modeGroup = toolbar.querySelector<HTMLElement>('.view-toolbar-mode')!;
@@ -182,12 +182,13 @@ test.describe('search query builder', () => {
     await expect(tableViewMode.getByRole('button', { name: 'Outline', exact: true })).toHaveAttribute('aria-pressed', 'false');
     await expect(tableViewMode.getByRole('button', { name: 'Table', exact: true })).toHaveAttribute('aria-pressed', 'true');
     const tableButtonLabels = await tableControls.locator(
-      '.view-toolbar-mode-button, .view-toolbar-button-row > .view-toolbar-pill',
+      '.view-toolbar-mode-button, .view-toolbar-button-row .view-toolbar-pill',
     ).evaluateAll((buttons) => (
       buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '')
     ));
     expect(tableButtonLabels).toEqual(outlineButtonLabels);
-    await expect(tableControls.getByRole('button', { name: '1 displayed field', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Display', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(tableControls.locator('.view-toolbar-summary-chip')).toHaveCount(0);
   });
 });
 

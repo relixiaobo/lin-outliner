@@ -284,6 +284,16 @@
   flex-wrap: wrap;
 }
 
+.view-toolbar-control-group {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .view-toolbar-mode {
   display: inline-flex;
   min-height: var(--control-size-xl);
@@ -819,9 +829,8 @@ button.outliner-table-column-kind:focus-visible {
   color: var(--text-primary);
 }
 
-/* Restates active display/group/filter dimensions inline with the toolbar
-   actions. Sort only uses this while its popover is open; the closed state lives
-   on the sort button icon. */
+/* Filter chips represent individual editable rules and stay grouped with the
+   configured Filter control. Singular view settings use their control state only. */
 .view-toolbar-summary {
   display: flex;
   max-width: min(520px, 100%);
@@ -922,13 +931,13 @@ button.outliner-table-column-kind:focus-visible {
   color: var(--text-primary);
 }
 
-.view-toolbar-pill.is-active {
-  background: var(--control-active);
-  color: var(--text-primary);
+.view-toolbar-pill.is-configured {
+  background: transparent;
+  color: var(--control-on);
 }
 
-.view-toolbar-pill.is-active:hover {
-  color: var(--text-primary);
+.view-toolbar-pill.is-configured:hover {
+  color: var(--control-on);
 }
 
 .view-toolbar-pill.is-open {
@@ -936,7 +945,7 @@ button.outliner-table-column-kind:focus-visible {
   color: var(--text-primary);
 }
 
-.view-toolbar-pill.is-active.is-open {
+.view-toolbar-pill.is-configured.is-open {
   color: var(--text-primary);
 }
 

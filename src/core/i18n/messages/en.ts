@@ -936,12 +936,8 @@ export const en = {
       booleanNotDone: 'Not done',
       booleanYes: 'Yes',
       booleanNo: 'No',
-      // Compact active-view chips and displayed field metadata.
-      summaryAriaLabel: 'Active view settings',
+      // Displayed field metadata.
       displayedFieldsAriaLabel: 'Displayed fields',
-      summaryDisplayCount: (count: number) => `${count} displayed field${count > 1 ? 's' : ''}`,
-      summaryGroupedBy: ({ field }: { field: string }) => `Grouped by ${field}`,
-      summarySortedBy: ({ field, arrow }: { field: string; arrow: string }) => `Sorted by ${field} ${arrow}`,
     },
     table: {
       ariaLabel: ({ title }: { title: string }) => `${title} table`,
