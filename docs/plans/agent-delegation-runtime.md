@@ -184,8 +184,9 @@ state or Tool Task evidence, never independent execution authorities.
 
 ### Generic background Tool Tasks
 
-This foundation applies to every background or auto-background Bash command.
-Delegation is only its first demanding consumer.
+This foundation applies to every explicit-background Bash command and to any
+foreground command whose cancelled process group still requires observable
+teardown. Delegation is only its first demanding consumer.
 
 `ToolTaskService` replaces the in-memory background-process map with a durable,
 domain-neutral record containing:
@@ -245,6 +246,16 @@ Background Bash supports the same bounded `stdin` as foreground Bash. The Host
 creates capture and task state first, starts the supervisor, writes and closes
 stdin with backpressure, and returns the task handle only after the input was
 accepted. Early exit or write failure settles that same task.
+
+Background execution is explicit, not inferred from elapsed wall-clock time.
+Omitted or false `run_in_background` waits for the same Tool Task to reach a
+terminal state regardless of duration, because later Agent work commonly depends
+on its result. True returns the durable task handle immediately. The Host never
+changes a successful foreground control flow after an arbitrary timer. If a
+cancelled foreground task remains nonterminal while its process group settles,
+the Host promotes that same task to background visibility so cancellation and
+recovery remain observable; this is a teardown safeguard, not automatic
+background execution.
 
 Ordinary commands require no integration. Cooperative CLIs may emit bounded
 generic progress events such as a phase, message, or producer-supplied fraction.
@@ -1016,6 +1027,9 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
 - **FR-1:** Background Tool Tasks are generic and durable.
   - **AC-1:** Plain Bash, delegation, and a video-generation fixture share one
     state, progress, artifact, cancel, restart, status, and delivery path.
+    Foreground Bash waits for terminal settlement regardless of elapsed time;
+    only explicit `run_in_background: true` returns early, except that incomplete
+    cancellation teardown promotes the same task for continued visibility.
   - **AC-2:** Generic task contracts contain no delegation or Runner concepts.
   - **AC-3:** Every terminal race or restart produces one immutable result and
     exactly one canonical delivery commit without replay; prepared batches
