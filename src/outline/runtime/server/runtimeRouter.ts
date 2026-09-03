@@ -27,7 +27,7 @@ import {
   OUTLINE_STORAGE_VERSION,
 } from '../../contract/version';
 import type { OutlineHistoryMutationOptions, OutlineRuntimeWorkspace } from '../runtimeWorkspace';
-import { applyOutlineDiff, commitOutlineChangeSet, diffOutlineChangeSet } from '../changeSet';
+import { applyOutlineDiff, changeSetIntentHash, commitOutlineChangeSet, diffOutlineChangeSet } from '../changeSet';
 import { countQueryMatches, countSavedSearchMatches } from '../selector';
 import { decodeOperationLogCursor, encodeOperationLogCursor } from '../operationLogCursor';
 
@@ -332,7 +332,16 @@ export class OutlineRuntimeRouter {
           ));
         }
         const replay = await this.workspace.settledOperation(idempotencyKey, input.expectDiff);
-        if (replay) return this.createResult(input.changeSet, replay);
+        if (replay) {
+          if (replay.intentHash !== changeSetIntentHash(input.changeSet)) {
+            throw new OutlineContractError(outlineError(
+              'idempotency_conflict',
+              'conflict',
+              `Idempotency key was already used with different create intent: ${idempotencyKey}`,
+            ));
+          }
+          return this.createResult(input.changeSet, replay);
+        }
       }
       diff = await diffOutlineChangeSet(this.workspace, input.changeSet);
       if (input.preview) return diff;

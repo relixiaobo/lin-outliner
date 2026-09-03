@@ -122,6 +122,58 @@ describe('outline porcelain CLI', () => {
     }
   });
 
+  test('keeps exact same-name Field definitions distinct by identity', async () => {
+    const root = await makeRoot();
+    const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+    try {
+      let firstFieldId = '';
+      let secondFieldId = '';
+      await runtime.workspace.mutate({
+        origin: 'local-user',
+        changeSetHash: '1'.repeat(64),
+        diffHash: '2'.repeat(64),
+        summary: 'Created same-name Field fixtures.',
+        execute: (core) => {
+          const firstTagId = core.createTag('Project schema').focus!.nodeId;
+          const firstEntryId = core.createFieldDef(firstTagId, 'Status', 'plain').focus!.nodeId;
+          firstFieldId = core.state().nodes[firstEntryId]!.fieldDefId!;
+          const secondTagId = core.createTag('Issue schema').focus!.nodeId;
+          const secondEntryId = core.createFieldDef(secondTagId, 'Status', 'plain').focus!.nodeId;
+          secondFieldId = core.state().nodes[secondEntryId]!.fieldDefId!;
+        },
+      });
+      expect(firstFieldId).not.toBe(secondFieldId);
+
+      const created = await jsonCommand(root, ['create', '--input', '-'], JSON.stringify({
+        at: { parent: '@today' },
+        fields: [
+          { key: 'projectStatus', field: firstFieldId },
+          { key: 'issueStatus', field: secondFieldId },
+        ],
+        node: {
+          text: 'Exact same-name Fields',
+          fields: { projectStatus: 'Planned', issueStatus: 'Active' },
+        },
+      }));
+
+      expect(created).toMatchObject({
+        code: 0,
+        data: { fieldCount: 2, definitions: { created: 0, reused: 2 } },
+      });
+      const ownerId = (created.data as { rootId: string }).rootId;
+      const state = runtime.workspace.documentState();
+      const selectedFieldIds = state.nodes[ownerId]!.children.flatMap((id) => {
+        const node = state.nodes[id];
+        return node?.type === 'fieldEntry' && node.fieldDefId ? [node.fieldDefId] : [];
+      });
+      expect(new Set(selectedFieldIds)).toEqual(new Set([firstFieldId, secondFieldId]));
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('reports explicit Field dependencies and reuses null auto-initialize configuration', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
@@ -292,7 +344,14 @@ describe('outline porcelain CLI', () => {
 
       const direct = await jsonCommand(root, ['preview', '--input', '-'], JSON.stringify(diff.normalizedChangeSet));
       expect(direct.code).toBe(0);
-      expect(direct.data).toEqual(diff);
+      expect(direct.data).toMatchObject({
+        changeSetHash: diff.changeSetHash,
+        normalizedChangeSet: diff.normalizedChangeSet,
+        bindings: diff.bindings,
+        affected: diff.affected,
+      });
+      expect((direct.data as Diff).intentHash).not.toBe(diff.intentHash);
+      expect((direct.data as Diff).diffHash).not.toBe(diff.diffHash);
 
       const reviewedArgs = [
         'create', '@today', 'Porcelain item', '--bind', 'created', '--expect-diff', diff.diffHash,
@@ -305,6 +364,16 @@ describe('outline porcelain CLI', () => {
       const operationsAfterApply = (await runtime.workspace.store.operations()).length;
       const replayed = await jsonCommand(root, reviewedArgs);
       expect(replayed).toMatchObject({ code: 0, command: 'create', data: applied.data });
+      expect((await runtime.workspace.store.operations()).length).toBe(operationsAfterApply);
+      const conflictingReplay = await jsonCommand(root, [
+        'create', '--input', '-', '--expect-diff', diff.diffHash,
+        '--idempotency-key', diff.normalizedChangeSet.idempotencyKey!,
+      ], JSON.stringify({
+        at: { parent: '@today' },
+        node: { text: 'Different reviewed payload', children: [{ text: 'Extra child' }] },
+        view: { mode: 'cards' },
+      }));
+      expect(conflictingReplay).toMatchObject({ code: 3, error: { code: 'idempotency_conflict' } });
       expect((await runtime.workspace.store.operations()).length).toBe(operationsAfterApply);
 
       expect((await jsonCommand(root, ['edit', nodeId!, '--description', 'Reviewed'])).code).toBe(0);

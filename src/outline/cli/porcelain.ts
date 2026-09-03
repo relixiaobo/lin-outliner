@@ -328,7 +328,9 @@ async function buildCreateChanges(
   const ownerBind = String(input.bind ?? 'created');
   const usedBindings = new Set([ownerBind]);
   const fieldRefs = new Map<string, TargetRef>();
-  const fieldNames = new Map<string, number>();
+  const namedFieldClaims = new Map<string, number>();
+  const exactFieldClaims = new Map<string, number>();
+  const exactFieldNames = new Map<string, number>();
   const changes: Change[] = [];
   const declarations = (input.fields ?? []) as Array<Record<string, unknown>>;
 
@@ -346,20 +348,21 @@ async function buildCreateChanges(
         isRecord(node.content) ? node.content.text : node.text,
         `create.fields/${index}/field name`,
       );
-      assertUniqueCreateFieldName(fieldNames, name, index);
+      const id = requiredString(node.id, `create.fields/${index}/field ID`);
+      assertUniqueExactCreateField(exactFieldClaims, exactFieldNames, namedFieldClaims, id, name, index);
       const bind = nextInternalBinding('field', usedBindings);
       changes.push({
         op: 'ensure',
         resource: 'definition',
         definitionType: 'field',
-        id: requiredString(node.id, `create.fields/${index}/field ID`),
+        id,
         name,
         bind,
       });
       fieldRefs.set(key, { binding: bind });
       continue;
     }
-    assertUniqueCreateFieldName(fieldNames, String(field.name), index);
+    assertUniqueNamedCreateField(namedFieldClaims, exactFieldNames, String(field.name), index);
     const bind = nextInternalBinding('field', usedBindings);
     changes.push({
       op: 'ensure',
@@ -389,13 +392,39 @@ async function buildCreateChanges(
   return changes;
 }
 
-function assertUniqueCreateFieldName(names: Map<string, number>, name: string, index: number): void {
+function assertUniqueNamedCreateField(
+  names: Map<string, number>,
+  exactNames: ReadonlyMap<string, number>,
+  name: string,
+  index: number,
+): void {
   const normalized = name.trim().toLocaleLowerCase();
-  const previous = names.get(normalized);
+  const previous = names.get(normalized) ?? exactNames.get(normalized);
   if (previous !== undefined) {
     throw usageError(`create.fields/${index} resolves to the same Field definition as create.fields/${previous}.`);
   }
   names.set(normalized, index);
+}
+
+function assertUniqueExactCreateField(
+  ids: Map<string, number>,
+  names: Map<string, number>,
+  namedClaims: ReadonlyMap<string, number>,
+  id: string,
+  name: string,
+  index: number,
+): void {
+  const previousId = ids.get(id);
+  if (previousId !== undefined) {
+    throw usageError(`create.fields/${index} resolves to the same Field definition as create.fields/${previousId}.`);
+  }
+  const normalized = name.trim().toLocaleLowerCase();
+  const previousName = namedClaims.get(normalized);
+  if (previousName !== undefined) {
+    throw usageError(`create.fields/${index} conflicts with name-based create.fields/${previousName}.`);
+  }
+  ids.set(id, index);
+  if (!names.has(normalized)) names.set(normalized, index);
 }
 
 async function publicFieldConfig(

@@ -2484,6 +2484,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       protocolVersion: 1;
       kind: 'outline.diff';
       diffHash: string;
+      intentHash: string;
       changeSetHash: string;
       baseRevision: number;
       normalizedChangeSet: MockChangeSet;
@@ -3353,11 +3354,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         return [];
       });
+      const intentHash = mockDigest(input);
       const changeSetHash = mockDigest(normalizedChangeSet);
       return {
         protocolVersion: 1,
         kind: 'outline.diff',
-        diffHash: mockDigest({ changeSetHash, bindings, affected, destructive }),
+        diffHash: mockDigest({ intentHash, changeSetHash, bindings, affected, destructive }),
+        intentHash,
         changeSetHash,
         baseRevision: revision,
         normalizedChangeSet,
@@ -3452,6 +3455,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         protocolVersion: 1,
         kind: 'outline.operation',
         operationId,
+        intentHash: diff.intentHash,
         changeSetHash: diff.changeSetHash,
         diffHash: diff.diffHash,
         origin: 'desktop',

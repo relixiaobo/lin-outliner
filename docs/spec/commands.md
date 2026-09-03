@@ -150,8 +150,10 @@ shape:
 ```
 
 Field keys are local column handles within one create request. Each key must
-resolve to a different persisted Field definition; declarations whose names are
-equal after trimming and case normalization are rejected before mutation.
+resolve to a different persisted Field identity. Name-based declarations whose
+names are equal after trimming and case normalization are rejected before
+mutation. Exact locators may select distinct same-name Fields, including Fields
+owned by different Tag schemas; repeating the same exact identity is rejected.
 
 Node text accepts plain text or the public rich-text object. Nodes may include
 description, code language, checkbox/done state, tags, one explicit reference,
@@ -357,9 +359,10 @@ after the trailer digest authenticates the uploaded ChangeSet.
 ## Preview, Transact, Apply, And Operations
 
 `preview` normalizes a ChangeSet and returns an `outline.diff` containing its
-canonical normalized ChangeSet, hashes, base revision, bindings, affected
-before/after digests, destructive summary, warnings, and size estimate. It does
-not advance document revision, create an Operation, or retain staged assets.
+submitted-intent hash, canonical normalized ChangeSet hash, base revision,
+bindings, affected before/after digests, destructive summary, warnings, and size
+estimate. It does not advance document revision, create an Operation, or retain
+staged assets.
 
 `transact` accepts the same ChangeSet contract and uses the same normalization,
 selector, binding, asset-lease, idempotency, transaction-log, recovery, and
@@ -407,7 +410,8 @@ receipt, asset-reference delta, and Event sequence. Only then does it return the
 failure leaves document state, projections, history, and asset reachability
 unchanged.
 
-An Operation records origin, optional trusted causation, source, summary,
+An Operation records the submitted `intentHash` separately from the normalized
+`changeSetHash`, plus origin, optional trusted causation, source, summary,
 bounded affected IDs plus complete-set count/hash, immutable created-definition
 and created/updated/deleted Node counts, before/after revisions, recovery state,
 optional text-edit undo-group metadata, and requested bounded result Projections.

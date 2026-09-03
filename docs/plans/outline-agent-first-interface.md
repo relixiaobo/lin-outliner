@@ -212,10 +212,11 @@ tokens. All Agent-authored CLI inputs and public results use the public terms,
 including advanced transactions. Runtime state and immutable reviewed artifact
 internals remain canonical and never persist aliases.
 
-The CLI lowers the complete request to one ChangeSet using internal bindings,
-commits it once, then reads the committed revision through the public Runtime
-projection path to assert the requested postconditions. Internal changes and
-reads do not become Provider calls.
+The CLI lowers the complete request to one ChangeSet using internal bindings
+and commits it once. Reviewed Diff and Operation records retain the submitted
+intent hash separately from the normalized ChangeSet hash, so replay requires
+both the same submitted request and the same reviewed artifact without reading
+mutable current state. Internal changes and reads do not become Provider calls.
 
 **FR-2:** Plain, nested, field-backed, and View-backed creation use this one
 shape and one Operation. No mode adds another owner/item/value identity model.

@@ -879,6 +879,7 @@ export const DiffSchema = Type.Object({
   protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
   kind: Type.Literal('outline.diff'),
   diffHash: Digest,
+  intentHash: Digest,
   changeSetHash: Digest,
   baseRevision: Type.Integer({ minimum: 0 }),
   normalizedChangeSet: ChangeSetSchema,
@@ -992,6 +993,7 @@ export const OperationSchema = Type.Object({
   protocolVersion: Type.Literal(OUTLINE_PROTOCOL_VERSION),
   kind: Type.Literal('outline.operation'),
   operationId: Identifier,
+  intentHash: Digest,
   changeSetHash: Digest,
   diffHash: Digest,
   origin: Type.Union([

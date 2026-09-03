@@ -144,6 +144,7 @@ function directCommitFocusDiff(changeSet: ChangeSet, revision: number): Diff {
     protocolVersion: 1,
     kind: 'outline.diff',
     diffHash: '0'.repeat(64),
+    intentHash: '0'.repeat(64),
     changeSetHash: '0'.repeat(64),
     baseRevision: revision,
     normalizedChangeSet: changeSet,

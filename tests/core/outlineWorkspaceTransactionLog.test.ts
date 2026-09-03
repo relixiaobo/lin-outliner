@@ -720,6 +720,7 @@ async function createTransaction(
     protocolVersion: OUTLINE_PROTOCOL_VERSION,
     kind: 'outline.operation',
     operationId,
+    intentHash: changeSetHash,
     changeSetHash,
     diffHash,
     origin: 'local-user',

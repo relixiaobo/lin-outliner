@@ -418,6 +418,7 @@ describe('outline public contract', () => {
       protocolVersion: 1,
       kind: 'outline.diff',
       diffHash: digest,
+      intentHash: digest,
       changeSetHash: digest,
       baseRevision: 1,
       normalizedChangeSet: changeSet,

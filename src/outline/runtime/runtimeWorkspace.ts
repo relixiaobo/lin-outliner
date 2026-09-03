@@ -98,6 +98,7 @@ export interface OutlineRuntimeMutationRequest {
   readonly origin: Operation['origin'];
   readonly causation?: Operation['causation'];
   readonly source?: Operation['source'];
+  readonly intentHash?: string;
   readonly changeSetHash: string;
   readonly diffHash: string;
   readonly expectedPatchHash?: string;
@@ -867,6 +868,7 @@ export class OutlineRuntimeWorkspace {
             protocolVersion: OUTLINE_PROTOCOL_VERSION,
             kind: 'outline.operation',
             operationId,
+            intentHash: request.intentHash ?? request.changeSetHash,
             changeSetHash: request.changeSetHash,
             diffHash: request.diffHash,
             origin: request.origin,
