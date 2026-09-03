@@ -13,24 +13,28 @@ context, while removing Agent trees, nesting, peer messaging, and model-owned
 Runner policy.
 
 The root Agent loads the built-in `delegate` Skill and invokes a packaged CLI
-through background `bash`. The CLI runs one isolated task and exits with one
-result. Delegation always uses the same generic background-task capability as
-video generation, builds, exports, and any other long Bash command, so the root
-conversation never waits synchronously for an Agent run.
+through background `bash`. One invocation creates an isolated Agent Session and
+runs its first Turn as a generic Tool Task. The root may later add context to the
+same Session through a short `delegate send` Bash call; each continued execution
+is another Tool Task with its own immutable result. Delegation therefore uses the
+same background-task capability as video generation, builds, exports, and any
+other long Bash command without reducing a multi-Turn Agent conversation to one
+process result.
 
 - **OBJ-1:** The user has one root collaborator; delegated work is ordinary tool
   work that the root eventually integrates or takes over.
 - **Clean-slate answer:** Bash owns generic process execution, Tool Tasks own
-  background lifecycle, the delegation CLI owns one delegated run, and Runners
-  own only harness adaptation.
+  execution lifecycle, Agent Sessions own isolated context and ordered messages,
+  the delegation CLI owns admission and session commands, and Runners own only
+  harness adaptation.
 - **Selected brownfield answer:** Reuse the current Agent execution kernel,
   tools, provider adapters, artifacts, worktrees, and Host-started Turns while
   deleting Subagent-specific identity, ledgers, routing, and UI.
 - **Minimum acceptable outcome:** The existing Subagent product and generic
   isolated-Skill mode are completely retired. With the experiment enabled, the
-  internal Runner restores parallel execution and fresh-context isolation
-  through the new path; with it disabled, the root works locally and no legacy
-  delegation surface remains.
+  internal Runner restores parallel execution, fresh-context isolation, and
+  root-owned continuation through the new path; with it disabled, the root works
+  locally and no legacy delegation surface remains.
 
 **PM decision (2026-09-03):** this is a direct pre-release cutover, not a
 coexistence experiment. The internal delegation cutover deletes the existing
@@ -43,16 +47,27 @@ graduation of Delegation; it is not a gate that preserves or restores the old
 system. External harness discovery is automatic and read-only; use remains
 explicitly authorized by the user.
 
+**PM correction (2026-09-03):** retiring the Subagent product does not retire
+multi-Turn delegation. A root must be able to add information to running work and
+continue the same isolated context after a Turn settles. The replacement keeps
+that capability through a root-owned hidden Thread plus Skill-guided CLI
+commands, without restoring Agent trees, peer messaging, nesting, or Subagent UI.
+
 ## Non-goals
 
 - No model-visible delegation, Agent, spawn, send, wait, inbox, or roster tool.
   Invocation is `skill` -> `bash` -> `delegate`.
-- No addressable child Agent, resumed delegated conversation, generation tree,
-  peer messaging, or more than one Tenon-managed delegation level.
+- No addressable child Agent, user-visible or navigable child Thread, generation
+  tree, peer-to-peer messaging, delegated-to-root message route, or more than one
+  Tenon-managed delegation level. A root-owned Agent Session handle identifies a
+  restricted hidden Thread, not an Agent entity or tree node.
 - No model-selected Runner, model, effort, concurrency, local scheduling limit,
   retry, fallback, or worktree policy. Runner selection belongs only to
   Settings.
 - No silent retry, model fallback, Runner failover, or replacement task.
+- No promise that added context mutates a model request or tool invocation already
+  in flight. Steering is durably queued and consumed only at a Runner-safe Turn
+  boundary.
 - No coexistence period, legacy Subagent fallback, or experiment-result rollback
   to the retired system.
 - No generic `execution: isolated` Skill mode, isolated-Skill child Thread, or
@@ -97,7 +112,9 @@ Rejected alternatives:
   select a different account or cost boundary, so `delegate run` uses only the
   Host-bound Settings selection.
 - A Delegated Task ledger beside a background Bash ledger creates competing
-  completion, cancellation, and notification truth.
+  completion, cancellation, and notification truth. The Agent Session is instead
+  a restricted role of the existing Thread/Turn aggregate plus a thin binding
+  for ordered message delivery; neither owns process or Tool Task terminal state.
 - Treating a remote protocol or external harness session as the task makes local
   failure and result recovery depend on vendor semantics.
 - Shipping every external harness with internal delegation makes the core design
@@ -114,9 +131,10 @@ Rejected alternatives:
 - The injected `KernelAgentOptions` boundary in `NativeAgentRuntime` supports a
   headless model gateway and tool set. The internal Runner reuses this kernel;
   it does not copy `PiTurnExecutor` or its Electron-backed Settings/tool wiring.
-- Local executable evidence confirms non-interactive entry points for Claude
-  Print, Codex Exec, and OpenClaw ACP. Exact flags remain version-bound Adapter
-  fixtures, not permanent assumptions in this plan.
+- Local executable evidence confirms non-interactive entry points for Claude and
+  Codex CLIs and an ACP entry point for OpenClaw. Continuation, permission
+  closure, and exact flags remain version-bound Adapter fixtures, not permanent
+  assumptions in this plan.
 - PR #619's real Agent replay is the design precedent for a one-call common
   path, one contract registry, closed-loop receipts, and task-corpus-first CLI
   design.
@@ -137,10 +155,11 @@ root Agent
   -> background bash(command: "delegate run --input - --output json")
        -> generic process supervisor
        -> delegate CLI
-            -> internal Tenon Runner
-            -> external harness Runner
+            -> root-owned Agent Session
+                 -> internal Tenon Runner
+                 -> external harness Runner
   -> generic background completion
-  -> root synthesis or ownership recovery
+  -> root synthesis, `delegate send`, or ownership recovery
 ```
 
 | Owner | Responsibility |
@@ -148,14 +167,18 @@ root Agent
 | Bash | Command, stdin, generic foreground/background execution, process sandbox. |
 | Tool Task | Background identity, process truth, output, artifacts, cancel, recovery, delivery. |
 | `delegate` Skill | When to delegate work to another Agent and how to form task intent. |
-| `delegate` CLI | Admission, policy resolution, local scheduling lease, Runner lifecycle, normalized result. |
-| Runner | One internal kernel session or external harness process. |
-| Root Agent | User communication, verification, integration, and ownership recovery. |
+| Agent Session | A restricted hidden Thread that owns stable context, ordered root messages, Runner binding, continuation, and closure. |
+| `delegate` CLI | Admission, policy resolution, session commands, local scheduling lease, Runner lifecycle, normalized result. |
+| Runner | One internal kernel Session or adapted external harness Session. |
+| Root Agent | User communication, added context, verification, integration, and ownership recovery. |
 
-The CLI process and its process group are the delegated run. There is no
-app-owned Delegated Task beside it. Internal execution state, external session
-IDs, transcripts, and logs are evidence attached to the process result, not
-independent task authorities.
+Each CLI process and process group is one execution Turn and one Tool Task. There
+is no app-owned Delegated Task beside it. The Agent Session is the existing
+Thread/Turn conversation aggregate in a restricted hidden role; it is not a new
+parallel transcript store. It may outlive a process so the root can continue
+with the same context, but owns no execution status, cancellation result,
+completion delivery, or process receipt. Runner session IDs and logs are Session
+state or Tool Task evidence, never independent execution authorities.
 
 ### Generic background Tool Tasks
 
@@ -289,6 +312,13 @@ their full logical length for each linked Thread. External cwd files and retaine
 worktrees are references, not copied detail bytes, and do not count toward these
 quotas.
 
+Hidden Session transcript resources and native resume state count toward the
+owner root Thread's logical quota and the application physical quota. Context
+required by an open Session is protected from pressure and age eviction, so a new
+execution may refuse at reservation rather than destroy resumability. Closing the
+Session removes that protection; the existing delivery-based clocks then make
+old detail immediately eligible when its 30-day TTL has already elapsed.
+
 The transition to `delivered` starts a 30-day detail TTL regardless of task
 outcome. Pending, delivering, blocked, and undelivered terminal tasks are never
 age-collected. Quota pressure may evict otherwise eligible delivered detail
@@ -307,6 +337,97 @@ successfully integrated worktree is removed through ordinary root Bash/git and
 reconciled as cleaned; task details provide a separate Host-owned confirmed
 cleanup action for a rejected retained worktree. No cleanup action is added to
 the model tool catalog.
+
+### Root-owned Agent Sessions
+
+Delegation is multi-Turn even though every execution remains an ordinary Tool
+Task. An Agent Session is the existing persistent Thread/Turn conversation model
+used in a restricted hidden role, not a second transcript aggregate. A new
+`delegation` Thread source replaces the overloaded `subagent` source. Its direct
+`parentThreadId` is an ownership edge to one interactive root Thread, never a
+recursive collaboration tree; delegated Threads cannot own another Session and
+are excluded from Thread lists, navigation, Agent UI, cross-Thread references,
+memory, and user-authored renderer admission.
+
+The Thread owns normalized prompt history, Turn history, configuration, context
+compaction, and transcript resources. A thin `DelegationSessionBinding` owns only
+facts that do not belong to a generic Thread or Tool Task: the Settings-resolved
+Runner and Task Profile snapshot, initial capability ceiling, current/previous
+Tool Task links, adapter session identity, ordered root-message commits, and
+session worktree disposition. It does not duplicate Turn content, process state,
+terminal results, delivery claims, or Tool Task output.
+
+The opaque CLI `SESSION_ID` is the hidden Thread's existing `id`; no second
+public identity is minted. The Thread's existing `sessionId` remains an internal
+Host-runtime binding and is not exposed as the delegation handle. Generic
+background Bash returns its `TASK_ID` immediately, so the root can use
+`delegate send --task` before the first execution settles. Every terminal
+delegation envelope includes `SESSION_ID` for later `send --session` or `close`.
+
+A Session is only `open` or `closed`. Whether it is running, queued, failed, or
+cancelled is derived from its linked Tool Tasks rather than copied into Session
+state. At most one execution Tool Task is active for a Session. Closing an idle
+Session is irreversible and makes its managed context eligible for ordinary
+retention; closing while its Tool Task is nonterminal is refused until
+`task_stop` or natural settlement. An open Session may be continued after a
+successful, failed, timed-out, cancelled, or lost execution, but failure and
+user cancellation never start that continuation automatically.
+
+`delegate run` creates the hidden Thread and first execution idempotently from
+the source Tool Item, Tool Task, request digest, and preallocated Session ID. A
+replayed call resolves the same identities. Failure before the Session commit
+leaves only the same failed Tool Task; failure after it leaves one recoverable
+open Session and never creates another Thread or Runner execution.
+
+The root may add context without exposing a model-native Agent messaging tool.
+`delegate send` accepts bounded stdin and targets either an active Tool Task or
+an existing Session handle owned by the current root Thread. The Host capability
+binds the target, exact message bytes and digest, source root Turn and Tool Item,
+current root capability ceiling, and Session revision. A different root,
+delegated Runner, user shell, external Agent, stale revision, closed Session, or
+unknown target is refused before the message or Provider is reached.
+
+Messages are persisted before `delegate send` acknowledges them. Each has a
+monotonic Session sequence, immutable digest, source provenance, and
+`queued | committed | blocked` delivery state. A per-Session gate linearizes a
+message racing execution settlement:
+
+- when committed before the active Turn's close boundary, it is added once at
+  the next Runner-safe boundary before another model request;
+- when the active Turn closes first, the `delegate send` invocation starts one
+  new Turn and Tool Task on the same hidden Thread;
+- when the active Tool Task fails, times out, is cancelled, or is lost before a
+  queued message commits to a model request, the message becomes `blocked` and
+  returns to the root with the failure evidence; it never becomes a silent retry;
+  and
+- after Host restart, the Thread transcript plus message sequence/digest decides
+  whether a message was already committed, so recovery neither drops nor repeats
+  it.
+
+Steering never claims to mutate a Provider request or tool invocation already in
+flight. It changes only a later model boundary in the same Turn or an explicit
+continued Turn. Root-produced message text is typed delegated-task context: it
+may refine the assignment, but cannot prove user approval, raise the Session's
+tool ceiling, change Runner/model/effort/worktree policy, or override Host
+instructions. Several pending messages are delivered in sequence as one bounded
+context block with their individual provenance preserved.
+
+Every Session resolves Runner, effective model/effort, Task Profile, maximum
+access, cwd, and worktree policy once at creation. Settings changes affect new
+Sessions only. Every continued Turn revalidates live model authorization and
+intersects the original Session ceiling with the root's current ceiling, so it
+may narrow but never widen authority. An unavailable pinned model or disabled
+Runner blocks that Turn before Provider I/O without changing the Session binding
+or silently selecting another Runner.
+
+Writable Sessions own one dedicated worktree across all Turns. Each Tool Task
+reports independently computed current patch evidence, but the worktree remains
+attached until the root closes and integrates or explicitly rejects the Session.
+This lets the root request corrections against the same isolated state. Idle
+Sessions hold no scheduler lease or process. An open Session auto-closes after
+30 days without an active Tool Task or committed root message; owner Thread
+archive closes its idle Sessions, and owner deletion follows the Tool Task and
+changed-worktree refusal rules before deleting their hidden Threads.
 
 ### Skill and CLI
 
@@ -330,30 +451,44 @@ Its complete routing policy is:
 - do not duplicate running delegated work locally;
 - create only the few independent tasks that fit the Thread's configured local
   outstanding-work limit;
-- rely on Host completion instead of polling; and
+- rely on Host completion instead of polling;
+- when new user context materially changes an active assignment, send it to the
+  existing Session instead of duplicating the work or starting a fresh Session;
 - after a non-user-initiated failure, keep verified evidence and return task
   ownership to the root; continue locally only when the root can do so safely;
 - after user cancellation, acknowledge cancellation and do not continue the
   cancelled work without a new user request.
 
-The common path is one Bash call. The model sends the input through
-`bash.stdin`; no prompt or path enters shell source.
+Each initial or continued Turn uses one background Bash call. The model sends
+the input through `bash.stdin`; no prompt or path enters shell source. A send to
+an active Tool Task normally settles after durable queue acknowledgement; a send
+to an idle Session remains the background execution for its newly admitted Turn.
 
 ```text
 delegate run --input - [--output text|json]
+delegate send (--task TASK_ID | --session SESSION_ID) --input - [--output text|json]
+delegate close --session SESSION_ID [--output text|json]
 delegate doctor [RUNNER_ID] [--output text|json]
-delegate schema [run|result]
+delegate schema [run|message|result]
 delegate version
 ```
 
-There is no `delegate status`, cancel, Runner-list, or configuration command.
-Status and cancellation are generic Tool Task operations; Runner policy belongs
-in Settings. `delegate run` accepts no Runner, model, effort, or scheduling
-override and v1 rejects every input source except `-`. `doctor` may inspect a
-named Adapter but cannot change run policy. `schema` and `doctor` are diagnostics,
-never common-path preflight.
+Run stdin uses the versioned task-intent envelope shown below. Send stdin is the
+smaller versioned message envelope
+`{"version":1,"message":"Inspect the newly reported race as well."}`. Neither
+form accepts conversation history, Runner policy, a Session identity, or an
+authority claim inside its content.
 
-`delegate` has one public executable wrapper and one bundled CLI entry. The
+There is no `delegate status`, cancel, Runner-list, or configuration command.
+Status and cancellation are generic Tool Task operations; Session continuation
+and closure are Agent-domain commands; Runner policy belongs in Settings.
+`delegate run` and `delegate send` accept no Runner, model, effort, access, or
+scheduling override and v1 rejects every input source except `-`. `delegate
+close` never stops a Tool Task or cleans a changed worktree. `doctor` may inspect
+a named Adapter but cannot change run policy. `schema` and `doctor` are
+diagnostics, never common-path preflight.
+
+`delegate` has one executable wrapper and one bundled CLI entry. The
 source resolver selects `src/delegate/bin/delegate`, the TypeScript CLI entry,
 and `bun`; the packaged resolver selects
 `resourcesPath/delegate/bin/delegate`,
@@ -370,7 +505,7 @@ executes the wrapper directly has no launch capability and is refused before
 Runner, worktree, or Provider activity; executable presence is not an inbound
 Agent API.
 
-The versioned input contains only task intent:
+The versioned run input contains only task intent:
 
 ```json
 {
@@ -388,24 +523,32 @@ types, personas, or model containers. `explore` and `plan` enforce read-only;
 workspace-write within the root's ceiling.
 
 One registry generates schema, parsing, normalization, help, admission
-lowering, result envelopes, and permission classification. The CLI writes
-progress to the supervisor's generic event channel, emits one terminal envelope
-to stdout, and exits with a stable code. It never exposes credentials or reads
-Tool Task persistence.
+lowering, message and result envelopes, and permission classification. An
+execution-owning CLI invocation writes progress to the supervisor's generic
+event channel, emits one terminal envelope to stdout, and exits with a stable
+code. A queue-only send emits one durable acknowledgement and exits. The CLI
+never exposes credentials or reads Tool Task persistence directly. Its
+nonce-authenticated Host broker is also the only route for loading and committing
+hidden Session Turns and root messages; the CLI never opens the application's
+Thread database.
 
-The Host supplies a short-lived, one-use launch capability bound to the root
-Thread, Tool Item, cwd, exact normalized argv, digest and byte length of the Bash
-`stdin`, effective capability ceiling, Settings-selected Runner, model/effort
-policy, local scheduling policy, and configuration revision. The Host writes
-those exact already-hashed bytes to the CLI pipe; the CLI consumes one bounded
-stdin stream and verifies its digest before admission. It never opens a task
-file or follows a task-input path. `delegate run` without the capability is
-refused. A Settings change or mismatched request digest makes an unused
-capability stale and requires a new root Tool call rather than substituting
-authority. The capability is unavailable to the delegated Runner, so knowing
-the CLI path cannot create another Tenon-managed task. Tool-call replay resolves
-the existing Tool Task by source Tool Item and request digest; a mismatched
-replay fails closed.
+For every state-changing command, the Host supplies a short-lived, one-use
+capability bound to the root Thread, Tool Item, cwd, exact normalized argv,
+digest and byte length of the Bash `stdin`, effective capability ceiling, and
+configuration revision. Run capabilities additionally bind the Settings-selected
+Runner, model/effort policy, local scheduling policy, and preallocated Session
+identity; send/close capabilities bind the target Session revision and prove
+ownership. The Host writes the exact already-hashed input bytes to the CLI pipe;
+the CLI consumes one bounded stdin stream and verifies its digest before
+admission. It never opens a task file or follows a task-input path.
+
+`delegate run`, `send`, or `close` without the matching capability is refused. A
+Settings change or mismatched request digest makes an unused capability stale
+and requires a new root Tool call rather than substituting authority. The
+capability is unavailable to the delegated Runner, so knowing the CLI path or
+Session ID cannot create, steer, resume, or close Tenon-managed work. Tool-call
+replay resolves the existing command outcome by source Tool Item and request
+digest; a mismatched replay fails closed.
 
 ### Internal Tenon Runner
 
@@ -413,11 +556,12 @@ The internal Runner imports the same Agent execution kernel used by the app into
 a headless CLI session. It does not recursively launch the Electron app or use
 `SubagentCollaboration`.
 
-The session receives the delegated prompt, Task Profile, repository
-instructions, admitted resources, and effective access. It does not receive the
-root conversation. Its transcript and result are written as Tool Task artifacts;
-it has no persistent, routable child Agent identity and never appears in the
-Thread list.
+The Session receives the delegated prompt, later committed root messages, Task
+Profile, repository instructions, admitted resources, and effective access. It
+does not receive the root conversation. Its normalized conversation is the
+hidden Thread's canonical Turn history; Runner-native transcripts and logs are
+bounded Tool Task or Session resources. It has no routable child Agent identity
+and never appears in the Thread list.
 
 Effective tools are:
 
@@ -454,13 +598,15 @@ An external Runner is a child of the trusted `delegate` process and uses its
 harness's native model loop and a proven subset of built-in tools. Tenon does not
 translate each external tool call. The Adapter probes compatibility, maps the
 effective parent capability ceiling to a closed native configuration, builds
-safe argv, normalizes events and final output, and propagates cancellation.
+safe argv, normalizes session events and final output, persists only the minimum
+resume identity, and propagates cancellation.
 
 The CLI still owns cwd/worktree, access ceiling, sanitized environment, local
-scheduling lease, timeout, bounded output, and the final result. It starts the
-harness in the same process group, disables session resume, cloud/background
-execution, and native Agent/Subagent features, and kills descendants on
-terminal exit.
+scheduling lease, per-Turn timeout, bounded output, and the final result. It
+starts the harness in the same process group, disables vendor cloud/background
+execution and native Agent/Subagent features, and kills descendants on terminal
+exit. Continuation uses only a Tenon-bound local resume identity; no unattended
+vendor session or process survives a Tool Task.
 
 Every Adapter publishes a version-bound `AdapterCapabilityMap` from Tenon action
 kinds to exact harness flags and native tools. Admission proves that each enabled
@@ -478,23 +624,31 @@ only when their subset mapping is proven. Broader extension support is a later
 capability, not arbitrary settings passthrough.
 
 Adapter readiness requires version-bound proof of machine-readable terminal
-output, cwd, effective-capability subset, cancellation, ephemeral settlement,
-and disabling the harness's native Agent/Subagent features. Prompt rules do not
-count. Known Agent executables are removed from child `PATH` as defense in depth,
-but arbitrary foreground shell execution is not represented as a structural
-no-nesting guarantee. Unsupported versions remain Detected but Not Ready.
+output, cwd, effective-capability subset, cancellation, session continuation,
+safe local resume identity and closure, and disabling the harness's native
+Agent/Subagent features. The Adapter declares whether an active message can be
+consumed at an in-process safe boundary or only as the next resumed Turn; Tenon
+never advertises immediate steering when only continuation is available. Prompt
+rules do not count. Known Agent executables are removed from child `PATH` as
+defense in depth, but arbitrary foreground shell execution is not represented as
+a structural no-nesting guarantee. Unsupported versions remain Detected but Not
+Ready.
 
 Candidate adapters are:
 
-- **Claude Print:** `claude -p` with machine-readable streaming, safe config,
-  explicit capability-subset tools, no session persistence, and the `Agent`
-  tool denied.
-- **Codex Exec:** `codex exec --json --ephemeral` only when explicit sandbox and
-  closed-config controls prove the admitted subset, with multi-agent capability
-  disabled.
-- **ACP/OpenClaw:** only after protocol negotiation proves access, cancellation,
-  ephemeral settlement, native Agent-feature disablement, and the effective
-  capability subset. Installed `openclaw acp` alone is not enough.
+- **Claude CLI:** non-interactive machine-readable streaming plus a version-bound
+  local continuation path, safe config, explicit capability-subset tools, and the
+  `Agent` tool denied.
+- **Codex CLI:** non-interactive JSON execution plus a version-bound local
+  continuation path only when explicit sandbox and closed-config controls prove
+  the admitted subset, with multi-agent capability disabled.
+- **ACP Runner Adapter:** ACP Client support only after negotiation proves
+  access, cancellation, sequential prompt continuation, native Agent-feature
+  disablement, and the effective capability subset. ACP v1 does not standardize
+  mutation of an already active prompt, so queued context becomes the next
+  `session/prompt` unless a separately proven extension supplies a safe boundary.
+  OpenClaw is one possible ACP Agent, not the protocol itself; installed
+  `openclaw acp` alone is not enough.
 
 Authentication remains the harness's responsibility. Discovery never logs in,
 installs, updates, starts a paid call, or reads credential contents. Expired auth
@@ -511,7 +665,7 @@ Settings -> Agent -> Delegation contains:
 - external **Harness default**, plus explicit models only when the Adapter can
   enumerate and validate a finite live catalog;
 - maximum access, with external Runners read-only by default;
-- bounded run duration; and
+- bounded per-Turn run duration; and
 - Advanced global, per-Thread outstanding, per-Runner, and local scheduling-pool
   limits.
 
@@ -519,7 +673,8 @@ Startup detects known executable names and saved paths with a bounded version
 probe. Detection does not authorize use. Turning on the experiment enables the
 internal Runner and selects it by default; every external Runner requires its
 own enable action. Disabling a Runner blocks new runs but does not discard an
-active Tool Task.
+active Tool Task. It also blocks continuation of an idle Session bound to that
+Runner; the Session remains inspectable and closable and never switches Runner.
 
 The experiment switch controls only the new Delegation capability. It does not
 restore legacy Subagent tools when off. The cutover removes
@@ -527,7 +682,7 @@ restore legacy Subagent tools when off. The cutover removes
 `delegate` is absent, no delegation control appears, and the root performs work
 locally. Tenon does not show an unavailable legacy fallback or block ordinary
 root work. Settings is the only Runner-selection authority. Changing the default
-affects future launch capabilities, never an admitted or running task.
+affects future Sessions only, never an admitted or existing Session.
 
 Runner and model choices come from live provider or Adapter capabilities, never
 from a model schema or static model list. A pinned unavailable Runner or model
@@ -556,6 +711,8 @@ supervisor consumes its reconstructed lease; a committed terminal receipt or
 occupied and blocks capacity until recovery terminates or settles it; restart
 never treats uncertainty as a free slot. Root provider work cannot survive its
 Host broker, so only a newly admitted recovery Turn acquires root occupancy.
+An idle Agent Session owns no scheduler lease; every continued execution
+reacquires admission without changing the Session's pinned Runner policy.
 
 A saturated local limit waits and reports a generic public phase. A full bounded
 Thread or global queue refuses before Runner start. Tenon cannot observe use by
@@ -568,24 +725,29 @@ lower a local limit, but never claims a diagnosed account capacity.
 ### Workspace, failure, and result
 
 Read-only work uses the root cwd under a Host-enforced read-only ceiling. Every
-workspace-write run gets a dedicated git worktree before Runner start. Non-git
-or unisolatable writable work is refused. Unchanged worktrees are removed.
-Changed or crash-ambiguous worktrees remain artifacts and are never merged or
-copied automatically.
+workspace-write Session gets one dedicated git worktree before its first Runner
+Turn. All continued Turns use that same worktree. Non-git or unisolatable
+writable work is refused. The worktree remains Session-owned while continuation
+is possible; unchanged worktrees are removed when the Session closes. Changed or
+crash-ambiguous worktrees remain artifacts and are never merged or copied
+automatically.
 
-For every changed worktree, the CLI computes the base revision, changed-file
+For every changed worktree at each Turn boundary, the CLI computes the base revision, changed-file
 manifest, normalized patch, retained worktree path, and reported verification
 evidence independently of Runner prose. Runner success means only that the
 isolated run settled successfully; it never means those changes reached the
 root workspace. The root inspects the evidence, applies or reconstructs accepted
-changes through ordinary Bash/git operations, verifies the integrated result,
-and then removes the worktree. Conflict, rejection, or uncertain recovery keeps
-the worktree and patch available and produces no integration claim.
+changes only after closing the Session, verifies the integrated result, and then
+removes the worktree. Before closure it may instead send corrections against the
+same isolated state. Conflict, rejection, or uncertain recovery keeps the
+worktree and patch available and produces no integration claim.
 
 Admission refusal starts no Runner, provider call, harness, worktree, retry, or
-fallback. Once started, success, failure, timeout, cancellation, malformed
-output, auth/rate-limit failure, or process loss produces one CLI envelope and
-one generic process receipt.
+fallback. Once an execution starts, success, failure, timeout, cancellation,
+malformed output, auth/rate-limit failure, or process loss produces one CLI
+envelope and one generic process receipt. The envelope includes the stable
+Session handle, Turn identity, committed root-message sequence, and whether
+continuation remains admissible; it never rewrites an earlier Tool Task result.
 
 The result includes terminal status, Runner/version, effective model when
 reported, duration, bounded final text or actionable error, partial-evidence
@@ -597,9 +759,11 @@ Background settlement updates the Tool Task immediately and notifies the root at
 its next idle boundary. The conversation stays interactive. After a failure,
 timeout, or loss, the root preserves verified partial evidence, makes no
 unsupported completion claim, and takes ownership of the unfinished user goal.
-It continues locally only when feasible; otherwise it reports the blocking fact
-and recovery options. It does not create a replacement delegated task. A
-user-cancelled task remains cancelled and triggers no automatic local takeover.
+It may explicitly continue the same open Session with corrective context or work
+locally when feasible; otherwise it reports the blocking fact and recovery
+options. It does not create a replacement Session or retry automatically. A
+user-cancelled task remains cancelled and triggers no automatic continuation or
+local takeover; a later user request may explicitly continue its open Session.
 
 ### User experience
 
@@ -609,9 +773,11 @@ builds, and other commands. Each row has description, running/terminal state,
 elapsed time, public progress when supplied, cancel, and failure indication.
 Details show bounded output, artifacts, diagnostics, and retained worktree.
 
-There is no Agent roster, child tree, generation count, peer-message UI, resume
-control, or child Thread navigation. Internal and external Runners look the same
-at the Tool Task layer.
+There is no Agent roster, child tree, generation count, peer-message UI,
+Agent-specific resume control, or child Thread navigation. Internal and external
+Runners look the same at the Tool Task layer. A task detail may show its opaque
+Session reference plus factual queued/committed/blocked context counts so the
+root and user can verify a requested update without exposing an Agent hierarchy.
 
 An invalid explicit model does not spin or silently switch. Settings shows the
 Runner as Not Ready; if invoked, the generic Bash task settles immediately with
@@ -620,7 +786,9 @@ updates the same generic task row and produces the same Host completion as any
 failed long-running command. User cancellation reports cancellation without
 asking the root to continue the work. Several results that become deliverable at
 one idle boundary appear in one root completion Turn, not a burst of autonomous
-Turns.
+Turns. Sending added context produces an immediate durable
+queued/continued/refused result through the ordinary Bash Item; it never merely
+says that the Agent was notified.
 
 The Bash Item and task details show the Settings-selected Runner. If the user
 asks for a different Runner, the root explains how to change the default instead
@@ -634,24 +802,29 @@ review until the root actually integrates and verifies them.
 | Current surface | End state |
 | --- | --- |
 | `agent` | Removed; experimental delegation is available only through Skill + Bash + CLI when enabled. |
-| `agent_message` | Removed; no steer, resume, peer, or `main` route. |
+| `agent_message` | Removed from the model tool catalog; root-to-owned-Session steer/resume moves to `delegate send`, while peer and delegated-to-root routes disappear. |
 | `bash` | Preserved; gains generic durable background execution and stdin. |
 | `task_status` | Added for any owned Tool Task; never used for polling. |
-| `task_stop` | Preserved for Tool Tasks; Agent-ID and `shell_id` routing are removed. |
+| `task_stop` | Preserved for the current Tool Task only; it never deletes or silently resumes an Agent Session, and Agent-ID/`shell_id` routing is removed. |
 | `skill` | Preserved for inline Skills; gains the root-only inline `delegate` Skill. |
 | Skill `execution: isolated` | Removed from parsing, validation, authoring, catalogs, runtime, persistence, and specs. |
 | Agent types | Removed as addressable/configurable entities; task profiles retain only intent semantics. |
 | Subagent UI | Removed; generic Tool Task presentation replaces it. |
+| Subagent child Thread | Replaced by a restricted hidden `delegation` Thread that reuses canonical Thread/Turn context without Agent-tree projection or nested ownership. |
 
-`SubagentCollaboration`, Subagent ledgers, generation routing, nesting budgets,
-Role-derived spawn definitions, Agent delivery, and Agent-tree presentation are
-deleted. `spawnIsolatedSkillThread`, isolated-Skill task paths, frontmatter and
+`SubagentCollaboration`, Subagent execution/request ledgers, recursive generation
+routing, nesting budgets, Role-derived spawn definitions, peer/main messaging,
+Agent delivery, and Agent-tree presentation are deleted. Root-owned continuation
+is rebuilt narrowly on canonical hidden Threads, privileged Turn steering, the
+thin `DelegationSessionBinding`, and `delegate send`; no Subagent record or UI is
+retained. `spawnIsolatedSkillThread`, isolated-Skill task paths, frontmatter and
 managed-install admission, child-result projection, and isolated-Skill tests/spec
 text are deleted with them. Skill `execution`, `allowed-tools`, `model`, `effort`,
-`shell`, and embedded-shell execution metadata are no longer accepted. A managed,
-user, or project Skill declaring any retired field is unavailable with an
-actionable validation diagnostic; it never silently becomes inline. Domain-neutral
-provider, tool, transcript, artifact, worktree, and Host-turn primitives remain.
+`shell`, and embedded-shell execution metadata are no longer accepted. A
+managed, user, or project Skill declaring any retired field is unavailable with
+an actionable validation diagnostic; it never silently becomes inline.
+Domain-neutral provider, tool, Thread/Turn, transcript, artifact, worktree, and
+Host-turn primitives remain.
 
 This retirement is unconditional. Feature-off tests assert that legacy Agent
 tools and UI do not return when Delegation is disabled. Existing pre-release
@@ -664,14 +837,16 @@ The delivery order is:
 1. **Generic background Tool Tasks:** Durable supervised Bash tasks, stdin,
    restart recovery, `task_status`, generic completion, artifacts, cancellation,
    and generic task UI. This is complete and useful without delegation.
-2. **Internal delegation and legacy retirement:** CLI, Skill, launch capability,
-   provider broker, local admission scheduling, internal Runner, Settings,
-   worktree handoff and integration evidence, experiment, and total Subagent plus
+2. **Internal delegation and legacy retirement:** CLI, Skill, command
+   capabilities, hidden multi-Turn Agent Sessions, root message queue, provider
+   broker, local admission scheduling, internal Runner, Settings, worktree
+   handoff and integration evidence, experiment, and total Subagent plus
    isolated-Skill retirement in one PR.
-3. **Claude Print adapter:** One complete external Runner with fixtures and real
+3. **Claude CLI adapter:** One complete external Runner with fixtures and real
    run evidence.
-4. **Codex Exec adapter:** The equivalent complete Codex Runner.
-5. **ACP/OpenClaw adapter:** Only after its capability gate passes.
+4. **Codex CLI adapter:** The equivalent complete Codex Runner.
+5. **ACP Runner adapter:** The protocol adapter after its capability gate passes;
+   OpenClaw is one separately verified ACP Agent candidate.
 
 The complete Generic Tool Task feature is the shared-interface-first owner: its
 protocol, codec, persistence, Host lifecycle, and renderer projection land
@@ -684,10 +859,10 @@ only after the internal Runner registry and capability map merge.
 | Delivery unit | Primary files and symbols | Main risks and collision order |
 | --- | --- | --- |
 | Generic Background Tool Tasks | `src/main/agent/capabilities/agentLocalTools.ts` (`backgroundTasks`, Bash execution); `src/main/agent/runtime/ToolRuntime.ts`; new `src/main/agent/tasks/*`, including the supervisor entry and source/packaged resolver; `src/main/agent/ThreadService.ts`; `src/main/agent/thread/TurnLifecycle.ts`; `src/core/agent/protocol.ts`, `codec.ts`, `rendererProjection.ts`, and `tools.ts`; `src/main/hostDomain/agentHost.ts` and `compositionLifecycle.ts`; `src/renderer/agent/components/ThreadDock.tsx`, `store/threadStore.ts`, and a generic task strip/detail surface; `package.json` build/`app:build`/`extraResources`; a packaged Tool Task smoke; corresponding Core/renderer/E2E tests and current Agent specs. | Owns the shared task/delivery interface and its runnable packaged supervisor first. Risks are orphan processes, source/package path drift, duplicate/lost delivery, authority confusion, unbounded retention, and quit/delete races. Starts after #622 releases `package.json`, then takes a coordinated infrastructure claim. |
-| Internal delegation and Subagent/isolated-Skill retirement | New `src/delegate/contract/*`, `cli/*`, `bin/delegate`, and `runners/internal/*`; new `src/main/delegateRuntime.ts`; `src/main/builtInSkills/delegate/SKILL.md`; `src/main/agent/runtime/kernel/NativeAgentRuntime.ts` and `kernel/types.ts`; `src/main/agent/ThreadService.ts`, `AgentConfigurationLoader.ts`, `AgentConfigurationWriter.ts`, `agentExecutionSelection.ts`, and `worktree/AgentWorktree.ts`; `src/main/hostDomain/agentHost.ts`; `src/core/agent/configuration.ts`, `tools.ts`, `protocol.ts`, `codec.ts`, and `rendererProjection.ts`; `src/renderer/ui/agent/AgentSettingsView.tsx`, `SettingsAgentSection.tsx`, and `AgentsSettings.tsx`; `src/main/agent/capabilities/agentCapabilities.ts`, `agentSkills.ts`, `agentToolPath.ts`, and `subagentToolPolicy.ts`; `src/main/managedSkillValidation.ts`; `package.json` build/`app:build`/`extraResources`; packaged delegate resolution/smoke tests; removal of `src/core/agent/subagentTaskPath.ts`; `src/main/agent/thread/SubagentCollaboration.ts`, `subagentExecutionProjection.ts`, `subagentOutput.ts`, and `subagentSettlementEnvelope.ts`; `src/main/agent/persistence/SubagentExecutionLedger.ts` and `SubagentRequestLedger.ts`; `src/renderer/agent/components/SubagentChip.tsx`, `SubagentDetailView.tsx`, `SubagentRegistryContext.tsx`, `SubagentReport.tsx`, and `SubagentWorkStrip.tsx`; `src/renderer/agent/subagentPresentation.ts`; and corresponding Skill/Subagent Core, renderer, fixture, and spec text. | Starts after Generic Tool Tasks, which has already released `package.json`. Risks are source/package path drift, capability/PATH leakage, credential leakage, stale Settings authority, incomplete retirement, accepting now-unsupported Skill metadata, and losing #612/#614 recovery truth. This unit takes the next coordinated infrastructure claim, owns the coordinated `src/core/agent/*` cut, and deletes old surfaces in the same PR. |
-| Claude Print adapter | New versioned Claude Adapter, `AdapterCapabilityMap`, probe/argv/stream fixtures, Runner registry entry, Settings readiness row, and focused integration tests/spec text. | Starts after the internal registry. Refuse unsupported versions or any unprovable native capability; no shared protocol change is expected. |
-| Codex Exec adapter | Equivalent Codex Adapter, closed-config/sandbox capability map, fixtures, registry entry, Settings readiness, and focused tests/spec text. | Starts after the internal registry and independently of Claude unless both need the same registry edit; prove shell/network subset before Ready. |
-| ACP/OpenClaw adapter | Adapter and fixtures only after protocol-level proof. | Deferred; executable discovery alone is not a claim or dependency. |
+| Internal delegation and Subagent/isolated-Skill retirement | New `src/delegate/contract/*`, `cli/*`, `bin/delegate`, and `runners/internal/*`; new `src/main/delegateRuntime.ts`; new `src/main/agent/delegation/*` for the thin Session binding, ordered root-message commits, and root-only command admission; `src/main/builtInSkills/delegate/SKILL.md`; `src/main/agent/runtime/kernel/NativeAgentRuntime.ts` and `kernel/types.ts`; `src/main/agent/ThreadService.ts`; `src/main/agent/thread/ThreadCatalogOps.ts`, `TurnLifecycle.ts`, `ThreadResourceOps.ts`, `ThreadHistoryReference.ts`, `ThreadTranscriptWriter.ts`, and `ThreadTrajectoryProjection.ts`; `src/main/agent/persistence/ThreadMetadataStore.ts`; `src/main/agent/AgentConfigurationLoader.ts`, `AgentConfigurationWriter.ts`, `agentExecutionSelection.ts`, and `worktree/AgentWorktree.ts`; `src/main/hostDomain/agentHost.ts`; `src/core/agent/configuration.ts`, `tools.ts`, `protocol.ts`, `codec.ts`, and `rendererProjection.ts`; `src/renderer/ui/agent/AgentSettingsView.tsx`, `SettingsAgentSection.tsx`, and `AgentsSettings.tsx`; `src/main/agent/capabilities/agentCapabilities.ts`, `agentSkills.ts`, `agentToolPath.ts`, and `subagentToolPolicy.ts`; `src/main/managedSkillValidation.ts`; `package.json` build/`app:build`/`extraResources`; packaged delegate run/send/close resolution and smoke tests; removal of `src/core/agent/subagentTaskPath.ts`; `src/main/agent/thread/SubagentCollaboration.ts`, `subagentExecutionProjection.ts`, `subagentOutput.ts`, and `subagentSettlementEnvelope.ts`; `src/main/agent/persistence/SubagentExecutionLedger.ts` and `SubagentRequestLedger.ts`; `src/renderer/agent/components/SubagentChip.tsx`, `SubagentDetailView.tsx`, `SubagentRegistryContext.tsx`, `SubagentReport.tsx`, and `SubagentWorkStrip.tsx`; `src/renderer/agent/subagentPresentation.ts`; and corresponding Skill/Subagent Core, renderer, fixture, and spec text. | Starts after Generic Tool Tasks, which has already released `package.json`. Risks are source/package path drift, capability/PATH leakage, credential leakage, duplicate/lost root messages, duplicated Thread/session truth, stale Settings authority, incomplete retirement, accepting now-unsupported Skill metadata, and losing #612/#614 recovery truth. This unit takes the next coordinated infrastructure claim, owns the coordinated `src/core/agent/*` cut, and deletes old surfaces in the same PR. |
+| Claude CLI adapter | New versioned Claude Adapter, `AdapterCapabilityMap`, local continuation contract, probe/argv/stream/resume fixtures, Runner registry entry, Settings readiness row, and focused integration tests/spec text. | Starts after the internal registry. Refuse unsupported versions, missing safe continuation, or any unprovable native capability; no shared protocol change is expected. |
+| Codex CLI adapter | Equivalent Codex Adapter, closed-config/sandbox capability map, local continuation contract, fixtures, registry entry, Settings readiness, and focused tests/spec text. | Starts after the internal registry and independently of Claude unless both need the same registry edit; prove continuation plus shell/network subset before Ready. |
+| ACP Runner adapter | Protocol adapter and fixtures only after ACP negotiation proves the required capability subset and sequential continuation. OpenClaw receives its own version-bound harness evidence through this adapter. | Deferred; protocol or executable discovery alone is not a claim or dependency. |
 
 The internal Runner consumes the root Continue/Rerun contract shipped in
 #612, immutable execution/delivery truth shipped in #614, and execution-selection
@@ -737,41 +912,48 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
   - **AC-33:** Source and packaged runtime resolution starts the standalone Tool
     Task supervisor without a repository path; a packaged restart smoke proves
     receipt recovery and live-process reattachment before admission reopens.
-- **FR-2:** Delegation is a one-call Skill and CLI workflow.
-  - **AC-4:** The model catalog has no Agent/delegation tool or Runner/model enum.
-  - **AC-5:** The common path uses one background Bash call, bounded stdin, and
-    no speculative doctor, schema, or status call; the root remains available
-    after the launching Turn.
-  - **AC-19:** `delegate run` accepts no Runner/model/effort override, and its
-    one-use Host capability binds the current Settings-selected Runner,
-    execution policy, capability ceiling, and configuration revision.
-  - **AC-31:** Delegation v1 accepts only `--input -`; the Host capability binds
-    the exact stdin bytes and normalized argv, and no task-input file, symlink,
-    or mutable path is opened.
+- **FR-2:** Delegation is a Bash-and-CLI Agent Session workflow.
+  - **AC-4:** The model catalog has no Agent/delegation/message tool or
+    Runner/model enum; run, send, and close remain Skill-guided CLI commands
+    through Bash.
+  - **AC-5:** Each initial or continued Turn uses one background Bash call,
+    bounded stdin, and no speculative doctor, schema, or status call; the root
+    remains available after admission.
+  - **AC-19:** `delegate run` and `delegate send` accept no
+    Runner/model/effort/access override. Their one-use Host capabilities bind the
+    current root, exact command/input, effective ceiling, configuration revision,
+    and either the Settings-selected new-Session policy or owned target Session.
+  - **AC-31:** Delegation v1 accepts task and message content only through
+    `--input -`; the Host capability binds the exact stdin bytes and normalized
+    argv, and no input file, symlink, or mutable path is opened.
   - **AC-34:** With Delegation enabled, root Bash resolves the packaged
-    `delegate` wrapper and completes one capability-attested internal run; with
-    it disabled or inside a Runner, the bin path and launch capability are absent.
+    `delegate` wrapper and completes capability-attested internal run, send, and
+    close paths; with it disabled or inside a Runner, the bin path and all
+    command capabilities are absent.
 - **FR-3:** User policy fails closed.
   - **AC-6:** Detection never enables an external Runner.
-  - **AC-7:** An invalid explicit Runner/model starts no delegated session,
+  - **AC-7:** An invalid configured Runner/model starts no delegated session,
     Provider call, harness, or worktree and never falls back, retries, or creates
     a replacement task; any already-created generic Tool Task settles with the
     actionable admission error.
   - **AC-35:** Direct invocation by a user shell or external Agent without a
     Host-issued root Tool capability refuses before Runner, worktree, credential,
-    or Provider activity; no external harness can treat `delegate` as an inbound
-    Tenon Agent API.
+    Provider, Session mutation, message, or closure activity; no external harness
+    can treat `delegate` as an inbound Tenon Agent API.
 - **FR-4:** Tenon-managed delegation depth is one.
-  - **AC-8:** Only an attested root Bash call can run `delegate`.
+  - **AC-8:** Only an attested root Bash call can execute a state-changing
+    `delegate` command.
   - **AC-9:** Internal and external Runners receive no Tenon launch capability
-    or admitted Tenon/native-harness Agent tool; known harness executables are
-    removed from child `PATH`, while arbitrary absolute executables remain
-    explicitly outside the structural guarantee.
+    or Session-command capability and no admitted Tenon/native-harness Agent
+    tool; known harness executables are removed from child `PATH`, while
+    arbitrary absolute executables remain explicitly outside the structural
+    guarantee.
   - **AC-20:** Per-Thread running plus queued delegation is bounded at admission,
     so a root cannot replace nesting with an unbounded flat task burst.
 - **FR-5:** Runners share one truthful result contract.
   - **AC-10:** Internal and external runs normalize terminal output, partial
-    evidence, errors, artifacts, cancellation, and factual usage.
+    evidence, errors, artifacts, cancellation, Session/Turn identity, committed
+    root-message sequence, continuation availability, and factual usage.
   - **AC-11:** Each external Adapter proves a version-bound closed mapping from
     the effective parent capability ceiling to a native subset and refuses any
     request with an unclassified or non-disableable native capability.
@@ -791,15 +973,17 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
     failures as discovered API-key, account, Provider, or cross-application
     capacity.
 - **FR-7:** Writable work is isolated.
-  - **AC-14:** Writable runs start only in a dedicated worktree; changed or
-    ambiguous state is retained and never integrated automatically.
+  - **AC-14:** Writable Sessions start only in one dedicated worktree reused by
+    all their Turns; changed or ambiguous state is retained and never integrated
+    automatically.
   - **AC-24:** Every changed worktree returns a CLI-computed base revision,
     changed-file manifest, patch, path, and verification evidence; the root
     distinguishes Runner success from successful integration and verifies any
     applied result before claiming completion.
 - **FR-8:** The Subagent product and generic isolated-Skill mode are retired.
-  - **AC-15:** Live guards find no spawn/message schema, Agent-ID routing,
-    nested-generation authority, Role-backed Agent type, or Agent-tree UI.
+  - **AC-15:** Live guards find no model-visible spawn/message schema, Agent-ID
+    or peer/main routing, nested-generation authority, Role-backed Agent type, or
+    Agent-tree UI; only root-owned Session commands remain behind Bash.
   - **AC-16:** `general`, `explore`, and `plan` remain enforced Task Profiles
     without Runner, model, persona, or nesting policy.
   - **AC-28:** With Delegation off by default, the model catalog contains neither
@@ -817,6 +1001,36 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
   - **AC-18:** Missing usage remains unknown; a configured-local-limit fixture
     queues deterministically, while an observed remote rate-limit response
     remains a factual failed run and does not mutate scheduling policy.
+- **FR-10:** Delegated context is multi-Turn and root-controlled without restoring
+  the Subagent product.
+  - **AC-36:** `delegate run` creates one restricted hidden `delegation` Thread
+    owned directly by the invoking root. It reuses canonical Thread/Turn context
+    and compaction but is absent from Thread lists, navigation, memory,
+    cross-Thread references, user admission, and Agent-tree projections.
+  - **AC-37:** When `delegate send --task` reaches an active owned Session, the
+    Host durably acknowledges one ordered message and the Runner consumes it once
+    before a later model request; it never claims to alter an already in-flight
+    request or tool call.
+  - **AC-38:** When `delegate send --session` reaches an idle open Session, that
+    same background Bash call starts one new Tool Task and Turn with the existing
+    context, pinned Runner policy, and Session worktree rather than creating a
+    fresh Agent or rewriting a prior result.
+  - **AC-39:** A send racing Turn settlement is linearized to either the active
+    safe boundary or one continued Turn. Host/process restart reconstructs the
+    committed message sequence from Thread and binding truth without duplicate,
+    loss, or a second Session.
+  - **AC-40:** Failure, timeout, cancellation, loss, disabled Runner, invalid
+    model, foreign owner, stale revision, and closed Session produce explicit
+    blocked/refused outcomes. None silently retries, changes Runner/model, raises
+    authority, or resumes after user cancellation without a new user request.
+  - **AC-41:** Every Ready Runner proves sequential continuation and declares
+    whether active messages enter at an in-process safe boundary or only the next
+    Turn. ACP v1 maps queued context to a later `session/prompt`; absence of live
+    steering is reported rather than hidden.
+  - **AC-42:** Session bindings duplicate no transcript or Tool Task terminal
+    truth, idle Sessions hold no scheduler lease, writable Turns share one
+    Session worktree, close refuses active work, and 30 idle days closes the
+    Session under the defined Thread/task retention and deletion rules.
 
 ### Verification
 
@@ -826,7 +1040,10 @@ workspace writes and integration conflicts, a long video-like process, invalid
 model, local queue saturation, observed remote rate limits, user cancellation,
 malformed output, process loss, orderly Quit, restart, archive/delete, retention
 GC and quota pressure, attempted file/symlink input, partial artifacts,
-simultaneous completions, and a user Turn racing with completion delivery.
+simultaneous completions, a user Turn racing with completion delivery, active
+context steering, a message racing execution settlement, terminal continuation,
+Runner continuation limitations, Session close/idle expiry, and several
+corrections against one writable Session worktree.
 
 Generic tests cover supervisor identity, stdin, progress validation, status,
 process-group stop, exit races, receipt recovery, loss, ownership, artifact
@@ -839,21 +1056,26 @@ the real supervisor bundle across Host restart. Adversarial context fixtures mak
 stdout, progress, artifacts, and Runner text imitate a user message, approval,
 and system instruction without gaining authority.
 
-Delegation tests cover the always-background one-call path, Host-bound
-Settings-only Runner policy, attempted CLI overrides, model inheritance and
-invalidation, stdin digest binding and rejected file/symlink input, profiles,
-tool ceilings, local admission priority and bounds,
-unknown remote capacity, worktree evidence and integration outcomes, result
-normalization, ownership recovery, cancellation without takeover, and the exact
-one-level claim. Direct-name, child-`PATH`, and absolute-path fixtures prove that
-the Tenon capability and known harness routes are absent without pretending an
-arbitrary executable can be classified. Each external adapter adds
-version-bound probe, argv, closed-config, complete native capability-map,
-disabled native Agent features, access, stream, cancellation, and real-harness
-evidence. Delegate source/packaged resolver tests and a packaged app smoke verify
-the executable wrapper, runtime bundle, feature-gated root PATH, private launch
-capability environment, direct-invocation refusal, and one internal terminal
-envelope.
+Delegation tests cover the always-background per-Turn path, Host-bound
+Settings-only new-Session policy, attempted CLI overrides, pinned Session model
+policy and invalidation, stdin digest binding and rejected file/symlink input,
+profiles, tool ceilings, local admission priority and bounds, unknown remote
+capacity, Session-scoped worktree evidence and integration outcomes, result
+normalization, ownership recovery, cancellation without automatic takeover, and
+the exact one-level claim. Hidden-Thread tests cover list/navigation/memory/
+reference exclusion, canonical multi-Turn context, message provenance, ordered
+safe-boundary consumption, active/terminal races, blocked failure/cancellation,
+restart idempotence, foreign/stale/closed refusal, idle expiry, and no duplicated
+Session/Tool Task truth. Direct-name, child-`PATH`, and absolute-path fixtures
+prove that Tenon command capabilities and known harness routes are absent without
+pretending an arbitrary executable can be classified. Each external adapter adds
+version-bound probe, argv, closed-config, complete native capability map,
+disabled native Agent features, access, stream, cancellation, continuation mode,
+resume/close, and real-harness evidence. Delegate source/packaged resolver tests
+and a packaged app smoke verify the executable wrapper, runtime bundle,
+feature-gated root PATH, private command capability environment,
+direct-invocation refusal, one internal initial Turn, active send, idle
+continuation, and close.
 
 Retirement checks derive their queue from live symbols, schemas, fixtures,
 specs, and packaged resources. UI/E2E checks cover feature-off, settings,
@@ -869,15 +1091,20 @@ is folded into current specs in the same PR.
 ## Open questions
 
 None for generic Tool Tasks or internal delegation. External names do not
-guarantee admission: Claude and Codex are first candidates; ACP/OpenClaw remains
-deferred until its protocol proves access, cancellation, ephemeral settlement,
-native Agent-feature disablement, and a closed capability subset.
+guarantee admission: Claude and Codex are first candidates only if their live
+versions prove closed capabilities and local continuation. The ACP Runner adapter
+remains deferred until negotiation proves access, cancellation, sequential
+continuation, native Agent-feature disablement, and a closed capability subset;
+OpenClaw is one candidate ACP Agent, not a combined protocol/Runner concept. A
+public inbound Tenon ACP Agent endpoint remains a separate user-authorized
+ownership, billing, permission, and result-routing design.
 
 ## Implementation checklist
 
 - [ ] Re-run collision checks and open one scoped Draft PR per delivery unit.
 - [ ] Ship and verify generic background Tool Tasks without delegation concepts.
-- [ ] Freeze the real task corpus, then the CLI and result registry.
+- [ ] Freeze the real task corpus, then the CLI, Session-message, and result
+  registries.
 - [ ] Ship internal delegation and remove all Subagent and isolated-Skill
   surfaces in the same cutover.
 - [ ] Fold behavior into current specs and run retirement plus full verification.
