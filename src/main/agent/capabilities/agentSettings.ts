@@ -8,6 +8,7 @@ import type {
   CredentialInfo,
   Model,
   ModelsStoreEntry,
+  ModelsStoreOperationOptions,
   OAuthCredentials,
   SimpleStreamOptions,
 } from '@earendil-works/pi-ai';
@@ -1331,32 +1332,49 @@ function normalizeSecretFile(value: unknown): SecretFile {
   return { credentials: credentials && typeof credentials === 'object' ? credentials : {} };
 }
 
-async function readPiModelCatalog(providerId: string): Promise<ModelsStoreEntry | undefined> {
-  return (await readJsonOrDefault(
+async function readPiModelCatalog(
+  providerId: string,
+  options?: ModelsStoreOperationOptions,
+): Promise<ModelsStoreEntry | undefined> {
+  options?.signal?.throwIfAborted();
+  const entry = (await readJsonOrDefault(
     modelCatalogsPath(),
     { catalogs: {} },
     normalizeModelCatalogFile,
   )).catalogs[providerId];
+  options?.signal?.throwIfAborted();
+  return entry;
 }
 
-async function writePiModelCatalog(providerId: string, entry: ModelsStoreEntry): Promise<void> {
+async function writePiModelCatalog(
+  providerId: string,
+  entry: ModelsStoreEntry,
+  options?: ModelsStoreOperationOptions,
+): Promise<void> {
+  options?.signal?.throwIfAborted();
   await updateJsonFile(
     modelCatalogsPath(),
     { catalogs: {} },
     normalizeModelCatalogFile,
     (file) => {
+      options?.signal?.throwIfAborted();
       file.catalogs[providerId] = entry;
     },
     PRIVATE_JSON_FILE_OPTIONS,
   );
 }
 
-async function deletePiModelCatalog(providerId: string): Promise<void> {
+async function deletePiModelCatalog(
+  providerId: string,
+  options?: ModelsStoreOperationOptions,
+): Promise<void> {
+  options?.signal?.throwIfAborted();
   await updateJsonFile(
     modelCatalogsPath(),
     { catalogs: {} },
     normalizeModelCatalogFile,
     (file) => {
+      options?.signal?.throwIfAborted();
       delete file.catalogs[providerId];
     },
     PRIVATE_JSON_FILE_OPTIONS,

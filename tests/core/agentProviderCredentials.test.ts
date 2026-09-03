@@ -35,6 +35,7 @@ import {
   parseCcSwitchModelOptionId,
   setCcSwitchRegistryReaderForTests,
 } from '../../src/main/ccSwitchRegistry';
+import { withFileWriteLock } from '../../src/main/jsonFileStore';
 
 type StoredOAuth = { refresh: string; access: string; expires: number };
 
@@ -519,6 +520,7 @@ describe('provider credential resolver', () => {
 
   test('a newer dynamic catalog refresh supersedes an older late result', async () => {
     const providerId = 'dynamic-catalog-test';
+    const catalogPath = path.join(currentUserData, 'agent-model-catalogs.json');
     const catalogModel = (id: string) => ({
       id,
       name: id,
@@ -532,13 +534,16 @@ describe('provider credential resolver', () => {
       maxTokens: 8192,
     });
     let attempts = 0;
-    let markFirstStarted: (() => void) | undefined;
-    let releaseFirst: (() => void) | undefined;
-    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
-    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let markFirstFetched: (() => void) | undefined;
+    let markLockHeld: (() => void) | undefined;
+    let releaseWriteLock: (() => void) | undefined;
+    const firstFetched = new Promise<void>((resolve) => { markFirstFetched = resolve; });
+    const lockHeld = new Promise<void>((resolve) => { markLockHeld = resolve; });
+    const writeGate = new Promise<void>((resolve) => { releaseWriteLock = resolve; });
     await writeFile(secretPath(), JSON.stringify({
       credentials: { [providerId]: { type: 'api_key', key: 'dynamic-key' } },
     }));
+    await writeFile(catalogPath, JSON.stringify({ catalogs: {} }));
     piModels().setProvider(createProvider({
       id: providerId,
       name: 'Dynamic Catalog Test',
@@ -550,15 +555,14 @@ describe('provider credential resolver', () => {
             : undefined,
         },
       },
-      models: [],
+      models: [catalogModel('current-model')],
       fetchModels: async () => {
         attempts += 1;
         if (attempts === 1) {
-          markFirstStarted?.();
-          await firstGate;
+          markFirstFetched?.();
           return [catalogModel('stale-model')];
         }
-        return [catalogModel('current-model')];
+        throw new Error('newer catalog refresh failed');
       },
       api: {
         stream: () => { throw new Error('stream should not be called'); },
@@ -566,19 +570,31 @@ describe('provider credential resolver', () => {
       },
     }));
 
+    const blockedWrite = withFileWriteLock(catalogPath, async () => {
+      markLockHeld?.();
+      await writeGate;
+    });
+    await lockHeld;
     const staleRefresh = piRefreshProviderModels(providerId);
-    await firstStarted;
-    await piRefreshProviderModels(providerId);
-    await staleRefresh;
-    releaseFirst?.();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await firstFetched;
+    expect(await Promise.race([
+      staleRefresh.then(() => 'settled', () => 'settled'),
+      new Promise((resolve) => setTimeout(() => resolve('pending'), 0)),
+    ])).toBe('pending');
+    try {
+      await expect(piRefreshProviderModels(providerId)).rejects.toThrow('newer catalog refresh failed');
+      await staleRefresh;
+    } finally {
+      releaseWriteLock?.();
+      await blockedWrite;
+    }
 
     expect(piModels().getModels(providerId).map((model) => model.id)).toEqual(['current-model']);
     const persisted = JSON.parse(await readFile(
-      path.join(currentUserData, 'agent-model-catalogs.json'),
+      catalogPath,
       'utf8',
     )) as { catalogs: Record<string, { models: Array<{ id: string }> }> };
-    expect(persisted.catalogs[providerId]?.models.map((model) => model.id)).toEqual(['current-model']);
+    expect(persisted.catalogs[providerId]).toBeUndefined();
   });
 
   test('discovers a direct CC Switch registry provider without exposing its key', async () => {
