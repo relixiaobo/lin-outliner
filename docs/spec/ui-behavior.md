@@ -371,26 +371,27 @@ longer derives candidates from nodes carrying that deleted tag.
 
 ## View Toolbar
 
-The node-level view toolbar is the presentation control for Outline child rows
-and saved-search results. For ordinary nodes it lives above rendered rows when
-the node's `viewDef.toolbarVisible` flag is true. Search nodes instead always
-expose one compact icon-first result-view band. It keeps **Outline** (persisted
-as `list`) and **Table** visible as one two-option mode selector in both modes;
-the active option has `aria-pressed="true"`. Outline additionally provides name
-search, Display, Group, Sort, and Filter; Table additionally provides name search,
-Sort, and Filter, while Add field owns visible-column configuration. The compact
-variant has no summary chips, result count, card fill, or decorative dividers,
-and activating name search expands its inline input. Ordinary Outline reuses the
-same selector with icon-and-text options. The node context menu's **View as**
-subview remains a secondary text entry point rather than the only discoverable
-mode control. Table ignores a saved group rule without clearing it,
-so returning to Outline restores the same grouping. These controls all read and
-write `viewDef` child nodes
+The node-level `ViewToolbar` is the single presentation control for Outline child
+rows and saved-search results. Renderers provide its owner and view state but do
+not select a toolbar variant. Every Node uses the same full bar in Outline and
+Table with the same structure, labels, summaries, and interactions. The bar
+keeps **Outline** (persisted as `list`) and **Table** visible as one two-option
+mode selector followed by name search, Display, Group, Sort, summaries, and
+Filter; the active mode has `aria-pressed="true"`. Display configures title
+metadata in Outline and visible columns in Table, while Group applies to the
+current row projection in both modes. Activating name search expands its inline
+input. The node context menu's **View as** subview remains a secondary text
+entry point rather than the only discoverable mode control. These controls all
+read and write `viewDef` child nodes
 (`displayField`, `sortRule`, `filterRule`, plus the view's `groupField`) rather
 than storing renderer-local state.
-The ordinary **Show/Hide view toolbar** action is not offered for Search nodes:
-their result-view band is part of the Search surface rather than a conditional
-projection of `viewDef.toolbarVisible`.
+
+`viewDef.toolbarVisible` is an explicit override for every Node type. When it is
+unset, Search defaults to visible and ordinary Nodes default to hidden. The
+shared **Show/Hide view toolbar** action writes the explicit value in both
+directions. Opening a toolbar section from another action writes `true` only
+when the effective visibility is false, avoiding a redundant undo entry when the
+toolbar is already available.
 
 Nested toolbars render as part of the expanded child outline, not as detached
 cards. They remain logically inside the expanded child subtree, while their
@@ -421,7 +422,7 @@ Sort follows Tana's separate state model: an active sort rule is represented on
 the Sort button itself, with the icon direction matching the first rule. While
 the Sort popover is open, the toolbar can also show a `Sorted by ...` summary
 chip beside the active button as editable context. Closing the popover leaves the
-compact icon state, not a persistent text chip.
+directional icon state, not a persistent text chip.
 
 Toolbar popovers follow Tana's field-first shape. Display is a direct checklist
 of fields. Group is a single-select field list because it has no per-field
@@ -500,10 +501,13 @@ row, the row expands in the same interaction so the toolbar becomes visible
 immediately. The menu label follows visibility in the current row: a configured
 toolbar hidden behind a collapsed row still reads as **Show view toolbar**.
 
-Display fields render on each visible content/result row as quiet metadata under
-the row title and inline tags. The node name is excluded because the title already
-shows it. Empty fields are omitted per row, so adding a Display field does not
-create blank placeholders on rows that do not carry that value. The displayed
+Visible display fields with `title` or legacy unspecified placement render on
+each visible Outline content/result row as quiet metadata under the row title and
+inline tags. Fields defaulted or added from Table use `body` placement and remain
+columns without appearing beside Node descriptions after switching to Outline.
+Selecting such a field from Outline's Display menu promotes it to `title`. The
+node name is excluded because the title already shows it. Empty fields are omitted
+per row, so adding a Display field does not create blank placeholders. The displayed
 values use the same field resolution as sort, filter, and group, but system
 fields render through the display adapter rather than the raw sort/filter
 adapter: dates render as `YYYY-MM-DD`, Done renders as text, and reference-like
@@ -515,7 +519,8 @@ future display-layer enhancement, not a different view model.
 
 Table is another projection of a node's direct children, not a copied dataset.
 Each direct content or reference child becomes one record after the shared
-filter and ordered-sort projection. The owner's own field-entry rows remain
+filter, ordered-sort, and optional grouping projection. Group headings span the
+record columns and use the same saved `groupField` as Outline. The owner's own field-entry rows remain
 above the grid because they describe the owner rather than its records. A
 filtered-out disclosure remains recoverable inside the grid and reveals rows in
 the same columns. Search nodes can use the same renderer, but never receive a
@@ -574,9 +579,9 @@ supported system fields. Both custom groups follow Schema order; system fields
 keep their established order. A hidden display field therefore remains
 available; selecting it restores that same column with its width, order,
 view-local label, and row values intact. Table's Edit displayed fields action
-opens this same Add field surface rather than restoring a second toolbar row. The
-Outline Display popover provides the equivalent checkbox toggle and presents
-custom Fields before System fields. Selecting a definition with no display field
+opens the shared toolbar Display popover; the header's Add field remains the
+direct column-creation surface. The Display popover provides the same checkbox
+model in both modes and presents custom Fields before System fields. Selecting a definition with no display field
 creates only a display-field node. The new-field path accepts a localized field
 type and atomically creates the field definition plus its display-field node.
 None of these paths bulk-create empty values on records.
@@ -674,8 +679,9 @@ continues to own visible Outline-mode searches.
 Search nodes do not repeat query semantics as read-only chips beneath a title
 that already identifies the query. The title query action is the single entry
 point for inspecting and editing those semantics. While its editor is open, the
-root result-view controls temporarily yield to it; closing the editor restores
-the same compact band without changing view configuration. The editor provides
+root ViewToolbar temporarily yields to it when effectively visible; closing the
+editor returns to the configured visibility without changing view configuration.
+The editor provides
 the materialized result count and an explicit refresh action as editing context;
 the closed result view needs neither because visible searches refresh
 automatically through their single mode-specific owner.
@@ -687,20 +693,15 @@ read-only, and disables Reset and Save. Users may still inspect the visible
 projection, refresh materialized results, or close the editor, but a partial
 projection is never writable over the complete query.
 
-Outline and Table therefore use one shared compact result-view mechanism rather
-than stacking a query summary and a full toolbar. Outline aligns name search,
-Table, Display, Group, Sort, and Filter with the result content axis. Table aligns
-name search, Outline, Sort, and Filter with the Title label axis above the pure
-field header; Add field owns visible columns. The compact band has no frame,
-fill, summary chips, result count, manual refresh, or decorative separator. At
-narrow pane widths its controls keep the shared fixed control size and wrap as
-complete units instead of shrinking or clipping.
-Each compact-control tooltip anchors to the control that currently owns hover or
-keyboard focus, including after the controls wrap. Moving directly between
-controls remeasures the new label's intrinsic width, so a short tooltip never
-inherits the width or location of the previous control. The Outline/Table
-segments instead use their accessible names and native delayed titles, avoiding
-an immediate custom overlay over the Table header or adjacent content.
+Search Outline and Table therefore use the same ViewToolbar as ordinary Nodes
+rather than stacking a query summary and a second Search-specific control band.
+Both modes keep Outline/Table, name search, Display, Group, Sort, summaries, and
+Filter in the same order. At narrow pane widths controls keep the shared fixed
+control size and wrap as complete units instead of shrinking or clipping. Each
+custom tooltip anchors to the control that currently owns hover or keyboard
+focus, including after controls wrap. Moving directly between controls
+remeasures the new label's intrinsic width, so a short tooltip never inherits the
+width or location of the previous control.
 
 ## NodePanel References Footer
 
@@ -905,7 +906,7 @@ transaction so undo/redo, projection, and asset reachability stay coherent.
 | Drop files on an outliner row | Prevent browser navigation, snapshot every regular `File` during the event, and show the normal neutral insertion guide. The top/middle/bottom thirds preserve before/inside/after tree placement. Each successful admission creates an ordinary Node plus one managed Source in original order; an empty target row retains its identity for the first success, later files become siblings, and a failed file creates no dangling Node. |
 | Paste files into an outliner row | A real clipboard `File` payload wins over companion display text. Pure image, mixed, and non-image clips all use the managed Source producer. On an empty row the first success retains row identity; on a non-empty row resources become ordered siblings after it. Successful siblings survive an independent failure. |
 | `/attachment` or `/image` on an empty row | Remove the trigger, open the native picker, and create ordinary managed Source-backed Nodes at that position. The task-oriented command name does not choose a Node type. Cancel leaves the row empty. |
-| Source-backed row | Render exactly like any ordinary content Node: editable RichText, normal neutral bullet, inline tags, references, description, selection, movement, Enter/Tab/Backspace, paste, and `#` behavior. No file-type bullet, read-only filename editor, inline image replacement, or hidden keyboard anchor exists. Its visible order matches Tana: the selected Source preview appears above the owner title/content, followed by the ordinary URI field. The preview aligns with the owner content column, and the Outline composition owns one compact preview-to-title gap instead of accumulating the shared preview body's standalone margin. While visible, the same ordinary marker sits in the rail beside the preview's upper edge, the title uses an empty leading slot, and the expanded guide starts below that marker and continues through the composition to its final visible descendant without blank frames during preview resize or optimistic insertion. Selecting the owner paints one uninterrupted neutral frame across the preview and title/content composition; the ordinary URI field stays outside that owner frame, preview pixels and controls stay above its paint plane, and no selection state changes layout or hit testing. Ordinary owner re-renders reuse a ready preview when the target's semantic identity is unchanged, so focus and structural edits never collapse its height to a loading state. The ordinary disclosure chevron follows normal owner-row hover visibility, reflects only authored content children, and collapses or expands those children without changing preview visibility; the bullet opens the normal Node page. Preview visibility is controlled independently by preview chrome and URI affordances. Enter on the URI field name uses the ordinary optimistic sibling path: the new editable Node and focus appear before Runtime settlement, then reconcile in place. A pending sibling does not reveal an additional trailing draft; only materializing a real trailing draft advances the next one, so Runtime settlement never removes a transient extra row. |
+| Source-backed row | Render exactly like any ordinary content Node: editable RichText, normal neutral bullet, inline tags, references, description, selection, movement, Enter/Tab/Backspace, paste, and `#` behavior. No file-type bullet, read-only filename editor, inline image replacement, or hidden keyboard anchor exists. Its visible order matches Tana: the selected Source preview appears above the owner title/content, followed by the ordinary URI field. The preview aligns with the owner content column, and the Outline composition owns one compact preview-to-title gap instead of accumulating the shared preview body's standalone margin. While visible, the same ordinary marker sits in the rail beside the preview's upper edge, the title uses an empty leading slot, and the expanded guide starts below that marker and continues through the composition to its final visible descendant without blank frames during preview resize or optimistic insertion. Selecting the owner paints one uninterrupted neutral frame across the preview and title/content composition; the ordinary URI field stays outside that owner frame, preview pixels and controls stay above its paint plane, and no selection state changes layout or hit testing. Ordinary owner re-renders reuse a ready preview when the target's semantic identity is unchanged, so focus and structural edits never collapse its height to a loading state. The ordinary disclosure chevron follows normal owner-row hover visibility, reflects every visible child row including field entries, and collapses or expands those children without changing preview visibility; the bullet opens the normal Node page. Content insertion separately targets ordinary content children, so field-only parents remain expandable without placing new content inside a field. Preview visibility is controlled independently by preview chrome and URI affordances. Enter on the URI field name uses the ordinary optimistic sibling path: the new editable Node and focus appear before Runtime settlement, then reconcile in place. A pending sibling does not reveal an additional trailing draft; only materializing a real trailing draft advances the next one, so Runtime settlement never removes a transient extra row. |
 | URI management | The URI field uses the same field row, value editor, responsive layout, URI validation, trailing input, ordering, tree commands, copy/move behavior, and entry deletion as other URI fields. Its exact editable values remain the authoritative management surface. Every URI value remains an ordinary field value Node with its normal bullet and disclosure; open and preview affordances immediately follow the final value text in the editor's ordinary inline flow without replacing that Node chrome, pinning controls to the row edge, or reserving a separate row. The owner Node's ordinary bullet and chevron also remain unchanged. At narrow pane widths, the URI field follows the shared field layout; when its value column is narrower than one control, the inline controls use the remaining row gutter instead of consuming the text measure or moving to a separate line. The owner preview compacts mature controls without clipping. The Node-page compact preview toolbar exposes the selected value's Source actions: Link File, Replace with File, Copy URI, retry, clear, remove, and exact-file authorization/revocation where applicable. Link File and Replace with File are explicit atomic Host workflows: the picker grant settles before the field mutation, and failed mutation releases a newly orphaned grant. Selection uses stable value identity, survives reorder, never skips an explicitly selected unavailable value, and falls back to the first surviving value only when its identity disappears. Removing the final value removes the URI entry and leaves the owner unchanged; adding the first later value selects and shows it. |
 | Edited or broken URI | A text edit commits exactly what the user entered and immediately derives presentation from that value. A syntactically valid edited YouTube or web URL loads the new address. Invalid, denied, unsupported, missing, or temporarily unavailable text stays durable and editable and shows its local reason; preview failure never rolls back or locks the field. |
 | URI preview state | On the drilled root Node page, the selected URI preview and compact toolbar render before editable title/content. In an ordinary Outline, the same selected preview renders without a duplicate toolbar above the owner title/content, with the ordinary URI field below it; this matches Tana's preview → title/content → URI order. It aligns with the owner content column, is not a child row, and does not alter the ordinary marker. The Node-page toolbar labels a single value directly and gives multiple values an ordered compact switcher. When no renderer-local visibility choice exists, managed assets, linked files, and recognized YouTube URLs start visible while generic webpages start hidden; an explicit Show or Hide choice then takes precedence over that Source-derived default and persists with selection in renderer-local view state. Every Outline presentation uses one shared upper-right **More + Close** group inset inside the preview boundary: More owns Source/file actions and Close owns **Hide preview**. On hover-capable pointers the mounted group is invisible and non-hit-testable at rest, then reveals when the preview body is hovered, the group contains keyboard focus, or its menu is open; coarse and non-hover pointers keep it visible. Reveal changes opacity only and never changes preview geometry. The group stays boxless in every pointer state; hover, active, and open change only icon intensity, keyboard focus keeps the ordinary circular ring, and each complete 24px control box sits beyond the shared document-page inset rather than straddling its inner edge. Tiny images keep their intrinsic pixels while reserving only enough transparent preview geometry to contain the corner group. The More menu opens below its trigger and prefers the visible preview as its four-edge boundary; a preview that cannot provide the menu's minimum usable width and height falls back to the owning pane, then to the viewport when no pane exists. Type-specific bodies keep only content controls such as playback or document Expand/Collapse. The selected URI value exposes no duplicate hide control while shown and exposes **Show preview** when hidden. Every other URI value exposes **Preview this Source** on its ordinary field row. Showing or switching atomically selects the requested value and restores its preview without moving focus into interactive media. Selected value, preview visibility, document reader state, and child disclosure are independent. Adding another value preserves them, editing a visible selection reloads it in place, editing another value does not select it, and editing while hidden remains hidden. Stale resolution from a previous selection cannot replace the current body. Invalid, denied, unavailable, or unsupported values keep their exact field text and show their own reason and recovery. Table and calendar projections render ordered URI values without rich previews. |

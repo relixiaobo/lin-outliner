@@ -897,7 +897,6 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
                     : prev
                 ));
               }}
-              variant={node.type === 'search' ? 'compact' : 'bar'}
             />
           </div>
         );

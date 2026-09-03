@@ -12,7 +12,7 @@ test.describe('search query builder', () => {
       .click();
 
     await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Recents');
-    const controls = page.locator('.view-toolbar.is-compact-controls');
+    const controls = page.locator('.view-toolbar');
     await expect(controls).toBeVisible();
     await expect(page.locator('.search-query-summary-bar')).toHaveCount(0);
     await page.getByRole('button', { name: 'Show query' }).click();
@@ -27,16 +27,38 @@ test.describe('search query builder', () => {
     await expect(builder.getByRole('button', { name: 'Save' })).toBeDisabled();
     await expect(page.locator('[data-node-id="recents-query"]')).toHaveCount(0);
     await builder.getByRole('button', { name: 'Close query', exact: true }).click();
-    await expect(page.locator('.view-toolbar.is-compact-controls')).toBeVisible();
+    await expect(page.locator('.view-toolbar')).toBeVisible();
   });
 
-  test('search outline uses one compact result-view control band', async ({ page }) => {
+  test('lets a search hide and restore the shared toolbar explicitly', async ({ page }) => {
+    await page.locator('.sidebar-primary-nav')
+      .getByRole('button', { name: 'Recents', exact: true })
+      .click();
+
+    const title = page.locator('.panel-title-editor').first();
+    const toolbar = page.locator('.view-toolbar');
+    await expect(toolbar).toBeVisible();
+
+    await title.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Hide view toolbar', exact: true }).click();
+    await expect(toolbar).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Show query', exact: true }).click();
+    await page.getByRole('button', { name: 'Close query', exact: true }).click();
+    await expect(toolbar).toHaveCount(0);
+
+    await title.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Show view toolbar', exact: true }).click();
+    await expect(toolbar).toBeVisible();
+  });
+
+  test('search outline and table use the same full view toolbar', async ({ page }) => {
     const originalViewport = page.viewportSize()!;
     await page.locator('.sidebar-primary-nav')
       .getByRole('button', { name: 'Recents', exact: true })
       .click();
 
-    const controls = page.locator('.view-toolbar.is-compact-controls');
+    const controls = page.locator('.view-toolbar');
     const firstResult = page.locator('.outliner-flat-flow-row .row').first();
     const viewMode = controls.getByRole('group', { name: 'View mode', exact: true });
     const outlineMode = viewMode.getByRole('button', { name: 'Outline', exact: true });
@@ -51,8 +73,12 @@ test.describe('search query builder', () => {
     await expect(controls.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
-    await expect(viewMode).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     await expect(viewMode).not.toHaveCSS('box-shadow', 'none');
+    const outlineButtonLabels = await controls.locator(
+      '.view-toolbar-mode-button, .view-toolbar-button-row > .view-toolbar-pill',
+    ).evaluateAll((buttons) => (
+      buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '')
+    ));
 
     const geometry = await controls.evaluate((toolbar) => {
       const rect = toolbar.getBoundingClientRect();
@@ -71,8 +97,8 @@ test.describe('search query builder', () => {
       };
     });
     expect(geometry.background).toBe('rgba(0, 0, 0, 0)');
-    expect(geometry.pseudoBefore).toBe('none');
-    expect(geometry.pseudoAfter).toBe('none');
+    expect(geometry.pseudoBefore).not.toBe('none');
+    expect(geometry.pseudoAfter).not.toBe('none');
     expect(geometry.left).toBeCloseTo(geometry.firstContentLeft, 1);
     expect(geometry.left).toBeCloseTo(geometry.scopeLeft + geometry.resolvedMarginLeft, 1);
     expect(await controls.evaluate((toolbar, result) => (
@@ -105,8 +131,10 @@ test.describe('search query builder', () => {
     expect(shortTooltipWidth).toBeLessThan(tooltipGeometry.tooltipWidth);
 
     await outlineMode.hover();
-    await expect(outlineMode).toHaveAttribute('title', 'Outline');
-    await expect(tableMode).toHaveAttribute('title', 'Table');
+    await expect(outlineMode).toContainText('Outline');
+    await expect(tableMode).toContainText('Table');
+    await expect(outlineMode).not.toHaveAttribute('title');
+    await expect(tableMode).not.toHaveAttribute('title');
     await expect(tooltip).toHaveCount(0);
 
     await page.setViewportSize({ width: 760, height: originalViewport.height });
@@ -115,13 +143,18 @@ test.describe('search query builder', () => {
       const controlSize = Number.parseFloat(getComputedStyle(document.documentElement)
         .getPropertyValue('--control-size-xl'));
       const contentStart = Number.parseFloat(getComputedStyle(toolbar).marginLeft);
-      scope.style.width = `calc(3 * var(--control-size-xl) + ${contentStart}px)`;
+      const modeWidth = toolbar.querySelector<HTMLElement>('.view-toolbar-mode')!.getBoundingClientRect().width;
+      scope.style.width = `${modeWidth + controlSize + contentStart}px`;
       const toolbarRect = toolbar.getBoundingClientRect();
       const controls = [...toolbar.querySelectorAll<HTMLElement>(
         '.view-toolbar-button-row > .view-toolbar-pill, .view-toolbar-mode-button',
       )];
       const modeButtons = [...toolbar.querySelectorAll<HTMLElement>('.view-toolbar-mode-button')];
       const modeGroup = toolbar.querySelector<HTMLElement>('.view-toolbar-mode')!;
+      const modeButtonTop = modeButtons[0]!.getBoundingClientRect().top;
+      const modeButtonsWidth = modeButtons.reduce((width, button) => (
+        width + button.getBoundingClientRect().width
+      ), 0);
       const geometry = {
         controlsContained: controls.every((control) => {
           const rect = control.getBoundingClientRect();
@@ -130,8 +163,8 @@ test.describe('search query builder', () => {
             && rect.width >= controlSize - 0.5;
         }),
         modeGroupIntact: modeButtons.every((button) => (
-          Math.abs(button.getBoundingClientRect().top - modeGroup.getBoundingClientRect().top) < 0.5
-        )) && modeGroup.getBoundingClientRect().width >= (2 * controlSize) - 0.5,
+          Math.abs(button.getBoundingClientRect().top - modeButtonTop) < 0.5
+        )) && modeGroup.getBoundingClientRect().width >= modeButtonsWidth - 0.5,
         overflowFree: toolbar.scrollWidth <= toolbar.clientWidth + 1,
         wrapped: toolbarRect.height > controlSize + 0.5,
       };
@@ -147,11 +180,18 @@ test.describe('search query builder', () => {
     await page.setViewportSize(originalViewport);
 
     await tableMode.click();
-    const tableControls = page.locator('.outliner-table-scope > .view-toolbar.is-compact-controls');
+    const tableControls = page.locator('.outliner-table-scope > .view-toolbar');
     const tableViewMode = tableControls.getByRole('group', { name: 'View mode', exact: true });
     await expect(tableControls).toBeVisible();
     await expect(tableViewMode.getByRole('button', { name: 'Outline', exact: true })).toHaveAttribute('aria-pressed', 'false');
     await expect(tableViewMode.getByRole('button', { name: 'Table', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    const tableButtonLabels = await tableControls.locator(
+      '.view-toolbar-mode-button, .view-toolbar-button-row > .view-toolbar-pill',
+    ).evaluateAll((buttons) => (
+      buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '')
+    ));
+    expect(tableButtonLabels).toEqual(outlineButtonLabels);
+    await expect(tableControls.getByRole('button', { name: '1 displayed field', exact: true })).toBeVisible();
   });
 });
 

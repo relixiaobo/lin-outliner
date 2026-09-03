@@ -57,6 +57,7 @@ import {
   fieldEntryForViewCell,
   hiddenFieldKey,
   readViewConfig,
+  visibleDisplayFieldsForView,
   viewDisplayValuesFor,
   viewFieldValuesFor,
 } from '../../src/renderer/ui/outliner/row-model';
@@ -547,7 +548,7 @@ describe('row interaction resolvers', () => {
     ]);
   });
 
-  test('keeps owner fields outside table rows and ignores saved grouping', () => {
+  test('keeps owner fields outside grouped table rows', () => {
     const parent = makeNode('parent', 'Parent', {
       children: ['view', 'owner-field', 'beta', 'alpha'],
     });
@@ -578,7 +579,9 @@ describe('row interaction resolvers', () => {
 
     expect(buildOutlinerRows(parent as any, byId)).toEqual([
       ownFieldRow('owner-field', 'owner-def'),
+      { id: 'group:parent:sys:name:alpha', type: 'group', label: 'Alpha' },
       { id: 'alpha', type: 'content' },
+      { id: 'group:parent:sys:name:beta', type: 'group', label: 'Beta' },
       { id: 'beta', type: 'content' },
     ]);
   });
@@ -1013,6 +1016,7 @@ describe('row interaction resolvers', () => {
         parentId: 'view',
         displayField: TAGS_FIELD,
         displayVisible: true,
+        displayPlacement: 'body',
       })],
       ['display-created', makeNode('display-created', '', {
         type: 'displayField',
@@ -1051,10 +1055,21 @@ describe('row interaction resolvers', () => {
 
     const view = readViewConfig(parent as any, byId);
 
+    expect(visibleDisplayFieldsForView(view).map((field) => field.id)).toEqual([
+      'display-status',
+      'display-created',
+      'display-empty',
+    ]);
     expect(viewDisplayValuesFor(byId.get('task') as any, view, byId)).toEqual([
       { id: 'display-status', field: 'status-def', label: 'Status', values: ['In progress'] },
-      { id: 'display-tags', field: TAGS_FIELD, label: 'Tags', values: ['project'] },
       { id: 'display-created', field: CREATED_FIELD, label: 'Created time', values: ['2026-06-30'] },
+    ]);
+
+    expect(visibleDisplayFieldsForView({ ...view, viewMode: 'table' }).map((field) => field.id)).toEqual([
+      'display-status',
+      'display-tags',
+      'display-created',
+      'display-empty',
     ]);
   });
 

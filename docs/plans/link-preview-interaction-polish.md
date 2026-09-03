@@ -13,7 +13,7 @@ implementation steps do not ship separately.
   new preview target, or new persistence/protocol surface.
 - No change to ordinary inline-link paste, typed URLs, Source ordering, child
   disclosure, Table projection, or file-preview renderer coverage.
-- No redesign of the complete view-configuration toolbar.
+- No new view-configuration capability or persisted view node shape.
 
 ## Design
 
@@ -46,15 +46,30 @@ The Source field remains an ordinary child field row outside that owner frame.
 The frame uses existing selection tokens, does not tint interactive media, does
 not intercept input, and does not alter layout.
 
-### Saved-search view mode control
+### View toolbar identity
 
-The compact Outline/Table control remains one visible two-option segmented
-control. Its pill track and neutral selected segment make the grouping and active
-mode legible without adding text to the dense result band. Each compact mode
-button keeps its accessible name and uses a native delayed title instead of an
-immediate custom tooltip that can cover adjacent content. The same component
-remains present in Outline and Table modes and keeps its current
-accessible names and pressed states.
+`ViewToolbar` owns its presentation and capability decisions. Renderers provide
+the owner and view state but cannot select an independent toolbar variant.
+Every Node therefore uses the same full bar, control order, labels, summaries,
+and interactions across Outline and Table. The Outline/Table control remains one
+visible two-option segmented control whose pill track and neutral selected
+segment make the grouping and active mode legible. Node type affects only the
+unset visibility default: Search starts open and ordinary Nodes start closed.
+An explicit `viewDef.toolbarVisible` value wins in both directions, so every Node
+can use the same Show/Hide action.
+
+Display placement distinguishes the two existing surfaces without adding a new
+state model. A field explicitly added from Outline uses `title`; fields defaulted
+or added while the owner is in Table use `body`. Table columns consume all
+visible display fields, while Outline title metadata consumes only `title` and
+legacy unspecified placements. Selecting a Table-only field from Outline's
+Display menu promotes it to `title`. Switching view mode therefore does not make
+Table column defaults appear like Node description content.
+
+Node disclosure uses the complete visible child scope, including field entries.
+Content insertion keeps a separate content-only child scope so Enter placement
+never targets a field entry. Source preview remains outside both scopes and
+therefore independent of disclosure.
 
 Table Title and field headers reuse the row leading grid instead of maintaining
 separate padding. A reserved chevron slot precedes each kind icon, aligning
@@ -84,8 +99,14 @@ unclaimed Electron/DOM focus loss self-heals without a direct DOM focus shortcut
 - Selecting a preview-bearing owner paints one stable neutral frame across its
   preview and title/content without covering its Source field or changing media
   hit testing.
-- The compact Outline/Table selector has one visible pill track, one neutral
-  selected segment, and no immediate custom tooltip over adjacent content.
+- Every Node toolbar keeps one full-bar structure, control order, labels,
+  summaries, and interaction model across Outline and Table.
+- Table-defaulted and Table-added columns do not render as Outline title metadata;
+  an explicit Outline Display selection does.
+- A Node whose only children are field entries exposes the parent marker and
+  disclosure state, while content insertion remains ordered after field entries.
+- The Outline/Table selector has one visible pill track and one neutral selected
+  segment.
 - Table Title and field header icons align with row bullets, labels align with
   row text, and a stable chevron slot precedes both.
 - Tab and Shift+Tab preserve the editing caret through optimistic relocation,

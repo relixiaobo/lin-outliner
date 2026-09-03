@@ -2159,6 +2159,27 @@ describe('Core', () => {
     expect(core.state().nodes[hiddenDisplayId]).toMatchObject({ displayVisible: false });
   });
 
+  test('uses display placement to separate table columns from Outline title metadata', () => {
+    const core = Core.new();
+    const owner = mustFocus(core.createNode(core.projection().todayId, null, 'Project'));
+
+    core.setViewMode(owner, 'table');
+    const displayId = mustFocus(core.addDisplayField(owner, DONE_FIELD));
+    expect(core.state().nodes[displayId]).toMatchObject({
+      displayField: DONE_FIELD,
+      displayPlacement: 'body',
+      displayVisible: true,
+    });
+
+    core.setViewMode(owner, 'list');
+    expect(mustFocus(core.addDisplayField(owner, DONE_FIELD))).toBe(displayId);
+    expect(core.state().nodes[displayId]).toMatchObject({
+      displayField: DONE_FIELD,
+      displayPlacement: 'title',
+      displayVisible: true,
+    });
+  });
+
   test('defaults separate table columns for same-name field definitions', () => {
     const core = Core.new();
     const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Project'));

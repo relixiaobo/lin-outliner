@@ -333,6 +333,26 @@ test.describe('definition configuration parity', () => {
     await expect(row(page, ids.beta).locator('.view-display-fields')).toHaveCount(0);
   });
 
+  test('field-only Nodes keep parent disclosure state', async ({ page }) => {
+    await invokeDocumentCommand(page, 'create_inline_field', {
+      parentId: ids.alpha,
+      index: null,
+      name: 'Status',
+      fieldType: 'plain',
+    });
+
+    const alpha = row(page, ids.alpha);
+    const marker = alpha.locator(':scope > .row > .row-leading .row-bullet-shape.content');
+    await expect(marker).toHaveClass(/has-children/);
+    await expect(marker).toHaveClass(/collapsed/);
+    await expect(alpha).toHaveAttribute('aria-expanded', 'false');
+
+    await alpha.hover();
+    await alpha.locator(':scope > .row > .row-leading .row-chevron-button').click();
+    await expect(alpha).toHaveAttribute('aria-expanded', 'true');
+    await expect(marker).toHaveClass(/expanded/);
+  });
+
   test('view toolbar group state is represented by the inline chip only', async ({ page }) => {
     await showViewToolbar(page, ids.today);
     await invokeDocumentCommand(page, 'set_group_field', { nodeId: ids.today, field: 'sys:done' });

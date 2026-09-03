@@ -306,21 +306,11 @@
 .view-toolbar-mode {
   display: inline-flex;
   min-height: var(--control-size-xl);
+  flex: 0 0 auto;
   align-items: center;
   border-radius: var(--radius-pill);
   box-shadow: var(--segmented-track-shadow);
   padding: var(--space-hairline);
-}
-
-.view-toolbar-mode.is-compact {
-  width: calc(2 * var(--control-size-xl));
-  min-height: var(--control-size-xl);
-  flex: 0 0 calc(2 * var(--control-size-xl));
-  gap: 0;
-  border-radius: var(--radius-pill);
-  background: var(--fill-1);
-  box-shadow: var(--segmented-track-shadow);
-  padding: 0;
 }
 
 .view-toolbar-mode-button {
@@ -332,22 +322,6 @@
   color: var(--text-secondary);
   font-size: var(--font-ui-sm);
   padding: 0 var(--space-3);
-}
-
-.view-toolbar-mode.is-compact .view-toolbar-mode-button {
-  width: var(--control-size-xl);
-  height: var(--control-size-xl);
-  min-height: var(--control-size-xl);
-  gap: 0;
-  padding: 0;
-}
-
-.view-toolbar-mode.is-compact .view-toolbar-mode-button:first-child {
-  border-radius: var(--radius-pill) var(--radius-xs) var(--radius-xs) var(--radius-pill);
-}
-
-.view-toolbar-mode.is-compact .view-toolbar-mode-button:last-child {
-  border-radius: var(--radius-xs) var(--radius-pill) var(--radius-pill) var(--radius-xs);
 }
 
 .view-toolbar-mode-button:hover {
@@ -379,29 +353,7 @@
   margin: var(--space-2) 0 var(--space-6);
 }
 
-.view-toolbar.is-compact-controls {
-  width: 100%;
-  max-width: calc(100% - var(--outliner-row-content-start));
-  padding: 0;
-}
-
-.view-toolbar.is-compact-controls::before,
-.view-toolbar.is-compact-controls::after {
-  display: none;
-}
-
-.view-toolbar.is-compact-controls > .view-toolbar-button-row {
-  min-height: var(--control-size-xl);
-  align-content: flex-start;
-  flex-wrap: wrap;
-  gap: 0;
-}
-
-.view-toolbar.is-compact-controls .view-toolbar-pill {
-  flex: 0 0 var(--control-size-xl);
-}
-
-.outliner-table-scope > .view-toolbar.is-compact-controls {
+.outliner-table-scope > .view-toolbar {
   max-width: calc(100% - var(--space-3));
   margin: 0 0 var(--space-2) var(--space-3);
 }
@@ -723,17 +675,23 @@ button.outliner-table-column-kind:focus-visible {
   min-height: var(--field-row-min-height);
 }
 
-.outliner-table-filtered-row {
+.outliner-table-filtered-row,
+.outliner-table-group-row {
   display: grid;
   width: max(100%, var(--table-min-width));
   min-width: var(--table-min-width);
   grid-template-columns: var(--table-columns);
 }
 
-.outliner-table-filtered-cell {
+.outliner-table-filtered-cell,
+.outliner-table-group-cell {
   min-width: 0;
   grid-column: 1 / -2;
   border-bottom: 1px solid var(--separator);
+}
+
+.outliner-table-group-cell .view-group-heading {
+  margin-left: var(--space-4);
 }
 
 .outliner-table-filtered-cell .filtered-out-heading {
@@ -1657,12 +1615,12 @@ button.outliner-table-column-kind:focus-visible {
 /* A Source preview and its owner title are one selectable Node composition.
    Two adjoining paint planes retain the direct-row DOM required by editing and
    drag logic while presenting one uninterrupted frame around that composition. */
-.row-wrap:has(> .row.selected:not(.drop-before):not(.drop-after))
+.row-wrap:has(> .outline-source-preview-row > .outline-source-preview)
   > .outline-source-preview-row {
   isolation: isolate;
 }
 
-.row-wrap:has(> .row.selected:not(.drop-before):not(.drop-after))
+.row-wrap:has(> .outline-source-preview-row > .outline-source-preview)
   > .outline-source-preview-row::before {
   position: absolute;
   top: 1px;
@@ -1670,23 +1628,33 @@ button.outliner-table-column-kind:focus-visible {
   bottom: 0;
   left: var(--row-selection-start);
   z-index: 0;
-  border: 1px solid color-mix(in srgb, var(--row-selection-border) 34%, transparent);
-  border-bottom: 0;
-  border-radius: var(--radius-row) var(--radius-row) 0 0;
-  background: var(--row-selected);
   content: "";
   pointer-events: none;
 }
 
-.row-wrap:has(> .row.selected:not(.drop-before):not(.drop-after))
+.row-wrap:has(
+  > .outline-source-preview-row > .outline-source-preview
+):has(> .row.selected:not(.drop-before):not(.drop-after))
+  > .outline-source-preview-row::before {
+  border: 1px solid color-mix(in srgb, var(--row-selection-border) 34%, transparent);
+  border-bottom: 0;
+  border-radius: var(--radius-row) var(--radius-row) 0 0;
+  background: var(--row-selected);
+}
+
+.row-wrap:has(> .outline-source-preview-row > .outline-source-preview)
   > .outline-source-preview-row > * {
   position: relative;
   z-index: 1;
 }
 
-.row-wrap:has(> .outline-source-preview-row)
-  > .row.selected:not(.drop-before):not(.drop-after)::before {
+.row-wrap:has(> .outline-source-preview-row > .outline-source-preview)
+  > .row:not(.drop-before):not(.drop-after)::before {
   top: 0;
+}
+
+.row-wrap:has(> .outline-source-preview-row > .outline-source-preview)
+  > .row.selected:not(.drop-before):not(.drop-after)::before {
   border-top: 0;
   border-radius: 0 0 var(--radius-row) var(--radius-row);
 }

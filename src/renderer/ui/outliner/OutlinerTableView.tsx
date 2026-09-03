@@ -104,7 +104,7 @@ import {
 import { fieldSlotId, type NodeFieldSlot } from '../../../core/fieldSlots';
 import { useTrailingDraftId } from './draftRow';
 import { SystemFieldValue } from './SystemFieldValue';
-import { FilteredOutHeading, HiddenFieldReveal } from './OutlinerViewChrome';
+import { FilteredOutHeading, HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import { OutlinerEmptyState } from './OutlinerEmptyState';
 import {
   nearestTableCell,
@@ -155,6 +155,12 @@ type TableRenderRow =
       id: string;
       count: number;
       expanded: boolean;
+    }
+  | {
+      kind: 'groupHeading';
+      key: string;
+      id: string;
+      label: string;
     };
 
 export interface OutlinerTableViewProps {
@@ -332,6 +338,10 @@ function tableRenderRows(
 ): TableRenderRow[] {
   const result: TableRenderRow[] = [];
   for (const row of rows) {
+    if (row.type === 'group') {
+      result.push({ kind: 'groupHeading', key: `group:${row.id}`, id: row.id, label: row.label });
+      continue;
+    }
     if (row.type === 'content') {
       result.push({
         kind: 'data',
@@ -1089,6 +1099,15 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
 
   const renderTableRow = (row: TableRenderRow, index: number) => {
     if (row.kind === 'data') return renderDataRow(row, index);
+    if (row.kind === 'groupHeading') {
+      return (
+        <div className="outliner-table-group-row" role="row" aria-rowindex={index + 2}>
+          <div className="outliner-table-group-cell" role="gridcell" aria-colindex={1}>
+            <ViewGroupHeading label={row.label} />
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="outliner-table-filtered-row" role="row" aria-rowindex={index + 2}>
         <div className="outliner-table-filtered-cell" role="gridcell" aria-colindex={1}>
@@ -1123,11 +1142,8 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
           view={view}
           index={props.index}
           run={props.run}
-          dropdownRequest={props.ui.toolbarDropdownRequest?.section === 'display'
-            ? null
-            : props.ui.toolbarDropdownRequest}
+          dropdownRequest={props.ui.toolbarDropdownRequest}
           onDropdownRequestConsumed={consumeToolbarRequest}
-          variant="compact"
         />
       ) : null}
       {ownerRows.length > 0 ? (
@@ -1221,11 +1237,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
           <TableAddColumn
             choices={fieldChoices}
             displayFields={view.displayFields}
-            dropdownRequest={props.ui.toolbarDropdownRequest?.section === 'display'
-              ? props.ui.toolbarDropdownRequest
-              : null}
             nodeId={props.parentId}
-            onDropdownRequestConsumed={consumeToolbarRequest}
             run={props.run}
           />
         </div>
@@ -1635,16 +1647,12 @@ function TableColumnHeader({
 function TableAddColumn({
   choices,
   displayFields,
-  dropdownRequest,
   nodeId,
-  onDropdownRequestConsumed,
   run,
 }: {
   choices: TableFieldChoice[];
   displayFields: readonly ViewDisplayField[];
-  dropdownRequest: ToolbarDropdownRequest | null;
   nodeId: NodeId;
-  onDropdownRequestConsumed: (request: ToolbarDropdownRequest) => void;
   run: CommandRunner;
 }) {
   const tt = useT().outliner.table;
@@ -1663,13 +1671,6 @@ function TableAddColumn({
     maxHeight: 420,
   });
   useDismissibleOverlay(menuRef, () => setOpen(false), { disabled: !open });
-  useEffect(() => {
-    if (!dropdownRequest || dropdownRequest.nodeId !== nodeId || dropdownRequest.section !== 'display') return;
-    setCreating(false);
-    setQuery('');
-    setOpen(true);
-    onDropdownRequestConsumed(dropdownRequest);
-  }, [dropdownRequest, nodeId, onDropdownRequestConsumed]);
   const visibleFieldIds = useMemo(() => new Set(
     displayFields.filter((field) => field.visible).map((field) => field.field),
   ), [displayFields]);

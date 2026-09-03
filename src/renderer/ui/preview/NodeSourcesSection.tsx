@@ -320,7 +320,7 @@ function SourceSwitcher({
         <MenuSurface
           ref={menuRef}
           aria-label={labels.switchSource}
-          className="node-source-menu"
+          className="anchored-overlay-surface node-source-menu"
           role="menu"
           style={style}
           onKeyDown={onKeyDown}
@@ -426,7 +426,7 @@ function SourceActionsMenu({
         <MenuSurface
           ref={menuRef}
           aria-label={labels.moreActions}
-          className="node-source-menu"
+          className="anchored-overlay-surface node-source-menu"
           role="menu"
           style={style}
           onKeyDown={onKeyDown}

@@ -332,10 +332,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     if (!child || !isContentBearingNode(child)) return false;
     return !props.suppressChildFieldEntries || !isActiveTableFieldEntry(child, props.index.byId);
   });
-  const rowChildIds = rowScopeChildIds.filter((childId) => (
+  const contentChildIds = rowScopeChildIds.filter((childId) => (
     props.index.byId.get(childId)?.type !== 'fieldEntry'
   ));
-  const firstContentChildId = rowChildIds[0];
+  const firstContentChildId = contentChildIds[0];
   const firstContentChildIndex = firstContentChildId
     ? childParentNode?.children.indexOf(firstContentChildId) ?? -1
     : -1;
@@ -358,7 +358,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     rootId: props.rootId,
     selectionRootId: props.selectionRootId,
     depth: props.depth,
-    childIds: rowChildIds,
+    childIds: rowScopeChildIds,
     index: props.index,
     ui: props.ui,
     uiRef: props.uiRef,

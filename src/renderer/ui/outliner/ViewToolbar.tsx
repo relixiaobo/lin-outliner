@@ -52,6 +52,7 @@ import {
   collectViewFieldChoices,
   customFilterFieldIdsOnRows,
   fieldChoiceLabel,
+  visibleDisplayFieldsForView,
   type ViewConfig,
 } from './row-model';
 import {
@@ -143,7 +144,6 @@ interface ViewToolbarProps {
   run: CommandRunner;
   dropdownRequest: ToolbarDropdownRequest | null;
   onDropdownRequestConsumed: (request: ToolbarDropdownRequest) => void;
-  variant?: 'bar' | 'compact';
 }
 
 type ViewMode = RenderableViewMode;
@@ -151,7 +151,6 @@ type ViewMode = RenderableViewMode;
 interface ViewModeControlProps {
   viewMode: ViewMode;
   labels: Pick<ViewToolbarMessages, 'viewMode' | 'outline' | 'table'>;
-  compact?: boolean;
   onChange: (mode: ViewMode) => void;
 }
 
@@ -168,14 +167,13 @@ const VIEW_MODE_OPTIONS = RENDERABLE_VIEW_MODES.map((mode) => ({
   ...VIEW_MODE_PRESENTATION[mode],
 }));
 
-// Keep mode selection visibly two-state in the compact result toolbar. The
-// context menu remains a secondary text entry point for users who discover
-// configuration through the node actions surface.
-function ViewModeControl({ viewMode, labels, compact = false, onChange }: ViewModeControlProps) {
+// Keep mode selection visibly two-state. The context menu remains a secondary
+// text entry point for users who discover configuration through node actions.
+function ViewModeControl({ viewMode, labels, onChange }: ViewModeControlProps) {
   return (
     <div
       aria-label={labels.viewMode}
-      className={`view-toolbar-mode${compact ? ' is-compact' : ''}`}
+      className="view-toolbar-mode"
       role="group"
     >
       {VIEW_MODE_OPTIONS.map(({ mode, icon: Icon, label }) => {
@@ -192,10 +190,9 @@ function ViewModeControl({ viewMode, labels, compact = false, onChange }: ViewMo
             className={classes}
             key={mode}
             onClick={() => onChange(mode)}
-            title={compact ? text : undefined}
           >
             <Icon size={ICON_SIZE.menu} />
-            {!compact && <span>{text}</span>}
+            <span>{text}</span>
           </ButtonControl>
         );
       })}
@@ -357,16 +354,14 @@ function summarizeView(
   view: ViewConfig,
   choices: FieldChoice[],
   t: ViewToolbarMessages,
-  options: { includeSort: boolean },
+  options: { includeDisplay: boolean; includeGroup: boolean; includeSort: boolean },
 ): ViewSummaryChip[] {
   const labelOf = (fieldId: string) => choices.find((choice) => choice.id === fieldId)?.label ?? fieldId;
   const chips: ViewSummaryChip[] = [];
   const visibleDisplayCount = new Set(
-    view.displayFields
-      .filter((field) => field.visible && field.field !== NAME_FIELD)
-      .map((field) => field.field),
+    visibleDisplayFieldsForView(view).map((field) => field.field),
   ).size;
-  if (visibleDisplayCount > 0) {
+  if (options.includeDisplay && visibleDisplayCount > 0) {
     chips.push({
       id: 'display',
       label: t.summaryDisplayCount(visibleDisplayCount),
@@ -374,7 +369,7 @@ function summarizeView(
       tone: 'display',
     });
   }
-  if (view.groupField && view.viewMode !== 'table') {
+  if (options.includeGroup && view.groupField) {
     chips.push({
       id: 'group',
       label: t.summaryGroupedBy({ field: labelOf(view.groupField) }),
@@ -413,7 +408,6 @@ export function ViewToolbar({
   run,
   dropdownRequest,
   onDropdownRequestConsumed,
-  variant = 'bar',
 }: ViewToolbarProps) {
   const t = useT();
   const tv = t.outliner.viewToolbar;
@@ -432,7 +426,6 @@ export function ViewToolbar({
   const nameFilter = view.filterRules.find(isNameFilterRule);
   const firstSortRule = view.sortRules[0];
   const SortStateIcon = firstSortRule?.direction === 'desc' ? SortDescIcon : SortAscIcon;
-  const compact = variant === 'compact';
   const buttonRefs: Record<ToolbarSection, RefObject<HTMLButtonElement | null>> = {
     display: displayRef,
     group: groupRef,
@@ -458,17 +451,9 @@ export function ViewToolbar({
 
   useEffect(() => {
     if (!dropdownRequest || dropdownRequest.nodeId !== node.id) return;
-    if (dropdownRequest.section === 'group' && view.viewMode === 'table') {
-      onDropdownRequestConsumed(dropdownRequest);
-      return;
-    }
     setOpen(dropdownRequest.section);
     onDropdownRequestConsumed(dropdownRequest);
-  }, [dropdownRequest, node.id, onDropdownRequestConsumed, view.viewMode]);
-
-  useEffect(() => {
-    if (view.viewMode === 'table' && open === 'group') setOpen(null);
-  }, [open, view.viewMode]);
+  }, [dropdownRequest, node.id, onDropdownRequestConsumed]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -561,13 +546,16 @@ export function ViewToolbar({
 
   const includeSortSummary = open === 'sort';
   const summaryChips = useMemo(
-    () => compact ? [] : summarizeView(view, choices, tv, { includeSort: includeSortSummary }),
-    [view, choices, tv, includeSortSummary, compact],
+    () => summarizeView(view, choices, tv, {
+      includeDisplay: true,
+      includeGroup: true,
+      includeSort: includeSortSummary,
+    }),
+    [view, choices, tv, includeSortSummary],
   );
   const titles = sectionTitles(tv);
   const viewModeControl = (
     <ViewModeControl
-      compact={compact}
       key="view-mode"
       labels={tv}
       onChange={(mode) => void run(() => api.setViewMode(node.id, mode))}
@@ -585,9 +573,7 @@ export function ViewToolbar({
       run={run}
     />
   );
-  const leadingControls = compact
-    ? [nameFilterControl, viewModeControl]
-    : [viewModeControl, nameFilterControl];
+  const leadingControls = [viewModeControl, nameFilterControl];
   const renderSummaryChip = (chip: ViewSummaryChip) => {
     if (chip.filterTarget?.ruleId) {
       return (
@@ -622,7 +608,7 @@ export function ViewToolbar({
 
   return (
     <div
-      className={`view-toolbar${compact ? ' is-compact-controls' : ''}`}
+      className="view-toolbar"
       aria-label={tv.toolbarAriaLabel}
       ref={toolbarRef}
       onBlur={hideTooltipFromEvent}
@@ -633,28 +619,22 @@ export function ViewToolbar({
     >
       <div className="view-toolbar-button-row">
         {leadingControls}
-        {view.viewMode !== 'table' ? (
-          <>
-            <ToolbarButton
-              ref={displayRef}
-              active={compact && view.displayFields.some((field) => field.visible && field.field !== NAME_FIELD)}
-              label={tv.display}
-              open={open === 'display'}
-              onClick={() => toggle('display')}
-            >
-              <FieldIcon size={ICON_SIZE.menu} />
-            </ToolbarButton>
-            <ToolbarButton
-              ref={groupRef}
-              active={compact && Boolean(view.groupField)}
-              label={tv.groupBy}
-              open={open === 'group'}
-              onClick={() => toggle('group')}
-            >
-              <GroupIcon size={ICON_SIZE.menu} />
-            </ToolbarButton>
-          </>
-        ) : null}
+        <ToolbarButton
+          ref={displayRef}
+          label={tv.display}
+          open={open === 'display'}
+          onClick={() => toggle('display')}
+        >
+          <FieldIcon size={ICON_SIZE.menu} />
+        </ToolbarButton>
+        <ToolbarButton
+          ref={groupRef}
+          label={tv.groupBy}
+          open={open === 'group'}
+          onClick={() => toggle('group')}
+        >
+          <GroupIcon size={ICON_SIZE.menu} />
+        </ToolbarButton>
         <ToolbarButton
           ref={sortRef}
           active={view.sortRules.length > 0}
@@ -671,7 +651,6 @@ export function ViewToolbar({
         )}
         <ToolbarButton
           ref={filterRef}
-          active={compact && view.filterRules.some((rule) => !isNameFilterRule(rule))}
           label={tv.filterBy}
           open={open === 'filter'}
           onClick={() => toggle('filter')}
@@ -947,6 +926,8 @@ function DisplaySection({
   // Name is the row text itself and is always shown, so it is not a toggle here.
   const displayable = choices.filter((choice) => choice.id !== NAME_FIELD);
   const byField = new Map(view.displayFields.map((field) => [field.field, field]));
+  const visibleFieldIds = new Set(visibleDisplayFieldsForView(view).map((field) => field.field));
+  const table = view.viewMode === 'table';
   const groups = bySection(displayable, CUSTOM_FIRST_FIELD_SECTIONS);
   return (
     <div className="view-toolbar-options">
@@ -955,7 +936,7 @@ function DisplaySection({
           <div className="view-toolbar-option-section">{group.section}</div>
           {group.items.map((choice) => {
             const entry = byField.get(choice.id);
-            const checked = Boolean(entry && entry.visible);
+            const checked = visibleFieldIds.has(choice.id);
             return (
               <OptionRow
                 key={choice.id}
@@ -965,7 +946,9 @@ function DisplaySection({
                 variant="checkbox"
                 onSelect={() => {
                   if (entry) {
-                    void run(() => api.updateDisplayField(entry.id, { visible: !entry.visible }));
+                    void run(() => api.updateDisplayField(entry.id, checked
+                      ? { visible: false }
+                      : table ? { visible: true } : { visible: true, placement: 'title' }));
                   } else {
                     void run(() => api.addDisplayField(node.id, choice.id));
                   }

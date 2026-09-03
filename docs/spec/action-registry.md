@@ -146,15 +146,13 @@ Two consequences the surfaces must honour:
 
 ## Effect plans
 
-An action resolves to an ORDERED PLAN, because real actions cross executors:
-on an ordinary node, `editViewSection` runs `set_view_toolbar_visible` and only
-THEN reveals the toolbar and the requested section. Renderer steps are emitted
-only after the preceding main step succeeded, and main waits for each ack — so a
-failed renderer step stops the plan and surfaces as a failure rather than
-silence. Search nodes instead resolve directly to the two renderer reveal steps:
-their compact result-view band is always available and is not governed by the
-ordinary toolbar flag, so opening a section must not create an invisible view
-configuration write or undo entry.
+An action resolves to an ORDERED PLAN, because real actions cross executors.
+When the effective toolbar visibility is false, `editViewSection` first runs
+`set_view_toolbar_visible`; it then reveals the toolbar and requested section.
+When the toolbar is already effectively visible, it skips the redundant write.
+Renderer steps are emitted only after the preceding main step succeeded, and
+main waits for each ack, so a failed renderer step stops the plan and surfaces
+as a failure rather than silence. This rule is identical for every Node type.
 
 `ACTION_BINDINGS` (`core/actions/bindings.ts`) is a `const` VALUE, not an
 interface: TypeScript erases interfaces, so a codec or executor could not read

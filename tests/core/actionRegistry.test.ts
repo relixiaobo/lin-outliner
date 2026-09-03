@@ -211,7 +211,7 @@ describe('object-set filtering', () => {
     expect(plan?.steps.map((step) => step.kind)).toEqual(['command', 'reveal', 'reveal']);
   });
 
-  test('saved searches omit the toolbar visibility setter for their always-on result controls', () => {
+  test('saved searches default to a visible toolbar but can explicitly hide and restore it', () => {
     const { core, today } = newDocument();
     const searchId = core.createSearchNode(today, null, {
       title: 'Search',
@@ -223,10 +223,22 @@ describe('object-set filtering', () => {
       view: [{ objectRef: anchor.objectRef, panelId: 'p', visualRowId: searchId, rowExpanded: true }],
     });
 
-    expect(resolveFamily(context, 'setViewToolbarVisible', anchor)).toEqual([]);
+    const hide = resolveFamily(context, 'setViewToolbarVisible', anchor)[0]!;
+    expect((hide.binding as { arguments: { visible: boolean } }).arguments.visible).toBe(false);
     expect(resolveFamily(context, 'editViewSection', anchor)).not.toEqual([]);
     const plan = planFor(context, 'editViewSection', anchor, { section: 'display' });
     expect(plan?.steps.map((step) => step.kind)).toEqual(['reveal', 'reveal']);
+
+    core.setViewToolbarVisible(searchId, false);
+    const hiddenProjection = projectionOf(core);
+    const hiddenAnchor = nodeObjectForRow(searchId, hiddenProjection.byId, mint);
+    const hiddenContext = contextFor(core, [hiddenAnchor], {
+      view: [{ objectRef: hiddenAnchor.objectRef, panelId: 'p', visualRowId: searchId, rowExpanded: true }],
+    });
+    const show = resolveFamily(hiddenContext, 'setViewToolbarVisible', hiddenAnchor)[0]!;
+    expect((show.binding as { arguments: { visible: boolean } }).arguments.visible).toBe(true);
+    expect(planFor(hiddenContext, 'editViewSection', hiddenAnchor, { section: 'display' })?.steps.map((step) => step.kind))
+      .toEqual(['command', 'reveal', 'reveal']);
   });
 });
 

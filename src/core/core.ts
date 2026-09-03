@@ -1937,15 +1937,19 @@ export class Core {
       const viewDefId = this.ensureViewDefDirect(nodeId);
       const state = this.snapshot();
       const viewDef = requiredNode(state, viewDefId);
+      if (viewDef.type !== 'viewDef') throw CoreError.invalidOperation('expected a view definition');
       const existing = viewDef.children
         .map((childId) => state.nodes[childId])
         .find((child): child is DisplayFieldNode => (
           child?.type === 'displayField' && child.displayField === fieldId
         ));
       if (existing) {
-        if (existing.displayVisible === false) {
+        const promoteToOutlineTitle = viewDef.viewMode !== 'table'
+          && existing.displayPlacement !== 'title';
+        if (existing.displayVisible === false || promoteToOutlineTitle) {
           const next = clone(existing);
           next.displayVisible = true;
+          if (promoteToOutlineTitle) next.displayPlacement = 'title';
           next.updatedAt = nowMs();
           this.loro.writeNode(next);
         }
@@ -1963,6 +1967,7 @@ export class Core {
         node.displayField = fieldId;
         node.displayVisible = true;
         node.displayOrder = nextOrder;
+        node.displayPlacement = viewDef.viewMode === 'table' ? 'body' : 'title';
       });
       return focus(displayFieldId);
     });
@@ -3841,6 +3846,7 @@ export class Core {
         node.displayField = fieldId;
         node.displayVisible = true;
         node.displayOrder = nextOrder++;
+        node.displayPlacement = 'body';
       });
     }
   }

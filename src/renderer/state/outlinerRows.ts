@@ -28,7 +28,11 @@ import {
 import type { ReferenceSummary } from '../../core/references';
 import { isDescendantOf, resolveReferenceChainTargetId } from '../../core/actions/rowFacets';
 import { TRASH_ID } from '../../core/types';
-import { INTERNAL_VIEW_NODE_TYPES, orderedByFiniteOrder } from '../../core/viewConfig';
+import {
+  INTERNAL_VIEW_NODE_TYPES,
+  orderedByFiniteOrder,
+  resolveViewToolbarVisible,
+} from '../../core/viewConfig';
 import { fieldSlotValueSource, nodeFieldSlots, type NodeFieldSlot } from '../../core/fieldSlots';
 
 export type OutlinerRowItem =
@@ -102,7 +106,7 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
     return {
       viewDefId: null,
       viewMode: 'list',
-      toolbarVisible: false,
+      toolbarVisible: resolveViewToolbarVisible(parent, undefined),
       groupField: null,
       sortRules: [],
       filterRules: [],
@@ -114,7 +118,7 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
   return {
     viewDefId: viewDef.id,
     viewMode: viewDef.viewMode ?? 'list',
-    toolbarVisible: Boolean(viewDef.toolbarVisible),
+    toolbarVisible: resolveViewToolbarVisible(parent, viewDef.toolbarVisible),
     groupField: viewDef.groupField ?? null,
     sortRules: viewChildren
       .filter((child): child is Extract<NodeProjection, { type: 'sortRule' }> => child.type === 'sortRule' && Boolean(child.sortField))
@@ -153,7 +157,7 @@ export function showsResultViewControls(
   node: NodeProjection | undefined,
   view: Pick<ViewConfig, 'toolbarVisible'> | null | undefined,
 ): boolean {
-  return Boolean(node && (node.type === 'search' || view?.toolbarVisible));
+  return Boolean(node && view?.toolbarVisible);
 }
 
 function directChildren(parent: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): NodeProjection[] {
@@ -683,11 +687,12 @@ function applyViewSettings(
     const contentRows = rows.filter((row) => row.type !== 'field' && row.type !== 'hiddenField');
     const sortedRows = sortRows(view, contentRows, byId, systemFieldContext);
     const { visible, filteredOut } = partitionFilterRows(view, sortedRows, byId, systemFieldContext);
-    if (filteredOut.length === 0) return [...fieldRows, ...visible];
+    const groupedVisible = groupRows(parent, view, visible, byId, systemFieldContext);
+    if (filteredOut.length === 0) return [...fieldRows, ...groupedVisible];
     const ruleKey = view.filterRules.map((rule) => rule.id).join('|');
     return [
       ...fieldRows,
-      ...visible,
+      ...groupedVisible,
       {
         id: `filtered:${parent.id}:${ruleKey}`,
         type: 'filteredOut',
@@ -757,6 +762,18 @@ export function visibleDisplayFields(view: ViewConfig): ViewDisplayField[] {
   return view.displayFields.filter((field) => field.visible && field.field !== NAME_FIELD);
 }
 
+export function visibleOutlineDisplayFields(view: ViewConfig): ViewDisplayField[] {
+  return visibleDisplayFields(view).filter((field) => (
+    field.placement === undefined || field.placement === 'title'
+  ));
+}
+
+export function visibleDisplayFieldsForView(view: ViewConfig): ViewDisplayField[] {
+  return view.viewMode === 'table'
+    ? visibleDisplayFields(view)
+    : visibleOutlineDisplayFields(view);
+}
+
 export function visibleAuthoredTableFieldIds(view: ViewConfig): Set<string> {
   return new Set(visibleDisplayFields(view).flatMap((field) => (
     isSystemFieldId(field.field) ? [] : [field.field]
@@ -789,7 +806,7 @@ export function viewDisplayValuesFor(
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
 ): ViewFieldValue[] {
-  return visibleDisplayFields(view).flatMap((displayField): ViewFieldValue[] => {
+  return visibleOutlineDisplayFields(view).flatMap((displayField): ViewFieldValue[] => {
     const values = displayFieldValuesFor(rowNode, displayField.field, byId, systemFieldContext)
       .map((value) => value.trim())
       .filter(Boolean);
