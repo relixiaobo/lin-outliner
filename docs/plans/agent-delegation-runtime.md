@@ -2,9 +2,9 @@
 
 **Shape:** A SET of complete features. Generic background Tool Tasks ship first
 as an independently useful Bash capability. Internal delegation then ships as a
-complete experimental capability while retiring Subagents in the same cutover.
-Each external Runner is a separate complete adapter, not part of the foundation
-PR.
+complete experimental capability while retiring Subagents and isolated Skills
+in the same cutover. Each external Runner is a separate complete adapter, not
+part of the foundation PR.
 
 ## Goal
 
@@ -26,18 +26,22 @@ conversation never waits synchronously for an Agent run.
 - **Selected brownfield answer:** Reuse the current Agent execution kernel,
   tools, provider adapters, artifacts, worktrees, and Host-started Turns while
   deleting Subagent-specific identity, ledgers, routing, and UI.
-- **Minimum acceptable outcome:** The existing Subagent product is completely
-  retired. With the experiment enabled, the internal Runner restores parallel
-  execution and fresh-context isolation through the new path; with it disabled,
-  the root works locally and no legacy delegation surface remains.
+- **Minimum acceptable outcome:** The existing Subagent product and generic
+  isolated-Skill mode are completely retired. With the experiment enabled, the
+  internal Runner restores parallel execution and fresh-context isolation
+  through the new path; with it disabled, the root works locally and no legacy
+  delegation surface remains.
 
 **PM decision (2026-09-03):** this is a direct pre-release cutover, not a
 coexistence experiment. The internal delegation cutover deletes the existing
-Subagent capability even though Delegation remains experimental and off by default. A
-default user therefore has no delegation capability until enabling the
-experiment. Measurement informs later graduation of Delegation; it is not a
-gate that preserves or restores the old system. External harness discovery is
-automatic and read-only; use remains explicitly authorized by the user.
+Subagent capability even though Delegation remains experimental and off by
+default. Generic Skill `execution: isolated` retires in the same cut because no
+bundled Skill uses it, it has no independent executor, and pre-release custom
+Skills have no compatibility guarantee. A default user therefore has no
+delegation capability until enabling the experiment. Measurement informs later
+graduation of Delegation; it is not a gate that preserves or restores the old
+system. External harness discovery is automatic and read-only; use remains
+explicitly authorized by the user.
 
 ## Non-goals
 
@@ -51,6 +55,9 @@ automatic and read-only; use remains explicitly authorized by the user.
 - No silent retry, model fallback, Runner failover, or replacement task.
 - No coexistence period, legacy Subagent fallback, or experiment-result rollback
   to the retired system.
+- No generic `execution: isolated` Skill mode, isolated-Skill child Thread, or
+  compatibility path for pre-release Skills that declared it. Inline Skills
+  remain; future context-isolated Agent work uses Delegation.
 - No background system specialized for delegation. The generic layer contains
   no Runner, model, Agent, profile, or delegation field.
 - No claim that delegation saves time or cost without complete-workflow evidence.
@@ -60,7 +67,8 @@ automatic and read-only; use remains explicitly authorized by the user.
   adapter.
 - No external harness plugins, hooks, user MCP servers, custom Agent packs, or
   background Agents in the first external adapters.
-- No migration for pre-release Subagent execution data.
+- No migration for pre-release Subagent execution data or isolated Skill
+  definitions.
 
 ## Design
 
@@ -112,6 +120,11 @@ Rejected alternatives:
 - The delivery-batch prepare/commit/reconcile protocol shipped in #612 and the
   immutable failure/delivery truth shipped in #614 are retained as generic Tool
   Task behavior rather than deleted with Subagent identity.
+- Live inspection on 2026-09-03 found that the bundled `outline` Skill and every
+  Skill in the active user/project search roots are inline. `execution: isolated`
+  remains a documented public authoring contract today, so its parser,
+  validation, runtime, specs, and tests must be removed explicitly rather than
+  left to fail after its executor is deleted.
 
 ### Main flow and ownership
 
@@ -252,22 +265,43 @@ Tool Task lifecycle is explicit:
 | Delete owner Thread | Refused while a task is active or a changed worktree is retained. | After explicit stop/cleanup, deletion releases task-owned resource references and terminal records with the Thread. |
 | Owner missing during recovery | Terminates any matching process and blocks delivery. | Retains bounded diagnostics and changed worktrees for explicit recovery; never starts an orphan Turn. |
 
-Delivered terminal records and ordinary artifacts use fixed product TTL and byte
-quotas with oldest-delivered-first collection. Pending/delivering records and
-changed or crash-ambiguous worktrees are never age-collected. Shared resources
-remain until both Thread and Tool Task references are released. A successfully
-integrated worktree is removed through ordinary root Bash/git and reconciled as
-cleaned; task details also provide a Host-owned confirmed cleanup action for a
-rejected retained worktree. No cleanup action is added to the model tool catalog.
+Retention separates compact history from expandable detail. The terminal state,
+delivery reference, bounded final envelope, and expired-detail marker remain with
+the owning Thread until Thread deletion. Captured stdout/stderr/progress and
+Tenon-managed task artifacts are detail bytes: at most 64 MiB aggregate per task,
+1 GiB of logical detail bytes per owner Thread, and 8 GiB of physical detail
+bytes across the application. Content-addressed bytes count once globally and at
+their full logical length for each linked Thread. External cwd files and retained
+worktrees are references, not copied detail bytes, and do not count toward these
+quotas.
+
+The transition to `delivered` starts a 30-day detail TTL regardless of task
+outcome. Pending, delivering, blocked, and undelivered terminal tasks are never
+age-collected. Quota pressure may evict otherwise eligible delivered detail
+oldest-first before 30 days; shared bytes remain while another canonical
+reference owns them. Every new background task reserves its 64 MiB ceiling
+before its process starts and releases unused reservation on terminal
+settlement. If eligible collection cannot satisfy the Thread or application
+reservation, the same task settles before spawn with a typed storage-limit
+error. Its row reports required, reclaimable, and protected bytes and offers a
+confirmed Host-owned action to clear eligible delivered details. An expired or
+cleared row says that detailed output is unavailable but retains its compact
+result and delivery truth.
+
+Changed or crash-ambiguous worktrees are never age- or pressure-collected. A
+successfully integrated worktree is removed through ordinary root Bash/git and
+reconciled as cleaned; task details provide a separate Host-owned confirmed
+cleanup action for a rejected retained worktree. No cleanup action is added to
+the model tool catalog.
 
 ### Skill and CLI
 
 The built-in `delegate` Skill is inline and model-only. It appears in an
 interactive root catalog whenever delegation is enabled; Runner readiness is an
 admission state, not Skill-catalog membership. It is absent from delegated
-execution, isolated Skills, and automations. This lets the root explain a
-disabled, missing, or stale Runner configuration instead of silently losing the
-capability when the user explicitly asks for delegation.
+execution and automations. This lets the root explain a disabled, missing, or
+stale Runner configuration instead of silently losing the capability when the
+user explicitly asks for delegation.
 
 Its catalog description is direct: `Delegate an independent task to another
 internal or external Agent and return its result to the current Agent.`
@@ -292,7 +326,7 @@ The common path is one Bash call. The model sends the input through
 `bash.stdin`; no prompt or path enters shell source.
 
 ```text
-delegate run --input FILE|- [--output text|json]
+delegate run --input - [--output text|json]
 delegate doctor [RUNNER_ID] [--output text|json]
 delegate schema [run|result]
 delegate version
@@ -301,8 +335,9 @@ delegate version
 There is no `delegate status`, cancel, Runner-list, or configuration command.
 Status and cancellation are generic Tool Task operations; Runner policy belongs
 in Settings. `delegate run` accepts no Runner, model, effort, or scheduling
-override. `doctor` may inspect a named Adapter but cannot change run policy.
-`schema` and `doctor` are diagnostics, never common-path preflight.
+override and v1 rejects every input source except `-`. `doctor` may inspect a
+named Adapter but cannot change run policy. `schema` and `doctor` are diagnostics,
+never common-path preflight.
 
 The versioned input contains only task intent:
 
@@ -328,14 +363,18 @@ to stdout, and exits with a stable code. It never exposes credentials or reads
 Tool Task persistence.
 
 The Host supplies a short-lived, one-use launch capability bound to the root
-Thread, Tool Item, cwd, effective capability ceiling, Settings-selected Runner,
-model/effort policy, local scheduling policy, and configuration revision.
-`delegate run` without it is refused. A Settings change or mismatched request
-digest makes an unused capability stale and requires a new root Tool call rather
-than substituting authority. The capability is unavailable to the delegated Runner,
-so knowing the CLI path cannot create another Tenon-managed task. Tool-call
-replay resolves the existing Tool Task by source Tool Item and request digest; a
-mismatched replay fails closed.
+Thread, Tool Item, cwd, exact normalized argv, digest and byte length of the Bash
+`stdin`, effective capability ceiling, Settings-selected Runner, model/effort
+policy, local scheduling policy, and configuration revision. The Host writes
+those exact already-hashed bytes to the CLI pipe; the CLI consumes one bounded
+stdin stream and verifies its digest before admission. It never opens a task
+file or follows a task-input path. `delegate run` without the capability is
+refused. A Settings change or mismatched request digest makes an unused
+capability stale and requires a new root Tool call rather than substituting
+authority. The capability is unavailable to the delegated Runner, so knowing
+the CLI path cannot create another Tenon-managed task. Tool-call replay resolves
+the existing Tool Task by source Tool Item and request digest; a mismatched
+replay fails closed.
 
 ### Internal Tenon Runner
 
@@ -359,9 +398,9 @@ root capability ceiling
 ```
 
 It may reuse current file, foreground Bash, Web, inline Skill, MCP, and extension
-tools when admitted by every layer. It cannot delegate, invoke isolated Skills,
-ask the user, manage automations, control the root, start background Bash, or
-call `task_status`/`task_stop`. These are runtime blocks, not prompt advice.
+tools when admitted by every layer. It cannot delegate, ask the user, manage
+automations, control the root, start background Bash, or call
+`task_status`/`task_stop`. These are runtime blocks, not prompt advice.
 The delegated process environment also removes known Agent-harness executables
 from `PATH` as defense in depth. Foreground Bash can still execute an arbitrary
 absolute binary, so the claimed invariant is deliberately narrower: the session
@@ -476,6 +515,17 @@ limit; users may manually group Runners they believe share an account or other
 constraint without Tenon inspecting credentials or asserting that the grouping
 matches Provider reality.
 
+Every acquired lease is a durable record bound to its Tool Task ID, supervisor
+nonce, Runner, Thread, pool, and configuration revision. Startup keeps all new
+admission closed while Tool Task recovery authenticates every nonterminal
+supervisor or terminal receipt. It then reconstructs global, Thread, Runner, and
+pool occupancy in one transaction before reopening admission. A matching live
+supervisor consumes its reconstructed lease; a committed terminal receipt or
+`lost` settlement releases it exactly once. An identity-ambiguous process remains
+occupied and blocks capacity until recovery terminates or settles it; restart
+never treats uncertainty as a free slot. Root provider work cannot survive its
+Host broker, so only a newly admitted recovery Turn acquires root occupancy.
+
 A saturated local limit waits and reports a generic public phase. A full bounded
 Thread or global queue refuses before Runner start. Tenon cannot observe use by
 other applications, infer an API key's real concurrency, or guarantee that a
@@ -557,29 +607,36 @@ review until the root actually integrates and verifies them.
 | `bash` | Preserved; gains generic durable background execution and stdin. |
 | `task_status` | Added for any owned Tool Task; never used for polling. |
 | `task_stop` | Preserved for Tool Tasks; Agent-ID and `shell_id` routing are removed. |
-| `skill` | Preserved; gains the root-only `delegate` Skill. |
+| `skill` | Preserved for inline Skills; gains the root-only inline `delegate` Skill. |
+| Skill `execution: isolated` | Removed from parsing, validation, authoring, catalogs, runtime, persistence, and specs. |
 | Agent types | Removed as addressable/configurable entities; task profiles retain only intent semantics. |
 | Subagent UI | Removed; generic Tool Task presentation replaces it. |
 
 `SubagentCollaboration`, Subagent ledgers, generation routing, nesting budgets,
 Role-derived spawn definitions, Agent delivery, and Agent-tree presentation are
-deleted. Domain-neutral provider, tool, transcript, artifact, worktree, and
-Host-turn primitives remain.
+deleted. `spawnIsolatedSkillThread`, isolated-Skill task paths, frontmatter and
+managed-install admission, child-result projection, and isolated-Skill tests/spec
+text are deleted with them. Skill `execution`, `allowed-tools`, `model`, `effort`,
+`shell`, and embedded-shell execution metadata are no longer accepted. A managed,
+user, or project Skill declaring any retired field is unavailable with an
+actionable validation diagnostic; it never silently becomes inline. Domain-neutral
+provider, tool, transcript, artifact, worktree, and Host-turn primitives remain.
 
 This retirement is unconditional. Feature-off tests assert that legacy Agent
 tools and UI do not return when Delegation is disabled. Existing pre-release
-Subagent execution data has no compatibility reader and is removed by the
-documented dev userData reset.
+Subagent execution data and managed isolated-Skill records have no compatibility
+reader and are removed by the documented dev userData reset. Workspace Skill
+files remain user-owned but must remove retired fields before they load again.
 
 The delivery order is:
 
 1. **Generic background Tool Tasks:** Durable supervised Bash tasks, stdin,
    restart recovery, `task_status`, generic completion, artifacts, cancellation,
    and generic task UI. This is complete and useful without delegation.
-2. **Internal delegation and Subagent retirement:** CLI, Skill, launch capability, provider
-   broker, local admission scheduling, internal Runner, Settings, worktree
-   handoff and integration evidence, experiment, and total Subagent retirement
-   in one PR.
+2. **Internal delegation and legacy retirement:** CLI, Skill, launch capability,
+   provider broker, local admission scheduling, internal Runner, Settings,
+   worktree handoff and integration evidence, experiment, and total Subagent plus
+   isolated-Skill retirement in one PR.
 3. **Claude Print adapter:** One complete external Runner with fixtures and real
    run evidence.
 4. **Codex Exec adapter:** The equivalent complete Codex Runner.
@@ -589,14 +646,14 @@ The complete Generic Tool Task feature is the shared-interface-first owner: its
 protocol, codec, persistence, Host lifecycle, and renderer projection land
 together as one useful feature before any delegation consumer. A separate
 unused interface-only scaffold would violate the repository's complete-feature
-rule. The internal delegation unit starts only after that merged contract and owns
-the one-cut Subagent deletion; external adapters start only after the internal
-Runner registry and capability map merge.
+rule. The internal delegation unit starts only after that merged contract and
+owns the one-cut Subagent and isolated-Skill deletion; external adapters start
+only after the internal Runner registry and capability map merge.
 
 | Delivery unit | Primary files and symbols | Main risks and collision order |
 | --- | --- | --- |
 | Generic Background Tool Tasks | `src/main/agent/capabilities/agentLocalTools.ts` (`backgroundTasks`, Bash execution); `src/main/agent/runtime/ToolRuntime.ts`; new `src/main/agent/tasks/*`; `src/main/agent/ThreadService.ts`; `src/main/agent/thread/TurnLifecycle.ts`; `src/core/agent/protocol.ts`, `codec.ts`, `rendererProjection.ts`, and `tools.ts`; `src/main/hostDomain/agentHost.ts` and `compositionLifecycle.ts`; `src/renderer/agent/components/ThreadDock.tsx`, `store/threadStore.ts`, and a generic task strip/detail surface; corresponding Core/renderer/E2E tests and current Agent specs. | Owns the shared task/delivery interface first. Risks are orphan processes, duplicate/lost delivery, authority confusion, unbounded retention, and quit/delete races. Packaging changes, if the supervisor needs a bundled entry, wait for #619 and use an isolated infrastructure claim. |
-| Internal delegation and Subagent retirement | New `src/delegate/contract/*`, `cli/*`, and `runners/internal/*`; `src/main/builtInSkills/delegate/SKILL.md`; `src/main/agent/runtime/kernel/NativeAgentRuntime.ts` and `kernel/types.ts`; `src/main/agent/AgentConfigurationLoader.ts`, `AgentConfigurationWriter.ts`, `agentExecutionSelection.ts`, and `AgentWorktree.ts`; `src/core/agent/configuration.ts`, `tools.ts`, `protocol.ts`, `codec.ts`, and `rendererProjection.ts`; `src/renderer/ui/agent/AgentSettingsView.tsx`, `SettingsAgentSection.tsx`, and `AgentsSettings.tsx`; `src/main/agent/capabilities/agentCapabilities.ts` and `subagentToolPolicy.ts`; removal of `src/main/agent/thread/SubagentCollaboration.ts`, `subagentExecutionProjection.ts`, `subagentOutput.ts`, and `subagentSettlementEnvelope.ts`; `src/main/agent/persistence/SubagentExecutionLedger.ts` and `SubagentRequestLedger.ts`; `src/renderer/agent/components/SubagentChip.tsx`, `SubagentDetailView.tsx`, `SubagentRegistryContext.tsx`, `SubagentReport.tsx`, and `SubagentWorkStrip.tsx`; `src/renderer/agent/subagentPresentation.ts`; and corresponding tests/spec text. | Starts after Generic Tool Tasks and #619. Risks are capability widening, credential leakage, stale Settings authority, incomplete retirement, and losing #612/#614 recovery truth. This unit owns the coordinated `src/core/agent/*` cut and deletes old surfaces in the same PR. |
+| Internal delegation and Subagent/isolated-Skill retirement | New `src/delegate/contract/*`, `cli/*`, and `runners/internal/*`; `src/main/builtInSkills/delegate/SKILL.md`; `src/main/agent/runtime/kernel/NativeAgentRuntime.ts` and `kernel/types.ts`; `src/main/agent/ThreadService.ts`, `AgentConfigurationLoader.ts`, `AgentConfigurationWriter.ts`, `agentExecutionSelection.ts`, and `worktree/AgentWorktree.ts`; `src/main/hostDomain/agentHost.ts`; `src/core/agent/configuration.ts`, `tools.ts`, `protocol.ts`, `codec.ts`, and `rendererProjection.ts`; `src/renderer/ui/agent/AgentSettingsView.tsx`, `SettingsAgentSection.tsx`, and `AgentsSettings.tsx`; `src/main/agent/capabilities/agentCapabilities.ts`, `agentSkills.ts`, and `subagentToolPolicy.ts`; `src/main/managedSkillValidation.ts`; removal of `src/core/agent/subagentTaskPath.ts`; `src/main/agent/thread/SubagentCollaboration.ts`, `subagentExecutionProjection.ts`, `subagentOutput.ts`, and `subagentSettlementEnvelope.ts`; `src/main/agent/persistence/SubagentExecutionLedger.ts` and `SubagentRequestLedger.ts`; `src/renderer/agent/components/SubagentChip.tsx`, `SubagentDetailView.tsx`, `SubagentRegistryContext.tsx`, `SubagentReport.tsx`, and `SubagentWorkStrip.tsx`; `src/renderer/agent/subagentPresentation.ts`; and corresponding Skill/Subagent Core, renderer, fixture, and spec text. | Starts after Generic Tool Tasks and #619. Risks are capability widening, credential leakage, stale Settings authority, incomplete retirement, accepting now-unsupported Skill metadata, and losing #612/#614 recovery truth. This unit owns the coordinated `src/core/agent/*` cut and deletes old surfaces in the same PR. |
 | Claude Print adapter | New versioned Claude Adapter, `AdapterCapabilityMap`, probe/argv/stream fixtures, Runner registry entry, Settings readiness row, and focused integration tests/spec text. | Starts after the internal registry. Refuse unsupported versions or any unprovable native capability; no shared protocol change is expected. |
 | Codex Exec adapter | Equivalent Codex Adapter, closed-config/sandbox capability map, fixtures, registry entry, Settings readiness, and focused tests/spec text. | Starts after the internal registry and independently of Claude unless both need the same registry edit; prove shell/network subset before Ready. |
 | ACP/OpenClaw adapter | Adapter and fixtures only after protocol-level proof. | Deferred; executable discovery alone is not a claim or dependency. |
@@ -634,8 +691,15 @@ Implementation follows its merge or explicitly orders shared files after a new
     its original envelope instead of a second delivery claim.
   - **AC-27:** Orderly Quit cancels and bounded-drains every process group;
     archive/delete rules prevent hidden active or changed-worktree orphans; and
-    terminal retention, resource GC, missing-owner recovery, and confirmed
-    retained-worktree cleanup are finite and observable.
+    missing-owner recovery and confirmed retained-worktree cleanup are finite and
+    observable.
+  - **AC-30:** Startup reconstructs durable lease occupancy from authenticated
+    supervisors and receipts before admission reopens; live or ambiguous work
+    consumes capacity, and terminal/lost settlement releases each lease once.
+  - **AC-32:** Compact task truth remains until Thread deletion; managed detail
+    has a 30-day maximum TTL, 64 MiB task, 1 GiB Thread, and 8 GiB application
+    ceilings with exact accounting, oldest-eligible eviction, protected-data
+    refusal, and visible expired/storage-pressure states.
 - **FR-2:** Delegation is a one-call Skill and CLI workflow.
   - **AC-4:** The model catalog has no Agent/delegation tool or Runner/model enum.
   - **AC-5:** The common path uses one background Bash call, bounded stdin, and
@@ -644,6 +708,9 @@ Implementation follows its merge or explicitly orders shared files after a new
   - **AC-19:** `delegate run` accepts no Runner/model/effort override, and its
     one-use Host capability binds the current Settings-selected Runner,
     execution policy, capability ceiling, and configuration revision.
+  - **AC-31:** Delegation v1 accepts only `--input -`; the Host capability binds
+    the exact stdin bytes and normalized argv, and no task-input file, symlink,
+    or mutable path is opened.
 - **FR-3:** User policy fails closed.
   - **AC-6:** Detection never enables an external Runner.
   - **AC-7:** An invalid explicit Runner/model starts no delegated session,
@@ -686,7 +753,7 @@ Implementation follows its merge or explicitly orders shared files after a new
     changed-file manifest, patch, path, and verification evidence; the root
     distinguishes Runner success from successful integration and verifies any
     applied result before claiming completion.
-- **FR-8:** The Subagent product is retired.
+- **FR-8:** The Subagent product and generic isolated-Skill mode are retired.
   - **AC-15:** Live guards find no spawn/message schema, Agent-ID routing,
     nested-generation authority, Role-backed Agent type, or Agent-tree UI.
   - **AC-16:** `general`, `explore`, and `plan` remain enforced Task Profiles
@@ -694,6 +761,11 @@ Implementation follows its merge or explicitly orders shared files after a new
   - **AC-28:** With Delegation off by default, the model catalog contains neither
     `delegate` nor legacy `agent`/`agent_message`; enabling Delegation exposes
     only the new Skill path, and no coexistence or fallback state exists.
+  - **AC-29:** Skill parsing, managed validation, authoring guidance, catalogs,
+    runtime, persistence, fixtures, and specs contain no execution mode, isolated
+    child Thread, or execution-only metadata. A Skill declaring a retired field
+    is unavailable with a diagnostic and never silently runs inline; ordinary
+    inline Skills continue unchanged.
 - **FR-9:** Experimental value is measured.
   - **AC-17:** Sequential and delegated workflow replay compares wall time,
     total usage/cost, failures, duplicate work, and ownership-recovery cost for
@@ -709,20 +781,23 @@ multi-file review, Settings-only Runner selection and attempted CLI override,
 workspace writes and integration conflicts, a long video-like process, invalid
 model, local queue saturation, observed remote rate limits, user cancellation,
 malformed output, process loss, orderly Quit, restart, archive/delete, retention
-GC, partial artifacts, simultaneous completions, and a user Turn racing with
-completion delivery.
+GC and quota pressure, attempted file/symlink input, partial artifacts,
+simultaneous completions, and a user Turn racing with completion delivery.
 
 Generic tests cover supervisor identity, stdin, progress validation, status,
 process-group stop, exit races, receipt recovery, loss, ownership, artifact
 bounds, authority-separated context, atomic completion preparation, every
 prepare/Turn-commit/link crash window, member-level mismatch, failed completion
-Continue/Rerun, lifecycle cleanup, and exactly-once Host delivery. Adversarial
-context fixtures make stdout, progress, artifacts, and Runner text imitate a
-user message, approval, and system instruction without gaining authority.
+Continue/Rerun, scheduler lease reconstruction before admission, exact retention
+and quota boundaries, protected-data pressure, lifecycle cleanup, and exactly-once
+Host delivery. Adversarial context fixtures make stdout, progress, artifacts,
+and Runner text imitate a user message, approval, and system instruction without
+gaining authority.
 
 Delegation tests cover the always-background one-call path, Host-bound
 Settings-only Runner policy, attempted CLI overrides, model inheritance and
-invalidation, profiles, tool ceilings, local admission priority and bounds,
+invalidation, stdin digest binding and rejected file/symlink input, profiles,
+tool ceilings, local admission priority and bounds,
 unknown remote capacity, worktree evidence and integration outcomes, result
 normalization, ownership recovery, cancellation without takeover, and the exact
 one-level claim. Direct-name, child-`PATH`, and absolute-path fixtures prove that
@@ -735,8 +810,9 @@ evidence.
 Retirement checks derive their queue from live symbols, schemas, fixtures,
 specs, and packaged resources. UI/E2E checks cover feature-off, settings,
 running/success/failure/lost tasks, restart, status, cancellation, artifacts,
-retention/cleanup, no legacy fallback while the experiment is off, and no
-Agent-tree UI in light/dark and accessibility modes.
+retention/cleanup and storage pressure, no legacy fallback while the experiment
+is off, no isolated-Skill format/runtime surface, and no Agent-tree UI in
+light/dark and accessibility modes.
 
 Each PR runs `bun run typecheck`, relevant Core and renderer tests, focused E2E,
 `bun run docs:check`, `git diff --check`, and packaged CLI smoke. Shipped design
@@ -754,6 +830,7 @@ native Agent-feature disablement, and a closed capability subset.
 - [ ] Re-run collision checks and open one scoped Draft PR per delivery unit.
 - [ ] Ship and verify generic background Tool Tasks without delegation concepts.
 - [ ] Freeze the real task corpus, then the CLI and result registry.
-- [ ] Ship internal delegation and remove all Subagent surfaces in the same cutover.
+- [ ] Ship internal delegation and remove all Subagent and isolated-Skill
+  surfaces in the same cutover.
 - [ ] Fold behavior into current specs and run retirement plus full verification.
 - [ ] Add each proven external Runner as a separate complete feature.
