@@ -454,25 +454,19 @@
 .outliner-table-title-header,
 .outliner-table-column-header {
   border-bottom: 1px solid var(--separator);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-3) 0 var(--row-edge);
 }
 
-.outliner-table-title-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.outliner-table-column-header {
-  gap: 0;
-  padding-left: var(--row-edge);
-}
-
+.outliner-table-title-leading,
 .outliner-table-column-leading {
   flex: 0 0 var(--row-leading-width);
 }
 
+.outliner-table-title-leading {
+  margin-left: calc(-1 * var(--table-title-leading-offset));
+}
+
+.outliner-table-title-kind,
 .outliner-table-column-kind {
   display: inline-flex;
   grid-column: 3;
@@ -484,6 +478,18 @@
   color: var(--text-tertiary);
 }
 
+.outliner-table-title-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outliner-table-column-header {
+  gap: 0;
+}
+
+.outliner-table-title-kind > svg,
 .outliner-table-column-kind > svg {
   width: var(--row-bullet-width);
   height: var(--row-bullet-width);

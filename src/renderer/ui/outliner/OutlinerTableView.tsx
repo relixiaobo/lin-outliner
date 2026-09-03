@@ -68,6 +68,7 @@ import {
   ICON_SIZE,
   MoreIcon,
   PencilIcon,
+  PlainTextIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { Input } from '../primitives/Input';
@@ -1191,6 +1192,12 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
       >
         <div className="outliner-table-header" role="row" aria-rowindex={1}>
           <div className="outliner-table-title-header" role="columnheader" aria-colindex={1}>
+            <span className="row-leading outliner-table-title-leading">
+              <span className="row-chevron-spacer" aria-hidden="true" />
+              <span className="outliner-table-title-kind" aria-hidden="true">
+                <PlainTextIcon size={ICON_SIZE.menu} />
+              </span>
+            </span>
             <span className="outliner-table-title-label">{tt.title}</span>
           </div>
           {columns.map((column, index) => {

@@ -56,9 +56,10 @@ immediate custom tooltip that can cover adjacent content. The same component
 remains present in Outline and Table modes and keeps its current
 accessible names and pressed states.
 
-Table field headers reuse the row leading grid instead of maintaining separate
-padding. A reserved chevron slot precedes the field-kind icon, aligning header
-icons with value bullets and header labels with value text at every column width.
+Table Title and field headers reuse the row leading grid instead of maintaining
+separate padding. A reserved chevron slot precedes each kind icon, aligning
+header icons with row bullets and header labels with row text at every column
+width.
 
 ### Structural editing focus
 
@@ -85,8 +86,8 @@ unclaimed Electron/DOM focus loss self-heals without a direct DOM focus shortcut
   hit testing.
 - The compact Outline/Table selector has one visible pill track, one neutral
   selected segment, and no immediate custom tooltip over adjacent content.
-- Table field header icons align with value bullets, labels align with value
-  text, and a stable chevron slot precedes both.
+- Table Title and field header icons align with row bullets, labels align with
+  row text, and a stable chevron slot precedes both.
 - Tab and Shift+Tab preserve the editing caret through optimistic relocation,
   text-patch settlement, and authoritative projection reconciliation; a focus
   that moved to another control is never reclaimed.

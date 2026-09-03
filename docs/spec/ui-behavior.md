@@ -581,6 +581,10 @@ creates only a display-field node. The new-field path accepts a localized field
 type and atomically creates the field definition plus its display-field node.
 None of these paths bulk-create empty values on records.
 
+Title and authored-field headers share the ordinary row leading grid. Each
+reserves a chevron slot before its kind icon, placing the icon on the body bullet
+axis and the label on the body text axis.
+
 An existing authored value renders through the ordinary node surface, including
 the standard bullet, single-click editing, disclosure, children, context menu,
 and established type-aware field behavior. There is no separate read-only cell

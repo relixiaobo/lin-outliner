@@ -97,6 +97,10 @@ test.describe('table view', () => {
       const firstTitleWrap = firstCell.querySelector<HTMLElement>(':scope > .row-wrap')!;
       const firstChevron = firstCell.querySelector<HTMLElement>('.row-chevron-button')!;
       const firstBullet = firstCell.querySelector<HTMLElement>('.row-bullet-button')!;
+      const firstText = firstCell.querySelector<HTMLElement>('.row-content-line')!;
+      const titleChevronSlot = title.querySelector<HTMLElement>('.row-chevron-spacer')!;
+      const titleIcon = title.querySelector<HTMLElement>('.outliner-table-title-kind')!;
+      const titleLabel = title.querySelector<HTMLElement>('.outliner-table-title-label')!;
       const scrollRect = scroll.getBoundingClientRect();
       const titleRect = title.getBoundingClientRect();
       const firstCellRect = firstCell.getBoundingClientRect();
@@ -152,7 +156,10 @@ test.describe('table view', () => {
         scrollLeft: scrollRect.left,
         scrollRight: scrollRect.right,
         scrollWidth: scrollRect.width,
-        titleLabelLeft: titleRect.left + Number.parseFloat(getComputedStyle(title).paddingLeft),
+        titleChevronRight: titleChevronSlot.getBoundingClientRect().right,
+        titleIconLeft: titleIcon.getBoundingClientRect().left,
+        titleLabelLeft: titleLabel.getBoundingClientRect().left,
+        titleTextLeft: firstText.getBoundingClientRect().left,
         titleWidth: titleRect.width,
       };
     });
@@ -165,7 +172,9 @@ test.describe('table view', () => {
     expect(geometry.firstCellBorderRight).toBe('0px');
     expect(geometry.addBorderBottom).toBe('0px');
     expect(geometry.firstCellBackground).toBe('rgba(0, 0, 0, 0)');
-    expect(geometry.firstBulletLeft).toBeCloseTo(geometry.titleLabelLeft, 1);
+    expect(geometry.firstBulletLeft).toBeCloseTo(geometry.titleIconLeft, 1);
+    expect(geometry.titleTextLeft).toBeCloseTo(geometry.titleLabelLeft, 1);
+    expect(geometry.titleChevronRight).toBeLessThan(geometry.titleIconLeft);
     expect(geometry.firstChevronLeft).toBeGreaterThanOrEqual(geometry.scrollLeft);
     expect(geometry.firstChevronRight).toBeLessThan(geometry.firstBulletLeft);
     expect(geometry.firstTitleWrapRight).toBeCloseTo(geometry.firstCellRight, 1);
