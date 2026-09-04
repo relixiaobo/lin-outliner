@@ -648,6 +648,11 @@ export class DelegationSessionStore {
       if (session.currentTaskId !== input.cancelledTaskId) {
         throw new DelegationStateError('conflict', 'User stop must fence the active delegation task');
       }
+      this.db.prepare(`
+        UPDATE delegation_root_messages
+        SET body = NULL, state = 'blocked', blocked_reason = ?, updated_at = ?
+        WHERE session_id = ? AND state = 'queued'
+      `).run('Delegation message was blocked by user stop', input.now, input.sessionId);
       this.advanceSession(input.sessionId, input.now, 'stop_fence_json = ?, last_resume_json = NULL', JSON.stringify(expectedFence));
       return this.requireSession(input.sessionId);
     });

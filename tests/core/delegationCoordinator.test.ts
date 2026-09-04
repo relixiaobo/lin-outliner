@@ -75,7 +75,7 @@ describe('DelegationCoordinator', () => {
       kind: 'delegate.message-receipt',
       sessionId: SESSION_ID,
       sequence: 1,
-      state: 'queued',
+      state: 'committed',
       taskId: 'task-run',
     });
     await waitUntil(() => fixture.store.readMessage('capability-send')?.state === 'committed');
@@ -87,6 +87,94 @@ describe('DelegationCoordinator', () => {
       state: 'context_committed',
       messageSequence: 1,
     });
+  });
+
+  test('continues every queued message when the active Turn closes before consuming them', async () => {
+    const fixture = coordinatorFixture();
+    fixture.runtime.deliverSteering = false;
+    const running = fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+    await waitUntil(() => fixture.runtime.active !== null);
+
+    const first = fixture.coordinator.execute(sendExecution({
+      capabilityId: 'capability-send-one',
+      taskId: 'task-send-one',
+      sessionRevision: fixture.store.readSession(SESSION_ID)!.revision,
+      message: 'Inspect the shutdown boundary.',
+    }));
+    await waitUntil(() => fixture.store.readMessage('capability-send-one')?.state === 'queued');
+    const second = fixture.coordinator.execute(sendExecution({
+      capabilityId: 'capability-send-two',
+      taskId: 'task-send-two',
+      sessionRevision: fixture.store.readSession(SESSION_ID)!.revision,
+      message: 'Also verify the restart boundary.',
+    }));
+    await waitUntil(() => fixture.store.readMessage('capability-send-two')?.state === 'queued');
+
+    fixture.runtime.finish();
+    await running;
+    const initial = fixture.store.settlementForTask('task-run')!;
+    await fixture.coordinator.settleFinalReceipt({
+      taskId: 'task-run',
+      preparedResultDigest: initial.preparedResultDigest,
+      receiptDigest: digest('initial-final-receipt'),
+    });
+    await waitUntil(() => fixture.runtime.active?.session.currentTaskId === 'task-send-one'
+      || fixture.runtime.active?.session.currentTaskId === 'task-send-two');
+    expect(fixture.runtime.active?.messages.map((message) => ({
+      sequence: message.sequence,
+      text: message.text,
+    }))).toEqual([
+      { sequence: 1, text: 'Inspect the shutdown boundary.' },
+      { sequence: 2, text: 'Also verify the restart boundary.' },
+    ]);
+
+    fixture.runtime.finish();
+    const outcomes = await Promise.all([first, second]);
+    expect(outcomes.filter((outcome) => (
+      (outcome as DelegateExecutionResult).kind === 'delegate.execution-result'
+    ))).toHaveLength(1);
+    expect(outcomes.filter((outcome) => (
+      (outcome as { kind: string }).kind === 'delegate.message-receipt'
+    ))).toHaveLength(1);
+    expect(fixture.store.messagesForSession(SESSION_ID).map((message) => message.state))
+      .toEqual(['committed', 'committed']);
+  });
+
+  test('does not redeliver accepted steering while unrelated Session changes wake the sender', async () => {
+    const fixture = coordinatorFixture();
+    fixture.runtime.deliverSteering = false;
+    const running = fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+    await waitUntil(() => fixture.runtime.active !== null);
+    const sending = fixture.coordinator.execute(sendExecution({
+      capabilityId: 'capability-send',
+      taskId: 'task-send',
+      sessionRevision: fixture.store.readSession(SESSION_ID)!.revision,
+      message: 'Hold this message at the next safe boundary.',
+    }));
+    await waitUntil(() => fixture.runtime.steeringAttempts === 1);
+
+    await fixture.coordinator.fenceUserStop({
+      taskId: 'task-run',
+      ownerThreadId: OWNER_ID,
+      stoppedByRootTurnId: ROOT_TURN_ID,
+      currentRootIntentRevision: 1,
+    });
+    expect(fixture.runtime.steeringAttempts).toBe(1);
+
+    fixture.runtime.finish();
+    await running;
+    const initial = fixture.store.settlementForTask('task-run')!;
+    await fixture.coordinator.settleFinalReceipt({
+      taskId: 'task-run',
+      preparedResultDigest: initial.preparedResultDigest,
+      receiptDigest: digest('initial-final-receipt'),
+    });
+    await expect(sending).resolves.toMatchObject({
+      kind: 'delegate.message-receipt',
+      state: 'blocked',
+      taskId: null,
+    });
+    expect(fixture.runtime.steeringAttempts).toBe(1);
   });
 
   test('persists the Session user-stop fence before process settlement can continue', async () => {
@@ -230,6 +318,8 @@ class FakeRuntime implements DelegationSessionRuntime {
   active: DelegationSessionRunInput | null = null;
   immediate = false;
   failCommit = false;
+  deliverSteering = true;
+  steeringAttempts = 0;
   readonly commits: DelegationSessionCommitInput[] = [];
   private resolveRun: ((result: DelegateExecutionResult) => void) | null = null;
   private committedMessageSequence = 0;
@@ -256,8 +346,11 @@ class FakeRuntime implements DelegationSessionRuntime {
 
   send(sessionId: ThreadId, message: DelegationRootMessage, onDelivered: () => void): boolean {
     if (this.active?.session.sessionId !== sessionId) return false;
-    this.committedMessageSequence = message.sequence;
-    onDelivered();
+    this.steeringAttempts += 1;
+    if (this.deliverSteering) {
+      this.committedMessageSequence = message.sequence;
+      onDelivered();
+    }
     return true;
   }
 

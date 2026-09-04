@@ -499,7 +499,10 @@ unknown target is refused before the message or Provider is reached.
 Messages are persisted before `delegate send` acknowledges them. Each has a
 monotonic Session sequence, immutable digest, source provenance, and
 `queued | committed | blocked` delivery state. A per-Session gate linearizes a
-message racing execution settlement:
+message racing execution settlement. The send CLI process remains active until
+its message is durably committed, explicitly blocked, or its own Tool Task takes
+ownership of the next Turn; an in-memory steering acceptance alone is not a
+successful terminal result:
 
 - when committed before the active Turn's close boundary, it is added once at
   the next Runner-safe boundary before another model request;

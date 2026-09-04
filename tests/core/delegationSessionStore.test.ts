@@ -285,9 +285,10 @@ describe('DelegationSessionStore', () => {
   test('persists a user-stop fence before release and clears it only with fresh root intent', () => {
     const { store } = fixture();
     createSession(store, SESSION_ID, 10);
+    store.appendMessage(messageInput(SESSION_ID, 1, 'message-before-stop', 'Do not resume this automatically.', 15));
     reserve(store, {
       sessionId: SESSION_ID,
-      expectedRevision: 1,
+      expectedRevision: 2,
       settlementId: 'settlement-one',
       turnId: DELEGATED_TURN_ID,
       taskId: 'task-one',
@@ -295,13 +296,18 @@ describe('DelegationSessionStore', () => {
     });
     const fenced = store.fenceUserStop({
       sessionId: SESSION_ID,
-      expectedRevision: 2,
+      expectedRevision: 3,
       cancelledTaskId: 'task-one',
       stoppedByRootTurnId: ROOT_TURN_ID,
       currentRootIntentRevision: 5,
       now: 30,
     });
     expect(fenced.stopFence).toMatchObject({ minimumResumeRevision: 6, cancelledTaskId: 'task-one' });
+    expect(store.readMessage('message-before-stop')).toMatchObject({
+      state: 'blocked',
+      text: null,
+      blockedReason: expect.stringContaining('user stop'),
+    });
 
     store.prepareSettlement({
       settlementId: 'settlement-one', requestDigest: REQUEST_DIGEST,

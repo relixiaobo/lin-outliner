@@ -113,6 +113,7 @@ interface PreparedDelegationTurn {
  */
 export class DelegationCoordinator {
   private readonly gates = createKeyedSerialMutationQueue();
+  private readonly sessionWaiters = new Map<ThreadId, Set<() => void>>();
   private readonly now: () => number;
 
   constructor(private readonly options: DelegationCoordinatorOptions) {
@@ -128,7 +129,7 @@ export class DelegationCoordinator {
   async fenceUserStop(input: DelegationUserStopInput): Promise<DelegationUserStopSettlement> {
     const initial = this.options.store.settlementForTask(input.taskId);
     if (!initial) return { outcome: 'unrelated' };
-    return this.gates.run(initial.sessionId, async () => {
+    const result = await this.gates.run(initial.sessionId, async () => {
       const settlement = this.options.store.settlementForTask(input.taskId);
       if (!settlement) return { outcome: 'unrelated' } as const;
       const session = this.options.store.readSession(settlement.sessionId);
@@ -149,6 +150,8 @@ export class DelegationCoordinator {
         minimumResumeRevision: fenced.stopFence!.minimumResumeRevision,
       } as const;
     });
+    this.notifySession(initial.sessionId);
+    return result;
   }
 
   async settleFinalReceipt(
@@ -166,6 +169,7 @@ export class DelegationCoordinator {
           this.now(),
         );
         this.options.store.releaseExecution(settlement.sessionId, evidence.taskId, this.now());
+        this.notifySession(settlement.sessionId);
         return { outcome: 'blocked', reason: blocked.blockedReason! } as const;
       }
       try {
@@ -177,6 +181,7 @@ export class DelegationCoordinator {
           this.now(),
         );
         this.options.store.releaseExecution(settlement.sessionId, evidence.taskId, this.now());
+        this.notifySession(settlement.sessionId);
         return { outcome: 'blocked', reason: blocked.blockedReason! } as const;
       }
       let reconciled = this.options.store.recordFinalReceipt({
@@ -196,6 +201,7 @@ export class DelegationCoordinator {
         });
       }
       this.options.store.releaseExecution(settlement.sessionId, evidence.taskId, this.now());
+      this.notifySession(settlement.sessionId);
       return reconciled.state === 'blocked'
         ? { outcome: 'blocked', reason: reconciled.blockedReason! } as const
         : { outcome: 'committed' } as const;
@@ -234,49 +240,72 @@ export class DelegationCoordinator {
     }
     const sessionBinding = admission.session;
     const input = decodeDelegateMessageInput(execution.input);
-    const admitted = await this.gates.run(sessionBinding.sessionId, async () => {
-      let session = this.requireOwnedSession(execution);
-      if (session.revision !== sessionBinding.sessionRevision) {
-        throw unavailable('Delegate Session changed before this message was admitted.');
-      }
-      if (session.stopFence) {
-        session = this.options.store.clearUserStopFence({
-          sessionId: session.sessionId,
-          expectedRevision: session.revision,
-          rootTurnId: admission.source.sourceTurnId as TurnId,
-          rootIntentRevision: admission.source.rootUserIntentRevision,
-          now: this.now(),
-        });
-      }
-      const message = this.options.store.appendMessage({
-        sessionId: session.sessionId,
-        expectedRevision: session.revision,
-        messageId: execution.capabilityId,
-        text: input.message,
-        sourceTaskId: admission.toolTaskId,
-        sourceRootTurnId: admission.source.sourceTurnId as TurnId,
-        sourceRootItemId: admission.source.sourceItemId,
-        sourceRootIntentRevision: admission.source.rootUserIntentRevision,
-        now: this.now(),
-      });
-      session = this.options.store.readSession(session.sessionId)!;
-      if (session.currentTaskId) {
-        const delivered = this.options.runtime.send(session.sessionId, message, () => {
-          void this.commitActiveMessage(session.sessionId, message).catch(() => undefined);
-        });
-        if (!delivered) {
-          throw unavailable('Delegate Session execution is active but cannot accept context yet.');
+    let messageAdmitted = false;
+    let steeringTaskId: string | null = null;
+    while (true) {
+      if (execution.signal.aborted) throw unavailable('Delegate message execution was cancelled.');
+      const step = await this.gates.run(sessionBinding.sessionId, async () => {
+        let session = this.requireOwnedSession(execution);
+        if (!messageAdmitted) {
+          if (session.revision !== sessionBinding.sessionRevision) {
+            throw unavailable('Delegate Session changed before this message was admitted.');
+          }
+          if (session.stopFence) {
+            session = this.options.store.clearUserStopFence({
+              sessionId: session.sessionId,
+              expectedRevision: session.revision,
+              rootTurnId: admission.source.sourceTurnId as TurnId,
+              rootIntentRevision: admission.source.rootUserIntentRevision,
+              now: this.now(),
+            });
+          }
+          this.options.store.appendMessage({
+            sessionId: session.sessionId,
+            expectedRevision: session.revision,
+            messageId: execution.capabilityId,
+            text: input.message,
+            sourceTaskId: admission.toolTaskId,
+            sourceRootTurnId: admission.source.sourceTurnId as TurnId,
+            sourceRootItemId: admission.source.sourceItemId,
+            sourceRootIntentRevision: admission.source.rootUserIntentRevision,
+            now: this.now(),
+          });
+          messageAdmitted = true;
+          session = this.options.store.readSession(session.sessionId)!;
         }
-        return { kind: 'receipt' as const, value: messageReceipt(message, session.currentTaskId) };
-      }
-      return {
-        kind: 'turn' as const,
-        value: this.prepareTurn(execution, session, input.message, [message]),
-      };
-    });
-    return admitted.kind === 'receipt'
-      ? admitted.value
-      : this.executePreparedTurn(admitted.value);
+        const message = this.options.store.readMessage(execution.capabilityId);
+        if (!message) throw unavailable('Delegate message admission is unavailable.');
+        if (message.state !== 'queued') {
+          const consumingTaskId = message.state === 'committed'
+            ? session.currentTaskId ?? session.previousTaskId
+            : null;
+          return { kind: 'receipt' as const, value: messageReceipt(message, consumingTaskId) };
+        }
+        if (!session.currentTaskId) {
+          const queued = this.options.store.queuedMessages(session.sessionId);
+          const first = queued[0];
+          if (!first?.text) throw unavailable('Delegate message prefix is unavailable.');
+          return {
+            kind: 'turn' as const,
+            value: this.prepareTurn(execution, session, first.text, queued),
+          };
+        }
+        const wait = this.waitForSessionChange(session.sessionId, execution.signal);
+        const settlement = this.options.store.settlementForTask(session.currentTaskId);
+        if (settlement?.state === 'awaiting_result'
+          && message.sequence > settlement.messageSequence
+          && steeringTaskId !== session.currentTaskId) {
+          const accepted = this.options.runtime.send(session.sessionId, message, () => {
+            void this.commitActiveMessage(session.sessionId, message).catch(() => undefined);
+          });
+          if (accepted) steeringTaskId = session.currentTaskId;
+        }
+        return { kind: 'wait' as const, value: wait };
+      });
+      if (step.kind === 'receipt') return step.value;
+      if (step.kind === 'turn') return this.executePreparedTurn(step.value);
+      await step.value;
+    }
   }
 
   private async close(execution: DelegateCapabilityExecution): Promise<DelegateCloseReceipt> {
@@ -337,14 +366,21 @@ export class DelegationCoordinator {
   }
 
   private async executePreparedTurn(preparedTurn: PreparedDelegationTurn): Promise<DelegateExecutionResult> {
-    const result = await this.options.runtime.run({
-      session: preparedTurn.session,
-      turnId: preparedTurn.turnId,
-      prompt: preparedTurn.prompt,
-      messages: preparedTurn.messages,
-      signal: preparedTurn.execution.signal,
-    });
-    return this.gates.run(preparedTurn.session.sessionId, async () => {
+    let result: DelegateExecutionResult;
+    try {
+      const running = this.options.runtime.run({
+        session: preparedTurn.session,
+        turnId: preparedTurn.turnId,
+        prompt: preparedTurn.prompt,
+        messages: preparedTurn.messages,
+        signal: preparedTurn.execution.signal,
+      });
+      this.notifySession(preparedTurn.session.sessionId);
+      result = await running;
+    } finally {
+      this.notifySession(preparedTurn.session.sessionId);
+    }
+    const committed = await this.gates.run(preparedTurn.session.sessionId, async () => {
       assertRuntimeResult(result, preparedTurn.session.sessionId, preparedTurn.turnId);
       const settlement = this.options.store.readSettlement(preparedTurn.settlementId);
       if (!settlement || settlement.state !== 'awaiting_result') {
@@ -408,6 +444,8 @@ export class DelegationCoordinator {
       });
       return result;
     });
+    this.notifySession(preparedTurn.session.sessionId);
+    return committed;
   }
 
   private async ensurePreparedContext(
@@ -472,25 +510,53 @@ export class DelegationCoordinator {
     sessionId: ThreadId,
     message: DelegationRootMessage,
   ): Promise<void> {
-    await this.gates.run(sessionId, async () => {
-      const session = this.options.store.readSession(sessionId);
-      if (!session || session.state !== 'open' || !session.currentTaskId) return;
-      const settlement = this.options.store.settlementForTask(session.currentTaskId);
-      if (!settlement || settlement.state !== 'awaiting_result') return;
-      this.options.store.commitMessagePrefix(
-        sessionId,
-        session.revision,
-        message.sequence,
-        settlement.turnId,
-        this.now(),
-      );
-      this.options.store.extendSettlementMessagePrefix({
-        settlementId: settlement.settlementId,
-        throughSequence: message.sequence,
-        messageSequenceDigest: this.options.store.messageSequenceDigest(sessionId, message.sequence),
-        now: this.now(),
+    try {
+      await this.gates.run(sessionId, async () => {
+        const session = this.options.store.readSession(sessionId);
+        if (!session || session.state !== 'open' || !session.currentTaskId) return;
+        const settlement = this.options.store.settlementForTask(session.currentTaskId);
+        if (!settlement || settlement.state !== 'awaiting_result') return;
+        if (message.sequence <= settlement.messageSequence) return;
+        this.options.store.commitMessagePrefix(
+          sessionId,
+          session.revision,
+          message.sequence,
+          settlement.turnId,
+          this.now(),
+        );
+        this.options.store.extendSettlementMessagePrefix({
+          settlementId: settlement.settlementId,
+          throughSequence: message.sequence,
+          messageSequenceDigest: this.options.store.messageSequenceDigest(sessionId, message.sequence),
+          now: this.now(),
+        });
       });
+    } finally {
+      this.notifySession(sessionId);
+    }
+  }
+
+  private waitForSessionChange(sessionId: ThreadId, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      let waiters = this.sessionWaiters.get(sessionId);
+      if (!waiters) {
+        waiters = new Set();
+        this.sessionWaiters.set(sessionId, waiters);
+      }
+      const finish = () => {
+        signal.removeEventListener('abort', finish);
+        waiters!.delete(finish);
+        if (waiters!.size === 0) this.sessionWaiters.delete(sessionId);
+        resolve();
+      };
+      waiters.add(finish);
+      signal.addEventListener('abort', finish, { once: true });
     });
+  }
+
+  private notifySession(sessionId: ThreadId): void {
+    for (const finish of [...(this.sessionWaiters.get(sessionId) ?? [])]) finish();
   }
 
   private requireOwnedSession(execution: DelegateCapabilityExecution): DelegationSessionBinding {
@@ -534,7 +600,7 @@ function executionDigest(execution: DelegateCapabilityExecution, messageSequence
   })).digest('hex');
 }
 
-function messageReceipt(message: DelegationRootMessage, taskId: string): DelegateMessageReceipt {
+function messageReceipt(message: DelegationRootMessage, taskId: string | null): DelegateMessageReceipt {
   return {
     version: 1,
     kind: 'delegate.message-receipt',
