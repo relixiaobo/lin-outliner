@@ -450,38 +450,6 @@ const agentHost = createAgentHost({
     recoverAgentWorktree: (input) => worktrees.recover(input),
     cleanupResidualAgentWorktree: (input) => worktrees.cleanupResidual(input),
     reportError,
-    writeTrajectoryExport: async ({ defaultFileName, bundle }) => {
-      try {
-        const window = windowApplicationHost.windows.main() ?? BrowserWindow.getFocusedWindow();
-        const result = window
-          ? await dialog.showSaveDialog(window, {
-              defaultPath: join(app.getPath('desktop'), defaultFileName),
-              filters: [{ name: 'JSON', extensions: ['json'] }],
-            })
-          : await dialog.showSaveDialog({
-              defaultPath: join(app.getPath('desktop'), defaultFileName),
-              filters: [{ name: 'JSON', extensions: ['json'] }],
-            });
-        if (result.canceled || !result.filePath) return { status: 'canceled' };
-        const content = JSON.stringify(bundle, null, 2);
-        await writeFile(result.filePath, content, 'utf8');
-        return {
-          status: 'written',
-          fileName: basename(result.filePath),
-          byteLength: Buffer.byteLength(content, 'utf8'),
-        };
-      } catch (error) {
-        reportError({
-          domain: 'persistence',
-          severity: 'error',
-          code: 'trajectory-export-write-failed',
-          message: 'Trajectory export write failed.',
-          context: { operation: 'writeTrajectoryExport' },
-          error,
-        });
-        return { status: 'failed', error: 'Trajectory export failed.' };
-      }
-    },
     resolveRendererStartDefaults: (request) => resolveRendererThreadStartDefaults({
       request,
       remembered: loadAppPreferences().lastAgentThreadConfiguration,

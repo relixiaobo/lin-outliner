@@ -1677,7 +1677,6 @@ export const en = {
         evidenceUnavailable: 'The referenced evidence is no longer available.',
         payloadUnavailable: 'The referenced payload is no longer available.',
         redacted: 'Sensitive evidence was redacted.',
-        partialCoverage: 'Only part of this record could be inspected.',
       },
       record: {
         initialSystemPrompt: 'Initial System Prompt',

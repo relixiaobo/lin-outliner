@@ -1,6 +1,6 @@
 import type { FetchFunction } from '@earendil-works/pi-ai';
 import { MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES } from '../../../core/agent/protocol';
-import { redactSecretLikeJsonForDiagnostics } from '../capabilities/agentSecretRedaction';
+import { redactSecretLikeTextAsync } from '../capabilities/agentSecretRedaction';
 
 export const RESPONSES_STREAM_IDLE_TIMEOUT_MS = 300_000;
 
@@ -83,15 +83,8 @@ export function createResilientResponsesFetch(
       }
       if (reportedNoiseFrameCount >= MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES) return;
       reportedNoiseFrameCount += 1;
-      const diagnostic = await redactSecretLikeJsonForDiagnostics(parsed.noise.value);
-      const frameType = isRecord(diagnostic.value) && typeof diagnostic.value.type === 'string'
-        ? boundedFrameType(diagnostic.value.type)
-        : null;
-      const snippet = boundedSnippet(
-        typeof diagnostic.value === 'string'
-          ? diagnostic.value
-          : JSON.stringify(diagnostic.value),
-      );
+      const frameType = await sanitizedFrameType(parsed.noise.value);
+      const snippet = await sanitizedNoiseSnippet(parsed.noise.value);
       firstNoiseSnippet ??= snippet;
       try {
         await options.onNoiseFrame?.({
@@ -213,6 +206,16 @@ function concatenateBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
 function boundedSnippet(value: string): string {
   if (value.length <= MAX_NOISE_FRAME_SNIPPET_CHARS) return value;
   return `${value.slice(0, MAX_NOISE_FRAME_SNIPPET_CHARS)}...[truncated]`;
+}
+
+async function sanitizedNoiseSnippet(value: unknown): Promise<string> {
+  const bounded = boundedSnippet(JSON.stringify(value));
+  return boundedSnippet((await redactSecretLikeTextAsync(bounded)).value);
+}
+
+async function sanitizedFrameType(value: unknown): Promise<string | null> {
+  if (!isRecord(value) || typeof value.type !== 'string') return null;
+  return boundedFrameType((await redactSecretLikeTextAsync(boundedFrameType(value.type) ?? '')).value);
 }
 
 function boundedFrameType(value: string | null): string | null {

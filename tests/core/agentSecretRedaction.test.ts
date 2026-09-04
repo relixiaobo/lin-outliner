@@ -1,11 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
   containsSecretLikeContent,
-  DIAGNOSTIC_SECRET_REDACTION_OMISSION,
   elideLargeBlobs,
   redactSecretLikeContent,
   redactSecretLikeJsonAsync,
-  redactSecretLikeJsonForDiagnostics,
 } from '../../src/main/agent/capabilities/agentSecretRedaction';
 
 const OPENAI_KEY = `sk-proj-${'A'.repeat(74)}T3BlbkFJ${'B'.repeat(74)}`;
@@ -274,7 +272,7 @@ describe('agent secret redaction', () => {
     });
   });
 
-  test('keeps durable scans fail-open and types diagnostic whole-payload omission explicitly', async () => {
+  test('keeps durable scans fail-open for an unscannable value', async () => {
     const unscannable = new Proxy<Record<string, unknown>>({}, {
       ownKeys: () => { throw new Error('unscannable'); },
     });
@@ -282,10 +280,6 @@ describe('agent secret redaction', () => {
     const durable = await redactSecretLikeJsonAsync(unscannable);
     expect(durable.value).toBe(unscannable);
     expect(durable.redactedPaths).toEqual([]);
-    expect(await redactSecretLikeJsonForDiagnostics(unscannable)).toEqual({
-      value: DIAGNOSTIC_SECRET_REDACTION_OMISSION,
-      redactedPaths: [''],
-    });
   });
 
   test('preserves durable structure and redacts every pending string when the worker fails', async () => {
@@ -319,32 +313,6 @@ describe('agent secret redaction', () => {
     } finally {
       console.warn = originalWarn;
     }
-  });
-
-  test('applies the diagnostic scan budget before parsing serialized JSON arguments', async () => {
-    const encoded = JSON.stringify({ password: 'x'.repeat(70_000) });
-    const result = await redactSecretLikeJsonForDiagnostics({ arguments: encoded });
-
-    expect(result).toEqual({
-      value: {
-        arguments: `[diagnostic text omitted after secret-scan budget: ${encoded.length} chars]`,
-      },
-      redactedPaths: ['/arguments'],
-    });
-  });
-
-  test('keeps one ordered diagnostic budget across a batched scan', async () => {
-    const first = 'ordinary first text '.repeat(1_500);
-    const second = `credential=${OPENAI_KEY}`;
-    const third = 'ordinary overflow text '.repeat(1_600);
-    const result = await redactSecretLikeJsonForDiagnostics({ first, second, third });
-
-    expect(result.value).toEqual({
-      first,
-      second: 'credential=[redacted secret-like content]',
-      third: `[diagnostic text omitted after secret-scan budget: ${third.length} chars]`,
-    });
-    expect(result.redactedPaths).toEqual(['/second', '/third']);
   });
 
   test('keeps arbitrary-span private-key redaction byte-identical in a large direct-path batch', async () => {

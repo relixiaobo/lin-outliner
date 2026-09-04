@@ -23,9 +23,6 @@ import {
   type TurnDiagnosticsProviderRequest,
   type TurnDiagnosticsProviderRequestField,
 } from '../../../core/agent/protocol';
-import {
-  redactSecretLikeJsonForDiagnostics,
-} from '../capabilities/agentSecretRedaction';
 import type { ContextBudgetPlan } from './ContextBudgetPlanner';
 import { estimateProviderMessageTokens } from './ContextBudgetPlanner';
 import type { StablePrompt } from './stablePrompt';
@@ -72,6 +69,7 @@ type MutableAcceptedInputActivity = Omit<
 };
 type MutableToolExecution = {
   callId: string;
+  providerCallId: string;
   toolName: string;
   itemId: string | null;
   admissionDisposition: ModelToolCallHistory['disposition'];
@@ -149,17 +147,10 @@ export class TurnDiagnosticsCollector {
     assertMessageProvenance(this.providerContext.messages, this.preparedPlan.messagePartProvenance);
     const previous = this.providerCalls.at(-1)?.preparedContext.messageIds ?? [];
     const normalizedRequest = jsonValue(payload, true);
-    const diagnostic = await redactSecretLikeJsonForDiagnostics({
-      messages: this.providerContext.messages.map((message) => jsonValue(message, true)),
-      request: normalizedRequest,
-    });
-    const diagnosticOmitted = typeof diagnostic.value === 'string';
-    const diagnosticMessages = diagnosticOmitted ? [] : diagnostic.value.messages;
-    const messageIds = this.providerContext.messages.map((message, messageIndex) => this.rememberMessage(
+    const messageIds = this.providerContext.messages.map((message) => this.rememberMessage(
       message,
-      diagnosticMessages[messageIndex] ?? '[diagnostic message omitted]',
+      jsonValue(message, true),
     ));
-    const redactedRequest = diagnosticOmitted ? diagnostic.value : diagnostic.value.request;
     const index = this.providerCalls.length;
     this.bindPendingActivities(index);
     this.providerCalls.push({
@@ -179,7 +170,7 @@ export class TurnDiagnosticsCollector {
       reservedOutputTokens: this.preparedPlan.budget.reservedOutputTokens,
       commonPrefixMessageCount: commonPrefixLength(previous, messageIds),
       request: this.rememberProviderRequest(
-        redactedRequest,
+        normalizedRequest,
         this.providerContext.messages,
         this.preparedPlan.messagePartProvenance,
       ),
@@ -194,6 +185,7 @@ export class TurnDiagnosticsCollector {
 
   captureToolExecutionStarted(
     callId: string,
+    providerCallId: string,
     toolName: string,
     itemId: string | null,
     modelCall: ModelToolCallHistory,
@@ -216,6 +208,7 @@ export class TurnDiagnosticsCollector {
     if (target.executions.some((execution) => execution.callId === callId)) return;
     target.executions.push({
       callId,
+      providerCallId,
       toolName,
       itemId,
       admissionDisposition: modelCall.disposition,
@@ -349,7 +342,7 @@ export class TurnDiagnosticsCollector {
         totalTokens: event.message.usage.totalTokens,
         cost: { ...event.message.usage.cost },
       },
-      value: (await redactSecretLikeJsonForDiagnostics(jsonValue(event.message, true))).value,
+      value: jsonValue(event.message, true),
     };
   }
 
@@ -382,7 +375,7 @@ export class TurnDiagnosticsCollector {
         provider: model.provider,
         model: model.id,
         api: model.api,
-        configuredBaseUrl: diagnosticBaseUrl(model.baseUrl),
+        configuredBaseUrl: model.baseUrl,
         transportSelection: 'auto',
         contextWindow: model.contextWindow,
         maxOutputTokens: model.maxTokens,
@@ -602,20 +595,6 @@ function providerRequestId(headers: Readonly<Record<string, string>>): string | 
     if (value) return value;
   }
   return null;
-}
-
-function diagnosticBaseUrl(value: string): string {
-  if (!value) return '';
-  try {
-    const endpoint = new URL(value);
-    endpoint.username = '';
-    endpoint.password = '';
-    endpoint.search = '';
-    endpoint.hash = '';
-    return endpoint.toString();
-  } catch {
-    return '';
-  }
 }
 
 function commonPrefixLength(left: readonly string[], right: readonly string[]): number {

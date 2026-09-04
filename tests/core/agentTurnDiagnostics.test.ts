@@ -153,6 +153,7 @@ describe('Turn diagnostics', () => {
     } as AgentEvent);
     collector.captureToolExecutionStarted(
       'tool-call-1',
+      'provider-tool-call-1',
       'alpha',
       'tool-item-1',
       replayableModelCall('alpha', {}),
@@ -184,7 +185,7 @@ describe('Turn diagnostics', () => {
     expect(payload.runtime).toMatchObject({
       provider: 'openai',
       model: 'test-model',
-      configuredBaseUrl: 'https://example.test/v1',
+      configuredBaseUrl: model.baseUrl,
       transportSelection: 'auto',
       contextWindow: 128_000,
       maxOutputTokens: 8_192,
@@ -326,6 +327,7 @@ describe('Turn diagnostics', () => {
         consumedByCallIndex: 1,
         executions: [{
           callId: 'tool-call-1',
+          providerCallId: 'provider-tool-call-1',
           toolName: 'alpha',
           itemId: 'tool-item-1',
           admissionDisposition: 'replayable',
@@ -390,7 +392,7 @@ describe('Turn diagnostics', () => {
     })).toThrow('itemId');
   });
 
-  test('redacts structured secrets from canonical messages and post-adapter requests', async () => {
+  test('preserves exact structured values in canonical messages and post-adapter requests', async () => {
     const rawSecret = 'generic-model-secret';
     const environmentSecret = 'hunter2hunter2hunter2';
     const command = `PGPASSWORD=${environmentSecret} psql`;
@@ -447,12 +449,12 @@ describe('Turn diagnostics', () => {
     await collector.captureProviderRequest(providerRequest(4_096));
 
     const payload = collector.payload();
-    expect(JSON.stringify(payload)).not.toContain(rawSecret);
-    expect(JSON.stringify(payload)).not.toContain(environmentSecret);
+    expect(JSON.stringify(payload)).toContain(rawSecret);
+    expect(JSON.stringify(payload)).toContain(environmentSecret);
     expect(payload.canonicalMessages[0]?.value).toMatchObject({
       content: [{ arguments: {
-        api_key: '[redacted]',
-        command: '[redacted secret-like content] psql',
+        api_key: rawSecret,
+        command,
         query: 'keep',
       } }],
     });
@@ -462,13 +464,13 @@ describe('Turn diagnostics', () => {
       cache_read_input_tokens: 900,
       input: [{
         arguments: JSON.stringify({
-          api_key: '[redacted]',
-          command: '[redacted secret-like content] psql',
+          api_key: rawSecret,
+          command,
           content: jsonShapedContent,
           query: 'keep',
         }),
       }],
-      metadata: { session_token: '[redacted]' },
+      metadata: { session_token: rawSecret },
     });
     expect(payload.providerCalls[0]?.requestFingerprint)
       .not.toBe(payload.providerCalls[1]?.requestFingerprint);
@@ -536,6 +538,7 @@ describe('Turn diagnostics', () => {
     } as AgentEvent);
     collector.captureToolExecutionStarted(
       'plan-call',
+      'provider-plan-call-1',
       'update_plan',
       null,
       replayableModelCall('update_plan', {}),
@@ -547,6 +550,7 @@ describe('Turn diagnostics', () => {
     await collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
     collector.captureToolExecutionStarted(
       'plan-call',
+      'provider-plan-call-2',
       'update_plan',
       null,
       replayableModelCall('update_plan', {}),
@@ -588,7 +592,11 @@ describe('Turn diagnostics', () => {
         type: 'toolExecutionBatch',
         sourceCallIndex: 2,
         consumedByCallIndex: 3,
-        executions: [expect.objectContaining({ toolName: 'update_plan', itemId: null })],
+        executions: [expect.objectContaining({
+          providerCallId: 'provider-plan-call-1',
+          toolName: 'update_plan',
+          itemId: null,
+        })],
       }),
     ]));
     expect(payload.activities.filter((activity) => activity.type === 'toolExecutionBatch')).toEqual([
@@ -608,7 +616,7 @@ describe('Turn diagnostics', () => {
     expect(decodeTurnDiagnosticsPayloadJson(encodeTurnDiagnosticsPayload(payload))).toEqual(payload);
   });
 
-  test('caps collected stream noise and rejects oversized durable payloads', async () => {
+  test('caps collected stream-noise telemetry', async () => {
     const message: UserMessage = {
       role: 'user',
       content: [{ type: 'text', text: 'Start.' }],

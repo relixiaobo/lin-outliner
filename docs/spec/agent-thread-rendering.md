@@ -1166,16 +1166,16 @@ for provider-visible tool catalog evidence; Assistant uses Summary / Preview /
 Request / Raw; Tool uses Summary / Input / Output / Schema / Raw; Retry,
 Compaction, and Delegation use Summary /
 Preview / Raw, and Delegation can open the child Thread's own Trajectory. Raw
-means Tenon's typed, bounded, credential-redacted evidence with captured
-filesystem paths preserved, not an unfiltered transport body. For Input and
+means Tenon's typed exact-or-unavailable retained evidence, not an inferred
+transport reconstruction. For Input and
 Assistant details, Raw renders ordered typed model parts first and then the
 complete typed detail envelope; the part view never replaces canonical message,
 diagnostics, provider request/response, runtime, call-index, or related-item
 evidence. The Request tab
-is the consumed provider call's materialized post-adapter payload after
-credential redaction and binary omission; it is never folded into the USER
+is the consumed provider call's materialized post-adapter payload after binary
+reference substitution; it is never folded into the USER
 preview. System Prompt, full model-context Preview, structured Request, Tool
-Input, Tool Output, Schema, and textual Raw parts use the same bounded read-only
+Input, Tool Output, Schema, and textual Raw parts use the same read-only
 evidence container with an explicit copy action. Copy returns the exact retained
 string shown for raw text; typed structured values are pretty-printed once and
 copy returns that exact visible serialization. Valid JSON raw text may receive
@@ -1195,8 +1195,8 @@ uses the ordered provider-neutral prepared-message parts
 captured before that adapter for the exact canonical `userMessage` Item.
 Diagnostics tag every `userInput` content part with its Item ID, so initial input
 and later steering can share a provider call without repeating or borrowing one
-another's parts. Text parts retain their credential-redacted text, including
-exact filesystem paths; image parts retain
+another's parts. Text parts retain their exact text, including credential-looking
+values and filesystem paths; image parts retain
 their position plus MIME type, byte length, and digest. The Preview therefore
 includes the real serialized attachment reference and inspection instructions,
 Node reference marker, image metadata, and explicit image-part marker while
@@ -1214,7 +1214,7 @@ captured model-visible context text from the prepared canonical provider context
 whenever diagnostics retained it. That text
 is the `<system-reminder>` / `<context authority="..." purpose="...">` projection supplied at the
 provider-context boundary after projection, budgeting, compaction, and
-diagnostic credential redaction. Non-stable CONTEXT rows are keyed by
+diagnostic capture. Non-stable CONTEXT rows are keyed by
 prepared-context-part diagnostics evidence, not by retained `contextEvidence`
 Items. A prepared provider content part is the ledger unit: if one
 `<system-reminder>` part contains multiple `<context>` blocks, it
@@ -1330,43 +1330,34 @@ Record labels are a typed semantic union and are localized only in renderer; mai
 never emits interface prose.
 
 Record details are lazy. `thread/trajectory/detail/read` returns the selected
-record plus sanitized detail evidence only. Main locates the owning Turn first
-and reads only that Turn's diagnostics for detail materialization. Returned
-evidence is bounded Turn evidence, bounded Item evidence, sanitized runtime
-facts, sanitized activity/provider-call request and response values, sanitized
-context payloads, and sanitized/truncated tool output. Every variable evidence
-field in that typed detail shares one 40,000-byte budget, including JSON keys,
-nodes, and string leaves; individual strings retain a 20,000-character ceiling,
-collections are capped, and the complete serialized detail has a 64,000-byte
-hard ceiling. Typed discriminators and required envelope fields are never
-rewritten to satisfy the budget. Truncation adds `partialCoverage` to the detail
-response's record; if the hard ceiling is reached, the response keeps the valid
-typed envelope and omits its variable evidence. A typed diagnostics activity is
-either retained with its original `type` discriminator or omitted as a whole;
-budget exhaustion never produces a partial activity that the response codec
-rejects. The complete detail-read response is checked against the hard ceiling
-after fallback construction. It never returns raw
-`Thread`, raw `Turn`, raw `ThreadItem`, a diagnostics payload path, digest-only
-payload authority, raw secrets, credentials, arbitrary response headers, image
-bytes, or unbounded content. Captured filesystem paths remain exact when they are
-part of accepted input, prepared context, provider request/response evidence, or
-model-issued tool arguments. Missing or corrupt diagnostics, payloads, and
-output remain explicit local availability facts rather than killing the whole
-workspace. Availability discovered during the lazy read is appended to the
-record returned by that detail response, and the inspector uses that returned
-record rather than the earlier list summary. Tool Input resolves only the
-canonical Item `modelCall` envelope: exact inline arguments, redacted replay
-arguments, payload-backed arguments read on demand, or bounded evidence-only
-arguments. It never reconstructs model arguments from host execution or display
-fields. Assistant Preview uses ordered typed parts extracted from that exact
+record plus exact-or-unavailable detail evidence only. Main locates the owning
+Turn first and reads only that Turn's diagnostics for detail materialization.
+Retained text and JSON values are not redacted, truncated, summarized, inferred,
+or replaced with neighboring evidence. The whole diagnostics payload has one
+all-or-nothing 16 MiB serialized admission limit; there are no per-string,
+per-collection, depth, shared-detail, or detail-response budgets and no partial
+coverage state. The response never returns raw `Thread`, raw `Turn`, raw
+`ThreadItem`, diagnostics storage paths, digest-only payload authority, arbitrary
+response headers, or image bytes. Binary evidence remains reference-only MIME,
+byte-length, and digest metadata. Missing, corrupt, invalid, or over-admission
+diagnostics, payloads, and output remain explicit local availability facts rather
+than killing the whole workspace. Availability discovered during the lazy read
+is appended to the record returned by that detail response, and the inspector
+uses that returned record rather than the earlier list summary. Tool Input first
+resolves the exact provider-issued arguments by matching the execution's retained
+provider call ID inside the source Provider Call response. When diagnostics exist
+but that match is unavailable, it does not fall back to canonical Item values.
+`redactedReplay` and `evidenceOnly` are never Trajectory Tool Input evidence; only
+when the entire diagnostics payload is absent may an exact `replayable` Item
+argument source be read on demand. Host execution and display fields are never
+model-input evidence. Tool Output reads the complete retained model-visible output
+without truncation. Assistant Preview uses ordered typed parts extracted from that exact
 provider call's retained terminal provider-neutral response. Text, thinking,
-tool calls, image metadata, and bounded unknown blocks retain their original
-order; a tool call retains its call ID, name, and bounded credential-redacted
-model-issued arguments, including exact filesystem paths. Normal provider
-tool-call IDs remain exact; an anomalous ID above the renderer identity ceiling
-uses one full SHA-256 identity in the Tool record, record ID, Assistant part, and
-detail lookup. This keeps the identity stable without allowing one provider
-string to bypass response bounds. Compaction Preview reads the retained compaction-summary payload on
+tool calls, image metadata, and unknown blocks retain their original order; a
+tool call retains its exact call ID, name, and model-issued arguments, including
+credential-looking values and filesystem paths. An anomalously long provider
+tool-call ID remains exact in detail evidence while only the record identity uses
+a full SHA-256 value to stay bounded. Compaction Preview reads the retained compaction-summary payload on
 demand. A ledger row's bounded preview remains a locating aid and never fills an
 empty Inspector Preview, Tool Input, Tool Output, or Context field.
 The System Prompt tab and row preview use the captured provider-context prompt
@@ -1375,16 +1366,6 @@ Delegation row previews use retained canonical model-call arguments when those
 arguments are inline, and remain empty when their payload-backed arguments are
 not part of the lightweight read. Host-only command, path, result, and
 presentation fields never substitute for model-input evidence.
-
-The lower-level `thread/trajectory/export` operation remains a main-owned
-diagnostic operation, but it is not a Trajectory toolbar surface. If a caller uses
-it, the renderer receives only status, file name, and byte length; it never
-receives the absolute save path. The saved bundle uses bounded,
-credential-redacted Thread metadata and retained diagnostics alongside the same
-record projection, including captured filesystem-path evidence, so it is a
-portable evidence bundle rather than a renderer-visible host-state dump. If the
-write fails, main records the complete error in diagnostics and returns only a
-fixed path-free failure message to the renderer.
 
 The lower-level `thread/turn/details/read` audited reader remains available for
 internal evidence validation. It still resolves one reachable full Turn and its

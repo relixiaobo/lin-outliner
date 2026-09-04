@@ -1880,7 +1880,6 @@ describe('Codex Agent Core protocol codec', () => {
       'thread/turn/details/read': { threadId: THREAD_ID, turnId: TURN_ID },
       'thread/trajectory/read': { threadId: THREAD_ID, limit: 120, focus: null },
       'thread/trajectory/detail/read': { threadId: THREAD_ID, recordId: 'record-1' },
-      'thread/trajectory/export': { threadId: THREAD_ID },
       'turn/submit': {
         threadId: THREAD_ID,
         input: [{ type: 'text', text: 'Submit' }],
@@ -1994,7 +1993,6 @@ describe('Codex Agent Core protocol codec', () => {
         selectedRecordId: null,
       },
       'thread/trajectory/detail/read': { threadId: THREAD_ID, record: null, detail: null },
-      'thread/trajectory/export': { status: 'canceled' },
       'turn/submit': {
         turn: completedTurn,
         turnId: TURN_ID,
@@ -2160,6 +2158,7 @@ describe('Codex Agent Core protocol codec', () => {
           consumedByCallIndex: null,
           executions: [{
             callId: 'tool-call-1',
+            providerCallId: 'provider-tool-call-1',
             toolName: 'bash',
             itemId: null,
             admissionDisposition: 'replayable',
@@ -2184,6 +2183,7 @@ describe('Codex Agent Core protocol codec', () => {
           executions: [
             {
               callId: 'tool-call-1',
+              providerCallId: 'provider-tool-call-1',
               toolName: 'bash',
               itemId: 'tool-item-1',
               admissionDisposition: 'replayable',
@@ -2195,6 +2195,7 @@ describe('Codex Agent Core protocol codec', () => {
             },
             {
               callId: 'tool-call-2',
+              providerCallId: 'provider-tool-call-2',
               toolName: 'bash',
               itemId: 'tool-item-1',
               admissionDisposition: 'replayable',
@@ -2293,6 +2294,7 @@ describe('Codex Agent Core protocol codec', () => {
               consumedByCallIndex: null,
               executions: [{
                 callId: 'missing-tool-call',
+                providerCallId: 'missing-provider-tool-call',
                 toolName: 'bash',
                 itemId: 'missing-tool-item',
                 admissionDisposition: 'replayable',

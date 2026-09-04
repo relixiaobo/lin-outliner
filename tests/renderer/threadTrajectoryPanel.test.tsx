@@ -1080,6 +1080,7 @@ describe('ThreadTrajectoryPanel', () => {
   });
 
   test('renders CONTEXT preview from captured model context text instead of the item summary', async () => {
+    const copied: string[] = [];
     const context = record({
       id: CONTEXT_ID,
       kind: 'context',
@@ -1097,14 +1098,8 @@ describe('ThreadTrajectoryPanel', () => {
         partIndex: 1,
       },
     });
-    const modelContextText = [
-      '<system-reminder>',
-      '<context authority="application" purpose="observation">',
-      'Use Browser Pilot for signed-in browser work.',
-      'Use code-review for local diffs and pull requests.',
-      '</context>',
-      '</system-reminder>',
-    ].join('\n');
+    const reminder = '<system-reminder>'.padEnd(8_087, 'R');
+    const modelContextText = `${'P'.repeat(64_001)}${reminder}`;
     const rendered = renderPanel(async (method, request) => {
       if (method === 'thread/trajectory/read') return trajectoryReadResponse([context]);
       if (method === 'thread/trajectory/detail/read') {
@@ -1112,6 +1107,10 @@ describe('ThreadTrajectoryPanel', () => {
         return contextDetailResponse(context, null, modelContextText);
       }
       throw new Error(`Unexpected Agent Core method: ${method}`);
+    });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (text: string) => { copied.push(text); } },
     });
 
     rendered.render();
@@ -1123,19 +1122,24 @@ describe('ThreadTrajectoryPanel', () => {
     const inspector = rendered.document.querySelector<HTMLElement>('[aria-label="Trajectory inspector"]');
     expect(inspector?.textContent).toContain('Sourceapplication · instruction');
     expect(inspector?.textContent).toContain('<system-reminder>');
-    expect(inspector?.textContent).toContain('<context authority="application" purpose="observation"');
-    expect(inspector?.textContent).toContain('Use Browser Pilot for signed-in browser work.');
     expect(inspector?.textContent).not.toContain('Available Skills (2)');
 
     clickButton(rendered.document, 'Preview');
-    expect(inspector?.textContent).toContain('Use code-review for local diffs and pull requests.');
+    expect(inspector?.textContent).toContain(reminder);
     expect(inspector?.querySelector('.thread-trajectory-preview > .thread-trajectory-code'))
       .not.toBeNull();
+    clickAriaButton(rendered.document, 'Copy raw content');
+    await flush();
+    expect(copied).toEqual([modelContextText]);
 
     clickButton(rendered.document, 'Raw');
     await flush();
     expect(inspector?.textContent).toContain('"item": null');
     expect(inspector?.textContent).toContain('"modelContextText"');
+    clickAriaButton(rendered.document, 'Copy raw content');
+    await flush();
+    expect(copied[1]).toContain(modelContextText);
+    expect(copied[1]).not.toContain('[truncated]');
   });
 
   test('keeps every Inspector preview on its record-kind evidence authority', async () => {

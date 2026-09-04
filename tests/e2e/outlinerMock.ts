@@ -4951,9 +4951,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                   },
           }) as T;
         }
-        if (method === 'thread/trajectory/export') {
-          return clone({ status: 'written', fileName: 'tenon-trajectory-mock.json', byteLength: 128 }) as T;
-        }
         if (method === 'thread/items/list') {
           const turns = mockTurns.get(String(input.threadId)) ?? [];
           const turnId = typeof input.turnId === 'string' ? input.turnId : null;
