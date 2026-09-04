@@ -892,13 +892,19 @@ alone. This is an audited raw evidence reader, not the product workspace route.
 canonical Turns plus retained evidence. It returns only `threadId`, a summary, an
 ordered record window, `olderCursor` / `newerCursor` plus `hasOlder` /
 `hasNewer`, and the selected record. Cursors are stable keyset cursors over
-record identity, not mutable array offsets. Reads locate the bounded Turn window
-before diagnostics payload reads and cap diagnostics read concurrency. They may
+record identity, not mutable array offsets. Reads resolve the tail, cursor, or
+focus to a canonical Turn position, then scan Turn headers in adaptive batches
+until the requested record coverage is full. They do not treat the record limit
+as a Turn count, and they cap diagnostics read concurrency. A read may
 materialize one predecessor Turn to recover the stable-prompt and tool-catalog
 fingerprints at the window boundary; predecessor evidence never enters the
-returned window. The
-summary uses lightweight whole-Thread Turn/Item/timing/usage facts and must not
-force diagnostics materialization outside the requested window. Record kinds are
+returned window. Completed-Turn projected summaries are reused by a rebuildable
+LRU bounded by record and Turn counts. Its key includes the Thread, Turn, and
+content-addressed diagnostics identity; it contains no raw diagnostics, never
+serves detail reads, and does not cache active Turns or unavailable diagnostics.
+The summary comes from a lightweight whole-Thread aggregate plus availability
+discovered in the loaded window, so it does not deserialize every Turn's Items
+or diagnostics. Record kinds are
 `input`, `context`, `assistant`, `tool`, `retry`, `compaction`, and
 `delegation`. Assistant records use provider-call evidence as their primary
 identity; tool and runtime records use diagnostic activities when retained and

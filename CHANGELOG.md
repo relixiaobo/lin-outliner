@@ -12,6 +12,33 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Agent delegation now has an approved execution plan (PR #620, codex-4)**
+  — the merged design replaces Subagents and isolated Skills with generic durable
+  Background Tool Tasks, a Skill-guided `delegate` CLI, hidden root-owned Agent
+  Sessions, Host-attested direct-exec launch admission, settlement and
+  cancellation fences, lifecycle/retention rules, and one complete feature per
+  delivery unit. Gate review found High design-contract defects across Runner
+  authority, delivery settlement, cancellation, process truth, and launch
+  capability scope; all were fixed before the final no-findings review. Verified
+  with `docs:check`, whitespace checks, product-spec inspection, and green PR
+  E2E signal samples. This is design authority only: runtime behavior remains
+  unchanged until #623 and the later internal delegation cutover ship.
+
+- **Trajectory inspection now pages live history through a bounded, truthful
+  window (PR #625, codex-2)** — main reads only the Turn ranges needed to cover a
+  record page, caches bounded completed-Turn summaries, and coalesces live tail
+  refreshes; renderer retains at most three contiguous pages without hiding an
+  unloaded gap or evicting the selected page. Gate review found one High sparse-
+  ordinal paging defect and two Medium cache/export and empty-catalog boundary
+  defects; all were fixed with dense Turn ranks, cache-independent authoritative
+  export reads, and an explicit final catalog fingerprint. Verified with
+  typecheck, `docs:check`, 2,862 passing Core tests with 6 skipped, 57 focused
+  Core tests, the targeted Electron Trajectory E2E, two additional light/dark
+  visual passes, and five GitHub E2E samples with green baseline subtraction.
+  This ships only the plan's paging/performance unit: exact Context, Request,
+  Assistant, Tool Input/Output, Raw, copy, restart, and fork evidence remains the
+  active exact-or-unavailable unit and is not claimed complete.
+
 - **Dynamic model catalogs now publish through generation-safe pi-ai 0.84
   collections (PR #622, codex)** — provider-scoped refreshes carry cancellation
   through the durable JSON store to the final atomic commit, so an older request

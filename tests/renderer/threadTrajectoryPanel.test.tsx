@@ -23,6 +23,11 @@ import {
   trajectorySearchMatches,
   trajectoryTimelineFocusRecords,
 } from '../../src/renderer/agent/components/trajectory/trajectoryModel';
+import {
+  EMPTY_TRAJECTORY_WINDOW,
+  reconcileTrajectoryWindow,
+  TRAJECTORY_WINDOW_RECORD_LIMIT,
+} from '../../src/renderer/agent/components/trajectory/trajectoryWindow';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
 const THREAD_ID = '01910000-0000-7000-8000-000000000001';
@@ -656,6 +661,93 @@ describe('ThreadTrajectoryPanel', () => {
     expect(recordRow(rendered.document, replacementTurnSeven.id).textContent)
       .toContain('Replacement after rolling back three Turns');
     expect(rendered.document.querySelectorAll('.thread-trajectory-turn-label')).toHaveLength(1);
+  });
+
+  test('coalesces live notifications and removes Load newer after joining the tail', async () => {
+    const initial = trajectoryRecords();
+    const appended = record({
+      ...initial[0]!,
+      id: 'turn:tail-turn:input:0',
+      turnId: 'tail-turn',
+      turnIndex: 1,
+      preview: 'Tail input',
+    });
+    const refresh = trajectoryReadResponse([...initial, appended]);
+    const firstRefresh = deferred<ThreadTrajectoryReadResponse>();
+    let reads = 0;
+    const rendered = renderPanel(async (method) => {
+      if (method !== 'thread/trajectory/read') throw new Error(`Unexpected Agent Core method: ${method}`);
+      reads += 1;
+      if (reads === 1) {
+        return trajectoryReadResponse(initial, null, { newerCursor: `after:${encodeURIComponent(TOOL_ID)}` });
+      }
+      if (reads === 2) return firstRefresh.promise;
+      return refresh;
+    });
+
+    rendered.render();
+    await flush();
+    expect(buttonLabels(rendered.document)).toContain('Load newer');
+
+    rendered.notify(trajectoryRefreshNotification());
+    await wait(130);
+    expect(reads).toBe(2);
+    rendered.notify(trajectoryRefreshNotification());
+    rendered.notify(trajectoryRefreshNotification());
+    rendered.notify(trajectoryRefreshNotification());
+    await wait(130);
+    expect(reads).toBe(2);
+
+    firstRefresh.resolve(refresh);
+    await flush();
+    await flush();
+
+    expect(reads).toBe(3);
+    expect(recordRow(rendered.document, appended.id).textContent).toContain('Tail input');
+    expect(buttonLabels(rendered.document)).not.toContain('Load newer');
+  });
+
+  test('isolates cursorless refresh flights when switching Threads', async () => {
+    const nextThreadId = '01910000-0000-7000-8000-000000000002';
+    const oldInitial = deferred<ThreadTrajectoryReadResponse>();
+    const nextInitial = deferred<ThreadTrajectoryReadResponse>();
+    const nextRecords = trajectoryRecords().map((entry) => ({
+      ...entry,
+      id: `${entry.id}:next`,
+      preview: `Next ${entry.preview}`,
+    }));
+    const requests: string[] = [];
+    const rendered = renderPanel(async (method, request) => {
+      if (method !== 'thread/trajectory/read') throw new Error(`Unexpected Agent Core method: ${method}`);
+      requests.push(request.threadId);
+      if (request.threadId === THREAD_ID) return oldInitial.promise;
+      if (requests.filter((threadId) => threadId === nextThreadId).length === 1) {
+        return nextInitial.promise;
+      }
+      return trajectoryReadResponse(nextRecords);
+    });
+
+    rendered.render();
+    expect(requests).toEqual([THREAD_ID]);
+
+    rendered.rerender(nextThreadId);
+    expect(requests).toEqual([THREAD_ID, nextThreadId]);
+    rendered.notify({
+      ...trajectoryRefreshNotification(),
+      threadId: nextThreadId,
+    });
+    await wait(130);
+
+    oldInitial.resolve(trajectoryReadResponse(trajectoryRecords()));
+    await flush();
+    expect(requests).toEqual([THREAD_ID, nextThreadId]);
+
+    nextInitial.resolve(trajectoryReadResponse(nextRecords));
+    await flush();
+    await flush();
+
+    expect(requests).toEqual([THREAD_ID, nextThreadId, nextThreadId]);
+    expect(recordRow(rendered.document, nextRecords[0]!.id).textContent).toContain('Next');
   });
 
   test('renders provider-visible tool catalog records as first-class Tools evidence', async () => {
@@ -1377,6 +1469,187 @@ describe('ThreadTrajectoryPanel', () => {
   });
 });
 
+describe('Trajectory working window', () => {
+  test('keeps three contiguous pages while paging beyond the cap in both directions', () => {
+    const records = trajectoryScaleRecords(600);
+    let result = reconcileTrajectoryWindow(
+      EMPTY_TRAJECTORY_WINDOW,
+      trajectoryReadResponse(records.slice(240, 360), null, {
+        olderCursor: trajectoryTestCursor('before', records[240]!),
+        newerCursor: trajectoryTestCursor('after', records[359]!),
+      }),
+      'initial',
+      true,
+      null,
+    );
+    result = reconcileTrajectoryWindow(result.window, trajectoryReadResponse(records.slice(120, 240), null, {
+      olderCursor: trajectoryTestCursor('before', records[120]!),
+      newerCursor: trajectoryTestCursor('after', records[239]!),
+    }), 'older', result.followingTail, null);
+    result = reconcileTrajectoryWindow(result.window, trajectoryReadResponse(records.slice(0, 120), null, {
+      newerCursor: trajectoryTestCursor('after', records[119]!),
+    }), 'older', result.followingTail, null);
+
+    expect(result.window.records.map((entry) => entry.id)).toEqual(records.slice(0, 360).map((entry) => entry.id));
+    expect(result.window.olderCursor).toBeNull();
+    expect(result.window.newerCursor).not.toBeNull();
+
+    result = reconcileTrajectoryWindow(result.window, trajectoryReadResponse(records.slice(360, 480), null, {
+      olderCursor: trajectoryTestCursor('before', records[360]!),
+      newerCursor: trajectoryTestCursor('after', records[479]!),
+    }), 'newer', result.followingTail, null);
+    result = reconcileTrajectoryWindow(result.window, trajectoryReadResponse(records.slice(480), null, {
+      olderCursor: trajectoryTestCursor('before', records[480]!),
+    }), 'newer', result.followingTail, null);
+
+    expect(result.window.records).toHaveLength(TRAJECTORY_WINDOW_RECORD_LIMIT);
+    expect(result.window.records.map((entry) => entry.id)).toEqual(records.slice(240).map((entry) => entry.id));
+    expect(new Set(result.window.records.map((entry) => entry.id)).size).toBe(TRAJECTORY_WINDOW_RECORD_LIMIT);
+    expect(result.window.olderCursor).not.toBeNull();
+    expect(result.window.newerCursor).toBeNull();
+  });
+
+  test('defers a cap-crossing tail suffix when it would evict the selected page', () => {
+    const records = trajectoryScaleRecords(480);
+    const selected = records[10]!;
+    const current = {
+      coveredRecordIds: new Set(records.slice(0, 360).map((record) => record.id)),
+      records: records.slice(0, 360),
+      olderCursor: null,
+      newerCursor: null,
+    };
+    const result = reconcileTrajectoryWindow(current, trajectoryReadResponse(records.slice(300), null, {
+      olderCursor: trajectoryTestCursor('before', records[300]!),
+    }), 'refresh', true, selected.id);
+
+    expect(result.followingTail).toBeFalse();
+    expect(result.closeInspector).toBeFalse();
+    expect(result.window.records.map((entry) => entry.id)).toEqual(current.records.map((entry) => entry.id));
+    expect(result.window.newerCursor).toBe(trajectoryTestCursor('after', records[359]!));
+  });
+
+  test('closes the inspector before explicit newer paging evicts its selected page', () => {
+    const records = trajectoryScaleRecords(480);
+    const current = {
+      coveredRecordIds: new Set(records.slice(0, 360).map((record) => record.id)),
+      records: records.slice(0, 360),
+      olderCursor: null,
+      newerCursor: trajectoryTestCursor('after', records[359]!),
+    };
+    const result = reconcileTrajectoryWindow(current, trajectoryReadResponse(records.slice(360), null, {
+      olderCursor: trajectoryTestCursor('before', records[360]!),
+    }), 'newer', false, records[10]!.id);
+
+    expect(result.closeInspector).toBeTrue();
+    expect(result.window.records.map((entry) => entry.id)).toEqual(records.slice(120).map((entry) => entry.id));
+    expect(result.window.newerCursor).toBeNull();
+  });
+
+  test('does not join a disjoint tail response across a real unloaded gap', () => {
+    const records = trajectoryScaleRecords(500);
+    const current = {
+      coveredRecordIds: new Set(records.slice(0, 120).map((record) => record.id)),
+      records: records.slice(0, 120),
+      olderCursor: null,
+      newerCursor: trajectoryTestCursor('after', records[119]!),
+    };
+    const result = reconcileTrajectoryWindow(current, trajectoryReadResponse(records.slice(380), null, {
+      olderCursor: trajectoryTestCursor('before', records[380]!),
+    }), 'refresh', true, null);
+
+    expect(result.window.records.map((entry) => entry.id)).toEqual(current.records.map((entry) => entry.id));
+    expect(result.window.newerCursor).toBe(current.newerCursor);
+  });
+
+  test('caps covered records without charging required structural ancestors', () => {
+    const covered = trajectoryScaleRecords(TRAJECTORY_WINDOW_RECORD_LIMIT);
+    const parent = { ...record({
+      ...covered[0]!,
+      id: 'turn:structural-parent:assistant:0',
+      kind: 'assistant',
+      lane: 'assistant',
+      turnId: 'structural-parent',
+      turnIndex: 0,
+      label: { type: 'assistantCall', callIndex: 0 },
+      primaryEvidence: {
+        type: 'providerCall',
+        threadId: THREAD_ID,
+        turnId: 'structural-parent',
+        callIndex: 0,
+      },
+    }), orderKey: testOrderKey(0, 0) };
+    const child = {
+      ...record({ ...covered[0]!, parentRecordId: parent.id }),
+      orderKey: testOrderKey(0, 1),
+    };
+    const response = trajectoryReadResponse([parent, child, ...covered.slice(1)], null, {
+      replacementRange: {
+        startOrderKey: child.orderKey,
+        endOrderKey: covered.at(-1)!.orderKey,
+      },
+    });
+    const result = reconcileTrajectoryWindow(EMPTY_TRAJECTORY_WINDOW, response, 'initial', true, null);
+
+    expect(result.window.coveredRecordIds.size).toBe(TRAJECTORY_WINDOW_RECORD_LIMIT);
+    expect(result.window.records).toHaveLength(TRAJECTORY_WINDOW_RECORD_LIMIT + 1);
+    expect(result.window.coveredRecordIds.has(parent.id)).toBeFalse();
+    expect(result.window.records[0]?.id).toBe(parent.id);
+  });
+
+  test('does not create an older cursor solely for a structural ancestor', () => {
+    const covered = trajectoryScaleRecords(TRAJECTORY_WINDOW_RECORD_LIMIT);
+    const parent = structuralParentRecord('shared-parent');
+    const child = {
+      ...covered[0]!,
+      parentRecordId: parent.id,
+      orderKey: testOrderKey(0, 1),
+    };
+    const response = trajectoryReadResponse([parent, child, ...covered.slice(1)], null, {
+      replacementRange: {
+        startOrderKey: child.orderKey,
+        endOrderKey: covered.at(-1)!.orderKey,
+      },
+    });
+    const initial = reconcileTrajectoryWindow(EMPTY_TRAJECTORY_WINDOW, response, 'initial', true, null);
+    const refreshed = reconcileTrajectoryWindow(initial.window, response, 'refresh', true, null);
+
+    expect(refreshed.window.olderCursor).toBeNull();
+    expect(refreshed.window.records[0]?.id).toBe(parent.id);
+  });
+
+  test('does not join disjoint coverage that only shares a structural ancestor', () => {
+    const parent = structuralParentRecord('shared-parent');
+    const firstChild = {
+      ...trajectoryScaleRecords(1)[0]!,
+      id: 'turn:shared-parent:tool:first',
+      parentRecordId: parent.id,
+      orderKey: testOrderKey(0, 1),
+    };
+    const laterChild = {
+      ...firstChild,
+      id: 'turn:shared-parent:tool:later',
+      orderKey: testOrderKey(0, 20),
+    };
+    const current = {
+      coveredRecordIds: new Set([firstChild.id]),
+      records: [parent, firstChild],
+      olderCursor: null,
+      newerCursor: trajectoryTestCursor('after', firstChild),
+    };
+    const response = trajectoryReadResponse([parent, laterChild], null, {
+      olderCursor: trajectoryTestCursor('before', laterChild),
+      replacementRange: {
+        startOrderKey: laterChild.orderKey,
+        endOrderKey: laterChild.orderKey,
+      },
+    });
+    const refreshed = reconcileTrajectoryWindow(current, response, 'refresh', true, null);
+
+    expect(refreshed.window.records.map((entry) => entry.id)).toEqual([parent.id, firstChild.id]);
+    expect(refreshed.window.newerCursor).toBe(current.newerCursor);
+  });
+});
+
 describe('Trajectory projection model', () => {
   test('derives truthful duration geometry and range membership without fabricating untimed spans', () => {
     const records = trajectoryRecords();
@@ -1505,6 +1778,7 @@ function renderPanel(
     readonly language?: 'en' | 'zh-Hans';
     readonly onOpenThreadTrajectory?: (threadId: string) => void;
     readonly selectedRecordId?: string;
+    readonly threadId?: string;
     readonly turnId?: string;
   } = {},
 ) {
@@ -1533,31 +1807,37 @@ function renderPanel(
   const rootElement = document.getElementById('root');
   if (!rootElement) throw new Error('Missing root element');
   const root = createRoot(rootElement);
+  let registeredForCleanup = false;
+  const renderThread = (threadId: string) => {
+    act(() => {
+      root.render(
+        <I18nProvider>
+          <ThreadTrajectoryPanel
+            canGoBack
+            onBack={() => undefined}
+            onClose={() => undefined}
+            onOpenThreadTrajectory={options.onOpenThreadTrajectory ?? (() => undefined)}
+            selectedRecordId={options.selectedRecordId}
+            showClose
+            threadId={threadId}
+            turnId={options.turnId}
+          />
+        </I18nProvider>,
+      );
+    });
+    if (!registeredForCleanup) {
+      registeredForCleanup = true;
+      mounted.push(() => act(() => root.unmount()));
+    }
+  };
   return {
     document,
     notify: (notification: AgentCoreNotification) => {
       act(() => notificationListener?.(notification));
     },
+    rerender: (threadId: string) => renderThread(threadId),
     window,
-    render: () => {
-      act(() => {
-        root.render(
-          <I18nProvider>
-            <ThreadTrajectoryPanel
-              canGoBack
-              onBack={() => undefined}
-              onClose={() => undefined}
-              onOpenThreadTrajectory={options.onOpenThreadTrajectory ?? (() => undefined)}
-              selectedRecordId={options.selectedRecordId}
-              showClose
-              threadId={THREAD_ID}
-              turnId={options.turnId}
-            />
-          </I18nProvider>,
-        );
-      });
-      mounted.push(() => act(() => root.unmount()));
-    },
+    render: () => renderThread(options.threadId ?? THREAD_ID),
   };
 }
 
@@ -1703,6 +1983,61 @@ function record(
 function testOrderKey(turnIndex: number, stepIndex: number): string {
   const component = (value: number) => value.toString(36).padStart(13, '0');
   return [turnIndex, 1, stepIndex, 0, 0, 0].map(component).join(':');
+}
+
+function trajectoryScaleRecords(count: number): readonly ThreadTrajectoryRecordSummary[] {
+  return Array.from({ length: count }, (_, index) => {
+    const turnId = `scale-turn-${index}`;
+    return record({
+      id: `turn:${turnId}:input:0`,
+      kind: 'input',
+      lane: 'input',
+      turnId,
+      turnIndex: index,
+      stepIndex: 0,
+      label: { type: 'input', source: 'initial' },
+      preview: `Record ${index}`,
+      primaryEvidence: { type: 'threadTurn', threadId: THREAD_ID, turnId },
+    });
+  });
+}
+
+function structuralParentRecord(turnId: string): ThreadTrajectoryRecordSummary {
+  return {
+    ...record({
+      ...trajectoryRecords()[1]!,
+      id: `turn:${turnId}:assistant:0`,
+      turnId,
+      label: { type: 'assistantCall', callIndex: 0 },
+      primaryEvidence: { type: 'providerCall', threadId: THREAD_ID, turnId, callIndex: 0 },
+    }),
+    orderKey: testOrderKey(0, 0),
+  };
+}
+
+function trajectoryTestCursor(
+  direction: 'after' | 'before',
+  boundary: ThreadTrajectoryRecordSummary,
+): string {
+  return `${direction}:${encodeURIComponent(boundary.id)}`;
+}
+
+function trajectoryRefreshNotification(): AgentCoreNotification {
+  return {
+    type: 'turn/providerRetry/changed',
+    threadId: THREAD_ID,
+    turnId: TURN_ID,
+    status: null,
+  };
+}
+
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => { resolve = settle; });
+  return { promise, resolve };
 }
 
 function assistantDetailResponse(): ThreadTrajectoryDetailReadResponse {

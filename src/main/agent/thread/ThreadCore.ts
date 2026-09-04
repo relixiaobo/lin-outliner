@@ -16,13 +16,15 @@ AgentCoreRecordedNotification,
 AgentCoreTransientNotification,
 ThreadId,
 ThreadItemDelta,
-Turn
+Turn,
+TurnItemsView
 } from '../../../core/agent/protocol';
 import { ExtensionRegistry } from '../ExtensionRegistry';
 import { applyThreadItemDelta } from '../itemDelta';
 import { KeyedMutex,Mutex } from '../Mutex';
 import { RolloutStore } from '../persistence/RolloutStore';
 import { ThreadHistoryProjectionStore } from '../persistence/ThreadHistoryProjectionStore';
+import type { ThreadTrajectoryTurnOverview } from '../persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore,type ThreadCatalogRecord } from '../persistence/ThreadMetadataStore';
 import { ToolPayloadStore } from '../persistence/ToolPayloadStore';
 import { AgentResourceStore } from '../persistence/AgentResourceStore';
@@ -461,10 +463,75 @@ export class ThreadCore {
   requireThread(threadId: ThreadId): ThreadCatalogRecord {
       return this.ephemeral.get(threadId)?.record ?? this.metadata.require(threadId);
     }
-  allTurns(threadId: ThreadId): Turn[] {
+  allTurns(threadId: ThreadId, itemsView: TurnItemsView = 'full'): Turn[] {
       const ephemeral = this.ephemeral.get(threadId);
-      if (ephemeral) return [...ephemeral.turns];
-      return this.history.allTurns(threadId);
+      if (ephemeral) {
+        return itemsView === 'notLoaded'
+          ? ephemeral.turns.map((turn) => ({ ...turn, items: [], itemsView }))
+          : [...ephemeral.turns];
+      }
+      return this.history.allTurns(threadId, itemsView);
+    }
+  trajectoryTurnOverview(threadId: ThreadId): ThreadTrajectoryTurnOverview {
+      const ephemeral = this.ephemeral.get(threadId);
+      if (!ephemeral) return this.history.trajectoryTurnOverview(threadId);
+      const turns = ephemeral.turns;
+      const usage = turns.reduce<ThreadTrajectoryTurnOverview['usage']>((total, turn) => {
+        const next = turn.execution.usage;
+        if (!total) {
+          return {
+            input: next.input,
+            output: next.output,
+            cacheRead: next.cacheRead,
+            cacheWrite: next.cacheWrite,
+            reasoning: null,
+            totalTokens: next.totalTokens,
+            costUsd: next.cost?.total ?? null,
+          };
+        }
+        return {
+          input: total.input + next.input,
+          output: total.output + next.output,
+          cacheRead: total.cacheRead + next.cacheRead,
+          cacheWrite: total.cacheWrite + next.cacheWrite,
+          reasoning: null,
+          totalTokens: total.totalTokens + next.totalTokens,
+          costUsd: total.costUsd === null || next.cost === null
+            ? null
+            : total.costUsd + next.cost.total,
+        };
+      }, null);
+      const startedAt = turns.length === 0 ? null : Math.min(...turns.map((turn) => turn.startedAt));
+      const completedAt = turns.length === 0 || turns.some((turn) => turn.completedAt === null)
+        ? null
+        : Math.max(...turns.map((turn) => turn.completedAt ?? turn.startedAt));
+      return {
+        completedAt,
+        diagnosticsUnavailable: turns.some((turn) => (
+          turn.status !== 'inProgress' && turn.execution.diagnosticsRef === null
+        )),
+        startedAt,
+        turnCount: turns.length,
+        usage,
+      };
+    }
+  trajectoryTurnPosition(threadId: ThreadId, turnId: string): number | null {
+      const ephemeral = this.ephemeral.get(threadId);
+      if (!ephemeral) return this.history.trajectoryTurnPosition(threadId, turnId);
+      const position = ephemeral.turns.findIndex((turn) => turn.id === turnId);
+      return position < 0 ? null : position;
+    }
+  trajectoryTurnRange(
+    threadId: ThreadId,
+    start: number,
+    end: number,
+    itemsView: TurnItemsView = 'notLoaded',
+  ): Turn[] {
+      const ephemeral = this.ephemeral.get(threadId);
+      if (!ephemeral) return this.history.trajectoryTurnRange(threadId, start, end, itemsView);
+      return ephemeral.turns.slice(start, end).map((turn) => (
+        itemsView === 'notLoaded' ? { ...turn, items: [], itemsView } : turn
+      ));
     }
   readTurn(threadId: ThreadId, turnId: string): Turn | null {
       return this.ephemeral.get(threadId)?.turns.find((turn) => turn.id === turnId)

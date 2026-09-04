@@ -12,6 +12,7 @@ import type {
   ThreadItemEntry,
   ThreadItemsListRequest,
   ThreadItemsListResponse,
+  ThreadTrajectoryUsageSummary,
   ThreadTurnsListRequest,
   ThreadTurnsListResponse,
   Turn,
@@ -82,6 +83,14 @@ export interface ThreadHistoryTurnPage {
   readonly newestPosition: number | null;
   readonly hasOlder: boolean;
   readonly hasNewer: boolean;
+}
+
+export interface ThreadTrajectoryTurnOverview {
+  readonly completedAt: number | null;
+  readonly diagnosticsUnavailable: boolean;
+  readonly startedAt: number | null;
+  readonly turnCount: number;
+  readonly usage: ThreadTrajectoryUsageSummary | null;
 }
 
 type StreamingItemsByTurn = Map<string, Map<string, ThreadItem>>;
@@ -406,6 +415,84 @@ export class ThreadHistoryProjectionStore {
       cursor = page.nextCursor;
     } while (cursor);
     return turns;
+  }
+
+  trajectoryTurnOverview(threadId: ThreadId): ThreadTrajectoryTurnOverview {
+    const row = this.db.prepare(`
+      SELECT
+        COUNT(*) AS turn_count,
+        MIN(started_at) AS started_at,
+        CASE WHEN SUM(completed_at IS NULL) > 0 THEN NULL ELSE MAX(completed_at) END AS completed_at,
+        SUM(json_extract(execution_json, '$.usage.input')) AS usage_input,
+        SUM(json_extract(execution_json, '$.usage.output')) AS usage_output,
+        SUM(json_extract(execution_json, '$.usage.cacheRead')) AS usage_cache_read,
+        SUM(json_extract(execution_json, '$.usage.cacheWrite')) AS usage_cache_write,
+        SUM(json_extract(execution_json, '$.usage.totalTokens')) AS usage_total_tokens,
+        CASE
+          WHEN SUM(json_extract(execution_json, '$.usage.cost.total') IS NULL) > 0 THEN NULL
+          ELSE SUM(json_extract(execution_json, '$.usage.cost.total'))
+        END AS usage_cost,
+        SUM(status != 'inProgress' AND json_extract(execution_json, '$.diagnosticsRef') IS NULL)
+          AS diagnostics_unavailable
+      FROM thread_turns
+      WHERE thread_id = ?
+    `).get(threadId) as {
+      completed_at: number | null;
+      diagnostics_unavailable: number | null;
+      started_at: number | null;
+      turn_count: number;
+      usage_cache_read: number | null;
+      usage_cache_write: number | null;
+      usage_cost: number | null;
+      usage_input: number | null;
+      usage_output: number | null;
+      usage_total_tokens: number | null;
+    };
+    const usage = row.turn_count === 0 ? null : {
+      input: row.usage_input ?? 0,
+      output: row.usage_output ?? 0,
+      cacheRead: row.usage_cache_read ?? 0,
+      cacheWrite: row.usage_cache_write ?? 0,
+      reasoning: null,
+      totalTokens: row.usage_total_tokens ?? 0,
+      costUsd: row.usage_cost,
+    };
+    return {
+      completedAt: row.completed_at,
+      diagnosticsUnavailable: (row.diagnostics_unavailable ?? 0) > 0,
+      startedAt: row.started_at,
+      turnCount: row.turn_count,
+      usage,
+    };
+  }
+
+  trajectoryTurnPosition(threadId: ThreadId, turnId: string): number | null {
+    const row = this.db.prepare(`
+      SELECT COUNT(preceding.turn_id) AS turn_rank
+      FROM thread_turns AS target
+      LEFT JOIN thread_turns AS preceding
+        ON preceding.thread_id = target.thread_id
+        AND preceding.position < target.position
+      WHERE target.thread_id = ? AND target.turn_id = ?
+      GROUP BY target.position
+    `).get(threadId, turnId) as { turn_rank: number } | undefined;
+    return row?.turn_rank ?? null;
+  }
+
+  trajectoryTurnRange(
+    threadId: ThreadId,
+    start: number,
+    end: number,
+    itemsView: TurnItemsView = 'notLoaded',
+  ): Turn[] {
+    if (end <= start) return [];
+    const rows = this.db.prepare(`
+      SELECT * FROM thread_turns
+      WHERE thread_id = ?
+      ORDER BY position
+      LIMIT ? OFFSET ?
+    `).all(threadId, end - start, start) as unknown as TurnRow[];
+    return rows.map((row) => this.turnFromRow(row, itemsView));
   }
 
   readTurn(threadId: ThreadId, turnId: string, itemsView: TurnItemsView = 'full'): Turn | null {
