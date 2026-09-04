@@ -243,6 +243,13 @@ export class DelegationSessionStore {
       const session = this.requireOpenSession(input.sessionId);
       this.assertRevision(session, input.expectedRevision);
       this.assertResumeFence(session, input.sourceRootTurnId, input.sourceRootIntentRevision);
+      const blocked = this.blockedSettlementForSession(input.sessionId);
+      if (blocked) {
+        throw new DelegationStateError(
+          'blocked',
+          `Delegation Session has a blocked settlement: ${blocked.settlementId}`,
+        );
+      }
       const sequence = session.messageSequence + 1;
       const prefixDigest = digestMessagePrefix(
         this.messageSequenceDigest(input.sessionId, sequence - 1),
@@ -346,11 +353,7 @@ export class DelegationSessionStore {
       const queued = this.queuedMessages(sessionId);
       if (queued.length === 0) return [];
       this.assertRevision(session, expectedRevision);
-      this.db.prepare(`
-        UPDATE delegation_root_messages
-        SET body = NULL, state = 'blocked', blocked_reason = ?, updated_at = ?
-        WHERE session_id = ? AND state = 'queued'
-      `).run(reason, now, sessionId);
+      this.blockQueuedMessagesWithinTransaction(sessionId, reason, now);
       this.advanceSession(sessionId, now);
       return this.messagesForSession(sessionId).filter((message) => queued.some((entry) => entry.messageId === message.messageId));
     });
@@ -387,12 +390,9 @@ export class DelegationSessionStore {
       if (session.currentTaskId) {
         throw new DelegationStateError('conflict', `Delegation Session already has an active execution: ${session.currentTaskId}`);
       }
-      const blocked = this.db.prepare(`
-        SELECT settlement_id FROM delegation_execution_settlements
-        WHERE session_id = ? AND state = 'blocked' LIMIT 1
-      `).get(input.sessionId) as { settlement_id: string } | undefined;
+      const blocked = this.blockedSettlementForSession(input.sessionId);
       if (blocked) {
-        throw new DelegationStateError('blocked', `Delegation Session has a blocked settlement: ${blocked.settlement_id}`);
+        throw new DelegationStateError('blocked', `Delegation Session has a blocked settlement: ${blocked.settlementId}`);
       }
       if (this.messageSequenceDigest(input.sessionId, input.messageSequence) !== input.messageSequenceDigest) {
         throw new DelegationStateError('conflict', 'Delegation execution message prefix digest does not match');
@@ -648,11 +648,11 @@ export class DelegationSessionStore {
       if (session.currentTaskId !== input.cancelledTaskId) {
         throw new DelegationStateError('conflict', 'User stop must fence the active delegation task');
       }
-      this.db.prepare(`
-        UPDATE delegation_root_messages
-        SET body = NULL, state = 'blocked', blocked_reason = ?, updated_at = ?
-        WHERE session_id = ? AND state = 'queued'
-      `).run('Delegation message was blocked by user stop', input.now, input.sessionId);
+      this.blockQueuedMessagesWithinTransaction(
+        input.sessionId,
+        'Delegation message was blocked by user stop',
+        input.now,
+      );
       this.advanceSession(input.sessionId, input.now, 'stop_fence_json = ?, last_resume_json = NULL', JSON.stringify(expectedFence));
       return this.requireSession(input.sessionId);
     });
@@ -794,8 +794,29 @@ export class DelegationSessionStore {
       UPDATE delegation_execution_settlements
       SET state = 'blocked', blocked_reason = ?, updated_at = ? WHERE settlement_id = ?
     `).run(reason, now, settlement.settlementId);
+    this.blockQueuedMessagesWithinTransaction(
+      settlement.sessionId,
+      `Delegation message was blocked because execution settlement ${settlement.settlementId} failed: ${reason}`,
+      now,
+    );
     this.advanceSession(settlement.sessionId, now);
     return this.requireSettlement(settlement.settlementId);
+  }
+
+  private blockQueuedMessagesWithinTransaction(sessionId: ThreadId, reason: string, now: number): void {
+    this.db.prepare(`
+      UPDATE delegation_root_messages
+      SET body = NULL, state = 'blocked', blocked_reason = ?, updated_at = ?
+      WHERE session_id = ? AND state = 'queued'
+    `).run(reason, now, sessionId);
+  }
+
+  private blockedSettlementForSession(sessionId: ThreadId): DelegationExecutionSettlement | null {
+    const row = this.db.prepare(`
+      SELECT * FROM delegation_execution_settlements
+      WHERE session_id = ? AND state = 'blocked' ORDER BY created_at, settlement_id LIMIT 1
+    `).get(sessionId) as SettlementRow | undefined;
+    return row ? settlementFromRow(row) : null;
   }
 
   private requireSession(sessionId: ThreadId): DelegationSessionBinding {

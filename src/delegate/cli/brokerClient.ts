@@ -24,12 +24,11 @@ export class DelegateBrokerError extends Error {
 export class DelegateBrokerClient implements DelegateStateExecutor {
   constructor(private readonly capability: DelegateLaunchCapability) {}
 
-  async execute(command: DelegateStateCommand, input: unknown, signal?: AbortSignal): Promise<unknown> {
+  async execute(command: DelegateStateCommand, _input: unknown, signal?: AbortSignal): Promise<unknown> {
     const request: DelegateBrokerRequest = {
       version: DELEGATE_PROTOCOL_VERSION,
       capability: this.capability,
       command,
-      input,
     };
     const response = await postJson(this.capability.brokerSocketPath, request, signal);
     if (!response.ok) throw new DelegateBrokerError(response.error.code, response.error.message);

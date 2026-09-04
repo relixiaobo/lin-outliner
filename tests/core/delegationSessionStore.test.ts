@@ -253,6 +253,13 @@ describe('DelegationSessionStore', () => {
       taskId: 'task-after-block',
       now: 80,
     })).toThrow('has a blocked settlement');
+    expect(() => store.appendMessage(messageInput(
+      SESSION_ID,
+      blockedSession.revision,
+      'message-after-block',
+      'This message must not enter a blocked Session.',
+      80,
+    ))).toThrow('has a blocked settlement');
   });
 
   test('blocks only the existing settlement when a Turn or Tool Task identity is rebound', () => {

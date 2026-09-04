@@ -224,7 +224,7 @@ export class DelegationCoordinator {
       throw unauthorized('Delegate run capability does not match its Session binding.');
     }
     const sessionBinding = admission.session;
-    const input = decodeDelegateRunInput(execution.input);
+    const input = decodeDelegateRunInput(parseAdmissionInput(execution.admission.stdin, 'run'));
     if (input.profile !== admission.policy.profile) {
       throw unauthorized('Delegate run profile does not match its admitted policy.');
     }
@@ -249,7 +249,7 @@ export class DelegationCoordinator {
       throw unauthorized('Delegate send capability does not match its Session binding.');
     }
     const sessionBinding = admission.session;
-    const input = decodeDelegateMessageInput(execution.input);
+    const input = decodeDelegateMessageInput(parseAdmissionInput(execution.admission.stdin, 'send'));
     let messageAdmitted = false;
     let steeringTaskId: string | null = null;
     while (true) {
@@ -608,7 +608,7 @@ function policySnapshot(execution: DelegateCapabilityExecution): DelegationPolic
 function executionDigest(execution: DelegateCapabilityExecution, messageSequenceDigest: string): string {
   return createHash('sha256').update(JSON.stringify({
     command: canonicalDelegateCommand(execution.admission.command),
-    input: execution.input,
+    stdin: execution.admission.stdin,
     source: execution.admission.source,
     policy: execution.admission.policy,
     session: execution.admission.session,
@@ -667,4 +667,12 @@ function unavailable(message: string): DelegateCapabilityRefusal {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function parseAdmissionInput(value: string, command: 'run' | 'send'): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    throw new DelegateCapabilityRefusal('invalid_input', `Delegate ${command} admission input is invalid.`);
+  }
 }

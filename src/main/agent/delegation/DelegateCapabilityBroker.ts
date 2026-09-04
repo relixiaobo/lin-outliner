@@ -68,7 +68,6 @@ export interface DelegateCapabilityAdmission {
 export interface DelegateCapabilityExecution {
   readonly admission: DelegateCapabilityAdmission;
   readonly capabilityId: string;
-  readonly input: unknown;
   readonly signal: AbortSignal;
 }
 
@@ -98,6 +97,7 @@ interface CapabilityRecord {
 export class DelegateCapabilityBroker {
   private readonly server: http.Server;
   private readonly connections = new Set<Socket>();
+  private readonly activeExecutionControllers = new Set<AbortController>();
   private readonly capabilities = new Map<string, CapabilityRecord>();
   private readonly now: () => number;
   private readonly capabilityTtlMs: number;
@@ -165,6 +165,7 @@ export class DelegateCapabilityBroker {
     if (this.stopping) return;
     this.stopping = true;
     this.capabilities.clear();
+    for (const controller of this.activeExecutionControllers) controller.abort('delegate_broker_stopping');
     for (const connection of this.connections) connection.destroy();
     if (this.server.listening) {
       await new Promise<void>((resolve) => this.server.close(() => resolve()));
@@ -181,16 +182,17 @@ export class DelegateCapabilityBroker {
       writeJson(response, 404, failure('invalid_input', 'Unknown Delegate broker route.'));
       return;
     }
+    const lifetime = requestLifetime(request, response);
     try {
       const value = await readJsonBody(request);
       const decoded = decodeBrokerRequest(value);
       const consumed = this.consume(decoded);
+      this.activeExecutionControllers.add(lifetime.controller);
       try {
         const data = await this.options.execute({
           admission: consumed.admission,
           capabilityId: consumed.capability.capabilityId,
-          input: decoded.input,
-          signal: AbortSignal.any([AbortSignal.timeout(24 * 60 * 60 * 1_000), requestAbortSignal(request)]),
+          signal: AbortSignal.any([AbortSignal.timeout(24 * 60 * 60 * 1_000), lifetime.controller.signal]),
         });
         writeJson(response, 200, { ok: true, data });
       } catch (error) {
@@ -199,12 +201,16 @@ export class DelegateCapabilityBroker {
           return;
         }
         writeJson(response, 500, failure('internal_error', errorMessage(error)));
+      } finally {
+        this.activeExecutionControllers.delete(lifetime.controller);
       }
     } catch (error) {
       const brokerError = error instanceof DelegateCapabilityRefusal
         ? error
         : new DelegateCapabilityRefusal('invalid_input', errorMessage(error));
       writeJson(response, brokerError.code === 'unavailable' ? 503 : 403, failure(brokerError.code, brokerError.message));
+    } finally {
+      lifetime.dispose();
     }
   }
 
@@ -234,7 +240,8 @@ export class DelegateCapabilityBroker {
 
 function decodeBrokerRequest(value: unknown): DelegateBrokerRequest {
   if (!isRecord(value) || value.version !== DELEGATE_PROTOCOL_VERSION
-    || !Object.hasOwn(value, 'input') || !isRecord(value.command) || !isRecord(value.capability)) {
+    || !exactKeys(value, ['version', 'capability', 'command'])
+    || !isRecord(value.command) || !isRecord(value.capability)) {
     throw new Error('Invalid Delegate broker request');
   }
   const capability = decodeDelegateLaunchCapability(value.capability);
@@ -242,7 +249,7 @@ function decodeBrokerRequest(value: unknown): DelegateBrokerRequest {
   if (canonicalDelegateCommand(command) !== canonicalDelegateCommand(capability.command)) {
     throw new Error('Delegate broker request command is invalid');
   }
-  return { version: DELEGATE_PROTOCOL_VERSION, capability, command, input: value.input };
+  return { version: DELEGATE_PROTOCOL_VERSION, capability, command };
 }
 
 function equalCapability(left: DelegateLaunchCapability, right: DelegateLaunchCapability): boolean {
@@ -331,13 +338,28 @@ async function readJsonBody(request: http.IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
 }
 
-function requestAbortSignal(request: http.IncomingMessage): AbortSignal {
+export function requestLifetime(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+): { readonly controller: AbortController; readonly dispose: () => void } {
   const controller = new AbortController();
-  request.once('aborted', () => controller.abort('broker_request_aborted'));
-  request.once('close', () => {
-    if (!request.complete) controller.abort('broker_request_closed');
-  });
-  return controller.signal;
+  const abortRequest = () => controller.abort('broker_request_aborted');
+  const abortResponse = () => {
+    if (!response.writableEnded) controller.abort('broker_response_closed');
+  };
+  request.once('aborted', abortRequest);
+  response.once('close', abortResponse);
+  request.socket.once('end', abortResponse);
+  request.socket.once('close', abortResponse);
+  return {
+    controller,
+    dispose: () => {
+      request.off('aborted', abortRequest);
+      response.off('close', abortResponse);
+      request.socket.off('end', abortResponse);
+      request.socket.off('close', abortResponse);
+    },
+  };
 }
 
 function failure(
@@ -348,7 +370,7 @@ function failure(
 }
 
 function writeJson(response: http.ServerResponse, status: number, value: DelegateBrokerResponse): void {
-  if (response.headersSent) return;
+  if (response.headersSent || response.destroyed || response.writableEnded) return;
   const body = `${JSON.stringify(value)}\n`;
   response.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -361,6 +383,10 @@ function writeJson(response: http.ServerResponse, status: number, value: Delegat
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }
 
 function isErrorCode(error: unknown, code: string): boolean {

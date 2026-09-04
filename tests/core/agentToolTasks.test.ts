@@ -446,7 +446,7 @@ describe('ToolTaskService', () => {
       }),
       execute: async (execution) => ({
         taskId: execution.admission.toolTaskId,
-        prompt: (execution.input as { prompt: string }).prompt,
+        prompt: (JSON.parse(execution.admission.stdin) as { prompt: string }).prompt,
       }),
     });
     await broker.start();

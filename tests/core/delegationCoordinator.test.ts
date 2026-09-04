@@ -297,6 +297,40 @@ describe('DelegationCoordinator', () => {
     expect(fixture.store.readSession(SESSION_ID)?.currentTaskId).toBeNull();
   });
 
+  test('blocks queued messages when their active execution cannot settle', async () => {
+    const fixture = coordinatorFixture();
+    fixture.runtime.deliverSteering = false;
+    void fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+    await waitUntil(() => fixture.runtime.active !== null);
+    const pendingMessage = fixture.coordinator.execute(sendExecution({
+      capabilityId: 'capability-send',
+      taskId: 'task-send',
+      sessionRevision: fixture.store.readSession(SESSION_ID)!.revision,
+      message: 'Inspect the evidence before continuing.',
+    }));
+    await waitUntil(() => fixture.store.readMessage('capability-send')?.state === 'queued');
+
+    await fixture.coordinator.settleFinalReceipt({
+      taskId: 'task-run',
+      preparedResultDigest: null,
+      receiptDigest: digest('failed-final-receipt'),
+    });
+
+    await expect(pendingMessage).resolves.toMatchObject({
+      kind: 'delegate.message-receipt',
+      state: 'blocked',
+      taskId: null,
+    });
+    expect(fixture.store.readMessage('capability-send')).toMatchObject({
+      state: 'blocked',
+      text: null,
+      blockedReason: expect.stringContaining('execution settlement'),
+    });
+    const session = fixture.store.readSession(SESSION_ID)!;
+    await expect(fixture.coordinator.execute(closeExecution('capability-close', session.revision)))
+      .resolves.toMatchObject({ closed: true });
+  });
+
   test('maps normalized delegated outcomes without overriding factual process failures', async () => {
     const fixture = coordinatorFixture();
     fixture.runtime.immediate = true;
@@ -460,7 +494,7 @@ function runExecution(capabilityId: string, taskId: string): DelegateCapabilityE
     capabilityId,
     taskId,
     command: parseDelegateCommand(['run', '--input', '-', '--output', 'json']) as DelegateStateCommand,
-    input: {
+    payload: {
       version: 1,
       prompt: 'Inspect the settlement path.',
       profile: 'explore',
@@ -482,7 +516,7 @@ function sendExecution(input: {
     command: parseDelegateCommand([
       'send', '--session', SESSION_ID, '--input', '-', '--output', 'json',
     ]) as DelegateStateCommand,
-    input: { version: 1, message: input.message },
+    payload: { version: 1, message: input.message },
     session: {
       kind: 'send',
       sessionId: SESSION_ID,
@@ -499,7 +533,7 @@ function closeExecution(capabilityId: string, sessionRevision: number): Delegate
     command: parseDelegateCommand([
       'close', '--session', SESSION_ID, '--output', 'json',
     ]) as DelegateStateCommand,
-    input: null,
+    payload: null,
     session: { kind: 'close', sessionId: SESSION_ID, sessionRevision },
   });
 }
@@ -508,18 +542,17 @@ function execution(input: {
   capabilityId: string;
   taskId: string;
   command: DelegateStateCommand;
-  input: unknown;
+  payload: unknown;
   session: DelegateCapabilityExecution['admission']['session'];
 }): DelegateCapabilityExecution {
   return {
     capabilityId: input.capabilityId,
-    input: input.input,
     signal: new AbortController().signal,
     admission: {
       toolTaskId: input.taskId,
       toolTaskNonce: `nonce-${input.taskId}`,
       command: input.command,
-      stdin: input.command.name === 'close' ? '' : JSON.stringify(input.input),
+      stdin: input.command.name === 'close' ? '' : JSON.stringify(input.payload),
       cwd: '/workspace',
       processSha256: digest('process'),
       source: {

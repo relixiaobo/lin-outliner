@@ -27,7 +27,6 @@ export interface DelegateBrokerRequest {
   readonly version: typeof DELEGATE_PROTOCOL_VERSION;
   readonly capability: DelegateLaunchCapability;
   readonly command: DelegateStateCommand;
-  readonly input: unknown;
 }
 
 export type DelegateBrokerResponse =

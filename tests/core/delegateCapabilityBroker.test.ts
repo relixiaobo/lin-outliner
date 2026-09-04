@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
+import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   parseDelegateCommand,
+  parseDelegateLaunchCapability,
   type DelegateStateCommand,
 } from '../../src/delegate/contract';
 import {
@@ -12,6 +15,7 @@ import {
   DelegateRuntimeHost,
   delegateCliProcessEnvironment,
   delegateProcessDigest,
+  requestLifetime,
   type DelegateCapabilityAdmission,
   type DelegateCapabilityExecution,
 } from '../../src/main/agent/delegation';
@@ -162,7 +166,10 @@ describe('Delegate capability broker', () => {
       expect(JSON.parse(first.stdout)).toMatchObject({ ok: true, data: { admitted: true, sessionId: SESSION_ID } });
       expect(executions).toHaveLength(1);
       expect(executions[0]!.admission.stdin).toBe(rawInput);
-      expect(executions[0]!.input).toMatchObject({ prompt: 'Inspect this path.', profile: 'explore' });
+      expect(JSON.parse(executions[0]!.admission.stdin)).toMatchObject({
+        prompt: 'Inspect this path.',
+        profile: 'explore',
+      });
 
       const replay = await runCliDirect(command, rawInput, capability);
       expect(replay.exitCode).toBe(6);
@@ -209,6 +216,105 @@ describe('Delegate capability broker', () => {
         error: { code: 'unavailable', message: expect.stringContaining('configuration changed') },
       });
       expect(executions).toHaveLength(0);
+    } finally {
+      await fixture.broker.stop();
+    }
+  });
+
+  test('rejects a broker payload that is not part of the issued capability', async () => {
+    const executions: DelegateCapabilityExecution[] = [];
+    const fixture = await createBroker('revision-1', async (execution) => {
+      executions.push(execution);
+      return { admitted: true };
+    });
+    try {
+      const rawInput = JSON.stringify({
+        version: 1,
+        prompt: 'Inspect the admitted path.',
+        profile: 'explore',
+        access: 'read-only',
+      });
+      const command = runCommand();
+      const capabilityBytes = fixture.broker.issue(admission(command, rawInput, 'revision-1'));
+      const capability = parseDelegateLaunchCapability(capabilityBytes);
+
+      const injected = await postBrokerJson(capability.brokerSocketPath, {
+        version: 1,
+        capability,
+        command,
+        input: {
+          version: 1,
+          prompt: 'Replace the admitted prompt.',
+          profile: 'explore',
+          access: 'read-only',
+        },
+      });
+      expect(injected).toMatchObject({
+        statusCode: 403,
+        body: { ok: false, error: { code: 'invalid_input' } },
+      });
+      expect(executions).toHaveLength(0);
+
+      const admitted = await runCliDirect(command, rawInput, capabilityBytes);
+      expect(admitted.exitCode).toBe(0);
+      expect(executions).toHaveLength(1);
+      expect(executions[0]!.admission.stdin).toBe(rawInput);
+    } finally {
+      await fixture.broker.stop();
+    }
+  });
+
+  test('aborts a request lifetime when its transport closes before the response completes', () => {
+    const socket = new EventEmitter();
+    const request = Object.assign(new EventEmitter(), { socket });
+    const response = Object.assign(new EventEmitter(), { writableEnded: false });
+    const lifetime = requestLifetime(
+      request as unknown as http.IncomingMessage,
+      response as unknown as http.ServerResponse,
+    );
+
+    socket.emit('close');
+
+    expect(lifetime.controller.signal.aborted).toBe(true);
+    expect(lifetime.controller.signal.reason).toBe('broker_response_closed');
+    lifetime.dispose();
+  });
+
+  test('aborts active Host execution when the broker stops', async () => {
+    let observedSignal: AbortSignal | null = null;
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const fixture = await createBroker('revision-1', async (execution) => {
+      observedSignal = execution.signal;
+      markStarted?.();
+      await new Promise<void>((_resolve, reject) => {
+        execution.signal.addEventListener('abort', () => reject(new Error('execution aborted')), { once: true });
+      });
+      return { unreachable: true };
+    });
+    try {
+      const rawInput = JSON.stringify({
+        version: 1,
+        prompt: 'Wait for cancellation.',
+        profile: 'explore',
+        access: 'read-only',
+      });
+      const command = runCommand();
+      const capability = parseDelegateLaunchCapability(
+        fixture.broker.issue(admission(command, rawInput, 'revision-1')),
+      );
+      const pending = postBrokerJson(capability.brokerSocketPath, {
+        version: 1,
+        capability,
+        command,
+      });
+      await started;
+
+      const stopping = fixture.broker.stop();
+
+      await waitUntil(() => observedSignal?.aborted === true);
+      await pending.catch(() => undefined);
+      await stopping;
     } finally {
       await fixture.broker.stop();
     }
@@ -319,6 +425,46 @@ interface ProcessResult {
   readonly exitCode: number | null;
   readonly stdout: string;
   readonly stderr: string;
+}
+
+function postBrokerJson(
+  socketPath: string,
+  value: unknown,
+): Promise<{ readonly statusCode: number | undefined; readonly body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify(value), 'utf8');
+    const request = http.request({
+      socketPath,
+      path: '/v1/execute',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': body.byteLength,
+      },
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer | string) => {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      });
+      response.once('error', reject);
+      response.once('end', () => {
+        resolve({
+          statusCode: response.statusCode,
+          body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown,
+        });
+      });
+    });
+    request.once('error', reject);
+    request.end(body);
+  });
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for Delegate broker state');
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 function runProcess(
