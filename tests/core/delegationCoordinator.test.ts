@@ -11,9 +11,10 @@ import {
   DelegationCoordinator,
   DelegationSessionStore,
   type DelegateCapabilityExecution,
-  type DelegationPreparedResultWriter,
+  type DelegationPreparedResultStore,
   type DelegationRootMessage,
   type DelegationSessionBinding,
+  type DelegationSessionCommitInput,
   type DelegationSessionRunInput,
   type DelegationSessionRuntime,
 } from '../../src/main/agent/delegation';
@@ -45,11 +46,11 @@ describe('DelegationCoordinator', () => {
     expect(fixture.store.readSession(SESSION_ID)).toMatchObject({ currentTaskId: 'task-run' });
     expect(fixture.prepared.values.get('task-run')).toBeDefined();
 
-    await fixture.coordinator.settleFinalReceipt({
+    await expect(fixture.coordinator.settleFinalReceipt({
       taskId: 'task-run',
       preparedResultDigest: settlement!.preparedResultDigest,
       receiptDigest: digest('final-receipt'),
-    });
+    })).resolves.toEqual({ outcome: 'committed' });
 
     expect(fixture.store.settlementForTask('task-run')).toMatchObject({ state: 'committed' });
     expect(fixture.store.readSession(SESSION_ID)).toMatchObject({
@@ -101,6 +102,49 @@ describe('DelegationCoordinator', () => {
     });
   });
 
+  test('reconciles a prepared result without running the delegated Turn again', async () => {
+    const fixture = coordinatorFixture();
+    fixture.runtime.immediate = true;
+    fixture.runtime.failCommit = true;
+
+    await expect(fixture.coordinator.execute(runExecution('capability-run', 'task-run')))
+      .rejects.toThrow('simulated canonical commit interruption');
+    const prepared = fixture.store.settlementForTask('task-run')!;
+    expect(prepared.state).toBe('prepared');
+    expect(fixture.runtime.commits).toHaveLength(0);
+
+    fixture.runtime.failCommit = false;
+    await fixture.coordinator.settleFinalReceipt({
+      taskId: 'task-run',
+      preparedResultDigest: prepared.preparedResultDigest,
+      receiptDigest: digest('final-receipt'),
+    });
+
+    expect(fixture.store.settlementForTask('task-run')).toMatchObject({ state: 'committed' });
+    expect(fixture.runtime.commits).toHaveLength(1);
+    expect(fixture.runtime.commits[0]).toMatchObject({
+      settlementId: 'capability-run',
+      turnId: prepared.turnId,
+    });
+  });
+
+  test('reports a blocked settlement when final evidence omits the prepared result', async () => {
+    const fixture = coordinatorFixture();
+    fixture.runtime.immediate = true;
+    await fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+
+    await expect(fixture.coordinator.settleFinalReceipt({
+      taskId: 'task-run',
+      preparedResultDigest: null,
+      receiptDigest: digest('final-receipt'),
+    })).resolves.toMatchObject({
+      outcome: 'blocked',
+      reason: expect.stringContaining('missing prepared result'),
+    });
+    expect(fixture.store.settlementForTask('task-run')?.state).toBe('blocked');
+    expect(fixture.store.readSession(SESSION_ID)?.currentTaskId).toBeNull();
+  });
+
   test('closes an idle owned Session and refuses a stale Session revision', async () => {
     const fixture = coordinatorFixture();
     fixture.runtime.immediate = true;
@@ -127,6 +171,8 @@ class FakeRuntime implements DelegationSessionRuntime {
   readonly closed: ThreadId[] = [];
   active: DelegationSessionRunInput | null = null;
   immediate = false;
+  failCommit = false;
+  readonly commits: DelegationSessionCommitInput[] = [];
   private resolveRun: ((result: DelegateExecutionResult) => void) | null = null;
   private committedMessageSequence = 0;
 
@@ -143,6 +189,11 @@ class FakeRuntime implements DelegationSessionRuntime {
       return result;
     }
     return new Promise((resolve) => { this.resolveRun = resolve; });
+  }
+
+  async commitResult(input: DelegationSessionCommitInput): Promise<void> {
+    if (this.failCommit) throw new Error('simulated canonical commit interruption');
+    this.commits.push(input);
   }
 
   send(sessionId: ThreadId, message: DelegationRootMessage, onDelivered: () => void): boolean {
@@ -166,7 +217,7 @@ class FakeRuntime implements DelegationSessionRuntime {
   }
 }
 
-class PreparedResults implements DelegationPreparedResultWriter {
+class PreparedResults implements DelegationPreparedResultStore {
   readonly values = new Map<string, Buffer>();
   returnWrongDigest = false;
 
@@ -179,6 +230,11 @@ class PreparedResults implements DelegationPreparedResultWriter {
     const value = Buffer.from(bytes);
     this.values.set(taskId, value);
     return { sha256: this.returnWrongDigest ? digest('wrong') : digest(value) };
+  }
+
+  async read(taskId: string, ownerThreadId: ThreadId): Promise<Uint8Array | null> {
+    if (ownerThreadId !== OWNER_ID) throw new Error('Unexpected prepared-result owner');
+    return this.values.get(taskId) ?? null;
   }
 }
 

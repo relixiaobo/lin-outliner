@@ -92,9 +92,7 @@ export class DelegateCapabilityRefusal extends Error {
 
 interface CapabilityRecord {
   readonly capability: DelegateLaunchCapability;
-  readonly encoded: Buffer;
   readonly admission: DelegateCapabilityAdmission;
-  state: 'issued' | 'consumed' | 'stale';
 }
 
 export class DelegateCapabilityBroker {
@@ -158,9 +156,7 @@ export class DelegateCapabilityBroker {
     const encoded = encodeDelegateLaunchCapability(capability);
     this.capabilities.set(capability.capabilityId, {
       capability,
-      encoded,
       admission: freezeAdmission(admission),
-      state: 'issued',
     });
     return Buffer.from(encoded);
   }
@@ -214,24 +210,24 @@ export class DelegateCapabilityBroker {
 
   private consume(request: DelegateBrokerRequest): CapabilityRecord {
     const record = this.capabilities.get(request.capability.capabilityId);
-    if (!record || record.state !== 'issued') {
+    if (!record) {
       throw new DelegateCapabilityRefusal('unauthorized', 'Delegate launch capability is unknown or already consumed.');
     }
     if (!equalCapability(record.capability, request.capability)) {
       throw new DelegateCapabilityRefusal('unauthorized', 'Delegate launch capability was modified.');
     }
     if (this.now() > record.capability.expiresAt) {
-      record.state = 'stale';
+      this.capabilities.delete(record.capability.capabilityId);
       throw new DelegateCapabilityRefusal('unavailable', 'Delegate launch capability expired before use.');
     }
     if (record.admission.policy.configurationRevision !== this.options.currentConfigurationRevision()) {
-      record.state = 'stale';
+      this.capabilities.delete(record.capability.capabilityId);
       throw new DelegateCapabilityRefusal('unavailable', 'Delegation configuration changed before admission.');
     }
     if (canonicalDelegateCommand(request.command) !== canonicalDelegateCommand(record.admission.command)) {
       throw new DelegateCapabilityRefusal('unauthorized', 'Delegate command does not match its capability.');
     }
-    record.state = 'consumed';
+    this.capabilities.delete(record.capability.capabilityId);
     return record;
   }
 }

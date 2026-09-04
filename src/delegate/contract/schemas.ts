@@ -134,6 +134,7 @@ export type DelegateResult = Static<typeof DelegateResultSchema>;
 
 const runInputValidator = Compile(DelegateRunInputSchema);
 const messageInputValidator = Compile(DelegateMessageInputSchema);
+const executionResultValidator = Compile(DelegateExecutionResultSchema);
 
 export function decodeDelegateRunInput(value: unknown): DelegateRunInput {
   if (!runInputValidator.Check(value)) {
@@ -154,6 +155,13 @@ export function decodeDelegateMessageInput(value: unknown): DelegateMessageInput
   const input = value as DelegateMessageInput;
   assertUtf8Bound(input.message, DELEGATE_MAX_MESSAGE_BYTES, 'message');
   return Object.freeze({ ...input });
+}
+
+export function decodeDelegateExecutionResult(value: unknown): DelegateExecutionResult {
+  if (!executionResultValidator.Check(value)) {
+    throw new Error(validationMessage('delegation execution result', executionResultValidator.Errors(value)));
+  }
+  return structuredClone(value) as DelegateExecutionResult;
 }
 
 function assertUtf8Bound(value: string, maxBytes: number, field: string): void {

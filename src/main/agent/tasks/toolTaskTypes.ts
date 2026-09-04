@@ -46,6 +46,14 @@ export interface ToolTaskArtifactSettlement {
   readonly warnings: readonly string[];
 }
 
+export type ToolTaskProducerReconciliation =
+  | { readonly outcome: 'preserve' }
+  | {
+    readonly outcome: 'fail';
+    readonly reason: string;
+    readonly error: string;
+  };
+
 export interface ToolTaskSchedulingPolicy {
   readonly pool: string;
   readonly configurationRevision: string;

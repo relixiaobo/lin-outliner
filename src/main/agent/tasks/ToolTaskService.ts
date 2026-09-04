@@ -24,6 +24,7 @@ import {
   type ToolTaskArtifactSettlement,
   type ToolTaskFinalReceipt,
   type ToolTaskProgress,
+  type ToolTaskProducerReconciliation,
   type ToolTaskProjection,
   type ToolTaskRecord,
   type ToolTaskSchedulerLimits,
@@ -77,11 +78,15 @@ export interface ToolTaskHost {
     readonly additionalContext: AdditionalContext;
     readonly additionalContextResourceRefs: readonly ThreadResourceReference[];
   }): Promise<boolean>;
+  reconcileTask?(
+    task: ToolTaskRecord,
+    producerContext: JsonValue | null,
+    receipt: ToolTaskFinalReceipt,
+  ): Promise<ToolTaskProducerReconciliation>;
   settleTask?(
     task: ToolTaskRecord,
     producerContext: JsonValue | null,
     maxArtifactBytes: number,
-    receipt: ToolTaskFinalReceipt,
   ): Promise<ToolTaskArtifactSettlement>;
   taskDetailsExpired?(ownerThreadId: ThreadId): Promise<void>;
   taskChanged(task: ToolTaskProjection): void;
@@ -183,6 +188,21 @@ export class ToolTaskService {
     }
     this.publish(this.store.markSettling(taskId, this.now()));
     return { sha256, byteLength: value.byteLength };
+  }
+
+  async readPreparedResult(taskId: string, ownerThreadId: ThreadId): Promise<Buffer | null> {
+    const task = this.store.owned(taskId, ownerThreadId);
+    if (!task) throw new Error(`Tool Task not found: ${taskId}`);
+    const bytes = await readFile(taskPaths(task.detailPath).preparedResult).catch((error: unknown) => {
+      if (isErrorCode(error, 'ENOENT')) return null;
+      throw error;
+    });
+    if (!bytes) return null;
+    const maxPreparedResultBytes = preparedResultMaxBytes(this.limits.taskDetailBytes);
+    if (bytes.byteLength < 1 || bytes.byteLength > maxPreparedResultBytes) {
+      throw new Error('Tool Task prepared result exceeds its byte limit');
+    }
+    return Buffer.from(bytes);
   }
 
   async initialize(): Promise<void> {
@@ -728,18 +748,18 @@ export class ToolTaskService {
           receipt,
           preparedResultMaxBytes(this.limits.taskDetailBytes),
         );
-        const stabilized = await stabilizeOutput(paths, task, receipt, this.limits.taskDetailBytes);
+        const terminalReceipt = await this.reconcileProducer(task, receipt);
+        const stabilized = await stabilizeOutput(paths, task, terminalReceipt, this.limits.taskDetailBytes);
         await this.settleArtifacts(
           task,
           this.limits.taskDetailBytes
             - stabilized.stdoutBytes
             - stabilized.stderrBytes
-            - receipt.preparedResultBytes,
-          receipt,
+            - terminalReceipt.preparedResultBytes,
         );
-        const terminal = this.store.commitTerminal(task.taskId, receipt, this.now(), {
+        const terminal = this.store.commitTerminal(task.taskId, terminalReceipt, this.now(), {
           ...stabilized,
-          preparedResultBytes: receipt.preparedResultBytes,
+          preparedResultBytes: terminalReceipt.preparedResultBytes,
         });
         this.supervisors.delete(task.taskId);
         this.clearMonitor(task.taskId);
@@ -815,18 +835,18 @@ export class ToolTaskService {
     const lost = await this.createLostReceipt(task, 'supervisor_missing');
     await atomicJsonWrite(paths.receipt, lost).catch(() => undefined);
     try {
-      const stabilized = await stabilizeOutput(paths, task, lost, this.limits.taskDetailBytes);
+      const terminalReceipt = await this.reconcileProducer(task, lost);
+      const stabilized = await stabilizeOutput(paths, task, terminalReceipt, this.limits.taskDetailBytes);
       await this.settleArtifacts(
         task,
         this.limits.taskDetailBytes
           - stabilized.stdoutBytes
           - stabilized.stderrBytes
-          - lost.preparedResultBytes,
-        lost,
+          - terminalReceipt.preparedResultBytes,
       );
-      const terminal = this.store.commitTerminal(task.taskId, lost, this.now(), {
+      const terminal = this.store.commitTerminal(task.taskId, terminalReceipt, this.now(), {
         ...stabilized,
-        preparedResultBytes: lost.preparedResultBytes,
+        preparedResultBytes: terminalReceipt.preparedResultBytes,
       });
       this.supervisors.delete(task.taskId);
       this.clearMonitor(task.taskId);
@@ -1091,8 +1111,9 @@ export class ToolTaskService {
       receiptDigest: digestText(JSON.stringify(unsigned)),
     };
     await atomicJsonWrite(paths.receipt, receipt).catch(() => undefined);
-    await this.settleArtifacts(task, this.limits.taskDetailBytes, receipt);
-    const terminal = this.store.commitTerminal(task.taskId, receipt, this.now());
+    const terminalReceipt = await this.reconcileProducer(task, receipt);
+    await this.settleArtifacts(task, this.limits.taskDetailBytes);
+    const terminal = this.store.commitTerminal(task.taskId, terminalReceipt, this.now());
     this.publish(terminal);
     if (terminal.backgroundEnabled) this.wakeDelivery(terminal.ownerThreadId);
     return terminal;
@@ -1127,13 +1148,12 @@ export class ToolTaskService {
   private async settleArtifacts(
     task: ToolTaskRecord,
     maxArtifactBytes: number,
-    receipt: ToolTaskFinalReceipt,
   ): Promise<ToolTaskRecord> {
     const current = this.store.read(task.taskId)!;
     if (current.artifactsSettled) return current;
     const producerContext = await readJson(taskPaths(task.detailPath).producer, 1024 * 1024);
     const settlement = this.host?.settleTask
-      ? await this.host.settleTask(current, producerContext as JsonValue | null, maxArtifactBytes, receipt)
+      ? await this.host.settleTask(current, producerContext as JsonValue | null, maxArtifactBytes)
       : { artifacts: [], warnings: [] };
     const artifactBytes = settlement.artifacts.reduce((sum, artifact) => sum + artifact.ref.byteLength, 0);
     if (!Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 0
@@ -1142,6 +1162,31 @@ export class ToolTaskService {
       throw new Error('Tool Task artifacts exceed the remaining durable detail ceiling');
     }
     return this.store.settleArtifacts(task.taskId, settlement, this.now());
+  }
+
+  private async reconcileProducer(
+    task: ToolTaskRecord,
+    receipt: ToolTaskFinalReceipt,
+  ): Promise<ToolTaskFinalReceipt> {
+    if (!this.host?.reconcileTask) return receipt;
+    const producerContext = await readJson(taskPaths(task.detailPath).producer, 1024 * 1024);
+    const reconciliation = await this.host.reconcileTask(
+      this.store.read(task.taskId)!,
+      producerContext as JsonValue | null,
+      receipt,
+    );
+    if (reconciliation.outcome === 'preserve' || receipt.state !== 'succeeded') return receipt;
+    const unsigned = {
+      ...receipt,
+      state: 'failed' as const,
+      reason: boundedReceiptField(reconciliation.reason, 256, 'producer_reconciliation_failed'),
+      error: boundedReceiptField(reconciliation.error, 4_096, 'Tool Task producer reconciliation failed.'),
+    };
+    const { receiptDigest: _receiptDigest, ...withoutDigest } = unsigned;
+    return {
+      ...withoutDigest,
+      receiptDigest: digestText(JSON.stringify(withoutDigest)),
+    };
   }
 
   private async enforceRetention(): Promise<void> {
@@ -1573,6 +1618,11 @@ function normalizedLabel(value: string, fallback: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function boundedReceiptField(value: string, maxLength: number, fallback: string): string {
+  const normalized = value.trim() || fallback;
+  return normalized.length <= maxLength ? normalized : normalized.slice(0, maxLength);
 }
 
 function delay(ms: number): Promise<void> {

@@ -3,6 +3,7 @@ import {
   DELEGATE_MAX_MESSAGE_BYTES,
   canonicalDelegateArgv,
   canonicalDelegateCommand,
+  decodeDelegateExecutionResult,
   decodeDelegateMessageInput,
   decodeDelegateRunInput,
   parseDelegateCommand,
@@ -102,5 +103,31 @@ describe('delegate command contract', () => {
     const oversized = '\u754c'.repeat(Math.floor(DELEGATE_MAX_MESSAGE_BYTES / 3) + 1);
     expect(() => decodeDelegateMessageInput({ version: 1, message: oversized }))
       .toThrow('message exceeds');
+  });
+
+  test('decodes the closed execution-result contract for durable recovery', () => {
+    const result = {
+      version: 1,
+      kind: 'delegate.execution-result',
+      sessionId: SESSION_ID,
+      turnId: '018f0f24-7b2e-7a3f-8a4b-123456789abe',
+      outcome: 'succeeded',
+      runner: { id: 'internal', version: '1' },
+      model: 'openai/test',
+      durationMs: 12,
+      text: 'Complete.',
+      error: null,
+      partialEvidence: false,
+      committedMessageSequence: 0,
+      continuation: 'available',
+      usage: { state: 'unknown' },
+      artifacts: [],
+      worktree: { disposition: 'none' },
+    } as const;
+    expect(decodeDelegateExecutionResult(result)).toEqual(result);
+    expect(() => decodeDelegateExecutionResult({ ...result, outcome: 'invented' }))
+      .toThrow('Invalid delegation execution result');
+    expect(() => decodeDelegateExecutionResult({ ...result, authority: 'root' }))
+      .toThrow('Invalid delegation execution result');
   });
 });

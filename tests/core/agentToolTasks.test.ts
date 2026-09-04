@@ -345,6 +345,32 @@ describe('ToolTaskService', () => {
     await waitForTerminal(service, started.taskId);
   });
 
+  test('downgrades only factual success when producer reconciliation fails', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, {
+      ...passiveHost(),
+      reconcileTask: async () => ({
+        outcome: 'fail',
+        reason: 'delegation_coordination_failed',
+        error: 'Canonical delegated context could not be reconciled.',
+      }),
+    });
+    const succeeded = await startHidden(service, 'printf complete');
+    const failed = await startHidden(service, 'exit 7');
+
+    await expect(waitForTerminal(service, succeeded.taskId)).resolves.toMatchObject({
+      state: 'failed',
+      exitCode: 0,
+      outcomeReason: 'delegation_coordination_failed',
+      error: 'Canonical delegated context could not be reconciled.',
+    });
+    await expect(waitForTerminal(service, failed.taskId)).resolves.toMatchObject({
+      state: 'failed',
+      exitCode: 7,
+      outcomeReason: 'exit_nonzero',
+    });
+  });
+
   test('carries one admitted Delegate command through supervisor fd 3 and the Host broker', async () => {
     const fixture = await createFixture();
     const service = await createService(fixture, passiveHost());
