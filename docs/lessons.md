@@ -2472,3 +2472,22 @@ Regression coverage must compare retained and displayed values byte-for-byte
 across Context, Request, Assistant, Tool Input/Output, Raw, copy, restart, and
 fork. Pagination, cache, and screenshot tests prove window behavior; they cannot
 prove evidence fidelity.
+
+## Privileged CLI launch begins before the CLI process
+
+PR #620 first bound `delegate` capabilities to argv/stdin checked by the CLI
+while the model-visible command still launched through `zsh -c`. The parent shell
+would receive the authority first, so composition, startup files, or sibling
+commands could observe or consume it before the intended child verified anything.
+
+**When a shell command crosses into a privileged app capability, the admission
+boundary is the Host launch path, not the called binary.** Parse the complete
+state-changing grammar before shell execution, lower only exact matches to a
+direct supervisor/exec specification, and transfer one-use authority through a
+private child-only channel. If parsing fails, settle the privileged operation
+explicitly instead of falling back to a shell path.
+
+Regression coverage must include shell composition, command substitution, startup
+hooks, env/argv/stdin exposure, descriptor inheritance, and direct-wrapper
+attempts. CLI-level digest checks prove the payload after handoff; they do not
+prove who held authority before handoff.

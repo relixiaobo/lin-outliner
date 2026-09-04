@@ -12,6 +12,18 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Agent delegation now has an approved execution plan (PR #620, codex-4)**
+  — the merged design replaces Subagents and isolated Skills with generic durable
+  Background Tool Tasks, a Skill-guided `delegate` CLI, hidden root-owned Agent
+  Sessions, Host-attested direct-exec launch admission, settlement and
+  cancellation fences, lifecycle/retention rules, and one complete feature per
+  delivery unit. Gate review found High design-contract defects across Runner
+  authority, delivery settlement, cancellation, process truth, and launch
+  capability scope; all were fixed before the final no-findings review. Verified
+  with `docs:check`, whitespace checks, product-spec inspection, and green PR
+  E2E signal samples. This is design authority only: runtime behavior remains
+  unchanged until #623 and the later internal delegation cutover ship.
+
 - **Trajectory inspection now pages live history through a bounded, truthful
   window (PR #625, codex-2)** — main reads only the Turn ranges needed to cover a
   record page, caches bounded completed-Turn summaries, and coalesces live tail
