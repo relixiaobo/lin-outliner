@@ -17,6 +17,8 @@ import { join } from 'node:path';
 import { AGENT_REASONING_LADDER } from '../../../core/types';
 import type {
   AgentModelOption,
+  AgentDelegationRunnerSettings,
+  AgentDelegationSettings,
   AgentProviderAuthKind,
   AgentRuntimeSettings,
   AgentRuntimeSettingsInput,
@@ -130,7 +132,9 @@ export interface ProviderConnectionProbeContext {
   matchesStoredConnection: boolean;
 }
 
-type StoredAgentRuntimeSettings = Partial<AgentRuntimeSettings>;
+type StoredAgentRuntimeSettings = Partial<Omit<AgentRuntimeSettings, 'delegation'>> & {
+  delegation?: AgentRuntimeSettingsInput['delegation'];
+};
 
 type StoredImageGenerationSettings = {
   defaultModel?: string | null;
@@ -164,6 +168,33 @@ function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
 
 const AGENT_REASONING_LEVELS = AGENT_REASONING_LADDER;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
+const DELEGATION_RUNNER_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const DELEGATION_POOL_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const MAX_DELEGATION_RUNNERS = 32;
+const MIN_DELEGATION_TIMEOUT_MS = 10_000;
+const MAX_DELEGATION_TIMEOUT_MS = 24 * 60 * 60_000;
+const MAX_DELEGATION_CONCURRENCY = 64;
+const MAX_DELEGATION_GLOBAL_QUEUE = 1_024;
+const MAX_DELEGATION_THREAD_QUEUE = 128;
+const DEFAULT_INTERNAL_DELEGATION_RUNNER: AgentDelegationRunnerSettings = {
+  enabled: true,
+  model: null,
+  effort: null,
+  maximumAccess: 'workspace-write',
+  timeoutMs: 60 * 60_000,
+  maxConcurrent: 4,
+  pool: 'agent-provider',
+  maxConcurrentPool: 4,
+};
+const DEFAULT_DELEGATION_SETTINGS: AgentDelegationSettings = {
+  enabled: false,
+  defaultRunnerId: 'internal',
+  maxConcurrentGlobal: 8,
+  maxConcurrentThread: 4,
+  maxQueuedGlobal: 32,
+  maxQueuedThread: 8,
+  runners: { internal: DEFAULT_INTERNAL_DELEGATION_RUNNER },
+};
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   additionalSkillDirectories: [],
   // Captured once for each delegated execution generation's local breaker.
@@ -174,6 +205,7 @@ const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   providerMaxRetries: null,
   providerMaxRetryDelayMs: 60_000,
   providerCacheRetention: 'short',
+  delegation: DEFAULT_DELEGATION_SETTINGS,
   disabledSkills: [],
 };
 
@@ -238,6 +270,23 @@ export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
   return normalizeAgentRuntimeSettings((await readProviderFile()).agent);
 }
 
+export async function getAgentDelegationConfiguration(): Promise<{
+  readonly settings: AgentDelegationSettings;
+  readonly revision: string;
+}> {
+  const settings = (await getAgentRuntimeSettings()).delegation;
+  return {
+    settings,
+    revision: delegationConfigurationRevision(settings),
+  };
+}
+
+export function delegationConfigurationRevision(settings: AgentDelegationSettings): string {
+  return createHash('sha256')
+    .update(JSON.stringify(normalizeDelegationSettings(settings)))
+    .digest('hex');
+}
+
 export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRuntimeConfig | null> {
   await piRestoreDynamicModels();
   const file = await readProviderFile();
@@ -286,9 +335,11 @@ export async function getProviderRuntimeConfig(
 
 export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInput) {
   await mutateProviderFile((file) => {
+    const current = normalizeAgentRuntimeSettings(file.agent);
     file.agent = normalizeAgentRuntimeSettings({
-      ...normalizeAgentRuntimeSettings(file.agent),
+      ...current,
       ...input,
+      delegation: input.delegation ? mergeDelegationSettings(current.delegation, input.delegation) : current.delegation,
     });
   });
   return getProviderSettings();
@@ -711,8 +762,111 @@ function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null
     providerCacheRetention: isAgentCacheRetention(input?.providerCacheRetention)
       ? input.providerCacheRetention
       : DEFAULT_AGENT_RUNTIME_SETTINGS.providerCacheRetention,
+    delegation: normalizeDelegationSettings(input?.delegation),
     disabledSkills: normalizeStringList(input?.disabledSkills, MAX_DISABLED_SKILLS),
   };
+}
+
+function mergeDelegationSettings(
+  current: AgentDelegationSettings,
+  input: NonNullable<AgentRuntimeSettingsInput['delegation']>,
+): AgentDelegationSettings {
+  const runners = { ...current.runners };
+  for (const [runnerId, runner] of Object.entries(input.runners ?? {})) {
+    const inherited = current.runners[runnerId] ?? defaultDelegationRunnerSettings(runnerId);
+    runners[runnerId] = { ...inherited, ...runner };
+  }
+  return normalizeDelegationSettings({ ...current, ...input, runners });
+}
+
+function normalizeDelegationSettings(input?: AgentRuntimeSettingsInput['delegation'] | AgentDelegationSettings | null): AgentDelegationSettings {
+  const runnerEntries = Object.entries(isRecord(input?.runners) ? input.runners : {})
+    .filter(([runnerId]) => DELEGATION_RUNNER_ID_PATTERN.test(runnerId))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .slice(0, MAX_DELEGATION_RUNNERS);
+  const runners: Record<string, AgentDelegationRunnerSettings> = {};
+  for (const [runnerId, value] of runnerEntries) {
+    runners[runnerId] = normalizeDelegationRunnerSettings(runnerId, value);
+  }
+  if (!runners.internal) {
+    runners.internal = { ...DEFAULT_INTERNAL_DELEGATION_RUNNER };
+  }
+  const defaultRunnerId = normalizeRunnerId(input?.defaultRunnerId) ?? DEFAULT_DELEGATION_SETTINGS.defaultRunnerId;
+  return {
+    enabled: input?.enabled === true,
+    defaultRunnerId,
+    maxConcurrentGlobal: normalizeBoundedPositiveInteger(
+      input?.maxConcurrentGlobal,
+      DEFAULT_DELEGATION_SETTINGS.maxConcurrentGlobal,
+      1,
+      MAX_DELEGATION_CONCURRENCY,
+    ),
+    maxConcurrentThread: normalizeBoundedPositiveInteger(
+      input?.maxConcurrentThread,
+      DEFAULT_DELEGATION_SETTINGS.maxConcurrentThread,
+      1,
+      MAX_DELEGATION_CONCURRENCY,
+    ),
+    maxQueuedGlobal: normalizeBoundedPositiveInteger(
+      input?.maxQueuedGlobal,
+      DEFAULT_DELEGATION_SETTINGS.maxQueuedGlobal,
+      1,
+      MAX_DELEGATION_GLOBAL_QUEUE,
+    ),
+    maxQueuedThread: normalizeBoundedPositiveInteger(
+      input?.maxQueuedThread,
+      DEFAULT_DELEGATION_SETTINGS.maxQueuedThread,
+      1,
+      MAX_DELEGATION_THREAD_QUEUE,
+    ),
+    runners,
+  };
+}
+
+function normalizeDelegationRunnerSettings(runnerId: string, input: unknown): AgentDelegationRunnerSettings {
+  const value = isRecord(input) ? input : {};
+  const defaults = defaultDelegationRunnerSettings(runnerId);
+  const model = value.model === null ? null : normalizeOptionalString(value.model) ?? defaults.model;
+  return {
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : defaults.enabled,
+    model,
+    effort: value.effort === null || isAgentReasoningLevel(value.effort) ? value.effort : defaults.effort,
+    maximumAccess: value.maximumAccess === 'read-only' || value.maximumAccess === 'workspace-write'
+      ? value.maximumAccess
+      : defaults.maximumAccess,
+    timeoutMs: normalizeBoundedPositiveInteger(value.timeoutMs, defaults.timeoutMs, MIN_DELEGATION_TIMEOUT_MS, MAX_DELEGATION_TIMEOUT_MS),
+    maxConcurrent: normalizeBoundedPositiveInteger(
+      value.maxConcurrent,
+      defaults.maxConcurrent,
+      1,
+      MAX_DELEGATION_CONCURRENCY,
+    ),
+    pool: normalizePool(value.pool) ?? defaults.pool,
+    maxConcurrentPool: normalizeBoundedPositiveInteger(
+      value.maxConcurrentPool,
+      defaults.maxConcurrentPool,
+      1,
+      MAX_DELEGATION_CONCURRENCY,
+    ),
+  };
+}
+
+function defaultDelegationRunnerSettings(runnerId: string): AgentDelegationRunnerSettings {
+  if (runnerId === 'internal') return DEFAULT_INTERNAL_DELEGATION_RUNNER;
+  return {
+    ...DEFAULT_INTERNAL_DELEGATION_RUNNER,
+    enabled: false,
+    maximumAccess: 'read-only',
+    pool: runnerId,
+  };
+}
+
+function normalizeRunnerId(value: unknown): string | undefined {
+  return typeof value === 'string' && DELEGATION_RUNNER_ID_PATTERN.test(value) ? value : undefined;
+}
+
+function normalizePool(value: unknown): string | undefined {
+  return typeof value === 'string' && DELEGATION_POOL_PATTERN.test(value) ? value : undefined;
 }
 
 /**
@@ -746,6 +900,11 @@ function normalizeNullablePositiveInteger(value: unknown, fallback: number | nul
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {
   return normalizeInteger(value, fallback, 1) ?? fallback;
+}
+
+function normalizeBoundedPositiveInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const normalized = normalizeInteger(value, fallback, min) ?? fallback;
+  return normalized <= max ? normalized : fallback;
 }
 
 function normalizeNullableNonNegativeInteger(value: unknown, fallback: number | null): number | null {
@@ -896,6 +1055,10 @@ function isOpenAICompatibleApiId(api: Api): api is OpenAICompatibleApiId {
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function providerCapabilities(providerId: string, languageModels: readonly AgentModelOption[]): AgentProviderCapabilitySummary[] {

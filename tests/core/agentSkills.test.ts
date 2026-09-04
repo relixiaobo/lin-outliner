@@ -1459,6 +1459,7 @@ describe('agent skills', () => {
     expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'outline', source: 'built-in' } });
     const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
+      'delegate',
       'outline',
       'skillify',
     ]);
@@ -1546,6 +1547,13 @@ describe('agent skills', () => {
     expect(delegate?.body).toContain('Completion is pushed; do not poll');
     expect(delegate?.body).toContain('After user cancellation');
     expect(delegate?.body).toContain('without a new user request.');
+
+    runtime.updateDisabledSkills(['delegate']);
+    expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => entry.name === 'delegate')).toBe(false);
+    expect(await runtime.invokeSkill({ skill: 'delegate', trigger: 'agent' })).toMatchObject({
+      ok: false,
+      code: 'skill_disabled',
+    });
   });
 
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {

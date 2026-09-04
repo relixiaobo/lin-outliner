@@ -702,6 +702,37 @@ export type AgentReasoningLevel = (typeof AGENT_REASONING_LADDER)[number];
 export type AgentReasoningLevelLabels = Partial<Record<AgentReasoningLevel, string>>;
 export type AgentCacheRetention = 'none' | 'short' | 'long';
 
+export type AgentDelegationAccess = 'read-only' | 'workspace-write';
+
+export interface AgentDelegationRunnerSettings {
+  enabled: boolean;
+  /** Provider-qualified model id. Null inherits the invoking root model. */
+  model: string | null;
+  /** Null inherits the invoking root reasoning effort. */
+  effort: AgentReasoningLevel | null;
+  maximumAccess: AgentDelegationAccess;
+  timeoutMs: number;
+  maxConcurrent: number;
+  pool: string;
+  maxConcurrentPool: number;
+}
+
+export interface AgentDelegationSettings {
+  enabled: boolean;
+  defaultRunnerId: string;
+  maxConcurrentGlobal: number;
+  maxConcurrentThread: number;
+  maxQueuedGlobal: number;
+  maxQueuedThread: number;
+  runners: Record<string, AgentDelegationRunnerSettings>;
+}
+
+export type AgentDelegationRunnerSettingsInput = Partial<AgentDelegationRunnerSettings>;
+
+export interface AgentDelegationSettingsInput extends Partial<Omit<AgentDelegationSettings, 'runners'>> {
+  runners?: Record<string, AgentDelegationRunnerSettingsInput>;
+}
+
 export interface AgentRuntimeSettings {
   additionalSkillDirectories: string[];
   subagentTokenBudget: number | null;
@@ -711,6 +742,7 @@ export interface AgentRuntimeSettings {
   providerMaxRetries: number | null;
   providerMaxRetryDelayMs: number | null;
   providerCacheRetention: AgentCacheRetention;
+  delegation: AgentDelegationSettings;
   disabledSkills?: string[];
 }
 
@@ -723,6 +755,7 @@ export interface AgentRuntimeSettingsInput {
   providerMaxRetries?: number | null;
   providerMaxRetryDelayMs?: number | null;
   providerCacheRetention?: AgentCacheRetention;
+  delegation?: AgentDelegationSettingsInput;
   disabledSkills?: string[];
 }
 

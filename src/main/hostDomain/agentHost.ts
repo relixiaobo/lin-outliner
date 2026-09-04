@@ -64,6 +64,7 @@ export interface AgentHostOptions {
   readonly loadRuntimeSettings: () => Promise<{
     readonly additionalSkillDirectories: readonly string[];
     readonly disabledSkills?: readonly string[];
+    readonly delegation?: { readonly enabled: boolean };
   }>;
   readonly timeline: TimelineMemoryHost;
   readonly reportError: (report: ErrorReport) => void;
@@ -212,6 +213,7 @@ export interface AgentSkillsCapability {
   updateRuntimeSettings(settings: {
     readonly additionalSkillDirectories: readonly string[];
     readonly disabledSkills?: readonly string[];
+    readonly delegation?: { readonly enabled: boolean };
   }): void;
   list(userInvocableOnly: boolean): ReturnType<ReturnType<typeof createManagedSkillsHost>['listPrimarySkills']>;
   undoAgentEdit(skillName: string): ReturnType<ReturnType<typeof createManagedSkillsHost>['undoPrimarySkillEdit']>;

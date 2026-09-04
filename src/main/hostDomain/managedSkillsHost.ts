@@ -28,6 +28,7 @@ export interface ManagedSkillsHostOptions {
   readonly loadRuntimeSettings: () => Promise<{
     readonly additionalSkillDirectories: readonly string[];
     readonly disabledSkills?: readonly string[];
+    readonly delegation?: { readonly enabled: boolean };
   }>;
 }
 
@@ -36,6 +37,7 @@ interface ManagedSkillsHost {
   updateRuntimeSettings(settings: {
     readonly additionalSkillDirectories: readonly string[];
     readonly disabledSkills?: readonly string[];
+    readonly delegation?: { readonly enabled: boolean };
   }): void;
   resolveAdmission(
     input: SkillAdmissionResolutionInput,
@@ -144,8 +146,7 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
   });
   void options.loadRuntimeSettings().then((settings) => {
     for (const runtime of [primaryRuntime, ...turnRuntimes.values()]) {
-      runtime.updateAdditionalSkillDirectories([...settings.additionalSkillDirectories]);
-      runtime.updateDisabledSkills([...(settings.disabledSkills ?? [])]);
+      applyRuntimeSettings(runtime, settings);
     }
   }).catch((error) => console.error('[agent] failed to load skill settings', error));
 
@@ -155,8 +156,7 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
     ),
     updateRuntimeSettings: (settings) => {
       for (const runtime of [primaryRuntime, ...turnRuntimes.values()]) {
-        runtime.updateAdditionalSkillDirectories([...settings.additionalSkillDirectories]);
-        runtime.updateDisabledSkills([...(settings.disabledSkills ?? [])]);
+        applyRuntimeSettings(runtime, settings);
       }
     },
     resolveAdmission: async (input, runtimeOptions) => {
@@ -270,10 +270,14 @@ function applyRuntimeSettings(
   settings: {
     readonly additionalSkillDirectories: readonly string[];
     readonly disabledSkills?: readonly string[];
+    readonly delegation?: { readonly enabled: boolean };
   },
 ): void {
   runtime.updateAdditionalSkillDirectories([...settings.additionalSkillDirectories]);
-  runtime.updateDisabledSkills([...(settings.disabledSkills ?? [])]);
+  runtime.updateDisabledSkills([
+    ...(settings.disabledSkills ?? []),
+    ...(settings.delegation?.enabled === true ? [] : ['delegate']),
+  ]);
 }
 
 function directSkillAdmissionInput(content: readonly ThreadUserContent[]): string | null {
