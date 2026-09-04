@@ -72,12 +72,15 @@ interaction.
 - Do not introduce macOS Keychain or another credential store. The existing
   credential owner and private `agent-secrets.json` file with mode `0600` remain
   authoritative.
-- Do not return stored API keys, OAuth material, secret paths, private Host
-  handles, or secret-bearing errors to model results, renderer DTOs, status
-  artifacts, logs, or diagnostics. An API key explicitly present in the current
-  renderer-authored user message may traverse one sensitive `models` invocation
-  under the credential contract below; Tenon creates no durable copy outside
-  the private credential store and the original user-authored input.
+- Do not proactively return stored API keys, OAuth material, secret paths,
+  private Host handles, or secret-bearing errors through Tenon-owned domain-tool
+  results, renderer DTOs, status artifacts, logs, or diagnostics. This is not a
+  confidentiality boundary against Full Access: generic file/process tools run
+  as the same OS account and can read local credential storage. An API key
+  explicitly present in the current renderer-authored user message may traverse
+  one sensitive `models` invocation under the credential contract below; Tenon
+  creates no durable copy outside the private credential store and the original
+  user-authored input.
 - Do not use `request_user_input` as security confirmation. It collects product
   input and cannot authorize destructive or authority-expanding work.
 - Do not place Translation target, model, automatic behavior, toggle state, or
@@ -130,12 +133,17 @@ disabled if that resource later appears, and the list selects availability
 without owning the selected resource.
 
 The hard constraints are Electron process isolation, isolated per-clone
-`userData`, existing Full Access and Agent ceiling rules, no retrieval of stored
-credentials by a model, root-only application management, fail-closed file
-admission, and no false claim of runtime settlement. The outgoing Settings
-hierarchy and composite stores are legacy constraints to delete, not contracts
-to preserve. A human bootstrap path is a product invariant because model access
-cannot depend on model access already existing.
+`userData`, the unchanged Full Access and Agent ceiling rules, no proactive
+credential exposure by typed Tenon surfaces, root-only application management,
+fail-closed file admission, and no false claim of runtime settlement. Full
+Access includes the Host account's local files, including Tenon's stored
+Provider credentials; mode `0600` excludes other OS accounts, not that Agent.
+Model-inaccessible secret storage would require a separate Full Access and
+storage-isolation redesign and conflicts with this plan's current-storage/no-
+Keychain premise. The outgoing Settings hierarchy and composite stores are
+legacy constraints to delete, not contracts to preserve. A human bootstrap path
+is a product invariant because model access cannot depend on model access
+already existing.
 
 ### 2. Public files and generated effective status
 
@@ -193,9 +201,14 @@ effective value under the same accepted source generation.
 This artifact resolves the direct-file race without a CLI or second settings
 protocol. After writing, an Agent computes the desired file digest with ordinary
 filesystem/shell capability and waits for a bounded interval until the matching
-status entry reaches a terminal state. It may claim applied only for matching
-`effective`; it reports `rejected`, `awaiting-confirmation`, or `degraded`
-truthfully, and reports settlement unknown if the bounded wait expires.
+status entry reaches a terminal state. It then re-reads the current desired file
+and recomputes its digest. It may claim applied at that verification instant only
+when terminal status is matching `effective` and the source still has the target
+digest. A different current digest means the edit was superseded or concurrently
+modified, never success for the newer bytes. It reports matching `rejected`,
+`awaiting-confirmation`, or `degraded` truthfully only while that source digest
+is still current, and reports settlement unknown if the bounded wait or final
+stable source read fails.
 
 ### 3. `settings.jsonc`
 
@@ -358,9 +371,11 @@ For declarative work the Skill tells the Agent to:
 2. select `settings.jsonc` or `keybindings.jsonc` from the user's intent;
 3. read the matching generated schema, existing overrides, and current status;
 4. make the smallest generic file edit while preserving unrelated comments;
-5. compute the exact saved digest and inspect only matching Host status; and
-6. report effective, rejected, degraded, awaiting-confirmation, or unknown
-   settlement exactly as observed.
+5. compute the exact saved digest and inspect only matching Host status;
+6. after terminal status, re-read the desired file and require that same digest;
+   and
+7. report effective, rejected, degraded, awaiting-confirmation, concurrent
+   modification, or unknown settlement exactly as observed.
 
 For resources, operations, private input, and contextual work the Skill selects
 one typed domain model tool. It never edits private domain stores, invents a
@@ -436,17 +451,29 @@ successful commit publishes a narrow Provider event. The Agent surface and any
 open model chooser re-read readiness and become usable without a restart.
 
 `Test Connection` probes the current unsaved candidate without changing the
-active generation. `Save` tests that exact candidate again inside the serialized
-commit operation so an earlier successful probe cannot authorize edited fields.
-A newly typed key may remain only in the private form's memory for retry and is
-discarded on close; opening the form later shows only that a credential exists.
+active generation. `Save` validates and durably commits the exact candidate as
+`configured/unverified` independently of network success, then tests that saved
+generation. A newly typed but unsaved key remains only in the credential form's
+memory and is discarded on close; after Save, opening the form shows that a
+credential exists and can retry verification without asking for the key again.
+The UI distinguishes `Saved, not verified` and the last redacted test failure
+from `Ready`.
 
 The UI and `models` tool call the same Main credential/connection owner. No
-renderer or model reads the credential file, and no second credential store is
-introduced. The owner persists local credentials in private
-`agent-secrets.json` with mode `0600`; macOS Keychain is deliberately not used.
-Stored secret reveal/copy remains a direct-human Models operation and stored
-secret deletion remains confirmed.
+renderer or typed domain tool receives a stored secret or credential-file path,
+and no second credential store is introduced. The owner persists local
+credentials in private `agent-secrets.json` with mode `0600`; macOS Keychain is
+deliberately not used. Stored secret reveal/copy remains a direct-human Models
+operation and stored secret deletion remains confirmed.
+
+This owner boundary prevents accidental propagation, not deliberate Full Access.
+An Agent with Full Access can independently use generic filesystem/process tools
+to find and read files available to the Host account, including this private
+file. The Full Access description continues to disclose that consequence. The
+`configuration` Skill does not provide the private path and instructs the Agent
+to use `models`, but instructions are not an enforcement boundary. A stronger
+guarantee is out of scope until credential storage or Full Access itself is
+redesigned.
 
 There are two API-key input paths:
 
@@ -468,27 +495,39 @@ copies it into a result, event, renderer DTO, status artifact, log, diagnostic,
 error, replay record, or telemetry. The result identifies only Provider,
 credential kind, connection generation, and outcome. Except for the original
 user-authored input and the committed private credential, Tenon retains no
-secret bytes after the invocation settles.
+secret bytes after the invocation settles through this typed route. Generic
+Full Access remains independently capable of reading or copying the committed
+file.
 
-Configuring a connection is one serialized semantic operation, with the
-Provider record as its single commit point:
+Provider state distinguishes `configuredGeneration` from `activeGeneration`.
+The configured pointer names the latest durably saved candidate and its
+verification status; the active pointer names the already verified generation
+allowed to serve runtime work. Both selectors live in the atomically replaced
+Provider record, which remains the authority and commit point:
 
 1. validate non-secret fields and stage a new credential generation in the
    private credential file without making it active;
-2. test the candidate endpoint and auth directly from that staged generation;
-3. on success, atomically replace the Provider record so it references the new
-   connection generation and then publish readiness; and
-4. on test, credential-write, or Provider-write failure, retain the previous
-   active generation and report a redacted failure; clean abandoned staged
-   generations immediately or during startup reconciliation.
+2. atomically commit the Provider's non-secret candidate fields and
+   `configuredGeneration` with `unverified` status while preserving its previous
+   `activeGeneration`;
+3. test the saved candidate endpoint and auth from that exact generation;
+4. on success, atomically record `verified` and move `activeGeneration` when the
+   connection is selected for use, then publish readiness; and
+5. on credential- or Provider-write failure, preserve both prior pointers and
+   clean any unreferenced staging; on test, network, quota, or auth failure,
+   persist the configured generation plus redacted verdict for later retry but
+   leave the previous active generation unchanged.
 
 This generation indirection makes crash recovery deterministic across the
 Provider store and `agent-secrets.json`: an unreferenced staged secret is never
-runnable, while a committed Provider generation always names already-durable
-credentials. The old generation remains recoverable until the commit completes
-and is garbage-collected afterward. OAuth uses the same generation/commit rule
-after its private browser exchange. Connection tests never mutate the active
-connection, and a failed replacement cannot break a previously working Agent.
+runnable, a configured generation always names already-durable credentials, and
+only an active generation is runnable. Credential generations are garbage-
+collected only when neither pointer references them. OAuth uses the same
+configured/verified/active transitions after its private browser exchange.
+Connection tests never overwrite the active pointer on failure, and a failed
+replacement cannot break a previously working Agent. On first launch, a failed
+test leaves a saved non-runnable connection; retry can later make it active and
+enable the Agent without re-entering credentials or restarting.
 
 Destructive operations and authority expansion use one shared Host interaction
 coordinator owned outside Settings. Before showing private UI it consumes and
@@ -548,19 +587,21 @@ available candidate before releasing the old registration. Validation,
 persistence, or registration failure preserves the previous accepted/effective
 set and publishes matching status diagnostics.
 
-`Keyboard Shortcuts...` opens the file. Reset means removing one override; Reset
-All means deleting overrides; both are routine source edits that restore known
-defaults. A searchable direct Shortcut Manager exists only
-for physical recording, conflict resolution, disable, per-command Reset, Reset
-All, and `Open Keybindings File`; it has no Settings parent or category shell.
-The `shortcuts` model tool can inspect effective bindings or start the private
-recording handoff, while ordinary Agent edits remain file-first.
+`Keyboard Shortcuts...` opens the searchable direct Shortcut Manager. It exists
+only for physical recording, conflict resolution, disable, per-command Reset,
+Reset All, and `Open Keybindings File`; it has no Settings parent or category
+shell. Reset means removing one override; Reset All means deleting overrides;
+both are routine source edits that restore known defaults. The `shortcuts` model
+tool can inspect effective bindings or start the private recording handoff,
+while ordinary Agent edits remain file-first.
 
 ### 8. Complete capability ledger
 
 Every current control, current hidden policy, and new shortcut capability has
 exactly one Agent route and one human destination. A native handoff means the
 Agent starts and awaits private human interaction but never receives its input.
+Risk labels describe these typed routes; they do not narrow Full Access generic
+filesystem/process authority.
 
 | Capability | Canonical Agent route | Risk | Owner / human destination |
 | --- | --- | --- | --- |
@@ -622,7 +663,8 @@ manifest used at runtime.
 The application menu keeps `Settings...`, `Open Configuration File`, and
 `Keyboard Shortcuts...`, then groups Models, Agents, Skills, Memory, Access, and
 Privacy & Data in a native `Manage` submenu. Settings opens only the flat
-declarative projection. About and Help retain platform-standard homes.
+declarative projection; Keyboard Shortcuts opens its direct Manager. About and
+Help retain platform-standard homes.
 Active-preview Translation remains on the preview. Contextual deep links open
 the same owners directly. The Agent's unavailable state also deep-links to
 Models so first-run setup never depends on a working model.
@@ -683,16 +725,20 @@ prior effective state stays active. The UI disables structured edits and offers
 **First launch has no runnable model.** Agent execution controls are unavailable
 and the surface presents `Set Up a Model`. The person completes Provider/auth,
 endpoint, credential or OAuth, and connection test in Models. A failed test or
-save leaves the prior state and form recoverable. A successful generation commit
-publishes readiness and enables Agent interaction immediately without restart.
+quota/network/auth check leaves the candidate durably `configured/unverified`
+for later retry without re-entering the credential; it is not runnable. A save
+failure preserves the prior Provider pointers and keeps the form recoverable. A
+successful verification moves the active generation, publishes readiness, and
+enables Agent interaction immediately without restart.
 
 **Agent receives an explicit API key.** A runnable root Agent calls the sensitive
 `models configure` operation with the value from its latest renderer-authored
 user message. The Host verifies the exact-message binding, stages and tests the
-new generation, commits the Provider reference, and returns only redacted public
-status. It opens no redundant credential prompt. A mismatch, stale Turn, failed
-test, or failed commit keeps the prior active connection and persists no active
-partial replacement.
+new generation, commits it as configured, and returns only redacted public
+status. It opens no redundant credential prompt. A failed test persists the
+candidate and verdict for later retry but keeps the prior active connection; a
+mismatch, stale Turn, credential-write failure, or Provider commit failure
+persists no partial configured replacement.
 
 **Agent disables a Skill.** The root Agent loads `configuration`, reads the
 schema and current file, adds the canonical name to `agent.skills.disabled`,
@@ -707,9 +753,11 @@ rejects that identity. Disabling all future file/status tools is therefore
 verifiable once without creating a re-enable path for the current Agent.
 
 **Agent changes theme to dark.** The root Agent edits `appearance.theme`, then
-waits for matching `effective` status. `nativeTheme.themeSource` and every open
-window acknowledge the same generation; new windows initialize from it. No
-renderer `[data-theme]` bridge or restart is involved.
+waits for matching `effective` status and verifies that the current source still
+has its target digest. `nativeTheme.themeSource` and every open window acknowledge
+the same generation; new windows initialize from it. A concurrent later save is
+reported instead of being confused with the target result. No renderer
+`[data-theme]` bridge or restart is involved.
 
 **Agent manages a domain.** The Skill selects one typed domain model tool. The
 owner validates current revision and authority, commits once, applies, publishes
@@ -747,10 +795,12 @@ default. Tenon never silently rewrites desired bytes.
   file or domain-tool route and one direct human destination. No legitimate
   control is Agent-unreachable or marked future.
 - **FR-6:** Host confirmation and private handoff cannot be completed by
-  Tenon-managed Agent work. Stored secrets never cross a model-readable
-  boundary; a key explicitly supplied in the current renderer-authored user
-  message may enter only the transient, exact-message-bound sensitive operation
-  and private credential owner defined above.
+  Tenon-managed Agent work. Typed domain routes, renderer projections, status,
+  logs, and diagnostics never proactively expose stored secrets; a key explicitly
+  supplied in the current renderer-authored user message may enter only the
+  transient, exact-message-bound sensitive operation and private credential
+  owner defined above. Full Access retains its disclosed same-account file and
+  process reach.
 - **FR-7:** Translation preferences and scoped clearing resolve exactly one
   active preview; global translation-cache maintenance remains Data.
 - **FR-8:** The command registry, `keybindings.jsonc`, schema/status, watcher,
@@ -765,9 +815,10 @@ default. Tenon never silently rewrites desired bytes.
   minimal edits, removes overrides on Reset, and refuses structured edits of an
   invalid source.
 - **FR-12:** Agent `Set Up a Model` and `Manage -> Models` provide complete
-  no-Agent bootstrap. The shared connection owner tests before one generation
-  commit, preserves the prior active connection on failure, uses
-  `agent-secrets.json` mode `0600`, and publishes immediate readiness.
+  no-Agent bootstrap. The shared connection owner persists a validated candidate
+  independently from verification, activates only a verified generation,
+  preserves the prior active connection on failure, uses `agent-secrets.json`
+  mode `0600`, and publishes immediate readiness after activation.
 - **NFR-1:** Each public configuration read is bounded to 256 KiB; status,
   model-tool schemas/results, and resource pages are bounded. Watcher work is
   coalesced and never blocks startup or renderer interaction.
@@ -807,8 +858,9 @@ default. Tenon never silently rewrites desired bytes.
   source-backed UI and `Open Configuration File` opens the exact file. A root
   Agent loads `configuration` and completes theme-dark, Skill-disable, and
   Tool-disable tasks with minimal generic file edits plus matching effective
-  status. Missing path, restricted file authority, invalid current bytes, stale
-  status, rejection, degradation, confirmation, and timeout remain truthful.
+  status and a final current-source digest read. Missing path, restricted file
+  authority, invalid current bytes, stale status, concurrent later save,
+  rejection, degradation, confirmation, and timeout remain truthful.
 - **AC-7 (FR-3, FR-4, FR-10):** Static/package guards find no `tenon settings`,
   Settings or Configuration CLI entry, executable, parser, help text, model
   tool, universal DTO/service, old category router, or Settings-specific
@@ -831,13 +883,16 @@ default. Tenon never silently rewrites desired bytes.
   delay private UI. No model-visible channel can approve; approve, cancel,
   stale state, changed authority, duplicate response, Host loss, and caller loss
   never produce false success or replay approval.
-- **AC-11 (FR-6, FR-12):** Stored-secret fixtures never enter tool schemas,
-  arguments, results, Thread Items, status, shared renderer state, logs, or
+- **AC-11 (FR-6, FR-12):** Stored-secret fixtures never enter typed domain-tool
+  schemas, arguments or results, status, shared renderer state, logs, or
   diagnostics. A newly supplied key appears only in its original renderer-authored
   message, one transient sensitive invocation, the staged private generation,
   and the final private credential. Persistence guards prove the durable Tool
   Item is redacted before write. OAuth, reveal/copy, cancel, browser/editor
-  failure, replay, and concurrent resource deletion retain private isolation.
+  failure, replay, and concurrent resource deletion retain that typed-route
+  boundary. Permission/copy tests continue to disclose and prove that Full
+  Access generic file/process tools can read same-account local credentials; no
+  stronger isolation is asserted.
 - **AC-12 (FR-7):** Webpage, caption, and EPUB tests prove contextual
   Translation changes no global file/singleton, scoped clearing affects only one
   preview, zero/ambiguous context is unavailable, and confirmed Data clearing
@@ -849,6 +904,8 @@ default. Tenon never silently rewrites desired bytes.
   recording/cancel, minimal edit, disable, Reset, Reset All, malformed JSONC,
   stale digest, persistence failure, global registration failure, live rebind,
   and preservation of the previous registration after every failed candidate.
+  `Keyboard Shortcuts...` opens Shortcut Manager, and its
+  `Open Keybindings File` opens the exact public source.
 - **AC-15 (FR-5, FR-10, FR-11):** E2E proves the flat Settings UI, every direct
   manager, About/Help action, Provider editor, credential handoff, diagnostics
   operation, and active-preview control remain reachable after the old Settings
@@ -871,14 +928,17 @@ default. Tenon never silently rewrites desired bytes.
   shows `Set Up a Model`, reaches Models without an Agent, and completes
   Provider/auth selection, endpoint input, API-key or OAuth, test, and save
   entirely through human UI. Success enables Agent input and a real request
-  without restart; invalid credential, network, quota, OAuth cancel, test
-  failure, and save failure remain recoverable and do not activate a partial
-  connection.
+  without restart. Invalid credential, network, quota, OAuth cancel, or test
+  failure leaves a restart-durable `configured/unverified` candidate that can be
+  retested without credential re-entry but cannot run the Agent; a storage
+  failure leaves no partial configured pointer and keeps the form recoverable.
 - **AC-20 (FR-3, FR-11):** UI, manual-file, and Agent edits are interleaved in
   E2E. Each converges through one source digest and effective status, appears in
   the other two surfaces, survives restart, and leaves no preference value or
   default outside the registry/source. Reset removes an override. A stale UI
-  digest cannot overwrite a newer manual or Agent edit.
+  digest cannot overwrite a newer manual or Agent edit. After matching terminal
+  status for Agent digest A, an interleaved manual save B before the final source
+  read produces concurrent-modification output, never success attributed to B.
 - **AC-21 (FR-1, FR-11):** Malformed and duplicate-key JSONC disable every
   structured UI edit, preserve the exact bytes and previous effective state,
   show a source-located error plus `Open File`, and recover live after the user
@@ -887,10 +947,11 @@ default. Tenon never silently rewrites desired bytes.
 - **AC-22 (FR-6, FR-12):** A runnable root Agent configures and tests a key
   explicitly supplied in its latest renderer-authored user message without a
   second prompt. Exact-message mismatch, child/delegated execution, stale Turn,
-  replay, test failure, credential-write failure, Provider commit failure, and
-  crash recovery never activate a partial replacement or echo the key. Startup
-  removes unreferenced staged generations and preserves the previous runnable
-  connection.
+  or replay cannot consume the key. Test/auth/network/quota failure persists the
+  new configured generation and redacted verdict for credential-free retry but
+  never activates it; credential-write failure, Provider commit failure, and
+  crash recovery leave no partial configured pointer or key echo. Startup removes
+  unreferenced staged generations and preserves the previous runnable connection.
 
 ## Delivery
 
@@ -939,7 +1000,8 @@ feature PR rather than entering the shared layer.
 - **A file becomes a junk drawer:** only deterministic declarative policy enters
   JSONC; live resources and operations remain typed domain state.
 - **A file write is mistaken for completion:** exact desired digest and generated
-  effective status are mandatory before success language.
+  effective status plus a final current-source digest read are mandatory before
+  success language.
 - **An Agent re-enables its own authority:** disabled-tool removal never admits
   directly; the Access owner and Host confirmation must edit the source.
 - **Domain tools recreate Settings:** there is no shared namespace, route table,
@@ -949,7 +1011,11 @@ feature PR rather than entering the shared layer.
 - **Secret escapes through Tool history or a failure:** stored secrets are absent
   from public schemas; an explicitly supplied key uses one marked-sensitive
   invocation, is redacted before durable Tool/Trajectory state, and cannot enter
-  a result, error, diagnostic, or status artifact.
+  a Tenon-owned domain result, error, diagnostic, or status artifact. Full Access
+  remains explicitly capable of reading the underlying same-account file.
+- **A transient outage destroys bootstrap work:** Save commits a configured
+  generation before verification; failed probes preserve it for credential-free
+  retry without making it active.
 - **Invalid files break launch:** last-known-good/safe defaults preserve runtime
   while desired bytes and diagnostics remain repairable.
 - **Legacy Settings retirement strands work:** same-source UI/file/Agent parity,
@@ -957,9 +1023,9 @@ feature PR rather than entering the shared layer.
 - **Shortcuts break native behavior:** fixed grammar is explicit and prior system
   registration stays active until a replacement succeeds.
 
-The 2026-09-04 collision re-check found open PRs #626 and #627; #620's Agent
-delegation design, #621's preview shell, and #623's generic Background Tool Tasks
-are merged implementation authority.
+The 2026-09-04 collision re-check found open PRs #626, #627, and #628; #620's
+Agent delegation design, #621's preview shell, and #623's generic Background
+Tool Tasks are merged implementation authority.
 
 - #627 owns exact-or-unavailable Agent Trajectory persistence and rendering. Its
   model-issued Tool Input work overlaps the sensitive `models configure`
@@ -969,10 +1035,11 @@ are merged implementation authority.
   metadata remains exact. This declared-sensitive exception supersedes #627's
   generic sentinel-credential fixture for this operation only. Feature 1 rebases
   after #627 and lands the exception through shared-interface ownership.
-- The merged #620 design still calls the outgoing Settings surface the only
-  Runner-policy authority. Its internal-delegation implementation and this plan
-  must converge on the direct Agent/delegation owner: whichever implementation
-  claims first publishes that typed owner, and the other rebases before work.
+- #628 implements the merged #620 delegation design and will consume outgoing
+  Settings plus Agent runtime/capability surfaces. It lands first, including its
+  selected delegation-policy owner. Feature 1 then rebases and moves that shipped
+  policy intact into the direct Agent/delegation owner defined here; it does not
+  redesign #628's Runner, Session, CLI, or capability contracts.
 - `agent-skill-authoring-foundation` and `agent-skill-curation-report` own Skill
   authoring/curation behavior. Feature 1 follows the foundation and preserves its
   final Skill source/provenance owners rather than recreating them.
@@ -996,9 +1063,9 @@ Settings/Configuration CLI or universal Settings control plane.
 
 ## Implementation Checklist
 
-- [ ] Re-run collision checks after #627 and before each implementation claim;
-      settle sensitive Tool persistence, protected tool contracts, and Agent
-      delegation ownership first.
+- [ ] Re-run collision checks after #627 and #628 and before each implementation
+      claim; settle sensitive Tool persistence, protected tool contracts, and
+      shipped Agent delegation ownership first.
 - [ ] Ship Feature 1 as a complete current-capability replacement, fold current
       specs, and retire the old Settings hierarchy only after flat UI, bootstrap,
       and Agent parity pass.
