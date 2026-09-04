@@ -519,6 +519,7 @@ export interface TurnDiagnosticsModelCallActivity {
 
 export interface TurnDiagnosticsToolExecution {
   readonly callId: string;
+  readonly providerResponsePartIndex: number;
   readonly toolName: string;
   /** Null only for deliberately transient tools that have no canonical Thread Item. */
   readonly itemId: ThreadItemId | null;
@@ -1876,7 +1877,6 @@ export const THREAD_TRAJECTORY_AVAILABILITY_REASONS = [
   'evidenceUnavailable',
   'payloadUnavailable',
   'redacted',
-  'partialCoverage',
 ] as const;
 export type ThreadTrajectoryAvailabilityReason = typeof THREAD_TRAJECTORY_AVAILABILITY_REASONS[number];
 
@@ -2146,6 +2146,7 @@ export interface ThreadTrajectoryRuntimeEvidence {
   readonly provider: string;
   readonly model: string;
   readonly api: string;
+  readonly configuredBaseUrl: string;
   readonly transportSelection: TurnDiagnosticsRuntime['transportSelection'];
   readonly contextWindow: number;
   readonly maxOutputTokens: number;
@@ -2251,24 +2252,6 @@ export interface ThreadTrajectoryDetailReadResponse {
   readonly record: ThreadTrajectoryRecordSummary | null;
   readonly detail: ThreadTrajectoryRecordDetail | null;
 }
-
-export interface ThreadTrajectoryExportRequest {
-  readonly threadId: ThreadId;
-}
-
-export type ThreadTrajectoryExportResponse =
-  | {
-      readonly status: 'written';
-      readonly fileName: string;
-      readonly byteLength: number;
-    }
-  | {
-      readonly status: 'canceled';
-    }
-  | {
-      readonly status: 'failed';
-      readonly error: string;
-    };
 
 export interface ProviderRetryStatus {
   readonly kind: 'request' | 'stream';
@@ -2495,7 +2478,6 @@ export const AGENT_CORE_METHODS = [
   'thread/turn/details/read',
   'thread/trajectory/read',
   'thread/trajectory/detail/read',
-  'thread/trajectory/export',
   'turn/submit',
   'turn/start',
   'turn/steer',
@@ -2543,7 +2525,6 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/turn/details/read': ThreadTurnDetailsReadRequest;
   readonly 'thread/trajectory/read': ThreadTrajectoryReadRequest;
   readonly 'thread/trajectory/detail/read': ThreadTrajectoryDetailReadRequest;
-  readonly 'thread/trajectory/export': ThreadTrajectoryExportRequest;
   readonly 'turn/submit': RendererTurnSubmitRequest;
   readonly 'turn/start': RendererTurnStartRequest;
   readonly 'turn/steer': RendererTurnSteerRequest;
@@ -2589,7 +2570,6 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/turn/details/read': ThreadTurnDetailsReadResponse;
   readonly 'thread/trajectory/read': ThreadTrajectoryReadResponse;
   readonly 'thread/trajectory/detail/read': ThreadTrajectoryDetailReadResponse;
-  readonly 'thread/trajectory/export': ThreadTrajectoryExportResponse;
   readonly 'turn/submit': TurnSubmitResponse;
   readonly 'turn/start': TurnStartResponse;
   readonly 'turn/steer': TurnSteerResponse;

@@ -155,6 +155,7 @@ export type KernelEvent =
       type: 'tool_call_admission';
       toolCallId: string;
       providerToolCallId: string;
+      providerResponsePartIndex: number;
       toolName: string;
       decision: ToolCallAdmissionDecision;
     }

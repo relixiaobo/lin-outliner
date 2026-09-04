@@ -1569,7 +1569,6 @@ export const zhHans: PartialMessages = {
         evidenceUnavailable: '引用的证据已不可用。',
         payloadUnavailable: '引用的数据已不可用。',
         redacted: '敏感证据已脱敏。',
-        partialCoverage: '只能检查这条记录的部分信息。',
       },
       record: {
         initialSystemPrompt: '初始系统提示词',

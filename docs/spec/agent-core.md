@@ -851,7 +851,7 @@ grouped by the concept they own:
 
 - `thread/*`: list, read, start, resume, fork, rollback, name, archive, delete, paged
   Turn/Item reads, exact full-output and context-evidence reads, authoritative
-  audited diagnostics reads, and Trajectory projection/detail/export reads
+  audited diagnostics reads, and Trajectory projection/detail reads
 - `turn/*`: start, steer, and interrupt
 - `goal/*`: get, create, and update
 - `userInput/respond`: resolve an active structured input request
@@ -929,39 +929,32 @@ activity alone is not unique evidence for any one of its calls. The record ID is
 stable projection identity for paging and selection, not evidence authority.
 Detail resolution never parses an evidence coordinate from that string.
 
-`thread/trajectory/detail/read` returns bounded, credential-redacted evidence for one record. It
+`thread/trajectory/detail/read` returns exact-or-unavailable evidence for one record. It
 locates the owning Turn from stable record identity and reads only that Turn's
 diagnostics before materializing detail evidence. It does not return full
-`Thread`, `Turn`, `ThreadItem`, or raw diagnostics payloads. It may return
-bounded Turn/Item evidence, sanitized runtime facts, sanitized provider-call
-request/response values, sanitized activity evidence, sanitized context payloads,
-and sanitized/truncated tool output. Credential redaction is applied at renderer-facing
-opaque evidence leaves; typed diagnostics control fields such as discriminators,
-indexes, and enum fields are preserved so a large legal evidence string cannot
-corrupt the diagnostics structure. Filesystem paths are preserved when they are
-part of accepted input, prepared context, a captured provider request or
-response, or model-issued tool arguments. It must not expose diagnostics payload
-storage paths, digest-only read authority, raw secrets, credentials, arbitrary
-response headers, or image bytes. Main resolves the record's typed
-primary reference against its owning Thread and Turn, then uses only explicitly
-related references for supporting evidence. Missing inspection evidence degrades
-that record or detail field and cannot change canonical history or fail a
-running Turn. Input detail preserves the ordered prepared-message part types;
-image bytes become MIME / byte-length / digest evidence. Tool Input resolves the
-canonical Item `modelCall` argument source rather than reconstructing arguments
-from presentation or host execution fields. A lazy read that discovers a
-missing argument payload or tool output appends the corresponding availability
-fact to the detail response's record. Canonical accepted input remains Raw
-evidence and never substitutes for missing prepared provider evidence in a
-Trajectory preview. Assistant detail preserves the terminal provider-neutral
-response as ordered text, thinking, tool-call, image-metadata, and bounded other
-parts. Compaction detail reads its retained summary payload on demand. Inspector
-evidence fields never fall back to the lightweight record preview.
-
-`thread/trajectory/export` writes the same sanitized projection from main and
-returns only status, file name, and byte length. The renderer never receives the
-absolute export path; write failures are logged in main and return a fixed
-path-free failure message.
+`Thread`, `Turn`, `ThreadItem`, diagnostics storage paths, digest-only read
+authority, arbitrary response headers, or image bytes. Main resolves the
+record's typed primary reference against its owning Thread and Turn, then uses
+only explicitly related references for supporting evidence. Retained text and
+JSON evidence is not redacted, truncated, summarized, inferred, or replaced by
+nearby evidence. Missing inspection evidence degrades that record or detail
+field and cannot change canonical history or fail a running Turn. Input detail
+preserves the ordered prepared-message part types; image bytes remain
+reference-only MIME / byte-length / digest evidence. Tool Input resolves the
+exact provider-issued arguments from the source Provider Call response by the
+execution's retained absolute response-part index. When diagnostics exist but
+that coordinate is invalid or does not identify a tool-call part, the field is unavailable; `redactedReplay` and
+`evidenceOnly` Item values are never substitutes. Only when the entire
+diagnostics payload is absent may an exact `replayable` Item argument source be
+used. Tool Output reads the complete retained model-visible output. A lazy read
+that discovers a missing argument payload or tool output appends the
+corresponding availability fact to the detail response's record. Canonical
+accepted input remains Raw evidence and never substitutes for missing prepared
+provider evidence in a Trajectory preview. Assistant detail preserves the
+terminal provider-neutral response as all ordered text, thinking, tool-call,
+image-metadata, and unknown parts. Compaction detail reads its retained summary
+payload on demand. Inspector evidence fields never fall back to the lightweight
+record preview.
 
 Recorded lifecycle notifications are the only notifications accepted by
 rollout and history projection stores. `thread/name/updated`, provider-retry
@@ -1008,7 +1001,7 @@ enter Core stores. See [`agent-automations.md`](agent-automations.md).
 
 Thread Details describes the durable Thread container and its Thread-level controls.
 Trajectory is the complete technical surface for a canonical Thread. It receives a
-main-owned sanitized projection over the same canonical Turns, retained diagnostics,
+main-owned exact-or-unavailable typed projection over the same canonical Turns, retained diagnostics,
 context payloads, and output references used by execution. It does not recreate the
 retired conversation/run/round debug projection, derive history from renderer
 pagination, or introduce an alternative execution ledger. USER rows are grounded
@@ -1017,7 +1010,7 @@ captured prepared-message parts whose `userInput` provenance carries that exact
 Item ID. CONTEXT rows come from captured system-context parts, stable prompt, or
 provider-visible tool catalogs. Canonical user content remains accepted-input
 evidence rather than a reconstruction of the provider request. REQUEST detail is
-the bounded materialized post-adapter provider payload captured in diagnostics;
+the complete retained post-adapter provider JSON captured in diagnostics;
 image bytes do not cross to renderer, while captured filesystem paths remain
 exact evidence.
 The exact page contract lives in

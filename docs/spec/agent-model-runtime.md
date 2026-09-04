@@ -1047,47 +1047,37 @@ according to their recorded wire shape.
 Turn-wide audit facts record the exact context epoch and cache affinity, L0/L1/L2
 stable-prompt source blocks and fingerprints, canonical-sorted tool schema pool,
 provider/model/API/configured-base-URL/transport selection, model limits, and retry/cache
-settings. Configured-base-URL diagnostics remove URL userinfo, query, and fragment data
-before persistence. These audit facts explain how the call was prepared; they are not a
-renderer-reconstructed request or another context authority.
+settings. The configured base URL is retained exactly, including userinfo, query, and
+fragment data when present. These audit facts explain how the call was prepared; they are
+not a renderer-reconstructed request or another context authority.
 
-Trajectory consumes these diagnostics through a main-owned sanitized projection.
+Trajectory consumes these diagnostics through a main-owned typed projection.
 The retained diagnostics payload remains the audited provider-boundary evidence;
-the renderer-facing Trajectory detail does not receive the raw payload, configured
-base URL, host paths, arbitrary headers, credentials, image bytes, or payload
-storage paths. The projection emits a stable-prompt context record on the first
+renderer-facing Trajectory detail receives exact retained text and JSON evidence,
+including the configured base URL, host paths, and credential-looking values, but
+does not receive arbitrary headers, image bytes, or payload storage paths. The
+projection emits a stable-prompt context record on the first
 retained prompt and whenever its complete fingerprint changes; it does not repeat
 an unchanged prompt for every Provider Call.
 Provider requests are captured after adapter transformation. Diagnostics may
 store large provider request fields as content-addressed `requestFragments`, but
 Trajectory detail materializes those fragments back into the original
-post-adapter payload shape before applying renderer-facing sanitization. That
+post-adapter payload shape without renderer-facing sanitization. That
 materialized request is request evidence for a provider call. It is distinct from
 canonical user input and from context evidence, and must not be presented as a
 USER message.
 
 Each tool execution diagnostic records its admission disposition, canonical identity,
-and schema digest when one exists. Assistant responses and tool observations pass the
-same Secretlint-backed, high-confidence redaction policy before diagnostics persistence;
-structured fields require both a credential name and a credential-candidate string, while
-ambiguous values pass unchanged. Direct scanner failures retain the existing boundary
-behavior: durable values fail open, while diagnostic copies are omitted. An off-main
-durable worker rejection instead preserves the traversed JSON container and non-string
-scalar structure, replaces every pending string with `[redacted]`, and emits one fixed
-content-free warning. Raw recognized credentials and host credentials are not diagnostic
-history.
-Canonical-message snapshots and post-adapter request fragments are redacted only in the
-diagnostic copy immediately before persistence. Serialized function-call arguments are
-scanned only at their outer adapter boundary and nested JSON strings are left intact.
-Each provider copy has a 64,000-character scan budget; text beyond it is replaced only in
-diagnostics. The ordered budget is spent before one batched scan; sufficiently large
-batches run the same whole-string scanner on the bounded Node worker pool, while small
-batches run directly exactly once. A pooled request starts its five-second watchdog only
-after leaving the queue for a new or idle worker; startup timeout releases capacity and
-a late worker is terminated. A diagnostic worker error or watchdog timeout terminates
-that worker and stores a typed whole-copy omission marker without a main-thread retry.
-No chunk boundary can change a credential match. The live provider request and the raw
-normalized value used for its fingerprint remain unchanged.
+absolute part index in the terminal provider response, and schema digest when one exists. Prepared messages,
+post-adapter requests, terminal provider responses, and diagnostic tool observations are
+retained exactly as observed; diagnostics does not run Secretlint, rewrite
+credential-looking strings, impose per-leaf or shared character budgets, or store
+redaction/omission substitutes. The source Provider Call and absolute response-part
+index link one admitted execution directly to its original tool-call part, even when
+provider-issued call IDs are empty or repeated, so
+Trajectory Tool Input can use the arguments the model actually issued rather than an
+Item replay or presentation value. Canonical durable history keeps its independent
+Secretlint-backed redaction policy; that policy does not alter diagnostic evidence.
 If diagnostic preparation or provenance alignment itself fails, the collector is
 disabled for that Turn and `diagnosticsRef` remains null; provider transport, event
 normalization, and the Turn continue.
@@ -1106,6 +1096,11 @@ Binary, base64 image, and image data-URL bytes are never copied into diagnostics
 omission marker retains encoding, MIME when known, byte length, and digest. Capture is
 observational only and cannot change provider request bytes, ordering, or prompt-cache
 behavior.
+
+Diagnostics admission is all-or-nothing at 16 MiB of serialized UTF-8 payload. A payload
+above that limit is not partially retained or rewritten: `diagnosticsRef` remains null and
+Trajectory reports the affected evidence as unavailable. This whole-payload admission
+limit is distinct from the bounded `streamNoiseFrames` telemetry described below.
 
 Canonical message and request-fragment IDs are SHA-256 digests of their stable JSON
 values. The main-process payload store verifies those content addresses on write, read,
@@ -1128,7 +1123,7 @@ streaming later fails. An adapter or non-HTTP transport that exposes no response
 provides no transport facts.
 Each custom Responses Provider Call also owns an ordered `streamNoiseFrames` list. Every
 entry records the chunk-arrival time, bounded frame type, and bounded secret-scanned JSON
-snippet for one frame the resilient fetch removed. The model-call diagnostic JSON export
+snippet for one frame the resilient fetch removed. Typed model-call diagnostic evidence
 includes this list beside the transport and normalized response facts. An older
 diagnostics payload may omit the optional list; new calls write it even when empty. The
 producer, collector, and decoder enforce a 64-entry maximum. The collector clamps a stale

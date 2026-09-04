@@ -231,6 +231,7 @@ describe('canonical model tool-call admission', () => {
   test('bounds untrusted evidence fields by UTF-8 bytes before persistence', () => {
     const decision = transientToolCallAdmission({
       toolCallId: 'rejected',
+      providerResponsePartIndex: 0,
       providerName: '工'.repeat(2_000),
       providerCall: {
         id: 'rejected',
@@ -317,6 +318,7 @@ async function admittedRequest(
   const redacted = await prepareToolCallArguments(argumentsValue, largeTextArguments);
   return {
     toolCallId: 'call-1',
+    providerResponsePartIndex: 0,
     providerName: 'bash',
     providerCall: {
       id: 'call-1',

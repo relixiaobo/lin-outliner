@@ -30,6 +30,7 @@ import {
 
 export interface ToolCallAdmissionRequest {
   readonly toolCallId: string;
+  readonly providerResponsePartIndex: number;
   readonly providerName: string;
   readonly providerCall: ModelProviderToolCall;
   readonly outcome:

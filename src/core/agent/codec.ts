@@ -1376,9 +1376,6 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/trajectory/detail/read':
       decoded = decodeThreadTrajectoryDetailReadRequest(value);
       break;
-    case 'thread/trajectory/export':
-      decoded = decodeThreadTrajectoryExportRequest(value);
-      break;
     case 'turn/submit':
       decoded = decodeRendererTurnSubmitRequest(value);
       break;
@@ -1506,9 +1503,6 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       break;
     case 'thread/trajectory/detail/read':
       decoded = decodeThreadTrajectoryDetailReadResponse(value);
-      break;
-    case 'thread/trajectory/export':
-      decoded = decodeThreadTrajectoryExportResponse(value);
       break;
     case 'turn/submit':
       decoded = decodeTurnSubmitResponse(value);
@@ -2144,16 +2138,6 @@ function decodeThreadTrajectoryDetailReadRequest(
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'thread/trajectory/detail/read.threadId'),
     recordId: stringValue(record.recordId, 'thread/trajectory/detail/read.recordId'),
-  });
-}
-
-function decodeThreadTrajectoryExportRequest(
-  value: unknown,
-): AgentCoreRequestByMethod['thread/trajectory/export'] {
-  const record = recordValue(value, 'thread/trajectory/export');
-  exactKeys(record, ['threadId'], 'thread/trajectory/export');
-  return deepFreeze({
-    threadId: uuidV7(record.threadId, 'thread/trajectory/export.threadId'),
   });
 }
 
@@ -2896,30 +2880,6 @@ function decodeThreadTrajectoryDetailReadResponse(
   return deepFreeze({ threadId, record: summary, detail });
 }
 
-function decodeThreadTrajectoryExportResponse(
-  value: unknown,
-): AgentCoreResponseByMethod['thread/trajectory/export'] {
-  const record = recordValue(value, 'thread/trajectory/export response');
-  const status = enumValue(record.status, ['written', 'canceled', 'failed'], 'thread/trajectory/export response.status');
-  if (status === 'written') {
-    exactKeys(record, ['status', 'fileName', 'byteLength'], 'thread/trajectory/export response');
-    return deepFreeze({
-      status,
-      fileName: stringValue(record.fileName, 'thread/trajectory/export response.fileName'),
-      byteLength: nonNegativeInteger(record.byteLength, 'thread/trajectory/export response.byteLength'),
-    });
-  }
-  if (status === 'canceled') {
-    exactKeys(record, ['status'], 'thread/trajectory/export response');
-    return deepFreeze({ status });
-  }
-  exactKeys(record, ['status', 'error'], 'thread/trajectory/export response');
-  return deepFreeze({
-    status,
-    error: stringValue(record.error, 'thread/trajectory/export response.error'),
-  });
-}
-
 function decodeThreadTrajectorySummary(value: unknown, path: string): ThreadTrajectorySummary {
   const record = recordValue(value, path);
   exactKeys(record, [
@@ -3512,6 +3472,7 @@ function decodeThreadTrajectoryRuntimeEvidence(value: unknown, path: string): Th
     'provider',
     'model',
     'api',
+    'configuredBaseUrl',
     'transportSelection',
     'contextWindow',
     'maxOutputTokens',
@@ -3527,6 +3488,7 @@ function decodeThreadTrajectoryRuntimeEvidence(value: unknown, path: string): Th
     provider: stringValue(record.provider, `${path}.provider`),
     model: stringValue(record.model, `${path}.model`),
     api: stringValue(record.api, `${path}.api`),
+    configuredBaseUrl: stringValue(record.configuredBaseUrl, `${path}.configuredBaseUrl`, true),
     transportSelection: enumValue(
       record.transportSelection,
       ['sse', 'websocket', 'websocket-cached', 'auto'],
@@ -5265,7 +5227,7 @@ function decodeTurnDiagnosticsActivities(
         const executionPath = `${path}.executions[${executionIndex}]`;
         const execution = recordValue(entry, executionPath);
         exactKeys(execution, [
-          'callId', 'toolName', 'itemId', 'admissionDisposition', 'canonicalIdentity',
+          'callId', 'providerResponsePartIndex', 'toolName', 'itemId', 'admissionDisposition', 'canonicalIdentity',
           'schemaDigest', 'startedAt', 'completedAt', 'status',
         ], executionPath);
         const startedAt = nonNegativeNumber(execution.startedAt, `${executionPath}.startedAt`);
@@ -5281,6 +5243,10 @@ function decodeTurnDiagnosticsActivities(
         }
         return {
           callId: stringValue(execution.callId, `${executionPath}.callId`),
+          providerResponsePartIndex: nonNegativeInteger(
+            execution.providerResponsePartIndex,
+            `${executionPath}.providerResponsePartIndex`,
+          ),
           toolName: stringValue(execution.toolName, `${executionPath}.toolName`),
           itemId: nullableString(execution.itemId, `${executionPath}.itemId`),
           admissionDisposition: enumValue(

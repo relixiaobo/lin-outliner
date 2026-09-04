@@ -318,6 +318,7 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'tool_call_admission',
       toolCallId: 'call-bash-invalid',
       providerToolCallId: 'call-bash-invalid',
+      providerResponsePartIndex: 0,
       toolName: 'bash',
       decision: {
         execute: false,
@@ -385,6 +386,7 @@ describe('PiTurnExecutor event normalization', () => {
     });
     const decision = transientToolCallAdmission({
       toolCallId: 'unknown-call',
+      providerResponsePartIndex: 0,
       providerName: rawProviderName,
       providerCall: testProviderCall(rawProviderName, { authorization: '[redacted]' }),
       outcome: {
@@ -399,6 +401,7 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'tool_call_admission',
       toolCallId: 'unknown-call',
       providerToolCallId: 'unknown-call',
+      providerResponsePartIndex: 0,
       toolName: rawProviderName,
       decision,
     });
@@ -578,6 +581,7 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'tool_call_admission',
       toolCallId: 'call-collab-summary',
       providerToolCallId: 'call-collab-summary',
+      providerResponsePartIndex: 0,
       toolName: 'agent_message',
       decision: {
         execute: true,
@@ -3701,9 +3705,11 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'tool_call_admission',
       toolCallId: 'call-file-1',
       providerToolCallId: 'call-file-1',
+      providerResponsePartIndex: 0,
       toolName: 'file_read',
       decision: await persistToolCallAdmission({
         toolCallId: 'call-file-1',
+        providerResponsePartIndex: 0,
         providerName: 'file_read',
         providerCall: testProviderCall('file_read', largeArguments),
         outcome: {
@@ -3840,6 +3846,7 @@ describe('PiTurnExecutor event normalization', () => {
     };
     const decision = await persistToolCallAdmission({
       toolCallId: 'large-file-write',
+      providerResponsePartIndex: 0,
       providerName: 'file_write',
       providerCall: testProviderCall('file_write', argumentsValue),
       outcome: {
@@ -3857,6 +3864,7 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'tool_call_admission',
       toolCallId: 'large-file-write',
       providerToolCallId: 'large-file-write',
+      providerResponsePartIndex: 0,
       toolName: 'file_write',
       decision,
     });

@@ -12,8 +12,6 @@ import { scanSecretStringsOffMain } from './agentSecretRedactionWorkerClient';
 
 export { containsSecretLikeContent, redactSecretLikeContent };
 
-export const DIAGNOSTIC_SECRET_REDACTION_OMISSION = '[diagnostic payload omitted after redaction failure]';
-const DIAGNOSTIC_SECRET_SCAN_CHARS = 64_000;
 const SECRET_SCAN_YIELD_INTERVAL_MS = 8;
 const DURABLE_SECRET_SCAN_FAILURE_WARNING = '[agent] Secret scanner worker failed; redacted all pending durable strings.';
 
@@ -41,27 +39,25 @@ export async function redactSecretLikeJsonAsync<T>(
   scanOffMain: ScanSecretStringsOffMain = scanSecretStringsOffMain,
 ): Promise<SecretRedactionResult<T>> {
   try {
-    return await scanSecretLikeJson(value, null, scanOffMain);
+    return await scanSecretLikeJson(value, scanOffMain);
   } catch {
     return { value, redactedPaths: [] };
   }
 }
 
 export async function redactSecretLikeTextAsync(value: string): Promise<SecretRedactionResult<string>> {
-  return scanSecretLikeJson(value, null, scanSecretStringsOffMain);
+  return scanSecretLikeJson(value, scanSecretStringsOffMain);
 }
 
-/**
- * Redact a diagnostic-only copy with bounded scanner work. Text beyond the budget is
- * omitted from diagnostics, never from execution, replay, or the provider request.
- */
-export async function redactSecretLikeJsonForDiagnostics<T>(
-  value: T,
-): Promise<SecretRedactionResult<T | typeof DIAGNOSTIC_SECRET_REDACTION_OMISSION>> {
+/** Fail closed for bounded transport telemetry that can surface in diagnostics and errors. */
+export async function redactSecretLikeTelemetry<T>(value: T): Promise<SecretRedactionResult<T>> {
   try {
-    return await scanSecretLikeJson(value, DIAGNOSTIC_SECRET_SCAN_CHARS, scanSecretStringsOffMain);
+    return await scanSecretLikeJson(value, scanSecretStringsOffMain);
   } catch {
-    return { value: DIAGNOSTIC_SECRET_REDACTION_OMISSION, redactedPaths: [''] };
+    return {
+      value: REDACTED_SECRET as T,
+      redactedPaths: [''],
+    };
   }
 }
 
@@ -81,10 +77,8 @@ interface RedactedPath {
 
 async function scanSecretLikeJson<T>(
   value: T,
-  scanBudget: number | null,
   scanOffMain: ScanSecretStringsOffMain,
 ): Promise<SecretRedactionResult<T>> {
-  let remainingChars = scanBudget;
   let pathOrder = 0;
   let lastYieldAt = performance.now();
   const pending: PendingSecretString[] = [];
@@ -103,15 +97,6 @@ async function scanSecretLikeJson<T>(
     apply: (output: string) => void,
   ): void => {
     const order = pathOrder++;
-    if (remainingChars !== null) {
-      if (content.length > remainingChars) {
-        const omission = `[diagnostic text omitted after secret-scan budget: ${content.length} chars]`;
-        if (omission !== content) redactedPaths.push({ path: path || '', order });
-        apply(omission);
-        return;
-      }
-      remainingChars -= content.length;
-    }
     // Establish the original container key/index order before deferred worker output arrives.
     apply(content);
     pending.push(new PendingSecretString(
@@ -165,7 +150,6 @@ async function scanSecretLikeJson<T>(
   try {
     offMainOutputs = await scanOffMain(jobs);
   } catch {
-    if (scanBudget !== null) throw new Error('Diagnostic secret scanner worker failed.');
     for (const entry of pending) {
       entry.apply(REDACTED_SECRET);
       if (entry.job.content !== REDACTED_SECRET) {
