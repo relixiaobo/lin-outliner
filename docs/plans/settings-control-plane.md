@@ -224,10 +224,13 @@ instructions but cannot widen execution authority. Adding entries to
 currently effective disabled-tool entry, including through deletion/reset of
 the whole file, is authority expansion: direct file admission leaves the prior
 accepted/effective generation active and publishes `awaiting-confirmation`.
-The Access owner must complete a Host-native review; approval performs one
-formatting-preserving edit of this same file through the configuration owner,
-then admits it. Cancel changes nothing. Thus the public file remains desired
-truth without making a model-authored edit its own approval.
+The Access owner must complete a Host-native review bound to the exact desired
+digest. Approval admits those unchanged bytes; any intervening edit makes the
+approval stale. Cancel leaves desired bytes visible but changes no accepted or
+effective state. When a person initiates enablement directly in Access, that
+surface confirms first and then requests one formatting-preserving edit through
+the configuration owner. Thus the public file remains desired truth without
+making a model-authored edit its own approval.
 
 Tool selection is Turn-stable. A newly accepted disabled-tool set never revokes
 the already admitted file/status capabilities of the root Turn that authored
@@ -266,7 +269,11 @@ while the preceding accepted generation remains active. On startup, an absent
 file selects defaults only when doing so does not silently widen a persisted
 effective tool block; otherwise it enters the same confirmation path. A present
 valid file wins. A present invalid file uses a last-known-good snapshot that
-still validates against the current registry, or safe defaults when none exists.
+still validates against the current registry. If both desired input and the
+persisted disabled-tool baseline are untrusted, ordinary UI starts with safe
+non-authority defaults but new Agent execution remains unavailable until a
+person repairs or explicitly resets configuration. Decode failure never turns
+an unknown prior block into an empty allow set.
 
 Acceptance is not a cross-domain rollback transaction. If one runtime owner
 fails after admission, that key keeps its last actual runtime value, status
@@ -436,7 +443,7 @@ Agent starts and awaits private human interaction but never receives its input.
 | Global Memory enablement and automatic update checks | `configuration` Skill -> `settings.jsonc` | routine, live | configuration owner / editor |
 | Global Skill enable/disable | `configuration` Skill -> `agent.skills.disabled` | routine, live catalog refresh | configuration owner / Skills |
 | Global model-tool disable | `configuration` Skill -> `agent.tools.disabled` | routine narrowing | configuration/access owners / Access |
-| Global model-tool re-enable | `access review_pending_tool_enable` | confirmed widening; source edit | access/configuration owners / Access |
+| Global model-tool re-enable | `access review_pending_tool_enable` | confirmed widening bound to pending digest | access/configuration owners / Access |
 | Provider timeout/retry/cache policy | `configuration` Skill -> `settings.jsonc` | routine; next request | configuration/Provider runtime owners / editor |
 | Provider/model catalog, connection and capability status | `models list|show` | inspect, paged | Provider/catalog owners / Models |
 | Provider enable/disable/activate, id/base URL, test, catalog refresh | `models enable|disable|activate|configure|test|refresh` | routine | Provider/catalog owners / Models |
@@ -564,8 +571,10 @@ private handoff/confirmation coordinator. The user completes or cancels native
 UI; the Agent receives only public outcome and cannot approve its own request.
 
 **Invalid startup file.** Tenon starts from a current valid snapshot or safe
-defaults, publishes rejected status, and shows repair guidance only after the
-application is usable. It never silently rewrites desired bytes.
+non-authority defaults, publishes rejected status, and shows repair guidance
+only after the application is usable. If no trusted effective Tool-disable
+baseline survives, Agent execution stays unavailable rather than widening by
+default. Tenon never silently rewrites desired bytes.
 
 ## Requirements
 
@@ -613,8 +622,9 @@ application is usable. It never silently rewrites desired bytes.
   rename, bursts, stale reads, and mid-read edits.
 - **AC-3 (FR-1, FR-2):** Startup and invalid-save tests prove distinct desired,
   accepted, and effective state; exact digest correlation; whole-candidate
-  rejection; last-known-good recovery; safe defaults; per-key degradation; and
-  preservation of desired bytes.
+  rejection; last-known-good recovery; safe non-authority defaults; refusal of
+  Agent admission when no trusted disabled-tool baseline survives; per-key
+  degradation; and preservation of desired bytes.
 - **AC-4 (FR-1, FR-2):** Theme/language acknowledge every window/native menu;
   Memory uses its admission boundary; Skill catalogs and tool admission refresh;
   Provider request policy affects only subsequent requests; update scheduling
@@ -623,9 +633,11 @@ application is usable. It never silently rewrites desired bytes.
   the same effective result.
 - **AC-5 (FR-2, FR-6):** Adding a disabled Tool is routine. Directly removing
   one, deleting the file, or resetting that key cannot widen authority; matching
-  status remains `awaiting-confirmation` until Access approval edits and admits
-  the same source. Cancel, stale digest, restart, and concurrent edits preserve
-  the prior effective block.
+  status remains `awaiting-confirmation` until Access approval admits that exact
+  unchanged digest. Human-initiated Access enablement confirms before its single
+  structural source edit. Cancel, stale digest, restart, and concurrent edits
+  preserve the prior effective block; corrupt desired and private baseline state
+  cannot decode as an empty disabled set.
 - **AC-6 (FR-3, FR-4):** E2E proves `Settings...`/`Cmd+,` opens the exact file.
   A root Agent loads `configuration` and completes theme-dark, Skill-disable,
   and Tool-disable tasks with minimal generic file edits plus matching effective
