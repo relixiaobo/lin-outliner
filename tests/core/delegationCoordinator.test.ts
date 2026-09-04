@@ -10,6 +10,7 @@ import { parseDelegateCommand } from '../../src/delegate/contract';
 import {
   DelegationCoordinator,
   DelegationSessionStore,
+  delegationTaskReconciliation,
   type DelegateCapabilityExecution,
   type DelegationPreparedResultStore,
   type DelegationRootMessage,
@@ -50,7 +51,10 @@ describe('DelegationCoordinator', () => {
       taskId: 'task-run',
       preparedResultDigest: settlement!.preparedResultDigest,
       receiptDigest: digest('final-receipt'),
-    })).resolves.toEqual({ outcome: 'committed' });
+    })).resolves.toMatchObject({
+      outcome: 'committed',
+      result: { outcome: 'succeeded' },
+    });
 
     expect(fixture.store.settlementForTask('task-run')).toMatchObject({ state: 'committed' });
     expect(fixture.store.readSession(SESSION_ID)).toMatchObject({
@@ -291,6 +295,38 @@ describe('DelegationCoordinator', () => {
     expect(fixture.store.readSession(SESSION_ID)?.currentTaskId).toBeNull();
   });
 
+  test('maps normalized delegated outcomes without overriding factual process failures', async () => {
+    const fixture = coordinatorFixture();
+    fixture.runtime.immediate = true;
+    fixture.runtime.outcome = 'timed_out';
+    const execution = await fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+    expect(execution).toMatchObject({ outcome: 'timed_out' });
+    const settlement = fixture.store.settlementForTask('task-run')!;
+    const committed = await fixture.coordinator.settleFinalReceipt({
+      taskId: 'task-run',
+      preparedResultDigest: settlement.preparedResultDigest,
+      receiptDigest: digest('final-receipt'),
+    });
+
+    expect(delegationTaskReconciliation(committed)).toEqual({
+      outcome: 'replace',
+      state: 'timed_out',
+      reason: 'delegated_execution_timed_out',
+      error: 'Delegated execution timed_out.',
+    });
+    expect(delegationTaskReconciliation({
+      outcome: 'blocked',
+      reason: 'Canonical context mismatch.',
+    })).toEqual({
+      outcome: 'replace',
+      state: 'failed',
+      reason: 'delegation_coordination_failed',
+      error: 'Canonical context mismatch.',
+    });
+    expect(delegationTaskReconciliation({ outcome: 'unrelated' }))
+      .toEqual({ outcome: 'preserve' });
+  });
+
   test('closes an idle owned Session and refuses a stale Session revision', async () => {
     const fixture = coordinatorFixture();
     fixture.runtime.immediate = true;
@@ -320,6 +356,7 @@ class FakeRuntime implements DelegationSessionRuntime {
   failCommit = false;
   deliverSteering = true;
   steeringAttempts = 0;
+  outcome: DelegateExecutionResult['outcome'] = 'succeeded';
   readonly commits: DelegationSessionCommitInput[] = [];
   private resolveRun: ((result: DelegateExecutionResult) => void) | null = null;
   private committedMessageSequence = 0;
@@ -332,7 +369,7 @@ class FakeRuntime implements DelegationSessionRuntime {
     this.active = input;
     this.committedMessageSequence = input.messages.at(-1)?.sequence ?? 0;
     if (this.immediate) {
-      const result = executionResult(input, this.committedMessageSequence);
+      const result = executionResult(input, this.committedMessageSequence, this.outcome);
       this.active = null;
       return result;
     }
@@ -360,7 +397,7 @@ class FakeRuntime implements DelegationSessionRuntime {
     const resolve = this.resolveRun;
     this.active = null;
     this.resolveRun = null;
-    resolve(executionResult(input, this.committedMessageSequence));
+    resolve(executionResult(input, this.committedMessageSequence, this.outcome));
   }
 
   async close(session: DelegationSessionBinding): Promise<void> {
@@ -503,19 +540,20 @@ function execution(input: {
 function executionResult(
   input: DelegationSessionRunInput,
   committedMessageSequence: number,
+  outcome: DelegateExecutionResult['outcome'] = 'succeeded',
 ): DelegateExecutionResult {
   return {
     version: 1,
     kind: 'delegate.execution-result',
     sessionId: input.session.sessionId,
     turnId: input.turnId,
-    outcome: 'succeeded',
+    outcome,
     runner: { id: 'internal', version: '1' },
     model: 'openai/gpt-test',
     durationMs: 10,
     text: 'Done.',
-    error: null,
-    partialEvidence: false,
+    error: outcome === 'succeeded' ? null : `Delegated execution ${outcome}.`,
+    partialEvidence: outcome !== 'succeeded',
     committedMessageSequence,
     continuation: 'available',
     usage: { state: 'unknown' },

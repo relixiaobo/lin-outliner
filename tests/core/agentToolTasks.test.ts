@@ -350,7 +350,8 @@ describe('ToolTaskService', () => {
     const service = await createService(fixture, {
       ...passiveHost(),
       reconcileTask: async () => ({
-        outcome: 'fail',
+        outcome: 'replace',
+        state: 'failed',
         reason: 'delegation_coordination_failed',
         error: 'Canonical delegated context could not be reconciled.',
       }),
@@ -369,6 +370,31 @@ describe('ToolTaskService', () => {
       exitCode: 7,
       outcomeReason: 'exit_nonzero',
     });
+  });
+
+  test('adopts a producer terminal outcome only after a factual successful process exit', async () => {
+    const fixture = await createFixture();
+    const outcomes = ['cancelled', 'timed_out', 'lost'] as const;
+    let index = 0;
+    const service = await createService(fixture, {
+      ...passiveHost(),
+      reconcileTask: async () => ({
+        outcome: 'replace',
+        state: outcomes[index++]!,
+        reason: 'delegated_execution_outcome',
+        error: null,
+      }),
+    });
+
+    for (const expected of outcomes) {
+      const terminal = await waitForTerminal(service, (await startHidden(service, 'printf complete')).taskId);
+      expect(terminal).toMatchObject({
+        state: expected,
+        exitCode: 0,
+        outcomeReason: 'delegated_execution_outcome',
+        error: null,
+      });
+    }
   });
 
   test('carries one admitted Delegate command through supervisor fd 3 and the Host broker', async () => {

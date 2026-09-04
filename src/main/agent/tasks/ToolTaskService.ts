@@ -1178,9 +1178,11 @@ export class ToolTaskService {
     if (reconciliation.outcome === 'preserve' || receipt.state !== 'succeeded') return receipt;
     const unsigned = {
       ...receipt,
-      state: 'failed' as const,
+      state: reconciliation.state,
       reason: boundedReceiptField(reconciliation.reason, 256, 'producer_reconciliation_failed'),
-      error: boundedReceiptField(reconciliation.error, 4_096, 'Tool Task producer reconciliation failed.'),
+      error: reconciliation.error === null
+        ? null
+        : boundedReceiptField(reconciliation.error, 4_096, 'Tool Task producer reconciliation failed.'),
     };
     const { receiptDigest: _receiptDigest, ...withoutDigest } = unsigned;
     return {

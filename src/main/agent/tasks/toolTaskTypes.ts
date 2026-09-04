@@ -49,9 +49,10 @@ export interface ToolTaskArtifactSettlement {
 export type ToolTaskProducerReconciliation =
   | { readonly outcome: 'preserve' }
   | {
-    readonly outcome: 'fail';
+    readonly outcome: 'replace';
+    readonly state: Extract<ToolTaskExecutionState, 'failed' | 'cancelled' | 'timed_out' | 'lost'>;
     readonly reason: string;
-    readonly error: string;
+    readonly error: string | null;
   };
 
 export interface ToolTaskSchedulingPolicy {

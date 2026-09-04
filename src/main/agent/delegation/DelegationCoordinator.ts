@@ -11,6 +11,7 @@ import {
   type DelegateMessageReceipt,
 } from '../../../delegate/contract';
 import { uuidV7 } from '../uuid';
+import type { ToolTaskProducerReconciliation } from '../tasks/toolTaskTypes';
 import {
   DelegateCapabilityRefusal,
   type DelegateCapabilityExecution,
@@ -72,7 +73,8 @@ export interface DelegationFinalReceiptEvidence {
 }
 
 export type DelegationFinalReceiptSettlement =
-  | { readonly outcome: 'unrelated' | 'committed' }
+  | { readonly outcome: 'unrelated' }
+  | { readonly outcome: 'committed'; readonly result: DelegateExecutionResult }
   | { readonly outcome: 'blocked'; readonly reason: string };
 
 export interface DelegationUserStopInput {
@@ -172,8 +174,16 @@ export class DelegationCoordinator {
         this.notifySession(settlement.sessionId);
         return { outcome: 'blocked', reason: blocked.blockedReason! } as const;
       }
+      let result: DelegateExecutionResult;
       try {
-        settlement = await this.ensurePreparedContext(settlement, evidence.preparedResultDigest);
+        const prepared = await this.ensurePreparedContext(settlement, evidence.preparedResultDigest);
+        settlement = prepared.settlement;
+        if (!prepared.result) {
+          this.options.store.releaseExecution(settlement.sessionId, evidence.taskId, this.now());
+          this.notifySession(settlement.sessionId);
+          return { outcome: 'blocked', reason: settlement.blockedReason! } as const;
+        }
+        result = prepared.result;
       } catch (error) {
         const blocked = this.options.store.blockSettlement(
           settlement.settlementId,
@@ -204,7 +214,7 @@ export class DelegationCoordinator {
       this.notifySession(settlement.sessionId);
       return reconciled.state === 'blocked'
         ? { outcome: 'blocked', reason: reconciled.blockedReason! } as const
-        : { outcome: 'committed' } as const;
+        : { outcome: 'committed', result } as const;
     });
   }
 
@@ -451,11 +461,12 @@ export class DelegationCoordinator {
   private async ensurePreparedContext(
     settlementInput: DelegationExecutionSettlement,
     preparedResultDigest: string,
-  ): Promise<DelegationExecutionSettlement> {
+  ): Promise<{
+    readonly settlement: DelegationExecutionSettlement;
+    readonly result: DelegateExecutionResult | null;
+  }> {
     let settlement = settlementInput;
-    if (settlement.state === 'context_committed'
-      || settlement.state === 'committed'
-      || settlement.state === 'blocked') return settlement;
+    if (settlement.state === 'blocked') return { settlement, result: null };
     const session = this.options.store.readSession(settlement.sessionId);
     if (!session) throw new Error(`Delegation Session is unavailable: ${settlement.sessionId}`);
     const bytes = await this.options.preparedResults.read(settlement.taskId, session.ownerThreadId);
@@ -477,7 +488,7 @@ export class DelegationCoordinator {
         now: this.now(),
       });
     }
-    if (settlement.messageSequence > 0) {
+    if (settlement.state === 'prepared' && settlement.messageSequence > 0) {
       const current = this.options.store.readSession(settlement.sessionId)!;
       this.options.store.commitMessagePrefix(
         settlement.sessionId,
@@ -487,23 +498,26 @@ export class DelegationCoordinator {
         this.now(),
       );
     }
-    await this.options.runtime.commitResult({
-      session: this.options.store.readSession(settlement.sessionId)!,
-      turnId: settlement.turnId,
-      result,
-      settlementId: settlement.settlementId,
-      requestDigest: settlement.requestDigest,
-      messageSequenceDigest: settlement.messageSequenceDigest,
-      preparedResultDigest,
-    });
-    return this.options.store.commitSettlementContext({
-      settlementId: settlement.settlementId,
-      turnId: settlement.turnId,
-      requestDigest: settlement.requestDigest,
-      messageSequenceDigest: settlement.messageSequenceDigest,
-      preparedResultDigest,
-      now: this.now(),
-    });
+    if (settlement.state === 'prepared') {
+      await this.options.runtime.commitResult({
+        session: this.options.store.readSession(settlement.sessionId)!,
+        turnId: settlement.turnId,
+        result,
+        settlementId: settlement.settlementId,
+        requestDigest: settlement.requestDigest,
+        messageSequenceDigest: settlement.messageSequenceDigest,
+        preparedResultDigest,
+      });
+      settlement = this.options.store.commitSettlementContext({
+        settlementId: settlement.settlementId,
+        turnId: settlement.turnId,
+        requestDigest: settlement.requestDigest,
+        messageSequenceDigest: settlement.messageSequenceDigest,
+        preparedResultDigest,
+        now: this.now(),
+      });
+    }
+    return { settlement, result };
   }
 
   private async commitActiveMessage(
@@ -608,6 +622,27 @@ function messageReceipt(message: DelegationRootMessage, taskId: string | null): 
     sequence: message.sequence,
     state: message.state,
     taskId,
+  };
+}
+
+export function delegationTaskReconciliation(
+  settlement: DelegationFinalReceiptSettlement,
+): ToolTaskProducerReconciliation {
+  if (settlement.outcome === 'unrelated') return { outcome: 'preserve' };
+  if (settlement.outcome === 'blocked') {
+    return {
+      outcome: 'replace',
+      state: 'failed',
+      reason: 'delegation_coordination_failed',
+      error: settlement.reason,
+    };
+  }
+  if (settlement.result.outcome === 'succeeded') return { outcome: 'preserve' };
+  return {
+    outcome: 'replace',
+    state: settlement.result.outcome,
+    reason: `delegated_execution_${settlement.result.outcome}`,
+    error: settlement.result.error,
   };
 }
 
