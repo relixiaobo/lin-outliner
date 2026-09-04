@@ -127,9 +127,11 @@ Rejected alternatives:
 
 ### Evidence and assumptions
 
-- Current background Bash ownership is the in-memory `backgroundTasks` map with
-  bounded history and temporary output; it has no durable generic completion
-  authority. This is the foundation gap, independent of delegation.
+- Production background Bash ownership now uses the durable `ToolTaskService`
+  shipped in #623. The retained in-memory `backgroundTasks` helper is confined
+  to direct test/custom tool construction outside `ThreadService`; it is not a
+  product execution authority. Every remaining delegation unit consumes the
+  durable generic task contract rather than reopening this foundation gap.
 - The injected `KernelAgentOptions` boundary in `NativeAgentRuntime` supports a
   headless model gateway and tool set. The internal Runner reuses this kernel;
   it does not copy `PiTurnExecutor` or its Electron-backed Settings/tool wiring.

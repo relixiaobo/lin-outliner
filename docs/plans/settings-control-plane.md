@@ -604,11 +604,12 @@ superseded.
 
 ## Collision Result
 
-The 2026-09-03 check found open PRs #620, #621, #623, #624, and #625.
+The 2026-09-03 check found open PRs #620, #621, #623, #624, and #625. Since that
+snapshot, #623 has shipped `package.json`, Desktop Host/Agent Bash composition,
+and the shared Agent protocol foundation needed by delivery unit 1. Unit 1 must
+consume that final packaged Tool Task mechanism after its remaining
+`agent-skill-authoring-foundation` predecessor merges.
 
-- #623 claims `package.json`, Desktop Host/Agent Bash composition, and shared
-  Agent protocol areas needed by delivery unit 1. Unit 1 starts after #623
-  merges and rebases onto its final packaged Tool Task mechanism.
 - #620 is a design-only Agent delegation plan that declares Settings the future
   Runner/model policy authority. Its implementation and this plan's Settings
   consumers must not run concurrently; the later claimant consumes the earlier

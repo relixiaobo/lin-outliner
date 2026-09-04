@@ -2510,3 +2510,24 @@ Regression coverage must configure the setting once, switch through every mode,
 assert both the active effect and the intentional no-op, then switch back and
 prove the saved state returns. Pair that flow with the capability registry so a
 shared toolbar cannot silently broaden projection semantics.
+
+## Supervisor authority starts at admission and ends before the child
+
+PR #623 initially made foreground cancellation effective only after Tool Task
+admission, so a saturated queue could keep an interrupted Turn pending and let
+shutdown settle the same task twice. The packaged supervisor also forwarded its
+own `ELECTRON_RUN_AS_NODE` launch control through `process.env` into the user's
+shell.
+
+**A supervisor owns cancellation from the first queued admission boundary, but
+its private launch environment stops at the child-process boundary.** Carry the
+same cancellation signal through queue wait, launch checks, and terminal wait;
+close admission before draining, settle queued leases before awaiting their
+start paths, and deduplicate no-process terminalization. Build the command
+environment by removing supervisor-only control keys while preserving the
+explicitly admitted workspace environment.
+
+Regression coverage must saturate capacity, abort and close while a foreground
+task is queued, prove that no child spawned and only one terminal receipt won,
+then run the packaged supervisor and assert that Host-only variables are absent
+while ordinary workspace variables survive.

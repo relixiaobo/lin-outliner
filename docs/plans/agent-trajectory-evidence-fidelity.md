@@ -280,15 +280,13 @@ means no retired live symbol or marker outside historical archive/changelog text
 
 ## Collision Result
 
-The board has no active Trajectory claim. PR #622 is merged and this plan is
-rebased onto it. This design-only PR touches no file claimed by open PRs. For
-implementation, PR #623 claims `ThreadService.ts` plus core protocol/codec for
-Generic Background Tool Tasks. The paging/performance unit has no overlap and
-can ship independently; the exact-evidence/legacy-export-removal unit overlaps
-`ThreadService.ts` and protocol/codec. Land those edits behind #623 or coordinate
-a separate interface-only claim after it rebases; do not develop both shared
-surfaces in parallel. The remaining Trajectory projection, renderer,
-diagnostics, and spec files do not overlap #620, #621, or #623 at this check.
+The paging/performance unit shipped in #625, and codex-2 owns the remaining
+exact-evidence/legacy-export-removal unit. Generic Background Tool Tasks shipped
+in #623 with the final `ThreadService.ts` and core protocol/codec foundation;
+the exact-evidence unit must rebase onto that merged surface before changing the
+same files. The remaining Trajectory projection, renderer, diagnostics, and spec
+files do not overlap that retired claim. Re-run the live collision check before
+editing shared Agent surfaces rather than relying on this historical snapshot.
 
 ## Open questions
 

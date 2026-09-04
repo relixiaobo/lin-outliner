@@ -13,11 +13,11 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-Two claims are open: ready PR #623 owns generic Background Tool Tasks, and Draft
-PR #626 owns the file-first Settings control-plane design. Link/preview
+One claim remains open: Draft PR #626 owns the file-first Settings control-plane
+design. Generic Background Tool Tasks shipped in #623 and released the durable
+task, packaged-supervisor, and shared Agent protocol foundation. Link/preview
 interaction polish shipped in #621 and released the shared preview-shell lane.
-Agent delegation runtime design authority shipped in #620; #623 now owns its
-generic Background Tool Tasks unit, while internal delegation,
+Agent delegation runtime design authority shipped in #620; internal delegation,
 Subagent/isolated-Skill retirement, and external Runner adapters stay active
 under that plan. Trajectory
 paging and bounded live inspection shipped in #625, while the same plan's
@@ -102,8 +102,8 @@ does not mix their product decisions into the architectural queue above.
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
 | P1 | [agent-trajectory-evidence-fidelity](plans/agent-trajectory-evidence-fidelity.md) | `in-progress` | Paging/performance Unit 1 shipped in #625; codex-2 owns the remaining exact-or-unavailable Unit 2, which must serialize with Agent diagnostics and Trajectory projection changes. |
-| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Plan authority shipped in #620; ready PR #623 owns Unit 1 generic Background Tool Tasks. Internal delegation plus Subagent/isolated-Skill retirement follows #623; each external Runner adapter remains a separate future claim. |
-| P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Unit 1 follows #623 and `agent-skill-authoring-foundation`; Unit 2 follows Unit 1, absorbs `semantic-working-state`, and must serialize with `agent-delegation-runtime`'s future Settings consumer. |
+| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Background Tool Tasks Unit 1 shipped in #623. Internal delegation plus Subagent/isolated-Skill retirement is next and must serialize with the active Trajectory exact-evidence shared surfaces; each external Runner adapter remains a separate future claim. |
+| P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Generic Tool Tasks shipped in #623; Unit 1 still follows `agent-skill-authoring-foundation`. Unit 2 follows Unit 1, absorbs `semantic-working-state`, and must serialize with `agent-delegation-runtime`'s future Settings consumer. |
 | P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | Definition-cache and Runtime-index units are eligible after #598; preview units use the live preview-shell lane. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Paused: `settings-control-plane` Unit 2 absorbs its Provider/managed-Skill behavior into the final resource pages; do not implement against the outgoing Settings surface. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
@@ -221,6 +221,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-delegation-runtime Unit 1** (`done`, #623, 2026-09-04) — durable
+  generic Tool Tasks now supervise foreground and explicit-background Bash with
+  packaged recovery, bounded scheduling/detail, exactly-once completion, and
+  shared controls/UI; the active plan remains open for internal delegation,
+  Subagent/isolated-Skill retirement, and separate external Runner adapters.
 - **link-preview-interaction-polish** (`done`, #621, 2026-09-04) — pasted links
   retain canonical identity, Source previews use content-aware defaults,
   attachment selection is composite, and Outline/Table share one view toolbar
@@ -230,7 +235,7 @@ One line per recent shipped integration. Older history and review detail live in
   delegation now has approved design authority for generic Background Tool
   Tasks, internal multi-Turn delegation, Subagent and isolated-Skill retirement,
   and separate external Runner adapters; the plan remains active for
-  implementation, with #623 owning Unit 1.
+  implementation, with its generic Tool Task Unit 1 shipped in #623.
 - **agent-trajectory-evidence-fidelity Unit 1** (`done`, #625, 2026-09-03) —
   Trajectory now pages real dense Turn ranks, coalesces live tail refreshes, and
   retains at most three renderer pages while cache-independent detail/export

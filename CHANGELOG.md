@@ -12,6 +12,23 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Background Bash now runs as durable generic Tool Tasks (PR #623,
+  codex-4)** — explicit background commands return persistent Thread-owned task
+  handles, while foreground commands keep waiting on the same supervised path
+  until factual terminal settlement. A packaged standalone supervisor owns
+  nonce-bound process identity, heartbeat and quiescent receipts, exact stdin,
+  bounded output and artifacts, process-group cancellation, restart recovery,
+  durable admission leases, storage pressure, retention, and exactly-once root
+  completion delivery. Generic `task_status` / `task_stop` controls and a shared
+  task strip expose progress, detail, cleanup, and terminal truth without adding
+  delegation concepts. Gate review found one High queued-foreground
+  cancellation/shutdown race and one Medium packaged environment leak; both
+  were fixed before the final no-findings review. Verified against current
+  `main` with typecheck, `docs:check`, whitespace checks, 2,896 passing Core
+  tests with 6 skipped, 1,519 renderer tests, focused Tool Task and Bash suites,
+  plus the branch's packaged build and real packaged-supervisor smoke; the non-
+  gating five-sample GitHub E2E signal remained running at merge.
+
 - **Links, Source previews, and view controls now share one consistent
   interaction model (PR #621, codex-3)** — pasted bare URLs keep their canonical
   identity while link-marked content opens externally; managed assets, linked
