@@ -2531,3 +2531,21 @@ Regression coverage must saturate capacity, abort and close while a foreground
 task is queued, prove that no child spawned and only one terminal receipt won,
 then run the packaged supervisor and assert that Host-only variables are absent
 while ordinary workspace variables survive.
+
+## Evidence correlation needs pre-normalization coordinates
+
+PR #627 first correlated Tool Input evidence to a provider response through the
+provider-issued call ID. Providers may emit empty or duplicate IDs, while later
+normalization may heal an empty ID into a usable runtime identity, so a lookup by
+the post-normalization value could bind the displayed input to the wrong response
+part or make exact evidence appear unavailable.
+
+**When forensic evidence must correlate records across a normalizing boundary,
+capture an immutable structural coordinate before normalization.** A provider
+identifier that can be empty, duplicated, repaired, or synthesized is an
+operational label, not authoritative provenance. Preserve the source call and
+absolute part index, then use the identifier only as corroborating evidence.
+
+Regression coverage must include empty and duplicate provider identifiers and
+prove correlation through restart and fork. Tests with unique well-formed IDs
+cannot distinguish source-coordinate fidelity from a convenient value lookup.

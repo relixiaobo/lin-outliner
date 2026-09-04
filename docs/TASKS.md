@@ -101,8 +101,7 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P1 | [agent-trajectory-evidence-fidelity](plans/agent-trajectory-evidence-fidelity.md) | `in-progress` | Paging/performance Unit 1 shipped in #625; codex-2 owns the remaining exact-or-unavailable Unit 2, which must serialize with Agent diagnostics and Trajectory projection changes. |
-| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Background Tool Tasks Unit 1 shipped in #623. Internal delegation plus Subagent/isolated-Skill retirement is next and must serialize with the active Trajectory exact-evidence shared surfaces; each external Runner adapter remains a separate future claim. |
+| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Background Tool Tasks Unit 1 shipped in #623. Internal delegation plus Subagent/isolated-Skill retirement is next and takes the coordinated Agent shared-interface claim; each external Runner adapter remains a separate future claim. |
 | P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Generic Tool Tasks shipped in #623; Unit 1 still follows `agent-skill-authoring-foundation`. Unit 2 follows Unit 1, absorbs `semantic-working-state`, and must serialize with `agent-delegation-runtime`'s future Settings consumer. |
 | P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | Definition-cache and Runtime-index units are eligible after #598; preview units use the live preview-shell lane. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Paused: `settings-control-plane` Unit 2 absorbs its Provider/managed-Skill behavior into the final resource pages; do not implement against the outgoing Settings surface. |
@@ -221,6 +220,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-trajectory-evidence-fidelity Unit 2 / complete** (`done`, #627,
+  2026-09-05) — Trajectory now preserves exact-or-unavailable Context, Request,
+  Assistant, Tool Input/Output, Raw, copy, restart, and fork evidence; the unused
+  export route and partial-coverage state are retired, and the plan is archived
+  at [agent-trajectory-evidence-fidelity](plans/archive/agent-trajectory-evidence-fidelity.md).
 - **agent-delegation-runtime Unit 1** (`done`, #623, 2026-09-04) — durable
   generic Tool Tasks now supervise foreground and explicit-background Bash with
   packaged recovery, bounded scheduling/detail, exactly-once completion, and
@@ -239,8 +243,8 @@ One line per recent shipped integration. Older history and review detail live in
 - **agent-trajectory-evidence-fidelity Unit 1** (`done`, #625, 2026-09-03) —
   Trajectory now pages real dense Turn ranks, coalesces live tail refreshes, and
   retains at most three renderer pages while cache-independent detail/export
-  reads and exact catalog boundaries preserve the scoped window contract; the
-  active plan remains open for the exact-or-unavailable evidence unit.
+  reads and exact catalog boundaries preserve the scoped window contract; this
+  paging foundation was completed by the exact-evidence unit in #627.
 - **electron-main-esm-startup** (`done`, fast-track, 2026-09-03) — development
   startup and optional macOS native addon resolution now use ESM-compatible
   module-directory paths, with a source guard covering both call sites.
