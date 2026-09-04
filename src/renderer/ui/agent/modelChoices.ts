@@ -166,6 +166,15 @@ export function flattenModelChoices(choices: ModelChoices): readonly ModelChoice
   return choices.groups.flatMap((group) => group.models);
 }
 
+export function modelChoiceAvailable(
+  choice: ModelChoice,
+  settings: AgentProviderSettingsView | null,
+): boolean {
+  if (!settings || choice.option.contextWindow <= 0) return false;
+  const provider = settings.providers.find((candidate) => candidate.providerId === choice.providerId);
+  return provider !== undefined && isProviderUsable(settings, provider);
+}
+
 function toChoice(providerId: string, option: AgentModelOption): ModelChoice {
   return { providerId, option, value: composeProviderQualifiedModel(providerId, option.id) };
 }

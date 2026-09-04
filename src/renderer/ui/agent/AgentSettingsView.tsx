@@ -4,6 +4,7 @@ import type {
   AgentProviderConfigView,
   AgentProviderSettingsView,
   AgentCapabilitySettingsView,
+  AgentDelegationSettingsInput,
 } from '../../api/types';
 import { api } from '../../api/client';
 import {
@@ -470,6 +471,23 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     return updated.agent.additionalSkillDirectories;
   }
 
+  async function changeDelegation(input: AgentDelegationSettingsInput): Promise<void> {
+    try {
+      const updated = await api.agentUpdateRuntimeSettings({ delegation: input });
+      setSettings((current) => current ? {
+        ...current,
+        agent: { ...current.agent, delegation: updated.agent.delegation },
+      } : updated);
+      setError(null);
+      setNotice(t.settings.agent.delegation.saved);
+      await reportAppliedRefreshFailure(onApplied, 'delegation-settings-refresh', 'delegation');
+    } catch (caught) {
+      setNotice(null);
+      setError(t.settings.agent.delegation.saveFailed);
+      reportSettingsMutationError('delegation-settings-write-failed', 'delegation', caught);
+    }
+  }
+
   /**
    * Persists one Skill's `disabledSkills` membership immediately.
    *
@@ -795,6 +813,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
               <SettingsAgentSection
                 blockErrors={capabilityMutationErrors}
                 blocks={capabilityBlocks}
+                onDelegationChange={changeDelegation}
                 onError={setError}
                 onNotice={setNotice}
                 onOpenPage={openPage}

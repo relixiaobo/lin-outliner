@@ -279,6 +279,26 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
           </div>
         </div>
         <div class="inset-group">
+          <div class="inset-group-header">Delegation</div>
+          <div role="list" class="inset-card" aria-label="Agent delegation">
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text">
+                  <span class="inset-row-label">Experimental delegation</span>
+                </span>
+              </div>
+              <div class="inset-row-trailing">
+                <button type="button" role="switch" aria-label="Experimental delegation" aria-checked="false">
+                  <span aria-hidden="true" class="switch-mark">
+                    <span class="switch-mark-thumb">
+                    </span>
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="inset-group">
           <div class="inset-group-header">Memory</div>
           <div role="list" class="inset-card" aria-label="Memory">
             <div role="listitem" class="inset-row">

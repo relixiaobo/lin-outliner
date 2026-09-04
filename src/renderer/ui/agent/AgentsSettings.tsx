@@ -33,8 +33,7 @@ import { SelectControl } from '../primitives/SelectControl';
 import { Textarea } from '../primitives/Textarea';
 import { AddIcon, ICON_SIZE } from '../icons';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
-import { buildModelChoices, flattenModelChoices } from './modelChoices';
-import { isProviderUsable } from './providerUsability';
+import { buildModelChoices, flattenModelChoices, modelChoiceAvailable } from './modelChoices';
 
 /** Before the view loads there is nothing to narrow; an empty catalogue reads as "no choices yet", not "none allowed". */
 const EMPTY_CAPABILITIES: AgentCapabilityCatalog = { tools: [], skills: [] };
@@ -817,15 +816,6 @@ function executionModelUnavailable(
   }));
   const selected = choices.find((choice) => choice.value === selection.model);
   return !selected || !modelChoiceAvailable(selected, settings);
-}
-
-function modelChoiceAvailable(
-  choice: ReturnType<typeof flattenModelChoices>[number],
-  settings: AgentProviderSettingsView | null,
-): boolean {
-  if (!settings || choice.option.contextWindow <= 0) return false;
-  const provider = settings.providers.find((candidate) => candidate.providerId === choice.providerId);
-  return provider !== undefined && isProviderUsable(settings, provider);
 }
 
 function listSublabel(base: string, unavailable: boolean, unavailableLabel: string): string {

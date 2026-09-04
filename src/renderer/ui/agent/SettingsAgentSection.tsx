@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AgentProviderSettingsView } from '../../api/types';
+import type { AgentDelegationSettingsInput } from '../../api/types';
 import { api } from '../../api/client';
 import type { SettingsPageTarget } from '../../../core/settingsWindow';
 import { useT } from '../../i18n/I18nProvider';
@@ -9,6 +10,7 @@ import { SettingsSecuritySection } from './SettingsSecuritySection';
 import { resolveProviderStatus, providerStatusSentence } from './providerStatus';
 import { buildProviderChoices } from './settingsProviderModel';
 import { formatProviderName } from './providerCatalog';
+import { SettingsDelegationGroup } from './SettingsDelegationGroup';
 
 interface SettingsAgentSectionProps {
   settings: AgentProviderSettingsView | null;
@@ -20,6 +22,7 @@ interface SettingsAgentSectionProps {
   onRemoveBlock: (rule: string) => void;
   onError: (message: string | null) => void;
   onNotice: (message: string | null) => void;
+  onDelegationChange: (input: AgentDelegationSettingsInput) => Promise<void>;
 }
 
 /**
@@ -42,6 +45,7 @@ export function SettingsAgentSection({
   onRemoveBlock,
   onError,
   onNotice,
+  onDelegationChange,
 }: SettingsAgentSectionProps) {
   const t = useT();
 
@@ -93,6 +97,8 @@ export function SettingsAgentSection({
           sublabel={t.settings.agent.skillCount({ count: skillCount })}
         />
       </InsetGroup>
+
+      <SettingsDelegationGroup onChange={onDelegationChange} settings={settings} />
 
       <MemorySettingsGroup onError={onError} onNotice={onNotice} />
 
