@@ -77,4 +77,17 @@ describe('side flyout placement', () => {
     // rather than being clamped on top of the row that opened it.
     expect(placement({ anchorLeft: 40, anchorRight: 280 }).left).toBe(284);
   });
+
+  test('can prefer the trailing side and flips before overlapping its anchor', () => {
+    expect(placement({
+      anchorLeft: 300,
+      anchorRight: 540,
+      preferredSide: 'right',
+    }).left).toBe(544);
+    expect(placement({
+      anchorLeft: 900,
+      anchorRight: 1140,
+      preferredSide: 'right',
+    }).left).toBe(636);
+  });
 });

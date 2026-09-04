@@ -117,7 +117,9 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(/\.file-preview-media-player\s*\{[^}]*border-radius:\s*var\(--file-preview-frame-radius\);/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-player\s*\{[^}]*box-shadow:\s*var\(--inset-hairline\);/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-controls\s*\{[^}]*flex-direction:\s*column;/s);
-    expect(filePreviewCss).toMatch(/\.file-preview-media-controls\s*\{[^}]*border:\s*0;[^}]*border-radius:\s*0;/s);
+    expect(filePreviewCss).toMatch(
+      /\.file-preview-media-controls\s*\{[^}]*border:\s*0;[^}]*border-radius:\s*var\(--radius-none\);/s,
+    );
     expect(filePreviewCss).toMatch(/\.file-preview-media-controls\s*\{[^}]*background:\s*transparent;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-controls\s*\{[^}]*box-shadow:\s*none;/s);
     expect(filePreviewCss).toContain('.file-preview-media-info');
@@ -141,7 +143,7 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(/\.file-preview-media-command-group--trailing\s*\{[^}]*justify-content:\s*flex-end;/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--media-video:not\(\.file-node-body--reader\)\s*\{[^}]*--file-preview-media-width:\s*min\(720px, 100%\);/s);
     expect(filePreviewCss).toMatch(/\.file-node-body--media-video:not\(\.file-node-body--reader\) \.file-preview-video\s*\{[^}]*max-height:\s*min\(60vh, 520px\);[^}]*object-fit:\s*contain;/s);
-    expect(filePreviewCss).toMatch(/\.file-preview-media-player--video:fullscreen,[\s\S]*?\.file-preview-media-player--video\[mediaisfullscreen\]\s*\{[^}]*width:\s*100%;[^}]*height:\s*100%;[^}]*max-width:\s*none;[^}]*max-height:\s*none;[^}]*border-radius:\s*0;/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-media-player--video:fullscreen,[\s\S]*?\.file-preview-media-player--video\[mediaisfullscreen\]\s*\{[^}]*width:\s*100%;[^}]*height:\s*100%;[^}]*max-width:\s*none;[^}]*max-height:\s*none;[^}]*border-radius:\s*var\(--radius-none\);/s);
     expect(filePreviewCss).toMatch(/\.file-preview-media-player--video:fullscreen \.file-preview-video,[\s\S]*?\.file-preview-media-player--video\[mediaisfullscreen\] \.file-preview-video\s*\{[^}]*width:\s*100%;[^}]*height:\s*100%;[^}]*max-width:\s*none;[^}]*max-height:\s*none;[^}]*object-fit:\s*contain;/s);
     expect(filePreviewCss.indexOf('.file-preview-media-player--video:fullscreen'))
       .toBeGreaterThan(filePreviewCss.indexOf(
@@ -159,7 +161,7 @@ describe('input modality CSS guards', () => {
     expect(a11yCss).toMatch(
       /@media \(prefers-contrast: more\), \(prefers-reduced-transparency: reduce\)[\s\S]*?--media-hud-gradient-start:\s*var\(--media-hud-bg\);/s,
     );
-    expect(filePreviewCss).toMatch(/\.file-preview-media-player--video \.file-preview-media-controls\s*\{[^}]*padding-block-start:\s*var\(--space-xl\);[^}]*background:\s*linear-gradient\([\s\S]*?var\(--media-hud-gradient-start\),[\s\S]*?var\(--media-hud-active-bg\)[\s\S]*?\);[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*box-shadow:\s*none;/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-media-player--video \.file-preview-media-controls\s*\{[^}]*padding-block-start:\s*var\(--space-xl\);[^}]*background:\s*linear-gradient\([\s\S]*?var\(--media-hud-gradient-start\),[\s\S]*?var\(--media-hud-active-bg\)[\s\S]*?\);[^}]*border:\s*0;[^}]*border-radius:\s*var\(--radius-none\);[^}]*box-shadow:\s*none;/s);
     expect(filePreviewCss).not.toMatch(
       /\.file-preview-media-player--video \.file-preview-media-controls\s*\{[^}]*background:[^;]*transparent/s,
     );

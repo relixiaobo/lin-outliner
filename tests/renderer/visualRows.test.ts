@@ -311,7 +311,7 @@ describe('buildVisualRows depth and extras', () => {
     expect(without.some((r) => r.kind === 'toolbar')).toBe(false);
   });
 
-  test('emits one compact-control host for a search even before toolbarVisible is persisted', () => {
+  test('uses Search as the default toolbar visibility only while the setting is absent', () => {
     const byId = byIdOf([
       node('search', { type: 'search', children: ['result'] } as Partial<NodeProjection>),
       node('result', { parentId: 'search', type: 'reference', targetId: 'target' }),
@@ -323,7 +323,29 @@ describe('buildVisualRows depth and extras', () => {
     expect(rows.find((row) => row.kind === 'toolbar')).toMatchObject({ nodeId: 'search', depth: 0 });
   });
 
-  test('emits compact controls for an expanded empty nested search', () => {
+  test('honors explicit Search toolbar visibility in both directions', () => {
+    const hidden = byIdOf([
+      node('search', { type: 'search', children: ['view'] } as Partial<NodeProjection>),
+      node('view', {
+        parentId: 'search',
+        type: 'viewDef',
+        toolbarVisible: false,
+      } as Partial<NodeProjection>),
+    ]);
+    const shown = byIdOf([
+      node('search', { type: 'search', children: ['view'] } as Partial<NodeProjection>),
+      node('view', {
+        parentId: 'search',
+        type: 'viewDef',
+        toolbarVisible: true,
+      } as Partial<NodeProjection>),
+    ]);
+
+    expect(buildVisualRows('search', hidden, { expanded: new Set() }).some((row) => row.kind === 'toolbar')).toBe(false);
+    expect(buildVisualRows('search', shown, { expanded: new Set() }).filter((row) => row.kind === 'toolbar')).toHaveLength(1);
+  });
+
+  test('emits the shared toolbar for an expanded empty nested search', () => {
     const byId = byIdOf([
       node('lib', { children: ['search'] }),
       node('search', { parentId: 'lib', type: 'search' } as Partial<NodeProjection>),

@@ -64,6 +64,14 @@ export function findViewDef<T extends ViewTreeNode>(
     .find((child): child is T => child?.type === 'viewDef');
 }
 
+/** Explicit view configuration wins; Search only changes the unset default. */
+export function resolveViewToolbarVisible(
+  owner: Pick<ViewTreeNode, 'type'> | undefined,
+  configured: boolean | undefined,
+): boolean {
+  return configured ?? (owner?.type === 'search');
+}
+
 export function entersTable(previousMode: ViewMode | undefined, nextMode: ViewMode): boolean {
   return nextMode === 'table' && (previousMode ?? 'list') !== 'table';
 }

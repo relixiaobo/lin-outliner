@@ -2197,7 +2197,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	        type: 'viewDef',
 	        parentId: nodeId,
 	        viewMode: 'list',
-	        toolbarVisible: false,
 	      });
 	      appendChild(nodeId, viewId, 0);
 	      return view;

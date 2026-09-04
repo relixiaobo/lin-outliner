@@ -799,9 +799,6 @@ export const zhHans: PartialMessages = {
     // 节点子项上方的视图工具栏：显示字段、分组、排序规则与渐进式筛选编辑器。
     viewToolbar: {
       toolbarAriaLabel: '视图工具栏',
-      viewMode: '视图模式',
-      outline: '大纲',
-      table: '表格',
       filterByName: '按名称筛选',
       nameFilterPlaceholder: '名称',
       clearNameFilter: '清除名称筛选',
@@ -853,12 +850,14 @@ export const zhHans: PartialMessages = {
       booleanNotDone: '未完成',
       booleanYes: '是',
       booleanNo: '否',
-      // 当前视图状态摘要 chips 与显示字段元数据。
-      summaryAriaLabel: '当前视图设置',
-      displayedFieldsAriaLabel: '显示字段',
-      summaryDisplayCount: (count: number) => `${count} 个显示字段`,
-      summaryGroupedBy: ({ field }: { field: string }) => `按 ${field} 分组`,
-      summarySortedBy: ({ field, arrow }: { field: string; arrow: string }) => `按 ${field} 排序 ${arrow}`,
+      filterChipAnyValues: ({ values }: { values: string[] }) => values.join(' 或 '),
+      filterChipAllValues: ({ values }: { values: string[] }) => values.join(' 且 '),
+      filterChipCreated: '创建',
+      filterChipUpdated: '编辑',
+      filterChipEmpty: ({ field }: { field: string }) => `${field}：为空`,
+      filterChipSet: ({ field }: { field: string }) => `${field}：有值`,
+      filterChipFieldValue: ({ field, value }: { field: string; value: string }) => `${field}：${value}`,
+      filterChipConditionValue: ({ field, operator, value }: { field: string; operator: string; value: string }) => `${field} · ${operator} · ${value}`,
     },
     table: {
       ariaLabel: ({ title }: { title: string }) => `${title}表格`,

@@ -8,6 +8,7 @@ import {
 } from '../../../core/source';
 import type { PreviewResolveSourceResult, PreviewTarget } from '../../../core/preview';
 import type { NodeProjection } from '../../api/types';
+import { youtubePreviewRouteForUrl } from './urlPreviewRouting';
 
 export interface NodeSourceDescriptor extends ResolvedNodeSource {
   previewTarget?: PreviewTarget;
@@ -87,6 +88,13 @@ export function selectedNodeSource(
 ): NodeSourceDescriptor | null {
   const values = nodeSourceValues(ownerId, byId);
   return values.find((value) => value.sourceValueId === selectedValueId) ?? values[0] ?? null;
+}
+
+export function sourcePreviewVisibleByDefault(source: NodeSourceDescriptor): boolean {
+  const target = source.previewTarget;
+  if (!target) return false;
+  if (target.kind === 'asset' || target.kind === 'linked-file') return true;
+  return target.kind === 'url' && youtubePreviewRouteForUrl(target.url) !== null;
 }
 
 export function sourcePreviewTarget(

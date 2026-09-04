@@ -762,7 +762,6 @@ function resolveSetViewToolbarVisible(
   const fact = viewFactFor(context, subject);
   if (!fact) return [];
   const node = anchorContentNode(context, subject);
-  if (node?.type === 'search') return [];
   const view = readNodeViewSettings(node, context.projection.byId);
   const visibleInRow = view.toolbarVisible && fact.rowExpanded;
   return [present({
@@ -1449,7 +1448,9 @@ const PLANNERS: { [K in ActionId]?: Planner<K> } = {
     if (!fact) return null;
     const nodeId = nodeIdForFacet(subject.content, context.projection);
     const steps: EffectStep[] = [];
-    if (anchorContentNode(context, subject)?.type !== 'search') {
+    const node = anchorContentNode(context, subject);
+    const view = readNodeViewSettings(node, context.projection.byId);
+    if (!view.toolbarVisible) {
       steps.push({
         on: 'main',
         kind: 'command',

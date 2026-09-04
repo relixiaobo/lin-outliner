@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type KeyboardEvent } from 'react';
 import type { FocusRequest, FocusTarget } from '../../state/document';
 import { isCompositionLive } from '../editor/compositionRelay';
 import { focusTargetMatches } from '../focus/focusModel';
+import { focusElementForRequest } from '../focus/focusRequestDom';
 import { resolveNodeLineKeyAction } from '../interactions/nodeLineKeymap';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
@@ -35,7 +36,7 @@ export function CheckboxFieldControl(props: CheckboxFieldControlProps) {
     const target = props.focusTarget;
     if (!request || !target || !focusTargetMatches(request.target, target)) return;
     if (isCompositionLive()) return;
-    buttonRef.current?.focus({ preventScroll: true });
+    if (!focusElementForRequest(buttonRef.current)) return;
     props.onFocusRequestConsumed?.(request);
   }, [props.focusRequest, props.focusTarget, props.onFocusRequestConsumed]);
 

@@ -162,8 +162,9 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   Native feel comes from materials, layout, and behaviour, not from coloured
   selection. The toggle / checkbox **on**-state carries `--control-on` (the macOS
   on-switch idiom) with a fixed-white knob / check glyph (`--text-on-accent`) in
-  BOTH themes. It is deliberately separate from `--status-success`, so status
-  green does not leak into non-status controls.
+  BOTH themes. Persistent configured icon controls may use `--control-on` on the
+  glyph only, with no resting fill. It is deliberately separate from
+  `--status-success`, so status green does not leak into non-status controls.
 - **Text selection is neutral too.** The editor text-selection highlight
   (`::selection`, `--text-selection-bg`) is a neutral ink alpha — the one place
   the OS would normally paint its system accent, kept neutral for consistency
@@ -451,7 +452,8 @@ scale font size with viewport width.
 - **Stroke:** ~`1.5px` optical at 16px, scaling with size; match the surrounding
   font weight so icons never look heavier than text.
 - **Color:** icons inherit text-color tokens (`--text-secondary` at rest,
-  `--text-primary` when active); never brand-colored except true brand marks.
+  `--text-primary` when active); persistent configured/on glyphs may use
+  `--control-on`. Icons are never brand-colored except true brand marks.
 - **Hover/active feedback:** an icon control responds by **deepening its colour**
   (`--text-secondary` → `--text-primary`), not by gaining a `--fill-*` box — see
   Interaction States. The colour change is mandatory (every control acknowledges

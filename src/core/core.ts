@@ -1937,6 +1937,7 @@ export class Core {
       const viewDefId = this.ensureViewDefDirect(nodeId);
       const state = this.snapshot();
       const viewDef = requiredNode(state, viewDefId);
+      if (viewDef.type !== 'viewDef') throw CoreError.invalidOperation('expected a view definition');
       const existing = viewDef.children
         .map((childId) => state.nodes[childId])
         .find((child): child is DisplayFieldNode => (
@@ -3793,7 +3794,6 @@ export class Core {
     const viewDefId = this.freshId('view');
     this.loro.createNodeWithId(viewDefId, nodeId, 0, 'viewDef', (node) => {
       node.viewMode = 'list';
-      node.toolbarVisible = false;
     });
     return viewDefId;
   }

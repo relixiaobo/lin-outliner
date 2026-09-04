@@ -36,7 +36,6 @@ import type {
   SplitNodeOptions,
   TagConfigPatch,
   TagTemplateBackfillPreview,
-  ViewMode,
 } from './types';
 import { parseSearchQueryOutline } from '../../core/searchQueryOutline';
 import { nextCompletedAt } from '../../core/doneState';
@@ -102,7 +101,6 @@ export const outlineDocumentApi = {
   clearSources,
   ingestAssetFromData,
   setViewToolbarVisible,
-  setViewMode,
   addSortRule,
   updateSortRule,
   removeSortRule,
@@ -412,6 +410,7 @@ function createSourceNode(
     assetId?: string;
     sourceText?: string;
     name?: string | null;
+    content?: RichText;
     id?: string;
   },
 ): Promise<CommandResult> {
@@ -422,7 +421,7 @@ function createSourceNode(
   return mutate(() => [{
     op: 'create',
     placement: structuralPlacement(oneId(parentId), index),
-    nodes: [draft({ text: options.name ?? '', marks: [], inlineRefs: [] }, id)],
+    nodes: [draft(options.content ?? { text: options.name ?? '', marks: [], inlineRefs: [] }, id)],
     bind: 'sourceOwner',
   }, {
     op: 'update',
@@ -491,10 +490,6 @@ async function ingestAssetFromData(
 
 function setViewToolbarVisible(nodeId: string, visible: boolean): Promise<CommandResult> {
   return update(nodeId, [{ kind: 'view', property: 'toolbar', action: 'set', visible }]);
-}
-
-function setViewMode(nodeId: string, mode: ViewMode): Promise<CommandResult> {
-  return update(nodeId, [{ kind: 'view', property: 'mode', action: 'set', mode }]);
 }
 
 function addSortRule(nodeId: string, field: string, direction: SortDirection = 'asc'): Promise<CommandResult> {

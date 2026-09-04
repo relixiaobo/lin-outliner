@@ -27,6 +27,7 @@ const inlineNativeAffordanceCssProperties = new Set([
 const pointerCursorSelectors = new Set([
   '.inline-ref:not([data-inline-ref-readonly="true"]):hover',
   '.row-editor .inline-ref:hover',
+  '.row-editor .ProseMirror a[href]:hover',
   // Tool paths become genuine content links only while the primary modifier is held.
   ':root.is-primary-modifier-pressed .thread-tool-path-reference:hover',
 ]);

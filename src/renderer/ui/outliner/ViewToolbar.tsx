@@ -32,11 +32,9 @@ import {
   ICON_SIZE,
   OptionsIcon,
   PlainTextIcon,
-  NodeReadToolIcon,
   SearchIcon,
   SortAscIcon,
   SortDescIcon,
-  TableIcon,
 } from '../icons';
 import type { ComponentType } from 'react';
 import { resolveFieldOptions, type FieldOption } from '../interactions/fieldOptions';
@@ -52,6 +50,7 @@ import {
   collectViewFieldChoices,
   customFilterFieldIdsOnRows,
   fieldChoiceLabel,
+  visibleDisplayFields,
   type ViewConfig,
 } from './row-model';
 import {
@@ -67,7 +66,6 @@ import {
 } from '../../../core/systemFields';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
-import { RENDERABLE_VIEW_MODES, type RenderableViewMode } from '../../../core/viewConfig';
 
 type ViewToolbarMessages = Messages['outliner']['viewToolbar'];
 
@@ -143,69 +141,9 @@ interface ViewToolbarProps {
   run: CommandRunner;
   dropdownRequest: ToolbarDropdownRequest | null;
   onDropdownRequestConsumed: (request: ToolbarDropdownRequest) => void;
-  variant?: 'bar' | 'compact';
 }
 
-type ViewMode = RenderableViewMode;
-
-interface ViewModeControlProps {
-  viewMode: ViewMode;
-  labels: Pick<ViewToolbarMessages, 'viewMode' | 'outline' | 'table'>;
-  compact?: boolean;
-  onChange: (mode: ViewMode) => void;
-}
-
-const VIEW_MODE_PRESENTATION: Record<ViewMode, {
-  icon: IconComponent;
-  label: keyof Pick<ViewToolbarMessages, 'outline' | 'table'>;
-}> = {
-  list: { icon: NodeReadToolIcon, label: 'outline' },
-  table: { icon: TableIcon, label: 'table' },
-};
-
-const VIEW_MODE_OPTIONS = RENDERABLE_VIEW_MODES.map((mode) => ({
-  mode,
-  ...VIEW_MODE_PRESENTATION[mode],
-}));
-
-// Keep mode selection visibly two-state in the compact result toolbar. The
-// context menu remains a secondary text entry point for users who discover
-// configuration through the node actions surface.
-function ViewModeControl({ viewMode, labels, compact = false, onChange }: ViewModeControlProps) {
-  return (
-    <div
-      aria-label={labels.viewMode}
-      className={`view-toolbar-mode${compact ? ' is-compact' : ''}`}
-      role="group"
-    >
-      {VIEW_MODE_OPTIONS.map(({ mode, icon: Icon, label }) => {
-        const selected = viewMode === mode;
-        const text = labels[label];
-        const classes = [
-          'view-toolbar-mode-button',
-          selected ? 'is-active' : '',
-          compact ? 'view-toolbar-tooltip-anchor' : '',
-        ].filter(Boolean).join(' ');
-        return (
-          <ButtonControl
-            aria-pressed={selected}
-            aria-label={text}
-            className={classes}
-            data-tooltip={compact ? text : undefined}
-            key={mode}
-            onClick={() => onChange(mode)}
-          >
-            <Icon size={ICON_SIZE.menu} />
-            {!compact && <span>{text}</span>}
-          </ButtonControl>
-        );
-      })}
-    </div>
-  );
-}
-
-// Configuration dropdowns remain separate from the mode selector above; each
-// section maps to one persisted view operation.
+// Each toolbar section maps to one persisted view-configuration operation.
 type ToolbarSection = ToolbarDropdownSection;
 type OpenSection = ToolbarSection | null;
 type FieldChoice = { id: string; label: string; section: 'System fields' | 'Fields' };
@@ -213,13 +151,12 @@ type FilterEditTarget = {
   field: string;
   ruleId?: string;
 };
-type ViewSummaryChip = {
+type FilterSummaryChip = {
   id: string;
   label: string;
-  section: ToolbarSection;
-  tone: 'display' | 'filter' | 'group' | 'sort';
-  filterTarget?: FilterEditTarget;
+  filterTarget: FilterEditTarget & { ruleId: string };
 };
+type FilterRule = ViewConfig['filterRules'][number];
 
 type FieldRule = { id: string; field: string };
 
@@ -298,6 +235,16 @@ function sectionTitles(t: ViewToolbarMessages): Record<ToolbarSection, string> {
   };
 }
 
+function scrollToolbarHorizontally(row: HTMLDivElement, event: WheelEvent) {
+  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+  const maxScrollLeft = row.scrollWidth - row.clientWidth;
+  if (maxScrollLeft <= 0) return;
+  const nextScrollLeft = Math.max(0, Math.min(maxScrollLeft, row.scrollLeft + event.deltaY));
+  if (nextScrollLeft === row.scrollLeft) return;
+  row.scrollLeft = nextScrollLeft;
+  event.preventDefault();
+}
+
 // Field pickers and option lists stay compact; the rule editors (sort/filter)
 // need room for the field/operator/value controls.
 const SECTION_WIDTHS: Record<ToolbarSection, number> = {
@@ -352,59 +299,68 @@ function collectFilterFieldChoices(
   return [...systemChoices, ...customChoices];
 }
 
-// Compact chips restate what the view is currently doing, so the active state is
-// legible without opening each menu. Empty when the view is default.
-function summarizeView(
+// Filter chips remain individual rule shortcuts. Display, Group, and Sort are
+// singular settings whose state belongs on their toolbar controls.
+function summarizeFilterValues(rule: FilterRule, values: string[], t: ViewToolbarMessages): string {
+  if (values.length === 1) return values[0]!;
+  return rule.valueLogic === 'all'
+    ? t.filterChipAllValues({ values })
+    : t.filterChipAnyValues({ values });
+}
+
+function filterSummaryFieldLabel(fieldId: string, fallback: string, t: ViewToolbarMessages): string {
+  if (fieldId === CREATED_FIELD) return t.filterChipCreated;
+  if (fieldId === UPDATED_FIELD) return t.filterChipUpdated;
+  return fallback;
+}
+
+function summarizeFilterRule(
+  rule: FilterRule,
+  fieldLabel: string,
+  byId: DocumentIndex['byId'],
+  t: ViewToolbarMessages,
+): string {
+  const summaryFieldLabel = filterSummaryFieldLabel(rule.field, fieldLabel, t);
+  const values = rule.values.map((value) => value.trim()).filter(Boolean);
+  if (rule.operator === 'is' && filterFieldKind(rule.field, byId) === 'boolean') {
+    const value = values[0]?.toLowerCase();
+    if (value === 'true' || value === 'false') {
+      const enabled = value === 'true';
+      const [enabledLabel, disabledLabel] = rule.field === DONE_FIELD
+        ? [t.booleanDone, t.booleanNotDone]
+        : [t.booleanYes, t.booleanNo];
+      const booleanLabel = enabled ? enabledLabel : disabledLabel;
+      return rule.field === DONE_FIELD
+        ? booleanLabel
+        : t.filterChipFieldValue({ field: summaryFieldLabel, value: booleanLabel });
+    }
+  }
+  if (rule.operator === 'is_empty') return t.filterChipEmpty({ field: summaryFieldLabel });
+  if (rule.operator === 'is_not_empty') return t.filterChipSet({ field: summaryFieldLabel });
+  if (values.length === 0) return summaryFieldLabel;
+  const operator = filterOperators(t).find((item) => item.id === rule.operator)?.label ?? rule.operator;
+  const value = summarizeFilterValues(rule, values, t);
+  return rule.operator === 'is' || rule.operator === 'contains'
+    ? t.filterChipFieldValue({ field: summaryFieldLabel, value })
+    : t.filterChipConditionValue({ field: summaryFieldLabel, operator, value });
+}
+
+function summarizeFilters(
   view: ViewConfig,
   choices: FieldChoice[],
+  byId: DocumentIndex['byId'],
   t: ViewToolbarMessages,
-  options: { includeSort: boolean },
-): ViewSummaryChip[] {
+): FilterSummaryChip[] {
   const labelOf = (fieldId: string) => choices.find((choice) => choice.id === fieldId)?.label ?? fieldId;
-  const chips: ViewSummaryChip[] = [];
-  const visibleDisplayCount = new Set(
-    view.displayFields
-      .filter((field) => field.visible && field.field !== NAME_FIELD)
-      .map((field) => field.field),
-  ).size;
-  if (visibleDisplayCount > 0) {
-    chips.push({
-      id: 'display',
-      label: t.summaryDisplayCount(visibleDisplayCount),
-      section: 'display',
-      tone: 'display',
-    });
-  }
-  if (view.groupField && view.viewMode !== 'table') {
-    chips.push({
-      id: 'group',
-      label: t.summaryGroupedBy({ field: labelOf(view.groupField) }),
-      section: 'group',
-      tone: 'group',
-    });
-  }
-  if (options.includeSort && view.sortRules.length > 0) {
-    const [first] = view.sortRules;
-    const arrow = first.direction === 'desc' ? '↓' : '↑';
-    const more = view.sortRules.length > 1 ? ` +${view.sortRules.length - 1}` : '';
-    chips.push({
-      id: 'sort',
-      label: t.summarySortedBy({ field: labelOf(first.field), arrow: `${arrow}${more}` }),
-      section: 'sort',
-      tone: 'sort',
-    });
-  }
-  for (const rule of view.filterRules) {
-    if (isNameFilterRule(rule)) continue;
-    chips.push({
+  return view.filterRules.flatMap((rule) => {
+    if (isNameFilterRule(rule)) return [];
+    const fieldLabel = labelOf(rule.field);
+    return [{
       id: `filter:${rule.id}`,
-      label: labelOf(rule.field),
-      section: 'filter',
-      tone: 'filter',
+      label: summarizeFilterRule(rule, fieldLabel, byId, t),
       filterTarget: { field: rule.field, ruleId: rule.id },
-    });
-  }
-  return chips;
+    }];
+  });
 }
 
 export function ViewToolbar({
@@ -414,7 +370,6 @@ export function ViewToolbar({
   run,
   dropdownRequest,
   onDropdownRequestConsumed,
-  variant = 'bar',
 }: ViewToolbarProps) {
   const t = useT();
   const tv = t.outliner.viewToolbar;
@@ -424,6 +379,7 @@ export function ViewToolbar({
   const referenceSummary = useMemo(() => referenceSummaryForIndex(index), [index]);
   const choices = useMemo(() => collectViewFieldChoices(node, index.byId, referenceSummary), [node, index.byId, referenceSummary]);
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const buttonRowRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const displayRef = useRef<HTMLButtonElement>(null);
@@ -431,9 +387,10 @@ export function ViewToolbar({
   const sortRef = useRef<HTMLButtonElement>(null);
   const filterRef = useRef<HTMLButtonElement>(null);
   const nameFilter = view.filterRules.find(isNameFilterRule);
+  const hasVisibleDisplayFields = visibleDisplayFields(view).length > 0;
+  const hasFilterRules = view.filterRules.some((rule) => !isNameFilterRule(rule));
   const firstSortRule = view.sortRules[0];
   const SortStateIcon = firstSortRule?.direction === 'desc' ? SortDescIcon : SortAscIcon;
-  const compact = variant === 'compact';
   const buttonRefs: Record<ToolbarSection, RefObject<HTMLButtonElement | null>> = {
     display: displayRef,
     group: groupRef,
@@ -451,26 +408,25 @@ export function ViewToolbar({
   const tooltipStyle = useAnchoredOverlay(tooltipRef, {
     anchorRect: tooltip?.anchorRect ?? null,
     disabled: !tooltip,
-    gap: 0,
     layoutKey: tooltip?.label,
     maxHeight: 80,
-    placement: 'bottom-start',
+    placement: 'bottom-center',
     width: 'content',
   });
 
   useEffect(() => {
     if (!dropdownRequest || dropdownRequest.nodeId !== node.id) return;
-    if (dropdownRequest.section === 'group' && view.viewMode === 'table') {
-      onDropdownRequestConsumed(dropdownRequest);
-      return;
-    }
     setOpen(dropdownRequest.section);
     onDropdownRequestConsumed(dropdownRequest);
-  }, [dropdownRequest, node.id, onDropdownRequestConsumed, view.viewMode]);
+  }, [dropdownRequest, node.id, onDropdownRequestConsumed]);
 
   useEffect(() => {
-    if (view.viewMode === 'table' && open === 'group') setOpen(null);
-  }, [open, view.viewMode]);
+    const row = buttonRowRef.current;
+    if (!row) return undefined;
+    const onWheel = (event: WheelEvent) => scrollToolbarHorizontally(row, event);
+    row.addEventListener('wheel', onWheel, { passive: false });
+    return () => row.removeEventListener('wheel', onWheel);
+  }, []);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -515,9 +471,9 @@ export function ViewToolbar({
     setOpen((current) => (current === section ? null : section));
   };
 
-  const openSummaryChip = (chip: ViewSummaryChip) => {
-    setRequestedFilterTarget(chip.filterTarget ?? null);
-    setOpen(chip.section);
+  const openFilterChip = (chip: FilterSummaryChip) => {
+    setRequestedFilterTarget(chip.filterTarget);
+    setOpen('filter');
   };
 
   const showTooltipFor = (element: HTMLElement) => {
@@ -527,15 +483,14 @@ export function ViewToolbar({
       return;
     }
     const rect = element.getBoundingClientRect();
-    const left = rect.right + 8;
     setTooltip({
       label,
       anchorRect: {
-        bottom: rect.top,
-        left,
-        right: left,
+        bottom: rect.bottom,
+        left: rect.left,
+        right: rect.right,
         top: rect.top,
-        width: 0,
+        width: rect.width,
       },
     });
   };
@@ -562,21 +517,11 @@ export function ViewToolbar({
     setTooltip(null);
   };
 
-  const includeSortSummary = open === 'sort';
-  const summaryChips = useMemo(
-    () => compact ? [] : summarizeView(view, choices, tv, { includeSort: includeSortSummary }),
-    [view, choices, tv, includeSortSummary, compact],
+  const filterSummaryChips = useMemo(
+    () => summarizeFilters(view, choices, index.byId, tv),
+    [view, choices, index.byId, tv],
   );
   const titles = sectionTitles(tv);
-  const viewModeControl = (
-    <ViewModeControl
-      compact={compact}
-      key="view-mode"
-      labels={tv}
-      onChange={(mode) => void run(() => api.setViewMode(node.id, mode))}
-      viewMode={view.viewMode === 'table' ? 'table' : 'list'}
-    />
-  );
   const nameFilterControl = (
     <NameFilterControl
       clearLabel={tv.clearNameFilter}
@@ -588,44 +533,28 @@ export function ViewToolbar({
       run={run}
     />
   );
-  const leadingControls = compact
-    ? [nameFilterControl, viewModeControl]
-    : [viewModeControl, nameFilterControl];
-  const renderSummaryChip = (chip: ViewSummaryChip) => {
-    if (chip.filterTarget?.ruleId) {
-      return (
-        <span className={`view-toolbar-summary-chip is-${chip.tone} has-remove`} key={chip.id}>
-          <ButtonControl
-            className="view-toolbar-summary-chip-main"
-            onClick={() => openSummaryChip(chip)}
-          >
-            <span className="view-toolbar-summary-chip-label">{chip.label}</span>
-          </ButtonControl>
-          <ButtonControl
-            aria-label={tv.removeFilterRule}
-            className="view-toolbar-summary-chip-remove view-toolbar-tooltip-anchor"
-            data-tooltip={tv.removeFilterRule}
-            onClick={() => void run(() => api.removeFilterRule(chip.filterTarget!.ruleId!))}
-          >
-            <CloseIcon size={ICON_SIZE.tiny} />
-          </ButtonControl>
-        </span>
-      );
-    }
-    return (
+  const renderFilterChip = (chip: FilterSummaryChip) => (
+    <span className="view-toolbar-summary-chip is-filter has-remove" key={chip.id}>
       <ButtonControl
-        className={`view-toolbar-summary-chip is-${chip.tone}`}
-        key={chip.id}
-        onClick={() => openSummaryChip(chip)}
+        className="view-toolbar-summary-chip-main"
+        onClick={() => openFilterChip(chip)}
       >
         <span className="view-toolbar-summary-chip-label">{chip.label}</span>
       </ButtonControl>
-    );
-  };
+      <ButtonControl
+        aria-label={tv.removeFilterRule}
+        className="view-toolbar-summary-chip-remove view-toolbar-tooltip-anchor"
+        data-tooltip={tv.removeFilterRule}
+        onClick={() => void run(() => api.removeFilterRule(chip.filterTarget.ruleId))}
+      >
+        <CloseIcon size={ICON_SIZE.tiny} />
+      </ButtonControl>
+    </span>
+  );
 
   return (
     <div
-      className={`view-toolbar${compact ? ' is-compact-controls' : ''}`}
+      className="view-toolbar"
       aria-label={tv.toolbarAriaLabel}
       ref={toolbarRef}
       onBlur={hideTooltipFromEvent}
@@ -634,53 +563,51 @@ export function ViewToolbar({
       onPointerOut={hideTooltipFromEvent}
       onPointerOver={showTooltipFromEvent}
     >
-      <div className="view-toolbar-button-row">
-        {leadingControls}
-        {view.viewMode !== 'table' ? (
-          <>
-            <ToolbarButton
-              ref={displayRef}
-              active={compact && view.displayFields.some((field) => field.visible && field.field !== NAME_FIELD)}
-              label={tv.display}
-              open={open === 'display'}
-              onClick={() => toggle('display')}
-            >
-              <FieldIcon size={ICON_SIZE.menu} />
-            </ToolbarButton>
-            <ToolbarButton
-              ref={groupRef}
-              active={compact && Boolean(view.groupField)}
-              label={tv.groupBy}
-              open={open === 'group'}
-              onClick={() => toggle('group')}
-            >
-              <GroupIcon size={ICON_SIZE.menu} />
-            </ToolbarButton>
-          </>
-        ) : null}
+      <div className="view-toolbar-button-row" ref={buttonRowRef}>
+        {nameFilterControl}
+        <ToolbarButton
+          ref={displayRef}
+          configured={hasVisibleDisplayFields}
+          label={tv.display}
+          open={open === 'display'}
+          onClick={() => toggle('display')}
+        >
+          <FieldIcon size={ICON_SIZE.menu} />
+        </ToolbarButton>
+        <ToolbarButton
+          ref={groupRef}
+          configured={Boolean(view.groupField)}
+          label={tv.groupBy}
+          open={open === 'group'}
+          onClick={() => toggle('group')}
+        >
+          <GroupIcon size={ICON_SIZE.menu} />
+        </ToolbarButton>
         <ToolbarButton
           ref={sortRef}
-          active={view.sortRules.length > 0}
+          configured={view.sortRules.length > 0}
           label={tv.sortBy}
           open={open === 'sort'}
           onClick={() => toggle('sort')}
         >
           <SortStateIcon size={ICON_SIZE.menu} />
         </ToolbarButton>
-        {summaryChips.length > 0 && (
-          <div className="view-toolbar-summary" aria-label={tv.summaryAriaLabel}>
-            {summaryChips.map(renderSummaryChip)}
-          </div>
-        )}
-        <ToolbarButton
-          ref={filterRef}
-          active={compact && view.filterRules.some((rule) => !isNameFilterRule(rule))}
-          label={tv.filterBy}
-          open={open === 'filter'}
-          onClick={() => toggle('filter')}
-        >
-          <FilterIcon size={ICON_SIZE.menu} />
-        </ToolbarButton>
+        <div className="view-toolbar-control-group" data-toolbar-section="filter">
+          <ToolbarButton
+            ref={filterRef}
+            configured={hasFilterRules}
+            label={tv.filterBy}
+            open={open === 'filter'}
+            onClick={() => toggle('filter')}
+          >
+            <FilterIcon size={ICON_SIZE.menu} />
+          </ToolbarButton>
+          {filterSummaryChips.length > 0 ? (
+            <div className="view-toolbar-summary">
+              {filterSummaryChips.map(renderFilterChip)}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {open && createPortal(
@@ -908,16 +835,16 @@ function NameFilterControl({
 }
 
 const ToolbarButton = forwardRef<HTMLButtonElement, {
-  active?: boolean;
+  configured?: boolean;
   label: string;
   open: boolean;
   onClick: () => void;
   children: ReactNode;
-}>(function ToolbarButton({ active = false, label, open, onClick, children }, ref) {
+}>(function ToolbarButton({ configured = false, label, open, onClick, children }, ref) {
   const classes = [
     'view-toolbar-pill',
     'view-toolbar-tooltip-anchor',
-    active ? 'is-active' : '',
+    configured ? 'is-configured' : '',
     open ? 'is-open' : '',
   ].filter(Boolean).join(' ');
   return (
@@ -925,6 +852,7 @@ const ToolbarButton = forwardRef<HTMLButtonElement, {
       ref={ref}
       aria-expanded={open}
       aria-label={label}
+      aria-pressed={configured}
       className={classes}
       data-tooltip={label}
       onClick={onClick}
@@ -950,6 +878,7 @@ function DisplaySection({
   // Name is the row text itself and is always shown, so it is not a toggle here.
   const displayable = choices.filter((choice) => choice.id !== NAME_FIELD);
   const byField = new Map(view.displayFields.map((field) => [field.field, field]));
+  const visibleFieldIds = new Set(visibleDisplayFields(view).map((field) => field.field));
   const groups = bySection(displayable, CUSTOM_FIRST_FIELD_SECTIONS);
   return (
     <div className="view-toolbar-options">
@@ -958,7 +887,7 @@ function DisplaySection({
           <div className="view-toolbar-option-section">{group.section}</div>
           {group.items.map((choice) => {
             const entry = byField.get(choice.id);
-            const checked = Boolean(entry && entry.visible);
+            const checked = visibleFieldIds.has(choice.id);
             return (
               <OptionRow
                 key={choice.id}
@@ -968,7 +897,7 @@ function DisplaySection({
                 variant="checkbox"
                 onSelect={() => {
                   if (entry) {
-                    void run(() => api.updateDisplayField(entry.id, { visible: !entry.visible }));
+                    void run(() => api.updateDisplayField(entry.id, { visible: !checked }));
                   } else {
                     void run(() => api.addDisplayField(node.id, choice.id));
                   }
@@ -1395,8 +1324,6 @@ function FilterRuleEditor({
     </div>
   );
 }
-
-type FilterRule = ViewConfig['filterRules'][number];
 
 // Boolean / checkbox fields store 'true' | 'false', so they are a binary choice.
 function BooleanFilterBody({ field, rule, run }: { field: string; rule: FilterRule; run: CommandRunner }) {

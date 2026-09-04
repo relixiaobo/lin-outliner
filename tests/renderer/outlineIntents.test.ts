@@ -629,17 +629,22 @@ describe('renderer Outline intents', () => {
     ]);
   });
 
-  test('writes bare-URL content and its Source in one owner update', async () => {
+  test('writes linked bare-URL content and its Source in one owner update', async () => {
     const harness = await createHarness([node('target')]);
     const url = 'https://example.com/article';
 
-    await outlineDocumentApi.setNodeContentAndAddSource('target', rich(url), url);
+    const linkedContent = {
+      text: url,
+      marks: [{ start: 0, end: url.length, type: 'link' as const, attrs: { href: url } }],
+      inlineRefs: [],
+    };
+    await outlineDocumentApi.setNodeContentAndAddSource('target', linkedContent, url);
 
     expect(harness.changeSets[0]!.operations).toEqual([{
       op: 'update',
       targets: oneId('target'),
       changes: [
-        { kind: 'content', value: rich(url) },
+          { kind: 'content', value: linkedContent },
         {
           kind: 'source',
           action: 'add',
@@ -648,6 +653,27 @@ describe('renderer Outline intents', () => {
         },
       ],
     }]);
+  });
+
+  test('creates a Source owner with caller-authored linked content', async () => {
+    const harness = await createHarness([node('root')]);
+    const url = 'https://example.com/article';
+    const content = {
+      text: url,
+      marks: [{ start: 0, end: url.length, type: 'link' as const, attrs: { href: url } }],
+      inlineRefs: [],
+    };
+
+    await outlineDocumentApi.createSourceNode('root', null, {
+      sourceText: url,
+      content,
+      id: 'linked-owner',
+    });
+
+    expect(harness.changeSets[0]!.operations[0]).toMatchObject({
+      op: 'create',
+      nodes: [{ id: 'linked-owner', content }],
+    });
   });
 
   test('materializes a bare-URL draft under its reserved Node identity', async () => {

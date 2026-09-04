@@ -57,7 +57,7 @@ import {
   fieldEntryForViewCell,
   hiddenFieldKey,
   readViewConfig,
-  viewDisplayValuesFor,
+  visibleDisplayFields,
   viewFieldValuesFor,
 } from '../../src/renderer/ui/outliner/row-model';
 import { CREATED_FIELD, DAY_FIELD, DONE_FIELD, NAME_FIELD, REF_COUNT_FIELD, TAGS_FIELD } from '../../src/core/systemFields';
@@ -991,7 +991,7 @@ describe('row interaction resolvers', () => {
     expect(second?.id).toBe('filtered:parent:filter-b');
   });
 
-  test('derives visible display field metadata from the same field values as view rules', () => {
+  test('keeps visible display field configuration independent from placement', () => {
     const parent = makeNode('parent', 'Parent', {
       children: ['view', 'task'],
     });
@@ -1013,6 +1013,7 @@ describe('row interaction resolvers', () => {
         parentId: 'view',
         displayField: TAGS_FIELD,
         displayVisible: true,
+        displayPlacement: 'body',
       })],
       ['display-created', makeNode('display-created', '', {
         type: 'displayField',
@@ -1051,10 +1052,17 @@ describe('row interaction resolvers', () => {
 
     const view = readViewConfig(parent as any, byId);
 
-    expect(viewDisplayValuesFor(byId.get('task') as any, view, byId)).toEqual([
-      { id: 'display-status', field: 'status-def', label: 'Status', values: ['In progress'] },
-      { id: 'display-tags', field: TAGS_FIELD, label: 'Tags', values: ['project'] },
-      { id: 'display-created', field: CREATED_FIELD, label: 'Created time', values: ['2026-06-30'] },
+    expect(visibleDisplayFields(view).map((field) => field.id)).toEqual([
+      'display-status',
+      'display-tags',
+      'display-created',
+      'display-empty',
+    ]);
+    expect(visibleDisplayFields({ ...view, viewMode: 'table' }).map((field) => field.id)).toEqual([
+      'display-status',
+      'display-tags',
+      'display-created',
+      'display-empty',
     ]);
   });
 

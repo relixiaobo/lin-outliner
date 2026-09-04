@@ -1,5 +1,15 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { openMockedApp } from './outlinerMock';
+
+async function switchCurrentViewFromContextMenu(page: Page, mode: 'Outline' | 'Table') {
+  await page.locator('.panel-title-editor').first().click({ button: 'right' });
+  const viewAs = page.getByRole('menu', { name: 'Node actions' })
+    .getByRole('menuitem', { name: 'View as', exact: true });
+  await viewAs.hover();
+  await page.getByRole('menu', { name: 'View as' })
+    .getByRole('menuitemradio', { name: mode, exact: true })
+    .click();
+}
 
 test.describe('search query builder', () => {
   test.beforeEach(async ({ page }) => {
@@ -12,7 +22,7 @@ test.describe('search query builder', () => {
       .click();
 
     await expect(page.locator('.outline-panel-surface.active-panel .panel-title-editor')).toContainText('Recents');
-    const controls = page.locator('.view-toolbar.is-compact-controls');
+    const controls = page.locator('.view-toolbar');
     await expect(controls).toBeVisible();
     await expect(page.locator('.search-query-summary-bar')).toHaveCount(0);
     await page.getByRole('button', { name: 'Show query' }).click();
@@ -27,30 +37,54 @@ test.describe('search query builder', () => {
     await expect(builder.getByRole('button', { name: 'Save' })).toBeDisabled();
     await expect(page.locator('[data-node-id="recents-query"]')).toHaveCount(0);
     await builder.getByRole('button', { name: 'Close query', exact: true }).click();
-    await expect(page.locator('.view-toolbar.is-compact-controls')).toBeVisible();
+    await expect(page.locator('.view-toolbar')).toBeVisible();
   });
 
-  test('search outline uses one compact result-view control band', async ({ page }) => {
+  test('lets a search hide and restore the shared toolbar explicitly', async ({ page }) => {
+    await page.locator('.sidebar-primary-nav')
+      .getByRole('button', { name: 'Recents', exact: true })
+      .click();
+
+    const title = page.locator('.panel-title-editor').first();
+    const toolbar = page.locator('.view-toolbar');
+    await expect(toolbar).toBeVisible();
+
+    await title.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Hide view toolbar', exact: true }).click();
+    await expect(toolbar).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Show query', exact: true }).click();
+    await page.getByRole('button', { name: 'Close query', exact: true }).click();
+    await expect(toolbar).toHaveCount(0);
+
+    await title.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Show view toolbar', exact: true }).click();
+    await expect(toolbar).toBeVisible();
+  });
+
+  test('search outline and table use the same configuration toolbar', async ({ page }) => {
     const originalViewport = page.viewportSize()!;
     await page.locator('.sidebar-primary-nav')
       .getByRole('button', { name: 'Recents', exact: true })
       .click();
 
-    const controls = page.locator('.view-toolbar.is-compact-controls');
+    const controls = page.locator('.view-toolbar');
     const firstResult = page.locator('.outliner-flat-flow-row .row').first();
-    const viewMode = controls.getByRole('group', { name: 'View mode', exact: true });
-    const outlineMode = viewMode.getByRole('button', { name: 'Outline', exact: true });
-    const tableMode = viewMode.getByRole('button', { name: 'Table', exact: true });
     await expect(controls).toHaveCount(1);
     await expect(firstResult).toBeVisible();
     await expect(page.locator('.search-query-summary-bar')).toHaveCount(0);
     await expect(controls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
-    await expect(outlineMode).toHaveAttribute('aria-pressed', 'true');
-    await expect(tableMode).toHaveAttribute('aria-pressed', 'false');
-    await expect(controls.getByRole('button', { name: 'Display', exact: true })).toBeVisible();
+    await expect(controls.getByRole('button', { name: 'Outline', exact: true })).toHaveCount(0);
+    await expect(controls.getByRole('button', { name: 'Table', exact: true })).toHaveCount(0);
+    await expect(controls.getByRole('button', { name: 'Display', exact: true })).toHaveAttribute('aria-pressed', 'false');
     await expect(controls.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
+    const outlineButtonLabels = await controls.locator(
+      '.view-toolbar-button-row .view-toolbar-pill',
+    ).evaluateAll((buttons) => (
+      buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '')
+    ));
 
     const geometry = await controls.evaluate((toolbar) => {
       const rect = toolbar.getBoundingClientRect();
@@ -62,17 +96,16 @@ test.describe('search query builder', () => {
         background: style.backgroundColor,
         firstContentLeft: firstContent.getBoundingClientRect().left,
         left: rect.left,
-        pseudoAfter: getComputedStyle(toolbar, '::after').display,
-        pseudoBefore: getComputedStyle(toolbar, '::before').display,
         resolvedMarginLeft: Number.parseFloat(style.marginLeft),
         scopeLeft: scopeRect.left,
+        right: rect.right,
+        scopeRight: scopeRect.right,
       };
     });
     expect(geometry.background).toBe('rgba(0, 0, 0, 0)');
-    expect(geometry.pseudoBefore).toBe('none');
-    expect(geometry.pseudoAfter).toBe('none');
     expect(geometry.left).toBeCloseTo(geometry.firstContentLeft, 1);
     expect(geometry.left).toBeCloseTo(geometry.scopeLeft + geometry.resolvedMarginLeft, 1);
+    expect(geometry.right).toBeCloseTo(geometry.scopeRight, 1);
     expect(await controls.evaluate((toolbar, result) => (
       Boolean(toolbar.compareDocumentPosition(result as Node) & Node.DOCUMENT_POSITION_FOLLOWING)
     ), await firstResult.elementHandle())).toBe(true);
@@ -84,21 +117,17 @@ test.describe('search query builder', () => {
     const nameFilterBox = await nameFilter.boundingBox();
     expect(nameFilterBox).not.toBeNull();
     const tooltipGeometry = await tooltip.evaluate((element) => {
-      const title = document.querySelector<HTMLElement>('.panel-title-editor')!;
-      const firstRow = document.querySelector<HTMLElement>('.outliner-flat-flow-row .row')!;
       const tooltipRect = element.getBoundingClientRect();
       return {
-        firstRowTop: firstRow.getBoundingClientRect().top,
-        titleBottom: title.getBoundingClientRect().bottom,
-        tooltipBottom: tooltipRect.bottom,
         tooltipLeft: tooltipRect.left,
+        tooltipRight: tooltipRect.right,
         tooltipTop: tooltipRect.top,
         tooltipWidth: tooltipRect.width,
       };
     });
-    expect(tooltipGeometry.tooltipLeft).toBeGreaterThan(nameFilterBox!.x + nameFilterBox!.width);
-    expect(tooltipGeometry.tooltipTop).toBeGreaterThan(tooltipGeometry.titleBottom);
-    expect(tooltipGeometry.tooltipBottom).toBeLessThanOrEqual(tooltipGeometry.firstRowTop);
+    expect(tooltipGeometry.tooltipLeft).toBeLessThan(nameFilterBox!.x + nameFilterBox!.width);
+    expect(tooltipGeometry.tooltipRight).toBeGreaterThan(nameFilterBox!.x);
+    expect(tooltipGeometry.tooltipTop).toBeGreaterThanOrEqual(nameFilterBox!.y + nameFilterBox!.height);
     expect(tooltipGeometry.tooltipWidth).toBeLessThan(180);
 
     await controls.getByRole('button', { name: 'Sort by', exact: true }).hover();
@@ -112,43 +141,52 @@ test.describe('search query builder', () => {
       const controlSize = Number.parseFloat(getComputedStyle(document.documentElement)
         .getPropertyValue('--control-size-xl'));
       const contentStart = Number.parseFloat(getComputedStyle(toolbar).marginLeft);
-      scope.style.width = `calc(3 * var(--control-size-xl) + ${contentStart}px)`;
-      const toolbarRect = toolbar.getBoundingClientRect();
+      scope.style.width = `${2 * controlSize + contentStart}px`;
+      const row = toolbar.querySelector<HTMLElement>('.view-toolbar-button-row')!;
       const controls = [...toolbar.querySelectorAll<HTMLElement>(
-        '.view-toolbar-button-row > .view-toolbar-pill, .view-toolbar-mode-button',
+        '.view-toolbar-button-row .view-toolbar-pill',
       )];
-      const modeButtons = [...toolbar.querySelectorAll<HTMLElement>('.view-toolbar-mode-button')];
-      const modeGroup = toolbar.querySelector<HTMLElement>('.view-toolbar-mode')!;
+      const controlCenter = (() => {
+        const rect = controls[0]!.getBoundingClientRect();
+        return rect.top + rect.height / 2;
+      })();
       const geometry = {
-        controlsContained: controls.every((control) => {
-          const rect = control.getBoundingClientRect();
-          return rect.left >= toolbarRect.left - 0.5
-            && rect.right <= toolbarRect.right + 0.5
-            && rect.width >= controlSize - 0.5;
-        }),
-        modeGroupIntact: modeButtons.every((button) => (
-          Math.abs(button.getBoundingClientRect().top - modeGroup.getBoundingClientRect().top) < 0.5
-        )) && modeGroup.getBoundingClientRect().width >= (2 * controlSize) - 0.5,
-        overflowFree: toolbar.scrollWidth <= toolbar.clientWidth + 1,
-        wrapped: toolbarRect.height > controlSize + 0.5,
+        controlsUnshrunk: controls.every((control) => (
+          control.getBoundingClientRect().width >= controlSize - 0.5
+        )),
+        ownsHorizontalOverflow: getComputedStyle(row).overflowX === 'auto'
+          && row.scrollWidth > row.clientWidth + 1,
+        scrollbarHidden: getComputedStyle(row).scrollbarWidth === 'none',
+        singleLine: getComputedStyle(row).flexWrap === 'nowrap'
+          && controls.every((control) => {
+            const rect = control.getBoundingClientRect();
+            return Math.abs(rect.top + rect.height / 2 - controlCenter) < 0.5;
+          }),
       };
       scope.style.removeProperty('width');
       return geometry;
     });
     expect(narrowGeometry).toEqual({
-      controlsContained: true,
-      modeGroupIntact: true,
-      overflowFree: true,
-      wrapped: true,
+      controlsUnshrunk: true,
+      ownsHorizontalOverflow: true,
+      scrollbarHidden: true,
+      singleLine: true,
     });
     await page.setViewportSize(originalViewport);
 
-    await tableMode.click();
-    const tableControls = page.locator('.outliner-table-scope > .view-toolbar.is-compact-controls');
-    const tableViewMode = tableControls.getByRole('group', { name: 'View mode', exact: true });
+    await switchCurrentViewFromContextMenu(page, 'Table');
+    const tableControls = page.locator('.outliner-table-scope > .view-toolbar');
     await expect(tableControls).toBeVisible();
-    await expect(tableViewMode.getByRole('button', { name: 'Outline', exact: true })).toHaveAttribute('aria-pressed', 'false');
-    await expect(tableViewMode.getByRole('button', { name: 'Table', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(tableControls.getByRole('button', { name: 'Outline', exact: true })).toHaveCount(0);
+    await expect(tableControls.getByRole('button', { name: 'Table', exact: true })).toHaveCount(0);
+    const tableButtonLabels = await tableControls.locator(
+      '.view-toolbar-button-row .view-toolbar-pill',
+    ).evaluateAll((buttons) => (
+      buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '')
+    ));
+    expect(tableButtonLabels).toEqual(outlineButtonLabels);
+    await expect(tableControls.getByRole('button', { name: 'Display', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(tableControls.locator('.view-toolbar-summary-chip')).toHaveCount(0);
   });
 });
 

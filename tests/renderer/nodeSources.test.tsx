@@ -3,7 +3,10 @@ import { act, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { PreviewResolveSourceResult } from '../../src/core/preview';
-import type { NodeSourceDescriptor } from '../../src/renderer/ui/preview/nodeSources';
+import {
+  sourcePreviewVisibleByDefault,
+  type NodeSourceDescriptor,
+} from '../../src/renderer/ui/preview/nodeSources';
 import { useResolvedNodeSources } from '../../src/renderer/ui/preview/NodeSourcesSection';
 import {
   resetNodeSourceViewStateForTests,
@@ -80,7 +83,10 @@ describe('Node Sources renderer state', () => {
   test('keeps selection through reorder, falls back after deletion, and preserves preview visibility', async () => {
     let view: ReturnType<typeof useNodeSourceViewState> | null = null;
     const Probe = ({ ids }: { ids: readonly string[] }) => {
-      const current = useNodeSourceViewState('owner', ids);
+      const current = useNodeSourceViewState('owner', ids.map((id) => ({
+        id,
+        previewVisibleByDefault: true,
+      })));
       useEffect(() => { view = current; }, [current]);
       return <output>{`${current.selectedValueId}:${current.previewVisible}`}</output>;
     };
@@ -100,7 +106,10 @@ describe('Node Sources renderer state', () => {
   test('shows the first Source after an owner returns from an empty state', async () => {
     let view: ReturnType<typeof useNodeSourceViewState> | null = null;
     const Probe = ({ ids }: { ids: readonly string[] }) => {
-      const current = useNodeSourceViewState('owner', ids);
+      const current = useNodeSourceViewState('owner', ids.map((id) => ({
+        id,
+        previewVisibleByDefault: true,
+      })));
       useEffect(() => { view = current; }, [current]);
       return <output>{`${current.selectedValueId}:${current.previewVisible}`}</output>;
     };
@@ -112,6 +121,46 @@ describe('Node Sources renderer state', () => {
 
     await act(async () => { root.render(<Probe ids={['source:new']} />); });
     expect(container.textContent).toBe('source:new:true');
+  });
+
+  test('derives the first visibility from Source strength and preserves an explicit choice', async () => {
+    let view: ReturnType<typeof useNodeSourceViewState> | null = null;
+    const Probe = ({ visibleByDefault }: { visibleByDefault: boolean }) => {
+      const current = useNodeSourceViewState('owner', [{
+        id: 'source:web',
+        previewVisibleByDefault: visibleByDefault,
+      }]);
+      useEffect(() => { view = current; }, [current]);
+      return <output>{String(current.previewVisible)}</output>;
+    };
+
+    await act(async () => { root.render(<Probe visibleByDefault={false} />); });
+    expect(container.textContent).toBe('false');
+    act(() => view?.show());
+    expect(container.textContent).toBe('true');
+
+    await act(async () => { root.render(<Probe visibleByDefault={false} />); });
+    expect(container.textContent).toBe('true');
+  });
+
+  test('starts assets, linked files, and YouTube visible but generic webpages hidden', () => {
+    expect(sourcePreviewVisibleByDefault(source('source:asset', {
+      kind: 'asset',
+      assetId: 'asset:1',
+    }))).toBe(true);
+    expect(sourcePreviewVisibleByDefault(source('source:file', {
+      kind: 'linked-file',
+      sourceValueId: 'source:file',
+      sourceText: 'file:///tmp/report.pdf',
+    }))).toBe(true);
+    expect(sourcePreviewVisibleByDefault(source('source:youtube', {
+      kind: 'url',
+      url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    }))).toBe(true);
+    expect(sourcePreviewVisibleByDefault(source('source:web', {
+      kind: 'url',
+      url: 'https://example.com/article',
+    }))).toBe(false);
   });
 });
 
@@ -136,6 +185,21 @@ function linkedSource(sourceText: string): NodeSourceDescriptor {
     availability: 'denied',
     reason: 'file-access-denied',
     actions: ['copy-uri', 'edit', 'authorize', 'replace', 'remove'],
+  };
+}
+
+function source(
+  sourceValueId: string,
+  previewTarget: NonNullable<NodeSourceDescriptor['previewTarget']>,
+): NodeSourceDescriptor {
+  return {
+    sourceValueId,
+    sourceText: previewTarget.kind === 'url' ? previewTarget.url : sourceValueId,
+    kind: previewTarget.kind === 'url' ? 'web' : 'file',
+    label: sourceValueId,
+    previewTarget,
+    availability: 'ready',
+    actions: ['preview'],
   };
 }
 

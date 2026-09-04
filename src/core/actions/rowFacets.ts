@@ -10,6 +10,7 @@
 import { projectFieldConfig } from '../configProjection';
 import { isOptionsFieldType } from '../fieldTypeRegistry';
 import { isContentBearingNode, type NodeId, type NodeProjection } from '../types';
+import { resolveViewToolbarVisible } from '../viewConfig';
 
 export type NodeRowKind =
   | 'content'
@@ -261,8 +262,12 @@ export function readNodeViewSettings(
     return {
       viewDefId: child.id,
       viewMode: child.viewMode ?? 'list',
-      toolbarVisible: Boolean(child.toolbarVisible),
+      toolbarVisible: resolveViewToolbarVisible(parent, child.toolbarVisible),
     };
   }
-  return { viewDefId: null, viewMode: 'list', toolbarVisible: false };
+  return {
+    viewDefId: null,
+    viewMode: 'list',
+    toolbarVisible: resolveViewToolbarVisible(parent, undefined),
+  };
 }

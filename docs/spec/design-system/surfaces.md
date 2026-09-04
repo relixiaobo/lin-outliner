@@ -147,26 +147,31 @@ and neutral text hierarchy keep the surface scannable in light and dark mode.
 Vertical cell borders and a top frame are absent at rest. The header may stick
 inside the panel but does not become translucent chrome.
 
-The Title marker slot aligns with the Title header label. Its disclosure occupies
-the reserved gutter immediately before the column, while the compensated row
-width keeps the Title column boundary fixed across leaf, expanded, hover, and
-selection states.
+Title and authored-field headers reuse the row leading grid. A reserved chevron
+slot precedes each kind icon, so header icons align with body bullets and header
+labels align with body text. The Title disclosure occupies the reserved gutter
+immediately before the column, while the compensated row width keeps the Title
+column boundary fixed across leaf, expanded, hover, and selection states.
 
-Search Outline and Table share one compact icon-first result-view band and never
-stack a query-summary row with a full toolbar. Name search expands inline only
-while active. A single two-option Outline/Table mode selector remains visible in
-both modes and reuses the ordinary Outline toolbar's mode component; the context
-menu is its secondary text entry point. Outline aligns the band with its result
-text axis derived from the shared row geometry; Table places it between the
-owner heading and field header on the Title label axis. The band has no fill,
-frame, summary chips, result count, manual refresh, or decorative separators.
-Its icon controls retain the token control size and wrap as complete units when
-the available pane is narrower than one row; the two mode options never split
-across lines. Tooltips follow the hovered or keyboard-focused control across
-wrapped rows and remeasure each label's intrinsic width when focus moves, so
-their anchor and box never carry over from a sibling control. The Table field header
-therefore remains pure column semantics, and header and row separators provide
-its only horizontal structure.
+`ViewToolbar` owns one stable presentation and control order rather than deriving
+a variant from owner type or renderer. Every Node uses the same full bar in
+Outline and Table, including the same labels, Filter rule chips, popovers, and
+tooltips.
+The toolbar has no frame or decorative separators; spacing and control grouping
+carry its hierarchy.
+Name search expands inline only while active. View mode is not duplicated in the
+configuration bar; the Node context menu is its single entry point, with
+**View as** opening a side submenu on hover, click, or `ArrowRight`.
+Toolbar controls retain the token control size and stay on one line; when the
+available pane is narrower, the toolbar owns native horizontal overflow without
+painting a scrollbar. It consumes the remaining pane width before overflowing;
+trackpads scroll natively, while a vertical wheel moves the row horizontally
+until it reaches an edge. Custom
+tooltips follow the hovered or keyboard-focused control across the scroller and
+remeasure each label's intrinsic width when focus moves, so their anchor and box
+never carry over from a sibling control.
+The Table field header therefore remains pure column semantics, and header and
+row separators provide its only horizontal structure.
 
 An active cell wrapper uses the neutral fill ladder plus the shared focus outline
 only while the wrapper itself owns focus; an idle table never paints a synthetic
@@ -207,11 +212,17 @@ reduced-transparency fallback. Column headers use Hide as their only removal
 action. Add column groups current-record custom fields first, other Schema custom
 fields second, and system fields last; the Outline Display editor likewise places
 custom Fields before System fields. Section labels remain compact metadata, not
-selectable rows. Search Outline adds Display and Group to the shared mode, name,
-Sort, and Filter controls; Search Table keeps the same mode selector, name search,
-Sort, and Filter while hidden columns remain directly recoverable through Add
-field. A nested table is
-an unframed indented scope with one
+selectable rows. Search Outline and Table share the same name, Display, Group,
+Sort, and Filter controls. Singular settings use the neutral active state
+on their own icon controls instead of text summaries. A configured control
+uses `--control-on` on its glyph without a background; the pill fill means its
+popover is open.
+Individual Filter rule chips follow the configured Filter control and stay with
+it in the toolbar's single line. Their labels summarize the effective condition rather
+than repeating only the field name; presence rules and timestamp system fields
+use compact labels while their editor keeps the complete wording.
+Hidden Table columns remain directly recoverable through Add field. A
+nested table is an unframed indented scope with one
 quiet separating edge, not a card inside the parent table. Each nested scope owns
 its own column template and local horizontal overflow.
 

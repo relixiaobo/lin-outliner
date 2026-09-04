@@ -58,8 +58,10 @@ async function configureRootTable(page: Page) {
 
 async function switchRootFromContextMenu(page: Page, mode: 'Outline' | 'Table') {
   await page.locator('.panel-title-editor').first().click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'View as', exact: true }).click();
-  await page.getByRole('dialog', { name: 'View as' }).getByRole('button', { name: mode, exact: true }).click();
+  await page.getByRole('menuitem', { name: 'View as', exact: true }).hover();
+  await page.getByRole('menu', { name: 'View as' })
+    .getByRole('menuitemradio', { name: mode, exact: true })
+    .click();
 }
 
 function rootGrid(page: Page) {
@@ -69,6 +71,38 @@ function rootGrid(page: Page) {
 test.describe('table view', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page, { dateField: true });
+  });
+
+  test('opens View as as a hover, click, and keyboard submenu', async ({ page }) => {
+    await page.locator('.panel-title-editor').first().click({ button: 'right' });
+    const parentMenu = page.getByRole('menu', { name: 'Node actions' });
+    const viewAs = parentMenu.getByRole('menuitem', { name: 'View as', exact: true });
+    const submenu = page.getByRole('menu', { name: 'View as' });
+
+    await viewAs.hover();
+    await expect(submenu).toBeVisible();
+    await expect(viewAs).toHaveAttribute('aria-expanded', 'true');
+    await submenu.getByRole('menuitemradio', { name: 'Outline', exact: true }).hover();
+    await expect(submenu).toBeVisible();
+    await expect(parentMenu).toBeVisible();
+
+    await viewAs.focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(submenu).toHaveCount(0);
+
+    await viewAs.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(submenu.getByRole('menuitemradio').first()).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await expect(submenu).toHaveCount(0);
+    await expect(viewAs).toBeFocused();
+
+    await viewAs.click();
+    await expect(submenu).toBeVisible();
+    await expect(submenu.getByRole('menuitemradio').first()).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(submenu).toHaveCount(0);
+    await expect(viewAs).toBeFocused();
   });
 
   test('switches the same children through View as and preserves the saved group rule', async ({ page }) => {
@@ -84,7 +118,8 @@ test.describe('table view', () => {
     await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Status', 'Due']);
     await expect(grid.locator('.outliner-table-column-kind')).toHaveCount(2);
     await expect(grid.getByRole('button', { name: 'Add column' })).toHaveText('Add field');
-    await expect(grid.getByRole('row')).toHaveCount(5);
+    await expect(grid.locator('.outliner-table-title-cell')).toHaveCount(4);
+    await expect(grid.locator('.outliner-table-group-row')).toHaveCount(0);
     await expect(grid.locator(`[data-table-row-id="${ids.alpha}"][data-table-column-id="__title__"]`)).toContainText('Alpha');
 
     const geometry = await grid.evaluate((element) => {
@@ -97,6 +132,10 @@ test.describe('table view', () => {
       const firstTitleWrap = firstCell.querySelector<HTMLElement>(':scope > .row-wrap')!;
       const firstChevron = firstCell.querySelector<HTMLElement>('.row-chevron-button')!;
       const firstBullet = firstCell.querySelector<HTMLElement>('.row-bullet-button')!;
+      const firstText = firstCell.querySelector<HTMLElement>('.row-content-line')!;
+      const titleChevronSlot = title.querySelector<HTMLElement>('.row-chevron-spacer')!;
+      const titleIcon = title.querySelector<HTMLElement>('.outliner-table-title-kind')!;
+      const titleLabel = title.querySelector<HTMLElement>('.outliner-table-title-label')!;
       const scrollRect = scroll.getBoundingClientRect();
       const titleRect = title.getBoundingClientRect();
       const firstCellRect = firstCell.getBoundingClientRect();
@@ -114,6 +153,18 @@ test.describe('table view', () => {
         return fontSize;
       };
       const addRect = add.getBoundingClientRect();
+      const fieldAlignment = fields.map((fieldHeader) => {
+        const columnId = fieldHeader.dataset.tableColumnId!;
+        const valueCell = scroll.querySelector<HTMLElement>(
+          `.outliner-table-cell[data-table-column-id="${CSS.escape(columnId)}"]`,
+        )!;
+        return {
+          bulletLeft: valueCell.querySelector<HTMLElement>('.row-bullet-button')!.getBoundingClientRect().left,
+          iconLeft: fieldHeader.querySelector<HTMLElement>('.outliner-table-column-kind')!.getBoundingClientRect().left,
+          labelLeft: fieldHeader.querySelector<HTMLElement>('.outliner-table-column-label')!.getBoundingClientRect().left,
+          textLeft: valueCell.querySelector<HTMLElement>('.row-content-line')!.getBoundingClientRect().left,
+        };
+      });
       return {
         addBorderBottom: getComputedStyle(add).borderBottomWidth,
         addRight: addRect.right,
@@ -122,6 +173,7 @@ test.describe('table view', () => {
         contentFontSize: getComputedStyle(firstCell).fontSize,
         contentFontToken: resolveFontSize('--font-content'),
         fieldWidths: fields.map((field) => field.getBoundingClientRect().width),
+        fieldAlignment,
         firstBulletLeft: firstBulletRect.left,
         firstCellBackground: getComputedStyle(firstCell).backgroundColor,
         firstCellBorderRight: getComputedStyle(firstCell).borderRightWidth,
@@ -139,7 +191,10 @@ test.describe('table view', () => {
         scrollLeft: scrollRect.left,
         scrollRight: scrollRect.right,
         scrollWidth: scrollRect.width,
-        titleLabelLeft: titleRect.left + Number.parseFloat(getComputedStyle(title).paddingLeft),
+        titleChevronRight: titleChevronSlot.getBoundingClientRect().right,
+        titleIconLeft: titleIcon.getBoundingClientRect().left,
+        titleLabelLeft: titleLabel.getBoundingClientRect().left,
+        titleTextLeft: firstText.getBoundingClientRect().left,
         titleWidth: titleRect.width,
       };
     });
@@ -152,10 +207,16 @@ test.describe('table view', () => {
     expect(geometry.firstCellBorderRight).toBe('0px');
     expect(geometry.addBorderBottom).toBe('0px');
     expect(geometry.firstCellBackground).toBe('rgba(0, 0, 0, 0)');
-    expect(geometry.firstBulletLeft).toBeCloseTo(geometry.titleLabelLeft, 1);
+    expect(geometry.firstBulletLeft).toBeCloseTo(geometry.titleIconLeft, 1);
+    expect(geometry.titleTextLeft).toBeCloseTo(geometry.titleLabelLeft, 1);
+    expect(geometry.titleChevronRight).toBeLessThan(geometry.titleIconLeft);
     expect(geometry.firstChevronLeft).toBeGreaterThanOrEqual(geometry.scrollLeft);
     expect(geometry.firstChevronRight).toBeLessThan(geometry.firstBulletLeft);
     expect(geometry.firstTitleWrapRight).toBeCloseTo(geometry.firstCellRight, 1);
+    for (const alignment of geometry.fieldAlignment) {
+      expect(alignment.iconLeft).toBeCloseTo(alignment.bulletLeft, 1);
+      expect(alignment.labelLeft).toBeCloseTo(alignment.textLeft, 1);
+    }
     expect(geometry.headerFontFamily).toBe(geometry.rootFontFamily);
     expect(geometry.contentFontFamily).toBe(geometry.rootFontFamily);
     expect(geometry.headerFontSize).toBe(geometry.headerFontToken);
@@ -182,14 +243,23 @@ test.describe('table view', () => {
     await page.setViewportSize(originalViewport);
 
     const tableScope = page.locator(`[data-table-owner-id="${ids.today}"]`);
-    const tableControls = tableScope.locator(':scope > .view-toolbar.is-compact-controls');
+    const tableControls = tableScope.locator(':scope > .view-toolbar');
     await expect(grid.locator('.view-toolbar')).toHaveCount(0);
     await expect(tableControls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
-    await expect(tableControls.getByRole('button', { name: 'Group by', exact: true })).toHaveCount(0);
-    await tableControls.getByRole('button', { name: 'Outline', exact: true }).click();
+    await expect(tableControls.getByRole('button', { name: 'Display', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
+    const tableButtonLabels = await tableControls.locator('button').evaluateAll((buttons) => (
+      buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '')
+    ));
+    await switchRootFromContextMenu(page, 'Outline');
     await expect(rootGrid(page)).toHaveCount(0);
-    const outlineToolbar = page.locator('.view-toolbar:not(.is-compact-controls)').first();
+    await expect(page.locator('.view-group-heading')).not.toHaveCount(0);
+    const outlineToolbar = page.locator('.view-toolbar').first();
     await expect(outlineToolbar.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
+    const outlineButtonLabels = await outlineToolbar.locator('button').evaluateAll((buttons) => (
+      buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '')
+    ));
+    expect(outlineButtonLabels).toEqual(tableButtonLabels);
 
     const groupField = await page.evaluate((todayId) => {
       const win = window as typeof window & {
@@ -206,8 +276,9 @@ test.describe('table view', () => {
     }, ids.today);
     expect(groupField).toBe('sys:done');
 
-    await outlineToolbar.getByRole('button', { name: 'Table', exact: true }).click();
+    await switchRootFromContextMenu(page, 'Table');
     await expect(rootGrid(page)).toBeVisible();
+    await expect(rootGrid(page).locator('.outliner-table-group-row')).toHaveCount(0);
   });
 
   test('defaults used custom fields as columns and preserves hidden choices across view switches', async ({ page }) => {
@@ -274,6 +345,9 @@ test.describe('table view', () => {
         args: { displayFieldId: statusDisplay.id, visible: false },
       },
       { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'list' } },
+    ]);
+
+    await invokeCommands(page, [
       { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
     ]);
 
@@ -977,11 +1051,12 @@ test.describe('table view', () => {
 
     const grid = page.getByRole('grid', { name: 'Recents table' });
     const tableScope = page.locator(`[data-table-owner-id="${ids.recents}"]`);
-    const tableControls = tableScope.locator(':scope > .view-toolbar.is-compact-controls');
+    const tableControls = tableScope.locator(':scope > .view-toolbar');
     const summary = page.locator('.search-query-summary-bar');
     await expect(grid.locator('.view-toolbar')).toHaveCount(0);
     await expect(tableControls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
-    await expect(tableControls.getByRole('button', { name: 'Outline', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Outline', exact: true })).toHaveCount(0);
+    await expect(tableControls.getByRole('button', { name: 'Table', exact: true })).toHaveCount(0);
     await expect(tableControls.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
     await expect(tableControls.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
     await expect(summary).toHaveCount(0);
@@ -995,7 +1070,7 @@ test.describe('table view', () => {
     const searchTableGeometry = await page.locator('.panel-inner').evaluate((panel) => {
       const header = panel.querySelector<HTMLElement>('.outliner-table-header')!;
       const title = panel.querySelector<HTMLElement>('.outliner-table-title-header')!;
-      const tableControls = panel.querySelector<HTMLElement>('.outliner-table-scope > .view-toolbar.is-compact-controls')!;
+      const tableControls = panel.querySelector<HTMLElement>('.outliner-table-scope > .view-toolbar')!;
       const headerRect = header.getBoundingClientRect();
       const titleRect = title.getBoundingClientRect();
       const controlsRect = tableControls.getBoundingClientRect();
@@ -1004,10 +1079,8 @@ test.describe('table view', () => {
         controlsBackground: controlsStyle.backgroundColor,
         controlsBottom: controlsRect.bottom,
         controlsLeft: controlsRect.left,
-        controlsPseudoAfter: getComputedStyle(tableControls, '::after').display,
-        controlsPseudoBefore: getComputedStyle(tableControls, '::before').display,
         controlsTop: controlsRect.top,
-        directToolbarCount: panel.querySelectorAll('.outliner-table-scope > .view-toolbar.is-compact-controls').length,
+        directToolbarCount: panel.querySelectorAll('.outliner-table-scope > .view-toolbar').length,
         headerLeft: headerRect.left,
         headerRight: headerRect.right,
         headerTop: headerRect.top,
@@ -1020,8 +1093,6 @@ test.describe('table view', () => {
     expect(searchTableGeometry.controlsBottom).toBeLessThanOrEqual(searchTableGeometry.headerTop);
     expect(searchTableGeometry.controlsLeft).toBeCloseTo(searchTableGeometry.titleLabelLeft, 1);
     expect(searchTableGeometry.controlsBackground).toBe('rgba(0, 0, 0, 0)');
-    expect(searchTableGeometry.controlsPseudoBefore).toBe('none');
-    expect(searchTableGeometry.controlsPseudoAfter).toBe('none');
     expect(searchTableGeometry.titleTop).toBe(searchTableGeometry.headerTop);
     expect(searchTableGeometry.titleBottom).toBeGreaterThan(searchTableGeometry.titleTop);
     expect(searchTableGeometry.titleLabelLeft).toBeGreaterThan(searchTableGeometry.headerLeft);
@@ -1043,7 +1114,7 @@ test.describe('table view', () => {
 
     await page.locator('.panel-title-editor').first().click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Edit displayed fields', exact: true }).click();
-    await expect(page.getByRole('dialog', { name: 'Add column' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Display' })).toBeVisible();
     await expect(tableControls).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(grid).toHaveAttribute('aria-rowcount', '1');

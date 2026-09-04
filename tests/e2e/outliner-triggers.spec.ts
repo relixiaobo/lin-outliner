@@ -1516,6 +1516,35 @@ test.describe('outliner trigger parity', () => {
     await expect(rowEditor(page, newNodeId)).toBeFocused();
   });
 
+  test('field-name Tab relocation restores unclaimed focus after settlement', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const firstFieldId = await lastTodayChildId(page);
+    if (!firstFieldId) throw new Error('missing first field');
+
+    await trailingEditor(page).click();
+    await page.keyboard.type('>');
+    const secondFieldId = await lastTodayChildId(page);
+    if (!secondFieldId || secondFieldId === firstFieldId) throw new Error('missing second field');
+
+    const secondFieldName = row(page, secondFieldId).locator('.field-name-input');
+    await expect(secondFieldName).toBeFocused();
+    const releaseRelocation = await holdOutlineMutation(page, { op: 'move' });
+    await page.keyboard.press('Tab');
+
+    await expect(secondFieldName).toBeFocused();
+    await secondFieldName.evaluate((element) => (element as HTMLElement).blur());
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+
+    await releaseRelocation();
+    await expect.poll(async () => (await nodeById(page, secondFieldId))?.parentId).toBe(firstFieldId);
+    await expect(page.locator(`[data-focus-node-id="${secondFieldId}"]:focus`)).toHaveCount(1);
+
+    await page.keyboard.press('Shift+Tab');
+    await expect.poll(async () => (await nodeById(page, secondFieldId))?.parentId).toBe(ids.today);
+    await expect(page.locator(`[data-focus-node-id="${secondFieldId}"]:focus`)).toHaveCount(1);
+  });
+
   test('typing a field name offers an existing field to reuse and relinks on select', async ({ page }) => {
     // Author one field named "Milestone" on `today` (a name the fixture does not
     // seed), then commit it so its definition is a reuse candidate.

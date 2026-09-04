@@ -882,9 +882,6 @@ export const en = {
     // rules, and the progressive filter editor.
     viewToolbar: {
       toolbarAriaLabel: 'View toolbar',
-      viewMode: 'View mode',
-      outline: 'Outline',
-      table: 'Table',
       filterByName: 'Filter by name',
       nameFilterPlaceholder: 'Name',
       clearNameFilter: 'Clear name filter',
@@ -936,12 +933,14 @@ export const en = {
       booleanNotDone: 'Not done',
       booleanYes: 'Yes',
       booleanNo: 'No',
-      // Compact active-view chips and displayed field metadata.
-      summaryAriaLabel: 'Active view settings',
-      displayedFieldsAriaLabel: 'Displayed fields',
-      summaryDisplayCount: (count: number) => `${count} displayed field${count > 1 ? 's' : ''}`,
-      summaryGroupedBy: ({ field }: { field: string }) => `Grouped by ${field}`,
-      summarySortedBy: ({ field, arrow }: { field: string; arrow: string }) => `Sorted by ${field} ${arrow}`,
+      filterChipAnyValues: ({ values }: { values: string[] }) => values.join(' or '),
+      filterChipAllValues: ({ values }: { values: string[] }) => values.join(' and '),
+      filterChipCreated: 'Created',
+      filterChipUpdated: 'Edited',
+      filterChipEmpty: ({ field }: { field: string }) => `${field}: Empty`,
+      filterChipSet: ({ field }: { field: string }) => `${field}: Set`,
+      filterChipFieldValue: ({ field, value }: { field: string; value: string }) => `${field}: ${value}`,
+      filterChipConditionValue: ({ field, operator, value }: { field: string; operator: string; value: string }) => `${field} · ${operator} · ${value}`,
     },
     table: {
       ariaLabel: ({ title }: { title: string }) => `${title} table`,

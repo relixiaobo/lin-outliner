@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import type { ContentBearingNodeProjection, NodeId } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
 import { focusTargetMatches } from '../focus/focusModel';
+import { focusElementForRequest } from '../focus/focusRequestDom';
 import { isCompositionLive } from '../editor/compositionRelay';
 import {
   insertTextIntoControlValue,
@@ -73,7 +74,7 @@ export function NodeDescription({
     }
     const input = inputRef.current;
     if (!input) return;
-    input.focus();
+    if (!focusElementForRequest(input)) return;
     setTextControlCursor(input, focusRequest.placement);
     onFocusRequestConsumed?.(focusRequest);
   }, [editing, focusRequest, focusTarget, onEditingChange, onFocusRequestConsumed]);
@@ -86,7 +87,7 @@ export function NodeDescription({
     }
     const input = inputRef.current;
     if (!input) return;
-    input.focus();
+    if (!focusElementForRequest(input)) return;
     const next = insertTextIntoControlValue({
       value: input.value,
       selectionStart: input.selectionStart,

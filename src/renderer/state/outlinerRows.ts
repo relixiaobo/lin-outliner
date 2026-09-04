@@ -28,7 +28,11 @@ import {
 import type { ReferenceSummary } from '../../core/references';
 import { isDescendantOf, resolveReferenceChainTargetId } from '../../core/actions/rowFacets';
 import { TRASH_ID } from '../../core/types';
-import { INTERNAL_VIEW_NODE_TYPES, orderedByFiniteOrder } from '../../core/viewConfig';
+import {
+  INTERNAL_VIEW_NODE_TYPES,
+  orderedByFiniteOrder,
+  resolveViewToolbarVisible,
+} from '../../core/viewConfig';
 import { fieldSlotValueSource, nodeFieldSlots, type NodeFieldSlot } from '../../core/fieldSlots';
 
 export type OutlinerRowItem =
@@ -84,13 +88,6 @@ export interface ViewConfig {
   displayFields: ViewDisplayField[];
 }
 
-export interface ViewFieldValue {
-  id: NodeId;
-  field: string;
-  label: string;
-  values: string[];
-}
-
 export function hiddenFieldKey(parentId: NodeId, fieldEntryId: NodeId): string {
   return `${parentId}:${fieldEntryId}`;
 }
@@ -102,7 +99,7 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
     return {
       viewDefId: null,
       viewMode: 'list',
-      toolbarVisible: false,
+      toolbarVisible: resolveViewToolbarVisible(parent, undefined),
       groupField: null,
       sortRules: [],
       filterRules: [],
@@ -114,7 +111,7 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
   return {
     viewDefId: viewDef.id,
     viewMode: viewDef.viewMode ?? 'list',
-    toolbarVisible: Boolean(viewDef.toolbarVisible),
+    toolbarVisible: resolveViewToolbarVisible(parent, viewDef.toolbarVisible),
     groupField: viewDef.groupField ?? null,
     sortRules: viewChildren
       .filter((child): child is Extract<NodeProjection, { type: 'sortRule' }> => child.type === 'sortRule' && Boolean(child.sortField))
@@ -153,7 +150,7 @@ export function showsResultViewControls(
   node: NodeProjection | undefined,
   view: Pick<ViewConfig, 'toolbarVisible'> | null | undefined,
 ): boolean {
-  return Boolean(node && (node.type === 'search' || view?.toolbarVisible));
+  return Boolean(node && view?.toolbarVisible);
 }
 
 function directChildren(parent: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): NodeProjection[] {
@@ -781,26 +778,6 @@ export function fieldSlotForViewCell(
   const displayed = displayNode(rowNode, byId);
   if (!displayed) return undefined;
   return nodeFieldSlots(byId, displayed.id).find((slot) => slot.fieldDefId === fieldId);
-}
-
-export function viewDisplayValuesFor(
-  rowNode: NodeProjection,
-  view: ViewConfig,
-  byId: Map<NodeId, NodeProjection>,
-  systemFieldContext?: SystemFieldContext,
-): ViewFieldValue[] {
-  return visibleDisplayFields(view).flatMap((displayField): ViewFieldValue[] => {
-    const values = displayFieldValuesFor(rowNode, displayField.field, byId, systemFieldContext)
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (values.length === 0) return [];
-    return [{
-      id: displayField.id,
-      field: displayField.field,
-      label: displayField.label?.trim() || fieldChoiceLabel(displayField.field, byId),
-      values,
-    }];
-  });
 }
 
 export function collectViewFieldChoices(

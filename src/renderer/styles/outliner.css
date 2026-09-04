@@ -3,10 +3,9 @@
   flex-direction: column;
   container-type: inline-size;
   --outliner-leading-bleed: var(--row-bullet-start);
-  /* The row wrapper bleeds left to expose its marker gutter. Add back the
-     remaining leading grid width to recover the row's content-text axis. */
-  --outliner-row-content-start: calc(
-    var(--row-leading-width) + var(--row-edge) - var(--outliner-leading-bleed)
+  /* Center full-size view controls on the ordinary bullet rail. */
+  --outliner-view-chrome-start: calc(
+    var(--row-bullet-center) - var(--outliner-leading-bleed) - var(--control-size-xl) / 2
   );
   --field-row-min-height: 32px;
   --field-row-padding-block: var(--space-1);
@@ -270,29 +269,10 @@
 .view-toolbar {
   position: relative;
   display: block;
-  width: min(100%, 760px);
-  margin: 2px 0 6px var(--outliner-row-content-start);
+  width: auto;
+  margin: 2px 0 6px var(--outliner-view-chrome-start);
   padding: var(--space-1) 0;
   color: var(--text-secondary);
-}
-
-.view-toolbar::before,
-.view-toolbar::after {
-  position: absolute;
-  right: var(--space-6);
-  left: 0;
-  height: 1px;
-  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
-  content: "";
-  pointer-events: none;
-}
-
-.view-toolbar::before {
-  top: 0;
-}
-
-.view-toolbar::after {
-  bottom: 0;
 }
 
 .view-toolbar-button-row {
@@ -300,55 +280,23 @@
   align-items: center;
   gap: var(--space-2);
   min-height: var(--control-size-xl);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
-.view-toolbar-mode {
+.view-toolbar-button-row::-webkit-scrollbar {
+  display: none;
+}
+
+.view-toolbar-control-group {
   display: inline-flex;
-  min-height: var(--control-size-xl);
+  min-width: 0;
+  flex: 0 0 auto;
   align-items: center;
-  border-radius: var(--radius-pill);
-  box-shadow: var(--segmented-track-shadow);
-  padding: var(--space-hairline);
-}
-
-.view-toolbar-mode.is-compact {
-  width: calc(2 * var(--control-size-xl));
-  min-height: var(--control-size-xl);
-  flex: 0 0 calc(2 * var(--control-size-xl));
-  gap: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  box-shadow: none;
-  padding: 0;
-}
-
-.view-toolbar-mode-button {
-  display: inline-flex;
-  min-height: calc(var(--control-size-xl) - 2 * var(--space-hairline));
-  align-items: center;
+  flex-wrap: nowrap;
   gap: var(--space-2);
-  border-radius: var(--radius-pill);
-  color: var(--text-secondary);
-  font-size: var(--font-ui-sm);
-  padding: 0 var(--space-3);
-}
-
-.view-toolbar-mode.is-compact .view-toolbar-mode-button {
-  width: var(--control-size-xl);
-  height: var(--control-size-xl);
-  min-height: var(--control-size-xl);
-  gap: 0;
-  padding: 0;
-}
-
-.view-toolbar-mode-button:hover {
-  color: var(--text-primary);
-}
-
-.view-toolbar-mode-button.is-active {
-  background: var(--control-active);
-  color: var(--text-primary);
 }
 
 /* Table is a dense presentation of the same child nodes, not a framed card.
@@ -371,29 +319,7 @@
   margin: var(--space-2) 0 var(--space-6);
 }
 
-.view-toolbar.is-compact-controls {
-  width: 100%;
-  max-width: calc(100% - var(--outliner-row-content-start));
-  padding: 0;
-}
-
-.view-toolbar.is-compact-controls::before,
-.view-toolbar.is-compact-controls::after {
-  display: none;
-}
-
-.view-toolbar.is-compact-controls > .view-toolbar-button-row {
-  min-height: var(--control-size-xl);
-  align-content: flex-start;
-  flex-wrap: wrap;
-  gap: 0;
-}
-
-.view-toolbar.is-compact-controls .view-toolbar-pill {
-  flex: 0 0 var(--control-size-xl);
-}
-
-.outliner-table-scope > .view-toolbar.is-compact-controls {
+.outliner-table-scope > .view-toolbar {
   max-width: calc(100% - var(--space-3));
   margin: 0 0 var(--space-2) var(--space-3);
 }
@@ -446,7 +372,28 @@
 .outliner-table-title-header,
 .outliner-table-column-header {
   border-bottom: 1px solid var(--separator);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-3) 0 var(--row-edge);
+}
+
+.outliner-table-title-leading,
+.outliner-table-column-leading {
+  flex: 0 0 var(--row-leading-width);
+}
+
+.outliner-table-title-leading {
+  margin-left: calc(-1 * var(--table-title-leading-offset));
+}
+
+.outliner-table-title-kind,
+.outliner-table-column-kind {
+  display: inline-flex;
+  grid-column: 3;
+  width: var(--row-bullet-width);
+  height: var(--row-bullet-width);
+  flex: 0 0 var(--row-bullet-width);
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
 }
 
 .outliner-table-title-label {
@@ -457,19 +404,10 @@
 }
 
 .outliner-table-column-header {
-  gap: var(--space-2);
+  gap: 0;
 }
 
-.outliner-table-column-kind {
-  display: inline-flex;
-  width: var(--row-bullet-width);
-  height: var(--row-bullet-width);
-  flex: 0 0 var(--row-bullet-width);
-  align-items: center;
-  justify-content: center;
-  color: var(--text-tertiary);
-}
-
+.outliner-table-title-kind > svg,
 .outliner-table-column-kind > svg {
   width: var(--row-bullet-width);
   height: var(--row-bullet-width);
@@ -650,7 +588,8 @@ button.outliner-table-column-kind:focus-visible {
   white-space: nowrap;
 }
 
-.outliner-table-cell.has-node-value {
+.outliner-table-cell.has-node-value,
+.outliner-table-cell:has(> .field-value-outliner) {
   align-items: stretch;
   overflow: visible;
   padding: 0;
@@ -702,17 +641,23 @@ button.outliner-table-column-kind:focus-visible {
   min-height: var(--field-row-min-height);
 }
 
-.outliner-table-filtered-row {
+.outliner-table-filtered-row,
+.outliner-table-group-row {
   display: grid;
   width: max(100%, var(--table-min-width));
   min-width: var(--table-min-width);
   grid-template-columns: var(--table-columns);
 }
 
-.outliner-table-filtered-cell {
+.outliner-table-filtered-cell,
+.outliner-table-group-cell {
   min-width: 0;
   grid-column: 1 / -2;
   border-bottom: 1px solid var(--separator);
+}
+
+.outliner-table-group-cell .view-group-heading {
+  margin-left: var(--space-4);
 }
 
 .outliner-table-filtered-cell .filtered-out-heading {
@@ -859,15 +804,14 @@ button.outliner-table-column-kind:focus-visible {
   color: var(--text-primary);
 }
 
-/* Restates active display/group/filter dimensions inline with the toolbar
-   actions. Sort only uses this while its popover is open; the closed state lives
-   on the sort button icon. */
+/* Filter chips represent individual editable rules and stay grouped with the
+   configured Filter control. Singular view settings use their control state only. */
 .view-toolbar-summary {
   display: flex;
-  max-width: min(520px, 100%);
   min-width: 0;
+  flex: 0 0 auto;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--space-1);
   padding: 0;
   color: var(--text-tertiary);
@@ -951,6 +895,7 @@ button.outliner-table-column-kind:focus-visible {
   display: inline-flex;
   width: var(--control-size-xl);
   height: var(--control-size-xl);
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
@@ -962,13 +907,13 @@ button.outliner-table-column-kind:focus-visible {
   color: var(--text-primary);
 }
 
-.view-toolbar-pill.is-active {
-  background: var(--control-active);
-  color: var(--text-primary);
+.view-toolbar-pill.is-configured {
+  background: transparent;
+  color: var(--control-on);
 }
 
-.view-toolbar-pill.is-active:hover {
-  color: var(--text-primary);
+.view-toolbar-pill.is-configured:hover {
+  color: var(--control-on);
 }
 
 .view-toolbar-pill.is-open {
@@ -976,7 +921,7 @@ button.outliner-table-column-kind:focus-visible {
   color: var(--text-primary);
 }
 
-.view-toolbar-pill.is-active.is-open {
+.view-toolbar-pill.is-configured.is-open {
   color: var(--text-primary);
 }
 
@@ -1345,7 +1290,7 @@ button.outliner-table-column-kind:focus-visible {
   min-height: var(--control-size-md);
   align-items: center;
   gap: var(--space-2);
-  margin: var(--space-4) 0 var(--space-1) var(--row-selection-start);
+  margin: var(--space-4) 0 var(--space-1) var(--outliner-view-chrome-start);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: var(--font-ui-sm);
@@ -1631,6 +1576,53 @@ button.outliner-table-column-kind:focus-visible {
   background: var(--row-selected);
   content: "";
   pointer-events: none;
+}
+
+/* A Source preview and its owner title are one selectable Node composition.
+   Two adjoining paint planes retain the direct-row DOM required by editing and
+   drag logic while presenting one uninterrupted frame around that composition. */
+.row-wrap:has(> .outline-source-preview-row > .outline-source-preview)
+  > .outline-source-preview-row {
+  isolation: isolate;
+}
+
+.row-wrap:has(> .outline-source-preview-row > .outline-source-preview)
+  > .outline-source-preview-row::before {
+  position: absolute;
+  top: 1px;
+  right: 6px;
+  bottom: 0;
+  left: var(--row-selection-start);
+  z-index: 0;
+  content: "";
+  pointer-events: none;
+}
+
+.row-wrap:has(
+  > .outline-source-preview-row > .outline-source-preview
+):has(> .row.selected:not(.drop-before):not(.drop-after))
+  > .outline-source-preview-row::before {
+  border: 1px solid color-mix(in srgb, var(--row-selection-border) 34%, transparent);
+  border-bottom: 0;
+  border-radius: var(--radius-row) var(--radius-row) 0 0;
+  background: var(--row-selected);
+}
+
+.row-wrap:has(> .outline-source-preview-row > .outline-source-preview)
+  > .outline-source-preview-row > * {
+  position: relative;
+  z-index: 1;
+}
+
+.row-wrap:has(> .outline-source-preview-row > .outline-source-preview)
+  > .row:not(.drop-before):not(.drop-after)::before {
+  top: 0;
+}
+
+.row-wrap:has(> .outline-source-preview-row > .outline-source-preview)
+  > .row.selected:not(.drop-before):not(.drop-after)::before {
+  border-top: 0;
+  border-radius: 0 0 var(--radius-row) var(--radius-row);
 }
 
 .row.selected > * {
@@ -2694,44 +2686,6 @@ button.outliner-table-column-kind:focus-visible {
   box-shadow: none;
 }
 
-.view-display-fields {
-  display: flex;
-  max-width: min(560px, 100%);
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  margin: var(--space-hairline) 0 0;
-  color: var(--text-tertiary);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta-tight);
-  user-select: none;
-}
-
-.view-display-field {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  align-items: baseline;
-  gap: var(--space-1);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-  padding: 0 var(--space-2);
-}
-
-.view-display-field-label {
-  flex: 0 0 auto;
-  color: var(--text-tertiary);
-  font-weight: 500;
-}
-
-.view-display-field-value {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .panel-title-editor .node-description {
   flex-basis: 100%;
   margin-top: 2px;
@@ -2885,6 +2839,18 @@ button.outliner-table-column-kind:focus-visible {
   font-weight: inherit;
   padding: 0 var(--space-hairline);
   text-decoration: none;
+}
+
+.row-editor .ProseMirror a[href] {
+  color: var(--link);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.12em;
+}
+
+.row-editor .ProseMirror a[href]:hover {
+  color: var(--link-hover);
+  cursor: pointer;
 }
 
 .row-editor .inline-ref:hover {
@@ -3186,9 +3152,14 @@ button.outliner-table-column-kind:focus-visible {
   text-align: left;
 }
 
-.node-context-item:hover {
+.node-context-item:hover,
+.node-context-item.is-open {
   background: var(--control-hover);
   color: var(--text-primary);
+}
+
+.node-context-submenu {
+  min-width: 0;
 }
 
 .node-context-item.is-danger {
