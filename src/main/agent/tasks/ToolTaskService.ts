@@ -28,6 +28,7 @@ import {
   type ToolTaskRecord,
   type ToolTaskSchedulerLimits,
   type ToolTaskSchedulingPolicy,
+  type ToolTaskProcessSpec,
   type ToolTaskSupervisorConfig,
   type ToolTaskSupervisorHeartbeat,
   type ToolTaskSupervisorIdentity,
@@ -43,6 +44,7 @@ const TASK_HEARTBEAT_STALE_MS = 3_000;
 const TASK_STOP_WAIT_MS = 3_000;
 const TASK_DELIVERY_BATCH_LIMIT = 8;
 const TASK_OUTPUT_PREVIEW_BYTES = 30_000;
+const TOOL_TASK_PRIVATE_CONTROL_MAX_BYTES = 64 * 1024;
 const DEFAULT_TOOL_TASK_SCHEDULER_LIMITS: ToolTaskSchedulerLimits = Object.freeze({
   maxConcurrentGlobal: 8,
   maxConcurrentThread: 4,
@@ -90,6 +92,8 @@ export interface StartToolTaskInput {
   readonly producer: string;
   readonly description: string;
   readonly command: string;
+  readonly process?: ToolTaskProcessSpec;
+  readonly privateControlInput?: Uint8Array;
   readonly cwd: string;
   readonly stdin?: string;
   readonly timeoutMs: number;
@@ -174,6 +178,7 @@ export class ToolTaskService {
     if (this.closing) throw new Error('Tool Task admission is closed');
     if (!this.initialized) throw new Error('Tool Task recovery has not completed');
     if (!this.host?.ownerExists(input.ownerThreadId)) throw new Error('Tool Task owner does not exist');
+    validateProcessInput(input);
     const run = this.startAccepted(input);
     this.startRuns.add(run);
     try {
@@ -321,10 +326,10 @@ export class ToolTaskService {
     let supervisor: ChildProcess | null = null;
     try {
       const config: ToolTaskSupervisorConfig = {
-        version: 1,
+        version: 2,
         taskId,
         nonce: task.nonce,
-        command: input.command,
+        process: input.process ?? { kind: 'shell', command: input.command },
         cwd: path.resolve(input.cwd),
         stdinPath: paths.stdin,
         stdoutPath: paths.stdout,
@@ -360,11 +365,14 @@ export class ToolTaskService {
           TENON_TOOL_TASK_PROGRESS_FILE: paths.progress,
         },
         detached: process.platform !== 'win32',
-        stdio: 'ignore',
+        stdio: input.privateControlInput ? ['ignore', 'ignore', 'ignore', 'pipe'] : 'ignore',
         windowsHide: true,
         sandbox: input.sandbox,
       });
       if (!supervisor.pid) throw new Error('Tool Task supervisor did not receive a process identity');
+      if (input.privateControlInput) {
+        await writePrivateControl(supervisor, input.privateControlInput);
+      }
       this.supervisors.set(taskId, supervisor);
       supervisor.once('close', () => {
         if (this.supervisors.get(taskId) === supervisor) this.supervisors.delete(taskId);
@@ -1098,6 +1106,46 @@ export class ToolTaskService {
     }
   }
 
+}
+
+function validateProcessInput(input: StartToolTaskInput): void {
+  const processSpec = input.process;
+  if (!processSpec || processSpec.kind === 'shell') {
+    if (input.privateControlInput) throw new Error('Private Tool Task control input requires a direct process');
+    return;
+  }
+  if (!processSpec.executable || processSpec.executable.includes('\0')) {
+    throw new Error('Direct Tool Task executable is invalid');
+  }
+  if (processSpec.args.some((arg) => arg.includes('\0'))
+    || Object.entries(processSpec.env).some(([key, value]) => !key || key.includes('=') || key.includes('\0') || value.includes('\0'))) {
+    throw new Error('Direct Tool Task arguments or environment are invalid');
+  }
+  if (processSpec.privateControl !== Boolean(input.privateControlInput)) {
+    throw new Error('Direct Tool Task private control declaration does not match its input');
+  }
+  if (input.privateControlInput && input.privateControlInput.byteLength === 0) {
+    throw new Error('Private Tool Task control input must not be empty');
+  }
+  if (input.privateControlInput && input.privateControlInput.byteLength > TOOL_TASK_PRIVATE_CONTROL_MAX_BYTES) {
+    throw new Error(`Private Tool Task control input exceeds ${TOOL_TASK_PRIVATE_CONTROL_MAX_BYTES} bytes`);
+  }
+}
+
+async function writePrivateControl(supervisor: ChildProcess, input: Uint8Array): Promise<void> {
+  const stream = supervisor.stdio[3];
+  if (!stream || typeof (stream as NodeJS.WritableStream).write !== 'function') {
+    throw new Error('Tool Task supervisor private control pipe is unavailable');
+  }
+  const writable = stream as NodeJS.WritableStream;
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    writable.once('error', onError);
+    writable.end(Buffer.from(input), () => {
+      writable.removeListener('error', onError);
+      resolve();
+    });
+  });
 }
 
 function schedulingPolicy(

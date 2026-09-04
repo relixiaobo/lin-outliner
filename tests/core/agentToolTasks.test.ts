@@ -206,6 +206,69 @@ describe('ToolTaskService', () => {
     expect(timedOut).toMatchObject({ state: 'timed_out', outcomeReason: 'timeout' });
   });
 
+  test('runs a direct process and transfers private control bytes only through fd 3', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const script = [
+      "const fs = require('node:fs');",
+      "const control = fs.readFileSync(3, 'utf8');",
+      "let stdin = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { stdin += chunk; });",
+      "process.stdin.on('end', () => process.stdout.write(JSON.stringify({",
+      "control, stdin, base: process.env.BASE_VISIBLE, direct: process.env.DIRECT_VISIBLE,",
+      "electron: process.env.ELECTRON_RUN_AS_NODE ?? 'unset',",
+      '})));',
+    ].join('');
+    const started = await startHidden(service, 'delegate run --input - --output json', {
+      stdin: 'task intent',
+      env: { ...process.env, BASE_VISIBLE: 'base', ELECTRON_RUN_AS_NODE: '1' },
+      process: {
+        kind: 'exec',
+        executable: process.execPath,
+        args: ['-e', script],
+        env: { DIRECT_VISIBLE: 'direct' },
+        privateControl: true,
+      },
+      privateControlInput: Buffer.from('private capability'),
+    });
+    const terminal = await waitForTerminal(service, started.taskId);
+    const output = await service.output(terminal.taskId, OWNER_ID);
+
+    expect(terminal).toMatchObject({ state: 'succeeded', outcomeReason: 'exit_zero' });
+    expect(JSON.parse(output!.stdout)).toEqual({
+      control: 'private capability',
+      stdin: 'task intent',
+      base: 'base',
+      direct: 'direct',
+      electron: 'unset',
+    });
+    expect(await readFile(path.join(terminal.detailPath, 'producer.json'), 'utf8'))
+      .not.toContain('private capability');
+  });
+
+  test('rejects mismatched private control declarations before creating a task', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const direct = {
+      kind: 'exec' as const,
+      executable: process.execPath,
+      args: ['--version'],
+      env: {},
+      privateControl: true,
+    };
+
+    await expect(service.start(startInput('direct', { process: direct })))
+      .rejects.toThrow('private control declaration does not match');
+    await expect(service.start(startInput('shell', { privateControlInput: Buffer.from('secret') })))
+      .rejects.toThrow('requires a direct process');
+    await expect(service.start(startInput('direct', {
+      process: direct,
+      privateControlInput: Buffer.alloc(0),
+    }))).rejects.toThrow('must not be empty');
+    expect(fixture.store.nonterminal()).toEqual([]);
+  });
+
   test('stops the owned process group and preserves the first terminal race result', async () => {
     const fixture = await createFixture();
     const service = await createService(fixture, passiveHost());
@@ -265,10 +328,10 @@ describe('ToolTaskService', () => {
     ]);
     const startedAt = Date.now();
     const config: ToolTaskSupervisorConfig = {
-      version: 1,
+      version: 2,
       taskId: 'task-identity-failure',
       nonce: 'nonce-identity-failure',
-      command: 'sleep 30',
+      process: { kind: 'shell', command: 'sleep 30' },
       cwd: root,
       stdinPath: paths.stdin,
       stdoutPath: paths.stdout,

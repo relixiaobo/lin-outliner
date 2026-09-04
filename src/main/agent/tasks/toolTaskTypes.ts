@@ -75,11 +75,21 @@ export interface ToolTaskLease {
   readonly releasedAt: number | null;
 }
 
+export type ToolTaskProcessSpec =
+  | { readonly kind: 'shell'; readonly command: string }
+  | {
+    readonly kind: 'exec';
+    readonly executable: string;
+    readonly args: readonly string[];
+    readonly env: Readonly<Record<string, string>>;
+    readonly privateControl: boolean;
+  };
+
 export interface ToolTaskSupervisorConfig {
-  readonly version: 1;
+  readonly version: 2;
   readonly taskId: string;
   readonly nonce: string;
-  readonly command: string;
+  readonly process: ToolTaskProcessSpec;
   readonly cwd: string;
   readonly stdinPath: string;
   readonly stdoutPath: string;

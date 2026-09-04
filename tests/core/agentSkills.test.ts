@@ -1530,6 +1530,24 @@ describe('agent skills', () => {
     }
   });
 
+  test('loads delegate as a model-only inline built-in Skill', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const delegate = await runtime.getSkill('delegate');
+
+    expect(delegate).toMatchObject({
+      name: 'delegate',
+      source: 'built-in',
+      execution: 'inline',
+      userInvocable: false,
+      modelInvocable: true,
+      allowedTools: [],
+    });
+    expect(delegate?.body).toContain('delegate run --input - --output json');
+    expect(delegate?.body).toContain('Completion is pushed; do not poll');
+    expect(delegate?.body).toContain('After user cancellation');
+    expect(delegate?.body).toContain('without a new user request.');
+  });
+
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {
     const repoRoot = path.join(path.sep, 'repo');
     const resourcesPath = path.join(path.sep, 'Applications', 'Tenon.app', 'Contents', 'Resources');
@@ -2177,11 +2195,18 @@ describe('agent skills', () => {
 });
 
 describe('built-in skill resource packaging', () => {
-  test('stages the complete public outline workflow into one packaged Skill', async () => {
+  test('stages the complete public workflows into packaged Skills', async () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
     await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
-    expect((await readdir(generatedRoot)).sort()).toEqual(['outline']);
+    expect((await readdir(generatedRoot)).sort()).toEqual(['delegate', 'outline']);
+    const delegateRoot = path.join(generatedRoot, 'delegate');
+    const delegateRaw = await readFile(path.join(delegateRoot, 'SKILL.md'), 'utf8');
+    expect(delegateRaw).toContain('delegate run --input - --output json');
+    expect(delegateRaw).toContain('run_in_background: true');
+    expect(delegateRaw).toContain('After user cancellation');
+    expect(delegateRaw).toContain('without a new user request.');
+    expect((await readdir(delegateRoot)).sort()).toEqual(['SKILL.md']);
     const outlineRoot = path.join(generatedRoot, 'outline');
     expect(await readFile(path.join(outlineRoot, 'SKILL.md'), 'utf8'))
       .toContain('outline example edit complete');
