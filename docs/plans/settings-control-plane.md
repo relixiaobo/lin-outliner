@@ -10,8 +10,8 @@ router, compatibility layer, or transitional Settings shell ships.
 - **OBJ-1:** `Settings...` and `Cmd+,` open the real scalar configuration file
   in the user's editor. A valid save applies automatically.
 - **OBJ-2:** People and authorized Agents configure Tenon by reading and editing
-  the same documented files. There is no second mutation API with different
-  behavior.
+  the same documented files. An on-demand Skill teaches the workflow without
+  creating a second mutation API.
 - **OBJ-3:** Invalid or partially saved text never replaces the last accepted
   configuration or prevents Tenon from starting.
 - **OBJ-4:** Configuration contains only declarative preferences. Resources,
@@ -32,6 +32,8 @@ that is not declarative configuration.
   discovery, validation, schema, inspection, or status commands.
 - Do not build a Settings-specific Agent tool, authenticated Settings router,
   route manifest, or generic Settings receipt protocol.
+- Do not turn configuration guidance into a command wrapper, duplicate key
+  catalog, validation engine, permission grant, or always-loaded prompt.
 - Do not ask an Agent to call `get`, `set`, `check`, `reload`, and `show` around a
   file edit. The file edit is the configuration mutation.
 - Do not build a replacement Settings window, generated form, embedded editor,
@@ -141,13 +143,34 @@ resolved public configuration directory to authorized local Agent execution as
 - changing a file outside Tenon follows the same watcher path regardless of
   whether a person, Agent file tool, shell command, or editor wrote it.
 
-There is no Settings Skill or CLI wrapper. An authorized Agent reads the schema
-or existing file with ordinary filesystem tools, makes a source edit, and reports
-that file mutation truthfully. It does not claim runtime application from
-file-write success alone. One short local-tool guidance rule names
-`TENON_CONFIG_DIR` and directs the Agent to the generated schema; it contains no
-copied key catalog or defaults. Tenon owns runtime validation, application, and
-the visible invalid-save notice.
+One immutable built-in inline Skill named `configuration` is the Agent's compact,
+on-demand guide. Its catalog description makes it discoverable for requests to
+change Tenon preferences or shortcuts. Loading it adds instructions only; it
+does not add tools, commands, permissions, execution overrides, or hidden state.
+The Skill tells the Agent to:
+
+1. resolve `TENON_CONFIG_DIR` through the ordinary shell environment;
+2. choose `settings.jsonc` or `keybindings.jsonc` by user intent;
+3. read the matching generated schema and then the existing override file when
+   present;
+4. make the smallest source edit with generic filesystem tools, preserving
+   unrelated comments and overrides;
+5. never place credentials, resources, operations, or contextual state in these
+   files; and
+6. report only the desired file change it can prove, not synchronous acceptance
+   or effective runtime application.
+
+The Skill contains no copied setting keys, values, defaults, shortcut identities,
+or schema fragments. Those facts come only from the generated schemas, so adding
+a setting or command cannot make guidance stale. It also does not teach a manual
+JSONC parser or validator; Tenon's watcher remains authoritative. A missing user
+file means an empty override document, not a reason to search elsewhere or call
+a setup command. If `TENON_CONFIG_DIR` is absent, the Skill refuses to guess a
+home-directory path. If existing bytes cannot be edited confidently as JSONC,
+the Agent preserves them and reports the blocking parse problem instead of
+replacing the document. If the requested work is a resource, operation, secret,
+or contextual control, the Skill names that category and does not touch either
+configuration file.
 
 ### 3. Scalar configuration
 
@@ -353,10 +376,11 @@ If no application accepts the JSONC document, Tenon reveals it in Finder and
 offers its exact path rather than opening an embedded fallback.
 
 **Agent edits configuration.** An authorized Agent resolves
-`TENON_CONFIG_DIR`, reads the relevant schema/file through ordinary filesystem
-tools, and edits only the requested override. Existing filesystem policy admits
-or rejects the write. Tenon observes the same save path as a human edit. The
-Agent reports the file change, not an invented synchronous application receipt.
+the `configuration` Skill, follows it to `TENON_CONFIG_DIR`, reads the relevant
+schema/file through ordinary filesystem tools, and edits only the requested
+override. Existing filesystem policy admits or rejects the write. Tenon observes
+the same save path as a human edit. The Agent reports the file change, not an
+invented synchronous application receipt.
 
 **Person manages a domain.** A menu command or contextual deep link opens the
 owning manager or surface directly. That owner reads its bounded projection,
@@ -377,17 +401,21 @@ silently overwrites the desired file.
 - **FR-3:** People and authorized Agents mutate scalar configuration only by
   editing `settings.jsonc`; no Settings-specific mutation command, tool, router,
   receipt, or alternate preference writer exists.
-- **FR-4:** The shared command registry, `keybindings.jsonc`, schema, watcher,
+- **FR-4:** The built-in inline `configuration` Skill provides only on-demand
+  workflow guidance and derives all configurable facts from generated schemas.
+  It adds no command, tool, permission, execution override, or duplicated
+  configuration contract.
+- **FR-5:** The shared command registry, `keybindings.jsonc`, schema, watcher,
   conflict validation, native registration, runtime matching, menus, and hints
   resolve every configurable shortcut from one accepted owner.
-- **FR-5:** Every current shortcut handler/hint is classified as configurable or
+- **FR-6:** Every current shortcut handler/hint is classified as configurable or
   as one named fixed interaction, and failed candidates do not displace the
   previous effective binding set.
-- **FR-6:** Every non-configuration workflow in the ownership table remains
+- **FR-7:** Every non-configuration workflow in the ownership table remains
   directly reachable through its domain after the Settings shell is removed.
-- **FR-7:** Translation preferences remain preview-contextual and persistent
+- **FR-8:** Translation preferences remain preview-contextual and persistent
   translation-cache maintenance remains a Data operation.
-- **FR-8:** The eight inherited ownership shapes are removed without compatibility
+- **FR-9:** The eight inherited ownership shapes are removed without compatibility
   adapters or replacement global coupling.
 - **NFR-1:** Public configuration reads are bounded to 256 KiB per file; watcher
   work is coalesced and never blocks startup or renderer interaction.
@@ -406,49 +434,56 @@ silently overwrites the desired file.
 - **AC-3 (FR-1, FR-2):** Startup and invalid-save tests prove desired/accepted/
   effective truth, whole-candidate rejection, current-registry last-known-good
   recovery, defaults after deletion, and preservation of invalid desired bytes.
-- **AC-4 (FR-2, FR-8):** Theme/language update every window and native menu;
+- **AC-4 (FR-2, FR-9):** Theme/language update every window and native menu;
   Memory disable uses its admission barrier; update scheduling consumes scalar
   policy. Restart proves no legacy store can override accepted configuration.
-- **AC-5 (FR-3):** E2E proves `Settings...` and `Cmd+,` create/open the exact
+- **AC-5 (FR-3, FR-4):** E2E proves `Settings...` and `Cmd+,` create/open the exact
   public file in the external editor. A Full Access Agent can discover the same
-  path and apply a valid change with generic file tools; restricted and blocked
-  Agents cannot escape existing filesystem policy. No Settings or Configuration
-  CLI, Settings tool/router, or application receipt is present.
-- **AC-6 (FR-4, FR-5):** Shortcut tests classify every handler/hint, round-trip
+  path by loading `configuration`, read the generated schema, and apply a valid
+  minimal change with generic file tools. Restricted and blocked Agents cannot
+  escape existing filesystem policy. No Settings or Configuration CLI, Settings
+  tool/router, or application receipt is present.
+- **AC-6 (FR-4):** Skill tests prove its catalog description routes preference
+  and shortcut intents, its instructions contain no configurable keys/defaults/
+  command identities or execution overrides, and valid tasks read the current
+  generated schema before editing. Missing files, invalid current files,
+  out-of-domain requests, and write-only settlement language are covered.
+- **AC-7 (FR-5, FR-6):** Shortcut tests classify every handler/hint, round-trip
   portable bindings, cover alternate/disabled values, overlapping/disjoint
   scopes, reserved chords, conflicts, localization, and fixed IME/editing
   grammar.
-- **AC-7 (FR-4, FR-5):** File and restart tests cover valid/invalid candidates,
+- **AC-8 (FR-5, FR-6):** File and restart tests cover valid/invalid candidates,
   live rebind, persistence failure, system registration failure, and preservation
   of the previous registration. `Keyboard Shortcuts...` opens the exact external
   file; removing one/all overrides restores defaults.
-- **AC-8 (FR-6):** E2E proves Models, Agents, Skills, Memory, Access, Privacy &
+- **AC-9 (FR-7):** E2E proves Models, Agents, Skills, Memory, Access, Privacy &
   Data, About, Help, Provider editing, and contextual Translation remain directly
   reachable after all Settings routes and navigation are absent.
-- **AC-9 (FR-7):** Webpage, caption, and EPUB tests prove contextual Translation
+- **AC-10 (FR-8):** Webpage, caption, and EPUB tests prove contextual Translation
   changes no global file/singleton; scoped clearing affects only one preview;
   global confirmed Data clearing includes entries from closed previews.
-- **AC-10 (FR-8):** Static and behavior guards prove `appPreferences`, the
+- **AC-11 (FR-9):** Static and behavior guards prove `appPreferences`, the
   Provider mega-DTO, duplicate Memory/update policy, global Translation
   preference state, broad Settings events/sender admission, mixed shortcut
   registry, shell polling/badges/feedback, and surviving Settings-derived domain
   names are absent.
-- **AC-11 (FR-1, FR-4, FR-6, NFR-1, NFR-2):** Invalid-file notices and every
+- **AC-12 (FR-1, FR-5, FR-7, NFR-1, NFR-2):** Invalid-file notices and every
   surviving direct manager pass keyboard and screen-reader use, 200% text, long
   English and Simplified Chinese, light/dark, increased contrast, reduced motion,
   and reduced transparency without overlap or layout shift.
-- **AC-12 (FR-1 through FR-8, NFR-1, NFR-2):** Current specs are rewritten in the
+- **AC-13 (FR-1 through FR-9, NFR-1, NFR-2):** Current specs are rewritten in the
   implementation PR; typecheck, relevant Core/renderer tests, focused E2E, docs
   checks, diff checks, and packaged smoke pass.
 
 ## Delivery
 
 One PR delivers both public configuration files, shared JSONC parsing primitives,
-runtime consumers, Agent path discovery, direct domain destinations, shortcut
-registry conversion, Settings-shell deletion, ownership splits, tests, and
-current-spec updates. Build order within the PR is definitions and file owners,
-runtime consumers, direct destinations, parity/E2E verification, then deletion.
-Nothing deletes the old writer or surface before its final consumer has moved.
+runtime consumers, Agent path discovery, the `configuration` Skill, direct domain
+destinations, shortcut registry conversion, Settings-shell deletion, ownership
+splits, tests, and current-spec updates. Build order within the PR is definitions
+and file owners, runtime consumers and Skill, direct destinations, parity/E2E
+verification, then deletion. Nothing deletes the old writer or surface before
+its final consumer has moved.
 
 Expected areas include configuration modules; `appPreferences`; Provider, Skill,
 Memory, update, Translation, and Agent ownership; command and shortcut registries;
