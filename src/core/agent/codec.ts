@@ -5227,7 +5227,7 @@ function decodeTurnDiagnosticsActivities(
         const executionPath = `${path}.executions[${executionIndex}]`;
         const execution = recordValue(entry, executionPath);
         exactKeys(execution, [
-          'callId', 'providerCallId', 'toolName', 'itemId', 'admissionDisposition', 'canonicalIdentity',
+          'callId', 'providerResponsePartIndex', 'toolName', 'itemId', 'admissionDisposition', 'canonicalIdentity',
           'schemaDigest', 'startedAt', 'completedAt', 'status',
         ], executionPath);
         const startedAt = nonNegativeNumber(execution.startedAt, `${executionPath}.startedAt`);
@@ -5243,7 +5243,10 @@ function decodeTurnDiagnosticsActivities(
         }
         return {
           callId: stringValue(execution.callId, `${executionPath}.callId`),
-          providerCallId: stringValue(execution.providerCallId, `${executionPath}.providerCallId`),
+          providerResponsePartIndex: nonNegativeInteger(
+            execution.providerResponsePartIndex,
+            `${executionPath}.providerResponsePartIndex`,
+          ),
           toolName: stringValue(execution.toolName, `${executionPath}.toolName`),
           itemId: nullableString(execution.itemId, `${executionPath}.itemId`),
           admissionDisposition: enumValue(

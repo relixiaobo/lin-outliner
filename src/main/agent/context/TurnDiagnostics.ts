@@ -69,7 +69,7 @@ type MutableAcceptedInputActivity = Omit<
 };
 type MutableToolExecution = {
   callId: string;
-  providerCallId: string;
+  providerResponsePartIndex: number;
   toolName: string;
   itemId: string | null;
   admissionDisposition: ModelToolCallHistory['disposition'];
@@ -185,7 +185,7 @@ export class TurnDiagnosticsCollector {
 
   captureToolExecutionStarted(
     callId: string,
-    providerCallId: string,
+    providerResponsePartIndex: number,
     toolName: string,
     itemId: string | null,
     modelCall: ModelToolCallHistory,
@@ -208,7 +208,7 @@ export class TurnDiagnosticsCollector {
     if (target.executions.some((execution) => execution.callId === callId)) return;
     target.executions.push({
       callId,
-      providerCallId,
+      providerResponsePartIndex,
       toolName,
       itemId,
       admissionDisposition: modelCall.disposition,

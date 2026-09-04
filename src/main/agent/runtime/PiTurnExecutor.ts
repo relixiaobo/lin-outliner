@@ -312,7 +312,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         } : {}),
         started: (execution) => diagnostics.captureToolExecutionStarted(
           execution.callId,
-          execution.providerCallId,
+          execution.providerResponsePartIndex,
           execution.toolName,
           execution.itemId,
           execution.modelCall,
@@ -910,7 +910,7 @@ export class PiEventNormalizer {
       }) => void;
       readonly started?: (execution: {
         readonly callId: string;
-        readonly providerCallId: string;
+        readonly providerResponsePartIndex: number;
         readonly toolName: string;
         readonly itemId: string | null;
         readonly modelCall: ModelToolCallHistory;
@@ -962,7 +962,7 @@ export class PiEventNormalizer {
       case 'tool_call_admission':
         await this.startTool(
           event.toolCallId,
-          event.providerToolCallId,
+          event.providerResponsePartIndex,
           event.decision.modelCall,
           event.decision.displayArguments,
         );
@@ -1052,7 +1052,7 @@ export class PiEventNormalizer {
 
   private async startTool(
     callId: string,
-    providerCallId: string,
+    providerResponsePartIndex: number,
     modelCall: ModelToolCallHistory,
     args: unknown,
   ): Promise<void> {
@@ -1064,7 +1064,7 @@ export class PiEventNormalizer {
     this.toolItems.set(callId, { item: started, startedAt });
     this.executionObserver?.started?.({
       callId,
-      providerCallId,
+      providerResponsePartIndex,
       toolName: providerName,
       itemId: started.id,
       modelCall,

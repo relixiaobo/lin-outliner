@@ -1068,12 +1068,13 @@ canonical user input and from context evidence, and must not be presented as a
 USER message.
 
 Each tool execution diagnostic records its admission disposition, canonical identity,
-provider-issued call ID, and schema digest when one exists. Prepared messages,
+absolute part index in the terminal provider response, and schema digest when one exists. Prepared messages,
 post-adapter requests, terminal provider responses, and diagnostic tool observations are
 retained exactly as observed; diagnostics does not run Secretlint, rewrite
 credential-looking strings, impose per-leaf or shared character budgets, or store
-redaction/omission substitutes. The exact provider-issued call ID links one admitted
-execution back to the matching tool-call part in its source Provider Call response, so
+redaction/omission substitutes. The source Provider Call and absolute response-part
+index link one admitted execution directly to its original tool-call part, even when
+provider-issued call IDs are empty or repeated, so
 Trajectory Tool Input can use the arguments the model actually issued rather than an
 Item replay or presentation value. Canonical durable history keeps its independent
 Secretlint-backed redaction policy; that policy does not alter diagnostic evidence.

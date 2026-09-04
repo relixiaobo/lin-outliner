@@ -85,6 +85,59 @@ describe('resilient OpenAI Responses SSE fetch', () => {
     });
   });
 
+  test('redacts ordinary credential values by their structured field names before bounding', async () => {
+    const apiKey = 'ordinary-api-key-value';
+    const password = 'ordinary-password-value';
+    const noise = `data: ${JSON.stringify({
+      type: 'relay.notice',
+      error: 'stream_read_error',
+      api_key: apiKey,
+      password,
+    })}\n\n`;
+    const completed = 'data: {"type":"response.completed"}\n\n';
+    const captured: string[] = [];
+
+    await withMockFetch(async () => eventStreamResponse([noise, completed]), async () => {
+      const fetch = createResilientResponsesFetch({
+        onNoiseFrame: (frame) => captured.push(frame.snippet),
+      });
+      const response = await fetch('https://relay.example.test/v1/responses');
+
+      expect(await response.text()).toBe(completed);
+      expect(captured).toHaveLength(1);
+      expect(captured[0]).not.toContain(apiKey);
+      expect(captured[0]).not.toContain(password);
+      expect(captured[0]).toContain('[redacted]');
+    });
+  });
+
+  test('redacts a complete private key before its serialized frame crosses the snippet boundary', async () => {
+    const privateKey = [
+      '-----BEGIN EC PRIVATE KEY-----',
+      'private-material'.repeat(40),
+      '-----END EC PRIVATE KEY-----',
+    ].join('\n');
+    const noise = `data: ${JSON.stringify({
+      type: 'relay.notice',
+      padding: 'x'.repeat(1_700),
+      error: { message: privateKey },
+    })}\n\n`;
+    const completed = 'data: {"type":"response.completed"}\n\n';
+    const captured: string[] = [];
+
+    await withMockFetch(async () => eventStreamResponse([noise, completed]), async () => {
+      const fetch = createResilientResponsesFetch({
+        onNoiseFrame: (frame) => captured.push(frame.snippet),
+      });
+      const response = await fetch('https://relay.example.test/v1/responses');
+
+      expect(await response.text()).toBe(completed);
+      expect(captured).toHaveLength(1);
+      expect(captured[0]).not.toContain('BEGIN EC PRIVATE KEY');
+      expect(captured[0]).not.toContain('private-material');
+    });
+  });
+
   test('redacts a secret-like frame type before reporting diagnostics', async () => {
     const secretType = 'sk-0123456789abcdefghijklmnopqrstuvwxyz';
     const noise = `data: {"type":"${secretType}","error":"stream_read_error"}\n\n`;

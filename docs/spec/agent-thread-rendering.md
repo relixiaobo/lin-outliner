@@ -1344,10 +1344,10 @@ diagnostics, payloads, and output remain explicit local availability facts rathe
 than killing the whole workspace. Availability discovered during the lazy read
 is appended to the record returned by that detail response, and the inspector
 uses that returned record rather than the earlier list summary. Tool Input first
-resolves the exact provider-issued arguments by matching the execution's retained
-provider call ID inside the source Provider Call response. When diagnostics exist
-but that match is unavailable, it does not fall back to canonical Item values.
-`redactedReplay` and `evidenceOnly` are never Trajectory Tool Input evidence; only
+resolves the exact provider-issued arguments at the execution's retained absolute
+part index inside the source Provider Call response. When diagnostics exist but
+that coordinate is invalid or does not identify a tool-call part, it does not fall back to canonical Item values.
+`redactedReplay` and `evidenceOnly` Item values are never Tool Input fallback evidence; only
 when the entire diagnostics payload is absent may an exact `replayable` Item
 argument source be read on demand. Host execution and display fields are never
 model-input evidence. Tool Output reads the complete retained model-visible output
@@ -1381,7 +1381,9 @@ empty Back stack.
 
 Normal Thread UI may visually group Items by Turn without printing every Turn
 ID. Trajectory must show the same Thread, Turn, Item, provider-call, and activity
-identities as the transport, while keeping renderer evidence sanitized.
+identities as the transport. Renderer evidence is exact when retained and otherwise
+explicitly unavailable; binary payloads remain reference-only, and host-private data
+that never entered retained execution evidence remains excluded.
 
 Thread Details exposes `ThreadMemoryMode` only for persistent root user Threads.
 Its loading, disabled, busy, and error states reuse the existing switch and

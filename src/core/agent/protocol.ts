@@ -519,7 +519,7 @@ export interface TurnDiagnosticsModelCallActivity {
 
 export interface TurnDiagnosticsToolExecution {
   readonly callId: string;
-  readonly providerCallId: string;
+  readonly providerResponsePartIndex: number;
   readonly toolName: string;
   /** Null only for deliberately transient tools that have no canonical Thread Item. */
   readonly itemId: ThreadItemId | null;

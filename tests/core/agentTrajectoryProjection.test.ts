@@ -103,7 +103,7 @@ describe('ThreadTrajectoryProjection', () => {
           executions: [{
             ...firstBatch.executions[0]!,
             callId: 'call:one',
-            providerCallId: 'provider:call:reused',
+            providerResponsePartIndex: 0,
             itemId: null,
             startedAt: 320,
             completedAt: 330,
@@ -122,6 +122,57 @@ describe('ThreadTrajectoryProjection', () => {
     const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: repeated.id });
     if (detail.detail?.kind !== 'tool') throw new Error('Expected repeated-ID Tool detail');
     expect(detail.detail.input).toEqual({ batch: 'second' });
+  });
+
+  test('resolves empty and repeated provider call ids by their exact response part coordinates', async () => {
+    const base = trajectoryDiagnostics();
+    const batch = base.activities[1] as Extract<
+      TurnDiagnosticsPayload['activities'][number],
+      { type: 'toolExecutionBatch' }
+    >;
+    const response = base.providerCalls[0]!.response!;
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      providerCalls: [{
+        ...base.providerCalls[0]!,
+        response: {
+          ...response,
+          value: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'before' },
+              { type: 'toolCall', id: '', name: 'first_tool', arguments: { position: 'empty' } },
+              { type: 'toolCall', id: 'duplicate', name: 'first_tool', arguments: { position: 'first' } },
+              { type: 'toolCall', id: 'duplicate', name: 'second_tool', arguments: { position: 'second' } },
+            ],
+          },
+        },
+      }],
+      activities: [
+        base.activities[0]!,
+        {
+          ...batch,
+          executions: [
+            { ...batch.executions[0]!, callId: 'host-empty', providerResponsePartIndex: 1, itemId: null },
+            { ...batch.executions[0]!, callId: 'host-first', providerResponsePartIndex: 2, itemId: null },
+            { ...batch.executions[1]!, callId: 'host-second', providerResponsePartIndex: 3, itemId: null },
+          ],
+        },
+      ],
+    };
+    const projection = trajectoryProjection({ diagnostics });
+    const trajectory = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const tools = trajectory.records.filter((record) => record.kind === 'tool');
+    const details = await Promise.all(tools.map(async (record) => (
+      (await projection.readDetail({ threadId: THREAD_ID, recordId: record.id })).detail
+    )));
+
+    expect(tools).toHaveLength(3);
+    expect(details.map((detail) => detail?.kind === 'tool' ? detail.input : null)).toEqual([
+      { position: 'empty' },
+      { position: 'first' },
+      { position: 'second' },
+    ]);
   });
 
   test('reads Tool Input from the exact provider response despite divergent or missing replay storage', async () => {
@@ -1049,7 +1100,7 @@ describe('ThreadTrajectoryProjection', () => {
         base.activities[0]!,
         {
           ...batch,
-          executions: [{ ...batch.executions[0]!, callId, providerCallId: callId, itemId: null }],
+          executions: [{ ...batch.executions[0]!, callId, providerResponsePartIndex: 0, itemId: null }],
         },
       ],
     };
@@ -1442,7 +1493,7 @@ describe('ThreadTrajectoryProjection', () => {
           executions: Array.from({ length: 300 }, (_, index) => ({
             ...batch.executions[0]!,
             callId: `call:${index}`,
-            providerCallId: `provider:call:${index}`,
+            providerResponsePartIndex: index,
             toolName: 'first_tool',
             itemId: null,
           })),
@@ -2110,7 +2161,7 @@ function trajectoryDiagnostics(): TurnDiagnosticsPayload {
         executions: [
           {
             callId: 'call:one',
-            providerCallId: 'provider:call:one',
+            providerResponsePartIndex: 0,
             toolName: 'first_tool',
             itemId: null,
             admissionDisposition: 'replayable',
@@ -2122,7 +2173,7 @@ function trajectoryDiagnostics(): TurnDiagnosticsPayload {
           },
           {
             callId: 'call:two:with:colon',
-            providerCallId: 'provider:call:two',
+            providerResponsePartIndex: 1,
             toolName: 'second_tool',
             itemId: null,
             admissionDisposition: 'replayable',

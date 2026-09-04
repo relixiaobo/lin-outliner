@@ -153,7 +153,7 @@ describe('Turn diagnostics', () => {
     } as AgentEvent);
     collector.captureToolExecutionStarted(
       'tool-call-1',
-      'provider-tool-call-1',
+      2,
       'alpha',
       'tool-item-1',
       replayableModelCall('alpha', {}),
@@ -327,7 +327,7 @@ describe('Turn diagnostics', () => {
         consumedByCallIndex: 1,
         executions: [{
           callId: 'tool-call-1',
-          providerCallId: 'provider-tool-call-1',
+          providerResponsePartIndex: 2,
           toolName: 'alpha',
           itemId: 'tool-item-1',
           admissionDisposition: 'replayable',
@@ -538,7 +538,7 @@ describe('Turn diagnostics', () => {
     } as AgentEvent);
     collector.captureToolExecutionStarted(
       'plan-call',
-      'provider-plan-call-1',
+      1,
       'update_plan',
       null,
       replayableModelCall('update_plan', {}),
@@ -550,7 +550,7 @@ describe('Turn diagnostics', () => {
     await collector.captureProviderRequest({ model: model.id, input: [firstMessage, steeringMessage] });
     collector.captureToolExecutionStarted(
       'plan-call',
-      'provider-plan-call-2',
+      3,
       'update_plan',
       null,
       replayableModelCall('update_plan', {}),
@@ -593,7 +593,7 @@ describe('Turn diagnostics', () => {
         sourceCallIndex: 2,
         consumedByCallIndex: 3,
         executions: [expect.objectContaining({
-          providerCallId: 'provider-plan-call-1',
+          providerResponsePartIndex: 1,
           toolName: 'update_plan',
           itemId: null,
         })],

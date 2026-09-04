@@ -51,6 +51,7 @@ export function toolAdmissionEvent(
     type: 'tool_call_admission',
     toolCallId,
     providerToolCallId: toolCallId,
+    providerResponsePartIndex: 0,
     toolName,
     decision: {
       modelCall: replayableModelCall(toolName, args, {

@@ -1,6 +1,6 @@
 import type { FetchFunction } from '@earendil-works/pi-ai';
 import { MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES } from '../../../core/agent/protocol';
-import { redactSecretLikeTextAsync } from '../capabilities/agentSecretRedaction';
+import { redactSecretLikeTelemetry } from '../capabilities/agentSecretRedaction';
 
 export const RESPONSES_STREAM_IDLE_TIMEOUT_MS = 300_000;
 
@@ -209,13 +209,13 @@ function boundedSnippet(value: string): string {
 }
 
 async function sanitizedNoiseSnippet(value: unknown): Promise<string> {
-  const bounded = boundedSnippet(JSON.stringify(value));
-  return boundedSnippet((await redactSecretLikeTextAsync(bounded)).value);
+  const redacted = await redactSecretLikeTelemetry(value);
+  return boundedSnippet(JSON.stringify(redacted.value));
 }
 
 async function sanitizedFrameType(value: unknown): Promise<string | null> {
   if (!isRecord(value) || typeof value.type !== 'string') return null;
-  return boundedFrameType((await redactSecretLikeTextAsync(boundedFrameType(value.type) ?? '')).value);
+  return boundedFrameType((await redactSecretLikeTelemetry(value.type)).value);
 }
 
 function boundedFrameType(value: string | null): string | null {

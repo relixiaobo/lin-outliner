@@ -205,8 +205,7 @@ export async function runKernel(
       return { messages: newMessages, interruptionError: null };
     }
 
-    const providerToolCalls = message.content.filter((part): part is AgentToolCall => part.type === 'toolCall');
-    const toolCalls = canonicalizeToolCalls(message, providerToolCalls, usedProviderToolCallIds);
+    const toolCalls = canonicalizeToolCalls(message, usedProviderToolCallIds);
     const toolResults: ToolResultMessage[] = [];
     hasMoreToolCalls = false;
     if (toolCalls.length > 0) {
@@ -345,6 +344,7 @@ interface ExecutedToolBatch {
 
 interface CanonicalizedToolCall {
   readonly activeProviderToolCallId: string;
+  readonly providerResponsePartIndex: number;
   readonly providerCall: ModelProviderToolCall;
   readonly toolCall: AgentToolCall;
 }
@@ -400,6 +400,7 @@ async function failTruncatedToolCalls(
     const tool = context.tools.find((candidate) => candidate.name === toolCall.name);
     const request = await rejectedToolCallAdmissionRequest(
       toolCall,
+      call.providerResponsePartIndex,
       call.providerCall,
       tool ? canonicalToolIdentity(tool) : null,
       'truncatedArguments',
@@ -578,7 +579,7 @@ async function prepareToolCall(
   context: KernelContext,
   call: CanonicalizedToolCall,
 ): Promise<PreparedToolCall | ImmediateToolCall> {
-  const { toolCall, providerCall } = call;
+  const { toolCall, providerCall, providerResponsePartIndex } = call;
   const tool = context.tools.find((candidate) => candidate.name === toolCall.name);
   if (!tool) {
     return {
@@ -586,7 +587,13 @@ async function prepareToolCall(
       tool: null,
       result: errorToolResult('tool_not_exposed', 'Tool is not exposed by the active registry.'),
       isError: true,
-      admission: await rejectedToolCallAdmissionRequest(toolCall, providerCall, null, 'unresolvedTool'),
+      admission: await rejectedToolCallAdmissionRequest(
+        toolCall,
+        providerResponsePartIndex,
+        providerCall,
+        null,
+        'unresolvedTool',
+      ),
     };
   }
   const identity = canonicalToolIdentity(tool);
@@ -615,6 +622,7 @@ async function prepareToolCall(
       args,
       admission: {
         toolCallId: toolCall.id,
+        providerResponsePartIndex,
         providerName: toolCall.name,
         providerCall,
         outcome: {
@@ -636,13 +644,20 @@ async function prepareToolCall(
       tool,
       result: errorToolResult('invalid_arguments', errorMessage(error)),
       isError: true,
-      admission: await rejectedToolCallAdmissionRequest(toolCall, providerCall, identity, 'invalidArguments'),
+      admission: await rejectedToolCallAdmissionRequest(
+        toolCall,
+        providerResponsePartIndex,
+        providerCall,
+        identity,
+        'invalidArguments',
+      ),
     };
   }
 }
 
 async function rejectedToolCallAdmissionRequest(
   toolCall: AgentToolCall,
+  providerResponsePartIndex: number,
   providerCall: ModelProviderToolCall,
   identity: import('../../../../core/agent/protocol').ModelToolIdentity | null,
   reason: Extract<ToolCallAdmissionRequest['outcome'], { readonly type: 'rejected' }>['reason'],
@@ -650,6 +665,7 @@ async function rejectedToolCallAdmissionRequest(
   const redacted = await prepareToolCallArguments(toolCall.arguments);
   return {
     toolCallId: toolCall.id,
+    providerResponsePartIndex,
     providerName: toolCall.name,
     providerCall,
     outcome: {
@@ -938,6 +954,7 @@ async function admitAndEmit(
     type: 'tool_call_admission',
     toolCallId: request.toolCallId,
     providerToolCallId: request.providerCall.id,
+    providerResponsePartIndex: request.providerResponsePartIndex,
     toolName: request.providerName,
     decision,
   });
@@ -1004,10 +1021,12 @@ function historicalToolCallIds(messages: readonly Message[]): Set<string> {
 
 function canonicalizeToolCalls(
   message: AssistantMessage,
-  toolCalls: readonly AgentToolCall[],
   usedIds: Set<string>,
 ): CanonicalizedToolCall[] {
-  return toolCalls.map((toolCall) => {
+  const calls: CanonicalizedToolCall[] = [];
+  message.content.forEach((part, providerResponsePartIndex) => {
+    if (part.type !== 'toolCall') return;
+    const toolCall = part;
     let toolCallId: string;
     let portableId: string;
     do {
@@ -1018,8 +1037,9 @@ function canonicalizeToolCalls(
       ? toolCall.id
       : portableId;
     usedIds.add(activeProviderToolCallId);
-    return {
+    calls.push({
       activeProviderToolCallId,
+      providerResponsePartIndex,
       providerCall: {
         id: activeProviderToolCallId,
         api: message.api,
@@ -1028,8 +1048,9 @@ function canonicalizeToolCalls(
         thoughtSignature: toolCall.thoughtSignature?.length ? toolCall.thoughtSignature : null,
       },
       toolCall: { ...toolCall, id: toolCallId },
-    };
+    });
   });
+  return calls;
 }
 
 async function emitToolExecutionEnd(finalized: FinalizedToolCall, emit: KernelEventSink): Promise<void> {

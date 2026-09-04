@@ -1159,15 +1159,15 @@ function providerToolInputEvidence(
   const batch = payload.activities[activityIndex] ?? null;
   if (batch?.type !== 'toolExecutionBatch') return unavailableEvidence('evidenceUnavailable');
   const response = payload.providerCalls[batch.sourceCallIndex]?.response?.value ?? null;
-  for (const part of modelResponseContent(response) ?? []) {
-    if (typeof part !== 'object' || part === null || Array.isArray(part)) continue;
-    const record = part as Readonly<Record<string, JsonValue>>;
-    const providerCallId = firstString(record.id, record.callId, record.toolCallId);
-    if (providerCallId !== execution.providerCallId) continue;
-    for (const key of ['arguments', 'args', 'input'] as const) {
-      if (Object.hasOwn(record, key)) return retainedEvidence(structuredClone(record[key] ?? null));
-    }
+  const part = modelResponseContent(response)?.[execution.providerResponsePartIndex] ?? null;
+  if (typeof part !== 'object' || part === null || Array.isArray(part)) {
     return unavailableEvidence('evidenceUnavailable');
+  }
+  const record = part as Readonly<Record<string, JsonValue>>;
+  const type = typeof record.type === 'string' ? record.type.toLowerCase().replace(/[_-]/g, '') : '';
+  if (type !== 'toolcall' && type !== 'functioncall') return unavailableEvidence('evidenceUnavailable');
+  for (const key of ['arguments', 'args', 'input'] as const) {
+    if (Object.hasOwn(record, key)) return retainedEvidence(structuredClone(record[key] ?? null));
   }
   return unavailableEvidence('evidenceUnavailable');
 }

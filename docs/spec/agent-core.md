@@ -942,8 +942,8 @@ field and cannot change canonical history or fail a running Turn. Input detail
 preserves the ordered prepared-message part types; image bytes remain
 reference-only MIME / byte-length / digest evidence. Tool Input resolves the
 exact provider-issued arguments from the source Provider Call response by the
-execution's retained provider call ID. When diagnostics exist but that evidence
-cannot be matched, the field is unavailable; `redactedReplay` and
+execution's retained absolute response-part index. When diagnostics exist but
+that coordinate is invalid or does not identify a tool-call part, the field is unavailable; `redactedReplay` and
 `evidenceOnly` Item values are never substitutes. Only when the entire
 diagnostics payload is absent may an exact `replayable` Item argument source be
 used. Tool Output reads the complete retained model-visible output. A lazy read
@@ -1001,7 +1001,7 @@ enter Core stores. See [`agent-automations.md`](agent-automations.md).
 
 Thread Details describes the durable Thread container and its Thread-level controls.
 Trajectory is the complete technical surface for a canonical Thread. It receives a
-main-owned sanitized projection over the same canonical Turns, retained diagnostics,
+main-owned exact-or-unavailable typed projection over the same canonical Turns, retained diagnostics,
 context payloads, and output references used by execution. It does not recreate the
 retired conversation/run/round debug projection, derive history from renderer
 pagination, or introduce an alternative execution ledger. USER rows are grounded
@@ -1010,7 +1010,7 @@ captured prepared-message parts whose `userInput` provenance carries that exact
 Item ID. CONTEXT rows come from captured system-context parts, stable prompt, or
 provider-visible tool catalogs. Canonical user content remains accepted-input
 evidence rather than a reconstruction of the provider request. REQUEST detail is
-the bounded materialized post-adapter provider payload captured in diagnostics;
+the complete retained post-adapter provider JSON captured in diagnostics;
 image bytes do not cross to renderer, while captured filesystem paths remain
 exact evidence.
 The exact page contract lives in

@@ -49,6 +49,18 @@ export async function redactSecretLikeTextAsync(value: string): Promise<SecretRe
   return scanSecretLikeJson(value, scanSecretStringsOffMain);
 }
 
+/** Fail closed for bounded transport telemetry that can surface in diagnostics and errors. */
+export async function redactSecretLikeTelemetry<T>(value: T): Promise<SecretRedactionResult<T>> {
+  try {
+    return await scanSecretLikeJson(value, scanSecretStringsOffMain);
+  } catch {
+    return {
+      value: REDACTED_SECRET as T,
+      redactedPaths: [''],
+    };
+  }
+}
+
 class PendingSecretString {
   constructor(
     readonly job: SecretStringScanJob,
