@@ -1,6 +1,10 @@
 import {
+  canonicalDelegateCommand,
+  delegateBytesDigest,
+  DELEGATE_CAPABILITY_FD,
   DELEGATE_CLI_VERSION,
   DELEGATE_EXIT_CODES,
+  DELEGATE_MAX_CAPABILITY_BYTES,
   DELEGATE_PROTOCOL_VERSION,
   DelegateMessageInputSchema,
   DelegateResultSchema,
@@ -10,10 +14,13 @@ import {
   delegateHelp,
   isDelegateStateCommand,
   parseDelegateCommand,
+  parseDelegateLaunchCapability,
   type DelegateCommand,
   type DelegateOutputMode,
   type DelegateStateCommand,
 } from '../contract';
+import { closeSync, readSync } from 'node:fs';
+import { DelegateBrokerClient, DelegateBrokerError } from './brokerClient';
 
 export interface DelegateCliIo {
   readonly readStdin: () => Promise<string>;
@@ -26,6 +33,7 @@ export interface DelegateStateExecutor {
     command: DelegateStateCommand,
     input: unknown,
     signal?: AbortSignal,
+    rawInput?: string,
   ): Promise<unknown>;
 }
 
@@ -33,6 +41,7 @@ export interface DelegateCliOptions {
   readonly io?: DelegateCliIo;
   readonly signal?: AbortSignal;
   readonly stateExecutor?: DelegateStateExecutor;
+  readonly readCapability?: () => Uint8Array | null;
 }
 
 interface DelegateCliFailure {
@@ -52,14 +61,16 @@ export async function runDelegateCli(
   try {
     command = parseDelegateCommand(argv);
     if (isDelegateStateCommand(command)) {
-      if (!options.stateExecutor) {
+      const executor = options.stateExecutor ?? defaultStateExecutor(command, options.readCapability);
+      if (!executor) {
         await writeFailure(io, command.output, 'unauthorized', 'Host delegation capability is required.');
         return DELEGATE_EXIT_CODES.unauthorized;
       }
+      const rawInput = command.name === 'close' ? '' : await io.readStdin();
       const input = command.name === 'close'
         ? null
-        : parseInput(await io.readStdin(), command.name === 'run' ? 'run' : 'message');
-      const result = await options.stateExecutor.execute(command, input, options.signal);
+        : parseInput(rawInput, command.name === 'run' ? 'run' : 'message');
+      const result = await executor.execute(command, input, options.signal, rawInput);
       await writeSuccess(io, command.output, result);
       return DELEGATE_EXIT_CODES.success;
     }
@@ -70,9 +81,73 @@ export async function runDelegateCli(
   } catch (error) {
     if (options.signal?.aborted) return signalExitCode(options.signal);
     const output = requestedOutput(argv);
-    await writeFailure(io, output, 'invalid_input', errorMessage(error));
-    return DELEGATE_EXIT_CODES.usage;
+    const code = error instanceof DelegateBrokerError ? error.code : 'invalid_input';
+    await writeFailure(io, output, code, errorMessage(error));
+    return failureExitCode(code);
   }
+}
+
+function defaultStateExecutor(
+  command: DelegateStateCommand,
+  readCapability: DelegateCliOptions['readCapability'],
+): DelegateStateExecutor | null {
+  const bytes = readCapability ? readCapability() : readCapabilityFd(DELEGATE_CAPABILITY_FD);
+  if (!bytes) return null;
+  let capability: ReturnType<typeof parseDelegateLaunchCapability>;
+  try {
+    capability = parseDelegateLaunchCapability(bytes);
+  } catch {
+    throw new DelegateBrokerError('unauthorized', 'Host delegation capability is invalid.');
+  }
+  if (canonicalDelegateCommand(capability.command) !== canonicalDelegateCommand(command)) {
+    throw new DelegateBrokerError('unauthorized', 'Delegate launch capability does not match the command.');
+  }
+  return new CapabilityBoundExecutor(capability);
+}
+
+class CapabilityBoundExecutor implements DelegateStateExecutor {
+  private readonly client: DelegateBrokerClient;
+
+  constructor(private readonly capability: ReturnType<typeof parseDelegateLaunchCapability>) {
+    this.client = new DelegateBrokerClient(capability);
+  }
+
+  async execute(
+    command: DelegateStateCommand,
+    input: unknown,
+    signal?: AbortSignal,
+    rawInput = '',
+  ): Promise<unknown> {
+    const actual = delegateBytesDigest(rawInput);
+    if (actual.byteLength !== this.capability.stdin.byteLength
+      || actual.sha256 !== this.capability.stdin.sha256) {
+      throw new DelegateBrokerError('unauthorized', 'Delegate launch capability does not match stdin.');
+    }
+    return this.client.execute(command, input, signal);
+  }
+}
+
+function readCapabilityFd(fd: number): Buffer | null {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const chunk = Buffer.allocUnsafe(Math.min(8 * 1024, DELEGATE_MAX_CAPABILITY_BYTES + 1 - total));
+      const count = readSync(fd, chunk, 0, chunk.byteLength, null);
+      if (count === 0) break;
+      total += count;
+      if (total > DELEGATE_MAX_CAPABILITY_BYTES) {
+        throw new DelegateBrokerError('unauthorized', 'Delegate launch capability exceeds its byte limit.');
+      }
+      chunks.push(chunk.subarray(0, count));
+    }
+  } catch (error) {
+    if (error instanceof DelegateBrokerError) throw error;
+    return null;
+  } finally {
+    try { closeSync(fd); } catch { /* An absent capability descriptor is an ordinary refusal. */ }
+  }
+  return total === 0 ? null : Buffer.concat(chunks, total);
 }
 
 function executeDiagnostic(command: Exclude<DelegateCommand, DelegateStateCommand>): unknown {
@@ -159,6 +234,13 @@ function renderText(value: unknown): string {
 
 function signalExitCode(signal: AbortSignal): number {
   return signal.reason === 'SIGTERM' ? DELEGATE_EXIT_CODES.terminated : DELEGATE_EXIT_CODES.interrupted;
+}
+
+function failureExitCode(code: DelegateCliFailure['error']['code']): number {
+  if (code === 'unauthorized') return DELEGATE_EXIT_CODES.unauthorized;
+  if (code === 'unavailable') return DELEGATE_EXIT_CODES.unavailable;
+  if (code === 'internal_error') return DELEGATE_EXIT_CODES.failed;
+  return DELEGATE_EXIT_CODES.usage;
 }
 
 function errorMessage(error: unknown): string {

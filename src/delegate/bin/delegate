@@ -31,6 +31,9 @@ if [ ! -f "$TENON_DELEGATE_CLI_ENTRY" ]; then
   exit 1
 fi
 
+# The public wrapper is diagnostic-only. Host-authorized state commands bypass it.
+exec 3</dev/null
+
 if [ "${TENON_DELEGATE_RUN_AS_NODE:-}" = "1" ]; then
   ELECTRON_RUN_AS_NODE=1 exec "$TENON_DELEGATE_CLI_RUNTIME" "$TENON_DELEGATE_CLI_ENTRY" "$@"
 fi

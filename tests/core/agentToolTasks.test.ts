@@ -26,6 +26,9 @@ import type {
   ToolTaskSupervisorConfig,
 } from '../../src/main/agent/tasks/toolTaskTypes';
 import { resolveToolTaskSupervisorRuntime } from '../../src/main/agent/tasks/toolTaskRuntime';
+import { DelegateRuntimeHost } from '../../src/main/agent/delegation';
+import { resolveDelegateCliRuntime } from '../../src/main/delegateRuntime';
+import { parseDelegateCommand, type DelegateStateCommand } from '../../src/delegate/contract';
 
 const OWNER_ID = '00000000-0000-7000-8000-000000000001' as ThreadId;
 const SOURCE_TURN_ID = '00000000-0000-7000-8000-000000000002' as TurnId;
@@ -245,6 +248,117 @@ describe('ToolTaskService', () => {
     });
     expect(await readFile(path.join(terminal.detailPath, 'producer.json'), 'utf8'))
       .not.toContain('private capability');
+  });
+
+  test('prepares a direct process only after allocating its durable task identity', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const seen: unknown[] = [];
+    const started = await startHidden(service, 'delegate run --input - --output json', {
+      stdin: 'task intent',
+      prepareProcess: async (context) => {
+        seen.push(context);
+        return {
+          process: {
+            kind: 'exec',
+            executable: process.execPath,
+            args: ['-e', "process.stdout.write('prepared')"],
+            env: {},
+            privateControl: false,
+          },
+        };
+      },
+    });
+    const terminal = await waitForTerminal(service, started.taskId);
+    const output = await service.output(terminal.taskId, OWNER_ID);
+
+    expect(terminal).toMatchObject({ state: 'succeeded', outcomeReason: 'exit_zero' });
+    expect(output?.stdout).toBe('prepared');
+    expect(seen).toEqual([{
+      taskId: started.taskId,
+      nonce: expect.any(String),
+      cwd: process.cwd(),
+      stdin: 'task intent',
+    }]);
+  });
+
+  test('carries one admitted Delegate command through supervisor fd 3 and the Host broker', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const command = parseDelegateCommand([
+      'run', '--input', '-', '--output', 'json',
+    ]) as DelegateStateCommand;
+    const stdin = JSON.stringify({
+      version: 1,
+      prompt: 'Inspect the complete transport.',
+      profile: 'explore',
+      access: 'read-only',
+    });
+    const scheduling = {
+      pool: 'delegate-local',
+      configurationRevision: 'revision-1',
+      maxConcurrentProducer: 2,
+      maxConcurrentPool: 2,
+    } as const;
+    const broker = new DelegateRuntimeHost({
+      cli: resolveDelegateCliRuntime({
+        isPackaged: false,
+        moduleDir: path.join(process.cwd(), 'src', 'main'),
+        resourcesPath: '/unused',
+        processExecPath: '/unused/Tenon',
+      }),
+      socketPath: path.join(fixture.root, 'delegate.sock'),
+      currentConfigurationRevision: () => scheduling.configurationRevision,
+      resolveAdmission: async () => ({
+        rootUserIntentRevision: 1,
+        policy: {
+          configurationRevision: scheduling.configurationRevision,
+          capabilityCeilingDigest: 'a'.repeat(64),
+          runnerId: 'internal',
+          modelId: 'provider/model',
+          effort: 'medium',
+          schedulingPolicyDigest: 'b'.repeat(64),
+        },
+        session: {
+          kind: 'run',
+          preallocatedSessionId: '018f0f24-7b2e-7a3f-8a4b-123456789abd',
+        },
+      }),
+      execute: async (execution) => ({
+        taskId: execution.admission.toolTaskId,
+        prompt: (execution.input as { prompt: string }).prompt,
+      }),
+    });
+    await broker.start();
+    try {
+      const commandRuntime = broker.commandRuntime(scheduling);
+      const started = await startHidden(service, 'delegate run --input - --output json', {
+        producer: 'delegate',
+        stdin,
+        scheduling,
+        prepareProcess: (context) => commandRuntime.prepare({
+          ...context,
+          command,
+          ownerThreadId: OWNER_ID,
+          sourceTurnId: SOURCE_TURN_ID,
+          sourceItemId: 'source-item',
+          env: process.env,
+        }),
+      });
+      const terminal = await waitForTerminal(service, started.taskId);
+      const output = await service.output(terminal.taskId, OWNER_ID);
+
+      expect(terminal).toMatchObject({ state: 'succeeded', outcomeReason: 'exit_zero' });
+      expect(JSON.parse(output!.stdout)).toEqual({
+        ok: true,
+        data: {
+          taskId: started.taskId,
+          prompt: 'Inspect the complete transport.',
+        },
+      });
+    } finally {
+      await broker.stop();
+    }
   });
 
   test('rejects mismatched private control declarations before creating a task', async () => {

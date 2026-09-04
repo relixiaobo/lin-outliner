@@ -61,8 +61,17 @@ import {
 } from '../../../core/agentAttachmentLimits';
 import { officeOwnershipFileInfo } from '../../../core/officeFiles';
 import { ingestPptxAsMarkdown, type PptxIngestionResult } from './agentPptxIngestion';
-import type { ToolTaskService } from '../tasks/ToolTaskService';
+import type {
+  PreparedToolTaskProcess,
+  ToolTaskProcessPreparationContext,
+  ToolTaskService,
+} from '../tasks/ToolTaskService';
+import type { ToolTaskSchedulingPolicy } from '../tasks/toolTaskTypes';
 import type { ToolTaskExecutionState } from '../../../core/agent/protocol';
+import {
+  parsePrivilegedDelegateCommand,
+  type DelegateStateCommand,
+} from '../../../delegate/contract';
 
 export { buildAgentLocalToolProcessEnv } from './agentToolProcess';
 
@@ -94,6 +103,7 @@ export interface LocalToolOptions {
   artifactSink?: ToolArtifactSink;
   toolTaskService?: ToolTaskService;
   turnId?: string;
+  delegateCommandRuntime?: DelegateCommandRuntime;
 }
 
 export interface AgentShellProcessEnvironment {
@@ -124,6 +134,20 @@ export interface AgentLocalWorkspaceContext {
   writeBoundary?: AgentWorkspaceWriteBoundary;
   /** Thread that owns background shell processes started from this workspace. */
   threadId?: string;
+  delegateCommandRuntime?: DelegateCommandRuntime;
+}
+
+export interface DelegateCommandRuntime {
+  readonly scheduling: ToolTaskSchedulingPolicy;
+  prepare(
+    input: ToolTaskProcessPreparationContext & {
+      readonly command: DelegateStateCommand;
+      readonly ownerThreadId: string;
+      readonly sourceTurnId: string;
+      readonly sourceItemId: string;
+      readonly env: NodeJS.ProcessEnv;
+    },
+  ): Promise<PreparedToolTaskProcess>;
 }
 
 export interface AgentWorkspaceWriteBoundary {
@@ -705,13 +729,19 @@ const BASH_PARAMETERS = {
 };
 
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
-  const workspace = options.workspace ?? createWorkspaceContext(
-    options.localRoot,
-    options.scratchRoot,
-    options.skillRuntime,
-    options.processEnvironment,
-    options.threadId,
-  );
+  const workspace = options.workspace
+    ? {
+        ...options.workspace,
+        ...(options.delegateCommandRuntime ? { delegateCommandRuntime: options.delegateCommandRuntime } : {}),
+      }
+    : createWorkspaceContext(
+        options.localRoot,
+        options.scratchRoot,
+        options.skillRuntime,
+        options.processEnvironment,
+        options.threadId,
+        options.delegateCommandRuntime,
+      );
   return [
     createFileReadTool(workspace, options.imageNormalizer),
     createFileGlobTool(workspace),
@@ -794,6 +824,7 @@ function createWorkspaceContext(
   skillRuntime?: AgentSkillRuntime,
   processEnvironment?: AgentShellProcessEnvironmentProvider,
   threadId?: string,
+  delegateCommandRuntime?: DelegateCommandRuntime,
 ): WorkspaceContext {
   const root = path.resolve(localRoot ?? process.cwd());
   const resolvedScratchRoot = scratchRootForWorkdir(localRoot, scratchRoot);
@@ -804,6 +835,7 @@ function createWorkspaceContext(
     skillRuntime,
     processEnvironment,
     ...(threadId ? { threadId } : {}),
+    ...(delegateCommandRuntime ? { delegateCommandRuntime } : {}),
   };
 }
 
@@ -814,9 +846,17 @@ export function createAgentLocalWorkspaceContext(
   processEnvironment?: AgentShellProcessEnvironmentProvider,
   writeBoundary?: AgentWorkspaceWriteBoundary,
   threadId?: string,
+  delegateCommandRuntime?: DelegateCommandRuntime,
 ): AgentLocalWorkspaceContext {
   return {
-    ...createWorkspaceContext(localRoot, scratchRoot, skillRuntime, processEnvironment, threadId),
+    ...createWorkspaceContext(
+      localRoot,
+      scratchRoot,
+      skillRuntime,
+      processEnvironment,
+      threadId,
+      delegateCommandRuntime,
+    ),
     ...(writeBoundary ? { writeBoundary } : {}),
   };
 }
@@ -1598,7 +1638,17 @@ function createBashTool(
       const started = Date.now();
       try {
         const params = normalizeBashParams(rawParams);
+        const delegateCommand = workspace.delegateCommandRuntime
+          ? parsePrivilegedDelegateCommand(params.command)
+          : null;
+        if (delegateCommand && !params.run_in_background) {
+          throw new LocalToolFailure(
+            'invalid_args',
+            'Delegate commands require run_in_background: true.',
+          );
+        }
         if (params.run_in_background) {
+          if (delegateCommand) validateDelegateCommandInput(delegateCommand, params.stdin);
           if (params.stdin !== undefined && (!toolTaskService || !workspace.threadId || !turnId)) {
             throw new LocalToolFailure(
               'invalid_args',
@@ -1612,6 +1662,7 @@ function createBashTool(
                 params,
                 turnId,
                 toolCallId,
+                delegateCommand,
               )
             : await startBackgroundCommand(workspace, params, toolCallId);
           const admissionFailed = data.taskStatus === 'failed' && data.exitCode == null
@@ -2377,6 +2428,7 @@ async function startSupervisedBackgroundCommand(
   params: BashParams,
   turnId: string,
   toolCallId: string,
+  delegateCommand: DelegateStateCommand | null = null,
 ): Promise<BashData> {
   const shellEnvironment = await resolveWorkspaceShellProcessEnvironment(workspace, {
     toolCallId,
@@ -2384,19 +2436,32 @@ async function startSupervisedBackgroundCommand(
   });
   const declaredOutputRoots = shellEnvironment?.declaredOutputRoots ?? [];
   const declaredOutputSnapshot = await snapshotDeclaredOutputRoots(declaredOutputRoots);
+  const env = buildWorkspaceShellProcessEnv(shellEnvironment);
+  const delegateRuntime = delegateCommand ? workspace.delegateCommandRuntime : undefined;
   const task = await service.start({
     ownerThreadId: workspace.threadId!,
     sourceTurnId: turnId,
     sourceItemId: toolCallId,
-    producer: 'bash',
+    producer: delegateRuntime ? 'delegate' : 'bash',
     description: params.description ?? 'Background command',
     command: params.command,
     cwd: workspace.root,
     ...(params.stdin === undefined ? {} : { stdin: params.stdin }),
     timeoutMs: params.timeout ?? BASH_DEFAULT_TIMEOUT_MS,
-    env: buildWorkspaceShellProcessEnv(shellEnvironment),
+    env,
     sandbox: workspaceShellSandbox(workspace),
     producerContext: encodeDeclaredOutputArtifactPlan(declaredOutputRoots, declaredOutputSnapshot),
+    ...(delegateRuntime && delegateCommand ? {
+      scheduling: delegateRuntime.scheduling,
+      prepareProcess: (context: ToolTaskProcessPreparationContext) => delegateRuntime.prepare({
+        ...context,
+        command: delegateCommand,
+        ownerThreadId: workspace.threadId!,
+        sourceTurnId: turnId,
+        sourceItemId: toolCallId,
+        env,
+      }),
+    } : {}),
   });
   const admissionFailed = task.state === 'failed'
     && task.childPid === null
@@ -2417,6 +2482,18 @@ async function startSupervisedBackgroundCommand(
       : {}),
     noOutputExpected: isSilentCommand(params.command),
   };
+}
+
+function validateDelegateCommandInput(command: DelegateStateCommand, stdin: string | undefined): void {
+  if (command.name === 'close') {
+    if (stdin !== undefined) {
+      throw new LocalToolFailure('invalid_args', 'delegate close does not accept Bash stdin.');
+    }
+    return;
+  }
+  if (stdin === undefined) {
+    throw new LocalToolFailure('invalid_args', `delegate ${command.name} requires literal JSON in Bash stdin.`);
+  }
 }
 
 async function runSupervisedForegroundCommand(

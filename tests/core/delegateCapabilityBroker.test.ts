@@ -1,0 +1,301 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import {
+  parseDelegateCommand,
+  type DelegateStateCommand,
+} from '../../src/delegate/contract';
+import {
+  DelegateCapabilityBroker,
+  DelegateRuntimeHost,
+  type DelegateCapabilityAdmission,
+  type DelegateCapabilityExecution,
+} from '../../src/main/agent/delegation';
+import { resolveDelegateCliRuntime } from '../../src/main/delegateRuntime';
+
+const repoRoot = path.resolve(import.meta.dir, '..', '..');
+const roots: string[] = [];
+const SESSION_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd';
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+describe('Delegate capability broker', () => {
+  test('builds one source direct process and binds its allocated Tool Task identity', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'delegate-runtime-host-'));
+    roots.push(root);
+    const executions: DelegateCapabilityExecution[] = [];
+    const runtime = new DelegateRuntimeHost({
+      cli: resolveDelegateCliRuntime({
+        isPackaged: false,
+        moduleDir: path.join(repoRoot, 'src', 'main'),
+        resourcesPath: '/unused',
+        processExecPath: '/unused/Tenon',
+      }),
+      socketPath: path.join(root, 'broker.sock'),
+      currentConfigurationRevision: () => 'revision-1',
+      resolveAdmission: async (input) => ({
+        rootUserIntentRevision: 3,
+        policy: admission(runCommand(), input.stdin, 'revision-1').policy,
+        session: { kind: 'run', preallocatedSessionId: SESSION_ID },
+      }),
+      execute: async (execution) => {
+        executions.push(execution);
+        return { taskId: execution.admission.toolTaskId };
+      },
+    });
+    await runtime.start();
+    try {
+      const command = runCommand();
+      const rawInput = JSON.stringify({
+        version: 1,
+        prompt: 'Inspect this process.',
+        profile: 'explore',
+        access: 'read-only',
+      });
+      const prepared = await runtime.commandRuntime({
+        pool: 'delegate-local',
+        configurationRevision: 'revision-1',
+        maxConcurrentProducer: 2,
+        maxConcurrentPool: 2,
+      }).prepare({
+        taskId: 'task_550e8400-e29b-41d4-a716-446655440000',
+        nonce: '550e8400-e29b-41d4-a716-446655440001',
+        cwd: repoRoot,
+        stdin: rawInput,
+        command,
+        ownerThreadId: 'root-thread',
+        sourceTurnId: 'source-turn',
+        sourceItemId: 'source-item',
+        env: { PATH: process.env.PATH, ELECTRON_RUN_AS_NODE: 'must-not-survive' },
+      });
+      expect(prepared.process).toMatchObject({
+        kind: 'exec',
+        executable: 'bun',
+        args: [
+          path.join(repoRoot, 'src', 'delegate', 'cli', 'entry.ts'),
+          'run', '--input', '-', '--output', 'json',
+        ],
+        env: {},
+        privateControl: true,
+      });
+      const result = await runProcess(
+        prepared.process.kind === 'exec' ? prepared.process.executable : '',
+        prepared.process.kind === 'exec' ? prepared.process.args : [],
+        rawInput,
+        prepared.privateControlInput!,
+      );
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: true,
+        data: { taskId: 'task_550e8400-e29b-41d4-a716-446655440000' },
+      });
+      expect(executions[0]!.admission).toMatchObject({
+        toolTaskId: 'task_550e8400-e29b-41d4-a716-446655440000',
+        toolTaskNonce: '550e8400-e29b-41d4-a716-446655440001',
+        processSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+        source: { rootUserIntentRevision: 3 },
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('admits one exact fd 3 invocation and rejects replay', async () => {
+    const executions: DelegateCapabilityExecution[] = [];
+    const fixture = await createBroker('revision-1', async (execution) => {
+      executions.push(execution);
+      return { admitted: true, sessionId: execution.admission.session.kind === 'run'
+        ? execution.admission.session.preallocatedSessionId
+        : null };
+    });
+    try {
+      const rawInput = '{\n  "version": 1,\n  "prompt": "Inspect this path.",\n  "profile": "explore",\n  "access": "read-only"\n}\n';
+      const command = runCommand();
+      const capability = fixture.broker.issue(admission(command, rawInput, 'revision-1'));
+      const first = await runCliDirect(command, rawInput, capability);
+
+      expect(first.exitCode).toBe(0);
+      expect(JSON.parse(first.stdout)).toMatchObject({ ok: true, data: { admitted: true, sessionId: SESSION_ID } });
+      expect(executions).toHaveLength(1);
+      expect(executions[0]!.admission.stdin).toBe(rawInput);
+      expect(executions[0]!.input).toMatchObject({ prompt: 'Inspect this path.', profile: 'explore' });
+
+      const replay = await runCliDirect(command, rawInput, capability);
+      expect(replay.exitCode).toBe(6);
+      expect(JSON.parse(replay.stdout)).toMatchObject({
+        ok: false,
+        error: { code: 'unauthorized', message: expect.stringContaining('already consumed') },
+      });
+      expect(executions).toHaveLength(1);
+    } finally {
+      await fixture.broker.stop();
+    }
+  });
+
+  test('rejects mismatched stdin before consumption and stale configuration at Host admission', async () => {
+    let revision = 'revision-1';
+    const executions: DelegateCapabilityExecution[] = [];
+    const fixture = await createBroker(() => revision, async (execution) => {
+      executions.push(execution);
+      return { admitted: true };
+    });
+    try {
+      const rawInput = JSON.stringify({
+        version: 1,
+        prompt: 'Inspect this path.',
+        profile: 'explore',
+        access: 'read-only',
+      });
+      const command = runCommand();
+      const capability = fixture.broker.issue(admission(command, rawInput, revision));
+
+      const mismatch = await runCliDirect(command, `${rawInput}\n`, capability);
+      expect(mismatch.exitCode).toBe(6);
+      expect(JSON.parse(mismatch.stdout)).toMatchObject({
+        ok: false,
+        error: { code: 'unauthorized', message: expect.stringContaining('stdin') },
+      });
+      expect(executions).toHaveLength(0);
+
+      revision = 'revision-2';
+      const stale = await runCliDirect(command, rawInput, capability);
+      expect(stale.exitCode).toBe(5);
+      expect(JSON.parse(stale.stdout)).toMatchObject({
+        ok: false,
+        error: { code: 'unavailable', message: expect.stringContaining('configuration changed') },
+      });
+      expect(executions).toHaveLength(0);
+    } finally {
+      await fixture.broker.stop();
+    }
+  });
+
+  test('the public launcher closes an inherited fd 3 capability', async () => {
+    const executions: DelegateCapabilityExecution[] = [];
+    const fixture = await createBroker('revision-1', async (execution) => {
+      executions.push(execution);
+      return { admitted: true };
+    });
+    try {
+      const rawInput = JSON.stringify({
+        version: 1,
+        prompt: 'This wrapper invocation must be refused.',
+        profile: 'explore',
+        access: 'read-only',
+      });
+      const command = runCommand();
+      const capability = fixture.broker.issue(admission(command, rawInput, 'revision-1'));
+      const result = await runProcess(
+        path.join(repoRoot, 'src', 'delegate', 'bin', 'delegate'),
+        commandArgs(command),
+        rawInput,
+        capability,
+      );
+
+      expect(result.exitCode).toBe(6);
+      expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: 'unauthorized' } });
+      expect(executions).toHaveLength(0);
+    } finally {
+      await fixture.broker.stop();
+    }
+  });
+});
+
+async function createBroker(
+  revision: string | (() => string),
+  execute: (execution: DelegateCapabilityExecution) => Promise<unknown>,
+): Promise<{ readonly broker: DelegateCapabilityBroker }> {
+  const root = await mkdtemp(path.join(tmpdir(), 'delegate-broker-'));
+  roots.push(root);
+  const broker = new DelegateCapabilityBroker({
+    socketPath: path.join(root, 'broker.sock'),
+    currentConfigurationRevision: typeof revision === 'string' ? () => revision : revision,
+    execute,
+  });
+  await broker.start();
+  return { broker };
+}
+
+function admission(
+  command: DelegateStateCommand,
+  stdin: string,
+  configurationRevision: string,
+): DelegateCapabilityAdmission {
+  return {
+    toolTaskId: 'task_550e8400-e29b-41d4-a716-446655440000',
+    toolTaskNonce: '550e8400-e29b-41d4-a716-446655440001',
+    command,
+    stdin,
+    cwd: repoRoot,
+    processSha256: 'a'.repeat(64),
+    source: {
+      rootThreadId: 'root-thread',
+      sourceTurnId: 'source-turn',
+      sourceItemId: 'source-item',
+      rootUserIntentRevision: 7,
+    },
+    policy: {
+      configurationRevision,
+      capabilityCeilingDigest: 'b'.repeat(64),
+      runnerId: 'internal',
+      modelId: 'provider/model',
+      effort: 'medium',
+      schedulingPolicyDigest: 'c'.repeat(64),
+    },
+    session: { kind: 'run', preallocatedSessionId: SESSION_ID },
+  };
+}
+
+function runCommand(): DelegateStateCommand {
+  return parseDelegateCommand(['run', '--input', '-', '--output', 'json']) as DelegateStateCommand;
+}
+
+function commandArgs(command: DelegateStateCommand): string[] {
+  if (command.name !== 'run') throw new Error('Test requires a run command');
+  return ['run', '--input', '-', '--output', command.output];
+}
+
+async function runCliDirect(
+  command: DelegateStateCommand,
+  stdin: string,
+  capability: Uint8Array,
+): Promise<ProcessResult> {
+  return runProcess('bun', [
+    path.join(repoRoot, 'src', 'delegate', 'cli', 'entry.ts'),
+    ...commandArgs(command),
+  ], stdin, capability);
+}
+
+interface ProcessResult {
+  readonly exitCode: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+function runProcess(
+  executable: string,
+  args: readonly string[],
+  stdin: string,
+  capability: Uint8Array,
+): Promise<ProcessResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, [...args], {
+      cwd: repoRoot,
+      stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', (exitCode) => resolve({ exitCode, stdout, stderr }));
+    child.stdin.end(stdin);
+    child.stdio[3]!.end(Buffer.from(capability));
+  });
+}

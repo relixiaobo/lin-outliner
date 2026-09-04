@@ -22,6 +22,7 @@ import {
   stopBackgroundShellTaskResult,
   type AgentFileReadImageNormalizer,
   type AgentLocalWorkspaceContext,
+  type DelegateCommandRuntime,
 } from '../capabilities/agentLocalTools';
 import type { AgentSkillRuntime } from '../capabilities/agentSkills';
 import { evaluateAgentToolCapability } from '../capabilities/agentCapabilities';
@@ -55,6 +56,9 @@ export interface ToolRuntimeOptions {
   readonly assembleRegistry?: boolean;
   readonly dynamicTools?: (context: TurnExecutionContext) => readonly AgentTool[] | Promise<readonly AgentTool[]>;
   readonly capabilityConfig?: AgentCapabilityConfig | (() => AgentCapabilityConfig | Promise<AgentCapabilityConfig>);
+  readonly delegateCommandRuntime?: (
+    context: TurnExecutionContext,
+  ) => DelegateCommandRuntime | undefined | Promise<DelegateCommandRuntime | undefined>;
 }
 
 export class ToolRuntime {
@@ -78,6 +82,7 @@ export class ToolRuntime {
     const imageGeneration = typeof this.options.imageGeneration === 'function'
       ? this.options.imageGeneration(context)
       : this.options.imageGeneration;
+    const delegateCommandRuntime = await this.options.delegateCommandRuntime?.(context);
     const capabilityTools = this.options.capabilityTools
       ? this.options.capabilityTools(context)
       : (await import('../capabilities/agentTools')).createAgentTools({
@@ -89,6 +94,7 @@ export class ToolRuntime {
           artifactSink,
           ...(toolTaskService === undefined ? {} : { toolTaskService }),
           turnId: context.turn.id,
+          ...(delegateCommandRuntime === undefined ? {} : { delegateCommandRuntime }),
         });
     const dynamicTools = await this.options.dynamicTools?.(context) ?? [];
     const collaborationTools = await this.service.collaborationToolContributions({

@@ -94,6 +94,9 @@ export interface StartToolTaskInput {
   readonly command: string;
   readonly process?: ToolTaskProcessSpec;
   readonly privateControlInput?: Uint8Array;
+  readonly prepareProcess?: (
+    context: ToolTaskProcessPreparationContext,
+  ) => Promise<PreparedToolTaskProcess>;
   readonly cwd: string;
   readonly stdin?: string;
   readonly timeoutMs: number;
@@ -104,6 +107,18 @@ export interface StartToolTaskInput {
   readonly producerContext?: JsonValue;
   readonly scheduling?: Partial<ToolTaskSchedulingPolicy>;
   readonly signal?: AbortSignal;
+}
+
+export interface ToolTaskProcessPreparationContext {
+  readonly taskId: string;
+  readonly nonce: string;
+  readonly cwd: string;
+  readonly stdin: string;
+}
+
+export interface PreparedToolTaskProcess {
+  readonly process: ToolTaskProcessSpec;
+  readonly privateControlInput?: Uint8Array;
 }
 
 export interface ToolTaskOutput {
@@ -325,11 +340,21 @@ export class ToolTaskService {
     const paths = taskPaths(task.detailPath);
     let supervisor: ChildProcess | null = null;
     try {
+      const prepared = input.prepareProcess
+        ? await input.prepareProcess({
+            taskId,
+            nonce: task.nonce,
+            cwd: path.resolve(input.cwd),
+            stdin: input.stdin ?? '',
+          })
+        : { process: input.process ?? { kind: 'shell', command: input.command },
+            ...(input.privateControlInput ? { privateControlInput: input.privateControlInput } : {}) };
+      validatePreparedProcess(prepared);
       const config: ToolTaskSupervisorConfig = {
         version: 2,
         taskId,
         nonce: task.nonce,
-        process: input.process ?? { kind: 'shell', command: input.command },
+        process: prepared.process,
         cwd: path.resolve(input.cwd),
         stdinPath: paths.stdin,
         stdoutPath: paths.stdout,
@@ -365,13 +390,13 @@ export class ToolTaskService {
           TENON_TOOL_TASK_PROGRESS_FILE: paths.progress,
         },
         detached: process.platform !== 'win32',
-        stdio: input.privateControlInput ? ['ignore', 'ignore', 'ignore', 'pipe'] : 'ignore',
+        stdio: prepared.privateControlInput ? ['ignore', 'ignore', 'ignore', 'pipe'] : 'ignore',
         windowsHide: true,
         sandbox: input.sandbox,
       });
       if (!supervisor.pid) throw new Error('Tool Task supervisor did not receive a process identity');
-      if (input.privateControlInput) {
-        await writePrivateControl(supervisor, input.privateControlInput);
+      if (prepared.privateControlInput) {
+        await writePrivateControl(supervisor, prepared.privateControlInput);
       }
       this.supervisors.set(taskId, supervisor);
       supervisor.once('close', () => {
@@ -1109,8 +1134,19 @@ export class ToolTaskService {
 }
 
 function validateProcessInput(input: StartToolTaskInput): void {
+  if (input.prepareProcess && (input.process || input.privateControlInput)) {
+    throw new Error('Prepared Tool Task process cannot be combined with a static process or private control input');
+  }
+  if (input.prepareProcess) return;
+  validatePreparedProcess({
+    process: input.process ?? { kind: 'shell', command: input.command },
+    ...(input.privateControlInput ? { privateControlInput: input.privateControlInput } : {}),
+  });
+}
+
+function validatePreparedProcess(input: PreparedToolTaskProcess): void {
   const processSpec = input.process;
-  if (!processSpec || processSpec.kind === 'shell') {
+  if (processSpec.kind === 'shell') {
     if (input.privateControlInput) throw new Error('Private Tool Task control input requires a direct process');
     return;
   }

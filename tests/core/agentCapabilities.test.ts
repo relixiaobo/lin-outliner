@@ -61,6 +61,8 @@ describe('agent capabilities', () => {
       'outline create --input -',
       'outline --json transact --input -',
       'env OUTLINE_SOCKET=/tmp/outline.sock outline --no-start preview --input -',
+      'delegate run --input - --output json',
+      'delegate send --task task_550e8400-e29b-41d4-a716-446655440000 --input - --output json',
     ]) expect(classifyBashStdinConsumer(command, true), command).toBe('registered-data');
 
     for (const command of [
@@ -91,6 +93,9 @@ describe('agent capabilities', () => {
       'outline apply --input -',
       'outline asset ingest -',
       'outline create --input $(printf -- -)',
+      'delegate run --output json --input -',
+      'delegate run --input - --output json | cat',
+      '/tmp/delegate run --input - --output json',
     ]) expect(classifyBashStdinConsumer(command, true), command).toBe('unknown');
 
     const payloads = ['safe data', '$(touch /tmp/never)', '-----BEGIN PRIVATE KEY-----'];
