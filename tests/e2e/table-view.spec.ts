@@ -345,9 +345,6 @@ test.describe('table view', () => {
       { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'list' } },
     ]);
 
-    await expect(row(page, ids.alpha).locator('.view-display-fields')).toHaveCount(0);
-    await expect(row(page, ids.beta).locator('.view-display-fields')).toHaveCount(0);
-
     await invokeCommands(page, [
       { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
     ]);

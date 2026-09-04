@@ -66,13 +66,11 @@ starts open and ordinary Nodes start closed.
 An explicit `viewDef.toolbarVisible` value wins in both directions, so every Node
 can use the same Show/Hide action.
 
-Display placement distinguishes the two existing surfaces without adding a new
-state model. A field explicitly added from Outline uses `title`; fields defaulted
-or added while the owner is in Table use `body`. Table columns consume all
-visible display fields, while Outline title metadata consumes only `title` and
-legacy unspecified placements. Selecting a Table-only field from Outline's
-Display menu promotes it to `title`. Switching view mode therefore does not make
-Table column defaults appear like Node description content.
+Display owns one visible-field set across view modes. Table consumes that set as
+columns; Outline does not duplicate field values beneath row titles, where they
+would read as Node description content. Outline continues to expose authored
+field rows and the real Node description, and switching view mode never rewrites
+display placement.
 
 Node disclosure uses the complete visible child scope, including field entries.
 Content insertion keeps a separate content-only child scope so Enter placement
@@ -109,8 +107,8 @@ unclaimed Electron/DOM focus loss self-heals without a direct DOM focus shortcut
   hit testing.
 - Every Node toolbar keeps one full-bar structure, control order, labels,
   Filter rule chips, and interaction model across Outline and Table.
-- Table-defaulted and Table-added columns do not render as Outline title metadata;
-  an explicit Outline Display selection does.
+- Display fields never render as Outline title metadata; Table consumes the same
+  persisted visible-field set as columns.
 - A Node whose only children are field entries exposes the parent marker and
   disclosure state, while content insertion remains ordered after field entries.
 - The configuration toolbar does not duplicate view-mode controls; **View as**

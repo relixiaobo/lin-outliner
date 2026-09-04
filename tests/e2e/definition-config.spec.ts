@@ -330,7 +330,7 @@ test.describe('definition configuration parity', () => {
     expect(geometry.afterContent).toBe('none');
   });
 
-  test('view toolbar display fields activate the control and render row metadata', async ({ page }) => {
+  test('view toolbar display fields stay out of Outline descriptions and remain available to Table', async ({ page }) => {
     await showViewToolbar(page, ids.today);
     await invokeDocumentCommand(page, 'apply_tag', { nodeId: ids.alpha, tagId: ids.projectTag });
     await invokeDocumentCommand(page, 'add_display_field', { nodeId: ids.today, field: 'sys:tags' });
@@ -349,11 +349,11 @@ test.describe('definition configuration parity', () => {
     await expect(dialog.getByText('Tags')).toBeVisible();
     await expect(dialog.getByText('Number of references')).toHaveCount(0);
 
-    const alphaDisplay = row(page, ids.alpha).locator('.view-display-fields');
-    await expect(alphaDisplay).toBeVisible();
-    await expect(alphaDisplay.locator('.view-display-field-label')).toHaveText('Tags');
-    await expect(alphaDisplay.locator('.view-display-field-value')).toHaveText('project');
+    await expect(row(page, ids.alpha).locator('.view-display-fields')).toHaveCount(0);
     await expect(row(page, ids.beta).locator('.view-display-fields')).toHaveCount(0);
+
+    await invokeDocumentCommand(page, 'set_view_mode', { nodeId: ids.today, mode: 'table' });
+    await expect(page.getByRole('columnheader').filter({ hasText: 'Tags' })).toBeVisible();
   });
 
   test('field-only Nodes keep parent disclosure state', async ({ page }) => {

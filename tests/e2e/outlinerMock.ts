@@ -2237,7 +2237,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	          displayField: fieldId,
 	          displayVisible: true,
 	          displayOrder: nextOrder++,
-	          displayPlacement: 'body',
 	        });
 	        appendChild(view.id, displayId);
 	      }
@@ -3045,15 +3044,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       if (instruction.action === 'add') {
         const field = mockViewField(instruction.field, bindings) ?? 'sys:name';
         const existing = directChildrenOfType(ownerView.id, 'displayField').find((node) => node.displayField === field);
-        if (existing) {
-          existing.displayVisible = true;
-          if (ownerView.viewMode !== 'table') existing.displayPlacement = 'title';
-        } else {
+        if (existing) existing.displayVisible = true;
+        else {
           const id = `display-${++sequence}`;
           makeNode(id, '', {
             type: 'displayField', parentId: ownerView.id, displayField: field,
             displayVisible: true, displayOrder: directChildrenOfType(ownerView.id, 'displayField').length,
-            displayPlacement: ownerView.viewMode === 'table' ? 'body' : 'title',
           });
           appendChild(ownerView.id, id);
         }
@@ -6563,7 +6559,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	              .find((display) => display.displayField === fieldId);
 	            if (existingDisplay) {
 	              existingDisplay.displayVisible = true;
-	              if (view.viewMode !== 'table') existingDisplay.displayPlacement = 'title';
 	              return clone(outcome({ nodeId: existingDisplay.id, selectAll: false }));
 	            }
 	            const displayId = `display-${++sequence}`;
@@ -6574,7 +6569,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	              displayField: fieldId || 'sys:name',
 	              displayVisible: true,
 	              displayOrder,
-	              displayPlacement: view.viewMode === 'table' ? 'body' : 'title',
 	            });
 	            appendChild(view.id, displayId);
 	            return clone(outcome({ nodeId: displayId, selectAll: false }));

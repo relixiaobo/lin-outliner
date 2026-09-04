@@ -376,9 +376,9 @@ rows and saved-search results. Renderers provide its owner and view state but do
 not select a toolbar variant. Every Node uses the same full bar in Outline and
 Table with the same structure, labels, filter chips, and interactions. The bar
 contains name search followed by Display, Group, Sort, and Filter. Configured
-controls have `aria-pressed="true"`. Display
-configures title metadata in Outline and visible columns in Table, while Group
-applies to the current row projection in both modes. Activating name search
+controls have `aria-pressed="true"`. Display maintains the Table column set
+without duplicating field values beneath Outline titles, while Group applies to
+the current row projection in both modes. Activating name search
 expands its inline input. The node context menu's **View as** flyout is the single
 view-mode entry point rather than being duplicated in the configuration bar. It
 opens on pointer hover as well as click or `ArrowRight`; pointer opening does not
@@ -514,19 +514,12 @@ row, the row expands in the same interaction so the toolbar becomes visible
 immediately. The menu label follows visibility in the current row: a configured
 toolbar hidden behind a collapsed row still reads as **Show view toolbar**.
 
-Visible display fields with `title` or legacy unspecified placement render on
-each visible Outline content/result row as quiet metadata under the row title and
-inline tags. Fields defaulted or added from Table use `body` placement and remain
-columns without appearing beside Node descriptions after switching to Outline.
-Selecting such a field from Outline's Display menu promotes it to `title`. The
-node name is excluded because the title already shows it. Empty fields are omitted
-per row, so adding a Display field does not create blank placeholders. The displayed
-values use the same field resolution as sort, filter, and group, but system
-fields render through the display adapter rather than the raw sort/filter
-adapter: dates render as `YYYY-MM-DD`, Done renders as text, and reference-like
-fields render their labels instead of raw ids/count internals. Values render as
-plain text joined by comma for now; typed chips and navigable references are a
-future display-layer enhancement, not a different view model.
+Display fields never render as metadata beneath an Outline row title. That area
+is reserved for the Node's authored description and inline tags; field values
+remain represented by their ordinary field rows. Display configuration is one
+shared visible-field set, independent of the current view mode, and Table
+consumes it as columns. Switching between Outline and Table therefore neither
+duplicates field values beside descriptions nor rewrites display placement.
 
 ## Table View
 
@@ -594,7 +587,8 @@ available; selecting it restores that same column with its width, order,
 view-local label, and row values intact. Table's Edit displayed fields action
 opens the shared toolbar Display popover; the header's Add field remains the
 direct column-creation surface. The Display popover provides the same checkbox
-model in both modes and presents custom Fields before System fields. Selecting a definition with no display field
+model and persisted visible-field set in both modes and presents custom Fields
+before System fields. Selecting a definition with no display field
 creates only a display-field node. The new-field path accepts a localized field
 type and atomically creates the field definition plus its display-field node.
 None of these paths bulk-create empty values on records.

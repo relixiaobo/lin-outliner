@@ -2159,7 +2159,7 @@ describe('Core', () => {
     expect(core.state().nodes[hiddenDisplayId]).toMatchObject({ displayVisible: false });
   });
 
-  test('uses display placement to separate table columns from Outline title metadata', () => {
+  test('keeps display field placement independent from view mode', () => {
     const core = Core.new();
     const owner = mustFocus(core.createNode(core.projection().todayId, null, 'Project'));
 
@@ -2167,15 +2167,16 @@ describe('Core', () => {
     const displayId = mustFocus(core.addDisplayField(owner, DONE_FIELD));
     expect(core.state().nodes[displayId]).toMatchObject({
       displayField: DONE_FIELD,
-      displayPlacement: 'body',
       displayVisible: true,
     });
+    expect(core.state().nodes[displayId]?.displayPlacement).toBeUndefined();
 
+    core.updateDisplayField(displayId, { visible: false, placement: 'body' });
     core.setViewMode(owner, 'list');
     expect(mustFocus(core.addDisplayField(owner, DONE_FIELD))).toBe(displayId);
     expect(core.state().nodes[displayId]).toMatchObject({
       displayField: DONE_FIELD,
-      displayPlacement: 'title',
+      displayPlacement: 'body',
       displayVisible: true,
     });
   });

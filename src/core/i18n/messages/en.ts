@@ -941,8 +941,6 @@ export const en = {
       filterChipSet: ({ field }: { field: string }) => `${field}: Set`,
       filterChipFieldValue: ({ field, value }: { field: string; value: string }) => `${field}: ${value}`,
       filterChipConditionValue: ({ field, operator, value }: { field: string; operator: string; value: string }) => `${field} · ${operator} · ${value}`,
-      // Displayed field metadata.
-      displayedFieldsAriaLabel: 'Displayed fields',
     },
     table: {
       ariaLabel: ({ title }: { title: string }) => `${title} table`,

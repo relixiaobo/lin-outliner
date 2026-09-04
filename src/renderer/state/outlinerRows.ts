@@ -88,13 +88,6 @@ export interface ViewConfig {
   displayFields: ViewDisplayField[];
 }
 
-export interface ViewFieldValue {
-  id: NodeId;
-  field: string;
-  label: string;
-  values: string[];
-}
-
 export function hiddenFieldKey(parentId: NodeId, fieldEntryId: NodeId): string {
   return `${parentId}:${fieldEntryId}`;
 }
@@ -762,18 +755,6 @@ export function visibleDisplayFields(view: ViewConfig): ViewDisplayField[] {
   return view.displayFields.filter((field) => field.visible && field.field !== NAME_FIELD);
 }
 
-export function visibleOutlineDisplayFields(view: ViewConfig): ViewDisplayField[] {
-  return visibleDisplayFields(view).filter((field) => (
-    field.placement === undefined || field.placement === 'title'
-  ));
-}
-
-export function visibleDisplayFieldsForView(view: ViewConfig): ViewDisplayField[] {
-  return view.viewMode === 'table'
-    ? visibleDisplayFields(view)
-    : visibleOutlineDisplayFields(view);
-}
-
 export function visibleAuthoredTableFieldIds(view: ViewConfig): Set<string> {
   return new Set(visibleDisplayFields(view).flatMap((field) => (
     isSystemFieldId(field.field) ? [] : [field.field]
@@ -798,26 +779,6 @@ export function fieldSlotForViewCell(
   const displayed = displayNode(rowNode, byId);
   if (!displayed) return undefined;
   return nodeFieldSlots(byId, displayed.id).find((slot) => slot.fieldDefId === fieldId);
-}
-
-export function viewDisplayValuesFor(
-  rowNode: NodeProjection,
-  view: ViewConfig,
-  byId: Map<NodeId, NodeProjection>,
-  systemFieldContext?: SystemFieldContext,
-): ViewFieldValue[] {
-  return visibleOutlineDisplayFields(view).flatMap((displayField): ViewFieldValue[] => {
-    const values = displayFieldValuesFor(rowNode, displayField.field, byId, systemFieldContext)
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (values.length === 0) return [];
-    return [{
-      id: displayField.id,
-      field: displayField.field,
-      label: displayField.label?.trim() || fieldChoiceLabel(displayField.field, byId),
-      values,
-    }];
-  });
 }
 
 export function collectViewFieldChoices(

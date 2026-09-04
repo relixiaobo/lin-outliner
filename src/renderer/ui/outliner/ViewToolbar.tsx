@@ -50,7 +50,7 @@ import {
   collectViewFieldChoices,
   customFilterFieldIdsOnRows,
   fieldChoiceLabel,
-  visibleDisplayFieldsForView,
+  visibleDisplayFields,
   type ViewConfig,
 } from './row-model';
 import {
@@ -387,7 +387,7 @@ export function ViewToolbar({
   const sortRef = useRef<HTMLButtonElement>(null);
   const filterRef = useRef<HTMLButtonElement>(null);
   const nameFilter = view.filterRules.find(isNameFilterRule);
-  const hasVisibleDisplayFields = visibleDisplayFieldsForView(view).length > 0;
+  const hasVisibleDisplayFields = visibleDisplayFields(view).length > 0;
   const hasFilterRules = view.filterRules.some((rule) => !isNameFilterRule(rule));
   const firstSortRule = view.sortRules[0];
   const SortStateIcon = firstSortRule?.direction === 'desc' ? SortDescIcon : SortAscIcon;
@@ -878,8 +878,7 @@ function DisplaySection({
   // Name is the row text itself and is always shown, so it is not a toggle here.
   const displayable = choices.filter((choice) => choice.id !== NAME_FIELD);
   const byField = new Map(view.displayFields.map((field) => [field.field, field]));
-  const visibleFieldIds = new Set(visibleDisplayFieldsForView(view).map((field) => field.field));
-  const table = view.viewMode === 'table';
+  const visibleFieldIds = new Set(visibleDisplayFields(view).map((field) => field.field));
   const groups = bySection(displayable, CUSTOM_FIRST_FIELD_SECTIONS);
   return (
     <div className="view-toolbar-options">
@@ -898,9 +897,7 @@ function DisplaySection({
                 variant="checkbox"
                 onSelect={() => {
                   if (entry) {
-                    void run(() => api.updateDisplayField(entry.id, checked
-                      ? { visible: false }
-                      : table ? { visible: true } : { visible: true, placement: 'title' }));
+                    void run(() => api.updateDisplayField(entry.id, { visible: !checked }));
                   } else {
                     void run(() => api.addDisplayField(node.id, choice.id));
                   }

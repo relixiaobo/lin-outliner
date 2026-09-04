@@ -997,7 +997,6 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
                 : undefined}
               optimisticChange={optimisticChangesById.get(row.id)}
               semanticRole="presentation"
-              hideDisplayFields
               suppressChildFieldEntries
               tableNextRowId={nextStoredRow?.kind === 'data' ? nextStoredRow.id : null}
             />

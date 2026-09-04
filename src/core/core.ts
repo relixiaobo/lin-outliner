@@ -1944,12 +1944,9 @@ export class Core {
           child?.type === 'displayField' && child.displayField === fieldId
         ));
       if (existing) {
-        const promoteToOutlineTitle = viewDef.viewMode !== 'table'
-          && existing.displayPlacement !== 'title';
-        if (existing.displayVisible === false || promoteToOutlineTitle) {
+        if (existing.displayVisible === false) {
           const next = clone(existing);
           next.displayVisible = true;
-          if (promoteToOutlineTitle) next.displayPlacement = 'title';
           next.updatedAt = nowMs();
           this.loro.writeNode(next);
         }
@@ -1967,7 +1964,6 @@ export class Core {
         node.displayField = fieldId;
         node.displayVisible = true;
         node.displayOrder = nextOrder;
-        node.displayPlacement = viewDef.viewMode === 'table' ? 'body' : 'title';
       });
       return focus(displayFieldId);
     });
@@ -3846,7 +3842,6 @@ export class Core {
         node.displayField = fieldId;
         node.displayVisible = true;
         node.displayOrder = nextOrder++;
-        node.displayPlacement = 'body';
       });
     }
   }

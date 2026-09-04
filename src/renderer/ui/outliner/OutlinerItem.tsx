@@ -47,7 +47,6 @@ import {
   type PendingStructuralChange,
   type UiState,
 } from '../../state/document';
-import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { deriveRowMemoState, rowMemoStateEqual } from '../../state/rowUiState';
 import { RichTextEditor, type EditorSplitPayload } from '../editor/RichTextEditor';
 import {
@@ -118,8 +117,6 @@ import {
   buildOutlinerRows,
   isActiveTableFieldEntry,
   readViewConfig,
-  viewDisplayValuesFor,
-  type ViewFieldValue,
 } from './row-model';
 import { draftCreateIndex, previousDraftSiblingId } from '../../state/trailingDraftPlacement';
 import { selectableRowForId } from '../../state/selectableRows';
@@ -221,7 +218,6 @@ interface OutlinerItemProps {
   // a lone label over a near-invisible ghost bullet. Ignored once materialized.
   draftPlaceholder?: string;
   semanticRole?: 'treeitem' | 'presentation';
-  hideDisplayFields?: boolean;
   suppressChildFieldEntries?: boolean;
   outlineSourcePreviewKey?: string;
   tableNextRowId?: NodeId | null;
@@ -340,10 +336,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     ? childParentNode?.children.indexOf(firstContentChildId) ?? -1
     : -1;
   const parentView = readViewConfig(parentNode, props.index.byId);
-  const referenceSummary = referenceSummaryForIndex(props.index);
-  const displayValues = realNode && displayed && !props.draft && !props.fieldValue
-    ? viewDisplayValuesFor(displayed, parentView, props.index.byId, { referenceSummary })
-    : [];
   const trailingDraftOrigin = props.draft === true
     && !realNode
     && (!props.optimisticChange || props.optimisticChange.originatesFromDraft === true);
@@ -3325,9 +3317,6 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               />
           )}
           {!useInlineContentSlot && fieldValueAffordances}
-          {!props.hideDisplayFields ? (
-            <ViewDisplayFields ariaLabel={t.outliner.viewToolbar.displayedFieldsAriaLabel} values={displayValues} />
-          ) : null}
           {dateFieldValue && props.fieldValue && (
             <DateValuePicker
               anchorRef={optionAnchorRef}
@@ -3601,20 +3590,6 @@ function SelectedReferenceOptionPicker({
   );
 }
 
-function ViewDisplayFields({ ariaLabel, values }: { ariaLabel: string; values: ViewFieldValue[] }) {
-  if (values.length === 0) return null;
-  return (
-    <div className="view-display-fields" aria-label={ariaLabel}>
-      {values.map((field) => (
-        <span className="view-display-field" key={field.id}>
-          <span className="view-display-field-label">{field.label}</span>
-          <span className="view-display-field-value">{field.values.join(', ')}</span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
 function referencePathEqual(a: readonly NodeId[], b: readonly NodeId[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
@@ -3699,7 +3674,6 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   if (prev.rootId !== next.rootId) return false;
   if (prev.depth !== next.depth) return false;
   if (prev.semanticRole !== next.semanticRole) return false;
-  if (prev.hideDisplayFields !== next.hideDisplayFields) return false;
   if (prev.suppressChildFieldEntries !== next.suppressChildFieldEntries) return false;
   if (prev.outlineSourcePreviewKey !== next.outlineSourcePreviewKey) return false;
   if (prev.tableNextRowId !== next.tableNextRowId) return false;

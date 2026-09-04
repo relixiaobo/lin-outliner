@@ -858,8 +858,6 @@ export const zhHans: PartialMessages = {
       filterChipSet: ({ field }: { field: string }) => `${field}：有值`,
       filterChipFieldValue: ({ field, value }: { field: string; value: string }) => `${field}：${value}`,
       filterChipConditionValue: ({ field, operator, value }: { field: string; operator: string; value: string }) => `${field} · ${operator} · ${value}`,
-      // Displayed field metadata.
-      displayedFieldsAriaLabel: '显示字段',
     },
     table: {
       ariaLabel: ({ title }: { title: string }) => `${title}表格`,
