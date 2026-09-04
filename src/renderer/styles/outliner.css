@@ -3,10 +3,9 @@
   flex-direction: column;
   container-type: inline-size;
   --outliner-leading-bleed: var(--row-bullet-start);
-  /* The row wrapper bleeds left to expose its marker gutter. Add back the
-     remaining leading grid width to recover the row's content-text axis. */
-  --outliner-row-content-start: calc(
-    var(--row-leading-width) + var(--row-edge) - var(--outliner-leading-bleed)
+  /* Center full-size view controls on the ordinary bullet rail. */
+  --outliner-view-chrome-start: calc(
+    var(--row-bullet-center) - var(--outliner-leading-bleed) - var(--control-size-xl) / 2
   );
   --field-row-min-height: 32px;
   --field-row-padding-block: var(--space-1);
@@ -271,7 +270,7 @@
   position: relative;
   display: block;
   width: auto;
-  margin: 2px 0 6px var(--outliner-row-content-start);
+  margin: 2px 0 6px var(--outliner-view-chrome-start);
   padding: var(--space-1) 0;
   color: var(--text-secondary);
 }
@@ -1291,7 +1290,7 @@ button.outliner-table-column-kind:focus-visible {
   min-height: var(--control-size-md);
   align-items: center;
   gap: var(--space-2);
-  margin: var(--space-4) 0 var(--space-1) var(--row-selection-start);
+  margin: var(--space-4) 0 var(--space-1) var(--outliner-view-chrome-start);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: var(--font-ui-sm);

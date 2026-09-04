@@ -299,7 +299,7 @@ test.describe('definition configuration parity', () => {
     await expect(row(page, ids.alpha).getByRole('button', { name: 'Collapse' })).toBeVisible();
   });
 
-  test('nested view toolbar aligns with its owner row content column and stays frameless', async ({ page }) => {
+  test('nested view toolbar aligns its first control with the owner bullet and stays frameless', async ({ page }) => {
     await showViewToolbar(page, ids.today);
     await invokeDocumentCommand(page, 'set_view_toolbar_visible', { nodeId: ids.alpha, visible: true });
 
@@ -311,21 +311,30 @@ test.describe('definition configuration parity', () => {
     await expect(rootToolbar).toBeVisible();
     await expect(nestedToolbar).toBeVisible();
 
-    const geometry = await page.evaluate(() => {
+    const geometry = await page.evaluate((ownerId) => {
       const toolbars = [...document.querySelectorAll<HTMLElement>('.view-toolbar')];
       const rootRect = toolbars[0]?.getBoundingClientRect();
       const nestedRect = toolbars[1]?.getBoundingClientRect();
+      const firstControlRect = toolbars[1]
+        ?.querySelector<HTMLElement>('.view-toolbar-pill')
+        ?.getBoundingClientRect();
+      const bulletRect = document.querySelector<HTMLElement>(
+        `[data-node-id="${ownerId}"] > .row > .row-leading .row-bullet-button`,
+      )?.getBoundingClientRect();
       const before = toolbars[1] ? getComputedStyle(toolbars[1], '::before') : null;
       const after = toolbars[1] ? getComputedStyle(toolbars[1], '::after') : null;
       return {
         rootLeft: rootRect?.left ?? 0,
         nestedLeft: nestedRect?.left ?? 0,
+        firstControlCenter: firstControlRect ? firstControlRect.left + firstControlRect.width / 2 : 0,
+        bulletCenter: bulletRect ? bulletRect.left + bulletRect.width / 2 : 0,
         beforeContent: before?.content ?? '',
         afterContent: after?.content ?? '',
       };
-    });
+    }, ids.alpha);
 
     expect(Math.abs(geometry.nestedLeft - geometry.rootLeft)).toBeLessThan(2);
+    expect(Math.abs(geometry.firstControlCenter - geometry.bulletCenter)).toBeLessThan(2);
     expect(geometry.beforeContent).toBe('none');
     expect(geometry.afterContent).toBe('none');
   });
@@ -552,6 +561,13 @@ test.describe('definition configuration parity', () => {
 
     const filteredOut = page.getByRole('button', { name: '2 items filtered out' });
     await expect(filteredOut).toBeVisible();
+    const [filteredTextBox, bulletBox] = await Promise.all([
+      filteredOut.locator('span').first().boundingBox(),
+      row(page, ids.alpha).locator(':scope > .row > .row-leading .row-bullet-button').boundingBox(),
+    ]);
+    expect(filteredTextBox).not.toBeNull();
+    expect(bulletBox).not.toBeNull();
+    expect(Math.abs(filteredTextBox!.x - bulletBox!.x)).toBeLessThan(2);
     await filteredOut.click();
     await expect(row(page, ids.beta)).toBeVisible();
     await expect(row(page, ids.gamma)).toBeVisible();

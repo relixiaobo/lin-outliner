@@ -397,9 +397,9 @@ toolbar is already available.
 
 Nested toolbars render as part of the expanded child outline, not as detached
 cards. They remain logically inside the expanded child subtree, while their
-visual indent aligns with the owning node's title/content column, derived from
-the same row geometry tokens instead of the bullet or selection gutter. The
-expanded parent guide line spans the toolbar and
+first control centers on the owning node's bullet axis, derived from the same
+row geometry tokens rather than a duplicated offset. The expanded parent guide
+line spans the toolbar and
 descendants. The toolbar itself has no frame or separator; hierarchy guides and
 Table row separators provide structure where the current projection needs it.
 
@@ -478,7 +478,9 @@ collapsed `N items filtered out` disclosure. Expanding it reveals the filtered
 rows in the same outline renderer and keyboard-selection model; collapsing it
 hides them again without changing the persisted view settings. The disclosure's
 renderer id includes the active filter-rule ids, so expanding an old filter does
-not silently expand a newly created filter on the same parent later.
+not silently expand a newly created filter on the same parent later. Its text
+starts on the bullet box axis and its control background shares the toolbar's
+view-chrome start, keeping view controls distinct from Node title text.
 
 When a field-first popover drills into an editor pane, focus moves to the pane's
 back control. That keeps Escape scoped to the popover and preserves keyboard

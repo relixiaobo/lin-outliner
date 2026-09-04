@@ -106,7 +106,9 @@ unclaimed Electron/DOM focus loss self-heals without a direct DOM focus shortcut
   preview and title/content without covering its Source field or changing media
   hit testing.
 - Every Node toolbar keeps one full-bar structure, control order, labels,
-  Filter rule chips, and interaction model across Outline and Table.
+  Filter rule chips, and interaction model across Outline and Table. In Outline,
+  its first control centers on the bullet axis and filtered-out disclosure text
+  begins at the bullet box.
 - Display fields never render as Outline title metadata; Table consumes the same
   persisted visible-field set as columns.
 - A Node whose only children are field entries exposes the parent marker and
