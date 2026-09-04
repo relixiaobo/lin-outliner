@@ -119,7 +119,7 @@ test.describe('table view', () => {
     await expect(grid.locator('.outliner-table-column-kind')).toHaveCount(2);
     await expect(grid.getByRole('button', { name: 'Add column' })).toHaveText('Add field');
     await expect(grid.locator('.outliner-table-title-cell')).toHaveCount(4);
-    await expect(grid.locator('.outliner-table-group-row')).not.toHaveCount(0);
+    await expect(grid.locator('.outliner-table-group-row')).toHaveCount(0);
     await expect(grid.locator(`[data-table-row-id="${ids.alpha}"][data-table-column-id="__title__"]`)).toContainText('Alpha');
 
     const geometry = await grid.evaluate((element) => {
@@ -253,6 +253,7 @@ test.describe('table view', () => {
     ));
     await switchRootFromContextMenu(page, 'Outline');
     await expect(rootGrid(page)).toHaveCount(0);
+    await expect(page.locator('.view-group-heading')).not.toHaveCount(0);
     const outlineToolbar = page.locator('.view-toolbar').first();
     await expect(outlineToolbar.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
     const outlineButtonLabels = await outlineToolbar.locator('button').evaluateAll((buttons) => (
@@ -277,6 +278,7 @@ test.describe('table view', () => {
 
     await switchRootFromContextMenu(page, 'Table');
     await expect(rootGrid(page)).toBeVisible();
+    await expect(rootGrid(page).locator('.outliner-table-group-row')).toHaveCount(0);
   });
 
   test('defaults used custom fields as columns and preserves hidden choices across view switches', async ({ page }) => {

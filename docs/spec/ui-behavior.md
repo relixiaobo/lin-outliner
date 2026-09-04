@@ -377,8 +377,9 @@ not select a toolbar variant. Every Node uses the same full bar in Outline and
 Table with the same structure, labels, filter chips, and interactions. The bar
 contains name search followed by Display, Group, Sort, and Filter. Configured
 controls have `aria-pressed="true"`. Display maintains the Table column set
-without duplicating field values beneath Outline titles, while Group applies to
-the current row projection in both modes. Activating name search
+without duplicating field values beneath Outline titles. Group retains one saved
+setting across modes, applies it to Outline, and leaves the Table projection
+ungrouped. Activating name search
 expands its inline input. The node context menu's **View as** flyout is the single
 view-mode entry point rather than being duplicated in the configuration bar. It
 opens on pointer hover as well as click or `ArrowRight`; pointer opening does not

@@ -680,12 +680,11 @@ function applyViewSettings(
     const contentRows = rows.filter((row) => row.type !== 'field' && row.type !== 'hiddenField');
     const sortedRows = sortRows(view, contentRows, byId, systemFieldContext);
     const { visible, filteredOut } = partitionFilterRows(view, sortedRows, byId, systemFieldContext);
-    const groupedVisible = groupRows(parent, view, visible, byId, systemFieldContext);
-    if (filteredOut.length === 0) return [...fieldRows, ...groupedVisible];
+    if (filteredOut.length === 0) return [...fieldRows, ...visible];
     const ruleKey = view.filterRules.map((rule) => rule.id).join('|');
     return [
       ...fieldRows,
-      ...groupedVisible,
+      ...visible,
       {
         id: `filtered:${parent.id}:${ruleKey}`,
         type: 'filteredOut',

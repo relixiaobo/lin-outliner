@@ -547,7 +547,7 @@ describe('row interaction resolvers', () => {
     ]);
   });
 
-  test('keeps owner fields outside grouped table rows', () => {
+  test('keeps owner fields outside table rows and ignores saved grouping', () => {
     const parent = makeNode('parent', 'Parent', {
       children: ['view', 'owner-field', 'beta', 'alpha'],
     });
@@ -578,9 +578,7 @@ describe('row interaction resolvers', () => {
 
     expect(buildOutlinerRows(parent as any, byId)).toEqual([
       ownFieldRow('owner-field', 'owner-def'),
-      { id: 'group:parent:sys:name:alpha', type: 'group', label: 'Alpha' },
       { id: 'alpha', type: 'content' },
-      { id: 'group:parent:sys:name:beta', type: 'group', label: 'Beta' },
       { id: 'beta', type: 'content' },
     ]);
   });
