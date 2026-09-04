@@ -452,12 +452,12 @@ open model chooser re-read readiness and become usable without a restart.
 
 `Test Connection` probes the current unsaved candidate without changing the
 active generation. `Save` validates and durably commits the exact candidate as
-`configured/unverified` independently of network success, then tests that saved
-generation. A newly typed but unsaved key remains only in the credential form's
-memory and is discarded on close; after Save, opening the form shows that a
-credential exists and can retry verification without asking for the key again.
-The UI distinguishes `Saved, not verified` and the last redacted test failure
-from `Ready`.
+an immutable `configured/unverified` connection snapshot independently of
+network success, then tests that saved snapshot. A newly typed but unsaved key
+remains only in the credential form's memory and is discarded on close; after
+Save, opening the form shows that a credential exists and can retry verification
+without asking for the key again. The UI distinguishes `Saved, not verified` and
+the last redacted test failure from `Ready`.
 
 The UI and `models` tool call the same Main credential/connection owner. No
 renderer or typed domain tool receives a stored secret or credential-file path,
@@ -499,35 +499,59 @@ secret bytes after the invocation settles through this typed route. Generic
 Full Access remains independently capable of reading or copying the committed
 file.
 
-Provider state distinguishes `configuredGeneration` from `activeGeneration`.
-The configured pointer names the latest durably saved candidate and its
-verification status; the active pointer names the already verified generation
-allowed to serve runtime work. Both selectors live in the atomically replaced
-Provider record, which remains the authority and commit point:
+Provider state contains stable identity, immutable connection snapshots, and
+`configuredGeneration`/`activeGeneration` selectors. Each generation is one
+complete snapshot of every field that can affect runtime connection resolution:
+Provider/adapter identity, endpoint/base URL, enabled state, auth kind, relevant
+catalog/model-resolution inputs, and a reference to its credential generation.
+No runtime-affecting candidate field remains mutable at Provider-record top
+level. Verification status and its redacted verdict are generation-scoped
+metadata; they never change the snapshot's connection inputs.
 
-1. validate non-secret fields and stage a new credential generation in the
-   private credential file without making it active;
-2. atomically commit the Provider's non-secret candidate fields and
-   `configuredGeneration` with `unverified` status while preserving its previous
+The configured selector names the latest durably saved snapshot. The active
+selector names the already verified snapshot allowed to serve runtime work.
+Runtime resolution reads the active snapshot as one unit and must not combine it
+with configured snapshot or top-level candidate fields. Each Provider owns these
+two generation selectors. The installation-level active-Provider selector names
+only a stable Provider identity; runtime then resolves that Provider's complete
+active snapshot. Selecting a Provider never selects its configured snapshot.
+Both generation selectors, the active-Provider selector, and the
+immutable snapshot index live in the atomically replaced Provider record, which
+remains the authority and commit point:
+
+1. validate every connection input, stage its credential generation in the
+   private credential file, and construct one complete immutable snapshot;
+2. atomically add that snapshot and move `configuredGeneration` to it with
+   `unverified` status while preserving the previous complete active snapshot and
    `activeGeneration`;
-3. test the saved candidate endpoint and auth from that exact generation;
-4. on success, atomically record `verified` and move `activeGeneration` when the
-   connection is selected for use, then publish readiness; and
+3. test the exact saved snapshot, including its own endpoint, enabled state,
+   auth kind, and credential reference;
+4. on success, re-enter the serialized owner and require that
+   `configuredGeneration`, requested active-Provider selection, snapshot inputs,
+   and authority still match the tested generation; otherwise return stale
+   without promotion. Atomically record `verified`, move that Provider's
+   `activeGeneration` to the same generation, and apply its active-Provider
+   selection intent, then publish readiness; and
 5. on credential- or Provider-write failure, preserve both prior pointers and
    clean any unreferenced staging; on test, network, quota, or auth failure,
-   persist the configured generation plus redacted verdict for later retry but
-   leave the previous active generation unchanged.
+   persist the configured snapshot plus redacted verdict for later retry but
+   leave the previous active snapshot and pointer byte-for-byte unchanged.
 
 This generation indirection makes crash recovery deterministic across the
 Provider store and `agent-secrets.json`: an unreferenced staged secret is never
-runnable, a configured generation always names already-durable credentials, and
-only an active generation is runnable. Credential generations are garbage-
-collected only when neither pointer references them. OAuth uses the same
-configured/verified/active transitions after its private browser exchange.
-Connection tests never overwrite the active pointer on failure, and a failed
-replacement cannot break a previously working Agent. On first launch, a failed
-test leaves a saved non-runnable connection; retry can later make it active and
-enable the Agent without re-entering credentials or restarting.
+runnable, a configured snapshot always names already-durable credentials, and
+runtime considers only the active snapshot and only when that snapshot is
+enabled. A snapshot is garbage-collected only when neither selector nor a probe
+references it; a credential generation is collected only when no retained
+snapshot or probe references it. OAuth uses the same configured/verified/active
+transitions after its private browser exchange. Disabling an existing Provider
+is a structurally verified snapshot promotion that needs no network probe; if it
+was selected, the same atomic write clears or moves the active-Provider selector
+to another already enabled active snapshot. Enabling or changing connection
+inputs requires successful verification. A failed replacement cannot change the
+previous active snapshot or break a working Agent. On first launch, a failed
+test leaves a saved non-runnable snapshot; retry can later promote that exact
+snapshot and enable the Agent without re-entering credentials or restarting.
 
 Destructive operations and authority expansion use one shared Host interaction
 coordinator owned outside Settings. Before showing private UI it consumes and
@@ -725,20 +749,22 @@ prior effective state stays active. The UI disables structured edits and offers
 **First launch has no runnable model.** Agent execution controls are unavailable
 and the surface presents `Set Up a Model`. The person completes Provider/auth,
 endpoint, credential or OAuth, and connection test in Models. A failed test or
-quota/network/auth check leaves the candidate durably `configured/unverified`
-for later retry without re-entering the credential; it is not runnable. A save
-failure preserves the prior Provider pointers and keeps the form recoverable. A
-successful verification moves the active generation, publishes readiness, and
-enables Agent interaction immediately without restart.
+quota/network/auth check leaves the complete candidate snapshot durably
+`configured/unverified` for later retry without re-entering the credential; it
+is not runnable. A save failure preserves the prior snapshots and selectors and
+keeps the form recoverable. A successful verification promotes that exact
+snapshot to active, publishes readiness, and enables Agent interaction
+immediately without restart.
 
 **Agent receives an explicit API key.** A runnable root Agent calls the sensitive
 `models configure` operation with the value from its latest renderer-authored
-user message. The Host verifies the exact-message binding, stages and tests the
-new generation, commits it as configured, and returns only redacted public
-status. It opens no redundant credential prompt. A failed test persists the
-candidate and verdict for later retry but keeps the prior active connection; a
-mismatch, stale Turn, credential-write failure, or Provider commit failure
-persists no partial configured replacement.
+user message. The Host verifies the exact-message binding, constructs and
+commits the complete immutable snapshot as configured/unverified, tests that
+exact snapshot, and promotes the same generation only on success. It returns
+only redacted public status and opens no redundant credential prompt. A failed
+test persists the snapshot and verdict for later retry but keeps the prior
+active snapshot unchanged; a mismatch, stale Turn, credential-write failure, or
+Provider commit failure persists no partial configured replacement.
 
 **Agent disables a Skill.** The root Agent loads `configuration`, reads the
 schema and current file, adds the canonical name to `agent.skills.disabled`,
@@ -815,10 +841,12 @@ default. Tenon never silently rewrites desired bytes.
   minimal edits, removes overrides on Reset, and refuses structured edits of an
   invalid source.
 - **FR-12:** Agent `Set Up a Model` and `Manage -> Models` provide complete
-  no-Agent bootstrap. The shared connection owner persists a validated candidate
-  independently from verification, activates only a verified generation,
-  preserves the prior active connection on failure, uses `agent-secrets.json`
-  mode `0600`, and publishes immediate readiness after activation.
+  no-Agent bootstrap. The shared connection owner persists every validated
+  candidate as one complete immutable snapshot independently from verification,
+  resolves runtime only from the active snapshot, promotes only the same verified
+  snapshot, preserves the prior active snapshot on failure, uses
+  `agent-secrets.json` mode `0600`, and publishes immediate readiness after
+  activation.
 - **NFR-1:** Each public configuration read is bounded to 256 KiB; status,
   model-tool schemas/results, and resource pages are bounded. Watcher work is
   coalesced and never blocks startup or renderer interaction.
@@ -930,8 +958,12 @@ default. Tenon never silently rewrites desired bytes.
   entirely through human UI. Success enables Agent input and a real request
   without restart. Invalid credential, network, quota, OAuth cancel, or test
   failure leaves a restart-durable `configured/unverified` candidate that can be
-  retested without credential re-entry but cannot run the Agent; a storage
-  failure leaves no partial configured pointer and keeps the form recoverable.
+  retested without credential re-entry but cannot run the Agent. Replacing a
+  working endpoint A with failing endpoint B proves runtime continues to resolve
+  all fields and credentials from A's complete active snapshot, never a mixture;
+  a storage failure leaves no partial configured pointer and keeps the form
+  recoverable. If B's probe succeeds after configured snapshot C replaces it,
+  the result is stale and neither B nor C is activated by that probe.
 - **AC-20 (FR-3, FR-11):** UI, manual-file, and Agent edits are interleaved in
   E2E. Each converges through one source digest and effective status, appears in
   the other two surfaces, survives restart, and leaves no preference value or
@@ -948,10 +980,16 @@ default. Tenon never silently rewrites desired bytes.
   explicitly supplied in its latest renderer-authored user message without a
   second prompt. Exact-message mismatch, child/delegated execution, stale Turn,
   or replay cannot consume the key. Test/auth/network/quota failure persists the
-  new configured generation and redacted verdict for credential-free retry but
-  never activates it; credential-write failure, Provider commit failure, and
-  crash recovery leave no partial configured pointer or key echo. Startup removes
-  unreferenced staged generations and preserves the previous runnable connection.
+  new complete configured snapshot and redacted verdict for credential-free retry
+  but never activates it. Tests vary endpoint, enabled state, auth kind,
+  catalog/model-resolution inputs, credential, and active-Provider selection
+  together and prove runtime observes either the old or promoted Provider-plus-
+  snapshot pair, never cross-generation fields.
+  A late successful probe for superseded snapshot B cannot promote B over newer
+  configured snapshot C.
+  Credential-write failure, Provider commit failure, and crash recovery leave no
+  partial configured pointer or key echo. Startup removes unreferenced staged
+  generations and preserves the previous runnable snapshot.
 
 ## Delivery
 
@@ -960,7 +998,7 @@ default. Tenon never silently rewrites desired bytes.
 One PR delivers `settings.jsonc`, generated schema/status, watcher and recovery,
 ten declarative definitions, root path exposure, the flat file-backed Settings
 UI, the `configuration` Skill, all nine non-shortcut domain tools, model
-bootstrap, generation-based credential transactions, confirmation/private
+bootstrap, immutable connection-snapshot transactions, confirmation/private
 handoff, direct managers, contextual Translation, ownership splits, and old
 Settings-hierarchy retirement. Build order is file/status definitions, typed
 owner contracts, runtime application, flat UI and Models bootstrap, domain
@@ -1014,8 +1052,12 @@ feature PR rather than entering the shared layer.
   a Tenon-owned domain result, error, diagnostic, or status artifact. Full Access
   remains explicitly capable of reading the underlying same-account file.
 - **A transient outage destroys bootstrap work:** Save commits a configured
-  generation before verification; failed probes preserve it for credential-free
+  snapshot before verification; failed probes preserve it for credential-free
   retry without making it active.
+- **A failed replacement corrupts a working connection:** every runtime field
+  and credential reference lives in one immutable snapshot; runtime reads only
+  `activeGeneration`, so it cannot combine configured endpoint B with active
+  credential A or apply B's enabled state before promotion.
 - **Invalid files break launch:** last-known-good/safe defaults preserve runtime
   while desired bytes and diagnostics remain repairable.
 - **Legacy Settings retirement strands work:** same-source UI/file/Agent parity,
@@ -1023,23 +1065,23 @@ feature PR rather than entering the shared layer.
 - **Shortcuts break native behavior:** fixed grammar is explicit and prior system
   registration stays active until a replacement succeeds.
 
-The 2026-09-04 collision re-check found open PRs #626, #627, and #628; #620's
-Agent delegation design, #621's preview shell, and #623's generic Background
-Tool Tasks are merged implementation authority.
+The 2026-09-05 collision re-check found open PRs #626 and #628. #620's Agent
+delegation design, #621's preview shell, #623's generic Background Tool Tasks,
+and #627's exact Agent Trajectory evidence are merged implementation authority.
 
-- #627 owns exact-or-unavailable Agent Trajectory persistence and rendering. Its
-  model-issued Tool Input work overlaps the sensitive `models configure`
-  boundary. Before that operation is registered, Feature 1 extends the
-  exact-or-unavailable contract so a diagnostic record containing its raw key is
+- Merged #627 owns exact-or-unavailable Agent Trajectory persistence and
+  rendering. Before sensitive `models configure` is registered, Feature 1
+  extends that shipped contract so a diagnostic record containing its raw key is
   not retained and Tool Input is explicitly unavailable; redacted operation
   metadata remains exact. This declared-sensitive exception supersedes #627's
-  generic sentinel-credential fixture for this operation only. Feature 1 rebases
-  after #627 and lands the exception through shared-interface ownership.
-- #628 implements the merged #620 delegation design and will consume outgoing
-  Settings plus Agent runtime/capability surfaces. It lands first, including its
-  selected delegation-policy owner. Feature 1 then rebases and moves that shipped
-  policy intact into the direct Agent/delegation owner defined here; it does not
-  redesign #628's Runner, Session, CLI, or capability contracts.
+  generic sentinel-credential fixture for this operation only and lands through
+  shared-interface ownership.
+- #628 implements the merged #620 delegation design and now modifies outgoing
+  Settings, `agentSettings`, Agent runtime/capability, renderer, protocol, and
+  shared type surfaces. It lands first, including its selected delegation-policy
+  owner. Feature 1 then rebases and moves that shipped policy intact into the
+  direct Agent/delegation owner defined here; it does not redesign #628's Runner,
+  Session, CLI, or capability contracts.
 - `agent-skill-authoring-foundation` and `agent-skill-curation-report` own Skill
   authoring/curation behavior. Feature 1 follows the foundation and preserves its
   final Skill source/provenance owners rather than recreating them.
@@ -1063,9 +1105,9 @@ Settings/Configuration CLI or universal Settings control plane.
 
 ## Implementation Checklist
 
-- [ ] Re-run collision checks after #627 and #628 and before each implementation
-      claim; settle sensitive Tool persistence, protected tool contracts, and
-      shipped Agent delegation ownership first.
+- [ ] Re-run collision checks after #628 and before each implementation claim;
+      settle the merged #627 sensitive Tool persistence contract, protected tool
+      contracts, and shipped Agent delegation ownership first.
 - [ ] Ship Feature 1 as a complete current-capability replacement, fold current
       specs, and retire the old Settings hierarchy only after flat UI, bootstrap,
       and Agent parity pass.
