@@ -32,6 +32,22 @@ export interface DelegateRuntimeHostOptions {
   readonly execute: DelegateCapabilityBrokerOptions['execute'];
 }
 
+const DELEGATE_CLI_ENV_KEYS = new Set([
+  'COMSPEC',
+  'HOME',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'PATH',
+  'PATHEXT',
+  'SYSTEMROOT',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'TZ',
+  'WINDIR',
+]);
+
 export class DelegateRuntimeHost {
   private readonly broker: DelegateCapabilityBroker;
 
@@ -55,16 +71,13 @@ export class DelegateRuntimeHost {
     return {
       scheduling,
       prepare: async (input) => {
-        const directEnv: Readonly<Record<string, string>> = this.options.cli.runAsNode
-          ? { ELECTRON_RUN_AS_NODE: '1' }
-          : {};
+        const directEnv = delegateCliProcessEnvironment(input.env, this.options.cli.runAsNode);
         const args = [this.options.cli.cliEntry, ...canonicalDelegateArgv(input.command)];
-        const finalEnv = directProcessEnvironment(input.env, directEnv);
         const processSha256 = delegateProcessDigest({
           executable: this.options.cli.cliRuntime,
           args,
           cwd: input.cwd,
-          env: finalEnv,
+          env: directEnv,
         });
         const unresolved = {
           toolTaskId: input.taskId,
@@ -124,11 +137,14 @@ export function delegateProcessDigest(input: {
   })).digest('hex');
 }
 
-function directProcessEnvironment(
+export function delegateCliProcessEnvironment(
   source: NodeJS.ProcessEnv,
-  overlay: Readonly<Record<string, string>>,
-): NodeJS.ProcessEnv {
-  const env = { ...source };
-  delete env.ELECTRON_RUN_AS_NODE;
-  return { ...env, ...overlay };
+  runAsNode: boolean,
+): Readonly<Record<string, string>> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined && DELEGATE_CLI_ENV_KEYS.has(key.toUpperCase())) env[key] = value;
+  }
+  if (runAsNode) env.ELECTRON_RUN_AS_NODE = '1';
+  return env;
 }

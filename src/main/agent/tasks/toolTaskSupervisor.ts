@@ -203,7 +203,7 @@ function resolveProcess(config: ToolTaskSupervisorConfig): {
     return {
       executable: config.process.executable,
       args: config.process.args,
-      env: { ...environment, ...config.process.env },
+      env: { ...config.process.env },
     };
   }
   const shell = process.platform === 'win32'

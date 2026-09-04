@@ -209,7 +209,7 @@ describe('ToolTaskService', () => {
     expect(timedOut).toMatchObject({ state: 'timed_out', outcomeReason: 'timeout' });
   });
 
-  test('runs a direct process and transfers private control bytes only through fd 3', async () => {
+  test('runs a direct process with its exact environment and transfers private control only through fd 3', async () => {
     const fixture = await createFixture();
     const service = await createService(fixture, passiveHost());
     const script = [
@@ -219,7 +219,7 @@ describe('ToolTaskService', () => {
       "process.stdin.setEncoding('utf8');",
       "process.stdin.on('data', (chunk) => { stdin += chunk; });",
       "process.stdin.on('end', () => process.stdout.write(JSON.stringify({",
-      "control, stdin, base: process.env.BASE_VISIBLE, direct: process.env.DIRECT_VISIBLE,",
+      "control, stdin, base: process.env.BASE_VISIBLE ?? 'unset', direct: process.env.DIRECT_VISIBLE,",
       "electron: process.env.ELECTRON_RUN_AS_NODE ?? 'unset',",
       '})));',
     ].join('');
@@ -242,7 +242,7 @@ describe('ToolTaskService', () => {
     expect(JSON.parse(output!.stdout)).toEqual({
       control: 'private capability',
       stdin: 'task intent',
-      base: 'base',
+      base: 'unset',
       direct: 'direct',
       electron: 'unset',
     });

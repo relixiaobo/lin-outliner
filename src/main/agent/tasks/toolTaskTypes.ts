@@ -89,6 +89,7 @@ export type ToolTaskProcessSpec =
     readonly kind: 'exec';
     readonly executable: string;
     readonly args: readonly string[];
+    /** Complete child environment snapshot. The supervisor does not add ambient variables. */
     readonly env: Readonly<Record<string, string>>;
     readonly privateControl: boolean;
   };

@@ -1115,7 +1115,11 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
     as an attested executable plus argv with `shell: false`; the one-use
     capability travels only over a dedicated child pipe and is closed before any
     Runner starts. Shell composition and shell startup behavior never receive
-    capability-bearing argv, environment, stdin, files, or descriptors.
+    capability-bearing argv, environment, stdin, files, or descriptors. The
+    direct-exec specification carries one complete sanitized CLI environment;
+    its admission digest and actual child spawn use those exact bytes without a
+    supervisor ambient-environment overlay, and Provider or managed-Skill
+    credentials are absent.
 - **FR-3:** User policy fails closed.
   - **AC-6:** Detection never enables an external Runner.
   - **AC-7:** An invalid configured Runner/model starts no delegated session,

@@ -10,6 +10,8 @@ import {
 import {
   DelegateCapabilityBroker,
   DelegateRuntimeHost,
+  delegateCliProcessEnvironment,
+  delegateProcessDigest,
   type DelegateCapabilityAdmission,
   type DelegateCapabilityExecution,
 } from '../../src/main/agent/delegation';
@@ -70,7 +72,14 @@ describe('Delegate capability broker', () => {
         ownerThreadId: 'root-thread',
         sourceTurnId: 'source-turn',
         sourceItemId: 'source-item',
-        env: { PATH: process.env.PATH, ELECTRON_RUN_AS_NODE: 'must-not-survive' },
+        env: {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          ELECTRON_RUN_AS_NODE: 'must-not-survive',
+          OPENAI_API_KEY: 'must-not-reach-cli',
+          TENON_MANAGED_SKILL_SECRET: 'must-not-reach-cli',
+          NODE_OPTIONS: '--require /must/not/run.js',
+        },
       });
       expect(prepared.process).toMatchObject({
         kind: 'exec',
@@ -79,20 +88,34 @@ describe('Delegate capability broker', () => {
           path.join(repoRoot, 'src', 'delegate', 'cli', 'entry.ts'),
           'run', '--input', '-', '--output', 'json',
         ],
-        env: {},
         privateControl: true,
       });
+      if (prepared.process.kind !== 'exec') throw new Error('Expected a direct process');
+      expect(prepared.process.env).toMatchObject({ PATH: process.env.PATH, HOME: process.env.HOME });
+      expect(prepared.process.env).not.toHaveProperty('ELECTRON_RUN_AS_NODE');
+      expect(prepared.process.env).not.toHaveProperty('OPENAI_API_KEY');
+      expect(prepared.process.env).not.toHaveProperty('TENON_MANAGED_SKILL_SECRET');
+      expect(prepared.process.env).not.toHaveProperty('NODE_OPTIONS');
+      expect(executions).toHaveLength(0);
       const result = await runProcess(
-        prepared.process.kind === 'exec' ? prepared.process.executable : '',
-        prepared.process.kind === 'exec' ? prepared.process.args : [],
+        prepared.process.executable,
+        prepared.process.args,
         rawInput,
         prepared.privateControlInput!,
+        prepared.process.env,
       );
       expect(result.exitCode).toBe(0);
       expect(JSON.parse(result.stdout)).toMatchObject({
         ok: true,
         data: { taskId: 'task_550e8400-e29b-41d4-a716-446655440000' },
       });
+      const executionDigest = executions[0]!.admission.processSha256;
+      expect(executionDigest).toBe(delegateProcessDigest({
+        executable: prepared.process.executable,
+        args: prepared.process.args,
+        cwd: repoRoot,
+        env: prepared.process.env,
+      }));
       expect(executions[0]!.admission).toMatchObject({
         toolTaskId: 'task_550e8400-e29b-41d4-a716-446655440000',
         toolTaskNonce: '550e8400-e29b-41d4-a716-446655440001',
@@ -102,6 +125,23 @@ describe('Delegate capability broker', () => {
     } finally {
       await runtime.stop();
     }
+  });
+
+  test('builds a minimal packaged CLI environment without ambient credentials or runtime injection', () => {
+    expect(delegateCliProcessEnvironment({
+      PATH: '/usr/bin:/bin',
+      HOME: '/tmp/home',
+      LANG: 'en_US.UTF-8',
+      OPENAI_API_KEY: 'provider-secret',
+      TENON_MANAGED_SKILL_SECRET: 'managed-secret',
+      NODE_OPTIONS: '--require /tmp/inject.js',
+      ELECTRON_RUN_AS_NODE: 'attacker-controlled',
+    }, true)).toEqual({
+      PATH: '/usr/bin:/bin',
+      HOME: '/tmp/home',
+      LANG: 'en_US.UTF-8',
+      ELECTRON_RUN_AS_NODE: '1',
+    });
   });
 
   test('admits one exact fd 3 invocation and rejects replay', async () => {
@@ -286,10 +326,12 @@ function runProcess(
   args: readonly string[],
   stdin: string,
   capability: Uint8Array,
+  env?: NodeJS.ProcessEnv,
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, [...args], {
       cwd: repoRoot,
+      env,
       stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
