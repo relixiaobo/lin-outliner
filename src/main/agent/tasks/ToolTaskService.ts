@@ -99,6 +99,7 @@ export interface StartToolTaskInput {
   readonly reserveForBackground?: boolean;
   readonly producerContext?: JsonValue;
   readonly scheduling?: Partial<ToolTaskSchedulingPolicy>;
+  readonly signal?: AbortSignal;
 }
 
 export interface ToolTaskOutput {
@@ -113,6 +114,7 @@ export class ToolTaskService {
   private readonly startRuns = new Set<Promise<ToolTaskRecord>>();
   private readonly reconciliationRuns = new Map<string, Promise<void>>();
   private readonly admissionRuns = new Map<string, Promise<void>>();
+  private readonly noProcessSettlementRuns = new Map<string, Promise<ToolTaskRecord>>();
   private readonly deliveryRuns = new Map<ThreadId, Promise<void>>();
   private readonly supervisors = new Map<string, ChildProcess>();
   private host: ToolTaskHost | null = null;
@@ -210,6 +212,14 @@ export class ToolTaskService {
         writeFile(paths.stderr, '', { encoding: 'utf8', mode: 0o600 }),
         atomicJsonWrite(paths.producer, input.producerContext ?? null),
       ]);
+      if (input.signal?.aborted || this.closing) {
+        return await this.settleWithoutProcess(
+          this.store.read(taskId)!,
+          'cancelled',
+          input.signal?.aborted ? 'user_stop' : 'application_quit',
+          null,
+        );
+      }
       const reservationBytes = input.reserveForBackground ?? input.backgroundEnabled ?? true
         ? this.limits.taskDetailBytes
         : 0;
@@ -261,7 +271,7 @@ export class ToolTaskService {
           this.continueQueuedAdmission(taskId, input);
           return queued;
         }
-        const acquired = await this.waitForLease(taskId);
+        const acquired = await this.waitForLease(taskId, input.signal);
         if (!acquired || acquired.state === 'released') return this.store.read(taskId)!;
       }
       return await this.launchAdmittedTask(taskId, input);
@@ -296,7 +306,17 @@ export class ToolTaskService {
     taskId: string,
     input: StartToolTaskInput,
   ): Promise<ToolTaskRecord> {
-    const task = this.store.read(taskId)!;
+    let task = this.store.read(taskId)!;
+    if (isToolTaskTerminal(task.state)) return task;
+    if (input.signal?.aborted || this.closing) {
+      return this.settleWithoutProcess(
+        task,
+        'cancelled',
+        input.signal?.aborted ? 'user_stop' : 'application_quit',
+        null,
+      );
+    }
+    if (task.state !== 'running' || this.store.readLease(taskId)?.state !== 'active') return task;
     const paths = taskPaths(task.detailPath);
     let supervisor: ChildProcess | null = null;
     try {
@@ -319,6 +339,17 @@ export class ToolTaskService {
         maxOutputBytes: this.limits.taskDetailBytes,
       };
       await atomicJsonWrite(paths.config, config);
+      task = this.store.read(taskId)!;
+      if (isToolTaskTerminal(task.state)) return task;
+      if (input.signal?.aborted || this.closing) {
+        return await this.settleWithoutProcess(
+          task,
+          'cancelled',
+          input.signal?.aborted ? 'user_stop' : 'application_quit',
+          null,
+        );
+      }
+      if (task.state !== 'running' || this.store.readLease(taskId)?.state !== 'active') return task;
       supervisor = await getAgentProcessExecutor().spawn({
         command: this.runtime.executable,
         args: [...this.runtime.argsPrefix, paths.config],
@@ -513,8 +544,13 @@ export class ToolTaskService {
     this.closing = true;
     for (const timer of this.monitors.values()) clearInterval(timer);
     this.monitors.clear();
+    await Promise.allSettled(this.store.nonterminal().map(async (task) => {
+      if (this.store.readLease(task.taskId)?.state === 'queued') {
+        await this.settleWithoutProcess(task, 'cancelled', 'application_quit', null);
+      }
+    }));
     await Promise.allSettled([...this.startRuns]);
-    const admissionRuns = [...this.admissionRuns.values()];
+    await Promise.allSettled([...this.admissionRuns.values()]);
     const active = this.store.nonterminal();
     await Promise.all(active.map(async (task) => {
       if (this.store.readLease(task.taskId)?.state === 'queued') {
@@ -530,7 +566,6 @@ export class ToolTaskService {
         reason: 'application_quit',
       }).catch(() => undefined);
     }));
-    await Promise.allSettled(admissionRuns);
     const deadline = Date.now() + Math.max(0, drainTimeoutMs);
     while (Date.now() < deadline && this.store.nonterminal().length > 0) {
       await Promise.all(this.store.nonterminal().map((task) => this.reconcileTask(task)));
@@ -921,6 +956,25 @@ export class ToolTaskService {
     reason: string,
     error: string | null,
   ): Promise<ToolTaskRecord> {
+    const existing = this.noProcessSettlementRuns.get(task.taskId);
+    if (existing) return existing;
+    const run = this.settleWithoutProcessOnce(task, state, reason, error).finally(() => {
+      if (this.noProcessSettlementRuns.get(task.taskId) === run) {
+        this.noProcessSettlementRuns.delete(task.taskId);
+      }
+    });
+    this.noProcessSettlementRuns.set(task.taskId, run);
+    return run;
+  }
+
+  private async settleWithoutProcessOnce(
+    task: ToolTaskRecord,
+    state: 'failed' | 'cancelled',
+    reason: string,
+    error: string | null,
+  ): Promise<ToolTaskRecord> {
+    const current = this.store.read(task.taskId)!;
+    if (isToolTaskTerminal(current.state)) return current;
     this.store.markSettling(task.taskId, this.now(), state === 'cancelled');
     const paths = taskPaths(task.detailPath);
     const unsigned = {
@@ -952,15 +1006,26 @@ export class ToolTaskService {
     return terminal;
   }
 
-  private async waitForLease(taskId: string): Promise<import('./toolTaskTypes').ToolTaskLease | null> {
-    while (!this.closing) {
+  private async waitForLease(
+    taskId: string,
+    signal?: AbortSignal,
+  ): Promise<import('./toolTaskTypes').ToolTaskLease | null> {
+    while (true) {
       const task = this.store.read(taskId);
       if (!task || isToolTaskTerminal(task.state)) return this.store.readLease(taskId);
+      if (signal?.aborted || this.closing) {
+        await this.settleWithoutProcess(
+          task,
+          'cancelled',
+          signal?.aborted ? 'user_stop' : 'application_quit',
+          null,
+        );
+        return this.store.readLease(taskId);
+      }
       const lease = this.store.tryActivateLease(taskId, this.schedulerLimits, this.now());
       if (!lease || lease.state !== 'queued') return lease;
       await delay(25);
     }
-    return this.store.readLease(taskId);
   }
 
   private publish(task: ToolTaskRecord): void {

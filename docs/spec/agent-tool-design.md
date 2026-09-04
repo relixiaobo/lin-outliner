@@ -242,7 +242,11 @@ duration never changes the control flow because subsequent Agent work may depend
 result. True returns the durable task handle immediately. If cancellation leaves a
 foreground process group nonterminal in `settling`, the Host promotes that same task to
 background visibility so teardown remains observable and controllable. This safeguard
-does not background an ordinary successful foreground command.
+does not background an ordinary successful foreground command. A foreground task that
+is still queued responds to its Turn cancellation before spawn and settles the same task
+as cancelled. Application shutdown closes admission, settles queued tasks before waiting
+for in-flight start paths, then stops admitted process groups; no queued task can launch
+after shutdown settlement.
 
 The standalone supervisor owns the process group, nonce-bound identity, heartbeat,
 bounded stdout/stderr files, stop request, and atomic quiescent final receipt. A Tool Task
@@ -253,6 +257,11 @@ reattaches to a matching live supervisor or consumes its receipt; authenticated 
 absence without one becomes `lost`, while ambiguous identity remains occupied rather
 than being treated as free capacity. Orderly Quit requests process-group teardown and
 bounded drain. No command is replayed during recovery.
+
+Packaged execution may add Host-only environment such as `ELECTRON_RUN_AS_NODE` to start
+the standalone supervisor. The supervisor removes those control keys before launching
+the user shell while preserving the admitted workspace environment and Tool Task progress
+channel.
 
 Admission uses durable `queued`, `active`, and `released` leases. Product limits bound
 global and per-Thread execution plus producer/pool occupancy and queue length. Saturated

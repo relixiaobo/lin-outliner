@@ -426,6 +426,7 @@ test('supervised foreground bash waits for its terminal boundary instead of elap
     const startedAt = Date.now();
     let startInput: Record<string, unknown> | undefined;
     let waitTimeoutMs: number | undefined;
+    let waitSignal: AbortSignal | undefined;
     let consumed = false;
     let promoted = false;
     const service = {
@@ -433,8 +434,14 @@ test('supervised foreground bash waits for its terminal boundary instead of elap
         startInput = input;
         return { taskId: 'task-foreground-wait', state: 'running', startedAt };
       },
-      waitForTerminal: async (_taskId: string, _ownerThreadId: string, timeoutMs: number) => {
+      waitForTerminal: async (
+        _taskId: string,
+        _ownerThreadId: string,
+        timeoutMs: number,
+        signal?: AbortSignal,
+      ) => {
         waitTimeoutMs = timeoutMs;
+        waitSignal = signal;
         return {
           taskId: 'task-foreground-wait',
           state: 'succeeded',
@@ -469,11 +476,12 @@ test('supervised foreground bash waits for its terminal boundary instead of elap
     );
     const bash = createLocalTools({ workspace, toolTaskService: service, turnId })
       .find((tool) => tool.name === 'bash')!;
+    const controller = new AbortController();
 
     const result = await bash.execute('foreground-wait', {
       command: 'long-running-dependent-command',
       timeout: 60_000,
-    });
+    }, controller.signal);
     const envelope = result.details as ToolEnvelope<BashData>;
 
     expect(startInput).toMatchObject({
@@ -482,6 +490,8 @@ test('supervised foreground bash waits for its terminal boundary instead of elap
       timeoutMs: 60_000,
     });
     expect(waitTimeoutMs).toBe(64_000);
+    expect(startInput?.signal).toBe(controller.signal);
+    expect(waitSignal).toBe(controller.signal);
     expect(envelope).toMatchObject({
       ok: true,
       data: { stdout: 'done', stderr: '', interrupted: false },

@@ -13,6 +13,7 @@ const STOP_POLL_MS = 100;
 const HEARTBEAT_INTERVAL_MS = 500;
 const QUIESCENCE_GRACE_MS = 500;
 const TERMINATION_GRACE_MS = 1_000;
+const SUPERVISOR_ONLY_ENV_KEYS = ['ELECTRON_RUN_AS_NODE'] as const;
 let activeConfig: ToolTaskSupervisorConfig | null = null;
 let activeChildPid: number | null = null;
 
@@ -36,7 +37,7 @@ async function main(): Promise<void> {
   try {
     child = spawn(shell, args, {
       cwd: config.cwd,
-      env: process.env,
+      env: commandEnvironment(process.env),
       shell: false,
       stdio: [stdin, 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
@@ -181,6 +182,12 @@ async function main(): Promise<void> {
     receiptDigest: createHash('sha256').update(JSON.stringify(unsigned)).digest('hex'),
   };
   await atomicJsonWrite(config.finalReceiptPath, receipt);
+}
+
+function commandEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...source };
+  for (const key of SUPERVISOR_ONLY_ENV_KEYS) delete env[key];
+  return env;
 }
 
 function decodeConfig(value: unknown): ToolTaskSupervisorConfig {

@@ -166,7 +166,11 @@ describe('ToolTaskService', () => {
     services.push(first);
     first.bindHost(passiveHost());
     await first.initialize();
-    const task = await startHidden(first, "sleep 0.3; printf 'packaged-recovery'");
+    const task = await startHidden(
+      first,
+      "sleep 0.3; printf '%s|%s' \"${ELECTRON_RUN_AS_NODE-unset}\" \"$TOOL_TASK_VISIBLE\"",
+      { env: { ...process.env, TOOL_TASK_VISIBLE: 'visible' } },
+    );
     await waitUntil(() => fixture.store.read(task.taskId)?.childPid !== null);
     const second = new ToolTaskService(fixture.store, fixture.detailRoot, packaged);
     services.push(second);
@@ -174,7 +178,7 @@ describe('ToolTaskService', () => {
     await second.initialize();
     expect(fixture.store.readLease(task.taskId)?.state).toBe('active');
     expect((await waitForTerminal(second, task.taskId)).state).toBe('succeeded');
-    expect((await second.output(task.taskId, OWNER_ID))?.stdout).toBe('packaged-recovery');
+    expect((await second.output(task.taskId, OWNER_ID))?.stdout).toBe('unset|visible');
   });
 
   test('supervises exact stdin and preserves factual success, failure, and timeout outcomes', async () => {
@@ -546,6 +550,68 @@ describe('ToolTaskService', () => {
     expect((await service.output(second.taskId, OWNER_ID))?.stdout).toBe('after capacity');
   });
 
+  test('cancels queued foreground admission before spawn when its Turn is interrupted', async () => {
+    const fixture = await createFixture();
+    const schedulerLimits: ToolTaskSchedulerLimits = {
+      maxConcurrentGlobal: 1,
+      maxConcurrentThread: 1,
+      maxQueuedGlobal: 1,
+      maxQueuedThread: 1,
+    };
+    const service = await createService(fixture, passiveHost(), Date.now, undefined, schedulerLimits);
+    const active = await service.start(startInput('sleep 30'));
+    const controller = new AbortController();
+    const starting = service.start(startInput("printf 'must not spawn'", {
+      backgroundEnabled: false,
+      signal: controller.signal,
+    }));
+    await waitUntil(() => fixture.store.queuedLeases().length === 1);
+    const queuedTaskId = fixture.store.queuedLeases()[0]!.taskId;
+
+    controller.abort();
+    const cancelled = await Promise.race([
+      starting,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Queued admission ignored abort')), 1_000)),
+    ]);
+
+    expect(cancelled).toMatchObject({
+      taskId: queuedTaskId,
+      state: 'cancelled',
+      outcomeReason: 'user_stop',
+      supervisorPid: null,
+      childPid: null,
+    });
+    expect(fixture.store.readLease(queuedTaskId)?.state).toBe('released');
+    await service.stop(active.taskId, OWNER_ID);
+  });
+
+  test('settles queued foreground admission before shutdown waits for start runs', async () => {
+    const fixture = await createFixture();
+    const schedulerLimits: ToolTaskSchedulerLimits = {
+      maxConcurrentGlobal: 1,
+      maxConcurrentThread: 1,
+      maxQueuedGlobal: 1,
+      maxQueuedThread: 1,
+    };
+    const service = await createService(fixture, passiveHost(), Date.now, undefined, schedulerLimits);
+    await service.start(startInput('sleep 30'));
+    const starting = service.start(startInput("printf 'must not spawn'", { backgroundEnabled: false }));
+    await waitUntil(() => fixture.store.queuedLeases().length === 1);
+    const queuedTaskId = fixture.store.queuedLeases()[0]!.taskId;
+
+    await service.close(3_000);
+    const cancelled = await starting;
+
+    expect(cancelled).toMatchObject({
+      taskId: queuedTaskId,
+      state: 'cancelled',
+      outcomeReason: 'application_quit',
+      supervisorPid: null,
+      childPid: null,
+    });
+    expect(fixture.store.readLease(queuedTaskId)?.state).toBe('released');
+  });
+
   test('recovers active occupancy and fails queued admission once without starting it', async () => {
     const fixture = await createFixture();
     const schedulerLimits: ToolTaskSchedulerLimits = {
@@ -704,7 +770,7 @@ describe('ToolTaskService', () => {
     }
   });
 
-  test('orderly close waits for in-flight admission before draining it', async () => {
+  test('orderly close settles an in-flight pre-spawn admission without launching it', async () => {
     const fixture = await createFixture();
     const service = await createService(fixture, passiveHost());
     const starting = service.start(startInput('sleep 30'));
@@ -714,7 +780,9 @@ describe('ToolTaskService', () => {
 
     expect(fixture.store.read(admitted.taskId)).toMatchObject({
       state: 'cancelled',
-      outcomeReason: 'stop_requested',
+      outcomeReason: 'application_quit',
+      supervisorPid: null,
+      childPid: null,
     });
   });
 

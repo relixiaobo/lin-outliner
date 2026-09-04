@@ -2452,6 +2452,7 @@ async function runSupervisedForegroundCommand(
     // which point the task is promoted so the Turn can return without hiding it.
     reserveForBackground: true,
     producerContext: encodeDeclaredOutputArtifactPlan(declaredOutputRoots, declaredOutputSnapshot),
+    signal,
   });
   let settled = await service.waitForTerminal(
     task.taskId,
