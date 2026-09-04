@@ -89,6 +89,64 @@ describe('DelegationCoordinator', () => {
     });
   });
 
+  test('persists the Session user-stop fence before process settlement can continue', async () => {
+    const fixture = coordinatorFixture();
+    const running = fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+    await waitUntil(() => fixture.runtime.active !== null);
+
+    await expect(fixture.coordinator.fenceUserStop({
+      taskId: 'task-run',
+      ownerThreadId: OWNER_ID,
+      stoppedByRootTurnId: ROOT_TURN_ID,
+      currentRootIntentRevision: 1,
+    })).resolves.toEqual({
+      outcome: 'fenced',
+      sessionId: SESSION_ID,
+      minimumResumeRevision: 2,
+    });
+    expect(fixture.store.readSession(SESSION_ID)?.stopFence).toMatchObject({
+      cancelledTaskId: 'task-run',
+      stoppedByRootTurnId: ROOT_TURN_ID,
+      stoppedAtRootIntentRevision: 1,
+      minimumResumeRevision: 2,
+    });
+    expect(fixture.runtime.active).not.toBeNull();
+
+    fixture.runtime.finish();
+    await running;
+    const settlement = fixture.store.settlementForTask('task-run')!;
+    await fixture.coordinator.settleFinalReceipt({
+      taskId: 'task-run',
+      preparedResultDigest: settlement.preparedResultDigest,
+      receiptDigest: digest('final-receipt'),
+    });
+    expect(fixture.store.readSession(SESSION_ID)).toMatchObject({
+      currentTaskId: null,
+      stopFence: { minimumResumeRevision: 2 },
+    });
+  });
+
+  test('does not claim unrelated or foreign Tool Tasks as delegated user stops', async () => {
+    const fixture = coordinatorFixture();
+    await expect(fixture.coordinator.fenceUserStop({
+      taskId: 'task-ordinary-bash',
+      ownerThreadId: OWNER_ID,
+      stoppedByRootTurnId: ROOT_TURN_ID,
+      currentRootIntentRevision: 1,
+    })).resolves.toEqual({ outcome: 'unrelated' });
+
+    const running = fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+    await waitUntil(() => fixture.runtime.active !== null);
+    await expect(fixture.coordinator.fenceUserStop({
+      taskId: 'task-run',
+      ownerThreadId: '00000000-0000-7000-8000-000000000099' as ThreadId,
+      stoppedByRootTurnId: ROOT_TURN_ID,
+      currentRootIntentRevision: 1,
+    })).rejects.toThrow('not owned');
+    fixture.runtime.finish();
+    await running;
+  });
+
   test('blocks only the affected execution when prepared result evidence mismatches', async () => {
     const fixture = coordinatorFixture();
     fixture.runtime.immediate = true;

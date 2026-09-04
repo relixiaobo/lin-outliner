@@ -75,6 +75,21 @@ export type DelegationFinalReceiptSettlement =
   | { readonly outcome: 'unrelated' | 'committed' }
   | { readonly outcome: 'blocked'; readonly reason: string };
 
+export interface DelegationUserStopInput {
+  readonly taskId: string;
+  readonly ownerThreadId: ThreadId;
+  readonly stoppedByRootTurnId: TurnId;
+  readonly currentRootIntentRevision: number;
+}
+
+export type DelegationUserStopSettlement =
+  | { readonly outcome: 'unrelated' }
+  | {
+    readonly outcome: 'fenced';
+    readonly sessionId: ThreadId;
+    readonly minimumResumeRevision: number;
+  };
+
 export interface DelegationCoordinatorOptions {
   readonly store: DelegationSessionStore;
   readonly runtime: DelegationSessionRuntime;
@@ -108,6 +123,32 @@ export class DelegationCoordinator {
     if (execution.admission.command.name === 'run') return this.run(execution);
     if (execution.admission.command.name === 'send') return this.send(execution);
     return this.close(execution);
+  }
+
+  async fenceUserStop(input: DelegationUserStopInput): Promise<DelegationUserStopSettlement> {
+    const initial = this.options.store.settlementForTask(input.taskId);
+    if (!initial) return { outcome: 'unrelated' };
+    return this.gates.run(initial.sessionId, async () => {
+      const settlement = this.options.store.settlementForTask(input.taskId);
+      if (!settlement) return { outcome: 'unrelated' } as const;
+      const session = this.options.store.readSession(settlement.sessionId);
+      if (!session || session.ownerThreadId !== input.ownerThreadId) {
+        throw unauthorized('Delegate Session is not owned by the Tool Task root Thread.');
+      }
+      const fenced = this.options.store.fenceUserStop({
+        sessionId: session.sessionId,
+        expectedRevision: session.revision,
+        cancelledTaskId: input.taskId,
+        stoppedByRootTurnId: input.stoppedByRootTurnId,
+        currentRootIntentRevision: input.currentRootIntentRevision,
+        now: this.now(),
+      });
+      return {
+        outcome: 'fenced',
+        sessionId: fenced.sessionId,
+        minimumResumeRevision: fenced.stopFence!.minimumResumeRevision,
+      } as const;
+    });
   }
 
   async settleFinalReceipt(
