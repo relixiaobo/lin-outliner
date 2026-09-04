@@ -124,6 +124,7 @@ export const DelegateResultSchema = Type.Union([
 
 export type DelegateTaskProfile = Static<typeof DelegateTaskProfileSchema>;
 export type DelegateAccess = Static<typeof DelegateAccessSchema>;
+export type DelegateUsage = Static<typeof DelegateUsageSchema>;
 export type DelegateRunInput = Static<typeof DelegateRunInputSchema>;
 export type DelegateMessageInput = Static<typeof DelegateMessageInputSchema>;
 export type DelegateExecutionResult = Static<typeof DelegateExecutionResultSchema>;
