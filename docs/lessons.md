@@ -2491,3 +2491,22 @@ Regression coverage must include shell composition, command substitution, startu
 hooks, env/argv/stdin exposure, descriptor inheritance, and direct-wrapper
 attempts. CLI-level digest checks prove the payload after handoff; they do not
 prove who held authority before handoff.
+
+## Shared presentation does not erase mode-specific semantics
+
+PR #621 unified the Outline and Table view toolbar, then initially routed Table
+rows through the Outline grouping projection because the shared control was
+mistaken for a shared rendering capability. The saved rule was meant to remain
+editable in both modes while affecting only Outline, and the change contradicted
+both the projection spec and the Table action registry.
+
+**When modes share controls or persisted configuration, keep each consumer's
+semantics explicit.** Presentation parity means the same setting can be viewed
+and edited; it does not mean every projection must apply that setting. Treat a
+new consumer of a shared configuration value as a product behavior change, even
+when no protocol shape changes.
+
+Regression coverage must configure the setting once, switch through every mode,
+assert both the active effect and the intentional no-op, then switch back and
+prove the saved state returns. Pair that flow with the capability registry so a
+shared toolbar cannot silently broaden projection semantics.

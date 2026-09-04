@@ -13,12 +13,13 @@ latest published train is `v0.7.0`.
 
 ## In Flight
 
-Three claims are open: Draft PR #621 owns link/preview interaction polish and the
-shared preview-shell lane, ready PR #623 owns generic Background Tool Tasks, and
-Draft PR #626 owns the file-first Settings control-plane design. Agent
-delegation runtime design authority shipped in #620; #623 now owns its generic
-Background Tool Tasks unit, while internal delegation, Subagent/isolated-Skill
-retirement, and external Runner adapters stay active under that plan. Trajectory
+Two claims are open: ready PR #623 owns generic Background Tool Tasks, and Draft
+PR #626 owns the file-first Settings control-plane design. Link/preview
+interaction polish shipped in #621 and released the shared preview-shell lane.
+Agent delegation runtime design authority shipped in #620; #623 now owns its
+generic Background Tool Tasks unit, while internal delegation,
+Subagent/isolated-Skill retirement, and external Runner adapters stay active
+under that plan. Trajectory
 paging and bounded live inspection shipped in #625, while the same plan's
 exact-or-unavailable evidence unit remains in progress with codex-2; no current
 claim may treat its bounded summaries as forensic evidence authority. The pi-ai
@@ -220,6 +221,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **link-preview-interaction-polish** (`done`, #621, 2026-09-04) — pasted links
+  retain canonical identity, Source previews use content-aware defaults,
+  attachment selection is composite, and Outline/Table share one view toolbar
+  plus a keyboard-accessible **View as** submenu; plan archived at
+  [link-preview-interaction-polish](plans/archive/link-preview-interaction-polish.md).
 - **agent-delegation-runtime plan gate** (`done`, #620, 2026-09-04) — Agent
   delegation now has approved design authority for generic Background Tool
   Tasks, internal multi-Turn delegation, Subagent and isolated-Skill retirement,

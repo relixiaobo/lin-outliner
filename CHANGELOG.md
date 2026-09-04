@@ -12,6 +12,23 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Links, Source previews, and view controls now share one consistent
+  interaction model (PR #621, codex-3)** — pasted bare URLs keep their canonical
+  identity while link-marked content opens externally; managed assets, linked
+  files, and YouTube sources default to visible previews while generic URLs stay
+  explicit. Attachment preview and title selection now form one stable frame,
+  field-only children participate in disclosure without changing content
+  insertion, and optimistic Tab relocation preserves the intended editor focus.
+  Outline and Table use the same full configuration toolbar, while the Node
+  context menu owns the pointer- and keyboard-accessible **View as** submenu;
+  saved grouping remains dormant in Table and returns in Outline. Gate review
+  found four Medium toolbar-default, design-guard, disclosure-test, and Table-
+  projection defects; all were fixed before the final no-findings review.
+  Verified with typecheck, `docs:check`, 2,865 passing Core tests with 6 skipped,
+  1,514 renderer tests, targeted interaction Playwright flows, 18 light/dark
+  runtime surface checks, four inspected light/dark screenshots, whitespace
+  checks, and five successful GitHub E2E samples plus baseline subtraction.
+
 - **Agent delegation now has an approved execution plan (PR #620, codex-4)**
   — the merged design replaces Subagents and isolated Skills with generic durable
   Background Tool Tasks, a Skill-guided `delegate` CLI, hidden root-owned Agent
