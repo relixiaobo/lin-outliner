@@ -64,6 +64,10 @@ const hiddenScrollbarSelectors = new Set([
   '.document-outline-rail-track::-webkit-scrollbar',
   '.thread-composer-attachment-tray',
   '.thread-composer-attachment-tray::-webkit-scrollbar',
+  // This single-line control rail remains horizontally scrollable by trackpad
+  // and wheel while omitting a content-style scrollbar from compact chrome.
+  '.view-toolbar-button-row',
+  '.view-toolbar-button-row::-webkit-scrollbar',
 ]);
 const layoutTransitionAllowlist = new Map([
   ['src/renderer/styles/canvas.css|.workspace-canvas|padding', 'Workspace canvas pads around rails during open/close layout motion.'],

@@ -1331,7 +1331,7 @@ test.describe('file attachments', () => {
     const attachmentRow = row(page, attachmentId);
 
     await attachmentRow.locator('> .row').first().hover();
-    await expect(attachmentRow).not.toHaveAttribute('aria-expanded', 'true');
+    await expect(attachmentRow).toHaveAttribute('aria-expanded', 'true');
     await page.evaluate(async ({ parentId }) => {
       const win = window as Window & {
         lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };

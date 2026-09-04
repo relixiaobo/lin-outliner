@@ -7,6 +7,7 @@ import { isInternalConfigNode } from '../../src/core/configSchema';
 import { runSearchNode } from '../../src/core/searchEngine';
 import { nodeFieldSlots } from '../../src/core/fieldSlots';
 import { formatAssetSourceUri } from '../../src/core/source';
+import { findViewDef, resolveViewToolbarVisible } from '../../src/core/viewConfig';
 import {
   AREAS_ID,
   DAILY_NOTES_ID,
@@ -110,6 +111,8 @@ describe('Core', () => {
       .map((childId) => state.nodes[childId])
       .find((node) => node?.type === 'viewDef');
     expect(viewDef).toMatchObject({ viewMode: 'list' });
+    expect(viewDef?.toolbarVisible).toBeUndefined();
+    expect(resolveViewToolbarVisible(recents, viewDef?.toolbarVisible)).toBe(true);
     const sortRule = viewDef?.children
       .map((childId) => state.nodes[childId])
       .find((node) => node?.type === 'sortRule');
@@ -1063,6 +1066,24 @@ describe('Core', () => {
     expect(viewDef.children.map((childId) => core.state().nodes[childId]?.type)).not.toContain('sortRule');
     expect(viewDef.children.map((childId) => core.state().nodes[childId]?.type)).not.toContain('filterRule');
     expect(viewDef.groupField).toBeUndefined();
+  });
+
+  test('preserves the Search toolbar default when first creating view config', () => {
+    const core = Core.new();
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Search',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'Search' },
+    }));
+    let state = core.state();
+    expect(findViewDef(state.nodes, state.nodes[searchId])).toBeUndefined();
+
+    core.addSortRule(searchId, 'sys:name');
+
+    state = core.state();
+    const search = state.nodes[searchId];
+    const viewDef = findViewDef(state.nodes, search);
+    expect(viewDef?.toolbarVisible).toBeUndefined();
+    expect(resolveViewToolbarVisible(search, viewDef?.toolbarVisible)).toBe(true);
   });
 
   test('toggle done marks a manual node done, then keeps the checkbox when undone', () => {

@@ -3794,7 +3794,6 @@ export class Core {
     const viewDefId = this.freshId('view');
     this.loro.createNodeWithId(viewDefId, nodeId, 0, 'viewDef', (node) => {
       node.viewMode = 'list';
-      node.toolbarVisible = false;
     });
     return viewDefId;
   }
