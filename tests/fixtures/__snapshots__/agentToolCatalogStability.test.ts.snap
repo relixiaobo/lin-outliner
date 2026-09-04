@@ -78,7 +78,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "bash",
-    "description": "Executes a shell command in the Thread working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nUse run_in_background for long-running commands. You do not need to append \\"&\\"; use task_stop if the task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
+    "description": "Executes a shell command in the Thread working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nSet run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.\\nYou do not need to append \\"&\\"; use task_stop if a background task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
     "parameters": {
       "type": "object",
       "additionalProperties": false,
@@ -107,7 +107,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         },
         "run_in_background": {
           "type": "boolean",
-          "description": "Set to true to run this command in the background. You do not need to append \\"&\\"; use task_stop to finalize its durable output."
+          "description": "Set to true only when the next useful action does not depend on this command result. Otherwise leave it false and wait for completion regardless of expected duration. You do not need to append \\"&\\"; use task_stop to finalize durable background output."
         }
       }
     }
@@ -519,6 +519,25 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
           "description": "Optional input governed by the selected Skill catalog entry. Omit for load-only Skills; pass only declared values for parameterized inline Skills; pass the exact user task for isolated Skills."
         }
       }
+    }
+  },
+  {
+    "name": "task_status",
+    "description": "Read one background Tool Task owned by this Thread.\\nCompletion is delivered automatically; use this only for an explicit status request or recovery, not polling.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "description": "The Tool Task ID returned by a background-producing tool.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "additionalProperties": false
     }
   },
   {

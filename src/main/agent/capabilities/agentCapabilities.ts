@@ -147,6 +147,12 @@ export function deriveAgentToolActionDescriptors(input: {
         summary: 'Stop an agent-launched background process.',
         consequence: 'Stop an agent-launched background process.',
       }),
+      descriptor(toolName, 'task.stop', {
+        accessScope: 'none',
+        title: 'Tool Task stop',
+        summary: 'Stop a background Tool Task owned by this Thread.',
+        consequence: 'Request process-group termination for a background Tool Task.',
+      }),
     ];
   }
 

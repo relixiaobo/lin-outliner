@@ -30,6 +30,7 @@ import { PiTurnExecutor, type PiTurnExecutorOptions } from '../agent/runtime/PiT
 import { ToolRuntime, type ToolRuntimeOptions } from '../agent/runtime/ToolRuntime';
 import type { TurnExecutionContext } from '../agent/runtime/types';
 import { AgentWorktree } from '../agent/worktree/AgentWorktree';
+import type { ToolTaskSupervisorRuntime } from '../agent/tasks/toolTaskRuntime';
 import { AttachmentResolver, type AttachmentResolverOptions } from '../agent/tools/attachments';
 import { ManagedSkillService } from '../managedSkillService';
 import { createManagedSkillsHost } from './managedSkillsHost';
@@ -59,6 +60,7 @@ export interface AgentHostOptions {
   readonly scratchRoot: string;
   readonly defaultCwd: string;
   readonly appVersion: string;
+  readonly toolTaskSupervisorRuntime?: ToolTaskSupervisorRuntime;
   readonly loadRuntimeSettings: () => Promise<{
     readonly additionalSkillDirectories: readonly string[];
     readonly disabledSkills?: readonly string[];
@@ -305,6 +307,9 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       input,
       options.createAdmissionSkillRuntimeOptions(input, composition),
     ),
+    ...(options.toolTaskSupervisorRuntime === undefined
+      ? {}
+      : { toolTaskSupervisorRuntime: options.toolTaskSupervisorRuntime }),
   });
   threadReference.set(threadService);
   const threads: AgentThreadCapability = {

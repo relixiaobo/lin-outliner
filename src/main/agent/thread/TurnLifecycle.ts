@@ -1353,6 +1353,7 @@ export class TurnLifecycle {
         turnId,
         turn,
         ...(subagentAdmission ? { subagentAdmission } : {}),
+        ...(request.toolTaskAdmission ? { toolTaskAdmission: request.toolTaskAdmission } : {}),
       } as const;
       let durableProjectionError: RecordedNotificationProjectionError | null = null;
       try {

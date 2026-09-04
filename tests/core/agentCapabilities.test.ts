@@ -262,6 +262,19 @@ describe('agent capabilities', () => {
     }
   });
 
+  test('classifies Tool Task inspection as read-only control-plane access', async () => {
+    const { workspace } = await workspaceFixture();
+    expect(evaluateAgentToolCapability({
+      toolName: 'task_status',
+      args: { task_id: 'task-owned' },
+      policy: { workspaceRoot: workspace },
+    })).toMatchObject({
+      behavior: 'allow',
+      access: 'read',
+      descriptor: { actionKind: 'task.inspect' },
+    });
+  });
+
   test('parses only explicit block rules and reports invalid entries', () => {
     const config = parseAgentCapabilitySettings({
       blocks: ['Action(git.publish_remote)', 'Command(git push origin main)', 'Action(unknown.action)', 42],

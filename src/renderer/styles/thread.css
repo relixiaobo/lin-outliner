@@ -3690,8 +3690,8 @@
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
-   WORK STRIP (SubagentWorkStrip.tsx). The deck's ONLY ambient status: one pill
-   in the header that does not exist when nothing is running. Chrome, so the
+   WORK STRIPS. Ambient status pills exist only while background work is active
+   or has just settled. Chrome, so the
    dropdown is the one Liquid-Glass material in this file — level 1, with the
    shared opaque fallback under reduced transparency (B5).
    ════════════════════════════════════════════════════════════════════════════ */
@@ -3756,6 +3756,50 @@
   color: var(--text-soft);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
+}
+
+.thread-tool-task-row {
+  flex-wrap: wrap;
+}
+
+.thread-tool-task-detail {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: var(--space-1);
+  padding: var(--space-1) 0 var(--space-1) calc(var(--icon-size-xs) + var(--space-2));
+  color: var(--text-tertiary);
+}
+
+.thread-tool-task-output {
+  max-height: 12rem;
+  overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: var(--font-code-block)/var(--line-code-block) var(--font-family-mono);
+}
+
+.thread-tool-task-artifacts ul {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+}
+
+.thread-tool-task-warning,
+.thread-tool-task-error {
+  width: 100%;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.thread-tool-task-pressure {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
 }
 
 .thread-work-strip-open {

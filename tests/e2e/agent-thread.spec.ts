@@ -4042,6 +4042,135 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.thread-work-strip')).toHaveCount(0);
   });
 
+  test('presents, stops, inspects, and clears generic background Tool Tasks', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock root Thread not found');
+      const now = Date.now();
+      const task = (input: Record<string, unknown>) => ({
+        taskId: input.taskId,
+        ownerThreadId: threadId,
+        sourceTurnId: '01910000-0000-7000-8000-00000000ed01',
+        sourceItemId: String(input.taskId),
+        producer: 'bash',
+        description: input.description,
+        state: input.state,
+        deliveryState: input.deliveryState ?? 'pending',
+        progress: input.progress ?? null,
+        exitCode: input.exitCode ?? null,
+        signal: null,
+        outcomeReason: input.outcomeReason ?? null,
+        error: input.error ?? null,
+        detailState: input.detailState ?? 'available',
+        artifacts: [],
+        artifactWarnings: [],
+        outputBytes: input.outputBytes ?? 0,
+        detailBytes: input.detailBytes ?? 0,
+        storagePressure: input.storagePressure ?? null,
+        startedAt: input.startedAt ?? now,
+        completedAt: input.completedAt ?? null,
+        deliveryTurnId: input.deliveryTurnId ?? null,
+      });
+      const running = task({
+        taskId: 'task-e2e-running',
+        description: 'Render preview',
+        state: 'running',
+        progress: { phase: 'render', message: 'Frame 12', fraction: 0.5, updatedAt: now },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'toolTask/changed', threadId, task: running });
+      return { threadId, now };
+    });
+
+    const pill = page.locator('.thread-work-strip-pill');
+    await expect(pill).toHaveText('1 running');
+    await pill.click();
+    const runningRow = page.locator('.thread-tool-task-row').filter({ hasText: 'Render preview' });
+    await expect(runningRow).toContainText('Frame 12');
+    await runningRow.locator('.thread-work-strip-open').click();
+    await expect(runningRow.locator('.thread-tool-task-output')).toHaveText('Mock background output');
+    await runningRow.getByRole('button', { name: 'Stop Render preview' }).click();
+    await expect.poll(async () => (
+      (await commandCalls(page)).filter((call) => call.cmd === 'task/stop').at(-1)?.args
+    )).toEqual({ threadId: fixture.threadId, taskId: 'task-e2e-running' });
+    await expect(runningRow).toContainText('Cancelled');
+
+    await page.evaluate(({ threadId, now }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const base = {
+        ownerThreadId: threadId,
+        sourceTurnId: '01910000-0000-7000-8000-00000000ed01',
+        producer: 'video',
+        progress: null,
+        signal: null,
+        artifacts: [],
+        artifactWarnings: [],
+        startedAt: now + 1,
+        completedAt: Date.now(),
+      };
+      const reclaimable = {
+        ...base,
+        taskId: 'task-e2e-reclaimable',
+        sourceItemId: 'task-e2e-reclaimable',
+        description: 'Earlier export',
+        state: 'succeeded',
+        deliveryState: 'delivered',
+        exitCode: 0,
+        outcomeReason: 'exit_zero',
+        error: null,
+        detailState: 'available',
+        outputBytes: 256,
+        detailBytes: 256,
+        storagePressure: null,
+        deliveryTurnId: '01910000-0000-7000-8000-00000000ed02',
+      };
+      const pressured = {
+        ...base,
+        taskId: 'task-e2e-pressure',
+        sourceItemId: 'task-e2e-pressure',
+        description: 'Large export',
+        state: 'failed',
+        deliveryState: 'pending',
+        exitCode: null,
+        outcomeReason: 'storage_limit',
+        error: 'Not enough managed task storage.',
+        detailState: 'storage_pressure',
+        outputBytes: 0,
+        detailBytes: 0,
+        storagePressure: {
+          scope: 'thread',
+          limitBytes: 1_024,
+          usedBytes: 1_024,
+          requiredBytes: 512,
+          reclaimableBytes: 256,
+          protectedBytes: 768,
+        },
+        deliveryTurnId: null,
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'toolTask/changed', threadId, task: reclaimable });
+      target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'toolTask/changed', threadId, task: pressured });
+    }, fixture);
+
+    const pressureRow = page.locator('.thread-tool-task-row').filter({ hasText: 'Large export' });
+    await pressureRow.locator('.thread-work-strip-open').click();
+    await expect(pressureRow.locator('.thread-tool-task-pressure')).toContainText('512 B');
+    await pressureRow.getByRole('button', { name: 'Clear eligible details' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Clear delivered task details?' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Clear eligible details' }).click();
+    await expect(pressureRow.locator('.thread-tool-task-pressure')).toContainText('256 B cleared');
+    await expect.poll(async () => (
+      (await commandCalls(page)).filter((call) => call.cmd === 'task/details/clear').length
+    )).toBe(1);
+  });
+
   test('never folds a settled Turn over a child that is still running', async ({ page }) => {
     await createNewThread(page);
     const fixture = await page.evaluate(async () => {

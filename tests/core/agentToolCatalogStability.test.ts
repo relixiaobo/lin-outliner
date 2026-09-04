@@ -51,7 +51,7 @@ describe('canonical provider tool catalog', () => {
   });
 
   test('declares and compiles output-data validation for every catalog tool', () => {
-    expect(MODEL_TOOL_CATALOG).toHaveLength(22);
+    expect(MODEL_TOOL_CATALOG).toHaveLength(23);
     const failures: string[] = [];
     for (const contract of MODEL_TOOL_CATALOG) {
       const name = canonicalModelToolKey(contract.identity);
@@ -91,6 +91,51 @@ describe('canonical provider tool catalog', () => {
     expect(schema('create_goal').Check({
       goal: { objective: 'Ship it', internalContinuationState: true },
     })).toBe(false);
+    expect(schema('task_status').Check({
+      taskId: 'task-1',
+      state: 'failed',
+      progress: { phase: 'queued', message: 'Waiting for capacity', fraction: null },
+      result: {
+        exitCode: null,
+        signal: null,
+        reason: 'storage_limit',
+        error: 'Storage reservation failed.',
+        output: null,
+        outputTruncated: false,
+        detailState: 'storage_pressure',
+        artifacts: [{
+          id: 'artifact-1',
+          label: 'Rendered clip',
+          fileName: 'clip.mp4',
+          mimeType: 'video/mp4',
+          byteLength: 12,
+        }],
+        storagePressure: {
+          scope: 'thread',
+          limitBytes: 1_024,
+          usedBytes: 900,
+          requiredBytes: 256,
+          reclaimableBytes: 100,
+          protectedBytes: 800,
+        },
+      },
+    })).toBe(true);
+    expect(schema('task_status').Check({
+      taskId: 'task-2',
+      state: 'succeeded',
+      progress: null,
+      result: {
+        exitCode: 0,
+        signal: null,
+        reason: 'exit_zero',
+        error: null,
+        output: null,
+        outputTruncated: false,
+        detailState: 'cleared',
+        artifacts: [],
+        storagePressure: null,
+      },
+    })).toBe(true);
   });
 
   test('offers every static model-tool schema to providers as an object-rooted schema', () => {

@@ -108,6 +108,7 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
       });
     }
     case 'thread/subagents/list':
+    case 'thread/tasks/list':
     case 'thread/references/search':
     case 'thread/references/resolve':
     case 'thread/name/set':
@@ -124,6 +125,9 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
     case 'turn/steer':
     case 'turn/interrupt':
     case 'turn/recovery/read':
+    case 'task/read':
+    case 'task/stop':
+    case 'task/details/clear':
     case 'goal/get':
     case 'goal/create':
     case 'goal/update':
@@ -161,6 +165,7 @@ export function projectAgentCoreNotification(
     case 'turn/providerRetry/changed':
     case 'turn/plan/updated':
     case 'subagent/execution/changed':
+    case 'toolTask/changed':
     case 'userInput/requested':
     case 'userInput/resolved':
     case 'goal/updated':

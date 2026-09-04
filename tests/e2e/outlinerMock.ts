@@ -935,8 +935,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       historyMode: 'paginated';
     };
     const mockThreads: MockThread[] = [];
-    const mockTurns = new Map<string, MockTurn[]>();
-    const mockGoals = new Map<string, unknown>();
+      const mockTurns = new Map<string, MockTurn[]>();
+      const mockGoals = new Map<string, unknown>();
+      const mockToolTasks = new Map<string, Record<string, unknown>>();
     type MockAutomation = {
       id: string;
       name: string;
@@ -1002,6 +1003,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         turnId?: unknown;
         turn?: unknown;
         thread?: unknown;
+        task?: unknown;
       };
       // A started Thread is in the catalog, so the mock's catalog learns it
       // here rather than in every test that announces one. A delegated child
@@ -1014,6 +1016,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         && !mockThreads.some((candidate) => candidate.id === (event.thread as MockThread).id)
       ) {
         mockThreads.push(clone(event.thread) as unknown as MockThread);
+      }
+      if (
+        event.type === 'toolTask/changed'
+        && event.task !== null
+        && typeof event.task === 'object'
+      ) {
+        const task = clone(event.task) as Record<string, unknown>;
+        mockToolTasks.set(String(task.taskId), task);
       }
       if (
         (event.type === 'turn/started' || event.type === 'turn/completed')
@@ -4191,6 +4201,52 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }
           data.sort((left, right) => Number(left.createdAt) - Number(right.createdAt));
           return clone({ data }) as T;
+        }
+        if (method === 'thread/tasks/list') {
+          const ownerThreadId = String(input.threadId);
+          const data = [...mockToolTasks.values()]
+            .filter((task) => task.ownerThreadId === ownerThreadId)
+            .sort((left, right) => Number(left.startedAt) - Number(right.startedAt));
+          return clone({ data }) as T;
+        }
+        if (method === 'task/read') {
+          const task = mockToolTasks.get(String(input.taskId));
+          if (!task || task.ownerThreadId !== input.threadId) throw new Error('Tool Task not found');
+          return clone({
+            task,
+            output: task.detailState === 'available'
+              ? { stdout: 'Mock background output', stderr: '', stdoutTruncated: false, stderrTruncated: false }
+              : null,
+          }) as T;
+        }
+        if (method === 'task/stop') {
+          const taskId = String(input.taskId);
+          const task = mockToolTasks.get(taskId);
+          if (!task || task.ownerThreadId !== input.threadId) throw new Error('Tool Task not found');
+          const stopped = {
+            ...task,
+            state: 'cancelled',
+            outcomeReason: 'user_stop',
+            completedAt: Date.now(),
+          };
+          mockToolTasks.set(taskId, stopped);
+          emitAgentCoreNotification({ type: 'toolTask/changed', threadId: input.threadId, task: stopped });
+          return clone({ task: stopped }) as T;
+        }
+        if (method === 'task/details/clear') {
+          const ownerThreadId = String(input.threadId);
+          const data: Array<Record<string, unknown>> = [];
+          let reclaimedBytes = 0;
+          for (const [taskId, task] of mockToolTasks) {
+            if (task.ownerThreadId !== ownerThreadId
+              || task.deliveryState !== 'delivered'
+              || task.detailState !== 'available') continue;
+            reclaimedBytes += Number(task.detailBytes ?? 0);
+            const cleared = { ...task, detailState: 'cleared', artifacts: [], artifactWarnings: [] };
+            mockToolTasks.set(taskId, cleared);
+            data.push(cleared);
+          }
+          return clone({ data, reclaimedBytes }) as T;
         }
         if (method === 'thread/read') {
           const thread = threadById(String(input.threadId));

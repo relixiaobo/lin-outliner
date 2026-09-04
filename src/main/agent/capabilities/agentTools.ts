@@ -11,6 +11,7 @@ import type { AgentTool } from '../runtime/kernel/types';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { ToolArtifactSink } from '../runtime/ToolArtifactSink';
+import type { ToolTaskService } from '../tasks/ToolTaskService';
 import {
   createLocalTools,
   type AgentFileReadImageNormalizer,
@@ -225,6 +226,8 @@ export interface AgentToolsOptions {
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
   artifactSink?: ToolArtifactSink;
+  toolTaskService?: ToolTaskService;
+  turnId?: string;
 }
 
 interface AgentToolCatalogEntry {
@@ -247,6 +250,8 @@ function buildAgentToolCatalog(options: AgentToolsOptions): AgentToolCatalogEntr
       skillRuntime: options.skillRuntime,
       imageNormalizer: options.imageNormalizer,
       artifactSink: options.artifactSink,
+      toolTaskService: options.toolTaskService,
+      turnId: options.turnId,
     }),
   }, {
     precondition: true,

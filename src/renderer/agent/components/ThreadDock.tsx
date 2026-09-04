@@ -16,6 +16,7 @@ import { SubagentDetailTitle, SubagentDetailView } from './SubagentDetailView';
 import type { SubagentRegistryEntry } from '../subagentPresentation';
 import { SubagentRegistryProvider, type SubagentActions } from './SubagentRegistryContext';
 import { SubagentWorkStrip } from './SubagentWorkStrip';
+import { ToolTaskStrip } from './ToolTaskStrip';
 import {
   BackIcon,
   ChevronDownIcon,
@@ -174,6 +175,9 @@ export const ThreadDock = memo(function ThreadDock({
   ]);
   const goal = thread ? snapshot.goalsByThread.get(thread.id) ?? null : null;
   const configuration = thread ? snapshot.configurationsByThread.get(thread.id) ?? null : null;
+  const toolTasks = useMemo(() => thread
+    ? [...snapshot.toolTasksById.values()].filter((task) => task.ownerThreadId === thread.id)
+    : [], [snapshot.toolTasksById, thread]);
   const userInput = thread ? snapshot.userInputByThread.get(thread.id) ?? null : null;
   const providerRetry = thread ? snapshot.providerRetryByThread.get(thread.id) ?? null : null;
   const plan = thread ? snapshot.planByThread.get(thread.id) ?? null : null;
@@ -499,6 +503,15 @@ export const ThreadDock = memo(function ThreadDock({
           ) : null}
           {surface === 'thread' && openAgentId === null ? (
             <SubagentWorkStrip byAgentId={subagentProjection.byAgentId} />
+          ) : null}
+          {surface === 'thread' && openAgentId === null && thread ? (
+            <ToolTaskStrip
+              onClearDetails={(threadId) => threadStore.clearToolTaskDetails(threadId)}
+              onRead={(threadId, taskId) => threadStore.readToolTask(threadId, taskId)}
+              onStop={(threadId, taskId) => threadStore.stopToolTask(threadId, taskId)}
+              ownerThreadId={thread.id}
+              tasks={toolTasks}
+            />
           ) : null}
           {surface === 'thread' && openAgentId === null ? (
             <IconButton

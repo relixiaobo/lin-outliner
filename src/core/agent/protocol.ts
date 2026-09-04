@@ -176,6 +176,71 @@ export interface SubagentTurnAdmission {
   readonly envelopeDigest: string;
 }
 
+/** Host-only identity for an atomically claimed background-task delivery batch. */
+export interface ToolTaskTurnAdmission {
+  readonly batchId: string;
+  readonly envelopeDigest: string;
+}
+
+export type ToolTaskExecutionState =
+  | 'running'
+  | 'settling'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'timed_out'
+  | 'lost';
+
+export type ToolTaskDeliveryState = 'pending' | 'delivering' | 'delivered' | 'blocked';
+export type ToolTaskDetailState = 'available' | 'expired' | 'cleared' | 'storage_pressure';
+
+export interface ToolTaskProgress {
+  readonly phase: string | null;
+  readonly message: string | null;
+  readonly fraction: number | null;
+  readonly updatedAt: number;
+}
+
+export interface ToolTaskArtifact {
+  readonly ref: ThreadResourceReference;
+  readonly readablePath: string | null;
+  readonly label: string;
+}
+
+export interface ToolTaskStoragePressure {
+  readonly scope: 'thread' | 'application';
+  readonly limitBytes: number;
+  readonly usedBytes: number;
+  readonly requiredBytes: number;
+  readonly reclaimableBytes: number;
+  readonly protectedBytes: number;
+}
+
+export interface ToolTaskProjection {
+  readonly taskId: string;
+  readonly ownerThreadId: ThreadId;
+  readonly sourceTurnId: TurnId;
+  readonly sourceItemId: string;
+  readonly producer: string;
+  readonly description: string;
+  readonly state: ToolTaskExecutionState;
+  readonly deliveryState: ToolTaskDeliveryState;
+  readonly progress: ToolTaskProgress | null;
+  readonly exitCode: number | null;
+  readonly signal: string | null;
+  readonly outcomeReason: string | null;
+  readonly error: string | null;
+  readonly detailState: ToolTaskDetailState;
+  readonly artifacts: readonly ToolTaskArtifact[];
+  readonly artifactWarnings: readonly string[];
+  readonly outputBytes: number;
+  readonly detailBytes: number;
+  readonly storagePressure: ToolTaskStoragePressure | null;
+  readonly startedAt: number;
+  readonly completedAt: number | null;
+  readonly deliveryTurnId: TurnId | null;
+}
+
 export interface ItemProvenance {
   readonly originThreadId: ThreadId;
   readonly originTurnId: TurnId;
@@ -1241,7 +1306,7 @@ export interface DynamicToolCallThreadItem extends ThreadToolItemBase {
   readonly durationMs: number | null;
 }
 
-export type AgentTaskToolName = 'agent' | 'agent_message' | 'task_stop';
+export type AgentTaskToolName = 'agent' | 'agent_message' | 'task_status' | 'task_stop';
 
 export type SubagentExecutionStatus =
   | 'pendingInit'
@@ -1575,6 +1640,47 @@ export interface ThreadSubagentsResponse {
    * a delegation the conversation never made.
    */
   readonly data: readonly SubagentExecutionProjection[];
+}
+
+export interface ThreadToolTasksRequest {
+  readonly threadId: ThreadId;
+}
+
+export interface ThreadToolTasksResponse {
+  readonly data: readonly ToolTaskProjection[];
+}
+
+export interface ToolTaskStopRequest {
+  readonly threadId: ThreadId;
+  readonly taskId: string;
+}
+
+export interface ToolTaskStopResponse {
+  readonly task: ToolTaskProjection;
+}
+
+export interface ToolTaskReadRequest {
+  readonly threadId: ThreadId;
+  readonly taskId: string;
+}
+
+export interface ToolTaskReadResponse {
+  readonly task: ToolTaskProjection;
+  readonly output: {
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly stdoutTruncated: boolean;
+    readonly stderrTruncated: boolean;
+  } | null;
+}
+
+export interface ToolTaskDetailsClearRequest {
+  readonly threadId: ThreadId;
+}
+
+export interface ToolTaskDetailsClearResponse {
+  readonly data: readonly ToolTaskProjection[];
+  readonly reclaimedBytes: number;
 }
 
 export interface ThreadReadRequest {
@@ -2212,6 +2318,7 @@ export interface PrivilegedTurnStartRequest extends TurnInputRequest {
   readonly additionalContextSource?: string;
   readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
   readonly trigger: TurnTrigger;
+  readonly toolTaskAdmission?: ToolTaskTurnAdmission;
 }
 
 export interface TurnStartResponse {
@@ -2366,6 +2473,7 @@ export const AGENT_CORE_METHODS = [
   'thread/references/resolve',
   'thread/descendants',
   'thread/subagents/list',
+  'thread/tasks/list',
   'thread/read',
   'thread/start',
   'thread/resume',
@@ -2395,6 +2503,9 @@ export const AGENT_CORE_METHODS = [
   'turn/recovery/read',
   'turn/continue',
   'turn/rerun',
+  'task/read',
+  'task/stop',
+  'task/details/clear',
   'goal/get',
   'goal/create',
   'goal/update',
@@ -2410,6 +2521,7 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/references/resolve': ThreadReferenceResolveRequest;
   readonly 'thread/descendants': ThreadDescendantsRequest;
   readonly 'thread/subagents/list': ThreadSubagentsRequest;
+  readonly 'thread/tasks/list': ThreadToolTasksRequest;
   readonly 'thread/read': ThreadReadRequest;
   readonly 'thread/start': RendererThreadStartRequest;
   readonly 'thread/resume': ThreadResumeRequest;
@@ -2439,6 +2551,9 @@ export interface AgentCoreRequestByMethod {
   readonly 'turn/recovery/read': TurnRecoveryReadRequest;
   readonly 'turn/continue': TurnContinueRequest;
   readonly 'turn/rerun': TurnRerunRequest;
+  readonly 'task/read': ToolTaskReadRequest;
+  readonly 'task/stop': ToolTaskStopRequest;
+  readonly 'task/details/clear': ToolTaskDetailsClearRequest;
   readonly 'goal/get': GetGoalInput;
   readonly 'goal/create': CreateGoalInput;
   readonly 'goal/update': UpdateGoalInput;
@@ -2452,6 +2567,7 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/references/resolve': ThreadReferenceResolveResponse;
   readonly 'thread/descendants': ThreadDescendantsResponse;
   readonly 'thread/subagents/list': ThreadSubagentsResponse;
+  readonly 'thread/tasks/list': ThreadToolTasksResponse;
   readonly 'thread/read': ThreadReadResponse;
   readonly 'thread/start': ThreadStartResponse;
   readonly 'thread/resume': ThreadResumeResponse;
@@ -2481,6 +2597,9 @@ export interface AgentCoreResponseByMethod {
   readonly 'turn/recovery/read': TurnRecoveryReadResponse;
   readonly 'turn/continue': TurnContinueResponse;
   readonly 'turn/rerun': TurnRerunResponse;
+  readonly 'task/read': ToolTaskReadResponse;
+  readonly 'task/stop': ToolTaskStopResponse;
+  readonly 'task/details/clear': ToolTaskDetailsClearResponse;
   readonly 'goal/get': GetGoalResponse;
   readonly 'goal/create': CreateGoalResponse;
   readonly 'goal/update': UpdateGoalResponse;
@@ -2513,6 +2632,12 @@ export type AgentCoreNotification =
       readonly turnId: TurnId;
       readonly turn: Turn;
       readonly subagentAdmission?: SubagentTurnAdmission;
+      readonly toolTaskAdmission?: ToolTaskTurnAdmission;
+    }
+  | {
+      readonly type: 'toolTask/changed';
+      readonly threadId: ThreadId;
+      readonly task: ToolTaskProjection;
     }
   | {
       readonly type: 'item/started';
@@ -2593,7 +2718,8 @@ export type AgentCoreTransientNotification = Extract<AgentCoreNotification, {
     | 'thread/name/updated'
     | 'turn/providerRetry/changed'
     | 'turn/plan/updated'
-    | 'subagent/execution/changed';
+    | 'subagent/execution/changed'
+    | 'toolTask/changed';
 }>;
 
 export type AgentCoreRecordedNotification = Exclude<AgentCoreNotification, AgentCoreTransientNotification>;

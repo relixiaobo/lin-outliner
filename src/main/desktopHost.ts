@@ -19,6 +19,7 @@ import type { ConfigurationLayerTarget } from './agent/AgentConfigurationWriter'
 import { createToolArtifactSink } from './agent/runtime/ToolArtifactSink';
 import { createImageArtifactReference, ImageObservationNormalizationError } from './agent/imageArtifacts';
 import { Mutex } from './agent/Mutex';
+import { resolveToolTaskSupervisorRuntime } from './agent/tasks/toolTaskRuntime';
 import {
   expandSkillDirectory,
   isolatedSkillShellContext,
@@ -354,6 +355,12 @@ const agentHost = createAgentHost({
   scratchRoot: agentScratchRoot,
   defaultCwd: agentLocalFileRoot,
   appVersion: app.getVersion(),
+  toolTaskSupervisorRuntime: resolveToolTaskSupervisorRuntime({
+    isPackaged: app.isPackaged,
+    moduleDir: environment.moduleDir,
+    resourcesPath: process.resourcesPath,
+    processExecPath: process.execPath,
+  }),
   loadRuntimeSettings: getAgentRuntimeSettings,
   timeline: outlineHost.timeline,
   reportError,

@@ -1406,6 +1406,31 @@ export const en = {
         errored: 'Failed',
         notFound: 'Not found',
       },
+      tasks: {
+        backgroundWork: 'Background tasks',
+        running: ({ count }: { count: number }) => `${count} running`,
+        justFinished: 'Just finished',
+        loading: 'Loading',
+        artifacts: 'Artifacts',
+        storagePressure: ({ required, available }: { required: string; available: string }) => (
+          `${required} is required, but only ${available} can be reclaimed.`
+        ),
+        clearDetails: 'Clear eligible details',
+        clearDetailsTitle: 'Clear delivered task details?',
+        clearDetailsMessage: 'This permanently removes eligible output and artifacts from delivered background tasks. Task results and delivery history remain.',
+        cleared: ({ size }: { size: string }) => `${size} cleared`,
+        nothingCleared: 'No eligible task details were available.',
+        stop: ({ name }: { name: string }) => `Stop ${name}`,
+        states: {
+          running: 'Running',
+          settling: 'Stopping',
+          succeeded: 'Finished',
+          failed: 'Failed',
+          cancelled: 'Cancelled',
+          timed_out: 'Timed out',
+          lost: 'Lost',
+        },
+      },
       agent: {
         openAgent: ({ name }: { name: string }) => `Open ${name}`,
         stopped: 'Stopped',
