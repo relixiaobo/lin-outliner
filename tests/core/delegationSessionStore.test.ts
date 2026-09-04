@@ -91,16 +91,29 @@ describe('DelegationSessionStore', () => {
       now: 22,
     })).toThrow('already has an active execution');
 
-    expect(store.prepareSettlement('settlement-one', REQUEST_DIGEST, PREPARED_DIGEST, 30).state)
+    expect(store.prepareSettlement({
+      settlementId: 'settlement-one', requestDigest: REQUEST_DIGEST, preparedResultDigest: PREPARED_DIGEST, now: 30,
+    }).state)
       .toBe('prepared');
-    expect(store.commitSettlementContext(
-      'settlement-one', DELEGATED_TURN_ID, REQUEST_DIGEST, PREPARED_DIGEST, 40,
-    ).state).toBe('context_committed');
+    expect(store.commitSettlementContext({
+      settlementId: 'settlement-one',
+      turnId: DELEGATED_TURN_ID,
+      requestDigest: REQUEST_DIGEST,
+      messageSequenceDigest: EMPTY_DELEGATION_MESSAGE_SEQUENCE_DIGEST,
+      preparedResultDigest: PREPARED_DIGEST,
+      now: 40,
+    }).state).toBe('context_committed');
     expect(() => store.releaseExecution(SESSION_ID, 'task-one', 41))
       .toThrow('before settlement reconciliation');
-    expect(store.recordFinalReceipt('settlement-one', PREPARED_DIGEST, RECEIPT_DIGEST, 50))
+    expect(store.recordFinalReceipt({
+      settlementId: 'settlement-one', taskId: 'task-one', preparedResultDigest: PREPARED_DIGEST,
+      finalReceiptDigest: RECEIPT_DIGEST, now: 50,
+    }))
       .toMatchObject({ state: 'context_committed', finalReceiptDigest: RECEIPT_DIGEST });
-    expect(store.commitSettlement('settlement-one', PREPARED_DIGEST, RECEIPT_DIGEST, 60).state)
+    expect(store.commitSettlement({
+      settlementId: 'settlement-one', taskId: 'task-one', preparedResultDigest: PREPARED_DIGEST,
+      finalReceiptDigest: RECEIPT_DIGEST, now: 60,
+    }).state)
       .toBe('committed');
     expect(store.readSession(SESSION_ID)?.currentTaskId).toBe('task-one');
 
@@ -177,27 +190,59 @@ describe('DelegationSessionStore', () => {
       });
     }
 
-    expect(store.prepareSettlement('settlement-prepared', digest('wrong request'), PREPARED_DIGEST, 30))
+    expect(store.prepareSettlement({
+      settlementId: 'settlement-prepared', requestDigest: digest('wrong request'),
+      preparedResultDigest: PREPARED_DIGEST, now: 30,
+    }))
       .toMatchObject({ state: 'blocked', blockedReason: expect.stringContaining('request digest mismatch') });
 
-    store.prepareSettlement('settlement-context', REQUEST_DIGEST, PREPARED_DIGEST, 30);
-    expect(store.commitSettlementContext(
-      'settlement-context', DELEGATED_TURN_TWO_ID, REQUEST_DIGEST, digest('wrong prepared'), 40,
-    )).toMatchObject({ state: 'blocked', blockedReason: expect.stringContaining('prepared result digest mismatch') });
+    store.prepareSettlement({
+      settlementId: 'settlement-context', requestDigest: REQUEST_DIGEST,
+      preparedResultDigest: PREPARED_DIGEST, now: 30,
+    });
+    expect(store.commitSettlementContext({
+      settlementId: 'settlement-context',
+      turnId: DELEGATED_TURN_TWO_ID,
+      requestDigest: REQUEST_DIGEST,
+      messageSequenceDigest: EMPTY_DELEGATION_MESSAGE_SEQUENCE_DIGEST,
+      preparedResultDigest: digest('wrong prepared'),
+      now: 40,
+    })).toMatchObject({ state: 'blocked', blockedReason: expect.stringContaining('prepared result digest mismatch') });
 
-    store.prepareSettlement('settlement-receipt', REQUEST_DIGEST, PREPARED_DIGEST, 30);
-    expect(store.recordFinalReceipt('settlement-receipt', digest('wrong prepared'), RECEIPT_DIGEST, 40))
+    store.prepareSettlement({
+      settlementId: 'settlement-receipt', requestDigest: REQUEST_DIGEST,
+      preparedResultDigest: PREPARED_DIGEST, now: 30,
+    });
+    expect(store.recordFinalReceipt({
+      settlementId: 'settlement-receipt', taskId: 'task-receipt',
+      preparedResultDigest: digest('wrong prepared'), finalReceiptDigest: RECEIPT_DIGEST, now: 40,
+    }))
       .toMatchObject({ state: 'blocked', blockedReason: expect.stringContaining('prepared result digest mismatch') });
 
-    store.prepareSettlement('settlement-healthy', REQUEST_DIGEST, PREPARED_DIGEST, 30);
-    expect(store.commitSettlementContext(
-      'settlement-healthy', cases[3].turnId, REQUEST_DIGEST, PREPARED_DIGEST, 40,
-    ).state).toBe('context_committed');
-    expect(store.recordFinalReceipt('settlement-healthy', PREPARED_DIGEST, RECEIPT_DIGEST, 50).state)
+    store.prepareSettlement({
+      settlementId: 'settlement-healthy', requestDigest: REQUEST_DIGEST,
+      preparedResultDigest: PREPARED_DIGEST, now: 30,
+    });
+    expect(store.commitSettlementContext({
+      settlementId: 'settlement-healthy',
+      turnId: cases[3].turnId,
+      requestDigest: REQUEST_DIGEST,
+      messageSequenceDigest: EMPTY_DELEGATION_MESSAGE_SEQUENCE_DIGEST,
+      preparedResultDigest: PREPARED_DIGEST,
+      now: 40,
+    }).state).toBe('context_committed');
+    expect(store.recordFinalReceipt({
+      settlementId: 'settlement-healthy', taskId: 'task-healthy', preparedResultDigest: PREPARED_DIGEST,
+      finalReceiptDigest: RECEIPT_DIGEST, now: 50,
+    }).state)
       .toBe('context_committed');
-    expect(store.commitSettlement('settlement-healthy', PREPARED_DIGEST, RECEIPT_DIGEST, 60).state)
+    expect(store.commitSettlement({
+      settlementId: 'settlement-healthy', taskId: 'task-healthy', preparedResultDigest: PREPARED_DIGEST,
+      finalReceiptDigest: RECEIPT_DIGEST, now: 60,
+    }).state)
       .toBe('committed');
     expect(store.unsettledSettlements()).toHaveLength(0);
+    expect(store.activeSettlements()).toHaveLength(4);
 
     const blockedSession = store.releaseExecution(SESSION_ID, 'task-prepared', 70);
     expect(() => reserve(store, {
@@ -258,10 +303,26 @@ describe('DelegationSessionStore', () => {
     });
     expect(fenced.stopFence).toMatchObject({ minimumResumeRevision: 6, cancelledTaskId: 'task-one' });
 
-    store.prepareSettlement('settlement-one', REQUEST_DIGEST, PREPARED_DIGEST, 40);
-    store.commitSettlementContext('settlement-one', DELEGATED_TURN_ID, REQUEST_DIGEST, PREPARED_DIGEST, 50);
-    store.recordFinalReceipt('settlement-one', PREPARED_DIGEST, RECEIPT_DIGEST, 60);
-    store.commitSettlement('settlement-one', PREPARED_DIGEST, RECEIPT_DIGEST, 70);
+    store.prepareSettlement({
+      settlementId: 'settlement-one', requestDigest: REQUEST_DIGEST,
+      preparedResultDigest: PREPARED_DIGEST, now: 40,
+    });
+    store.commitSettlementContext({
+      settlementId: 'settlement-one',
+      turnId: DELEGATED_TURN_ID,
+      requestDigest: REQUEST_DIGEST,
+      messageSequenceDigest: EMPTY_DELEGATION_MESSAGE_SEQUENCE_DIGEST,
+      preparedResultDigest: PREPARED_DIGEST,
+      now: 50,
+    });
+    store.recordFinalReceipt({
+      settlementId: 'settlement-one', taskId: 'task-one', preparedResultDigest: PREPARED_DIGEST,
+      finalReceiptDigest: RECEIPT_DIGEST, now: 60,
+    });
+    store.commitSettlement({
+      settlementId: 'settlement-one', taskId: 'task-one', preparedResultDigest: PREPARED_DIGEST,
+      finalReceiptDigest: RECEIPT_DIGEST, now: 70,
+    });
     const released = store.releaseExecution(SESSION_ID, 'task-one', 80);
 
     expect(() => store.clearUserStopFence({

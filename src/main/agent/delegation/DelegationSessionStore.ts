@@ -439,38 +439,54 @@ export class DelegationSessionStore {
     `).all() as SettlementRow[]).map(settlementFromRow);
   }
 
-  prepareSettlement(
-    settlementId: string,
-    requestDigest: string,
-    preparedResultDigest: string,
-    now: number,
-  ): DelegationExecutionSettlement {
-    assertDigest(requestDigest, 'request');
-    assertDigest(preparedResultDigest, 'prepared result');
-    return this.transitionSettlement(settlementId, now, (settlement) => {
-      if (settlement.requestDigest !== requestDigest) return { blocked: 'Prepared result request digest mismatch' };
-      if (settlement.preparedResultDigest && settlement.preparedResultDigest !== preparedResultDigest) {
+  activeSettlements(): readonly DelegationExecutionSettlement[] {
+    return (this.db.prepare(`
+      SELECT settlements.*
+      FROM delegation_execution_settlements AS settlements
+      INNER JOIN delegation_sessions AS sessions
+        ON sessions.session_id = settlements.session_id
+        AND sessions.current_task_id = settlements.task_id
+      ORDER BY settlements.created_at, settlements.settlement_id
+    `).all() as SettlementRow[]).map(settlementFromRow);
+  }
+
+  prepareSettlement(input: {
+    readonly settlementId: string;
+    readonly requestDigest: string;
+    readonly preparedResultDigest: string;
+    readonly now: number;
+  }): DelegationExecutionSettlement {
+    assertDigest(input.requestDigest, 'request');
+    assertDigest(input.preparedResultDigest, 'prepared result');
+    return this.transitionSettlement(input.settlementId, input.now, (settlement) => {
+      if (settlement.requestDigest !== input.requestDigest) return { blocked: 'Prepared result request digest mismatch' };
+      if (settlement.preparedResultDigest && settlement.preparedResultDigest !== input.preparedResultDigest) {
         return { blocked: 'Prepared result digest mismatch' };
       }
       if (settlement.state === 'blocked' || settlement.state === 'committed') return { unchanged: true };
       if (settlement.state !== 'awaiting_result') return { unchanged: true };
-      return { state: 'prepared', preparedResultDigest };
+      return { state: 'prepared', preparedResultDigest: input.preparedResultDigest };
     });
   }
 
-  commitSettlementContext(
-    settlementId: string,
-    turnId: TurnId,
-    requestDigest: string,
-    preparedResultDigest: string,
-    now: number,
-  ): DelegationExecutionSettlement {
-    assertDigest(requestDigest, 'request');
-    assertDigest(preparedResultDigest, 'prepared result');
-    return this.transitionSettlement(settlementId, now, (settlement) => {
-      if (settlement.turnId !== turnId) return { blocked: 'Canonical completion Turn identity mismatch' };
-      if (settlement.requestDigest !== requestDigest) return { blocked: 'Canonical completion request digest mismatch' };
-      if (settlement.preparedResultDigest !== preparedResultDigest) {
+  commitSettlementContext(input: {
+    readonly settlementId: string;
+    readonly turnId: TurnId;
+    readonly requestDigest: string;
+    readonly messageSequenceDigest: string;
+    readonly preparedResultDigest: string;
+    readonly now: number;
+  }): DelegationExecutionSettlement {
+    assertDigest(input.requestDigest, 'request');
+    assertDigest(input.messageSequenceDigest, 'message sequence');
+    assertDigest(input.preparedResultDigest, 'prepared result');
+    return this.transitionSettlement(input.settlementId, input.now, (settlement) => {
+      if (settlement.turnId !== input.turnId) return { blocked: 'Canonical completion Turn identity mismatch' };
+      if (settlement.requestDigest !== input.requestDigest) return { blocked: 'Canonical completion request digest mismatch' };
+      if (settlement.messageSequenceDigest !== input.messageSequenceDigest) {
+        return { blocked: 'Canonical completion message sequence digest mismatch' };
+      }
+      if (settlement.preparedResultDigest !== input.preparedResultDigest) {
         return { blocked: 'Canonical completion prepared result digest mismatch' };
       }
       if (settlement.state === 'blocked' || settlement.state === 'committed'
@@ -480,40 +496,44 @@ export class DelegationSessionStore {
     });
   }
 
-  recordFinalReceipt(
-    settlementId: string,
-    preparedResultDigest: string,
-    finalReceiptDigest: string,
-    now: number,
-  ): DelegationExecutionSettlement {
-    assertDigest(preparedResultDigest, 'prepared result');
-    assertDigest(finalReceiptDigest, 'final receipt');
-    return this.transitionSettlement(settlementId, now, (settlement) => {
-      if (settlement.preparedResultDigest !== preparedResultDigest) {
+  recordFinalReceipt(input: {
+    readonly settlementId: string;
+    readonly taskId: string;
+    readonly preparedResultDigest: string;
+    readonly finalReceiptDigest: string;
+    readonly now: number;
+  }): DelegationExecutionSettlement {
+    assertDigest(input.preparedResultDigest, 'prepared result');
+    assertDigest(input.finalReceiptDigest, 'final receipt');
+    return this.transitionSettlement(input.settlementId, input.now, (settlement) => {
+      if (settlement.taskId !== input.taskId) return { blocked: 'Final receipt Tool Task identity mismatch' };
+      if (settlement.preparedResultDigest !== input.preparedResultDigest) {
         return { blocked: 'Final receipt prepared result digest mismatch' };
       }
-      if (settlement.finalReceiptDigest && settlement.finalReceiptDigest !== finalReceiptDigest) {
+      if (settlement.finalReceiptDigest && settlement.finalReceiptDigest !== input.finalReceiptDigest) {
         return { blocked: 'Final receipt digest mismatch' };
       }
       if (settlement.state === 'blocked' || settlement.state === 'committed') return { unchanged: true };
       if (settlement.state === 'awaiting_result') return { blocked: 'Final receipt exists without a prepared result' };
-      return { state: settlement.state, finalReceiptDigest };
+      return { state: settlement.state, finalReceiptDigest: input.finalReceiptDigest };
     });
   }
 
-  commitSettlement(
-    settlementId: string,
-    preparedResultDigest: string,
-    finalReceiptDigest: string,
-    now: number,
-  ): DelegationExecutionSettlement {
-    assertDigest(preparedResultDigest, 'prepared result');
-    assertDigest(finalReceiptDigest, 'final receipt');
-    return this.transitionSettlement(settlementId, now, (settlement) => {
-      if (settlement.preparedResultDigest !== preparedResultDigest) {
+  commitSettlement(input: {
+    readonly settlementId: string;
+    readonly taskId: string;
+    readonly preparedResultDigest: string;
+    readonly finalReceiptDigest: string;
+    readonly now: number;
+  }): DelegationExecutionSettlement {
+    assertDigest(input.preparedResultDigest, 'prepared result');
+    assertDigest(input.finalReceiptDigest, 'final receipt');
+    return this.transitionSettlement(input.settlementId, input.now, (settlement) => {
+      if (settlement.taskId !== input.taskId) return { blocked: 'Terminal commit Tool Task identity mismatch' };
+      if (settlement.preparedResultDigest !== input.preparedResultDigest) {
         return { blocked: 'Terminal commit prepared result digest mismatch' };
       }
-      if (settlement.finalReceiptDigest !== finalReceiptDigest) {
+      if (settlement.finalReceiptDigest !== input.finalReceiptDigest) {
         return { blocked: 'Terminal commit final receipt digest mismatch' };
       }
       if (settlement.state === 'blocked' || settlement.state === 'committed') return { unchanged: true };
@@ -548,7 +568,8 @@ export class DelegationSessionStore {
     readonly currentRootIntentRevision: number;
     readonly now: number;
   }): DelegationSessionBinding {
-    if (!isPositiveInteger(input.currentRootIntentRevision)) {
+    if (!isPositiveInteger(input.currentRootIntentRevision)
+      || input.currentRootIntentRevision === Number.MAX_SAFE_INTEGER) {
       throw new DelegationStateError('invalid', 'User stop requires a positive root intent revision');
     }
     return this.transaction(() => {
