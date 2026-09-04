@@ -14,6 +14,8 @@ import {
   type DelegateBrokerResponse,
   type DelegateLaunchCapability,
   type DelegateStateCommand,
+  type DelegateAccess,
+  type DelegateTaskProfile,
 } from '../../../delegate/contract';
 import { uuidV7 } from '../uuid';
 
@@ -31,8 +33,13 @@ export interface DelegateCapabilityPolicyBinding {
   readonly configurationRevision: string;
   readonly capabilityCeilingDigest: string;
   readonly runnerId: string;
+  readonly runnerVersion: string | null;
+  readonly modelProvider: string;
   readonly modelId: string;
   readonly effort: string;
+  readonly profile: DelegateTaskProfile;
+  readonly access: DelegateAccess;
+  readonly timeoutMs: number;
   readonly schedulingPolicyDigest: string;
 }
 
@@ -267,6 +274,7 @@ function validateAdmission(admission: DelegateCapabilityAdmission): void {
     admission.toolTaskNonce,
     admission.policy.configurationRevision,
     admission.policy.runnerId,
+    admission.policy.modelProvider,
     admission.policy.modelId,
     admission.policy.effort,
     admission.source.rootThreadId,
@@ -275,6 +283,12 @@ function validateAdmission(admission: DelegateCapabilityAdmission): void {
   ];
   if (required.some((value) => !value || value.includes('\0'))) {
     throw new Error('Delegate capability admission contains an invalid binding');
+  }
+  if (!['general', 'explore', 'plan'].includes(admission.policy.profile)
+    || !['read-only', 'workspace-write'].includes(admission.policy.access)
+    || !Number.isSafeInteger(admission.policy.timeoutMs)
+    || admission.policy.timeoutMs < 1) {
+    throw new Error('Delegate capability admission contains an invalid execution policy');
   }
   if (admission.session.kind !== admission.command.name) {
     throw new Error('Delegate capability Session binding does not match its command');

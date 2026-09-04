@@ -99,9 +99,11 @@ export interface ToolTaskSupervisorConfig {
   readonly heartbeatPath: string;
   readonly stopRequestPath: string;
   readonly finalReceiptPath: string;
+  readonly preparedResultPath: string;
   readonly startedAt: number;
   readonly timeoutMs: number;
   readonly maxOutputBytes: number;
+  readonly maxPreparedResultBytes: number;
 }
 
 export interface ToolTaskSupervisorIdentity {
@@ -122,7 +124,7 @@ export interface ToolTaskSupervisorHeartbeat {
 }
 
 export interface ToolTaskFinalReceipt {
-  readonly version: 1;
+  readonly version: 2;
   readonly taskId: string;
   readonly nonce: string;
   readonly state: Extract<ToolTaskExecutionState, 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | 'lost'>;
@@ -137,6 +139,7 @@ export interface ToolTaskFinalReceipt {
   readonly stdoutBytes: number;
   readonly stderrBytes: number;
   readonly preparedResultDigest: string | null;
+  readonly preparedResultBytes: number;
   readonly receiptDigest: string;
 }
 

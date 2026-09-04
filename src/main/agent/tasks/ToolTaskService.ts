@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { link, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
   AdditionalContext,
@@ -45,6 +45,7 @@ const TASK_STOP_WAIT_MS = 3_000;
 const TASK_DELIVERY_BATCH_LIMIT = 8;
 const TASK_OUTPUT_PREVIEW_BYTES = 30_000;
 const TOOL_TASK_PRIVATE_CONTROL_MAX_BYTES = 64 * 1024;
+const TOOL_TASK_PREPARED_RESULT_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_TOOL_TASK_SCHEDULER_LIMITS: ToolTaskSchedulerLimits = Object.freeze({
   maxConcurrentGlobal: 8,
   maxConcurrentThread: 4,
@@ -80,6 +81,7 @@ export interface ToolTaskHost {
     task: ToolTaskRecord,
     producerContext: JsonValue | null,
     maxArtifactBytes: number,
+    receipt: ToolTaskFinalReceipt,
   ): Promise<ToolTaskArtifactSettlement>;
   taskDetailsExpired?(ownerThreadId: ThreadId): Promise<void>;
   taskChanged(task: ToolTaskProjection): void;
@@ -128,6 +130,11 @@ export interface ToolTaskOutput {
   readonly stderrTruncated: boolean;
 }
 
+export interface ToolTaskPreparedResult {
+  readonly sha256: string;
+  readonly byteLength: number;
+}
+
 export class ToolTaskService {
   private readonly monitors = new Map<string, ReturnType<typeof setInterval>>();
   private readonly startRuns = new Set<Promise<ToolTaskRecord>>();
@@ -153,6 +160,29 @@ export class ToolTaskService {
   bindHost(host: ToolTaskHost): void {
     if (this.host) throw new Error('Tool Task host is already bound');
     this.host = host;
+  }
+
+  async prepareResult(taskId: string, ownerThreadId: ThreadId, bytes: Uint8Array): Promise<ToolTaskPreparedResult> {
+    const task = this.store.owned(taskId, ownerThreadId);
+    if (!task) throw new Error(`Tool Task not found: ${taskId}`);
+    if (isToolTaskTerminal(task.state)) throw new Error(`Tool Task is already terminal: ${taskId}`);
+    const maxPreparedResultBytes = preparedResultMaxBytes(this.limits.taskDetailBytes);
+    if (bytes.byteLength < 1 || bytes.byteLength > maxPreparedResultBytes) {
+      throw new Error(`Tool Task prepared result must be between 1 and ${maxPreparedResultBytes} bytes`);
+    }
+    const value = Buffer.from(bytes);
+    const sha256 = createHash('sha256').update(value).digest('hex');
+    const preparedPath = taskPaths(task.detailPath).preparedResult;
+    const created = await atomicCreateBytes(preparedPath, value);
+    if (!created) {
+      const existing = await readFile(preparedPath);
+      const existingDigest = createHash('sha256').update(existing).digest('hex');
+      if (existingDigest !== sha256 || existing.byteLength !== value.byteLength) {
+        throw new Error(`Tool Task prepared result is immutable: ${taskId}`);
+      }
+    }
+    this.publish(this.store.markSettling(taskId, this.now()));
+    return { sha256, byteLength: value.byteLength };
   }
 
   async initialize(): Promise<void> {
@@ -350,6 +380,7 @@ export class ToolTaskService {
         : { process: input.process ?? { kind: 'shell', command: input.command },
             ...(input.privateControlInput ? { privateControlInput: input.privateControlInput } : {}) };
       validatePreparedProcess(prepared);
+      const maxPreparedResultBytes = preparedResultMaxBytes(this.limits.taskDetailBytes);
       const config: ToolTaskSupervisorConfig = {
         version: 2,
         taskId,
@@ -364,9 +395,11 @@ export class ToolTaskService {
         heartbeatPath: paths.heartbeat,
         stopRequestPath: paths.stop,
         finalReceiptPath: paths.receipt,
+        preparedResultPath: paths.preparedResult,
         startedAt: task.startedAt,
         timeoutMs: input.timeoutMs,
-        maxOutputBytes: this.limits.taskDetailBytes,
+        maxOutputBytes: this.limits.taskDetailBytes - maxPreparedResultBytes,
+        maxPreparedResultBytes,
       };
       await atomicJsonWrite(paths.config, config);
       task = this.store.read(taskId)!;
@@ -690,12 +723,24 @@ export class ToolTaskService {
     });
     if (receipt) {
       try {
+        await verifyPreparedResult(
+          paths.preparedResult,
+          receipt,
+          preparedResultMaxBytes(this.limits.taskDetailBytes),
+        );
         const stabilized = await stabilizeOutput(paths, task, receipt, this.limits.taskDetailBytes);
         await this.settleArtifacts(
           task,
-          this.limits.taskDetailBytes - stabilized.stdoutBytes - stabilized.stderrBytes,
+          this.limits.taskDetailBytes
+            - stabilized.stdoutBytes
+            - stabilized.stderrBytes
+            - receipt.preparedResultBytes,
+          receipt,
         );
-        const terminal = this.store.commitTerminal(task.taskId, receipt, this.now(), stabilized);
+        const terminal = this.store.commitTerminal(task.taskId, receipt, this.now(), {
+          ...stabilized,
+          preparedResultBytes: receipt.preparedResultBytes,
+        });
         this.supervisors.delete(task.taskId);
         this.clearMonitor(task.taskId);
         this.publish(terminal);
@@ -773,9 +818,16 @@ export class ToolTaskService {
       const stabilized = await stabilizeOutput(paths, task, lost, this.limits.taskDetailBytes);
       await this.settleArtifacts(
         task,
-        this.limits.taskDetailBytes - stabilized.stdoutBytes - stabilized.stderrBytes,
+        this.limits.taskDetailBytes
+          - stabilized.stdoutBytes
+          - stabilized.stderrBytes
+          - lost.preparedResultBytes,
+        lost,
       );
-      const terminal = this.store.commitTerminal(task.taskId, lost, this.now(), stabilized);
+      const terminal = this.store.commitTerminal(task.taskId, lost, this.now(), {
+        ...stabilized,
+        preparedResultBytes: lost.preparedResultBytes,
+      });
       this.supervisors.delete(task.taskId);
       this.clearMonitor(task.taskId);
       this.publish(terminal);
@@ -936,8 +988,12 @@ export class ToolTaskService {
   private async createLostReceipt(task: ToolTaskRecord, reason: string): Promise<ToolTaskFinalReceipt> {
     const paths = taskPaths(task.detailPath);
     const [stdoutBytes, stderrBytes] = await Promise.all([fileSize(paths.stdout), fileSize(paths.stderr)]);
+    const preparedResult = await readPreparedResultEvidence(
+      paths.preparedResult,
+      preparedResultMaxBytes(this.limits.taskDetailBytes),
+    );
     const unsigned = {
-      version: 1 as const,
+      version: 2 as const,
       taskId: task.taskId,
       nonce: task.nonce,
       state: 'lost' as const,
@@ -951,7 +1007,8 @@ export class ToolTaskService {
       quiescedAt: this.now(),
       stdoutBytes,
       stderrBytes,
-      preparedResultDigest: null,
+      preparedResultDigest: preparedResult.sha256,
+      preparedResultBytes: preparedResult.byteLength,
     };
     return { ...unsigned, receiptDigest: digestText(JSON.stringify(unsigned)) };
   }
@@ -964,7 +1021,7 @@ export class ToolTaskService {
     const paths = taskPaths(task.detailPath);
     const [stdoutBytes, stderrBytes] = await Promise.all([fileSize(paths.stdout), fileSize(paths.stderr)]);
     const unsigned = {
-      version: 1 as const,
+      version: 2 as const,
       taskId: task.taskId,
       nonce: task.nonce,
       state: 'failed' as const,
@@ -979,6 +1036,7 @@ export class ToolTaskService {
       stdoutBytes,
       stderrBytes,
       preparedResultDigest: null,
+      preparedResultBytes: 0,
     };
     return { ...unsigned, receiptDigest: digestText(JSON.stringify(unsigned)) };
   }
@@ -1011,7 +1069,7 @@ export class ToolTaskService {
     this.store.markSettling(task.taskId, this.now(), state === 'cancelled');
     const paths = taskPaths(task.detailPath);
     const unsigned = {
-      version: 1 as const,
+      version: 2 as const,
       taskId: task.taskId,
       nonce: task.nonce,
       state,
@@ -1026,13 +1084,14 @@ export class ToolTaskService {
       stdoutBytes: await fileSize(paths.stdout),
       stderrBytes: await fileSize(paths.stderr),
       preparedResultDigest: null,
+      preparedResultBytes: 0,
     };
     const receipt: ToolTaskFinalReceipt = {
       ...unsigned,
       receiptDigest: digestText(JSON.stringify(unsigned)),
     };
     await atomicJsonWrite(paths.receipt, receipt).catch(() => undefined);
-    await this.settleArtifacts(task, this.limits.taskDetailBytes);
+    await this.settleArtifacts(task, this.limits.taskDetailBytes, receipt);
     const terminal = this.store.commitTerminal(task.taskId, receipt, this.now());
     this.publish(terminal);
     if (terminal.backgroundEnabled) this.wakeDelivery(terminal.ownerThreadId);
@@ -1065,12 +1124,16 @@ export class ToolTaskService {
     if (task.backgroundEnabled) this.host?.taskChanged(projectToolTask(task));
   }
 
-  private async settleArtifacts(task: ToolTaskRecord, maxArtifactBytes: number): Promise<ToolTaskRecord> {
+  private async settleArtifacts(
+    task: ToolTaskRecord,
+    maxArtifactBytes: number,
+    receipt: ToolTaskFinalReceipt,
+  ): Promise<ToolTaskRecord> {
     const current = this.store.read(task.taskId)!;
     if (current.artifactsSettled) return current;
     const producerContext = await readJson(taskPaths(task.detailPath).producer, 1024 * 1024);
     const settlement = this.host?.settleTask
-      ? await this.host.settleTask(current, producerContext as JsonValue | null, maxArtifactBytes)
+      ? await this.host.settleTask(current, producerContext as JsonValue | null, maxArtifactBytes, receipt)
       : { artifacts: [], warnings: [] };
     const artifactBytes = settlement.artifacts.reduce((sum, artifact) => sum + artifact.ref.byteLength, 0);
     if (!Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 0
@@ -1244,8 +1307,25 @@ function taskPaths(root: string) {
     heartbeat: path.join(root, 'heartbeat.json'),
     stop: path.join(root, 'stop.json'),
     receipt: path.join(root, 'final-receipt.json'),
+    preparedResult: path.join(root, 'prepared-result.bin'),
     sanitized: path.join(root, 'sanitized.json'),
   };
+}
+
+async function atomicCreateBytes(filePath: string, bytes: Uint8Array): Promise<boolean> {
+  const temporary = `${filePath}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, bytes, { mode: 0o600 });
+    try {
+      await link(temporary, filePath);
+      return true;
+    } catch (error) {
+      if (isErrorCode(error, 'EEXIST')) return false;
+      throw error;
+    }
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 
 async function readIdentity(filePath: string, task: ToolTaskRecord): Promise<ToolTaskSupervisorIdentity | null> {
@@ -1263,7 +1343,7 @@ async function readFinalReceipt(filePath: string, task: ToolTaskRecord): Promise
   const value = await readJson(filePath);
   if (value === null) return null;
   const record = value as Partial<ToolTaskFinalReceipt>;
-  if (record.version !== 1 || record.taskId !== task.taskId || record.nonce !== task.nonce
+  if (record.version !== 2 || record.taskId !== task.taskId || record.nonce !== task.nonce
     || !['succeeded', 'failed', 'cancelled', 'timed_out', 'lost'].includes(record.state ?? '')
     || typeof record.receiptDigest !== 'string' || !/^[0-9a-f]{64}$/u.test(record.receiptDigest)
     || record.startedAt !== task.startedAt
@@ -1280,6 +1360,8 @@ async function readFinalReceipt(filePath: string, task: ToolTaskRecord): Promise
     || !(record.preparedResultDigest === null
       || (typeof record.preparedResultDigest === 'string'
         && /^[0-9a-f]{64}$/u.test(record.preparedResultDigest)))
+    || !nonNegativeInteger(record.preparedResultBytes)
+    || ((record.preparedResultDigest === null) !== (record.preparedResultBytes === 0))
     || (record.state === 'succeeded'
       && (record.exitCode !== 0 || record.signal !== null || record.error !== null
         || record.supervisorPid === null || record.childPid === null))) {
@@ -1438,6 +1520,47 @@ async function atomicJsonWrite(target: string, value: unknown): Promise<void> {
   const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: 'utf8', mode: 0o600 });
   await rename(temporary, target);
+}
+
+async function readPreparedResultEvidence(filePath: string, maxBytes: number): Promise<{
+  readonly sha256: string | null;
+  readonly byteLength: number;
+}> {
+  const bytes = await readFile(filePath).catch((error: unknown) => {
+    if (isErrorCode(error, 'ENOENT')) return null;
+    throw error;
+  });
+  if (!bytes) return { sha256: null, byteLength: 0 };
+  if (bytes.byteLength < 1 || bytes.byteLength > maxBytes) {
+    throw new Error('Tool Task prepared result exceeds its byte limit');
+  }
+  return {
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    byteLength: bytes.byteLength,
+  };
+}
+
+async function verifyPreparedResult(
+  filePath: string,
+  receipt: ToolTaskFinalReceipt,
+  maxBytes: number,
+): Promise<void> {
+  const evidence = await readPreparedResultEvidence(filePath, maxBytes);
+  if (evidence.sha256 !== receipt.preparedResultDigest
+    || evidence.byteLength !== receipt.preparedResultBytes) {
+    throw new Error('Tool Task prepared result does not match its final receipt');
+  }
+}
+
+function preparedResultMaxBytes(taskDetailBytes: number): number {
+  return Math.min(
+    TOOL_TASK_PREPARED_RESULT_MAX_BYTES,
+    Math.max(1, Math.floor(taskDetailBytes / 4)),
+  );
+}
+
+function isErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && 'code' in error && error.code === code;
 }
 
 function digestText(value: string): string {

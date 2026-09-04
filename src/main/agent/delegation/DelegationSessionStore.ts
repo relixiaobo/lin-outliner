@@ -450,6 +450,58 @@ export class DelegationSessionStore {
     `).all() as SettlementRow[]).map(settlementFromRow);
   }
 
+  extendSettlementMessagePrefix(input: {
+    readonly settlementId: string;
+    readonly throughSequence: number;
+    readonly messageSequenceDigest: string;
+    readonly now: number;
+  }): DelegationExecutionSettlement {
+    assertDigest(input.messageSequenceDigest, 'message sequence');
+    return this.transaction(() => {
+      const settlement = this.requireSettlement(input.settlementId);
+      if (!Number.isSafeInteger(input.throughSequence)
+        || input.throughSequence < settlement.messageSequence) {
+        throw new DelegationStateError('invalid', 'Delegation settlement message prefix cannot move backward');
+      }
+      if (input.throughSequence === settlement.messageSequence) {
+        if (input.messageSequenceDigest !== settlement.messageSequenceDigest) {
+          return this.blockSettlementWithinTransaction(
+            settlement,
+            'Delegation settlement message prefix digest mismatch',
+            input.now,
+          );
+        }
+        return settlement;
+      }
+      if (settlement.state !== 'awaiting_result') {
+        return this.blockSettlementWithinTransaction(
+          settlement,
+          'Delegation settlement message prefix changed after result preparation',
+          input.now,
+        );
+      }
+      if (this.messageSequenceDigest(settlement.sessionId, input.throughSequence)
+        !== input.messageSequenceDigest) {
+        return this.blockSettlementWithinTransaction(
+          settlement,
+          'Delegation settlement message prefix does not match Session evidence',
+          input.now,
+        );
+      }
+      this.db.prepare(`
+        UPDATE delegation_execution_settlements
+        SET message_sequence = ?, message_sequence_digest = ?, updated_at = ?
+        WHERE settlement_id = ? AND state = 'awaiting_result'
+      `).run(
+        input.throughSequence,
+        input.messageSequenceDigest,
+        input.now,
+        input.settlementId,
+      );
+      return this.requireSettlement(input.settlementId);
+    });
+  }
+
   prepareSettlement(input: {
     readonly settlementId: string;
     readonly requestDigest: string;
@@ -542,6 +594,15 @@ export class DelegationSessionStore {
       }
       return { state: 'committed' };
     });
+  }
+
+  blockSettlement(settlementId: string, reason: string, now: number): DelegationExecutionSettlement {
+    if (!reason) throw new DelegationStateError('invalid', 'Delegation settlement block requires a reason');
+    return this.transaction(() => this.blockSettlementWithinTransaction(
+      this.requireSettlement(settlementId),
+      reason,
+      now,
+    ));
   }
 
   releaseExecution(sessionId: ThreadId, taskId: string, now: number): DelegationSessionBinding {

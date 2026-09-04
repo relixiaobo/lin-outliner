@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { closeSync, openSync, readSync, statSync, writeSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, statSync, writeSync } from 'node:fs';
 import { access, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
@@ -146,6 +146,7 @@ async function main(): Promise<void> {
 
   const quiescedAt = Date.now();
   const sizes = outputSizes(config);
+  const preparedResult = preparedResultEvidence(config);
   const outcome = stopReason === 'requested'
     ? { state: 'cancelled' as const, reason: 'stop_requested' }
     : stopReason === 'timed_out'
@@ -162,7 +163,7 @@ async function main(): Promise<void> {
               ? { state: 'succeeded' as const, reason: 'exit_zero' }
               : { state: 'failed' as const, reason: result.signal ? 'signal' : 'exit_nonzero' };
   const unsigned = {
-    version: 1 as const,
+    version: 2 as const,
     taskId: config.taskId,
     nonce: config.nonce,
     state: outcome.state,
@@ -176,7 +177,8 @@ async function main(): Promise<void> {
     quiescedAt,
     stdoutBytes: sizes.stdout,
     stderrBytes: sizes.stderr,
-    preparedResultDigest: null,
+    preparedResultDigest: preparedResult.sha256,
+    preparedResultBytes: preparedResult.byteLength,
   };
   const receipt: ToolTaskFinalReceipt = {
     ...unsigned,
@@ -256,7 +258,7 @@ function decodeConfig(value: unknown): ToolTaskSupervisorConfig {
   const record = value as Record<string, unknown>;
   const strings = [
     'taskId', 'nonce', 'cwd', 'stdinPath', 'stdoutPath', 'stderrPath', 'progressPath',
-    'identityPath', 'heartbeatPath', 'stopRequestPath', 'finalReceiptPath',
+    'identityPath', 'heartbeatPath', 'stopRequestPath', 'finalReceiptPath', 'preparedResultPath',
   ] as const;
   if (record.version !== 2 || strings.some((key) => typeof record[key] !== 'string' || !record[key])
     || !validProcessSpec(record.process)) {
@@ -264,7 +266,8 @@ function decodeConfig(value: unknown): ToolTaskSupervisorConfig {
   }
   if (!Number.isFinite(record.startedAt)
     || !Number.isSafeInteger(record.timeoutMs) || Number(record.timeoutMs) < 1
-    || !Number.isSafeInteger(record.maxOutputBytes) || Number(record.maxOutputBytes) < 1) {
+    || !Number.isSafeInteger(record.maxOutputBytes) || Number(record.maxOutputBytes) < 1
+    || !Number.isSafeInteger(record.maxPreparedResultBytes) || Number(record.maxPreparedResultBytes) < 1) {
     throw new Error('Invalid Tool Task config limits');
   }
   return record as unknown as ToolTaskSupervisorConfig;
@@ -297,6 +300,30 @@ function outputSizes(config: ToolTaskSupervisorConfig): { stdout: number; stderr
     try { return statSync(candidate).size; } catch { return 0; }
   };
   return { stdout: size(config.stdoutPath), stderr: size(config.stderrPath) };
+}
+
+function preparedResultEvidence(config: ToolTaskSupervisorConfig): {
+  readonly sha256: string | null;
+  readonly byteLength: number;
+} {
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(config.preparedResultPath);
+  } catch (error) {
+    if (isErrorCode(error, 'ENOENT')) return { sha256: null, byteLength: 0 };
+    throw error;
+  }
+  if (bytes.byteLength < 1 || bytes.byteLength > config.maxPreparedResultBytes) {
+    throw new Error('Tool Task prepared result exceeds its byte limit');
+  }
+  return {
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    byteLength: bytes.byteLength,
+  };
+}
+
+function isErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && 'code' in error && error.code === code;
 }
 
 function waitForChild(child: ReturnType<typeof spawn>): Promise<{
@@ -371,8 +398,9 @@ void main().catch(async (error) => {
       }
       if (!activeChildPid || !await executionExists(activeChildPid)) {
         const sizes = outputSizes(config);
+        const preparedResult = preparedResultEvidence(config);
         const unsigned = {
-          version: 1 as const,
+          version: 2 as const,
           taskId: config.taskId,
           nonce: config.nonce,
           state: 'failed' as const,
@@ -386,7 +414,8 @@ void main().catch(async (error) => {
           quiescedAt: Date.now(),
           stdoutBytes: sizes.stdout,
           stderrBytes: sizes.stderr,
-          preparedResultDigest: null,
+          preparedResultDigest: preparedResult.sha256,
+          preparedResultBytes: preparedResult.byteLength,
         };
         const receipt: ToolTaskFinalReceipt = {
           ...unsigned,

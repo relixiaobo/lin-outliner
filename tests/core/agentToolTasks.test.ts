@@ -282,6 +282,69 @@ describe('ToolTaskService', () => {
     }]);
   });
 
+  test('commits an optional prepared result only after its bytes match the final receipt', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const started = await startHidden(service, 'cooperative producer', {
+      process: {
+        kind: 'exec',
+        executable: process.execPath,
+        args: ['-e', "setTimeout(() => process.stdout.write('done'), 150)"],
+        env: {},
+        privateControl: false,
+      },
+    });
+    const result = Buffer.from('{"status":"prepared"}', 'utf8');
+    const prepared = await service.prepareResult(started.taskId, OWNER_ID, result);
+    expect(prepared).toEqual({
+      sha256: createHash('sha256').update(result).digest('hex'),
+      byteLength: result.byteLength,
+    });
+    expect(await service.prepareResult(started.taskId, OWNER_ID, result)).toEqual(prepared);
+    await expect(service.prepareResult(started.taskId, OWNER_ID, Buffer.from('different')))
+      .rejects.toThrow('immutable');
+
+    const terminal = await waitForTerminal(service, started.taskId);
+    const receipt = JSON.parse(await readFile(
+      path.join(fixture.detailRoot, started.taskId, 'final-receipt.json'),
+      'utf8',
+    )) as ToolTaskFinalReceipt;
+    expect(terminal).toMatchObject({
+      state: 'succeeded',
+      detailBytes: result.byteLength + 4,
+    });
+    expect(receipt).toMatchObject({
+      version: 2,
+      preparedResultDigest: prepared.sha256,
+      preparedResultBytes: result.byteLength,
+    });
+  });
+
+  test('keeps the first prepared result immutable across concurrent writers', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const started = await startHidden(service, 'racing cooperative producer', {
+      process: {
+        kind: 'exec',
+        executable: process.execPath,
+        args: ['-e', 'setTimeout(() => {}, 250)'],
+        env: {},
+        privateControl: false,
+      },
+    });
+    const candidates = [Buffer.from('first'), Buffer.from('second')];
+    const results = await Promise.allSettled(candidates.map((candidate) => (
+      service.prepareResult(started.taskId, OWNER_ID, candidate)
+    )));
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const stored = await readFile(
+      path.join(fixture.detailRoot, started.taskId, 'prepared-result.bin'),
+    );
+    expect(candidates.some((candidate) => candidate.equals(stored))).toBe(true);
+    await waitForTerminal(service, started.taskId);
+  });
+
   test('carries one admitted Delegate command through supervisor fd 3 and the Host broker', async () => {
     const fixture = await createFixture();
     const service = await createService(fixture, passiveHost());
@@ -315,8 +378,13 @@ describe('ToolTaskService', () => {
           configurationRevision: scheduling.configurationRevision,
           capabilityCeilingDigest: 'a'.repeat(64),
           runnerId: 'internal',
+          runnerVersion: '1',
+          modelProvider: 'provider',
           modelId: 'provider/model',
           effort: 'medium',
+          profile: 'explore',
+          access: 'read-only',
+          timeoutMs: 60_000,
           schedulingPolicyDigest: 'b'.repeat(64),
         },
         session: {
@@ -433,6 +501,7 @@ describe('ToolTaskService', () => {
       heartbeat: path.join(root, 'heartbeat.json'),
       stop: path.join(root, 'stop.json'),
       receipt: path.join(root, 'final-receipt.json'),
+      preparedResult: path.join(root, 'prepared-result.bin'),
       config: path.join(root, 'config.json'),
     };
     await Promise.all([
@@ -455,9 +524,11 @@ describe('ToolTaskService', () => {
       heartbeatPath: paths.heartbeat,
       stopRequestPath: paths.stop,
       finalReceiptPath: paths.receipt,
+      preparedResultPath: paths.preparedResult,
       startedAt,
       timeoutMs: 60_000,
       maxOutputBytes: 1024,
+      maxPreparedResultBytes: 1024,
     };
     await writeFile(paths.config, `${JSON.stringify(config)}\n`);
     const supervisor = spawn(runtime.executable, [...runtime.argsPrefix, paths.config], {
@@ -1131,7 +1202,7 @@ function receiptFor(
   quiescedAt: number,
 ): ToolTaskFinalReceipt {
   const unsigned = {
-    version: 1 as const,
+    version: 2 as const,
     taskId: task.taskId,
     nonce: task.nonce,
     state,
@@ -1146,6 +1217,7 @@ function receiptFor(
     stdoutBytes: 0,
     stderrBytes: 0,
     preparedResultDigest: null,
+    preparedResultBytes: 0,
   };
   return {
     ...unsigned,
