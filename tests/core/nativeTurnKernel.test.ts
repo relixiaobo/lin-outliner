@@ -1194,6 +1194,7 @@ describe('native turn kernel parity', () => {
   test('heals empty and repeated provider ids before the next same-model request', async () => {
     const gateway = new ScriptedGateway([
       () => terminalStream(assistant([
+        { type: 'text', text: 'before' },
         { type: 'toolCall', id: '', name: 'first', arguments: {} },
         { type: 'toolCall', id: 'duplicate', name: 'second', arguments: {} },
         { type: 'toolCall', id: 'duplicate', name: 'third', arguments: {} },
@@ -1227,6 +1228,7 @@ describe('native turn kernel parity', () => {
     expect(callIds[2]).toMatch(/^tc_[0-9a-f]{32}$/);
     expect(resultIds).toEqual(callIds);
     expect(admissions.map((event) => event.providerToolCallId)).toEqual(callIds);
+    expect(admissions.map((event) => event.providerResponsePartIndex)).toEqual([1, 2, 3]);
     expect(admissions.map((event) => event.toolCallId).every((id) => /^[0-9a-f-]{36}$/.test(id))).toBe(true);
     expect(new Set(admissions.map((event) => event.toolCallId)).size).toBe(3);
   });

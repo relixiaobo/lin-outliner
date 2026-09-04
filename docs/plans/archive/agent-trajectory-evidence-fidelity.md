@@ -110,8 +110,8 @@ retain its exact value. The projector selects or clones typed evidence; it does
 not sanitize it. Ownership checks, one-record lazy reads, digest verification,
 and local unavailable states remain.
 
-Tool Input resolves the exact model-issued call from its source provider
-response by original call ID. A canonical `replayable` call is an exact fallback
+Tool Input resolves the exact model-issued call from its source Provider Call
+response by the execution's absolute response-part index. A canonical `replayable` call is an exact fallback
 only when diagnostics are unavailable; `redactedReplay` and `evidenceOnly` are
 never promoted to exact input. Tool Output reads the full `outputRef`. Context
 and Input Preview read captured prepared parts. Assistant Preview and Request

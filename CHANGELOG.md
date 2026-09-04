@@ -12,6 +12,20 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Agent Trajectory now preserves exact execution evidence end to end (PR
+  #627, codex-2)** — Context, provider Request and Assistant response, Tool
+  Input/Output, Raw, and copy now expose the complete retained value from their
+  named runtime boundaries or report that evidence unavailable; restart and
+  fork retain the same fidelity. Bounded ledger summaries remain navigation
+  aids without becoming evidence, while the old sanitization/truncation paths,
+  `partialCoverage` state, and unreachable trajectory export route are removed.
+  Gate review found a High transport-telemetry secret leak plus Medium
+  provider-ID correlation and spec/plan drift defects; all were fixed before
+  the final no-findings review. Verified with typecheck, `docs:check`, 2,898
+  passing Core tests with 6 skipped, 37 focused renderer tests, whitespace
+  checks, and five successful GitHub E2E samples on the implementation head;
+  the docs-only final head's non-gating samples remained running at merge.
+
 - **Background Bash now runs as durable generic Tool Tasks (PR #623,
   codex-4)** — explicit background commands return persistent Thread-owned task
   handles, while foreground commands keep waiting on the same supervised path

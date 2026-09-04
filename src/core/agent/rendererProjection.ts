@@ -121,7 +121,6 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
     case 'thread/item/arguments/read':
     case 'thread/trajectory/read':
     case 'thread/trajectory/detail/read':
-    case 'thread/trajectory/export':
     case 'turn/steer':
     case 'turn/interrupt':
     case 'turn/recovery/read':

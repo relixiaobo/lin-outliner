@@ -273,14 +273,33 @@ describe('Agent tool payload store', () => {
     const sourceThreadId = uuidV7(1_720_000_000_000);
     const targetThreadId = uuidV7(1_720_000_000_001);
     const conflictThreadId = uuidV7(1_720_000_000_002);
-    const retainedPayload = turnDiagnosticsPayload();
+    const exactReminder = `${'P'.repeat(64_001)}${'<system-reminder>'.padEnd(8_087, 'R')}`;
+    const retainedPayload = {
+      ...turnDiagnosticsPayload(),
+      stablePrompt: {
+        blocks: [{
+          id: 'system-reminder',
+          layer: 'L2' as const,
+          text: exactReminder,
+          fingerprint: 'b'.repeat(64),
+        }],
+        fingerprints: {
+          l0: 'c'.repeat(64),
+          l1: 'd'.repeat(64),
+          l2: 'e'.repeat(64),
+          complete: 'f'.repeat(64),
+        },
+      },
+    };
     const retained = await store.writeTurnDiagnostics(sourceThreadId, retainedPayload);
     const orphan = await store.writeTurnDiagnostics(sourceThreadId, turnDiagnosticsPayload('reset-1'));
 
     expect(await store.readTurnDiagnostics(sourceThreadId, retained)).toEqual(retainedPayload);
     expect(await store.copyTurnDiagnosticsToThread(sourceThreadId, targetThreadId, retained)).toBe(true);
     await store.deleteThread(sourceThreadId);
-    expect(await store.readTurnDiagnostics(targetThreadId, retained)).toEqual(retainedPayload);
+    const forked = await store.readTurnDiagnostics(targetThreadId, retained);
+    expect(forked).toEqual(retainedPayload);
+    expect(forked?.stablePrompt?.blocks[0]?.text).toBe(exactReminder);
 
     const conflictDirectory = join(root, conflictThreadId, 'turn-diagnostics');
     await mkdir(conflictDirectory, { recursive: true });
@@ -290,7 +309,9 @@ describe('Agent tool payload store', () => {
 
     const secondOrphan = await store.writeTurnDiagnostics(targetThreadId, turnDiagnosticsPayload('reset-2'));
     await store.pruneUnreferencedTurnDiagnostics(targetThreadId, [retained]);
-    expect(await store.readTurnDiagnostics(targetThreadId, retained)).toEqual(retainedPayload);
+    const restarted = await store.readTurnDiagnostics(targetThreadId, retained);
+    expect(restarted).toEqual(retainedPayload);
+    expect(restarted?.stablePrompt?.blocks[0]?.text).toBe(exactReminder);
     expect(await store.readTurnDiagnostics(targetThreadId, secondOrphan)).toBeNull();
     expect(await store.readTurnDiagnostics(targetThreadId, orphan)).toBeNull();
   });

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import { decodeAgentCoreResponse } from '../../src/core/agent/codec';
+import { MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES } from '../../src/core/agent/protocol';
 import type {
   Thread,
   ThreadContextPayload,
@@ -65,7 +66,116 @@ describe('ThreadTrajectoryProjection', () => {
     });
   });
 
-  test('reads Tool Input from canonical model-call arguments and reports missing retained references', async () => {
+  test('resolves repeated host call ids within the record owning execution batch', async () => {
+    const base = trajectoryDiagnostics();
+    const firstBatch = base.activities[1] as Extract<
+      TurnDiagnosticsPayload['activities'][number],
+      { type: 'toolExecutionBatch' }
+    >;
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      providerCalls: [
+        base.providerCalls[0]!,
+        {
+          ...base.providerCalls[0]!,
+          index: 1,
+          requestedAt: 300,
+          response: {
+            ...base.providerCalls[0]!.response!,
+            receivedAt: 310,
+            value: {
+              role: 'assistant',
+              content: [{
+                type: 'toolCall',
+                id: 'provider:call:reused',
+                name: 'first_tool',
+                arguments: { batch: 'second' },
+              }],
+            },
+          },
+        },
+      ],
+      activities: [
+        ...base.activities,
+        {
+          ...firstBatch,
+          sourceCallIndex: 1,
+          executions: [{
+            ...firstBatch.executions[0]!,
+            callId: 'call:one',
+            providerResponsePartIndex: 0,
+            itemId: null,
+            startedAt: 320,
+            completedAt: 330,
+          }],
+        },
+      ],
+    };
+    const projection = trajectoryProjection({ diagnostics });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const repeated = response.records.find((record) => (
+      record.primaryEvidence.type === 'toolExecution'
+      && record.primaryEvidence.activityIndex === 2
+    ));
+    if (!repeated) throw new Error('Expected repeated-ID Tool record');
+
+    const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: repeated.id });
+    if (detail.detail?.kind !== 'tool') throw new Error('Expected repeated-ID Tool detail');
+    expect(detail.detail.input).toEqual({ batch: 'second' });
+  });
+
+  test('resolves empty and repeated provider call ids by their exact response part coordinates', async () => {
+    const base = trajectoryDiagnostics();
+    const batch = base.activities[1] as Extract<
+      TurnDiagnosticsPayload['activities'][number],
+      { type: 'toolExecutionBatch' }
+    >;
+    const response = base.providerCalls[0]!.response!;
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      providerCalls: [{
+        ...base.providerCalls[0]!,
+        response: {
+          ...response,
+          value: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'before' },
+              { type: 'toolCall', id: '', name: 'first_tool', arguments: { position: 'empty' } },
+              { type: 'toolCall', id: 'duplicate', name: 'first_tool', arguments: { position: 'first' } },
+              { type: 'toolCall', id: 'duplicate', name: 'second_tool', arguments: { position: 'second' } },
+            ],
+          },
+        },
+      }],
+      activities: [
+        base.activities[0]!,
+        {
+          ...batch,
+          executions: [
+            { ...batch.executions[0]!, callId: 'host-empty', providerResponsePartIndex: 1, itemId: null },
+            { ...batch.executions[0]!, callId: 'host-first', providerResponsePartIndex: 2, itemId: null },
+            { ...batch.executions[1]!, callId: 'host-second', providerResponsePartIndex: 3, itemId: null },
+          ],
+        },
+      ],
+    };
+    const projection = trajectoryProjection({ diagnostics });
+    const trajectory = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const tools = trajectory.records.filter((record) => record.kind === 'tool');
+    const details = await Promise.all(tools.map(async (record) => (
+      (await projection.readDetail({ threadId: THREAD_ID, recordId: record.id })).detail
+    )));
+
+    expect(tools).toHaveLength(3);
+    expect(details.map((detail) => detail?.kind === 'tool' ? detail.input : null)).toEqual([
+      { position: 'empty' },
+      { position: 'first' },
+      { position: 'second' },
+    ]);
+  });
+
+  test('reads Tool Input from the exact provider response despite divergent or missing replay storage', async () => {
     const base = trajectoryDiagnostics();
     const argumentsRef: ThreadContextPayloadReference = {
       id: '6'.repeat(64),
@@ -147,12 +257,9 @@ describe('ThreadTrajectoryProjection', () => {
     if (missingDetail.detail?.kind !== 'tool' || !missingDetail.record) {
       throw new Error('Expected payload-backed Tool detail');
     }
-    expect(missingDetail.detail.input).toBeNull();
+    expect(missingDetail.detail.input).toEqual({ file_path: '/workspace/second-payload.ts' });
     expect(missingDetail.detail.outputText).toBeNull();
-    expect(missingDetail.record.availability).toEqual([
-      { reason: 'payloadUnavailable' },
-      { reason: 'evidenceUnavailable' },
-    ]);
+    expect(missingDetail.record.availability).toEqual([{ reason: 'evidenceUnavailable' }]);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', missingDetail)).toEqual(missingDetail);
   });
 
@@ -205,27 +312,6 @@ describe('ThreadTrajectoryProjection', () => {
     };
     delete wire.records[toolIndex]!.primaryEvidence.callId;
     expect(() => decodeAgentCoreResponse('thread/trajectory/read', wire)).toThrow(/callId/);
-  });
-
-  test('keeps retained diagnostics in export after a cached list read', async () => {
-    let diagnosticsReads = 0;
-    const projection = trajectoryProjection({
-      onReadDiagnostics: () => { diagnosticsReads += 1; },
-    });
-
-    await projection.read({ threadId: THREAD_ID, limit: 100 });
-    const exported = await projection.exportBundle(THREAD_ID);
-
-    expect(exported.diagnostics).toHaveLength(1);
-    expect(exported.diagnostics[0]).toMatchObject({
-      turnId: TURN_ID,
-      ref: DIAGNOSTICS_REF,
-      payload: {
-        schemaVersion: 1,
-        providerCalls: [{ index: 0 }],
-      },
-    });
-    expect(diagnosticsReads).toBe(2);
   });
 
   test('uses the captured provider-context prompt instead of stable-prompt source blocks', async () => {
@@ -314,7 +400,7 @@ describe('ThreadTrajectoryProjection', () => {
           path: '/workspace/src/app.ts',
           line_start: 1,
           line_end: 80,
-          authorization: '‹redacted›',
+        authorization: 'Bearer test-credential-value',
         },
       },
       { type: 'image', mimeType: 'image/png', byteLength: 128, sha256: imageDigest },
@@ -707,25 +793,46 @@ describe('ThreadTrajectoryProjection', () => {
     expect(detail.detail.message?.content).toEqual([{ type: 'text', text: 'message 0' }]);
   });
 
-  test('redacts credential-looking strings from previews, details, tool output, and export bundles', async () => {
+  test('preserves credential-looking strings in summaries and exact detail evidence', async () => {
     const secret = `sk-${'a'.repeat(32)}`;
-    const diagnostics = {
-      ...trajectoryDiagnostics(),
+    const base = trajectoryDiagnostics();
+    const batch = base.activities.find((activity) => activity.type === 'toolExecutionBatch');
+    if (!batch || batch.type !== 'toolExecutionBatch') throw new Error('Expected tool batch');
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
       stablePrompt: {
-        ...trajectoryDiagnostics().stablePrompt!,
+        ...base.stablePrompt!,
         blocks: [{
-          ...trajectoryDiagnostics().stablePrompt!.blocks[0]!,
+          ...base.stablePrompt!.blocks[0]!,
           text: `System ${secret}`,
         }],
       },
       providerCalls: [{
-        ...trajectoryDiagnostics().providerCalls[0]!,
+        ...base.providerCalls[0]!,
         request: { kind: 'value' as const, value: { input: `Authorization: Bearer ${secret}` } },
         response: {
-          ...trajectoryDiagnostics().providerCalls[0]!.response!,
-          value: { role: 'assistant', content: [{ type: 'output_text', text: `token ${secret}` }] },
+          ...base.providerCalls[0]!.response!,
+          value: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'toolCall',
+                id: 'provider:call:one',
+                name: 'first_tool',
+                arguments: { token: secret },
+              },
+              { type: 'output_text', text: `token ${secret}` },
+            ],
+          },
         },
       }],
+      activities: [
+        base.activities[0]!,
+        {
+          ...batch,
+          executions: [{ ...batch.executions[0]!, itemId: 'tool-with-output' }],
+        },
+      ],
     };
     const turn = {
       ...trajectoryTurn(),
@@ -737,6 +844,15 @@ describe('ThreadTrajectoryProjection', () => {
         tool: 'tool',
         arguments: { token: secret },
         status: 'completed' as const,
+        modelCall: {
+          disposition: 'replayable' as const,
+          identity: { namespace: null, name: 'first_tool' },
+          providerName: 'first_tool',
+          providerCall: testProviderCall('first_tool', { token: secret }),
+          arguments: { storage: 'inline' as const, value: { token: secret } },
+          schemaDigest: '8'.repeat(64),
+        },
+        pluginId: null,
         result: `Tool returned ${secret}`,
         error: null,
         outputRef: {
@@ -754,138 +870,40 @@ describe('ThreadTrajectoryProjection', () => {
       turn,
     });
     const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
-    expect(JSON.stringify(response)).not.toContain(secret);
-    expect(JSON.stringify(response)).toContain('[redacted secret-like content]');
+    expect(JSON.stringify(response)).toContain(secret);
 
     const assistant = response.records.find((record) => record.kind === 'assistant');
     if (!assistant) throw new Error('Expected Assistant record');
     const assistantDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: assistant.id });
-    expect(JSON.stringify(assistantDetail)).not.toContain(secret);
+    expect(JSON.stringify(assistantDetail)).toContain(secret);
+
+    const system = response.records.find((record) => record.primaryEvidence.type === 'stablePrompt');
+    if (!system) throw new Error('Expected System Prompt record');
+    const systemDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: system.id });
+    expect(JSON.stringify(systemDetail)).toContain(secret);
 
     const tool = response.records.find((record) => record.kind === 'tool');
     if (!tool) throw new Error('Expected Tool record');
     const toolDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: tool.id });
-    expect(JSON.stringify(toolDetail)).not.toContain(secret);
-
-    const exported = await projection.exportBundle(THREAD_ID);
-    expect(JSON.stringify(exported)).not.toContain(secret);
+    if (toolDetail.detail?.kind !== 'tool') throw new Error('Expected Tool detail');
+    expect(toolDetail.detail.input).toEqual({ token: secret });
+    expect(toolDetail.detail.outputText).toBe(`Raw tool output ${secret}`);
   });
 
-  test('redacts camelCase fields and JSON-encoded secrets from detail and export evidence', async () => {
-    const secret = '9f3a2c8d5e71b04a';
-    const itemId = 'tool-json-secret';
-    const jsonArguments = JSON.stringify({ password: secret });
-    const baseDiagnostics = trajectoryDiagnostics();
+  test('preserves a System Reminder after more than 64,000 preceding characters', async () => {
+    const reminder = '<system-reminder>'.padEnd(8_087, 'R');
+    const exactPrompt = `${'P'.repeat(64_001)}${reminder}`;
+    const base = trajectoryDiagnostics();
     const diagnostics: TurnDiagnosticsPayload = {
-      ...baseDiagnostics,
-      providerCalls: [{
-        ...baseDiagnostics.providerCalls[0]!,
-        request: {
-          kind: 'value',
-          value: {
-            clientSecret: secret,
-            arguments: jsonArguments,
-          },
-        },
-      }],
-      activities: [
-        baseDiagnostics.activities[0]!,
-        {
-          type: 'toolExecutionBatch',
-          sourceCallIndex: 0,
-          consumedByCallIndex: null,
-          executions: [{
-            callId: 'call:secret',
-            toolName: 'secret_tool',
-            itemId,
-            admissionDisposition: 'accepted',
-            canonicalIdentity: null,
-            schemaDigest: null,
-            startedAt: 190,
-            completedAt: 210,
-            status: 'completed',
-          }],
-        },
-      ],
-    };
-    const turn: Turn = {
-      ...trajectoryTurn(),
-      items: [{
-        type: 'mcpToolCall',
-        id: itemId,
-        provenance: itemProvenance(itemId),
-        server: 'server',
-        tool: 'secret_tool',
-        arguments: {
-          clientSecret: secret,
-          arguments: jsonArguments,
-        },
-        status: 'completed',
-        modelCall: {
-          disposition: 'replayable',
-          identity: { namespace: 'server', name: 'secret_tool' },
-          providerName: 'secret_tool',
-          providerCall: testProviderCall('secret_tool', { token: 'secret' }),
-          arguments: {
-            storage: 'inline',
-            value: {
-              clientSecret: secret,
-              arguments: jsonArguments,
-            },
-          },
-          schemaDigest: '9'.repeat(64),
-        },
-        pluginId: null,
-        result: JSON.stringify({ clientSecret: secret, body: jsonArguments }),
-        error: null,
-        outputRef: {
-          id: 'f'.repeat(64),
-          mimeType: 'text/plain',
-          byteLength: 128,
-          summary: JSON.stringify({ clientSecret: secret }),
-        },
-        durationMs: 10,
-      }],
-    };
-    const projection = trajectoryProjection({
-      diagnostics,
-      toolOutput: JSON.stringify({ clientSecret: secret, body: jsonArguments }),
-      turn,
-    });
-
-    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
-    expect(JSON.stringify(response)).not.toContain(secret);
-
-    const assistant = response.records.find((record) => record.kind === 'assistant');
-    if (!assistant) throw new Error('Expected Assistant record');
-    const assistantDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: assistant.id });
-    const assistantJson = JSON.stringify(assistantDetail);
-    expect(assistantJson).not.toContain(secret);
-    expect(assistantJson).not.toContain(jsonArguments);
-
-    const tool = response.records.find((record) => record.kind === 'tool');
-    if (!tool) throw new Error('Expected Tool record');
-    const toolDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: tool.id });
-    const toolJson = JSON.stringify(toolDetail);
-    expect(toolJson).not.toContain(secret);
-    expect(toolJson).not.toContain(jsonArguments);
-
-    const exported = await projection.exportBundle(THREAD_ID);
-    const exportJson = JSON.stringify(exported);
-    expect(exportJson).not.toContain(secret);
-    expect(exportJson).not.toContain(jsonArguments);
-  });
-
-  test('keeps typed diagnostics structure when a large stable prompt exceeds redaction budget', async () => {
-    const diagnostics: TurnDiagnosticsPayload = {
-      ...trajectoryDiagnostics(),
+      ...base,
       stablePrompt: {
-        ...trajectoryDiagnostics().stablePrompt!,
+        ...base.stablePrompt!,
         blocks: [{
-          ...trajectoryDiagnostics().stablePrompt!.blocks[0]!,
-          text: 'System '.padEnd(70_000, 'x'),
+          ...base.stablePrompt!.blocks[0]!,
+          text: exactPrompt,
         }],
       },
+      requestFragments: [{ id: 'system', value: exactPrompt }],
     };
     const projection = trajectoryProjection({ diagnostics });
 
@@ -898,15 +916,16 @@ describe('ThreadTrajectoryProjection', () => {
     const system = response.records.find((record) => record.primaryEvidence.type === 'stablePrompt');
     if (!system) throw new Error('Expected System Prompt record');
     const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: system.id });
-    const serialized = JSON.stringify(detail);
-
-    expect(serialized).toContain('… [truncated]');
-    expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThanOrEqual(64_000);
-    expect(detail.record?.availability).toContainEqual({ reason: 'partialCoverage' });
+    if (detail.detail?.kind !== 'context') throw new Error('Expected Context detail');
+    expect(detail.detail.modelContextText).toBe(exactPrompt);
+    expect(detail.detail.payload).toMatchObject({
+      stablePrompt: { blocks: [{ text: exactPrompt }] },
+    });
+    expect(detail.record?.availability).toEqual([]);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', detail)).toEqual(detail);
   });
 
-  test('shares one response budget across multiple large detail evidence leaves', async () => {
+  test('preserves multiple large provider evidence leaves without a shared response budget', async () => {
     const base = trajectoryDiagnostics();
     const large = 'Evidence '.padEnd(19_000, 'x');
     const diagnostics: TurnDiagnosticsPayload = {
@@ -936,16 +955,55 @@ describe('ThreadTrajectoryProjection', () => {
     if (!assistant) throw new Error('Expected Assistant record');
 
     const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: assistant.id });
-    const serialized = JSON.stringify(detail);
-
-    expect(detail.detail?.kind).toBe('assistant');
-    expect(serialized).toContain('… [truncated]');
-    expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThanOrEqual(64_000);
-    expect(detail.record?.availability).toContainEqual({ reason: 'partialCoverage' });
+    if (detail.detail?.kind !== 'assistant') throw new Error('Expected Assistant detail');
+    expect(detail.detail.diagnostics?.providerCall?.request).toEqual({
+      first: large,
+      second: large,
+      third: large,
+    });
+    expect(detail.detail.modelOutputParts).toEqual([
+      { type: 'text', text: large },
+      { type: 'text', text: large },
+      { type: 'text', text: large },
+    ]);
+    expect(detail.record?.availability).toEqual([]);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', detail)).toEqual(detail);
   });
 
-  test('omits typed activities that cannot fit after earlier detail evidence', async () => {
+  test('preserves collections beyond 100 entries and deeply nested valid JSON', async () => {
+    let deep: import('../../src/core/agent/protocol').JsonValue = 'deep-sentinel';
+    for (let index = 0; index < 40; index += 1) deep = { child: deep };
+    const output = Array.from({ length: 150 }, (_, index) => ({
+      type: 'text',
+      text: `part-${index}`,
+    }));
+    const base = trajectoryDiagnostics();
+    const diagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      providerCalls: [{
+        ...base.providerCalls[0]!,
+        request: { kind: 'value', value: { deep } },
+        response: {
+          ...base.providerCalls[0]!.response!,
+          value: { role: 'assistant', content: output },
+        },
+      }],
+    };
+    const projection = trajectoryProjection({ diagnostics });
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    const assistant = response.records.find((record) => record.kind === 'assistant');
+    if (!assistant) throw new Error('Expected Assistant record');
+
+    const detail = await projection.readDetail({ threadId: THREAD_ID, recordId: assistant.id });
+    if (detail.detail?.kind !== 'assistant') throw new Error('Expected Assistant detail');
+    expect(detail.detail.modelOutputParts).toHaveLength(150);
+    expect(detail.detail.modelOutputParts?.at(-1)).toEqual({ type: 'text', text: 'part-149' });
+    expect(detail.detail.diagnostics?.providerCall?.request).toEqual({ deep });
+    expect(JSON.stringify(detail)).toContain('deep-sentinel');
+    expect(detail.record?.availability).toEqual([]);
+  });
+
+  test('preserves large input evidence and typed activities together', async () => {
     const large = 'Evidence '.padEnd(19_000, 'x');
     const inputText = 'Input '.padEnd(30_000, 'x');
     const inputDiagnostics = inputEnvelopeDiagnostics();
@@ -977,8 +1035,10 @@ describe('ThreadTrajectoryProjection', () => {
       recordId: inputRecord.id,
     });
     if (inputDetail.detail?.kind !== 'input') throw new Error('Expected Input detail');
-    expect(inputDetail.detail.diagnostics?.activity).toBeNull();
-    expect(inputDetail.record?.availability).toContainEqual({ reason: 'partialCoverage' });
+    expect(inputDetail.detail.modelInputParts).toEqual([{ type: 'text', text: inputText }]);
+    expect(inputDetail.detail.message?.content).toEqual([{ type: 'text', text: inputText }]);
+    expect(inputDetail.detail.diagnostics?.activity).toMatchObject({ type: 'acceptedInput' });
+    expect(inputDetail.record?.availability).toEqual([]);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', inputDetail)).toEqual(inputDetail);
 
     const toolDiagnostics = trajectoryDiagnostics();
@@ -1013,12 +1073,12 @@ describe('ThreadTrajectoryProjection', () => {
 
     const toolDetail = await toolProjection.readDetail({ threadId: THREAD_ID, recordId: toolRecord.id });
     if (toolDetail.detail?.kind !== 'tool') throw new Error('Expected Tool detail');
-    expect(toolDetail.detail.diagnostics?.activity).toBeNull();
-    expect(toolDetail.record?.availability).toContainEqual({ reason: 'partialCoverage' });
+    expect(toolDetail.detail.diagnostics?.activity).toMatchObject({ type: 'toolExecutionBatch' });
+    expect(toolDetail.record?.availability).toEqual([]);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', toolDetail)).toEqual(toolDetail);
   });
 
-  test('bounds oversized provider tool-call identities across list and detail evidence', async () => {
+  test('bounds oversized provider tool-call identities only in record keys', async () => {
     const callId = `call:${'x'.repeat(70_000)}`;
     const expectedIdentity = `tenon:tool-call:sha256:${createHash('sha256').update(callId, 'utf8').digest('hex')}`;
     const base = trajectoryDiagnostics();
@@ -1038,7 +1098,10 @@ describe('ThreadTrajectoryProjection', () => {
       }],
       activities: [
         base.activities[0]!,
-        { ...batch, executions: [{ ...batch.executions[0]!, callId, itemId: null }] },
+        {
+          ...batch,
+          executions: [{ ...batch.executions[0]!, callId, providerResponsePartIndex: 0, itemId: null }],
+        },
       ],
     };
     const projection = trajectoryProjection({ diagnostics });
@@ -1053,8 +1116,7 @@ describe('ThreadTrajectoryProjection', () => {
 
     const toolDetail = await projection.readDetail({ threadId: THREAD_ID, recordId: tool.id });
     if (toolDetail.detail?.kind !== 'tool') throw new Error('Expected Tool detail');
-    expect(toolDetail.detail.executionCallId).toBe(expectedIdentity);
-    expect(Buffer.byteLength(JSON.stringify(toolDetail), 'utf8')).toBeLessThanOrEqual(64_000);
+    expect(toolDetail.detail.executionCallId).toBe(callId);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', toolDetail)).toEqual(toolDetail);
 
     const assistant = response.records.find((record) => record.kind === 'assistant');
@@ -1063,11 +1125,10 @@ describe('ThreadTrajectoryProjection', () => {
     if (assistantDetail.detail?.kind !== 'assistant') throw new Error('Expected Assistant detail');
     expect(assistantDetail.detail.modelOutputParts).toContainEqual({
       type: 'toolCall',
-      callId: expectedIdentity,
+      callId,
       name: 'first_tool',
       arguments: {},
     });
-    expect(Buffer.byteLength(JSON.stringify(assistantDetail), 'utf8')).toBeLessThanOrEqual(64_000);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', assistantDetail)).toEqual(assistantDetail);
   });
 
@@ -1108,6 +1169,38 @@ describe('ThreadTrajectoryProjection', () => {
     const refreshed = await projection.read({ threadId: THREAD_ID, limit: 100 });
     expect(activeReads).toBe(2);
     expect(refreshed.records.find((record) => record.kind === 'assistant')?.state).toBe('completed');
+  });
+
+  test('makes oversized active diagnostics wholly unavailable', async () => {
+    const activeTurn = {
+      ...trajectoryTurn(),
+      status: 'inProgress' as const,
+      completedAt: null,
+      durationMs: null,
+      execution: { ...trajectoryTurn().execution, diagnosticsRef: null },
+    };
+    const base = trajectoryDiagnostics();
+    const activeDiagnostics: TurnDiagnosticsPayload = {
+      ...base,
+      stablePrompt: {
+        ...base.stablePrompt!,
+        blocks: [{
+          ...base.stablePrompt!.blocks[0]!,
+          text: 'x'.repeat(MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES),
+        }],
+      },
+    };
+    const projection = trajectoryProjection({
+      turn: activeTurn,
+      activeDiagnostics: () => activeDiagnostics,
+    });
+
+    const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
+    expect(response.records.some((record) => record.kind === 'assistant')).toBeFalse();
+    expect(response.summary.availability).toContainEqual({ reason: 'diagnosticsUnavailable' });
+    expect(response.records.every((record) => (
+      record.availability.some((entry) => entry.reason === 'diagnosticsUnavailable')
+    ))).toBeTrue();
   });
 
   test('does not cache unavailable diagnostics after their retained payload recovers', async () => {
@@ -1400,6 +1493,7 @@ describe('ThreadTrajectoryProjection', () => {
           executions: Array.from({ length: 300 }, (_, index) => ({
             ...batch.executions[0]!,
             callId: `call:${index}`,
+            providerResponsePartIndex: index,
             toolName: 'first_tool',
             itemId: null,
           })),
@@ -2039,7 +2133,23 @@ function trajectoryDiagnostics(): TurnDiagnosticsPayload {
           totalTokens: 14,
           cost: { input: 0.00001, output: 0.00002, cacheRead: 0, cacheWrite: 0, total: 0.00003 },
         },
-        value: { role: 'assistant', content: [] },
+        value: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'provider:call:one',
+              name: 'first_tool',
+              arguments: { command: 'printf model', timeout: 5_000, run_in_background: true },
+            },
+            {
+              type: 'toolCall',
+              id: 'provider:call:two',
+              name: 'second_tool',
+              arguments: { file_path: '/workspace/second-payload.ts' },
+            },
+          ],
+        },
       },
     }],
     activities: [
@@ -2051,9 +2161,10 @@ function trajectoryDiagnostics(): TurnDiagnosticsPayload {
         executions: [
           {
             callId: 'call:one',
+            providerResponsePartIndex: 0,
             toolName: 'first_tool',
             itemId: null,
-            admissionDisposition: 'accepted',
+            admissionDisposition: 'replayable',
             canonicalIdentity: null,
             schemaDigest: null,
             startedAt: 190,
@@ -2062,9 +2173,10 @@ function trajectoryDiagnostics(): TurnDiagnosticsPayload {
           },
           {
             callId: 'call:two:with:colon',
+            providerResponsePartIndex: 1,
             toolName: 'second_tool',
             itemId: null,
-            admissionDisposition: 'accepted',
+            admissionDisposition: 'replayable',
             canonicalIdentity: null,
             schemaDigest: null,
             startedAt: 190,

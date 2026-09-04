@@ -1880,7 +1880,6 @@ describe('Codex Agent Core protocol codec', () => {
       'thread/turn/details/read': { threadId: THREAD_ID, turnId: TURN_ID },
       'thread/trajectory/read': { threadId: THREAD_ID, limit: 120, focus: null },
       'thread/trajectory/detail/read': { threadId: THREAD_ID, recordId: 'record-1' },
-      'thread/trajectory/export': { threadId: THREAD_ID },
       'turn/submit': {
         threadId: THREAD_ID,
         input: [{ type: 'text', text: 'Submit' }],
@@ -1994,7 +1993,6 @@ describe('Codex Agent Core protocol codec', () => {
         selectedRecordId: null,
       },
       'thread/trajectory/detail/read': { threadId: THREAD_ID, record: null, detail: null },
-      'thread/trajectory/export': { status: 'canceled' },
       'turn/submit': {
         turn: completedTurn,
         turnId: TURN_ID,
@@ -2105,6 +2103,43 @@ describe('Codex Agent Core protocol codec', () => {
 
     const [providerCall] = turnDiagnosticsPayload.providerCalls;
     expect(providerCall).toBeDefined();
+    const diagnosticExecution = {
+      callId: 'tool-call-coordinate',
+      providerResponsePartIndex: 2,
+      toolName: 'bash',
+      itemId: null,
+      admissionDisposition: 'replayable' as const,
+      canonicalIdentity: { namespace: null, name: 'bash' },
+      schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
+      startedAt: 101,
+      completedAt: 102,
+      status: 'completed' as const,
+    };
+    const diagnosticBatch = {
+      type: 'toolExecutionBatch' as const,
+      sourceCallIndex: 0,
+      consumedByCallIndex: null,
+      executions: [diagnosticExecution],
+    };
+    const { providerResponsePartIndex: _providerResponsePartIndex, ...missingResponsePartIndex } = diagnosticExecution;
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...turnDiagnosticsPayload,
+      activities: [...turnDiagnosticsPayload.activities, { ...diagnosticBatch, executions: [missingResponsePartIndex] }],
+    })).toThrow('providerResponsePartIndex');
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...turnDiagnosticsPayload,
+      activities: [{
+        ...diagnosticBatch,
+        executions: [{ ...diagnosticExecution, providerCallId: 'legacy-provider-id' }],
+      }],
+    })).toThrow('unknown fields: providerCallId');
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...turnDiagnosticsPayload,
+      activities: [{
+        ...diagnosticBatch,
+        executions: [{ ...diagnosticExecution, providerResponsePartIndex: -1 }],
+      }],
+    })).toThrow('expected a non-negative safe integer');
     const { activities: _activities, ...missingActivities } = turnDiagnosticsPayload;
     expect(() => decodeTurnDiagnosticsPayload(missingActivities)).toThrow('turnDiagnostics.activities');
     const { request: _request, ...missingRequest } = providerCall!;
@@ -2160,6 +2195,7 @@ describe('Codex Agent Core protocol codec', () => {
           consumedByCallIndex: null,
           executions: [{
             callId: 'tool-call-1',
+            providerResponsePartIndex: 0,
             toolName: 'bash',
             itemId: null,
             admissionDisposition: 'replayable',
@@ -2184,6 +2220,7 @@ describe('Codex Agent Core protocol codec', () => {
           executions: [
             {
               callId: 'tool-call-1',
+              providerResponsePartIndex: 0,
               toolName: 'bash',
               itemId: 'tool-item-1',
               admissionDisposition: 'replayable',
@@ -2195,6 +2232,7 @@ describe('Codex Agent Core protocol codec', () => {
             },
             {
               callId: 'tool-call-2',
+              providerResponsePartIndex: 1,
               toolName: 'bash',
               itemId: 'tool-item-1',
               admissionDisposition: 'replayable',
@@ -2293,6 +2331,7 @@ describe('Codex Agent Core protocol codec', () => {
               consumedByCallIndex: null,
               executions: [{
                 callId: 'missing-tool-call',
+                providerResponsePartIndex: 0,
                 toolName: 'bash',
                 itemId: 'missing-tool-item',
                 admissionDisposition: 'replayable',

@@ -617,8 +617,9 @@ consume that final packaged Tool Task mechanism after its remaining
 - #621 owns shared preview-shell implementation. This plan changes only where
   Translation configuration is presented and preserves preview behavior; any
   overlapping preview file discovered at claim time is serialized behind #621.
-- #624 and #625 own Agent Trajectory evidence/paging and do not overlap the
-  planned Settings contract, CLI, Skill, or renderer surfaces.
+- PRs #624, #625, and #627 completed Agent Trajectory design, paging, and exact
+  evidence. Those files are no longer an active collision claim and do not
+  overlap the planned Settings contract, CLI, Skill, or renderer surfaces.
 - Active `agent-skill-authoring-foundation` changes Skill identity and Settings
   binding behavior. Delivery unit 1 consumes that merged identity contract
   rather than defining a competing Skill resource shape.
