@@ -164,6 +164,8 @@ describe('DelegationCoordinator', () => {
       currentRootIntentRevision: 1,
     });
     expect(fixture.runtime.steeringAttempts).toBe(1);
+    fixture.runtime.deliverPendingSteering();
+    await waitUntil(() => fixture.store.readMessage('capability-send')?.state === 'blocked');
 
     fixture.runtime.finish();
     await running;
@@ -356,6 +358,7 @@ class FakeRuntime implements DelegationSessionRuntime {
   failCommit = false;
   deliverSteering = true;
   steeringAttempts = 0;
+  private readonly pendingSteering: Array<() => void> = [];
   outcome: DelegateExecutionResult['outcome'] = 'succeeded';
   readonly commits: DelegationSessionCommitInput[] = [];
   private resolveRun: ((result: DelegateExecutionResult) => void) | null = null;
@@ -387,8 +390,14 @@ class FakeRuntime implements DelegationSessionRuntime {
     if (this.deliverSteering) {
       this.committedMessageSequence = message.sequence;
       onDelivered();
+    } else {
+      this.pendingSteering.push(onDelivered);
     }
     return true;
+  }
+
+  deliverPendingSteering(): void {
+    for (const deliver of this.pendingSteering.splice(0)) deliver();
   }
 
   finish(): void {

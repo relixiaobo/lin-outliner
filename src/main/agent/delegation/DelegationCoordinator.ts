@@ -528,20 +528,22 @@ export class DelegationCoordinator {
       await this.gates.run(sessionId, async () => {
         const session = this.options.store.readSession(sessionId);
         if (!session || session.state !== 'open' || !session.currentTaskId) return;
+        const currentMessage = this.options.store.readMessage(message.messageId);
+        if (!currentMessage || currentMessage.state !== 'queued') return;
         const settlement = this.options.store.settlementForTask(session.currentTaskId);
         if (!settlement || settlement.state !== 'awaiting_result') return;
-        if (message.sequence <= settlement.messageSequence) return;
+        if (currentMessage.sequence <= settlement.messageSequence) return;
         this.options.store.commitMessagePrefix(
           sessionId,
           session.revision,
-          message.sequence,
+          currentMessage.sequence,
           settlement.turnId,
           this.now(),
         );
         this.options.store.extendSettlementMessagePrefix({
           settlementId: settlement.settlementId,
-          throughSequence: message.sequence,
-          messageSequenceDigest: this.options.store.messageSequenceDigest(sessionId, message.sequence),
+          throughSequence: currentMessage.sequence,
+          messageSequenceDigest: this.options.store.messageSequenceDigest(sessionId, currentMessage.sequence),
           now: this.now(),
         });
       });
