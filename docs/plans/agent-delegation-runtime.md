@@ -155,8 +155,9 @@ Rejected alternatives:
 root Agent
   -> `delegate` Skill
   -> background bash(command: "delegate run --input - --output json")
-       -> generic process supervisor
-       -> delegate CLI
+       -> Host delegation-launch admission
+       -> generic process supervisor, direct-exec mode
+       -> delegate CLI runtime (no parent shell)
             -> root-owned Agent Session
                  -> internal Tenon Runner
                  -> external harness Runner
@@ -166,11 +167,12 @@ root Agent
 
 | Owner | Responsibility |
 | --- | --- |
-| Bash | Command, stdin, generic foreground/background execution, process sandbox. |
+| Bash | Model-visible command/stdin surface, generic foreground/background execution, process sandbox, and routing of an exact admitted delegation launch. |
 | Tool Task | Background identity, process truth, output, artifacts, cancel, recovery, delivery. |
 | `delegate` Skill | When to delegate work to another Agent and how to form task intent. |
 | Agent Session | A restricted hidden Thread that owns stable context, ordered root messages, Runner binding, settlement links, continuation, and closure. |
-| `delegate` CLI | Admission, policy resolution, session commands, local scheduling lease, Runner lifecycle, normalized result. |
+| Delegation launch admission | Recognizes the complete closed state-changing command, rejects shell composition from the privileged path, and lowers it to an attested direct-exec process specification. |
+| `delegate` CLI | Capability admission, policy resolution, session commands, local scheduling lease, Runner lifecycle, normalized result. |
 | Runner | One internal kernel Session or adapted external harness Session. |
 | Root Agent | User communication, added context, verification, integration, and ownership recovery. |
 
@@ -583,9 +585,11 @@ Its complete routing policy is:
   cancelled work without a new user request.
 
 Each initial or continued Turn uses one background Bash call. The model sends
-the input through `bash.stdin`; no prompt or path enters shell source. A send to
-an active Tool Task normally settles after durable queue acknowledgement; a send
-to an idle Session remains the background execution for its newly admitted Turn.
+the input through `bash.stdin`; no prompt or path enters command source. Bash is
+the model-visible invocation surface, not a promise that every admitted command
+runs through a shell. A send to an active Tool Task normally settles after
+durable queue acknowledgement; a send to an idle Session remains the background
+execution for its newly admitted Turn.
 
 ```text
 delegate run --input - [--output text|json]
@@ -619,14 +623,31 @@ and `bun`; the packaged resolver selects
 `ELECTRON_RUN_AS_NODE=1`. A dedicated build step emits the CLI bundle before
 `electron-builder`; `extraResources` copies the bundle and executable wrapper.
 The root's per-Turn Bash environment adds the resolved bin directory only while
-Delegation is enabled. Delegated Runner environments always remove it. The Host
-injects the one-use launch capability only into the exact admitted root Bash
-process; it is never process-global or inherited by the Runner. The wrapper
-forwards the private runtime entry and capability environment without resolving
-policy or credentials itself. A user shell or external Agent that discovers and
-executes the wrapper directly has no launch capability and is refused before
-Runner, worktree, or Provider activity; executable presence is not an inbound
-Agent API.
+Delegation is enabled. Delegated Runner environments always remove it. The
+wrapper resolves the private runtime entry for unprivileged diagnostics and
+direct-invocation refusal; it never receives or forwards a launch capability. A
+user shell or external Agent that discovers the wrapper may run its read-only
+diagnostics, but every directly invoked state-changing command has no launch
+capability and is refused before Runner, worktree, or Provider activity;
+executable presence is not an inbound Agent API.
+
+State-changing commands have a narrower path. The shared command registry emits
+a Host-side parser for the exact complete `delegate run`, `send`, and `close`
+forms above. The parser accepts only the canonical bare command, fixed option
+order, and lexically valid task/session IDs. It accepts no quoting, environment
+assignment, path-qualified executable, redirection, pipe, separator, expansion,
+command substitution, grouping, background operator, or trailing command. On a
+full match the Bash Tool call remains the visible Tool Item, but the Host lowers
+the parsed argv and captured stdin to a generic direct-exec supervisor process
+specification. The supervisor starts the resolved CLI runtime directly with
+`shell: false`; neither the user's shell nor the executable wrapper is an
+ancestor. Any non-match follows ordinary unprivileged Bash execution with no
+launch capability, so an embedded or composed `delegate run|send|close` reaches
+the wrapper only to be refused. Read-only `doctor`, `schema`, and `version`
+remain ordinary shell commands and cannot acquire state-changing authority.
+After an exact match, any parser/runtime-resolution, process-specification, pipe,
+spawn, or capability-verification failure settles that Tool Task explicitly and
+never falls back to shell execution.
 
 The versioned run input contains only task intent:
 
@@ -655,17 +676,26 @@ nonce-authenticated Host broker is also the only route for loading and committin
 hidden Session Turns and root messages; the CLI never opens the application's
 Thread database.
 
-For every state-changing command, the Host supplies a short-lived, one-use
-capability bound to the root Thread, Tool Item, cwd, exact normalized argv,
-digest and byte length of the Bash `stdin`, effective capability ceiling, and
-configuration revision. Send capabilities also bind the source Turn's canonical
-user-intent revision or its absence and the current user-stop fence. Run
-capabilities additionally bind the Settings-selected
-Runner, model/effort policy, local scheduling policy, and preallocated Session
-identity; send/close capabilities bind the target Session revision and prove
-ownership. The Host writes the exact already-hashed input bytes to the CLI pipe;
-the CLI consumes one bounded stdin stream and verifies its digest before
-admission. It never opens a task file or follows a task-input path.
+For every admitted state-changing command, the Host supplies a short-lived,
+one-use capability bound to the root Thread, Tool Item, cwd, exact normalized
+argv, digest and byte length of the captured Bash `stdin`, effective capability
+ceiling, and configuration revision. Send capabilities also bind the source
+Turn's canonical user-intent revision or its absence and the current user-stop
+fence. Run capabilities additionally bind the Settings-selected Runner,
+model/effort policy, local scheduling policy, and preallocated Session identity;
+send/close capabilities bind the target Session revision and prove ownership.
+The Host seals the capability to the attested process specification and
+transfers it to the trusted supervisor through a one-shot inherited control pipe
+rather than the persisted supervisor config. The supervisor verifies the sealed
+process specification, writes the capability once through a distinct child-only
+pipe on a fixed extra file descriptor, and closes both pipes after CLI admission.
+Neither process places the capability, broker credential, or descriptor number
+in argv, stdin, an environment variable, an output file, or a shell-visible
+process. The supervisor separately writes the exact already-hashed input bytes
+to CLI stdin. The CLI consumes one bounded stdin stream, verifies its digest
+against the capability, and closes the capability descriptor before starting a
+Runner. It never opens a task file or follows a task-input path, and Runner stdio
+cannot inherit the closed descriptor.
 
 `delegate run`, `send`, or `close` without the matching capability is refused. A
 Settings change or mismatched request digest makes an unused capability stale
@@ -707,9 +737,10 @@ absolute binary, so the claimed invariant is deliberately narrower: the session
 has no Tenon launch capability or admitted Tenon/native harness delegation tool;
 Tenon does not claim to classify every executable as Agent software.
 
-Provider calls use a Host broker scoped by the launch capability, so credentials
-never enter the shell environment. Broker disconnect cancels the active internal
-call and causes the supervisor to terminate the full delegated process group.
+Provider calls use a Host broker scoped by the consumed launch capability, so
+credentials never enter CLI or Runner argv, environment, or files. Broker
+disconnect cancels the active internal call and causes the supervisor to
+terminate the full delegated process group.
 The prepared-result protocol preserves any already committed hidden Turn, while
 the quiescent final receipt records the Tool Task as `host_broker_lost`; no hidden
 app-side or external run continues after broker loss, and no Tool Task
@@ -939,7 +970,7 @@ review until the root actually integrates and verifies them.
 | --- | --- |
 | `agent` | Removed; experimental delegation is available only through Skill + Bash + CLI when enabled. |
 | `agent_message` | Removed from the model tool catalog; root-to-owned-Session steer/resume moves to `delegate send`, while peer and delegated-to-root routes disappear. |
-| `bash` | Preserved; gains generic durable background execution and stdin. |
+| `bash` | Preserved; gains generic durable background execution and stdin. Internal delegation later adds strict routing from an exact state-changing CLI command to a Host-attested direct-exec process, without adding a model-visible tool. |
 | `task_status` | Added for any owned Tool Task; never used for polling. |
 | `task_stop` | Preserved for the current Tool Task only; it never deletes or silently resumes an Agent Session, and Agent-ID/`shell_id` routing is removed. |
 | `skill` | Preserved for inline Skills; gains the root-only inline `delegate` Skill. |
@@ -973,11 +1004,12 @@ The delivery order is:
 1. **Generic background Tool Tasks:** Durable supervised Bash tasks, stdin,
    restart recovery, `task_status`, generic completion, artifacts, cancellation,
    and generic task UI. This is complete and useful without delegation.
-2. **Internal delegation and legacy retirement:** CLI, Skill, command
-   capabilities, hidden multi-Turn Agent Sessions, root message queue, provider
-   broker, local admission scheduling, internal Runner, Settings, worktree
-   handoff and integration evidence, experiment, and total Subagent plus
-   isolated-Skill retirement in one PR.
+2. **Internal delegation and legacy retirement:** CLI, Skill, exact Bash-command
+   admission and direct-exec lowering, private command capabilities, hidden
+   multi-Turn Agent Sessions, root message queue, provider broker, local
+   admission scheduling, internal Runner, Settings, worktree handoff and
+   integration evidence, experiment, and total Subagent plus isolated-Skill
+   retirement in one PR.
 3. **Claude CLI adapter:** One complete external Runner with fixtures and real
    run evidence.
 4. **Codex CLI adapter:** The equivalent complete Codex Runner.
@@ -995,7 +1027,7 @@ only after the internal Runner registry and capability map merge.
 | Delivery unit | Primary files and symbols | Main risks and collision order |
 | --- | --- | --- |
 | Generic Background Tool Tasks | `src/main/agent/capabilities/agentLocalTools.ts` (`backgroundTasks`, Bash execution); `src/main/agent/runtime/ToolRuntime.ts`; new `src/main/agent/tasks/*`, including the supervisor entry and source/packaged resolver; `src/main/agent/ThreadService.ts`; `src/main/agent/thread/TurnLifecycle.ts`; `src/core/agent/protocol.ts`, `codec.ts`, `rendererProjection.ts`, and `tools.ts`; `src/main/hostDomain/agentHost.ts` and `compositionLifecycle.ts`; `src/renderer/agent/components/ThreadDock.tsx`, `store/threadStore.ts`, and a generic task strip/detail surface; `package.json` build/`app:build`/`extraResources`; a packaged Tool Task smoke; corresponding Core/renderer/E2E tests and current Agent specs. | Owns the shared task/delivery interface and its runnable packaged supervisor first. Risks are orphan processes, source/package path drift, duplicate/lost delivery, authority confusion, unbounded retention, and quit/delete races. Starts after #622 releases `package.json`, then takes a coordinated infrastructure claim. |
-| Internal delegation and Subagent/isolated-Skill retirement | New `src/delegate/contract/*`, `cli/*`, `bin/delegate`, and `runners/internal/*`; new `src/main/delegateRuntime.ts`; new `src/main/agent/delegation/*` for the thin Session binding, ordered root-message commits, and root-only command admission; `src/main/builtInSkills/delegate/SKILL.md`; `src/main/agent/runtime/kernel/NativeAgentRuntime.ts` and `kernel/types.ts`; `src/main/agent/ThreadService.ts`; `src/main/agent/thread/ThreadCatalogOps.ts`, `TurnLifecycle.ts`, `ThreadResourceOps.ts`, `ThreadHistoryReference.ts`, `ThreadTranscriptWriter.ts`, and `ThreadTrajectoryProjection.ts`; `src/main/agent/persistence/ThreadMetadataStore.ts`; `src/main/agent/AgentConfigurationLoader.ts`, `AgentConfigurationWriter.ts`, `agentExecutionSelection.ts`, and `worktree/AgentWorktree.ts`; `src/main/hostDomain/agentHost.ts`; `src/core/agent/configuration.ts`, `tools.ts`, `protocol.ts`, `codec.ts`, and `rendererProjection.ts`; `src/renderer/ui/agent/AgentSettingsView.tsx`, `SettingsAgentSection.tsx`, and `AgentsSettings.tsx`; `src/main/agent/capabilities/agentCapabilities.ts`, `agentSkills.ts`, `agentToolPath.ts`, and `subagentToolPolicy.ts`; `src/main/managedSkillValidation.ts`; `package.json` build/`app:build`/`extraResources`; packaged delegate run/send/close resolution and smoke tests; removal of `src/core/agent/subagentTaskPath.ts`; `src/main/agent/thread/SubagentCollaboration.ts`, `subagentExecutionProjection.ts`, `subagentOutput.ts`, and `subagentSettlementEnvelope.ts`; `src/main/agent/persistence/SubagentExecutionLedger.ts` and `SubagentRequestLedger.ts`; `src/renderer/agent/components/SubagentChip.tsx`, `SubagentDetailView.tsx`, `SubagentRegistryContext.tsx`, `SubagentReport.tsx`, and `SubagentWorkStrip.tsx`; `src/renderer/agent/subagentPresentation.ts`; and corresponding Skill/Subagent Core, renderer, fixture, and spec text. | Starts after Generic Tool Tasks, which has already released `package.json`. Risks are source/package path drift, capability/PATH leakage, credential leakage, duplicate/lost root messages, duplicated Thread/session truth, stale Settings authority, incomplete retirement, accepting now-unsupported Skill metadata, and losing #612/#614 recovery truth. This unit takes the next coordinated infrastructure claim, owns the coordinated `src/core/agent/*` cut, and deletes old surfaces in the same PR. |
+| Internal delegation and Subagent/isolated-Skill retirement | New `src/delegate/contract/*`, `cli/*`, `bin/delegate`, and `runners/internal/*`; new `src/main/delegateRuntime.ts`; new `src/main/agent/delegation/*` for the thin Session binding, ordered root-message commits, and root-only command admission; `src/main/builtInSkills/delegate/SKILL.md`; `src/main/agent/runtime/kernel/NativeAgentRuntime.ts` and `kernel/types.ts`; `src/main/agent/ThreadService.ts`; `src/main/agent/thread/ThreadCatalogOps.ts`, `TurnLifecycle.ts`, `ThreadResourceOps.ts`, `ThreadHistoryReference.ts`, `ThreadTranscriptWriter.ts`, and `ThreadTrajectoryProjection.ts`; `src/main/agent/persistence/ThreadMetadataStore.ts`; `src/main/agent/AgentConfigurationLoader.ts`, `AgentConfigurationWriter.ts`, `agentExecutionSelection.ts`, and `worktree/AgentWorktree.ts`; `src/main/hostDomain/agentHost.ts`; `src/core/agent/configuration.ts`, `tools.ts`, `protocol.ts`, `codec.ts`, and `rendererProjection.ts`; `src/renderer/ui/agent/AgentSettingsView.tsx`, `SettingsAgentSection.tsx`, and `AgentsSettings.tsx`; `src/main/agent/capabilities/agentLocalTools.ts`, `agentProcessExecutor.ts`, `agentCapabilities.ts`, `agentSkills.ts`, `agentToolPath.ts`, and `subagentToolPolicy.ts`; `src/main/agent/tasks/toolTaskSupervisor.ts` and its process-spec contract; `src/main/managedSkillValidation.ts`; `package.json` build/`app:build`/`extraResources`; packaged delegate run/send/close resolution and smoke tests; removal of `src/core/agent/subagentTaskPath.ts`; `src/main/agent/thread/SubagentCollaboration.ts`, `subagentExecutionProjection.ts`, `subagentOutput.ts`, and `subagentSettlementEnvelope.ts`; `src/main/agent/persistence/SubagentExecutionLedger.ts` and `SubagentRequestLedger.ts`; `src/renderer/agent/components/SubagentChip.tsx`, `SubagentDetailView.tsx`, `SubagentRegistryContext.tsx`, `SubagentReport.tsx`, and `SubagentWorkStrip.tsx`; `src/renderer/agent/subagentPresentation.ts`; and corresponding Skill/Subagent Core, renderer, fixture, and spec text. | Starts after Generic Tool Tasks, which has already released `package.json`. Risks are direct-exec/shell path confusion, capability or descriptor leakage, source/package path drift, credential leakage, duplicate/lost root messages, duplicated Thread/session truth, stale Settings authority, incomplete retirement, accepting now-unsupported Skill metadata, and losing #612/#614 recovery truth. This unit takes the next coordinated infrastructure claim, owns the coordinated `src/core/agent/*` cut, and deletes old surfaces in the same PR. |
 | Claude CLI adapter | New versioned Claude Adapter, `AdapterCapabilityMap`, local continuation contract, probe/argv/stream/resume fixtures, Runner registry entry, Settings readiness row, and focused integration tests/spec text. | Starts after the internal registry. Refuse unsupported versions, missing safe continuation, or any unprovable native capability; no shared protocol change is expected. |
 | Codex CLI adapter | Equivalent Codex Adapter, closed-config/sandbox capability map, local continuation contract, fixtures, registry entry, Settings readiness, and focused tests/spec text. | Starts after the internal registry and independently of Claude unless both need the same registry edit; prove continuation plus shell/network subset before Ready. |
 | ACP Runner adapter | Protocol adapter and fixtures only after ACP negotiation proves the required capability subset and sequential continuation. OpenClaw receives its own version-bound harness evidence through this adapter. | Deferred; protocol or executable discovery alone is not a claim or dependency. |
@@ -1060,7 +1092,7 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
 - **FR-2:** Delegation is a Bash-and-CLI Agent Session workflow.
   - **AC-4:** The model catalog has no Agent/delegation/message tool or
     Runner/model enum; run, send, and close remain Skill-guided CLI commands
-    through Bash.
+    through the Bash Tool surface.
   - **AC-5:** Each initial or continued Turn uses one background Bash call,
     bounded stdin, and no speculative doctor, schema, or status call; the root
     remains available after admission.
@@ -1069,12 +1101,19 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
     current root, exact command/input, effective ceiling, configuration revision,
     and either the Settings-selected new-Session policy or owned target Session.
   - **AC-31:** Delegation v1 accepts task and message content only through
-    `--input -`; the Host capability binds the exact stdin bytes and normalized
-    argv, and no input file, symlink, or mutable path is opened.
+    `--input -`; the Host capability binds the exact captured stdin bytes and
+    normalized argv, the supervisor writes them directly to CLI stdin, and no
+    shell, input file, symlink, or mutable path can consume or replace them.
   - **AC-34:** With Delegation enabled, root Bash resolves the packaged
-    `delegate` wrapper and completes capability-attested internal run, send, and
-    close paths; with it disabled or inside a Runner, the bin path and all
-    command capabilities are absent.
+    `delegate` name and completes Host-routed, capability-attested internal run,
+    send, and close paths against the packaged CLI runtime; with it disabled or
+    inside a Runner, the bin path and all command capabilities are absent.
+  - **AC-45:** A state-changing command receives a capability only after its
+    entire Bash command matches the closed canonical grammar. It is then launched
+    as an attested executable plus argv with `shell: false`; the one-use
+    capability travels only over a dedicated child pipe and is closed before any
+    Runner starts. Shell composition and shell startup behavior never receive
+    capability-bearing argv, environment, stdin, files, or descriptors.
 - **FR-3:** User policy fails closed.
   - **AC-6:** Detection never enables an external Runner.
   - **AC-7:** An invalid configured Runner/model starts no delegated session,
@@ -1086,8 +1125,10 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
     Provider, Session mutation, message, or closure activity; no external harness
     can treat `delegate` as an inbound Tenon Agent API.
 - **FR-4:** Tenon-managed delegation depth is one.
-  - **AC-8:** Only an attested root Bash call can execute a state-changing
-    `delegate` command.
+  - **AC-8:** Only an attested root Bash Tool call whose complete command lowers
+    to the direct-exec path can execute a state-changing `delegate` command. A
+    user shell, external Agent, wrapper invocation, path-qualified command, or
+    composed shell command has no equivalent authority.
   - **AC-9:** Internal and external Runners receive no Tenon launch capability
     or Session-command capability and no admitted Tenon/native-harness Agent
     tool; known harness executables are removed from child `PATH`, while
@@ -1215,13 +1256,18 @@ the real supervisor bundle across Host restart. Adversarial context fixtures mak
 stdout, progress, artifacts, and Runner text imitate a user message, approval,
 and system instruction without gaining authority.
 
-Delegation tests cover the always-background per-Turn path, Host-bound
-Settings-only new-Session policy, attempted CLI overrides, pinned Session model
-policy and invalidation, stdin digest binding and rejected file/symlink input,
-profiles, tool ceilings, local admission priority and bounds, unknown remote
-capacity, Session-scoped worktree evidence and integration outcomes, result
-normalization, ownership recovery, cancellation without automatic takeover, and
-the exact one-level claim. Hidden-Thread tests cover list/navigation/memory/
+Delegation tests cover the always-background per-Turn path, the closed Host
+command parser and direct-exec lowering, Host-bound Settings-only new-Session
+policy, attempted CLI overrides, pinned Session model policy and invalidation,
+stdin digest binding and rejected file/symlink input, profiles, tool ceilings,
+local admission priority and bounds, unknown remote capacity, Session-scoped
+worktree evidence and integration outcomes, result normalization, ownership
+recovery, cancellation without automatic takeover, and the exact one-level
+claim. Adversarial launch fixtures cover `; env`, pipes, redirections,
+environment prefixes, quoted/path-qualified executables, command substitution,
+shell startup hooks, stdin pre-consumption/replacement, descriptor inheritance,
+and a direct wrapper call; none can observe or reuse a capability, mutate a
+Session, or start a Runner. Hidden-Thread tests cover list/navigation/memory/
 reference exclusion, canonical multi-Turn context, message provenance, ordered
 safe-boundary consumption, active/terminal races, blocked failure/cancellation,
 restart idempotence, foreign/stale/closed refusal, idle expiry, and no duplicated
@@ -1239,7 +1285,7 @@ version-bound probe, argv, closed-config, complete native capability map,
 disabled native Agent features, access, stream, cancellation, continuation mode,
 resume/close, and real-harness evidence. Delegate source/packaged resolver tests
 and a packaged app smoke verify the executable wrapper, runtime bundle,
-feature-gated root PATH, private command capability environment,
+feature-gated root PATH, direct-exec runtime resolution, private capability pipe,
 direct-invocation refusal, one internal initial Turn, active send, idle
 continuation, and close.
 
