@@ -14,7 +14,7 @@ import type { DocumentIndex } from '../../state/document';
 import {
   CheckboxIcon,
   ColorIcon,
-  HashIcon,
+  NumberFieldIcon,
   HideIcon,
   ICON_SIZE,
   OptionsIcon,
@@ -161,7 +161,7 @@ function ConfigIcon({ item, fieldType }: { item: DefinitionConfigItem; fieldType
   if (item.key === 'autoInitialize') return <SettingsIcon size={ICON_SIZE.rowGlyph} />;
   if (item.key === 'hideField') return <HideIcon size={ICON_SIZE.rowGlyph} />;
   if (item.key === 'minValue' || item.key === 'maxValue') {
-    return <HashIcon size={ICON_SIZE.rowGlyph} />;
+    return <NumberFieldIcon size={ICON_SIZE.rowGlyph} />;
   }
   return <SettingsIcon size={ICON_SIZE.rowGlyph} />;
 }

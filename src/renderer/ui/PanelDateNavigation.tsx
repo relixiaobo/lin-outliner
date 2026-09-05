@@ -15,7 +15,7 @@ interface PanelDateNavigationProps {
   run: CommandRunner;
 }
 
-const PANEL_DATE_ICON_SIZE = 13;
+const PANEL_DATE_ICON_SIZE = 'compact' as const;
 const PANEL_DATE_ICON_STROKE_WIDTH = 1.8;
 
 function noteDensityClass(count: number) {
@@ -122,7 +122,7 @@ export function PanelDateNavigation({
           className="panel-date-nav-button"
           onClick={() => void navigateToDate(offsetIsoLocalDate(isoDate, -1))}
         >
-          <ChevronLeftIcon size={PANEL_DATE_ICON_SIZE} strokeWidth={PANEL_DATE_ICON_STROKE_WIDTH} />
+          <ChevronLeftIcon size={PANEL_DATE_ICON_SIZE} />
         </ButtonControl>
         <ButtonControl
           className="panel-date-nav-today"
@@ -135,7 +135,7 @@ export function PanelDateNavigation({
           className="panel-date-nav-button"
           onClick={() => void navigateToDate(offsetIsoLocalDate(isoDate, 1))}
         >
-          <ChevronRightIcon size={PANEL_DATE_ICON_SIZE} strokeWidth={PANEL_DATE_ICON_STROKE_WIDTH} />
+          <ChevronRightIcon size={PANEL_DATE_ICON_SIZE} />
         </ButtonControl>
         <span className="panel-date-nav-divider" aria-hidden="true" />
         <ButtonControl
@@ -144,7 +144,7 @@ export function PanelDateNavigation({
           className="panel-date-picker-button"
           onClick={() => setCalendarOpen((open) => !open)}
         >
-          <CalendarIcon size={PANEL_DATE_ICON_SIZE} strokeWidth={PANEL_DATE_ICON_STROKE_WIDTH} />
+          <CalendarIcon size={PANEL_DATE_ICON_SIZE} />
         </ButtonControl>
       </nav>
       {calendarOpen && (

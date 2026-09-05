@@ -15,20 +15,20 @@
   background-color: currentColor;
   background-image:
     linear-gradient(
-      90deg,
+      110deg,
       currentColor 0%,
       currentColor 30%,
       var(--working-text-highlight) 50%,
       currentColor 70%,
       currentColor 100%
     );
-  background-position: -100% 0;
+  background-position: calc(0% - 3em) 0;
   background-repeat: no-repeat;
-  background-size: 50% 100%;
+  background-size: 3em 100%;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: working-text-sweep var(--motion-working-cycle) linear var(--motion-working-delay) infinite;
+  animation: working-text-sweep var(--motion-working-cycle) ease-in-out var(--motion-working-delay) infinite;
 }
 
 .working-text-truncate {
@@ -44,12 +44,12 @@
 
 @keyframes working-text-sweep {
   0% {
-    background-position: -100% 0;
+    background-position: calc(0% - 3em) 0;
   }
 
   60%,
   100% {
-    background-position: 250% 0;
+    background-position: calc(100% + 3em) 0;
   }
 }
 

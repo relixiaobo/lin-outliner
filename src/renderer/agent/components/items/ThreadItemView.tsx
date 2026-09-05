@@ -34,28 +34,17 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CopyIcon,
-  FileDeleteToolIcon,
-  FileEditToolIcon,
-  FileGlobToolIcon,
-  FileGrepToolIcon,
   FileImageIcon,
-  FileReadToolIcon,
-  FileWriteToolIcon,
-  GenericToolIcon,
   ICON_SIZE,
   InfoIcon,
   LoaderIcon,
-  McpToolIcon,
   PencilIcon,
-  PlanToolIcon,
-  QuestionToolIcon,
   RestoreIcon,
-  SkillIcon,
   StopIcon,
-  TerminalIcon,
-  WebFetchToolIcon,
-  WebSearchToolIcon,
+  type IconSize,
 } from '../../../ui/icons';
+import { toolGroupPresentation, toolPresentation, type ThreadToolItem } from './toolPresentation';
+export type { ThreadToolItem } from './toolPresentation';
 import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
 import { IconButton } from '../../../ui/primitives/IconButton';
 import { ButtonControl } from '../../../ui/primitives/ButtonControl';
@@ -84,15 +73,6 @@ import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIng
 import { ToolCodeBlock } from '../ToolCodeBlock';
 import type { DisclosureScrollAnchorHold } from '../../../ui/interactions/disclosureScrollAnchor';
 import { userFacingAgentError } from '../../threadErrorMessage';
-
-export type ThreadToolItem = Extract<ThreadItem, {
-  type:
-    | 'commandExecution'
-    | 'fileChange'
-    | 'mcpToolCall'
-    | 'dynamicToolCall'
-    | 'webSearch';
-}>;
 
 interface ThreadItemViewProps {
   readonly active: boolean;
@@ -291,7 +271,10 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
   // The tooltip re-derives the summary with no elision, so the names the row
   // could not fit are still reachable.
   const title = summarizeThreadToolActivity(
-    items, t.agent.thread.activity, index, { subjectLimit: Number.POSITIVE_INFINITY },
+    items,
+    t.agent.thread.activity,
+    index,
+    { subjectLimit: Number.POSITIVE_INFINITY, showWebQueryList: true },
   );
   return (
     <div className={`thread-item thread-tool-activity-group thread-tool-${status}`}>
@@ -1061,7 +1044,7 @@ export function ThreadMessageCopyButton({
   onCopy,
   text,
 }: {
-  readonly iconSize?: number;
+  readonly iconSize?: IconSize;
   readonly label: string;
   readonly onCopy?: () => Promise<void>;
   readonly text: string;
@@ -1340,35 +1323,7 @@ function namedToolAct(
 }
 
 function toolIcon(item: ThreadToolItem): ReactNode {
-  switch (item.type) {
-    case 'commandExecution': return <TerminalIcon size={ICON_SIZE.menu} />;
-    case 'fileChange': {
-      const kinds = new Set(item.changes.map((change) => change.kind));
-      if (kinds.size === 1 && kinds.has('add')) return <FileWriteToolIcon size={ICON_SIZE.menu} />;
-      if (kinds.size === 1 && kinds.has('delete')) return <FileDeleteToolIcon size={ICON_SIZE.menu} />;
-      return <FileEditToolIcon size={ICON_SIZE.menu} />;
-    }
-    case 'webSearch': return <WebSearchToolIcon size={ICON_SIZE.menu} />;
-    case 'mcpToolCall': return <McpToolIcon size={ICON_SIZE.menu} />;
-    case 'dynamicToolCall': return dynamicToolIcon(item);
-    default: return assertNever(item);
-  }
-}
-
-function dynamicToolIcon(item: Extract<ThreadToolItem, { type: 'dynamicToolCall' }>): ReactNode {
-  const identity = normalizedToolIdentity(item.namespace, item.tool);
-  const Icon = identity === 'file_write' ? FileWriteToolIcon
-    : identity === 'file_edit' ? FileEditToolIcon
-      : identity === 'file_delete' ? FileDeleteToolIcon
-        : identity === 'file_read' ? FileReadToolIcon
-          : identity === 'file_glob' ? FileGlobToolIcon
-            : identity === 'file_grep' ? FileGrepToolIcon
-              : identity === 'web_search' ? WebSearchToolIcon
-                          : identity === 'web_fetch' ? WebFetchToolIcon
-                            : identity === 'update_plan' ? PlanToolIcon
-                              : identity === 'skill' ? SkillIcon
-                                : identity === 'request_user_input' ? QuestionToolIcon
-                                  : GenericToolIcon;
+  const { Icon } = toolPresentation(item);
   return <Icon size={ICON_SIZE.menu} />;
 }
 
@@ -1378,15 +1333,8 @@ function dynamicToolIcon(item: Extract<ThreadToolItem, { type: 'dynamicToolCall'
  * wears that tool's icon; the wrench is for genuinely mixed groups.
  */
 function groupGlyph(items: readonly ThreadToolItem[]): ReactNode {
-  const first = items[0];
-  // Same slot, same size: the shared-tool path renders at ICON_SIZE.menu, so
-  // the mixed fallback must too or the group glyph visibly changes size.
-  if (first === undefined) return <GenericToolIcon size={ICON_SIZE.menu} />;
-  const shared = items.every((item) => item.type === first.type
-    && (item.type !== 'dynamicToolCall' || dynamicToolActivityKind(item) === dynamicToolActivityKind(
-      first as Extract<ThreadToolItem, { type: 'dynamicToolCall' }>,
-    )));
-  return shared ? toolIcon(first) : <GenericToolIcon size={ICON_SIZE.menu} />;
+  const { Icon } = toolGroupPresentation(items);
+  return <Icon size={ICON_SIZE.menu} />;
 }
 
 function groupStatus(items: readonly ThreadToolItem[]): ItemExecutionStatus {
@@ -1399,6 +1347,7 @@ function groupStatus(items: readonly ThreadToolItem[]): ItemExecutionStatus {
 type ToolActivityKind =
   | 'command'
   | 'fileCreate'
+  | 'fileWrite'
   | 'fileEdit'
   | 'fileDelete'
   | 'fileRead'
@@ -1413,6 +1362,7 @@ type ToolActivityKind =
 const TOOL_ACTIVITY_ORDER: readonly ToolActivityKind[] = [
   'command',
   'fileCreate',
+  'fileWrite',
   'fileEdit',
   'fileDelete',
   'fileRead',
@@ -1431,6 +1381,8 @@ interface ToolActivityBucket {
   /** Display name per subject key, when the call carried one. */
   readonly names: Map<string, string>;
   readonly runningSubjects: Set<string>;
+  settledCalls: number;
+  runningCalls: number;
 }
 
 export interface ToolActivitySegment {
@@ -1464,12 +1416,28 @@ export function threadToolActivitySegments(
 ): readonly ToolActivitySegment[] {
   const limit = options.subjectLimit ?? NAMED_SUBJECT_LIMIT;
   const buckets = new Map<ToolActivityKind, ToolActivityBucket>();
-  const add = (kind: ToolActivityKind, subject: string, running: boolean, name?: string) => {
+  const add = (
+    kind: ToolActivityKind,
+    subject: string,
+    running: boolean,
+    name?: string,
+    call = false,
+  ) => {
     const bucket = buckets.get(kind)
-      ?? { subjects: new Set<string>(), names: new Map<string, string>(), runningSubjects: new Set<string>() };
+      ?? {
+        subjects: new Set<string>(),
+        names: new Map<string, string>(),
+        runningSubjects: new Set<string>(),
+        settledCalls: 0,
+        runningCalls: 0,
+      };
     if (name !== undefined) bucket.names.set(subject, name);
     bucket.subjects.add(subject);
     if (running) bucket.runningSubjects.add(subject);
+    if (call) {
+      if (running) bucket.runningCalls += 1;
+      else bucket.settledCalls += 1;
+    }
     buckets.set(kind, bucket);
   };
 
@@ -1490,15 +1458,21 @@ export function threadToolActivitySegments(
         }
         break;
       case 'webSearch':
-        add('web', item.query || item.id, running, item.query ? quoteSubject(item.query) : undefined);
+        add('web', item.id, running, item.query ? quoteSubject(item.query) : undefined, true);
         break;
       case 'mcpToolCall':
         add('tool', item.id, running);
         break;
       case 'dynamicToolCall': {
-        const kind = dynamicToolActivityKind(item);
+        const kind: ToolActivityKind = dynamicToolActivityKind(item);
         const subjects = dynamicToolSubjects(item, kind, index);
-        subjects.keys.forEach((key, position) => add(kind, key, running, subjects.names[position]));
+        subjects.keys.forEach((key, position) => add(
+          kind,
+          kind === 'web' ? item.id : key,
+          running,
+          subjects.names[position],
+          kind === 'web' && position === 0,
+        ));
         break;
       }
       default:
@@ -1514,6 +1488,8 @@ export function threadToolActivitySegments(
     const keys = [...bucket.subjects];
     const settledKeys = keys.filter((key) => !bucket.runningSubjects.has(key));
     const runningKeys = keys.filter((key) => bucket.runningSubjects.has(key));
+    const settledCalls = bucket.settledCalls;
+    const runningCalls = bucket.runningCalls;
     const namesFor = (subset: readonly string[]): readonly string[] => {
       const named = subset.flatMap((key) => {
         const name = bucket.names.get(key);
@@ -1523,7 +1499,16 @@ export function threadToolActivitySegments(
     };
     return [settledKeys, runningKeys].flatMap((subset, position) => (
       subset.length === 0 ? [] : [{
-        text: toolActivityPhrase(kind, subset.length, namesFor(subset), position === 1, labels, limit),
+        text: toolActivityPhrase(
+          kind,
+          subset.length,
+          namesFor(subset),
+          position === 1,
+          labels,
+          limit,
+          position === 1 ? runningCalls : settledCalls,
+          options.showWebQueryList ?? false,
+        ),
         tone: 'neutral' as const,
       }]
     ));
@@ -1561,6 +1546,7 @@ const SUBJECT_VERBS: Partial<Record<
   { readonly past: SubjectPhraseKey; readonly present: SubjectPhraseKey }
 >> = {
   fileCreate: { past: 'createdNamed', present: 'creatingNamed' },
+  fileWrite: { past: 'wroteNamed', present: 'writingNamed' },
   fileEdit: { past: 'editedNamed', present: 'editingNamed' },
   fileDelete: { past: 'deletedNamed', present: 'deletingNamed' },
   fileRead: { past: 'readNamed', present: 'readingNamed' },
@@ -1577,6 +1563,7 @@ const NAMED_SUBJECT_LIMIT = 2;
 /** Display uses the elided form; `title` passes Infinity for the full list. */
 export interface ToolSummaryOptions {
   readonly subjectLimit?: number;
+  readonly showWebQueryList?: boolean;
 }
 
 function toolActivityPhrase(
@@ -1586,22 +1573,29 @@ function toolActivityPhrase(
   running: boolean,
   labels: Messages['agent']['thread']['activity'],
   limit: number = NAMED_SUBJECT_LIMIT,
+  callCount = count,
+  showWebQueryList = false,
 ): string {
   // Only name subjects when every one of them is nameable; a partly-named bucket
   // would silently drop the work it could not name.
   if (names.length === count && names.length > 0) {
-    const named = namedSubjectPhrase(kind, names, running, labels, limit);
+    const named = namedSubjectPhrase(
+      kind, names, running, labels, limit, callCount, showWebQueryList,
+    );
     if (named !== null) return named;
   }
   switch (kind) {
     case 'command': return running ? labels.runningCommands({ count }) : labels.ranCommands({ count });
     case 'fileCreate': return running ? labels.creatingFiles({ count }) : labels.createdFiles({ count });
+    case 'fileWrite': return running ? labels.writingFiles({ count }) : labels.wroteFiles({ count });
     case 'fileEdit': return running ? labels.editingFiles({ count }) : labels.editedFiles({ count });
     case 'fileDelete': return running ? labels.deletingFiles({ count }) : labels.deletedFiles({ count });
     case 'fileRead': return running ? labels.readingFiles({ count }) : labels.readFiles({ count });
     case 'fileSearch': return running ? labels.searchingFiles : labels.searchedFiles;
     case 'plan': return running ? labels.updatingPlan : labels.updatedPlan({ count });
-    case 'web': return running ? labels.searchingWebActivity : labels.searchedWebActivity;
+    case 'web': return callCount > 1
+      ? (running ? labels.searchingWebQueries : labels.searchedWebQueries)({ count: callCount })
+      : (running ? labels.searchingWebActivity : labels.searchedWebActivity);
     case 'webFetch': return running ? labels.fetchingPages({ count }) : labels.fetchedPages({ count });
     case 'skill': return running ? labels.usingSkills({ count }) : labels.usedSkills({ count });
     case 'question': return running ? labels.askingQuestions({ count }) : labels.askedQuestions({ count });
@@ -1616,9 +1610,16 @@ function namedSubjectPhrase(
   running: boolean,
   labels: Messages['agent']['thread']['activity'],
   limit: number,
+  callCount: number,
+  showWebQueryList: boolean,
 ): string | null {
   // The web-search family already ships subject-bearing phrasing of its own.
   if (kind === 'web') {
+    if (callCount > 1 && !showWebQueryList) {
+      return running
+        ? labels.searchingWebQueries({ count: callCount })
+        : labels.searchedWebQueries({ count: callCount });
+    }
     const query = joinSubjects(names, labels, limit);
     return running ? labels.searchingWeb({ query }) : labels.searchedWeb({ query });
   }
@@ -1648,7 +1649,7 @@ function sentenceFragment(value: string): string {
 function dynamicToolActivityKind(item: Extract<ThreadToolItem, { type: 'dynamicToolCall' }>): ToolActivityKind {
   const identity = normalizedToolIdentity(item.namespace, item.tool);
   switch (identity) {
-    case 'file_write': return 'fileCreate';
+    case 'file_write': return 'fileWrite';
     case 'file_edit': return 'fileEdit';
     case 'file_delete': return 'fileDelete';
     case 'file_read': return 'fileRead';
@@ -1676,6 +1677,7 @@ interface ToolActivitySubjects {
 
 const SUBJECT_ARGUMENT_KEYS: Partial<Record<ToolActivityKind, readonly string[]>> = {
   fileCreate: ['file_path', 'path'],
+  fileWrite: ['file_path', 'path'],
   fileEdit: ['file_path', 'path'],
   fileDelete: ['file_path', 'path'],
   fileRead: ['file_path', 'path'],

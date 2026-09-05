@@ -93,7 +93,7 @@ function renderValue(
   switch (display.kind) {
     case 'date':
       return display.text
-        ? (<><span>{display.text}</span><CalendarIcon size={13} strokeWidth={1.8} /></>)
+        ? (<><span>{display.text}</span><CalendarIcon size="compact" /></>)
         : systemEmpty;
     case 'tags':
       return display.tagIds.length === 0

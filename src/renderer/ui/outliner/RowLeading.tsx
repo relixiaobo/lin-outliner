@@ -1,8 +1,9 @@
-import type { ComponentType, DragEvent } from 'react';
+import type { DragEvent } from 'react';
 import type { FieldType } from '../../api/types';
 import {
   ChevronRightIcon,
   ICON_SIZE,
+  type AppIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { RowMarker, type RowMarkerVariant } from './RowMarker';
@@ -15,7 +16,7 @@ interface RowLeadingProps {
   expanded: boolean;
   variant: RowLeadingVariant;
   fieldType?: FieldType;
-  markerIcon?: ComponentType<{ size?: number }>;
+  markerIcon?: AppIcon;
   markerClassName?: string;
   bulletColors?: string[];
   tagDefColor?: string;

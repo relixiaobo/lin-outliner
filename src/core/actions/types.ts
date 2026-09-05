@@ -8,7 +8,7 @@
 
 import type { ExternalContext } from '../launcher/context';
 import type { Locale } from '../locale';
-import type { FocusHint, NodeId } from '../types';
+import type { FocusHint, NodeId, NodeProjection } from '../types';
 import type { ActionEffectPlan, AppSurface, ViewSection } from './bindings';
 
 /** Every static label the surface can search or render, in BOTH locales. */
@@ -77,47 +77,14 @@ export type PresentedName =
   | { source: 'literal'; value: string }
   | { source: 'localized'; values: LocalizedNames };
 
-export type IconId =
-  | 'agent'
-  | 'check'
-  | 'checkbox'
-  | 'copy'
-  | 'description'
-  | 'duplicate'
-  | 'field'
-  | 'file'
-  | 'filter'
-  | 'group'
-  | 'hideToolbar'
-  | 'moveDown'
-  | 'moveTo'
-  | 'moveUp'
-  | 'library'
-  | 'mainWindow'
-  | 'node'
-  | 'outline'
-  | 'open'
-  | 'pin'
-  | 'restore'
-  | 'savedSearches'
-  | 'schema'
-  | 'settings'
-  | 'showToolbar'
-  | 'sortAsc'
-  | 'supertag'
-  | 'table'
-  | 'trash';
-
-export interface ObjectPresentation {
+interface ObjectPresentationBase {
   objectRef: ObjectRef;
-  kind: SurfaceObjectKind;
   name: PresentedName;
   subtitle?: PresentedName;
-  iconId: IconId;
   typeLabel: LocalizedNames;
   /**
    * The node's OWN emoji, when it has one. A node's icon is data, not a fixed
-   * glyph, so it is carried rather than derived from `iconId`.
+   * glyph, so it is carried independently of object type.
    */
   emoji?: string;
   /**
@@ -129,6 +96,19 @@ export interface ObjectPresentation {
    */
   backingNodeId?: NodeId;
 }
+
+export type ObjectPresentation = ObjectPresentationBase & (
+  | {
+      kind: 'node';
+      node:
+        | { kind: 'system'; key: SystemNodeKey }
+        | { kind: 'document'; nodeType: NodeProjection['type'] | null };
+    }
+  | { kind: 'nodeSelection' }
+  | { kind: 'draft'; purpose: 'node' | 'tag' }
+  | { kind: 'appSurface'; surface: AppSurface }
+  | { kind: 'externalPage'; sourceKind: 'web' | 'application' | 'unknown' }
+);
 
 /** `mainList` is deliberately not a value: an action is never a main-list row. */
 export type ActionSurface = 'contextMenu' | 'actionPanel';
@@ -449,7 +429,6 @@ export type ActionPresentationFor<
   names: LocalizedNames;
   /** Locale-independent search terms; never action ids. */
   aliases: readonly string[];
-  iconId: IconId;
   surfaces: readonly ActionSurface[];
   evaluation: PresentableEvaluation;
   binding: B;

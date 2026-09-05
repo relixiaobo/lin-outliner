@@ -8,7 +8,7 @@ import {
   AddChildIcon,
   FolderIcon,
   ICON_SIZE,
-  OpenIcon,
+  OpenInDefaultAppIcon,
   ShowIcon,
 } from '../icons';
 import { MenuItem } from '../primitives/MenuItem';
@@ -158,7 +158,7 @@ export function InlineFileContextMenu({
       ) : null}
       <MenuItem
         className="node-context-item"
-        icon={<OpenIcon size={ICON_SIZE.menu} />}
+        icon={<OpenInDefaultAppIcon size={ICON_SIZE.menu} />}
         label={labels.openWithDefaultApp}
         onClick={run(openExternally)}
         role="menuitem"

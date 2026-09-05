@@ -260,7 +260,6 @@ function presentation(actionId: string, label: string, args: unknown) {
     subjectRef: 'subject-1',
     names: { en: label, 'zh-Hans': label },
     aliases: [],
-    iconId: 'copy',
     surfaces: ['contextMenu'],
     evaluation: { status: 'applicable' },
     binding: args === undefined

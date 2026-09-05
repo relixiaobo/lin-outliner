@@ -52,7 +52,6 @@ import type {
   ActionResolveContext,
   ActionSurface,
   ConfirmationSpec,
-  IconId,
   LocalizedNames,
   NodeObject,
   ObjectRef,
@@ -271,21 +270,6 @@ export const ACTION_ALIASES: Record<ActionId, readonly string[]> = {
   outdent: ['unnest', 'promote', 'untab'],
 };
 
-const ICONS: Record<string, IconId> = {
-  openInSplitPane: 'open',
-  setPinned: 'pin',
-  sendToAgent: 'agent',
-  duplicate: 'duplicate',
-  moveUp: 'moveUp',
-  moveDown: 'moveDown',
-  moveTo: 'moveTo',
-  setDone: 'checkbox',
-  addTag: 'supertag',
-  editDescription: 'description',
-  copy: 'copy',
-  trash: 'trash',
-  restore: 'restore',
-};
 
 // ---------------------------------------------------------------------------
 // Subject rows
@@ -350,7 +334,6 @@ function present<K extends ActionId>(params: {
   actionId: K;
   subjectRef: ObjectRef;
   names: LocalizedNames;
-  iconId: IconId;
   eligible: boolean;
   rejection?: ActionRejectionCode;
   arguments: ActionArguments[K];
@@ -361,7 +344,6 @@ function present<K extends ActionId>(params: {
     subjectRef: params.subjectRef,
     names: params.names,
     aliases: ACTION_ALIASES[params.actionId],
-    iconId: params.iconId,
     surfaces: ACTION_SURFACES[params.actionId],
     evaluation: params.eligible ? APPLICABLE : rejected(params.rejection ?? 'noEligibleRows'),
     binding: { state: 'ready', arguments: params.arguments },
@@ -504,7 +486,6 @@ function resolveOpen(
       actionId: 'open',
       subjectRef: subject.objectRef,
       names: actionName('open'),
-      iconId: 'open',
       eligible: true,
       arguments: {},
     })];
@@ -523,7 +504,6 @@ function resolveOpenInSplitPane(
     actionId: 'openInSplitPane',
     subjectRef: subject.objectRef,
     names: actionName('openInSplitPane'),
-    iconId: ICONS.openInSplitPane!,
     eligible: true,
     arguments: {},
   })];
@@ -545,7 +525,6 @@ function resolveSetPinned(
     actionId: 'setPinned',
     subjectRef: subject.objectRef,
     names: actionName(fact.isPinned ? 'unpin' : 'pin'),
-    iconId: ICONS.setPinned!,
     eligible: true,
     arguments: { pinned: !fact.isPinned },
   })];
@@ -564,7 +543,6 @@ function resolveSendToAgent(
     actionId: 'sendToAgent',
     subjectRef: subject.objectRef,
     names: actionName('sendToAgent'),
-    iconId: ICONS.sendToAgent!,
     eligible: true,
     arguments: {},
   })];
@@ -593,7 +571,6 @@ function resolveDuplicate(
     actionId: 'duplicate',
     subjectRef: subject.objectRef,
     names: withBatchPrefix(actionName('duplicate'), rows.cardinality),
-    iconId: ICONS.duplicate!,
     eligible: eligible.length > 0,
     arguments: {},
   })];
@@ -627,7 +604,6 @@ function resolveMove(
     actionId: 'move',
     subjectRef: subject.objectRef,
     names: withBatchPrefix(actionName(direction === 'up' ? 'moveUp' : 'moveDown'), rows.cardinality),
-    iconId: direction === 'up' ? ICONS.moveUp! : ICONS.moveDown!,
     eligible: relativeIds.length > 0,
     arguments: { relative: direction },
   });
@@ -636,7 +612,6 @@ function resolveMove(
     subjectRef: subject.objectRef,
     names: actionName('moveTo'),
     aliases: ACTION_ALIASES.move,
-    iconId: ICONS.moveTo!,
     surfaces: ACTION_SURFACES.move,
     evaluation: destinationIds.length > 0 ? APPLICABLE : rejected('noEligibleRows'),
     binding: { state: 'needsParameter', seed: {}, parameter: MOVE_PARAMETER },
@@ -679,7 +654,6 @@ function resolveSetDone(
     actionId: 'setDone',
     subjectRef: subject.objectRef,
     names: withBatchPrefix(actionName(value ? 'markDone' : 'markNotDone'), rows.cardinality),
-    iconId: ICONS.setDone!,
     eligible,
     arguments: { done: value },
   });
@@ -723,7 +697,6 @@ function resolveAddTag(
     subjectRef: subject.objectRef,
     names: withBatchPrefix(actionName('addTag'), rows.cardinality),
     aliases: ACTION_ALIASES.addTag,
-    iconId: ICONS.addTag!,
     surfaces: ACTION_SURFACES.addTag,
     evaluation: targets.length > 0 ? APPLICABLE : rejected('noEligibleRows'),
     binding: { state: 'needsParameter', seed: {}, parameter: TAG_PARAMETER },
@@ -742,7 +715,6 @@ function resolveSetViewMode(
     actionId: 'setViewMode',
     subjectRef: subject.objectRef,
     names: actionName(mode === 'table' ? 'viewTable' : 'viewOutline'),
-    iconId: mode === 'table' ? 'table' : 'outline',
     eligible: true,
     arguments: { mode },
   });
@@ -768,7 +740,6 @@ function resolveSetViewToolbarVisible(
     actionId: 'setViewToolbarVisible',
     subjectRef: subject.objectRef,
     names: actionName(visibleInRow ? 'hideViewToolbar' : 'showViewToolbar'),
-    iconId: visibleInRow ? 'hideToolbar' : 'showToolbar',
     eligible: true,
     arguments: { visible: !visibleInRow },
   })];
@@ -781,12 +752,6 @@ const VIEW_SECTION_NAMES: Record<ViewSection, LocalizedNames> = {
   display: actionName('editDisplayedFields'),
 };
 
-const VIEW_SECTION_ICONS: Record<ViewSection, IconId> = {
-  filter: 'filter',
-  sort: 'sortAsc',
-  group: 'group',
-  display: 'field',
-};
 
 function resolveEditViewSection(
   context: ActionResolveContext,
@@ -804,7 +769,6 @@ function resolveEditViewSection(
     actionId: 'editViewSection',
     subjectRef: subject.objectRef,
     names: VIEW_SECTION_NAMES[section],
-    iconId: VIEW_SECTION_ICONS[section],
     eligible: true,
     arguments: { section },
   }));
@@ -820,7 +784,6 @@ function resolveEditDescription(
     actionId: 'editDescription',
     subjectRef: subject.objectRef,
     names: actionName('editDescription'),
-    iconId: ICONS.editDescription!,
     eligible: true,
     arguments: {},
   })];
@@ -837,7 +800,6 @@ function resolveCopy(
     actionId: 'copy',
     subjectRef: subject.objectRef,
     names: actionName(representation === 'text' ? 'copyText' : 'copyNodeId'),
-    iconId: ICONS.copy!,
     eligible: true,
     arguments: { representation },
   });
@@ -886,7 +848,6 @@ function resolveRemove(
     actionId: 'remove',
     subjectRef: subject.objectRef,
     names: withBatchPrefix(names, rows.cardinality),
-    iconId: ICONS.trash!,
     eligible: trashIds.length + fieldValueIds.length > 0,
     arguments: {},
   })];
@@ -902,7 +863,6 @@ function resolveRestore(
     actionId: 'restore',
     subjectRef: subject.objectRef,
     names: actionName('restore'),
-    iconId: ICONS.restore!,
     eligible: true,
     arguments: {},
   })];
@@ -945,7 +905,6 @@ function resolveDeleteForever(
     actionId: 'deleteForever',
     subjectRef: subject.objectRef,
     names: withBatchPrefix(actionName('deleteForever'), rows.cardinality),
-    iconId: ICONS.trash!,
     eligible: ids.length > 0,
     arguments: {},
     confirm: deleteForeverConfirmation(ids.length),
@@ -962,7 +921,6 @@ function resolveEmptyTrash(
     actionId: 'emptyTrash',
     subjectRef: subject.objectRef,
     names: actionName('emptyTrash'),
-    iconId: ICONS.trash!,
     eligible: ids.length > 0,
     rejection: 'trashEmpty',
     arguments: {},
@@ -1014,7 +972,6 @@ function resolveCapture(
     actionId: 'capture',
     subjectRef: subject.objectRef,
     names: actionName('capture'),
-    iconId: 'open',
     eligible: true,
     arguments: { destination },
   })];
@@ -1053,7 +1010,6 @@ function resolveCreate(
     actionId: 'create',
     subjectRef: subject.objectRef,
     names: actionName('createNode'),
-    iconId: 'node',
     eligible: subject.text.trim().length > 0,
     arguments: { destination },
   })];
@@ -1113,7 +1069,6 @@ function resolveIndent(
     actionId: 'indent',
     subjectRef: subject.objectRef,
     names: withBatchPrefix(actionName('indent'), rows.cardinality),
-    iconId: 'moveTo',
     eligible: eligible.length > 0,
     arguments: {},
   })];
@@ -1135,7 +1090,6 @@ function resolveOutdent(
     actionId: 'outdent',
     subjectRef: subject.objectRef,
     names: withBatchPrefix(actionName('outdent'), rows.cardinality),
-    iconId: 'moveTo',
     eligible: eligible.length > 0,
     arguments: {},
   })];

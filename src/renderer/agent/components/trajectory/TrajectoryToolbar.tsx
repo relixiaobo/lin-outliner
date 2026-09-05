@@ -4,7 +4,7 @@ import { formatNumber } from '../../../ui/formatting';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
-  ClockIcon,
+  DurationIcon,
   ICON_SIZE,
   SearchIcon,
 } from '../../../ui/icons';
@@ -51,7 +51,7 @@ export const TrajectoryToolbar = memo(function TrajectoryToolbar({
           title={mode === 'duration' ? t.agent.trajectory.sequenceMode : t.agent.trajectory.durationMode}
           type="button"
         >
-          <ClockIcon size={ICON_SIZE.rowGlyph} />
+          <DurationIcon size={ICON_SIZE.rowGlyph} />
           <span>{t.agent.trajectory.duration}</span>
         </button>
         <button

@@ -56,6 +56,7 @@ import {
   SeekForwardIcon,
   VolumeHighIcon,
   VolumeLowIcon,
+  VolumeMediumIcon,
   VolumeOffIcon,
 } from '../icons';
 import { inlineFileIconKind, INLINE_FILE_ICON_CLASS } from '../editor/inlineFileIcon';
@@ -329,7 +330,7 @@ export interface FilePreviewShellProps {
   state: PreviewSourceState;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   /** The OS-default-app open action (asset / local file / url). Null when not openable. */
-  primaryOpen?: { label: string; run: () => void } | null;
+  primaryOpen?: FilePreviewMenuAction | null;
   /** Secondary actions for the `⋯` menu (reveal in Finder, copy, add to outline). */
   menuActions?: FilePreviewMenuAction[];
   /** A quiet caption (type · size · pages) shown in the `⋯` menu header. */
@@ -808,7 +809,7 @@ function MediaPreviewPlayer({
             <MediaMuteButton className="file-preview-media-button">
               <VolumeOffIcon aria-hidden="true" className="file-preview-media-glyph" slot="off" />
               <VolumeLowIcon aria-hidden="true" className="file-preview-media-glyph" slot="low" />
-              <VolumeLowIcon aria-hidden="true" className="file-preview-media-glyph" slot="medium" />
+              <VolumeMediumIcon aria-hidden="true" className="file-preview-media-glyph" slot="medium" />
               <VolumeHighIcon aria-hidden="true" className="file-preview-media-glyph" slot="high" />
             </MediaMuteButton>
             <MediaVolumeRange className="file-preview-media-volume" />
@@ -821,9 +822,9 @@ function MediaPreviewPlayer({
               <PlayIcon aria-hidden="true" className="file-preview-media-glyph" slot="play" />
               <PauseIcon
                 aria-hidden="true"
-                className="file-preview-media-glyph file-preview-media-glyph--pause"
+                className="file-preview-media-glyph"
                 slot="pause"
-              />
+ />
             </MediaPlayButton>
             <MediaSeekForwardButton className="file-preview-media-button" seekOffset={15}>
               <SeekForwardIcon aria-hidden="true" className="file-preview-media-glyph" slot="icon" />

@@ -46,16 +46,6 @@
   color: var(--status-danger);
 }
 
-.feedback-state.is-loading svg {
-  animation: feedback-state-spin var(--motion-spin-cycle) linear infinite;
-}
-
-@keyframes feedback-state-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .feedback-state.is-loading svg {
     animation: none;

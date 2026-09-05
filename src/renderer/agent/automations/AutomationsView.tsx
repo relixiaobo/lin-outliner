@@ -5,7 +5,6 @@ import type { AgentProviderSettingsView } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
 import {
   AddIcon,
-  ClockIcon,
   CloseIcon,
   MoreIcon,
   PlayIcon,
@@ -154,7 +153,7 @@ export function AutomationsView(props: AutomationsViewProps) {
       <div className="automations-controls">
         <div className="automations-toolbar">
           <label className="automations-search">
-            <SearchIcon aria-hidden size={14} />
+            <SearchIcon aria-hidden size="menu" />
             <Input
               autoComplete="off"
               label={t.search}
@@ -202,7 +201,7 @@ export function AutomationsView(props: AutomationsViewProps) {
             <EmptyState
               action={(
                 <Button onClick={(event) => openCreate(event.currentTarget)} size="sm" variant="primary">
-                  <AddIcon size={12} />{t.new}
+                  <AddIcon size="rowGlyph" />{t.new}
                 </Button>
               )}
               body={t.emptyDescription}
@@ -223,7 +222,7 @@ export function AutomationsView(props: AutomationsViewProps) {
               type="button"
             >
               <span className="automation-list-icon">
-                <ClockIcon aria-hidden size={14} />
+                <ScheduledIcon size="menu" />
                 <span className={`automation-unread${unread ? ' is-visible' : ''}`} aria-hidden="true" />
               </span>
               <span className="automation-list-copy">
@@ -278,7 +277,7 @@ export function AutomationsView(props: AutomationsViewProps) {
                   size="sm"
                   variant="primary"
                 >
-                  <PlayIcon size={12} />{t.startNow}
+                  <PlayIcon size="rowGlyph" />{t.startNow}
                 </Button>
               ) : null}
               {selected ? (

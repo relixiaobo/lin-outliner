@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useReducer, useRef, useState, type ReactNode } from 'react';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { api } from '../../api/client';
-import { CheckIcon, ICON_SIZE, LoaderIcon, OpenIcon } from '../icons';
+import { CheckIcon, ICON_SIZE, LoaderIcon, OpenInBrowserIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -265,7 +265,7 @@ export function ProviderOAuthForm({
                   onClick={() => onOpenExternal(flow.deviceCode!.verificationUri)}
                 >
                   <span>{flow.deviceCode.verificationUri}</span>
-                  <OpenIcon size={ICON_SIZE.tiny} />
+                  <OpenInBrowserIcon size={ICON_SIZE.tiny} />
                 </ButtonControl>
                 {countdown !== null ? (
                   <p className="settings-sheet-oauth-countdown">{t.providerOAuth.expiresIn({ time: formatCountdown(countdown) })}</p>
@@ -280,7 +280,7 @@ export function ProviderOAuthForm({
                 </p>
                 <ButtonControl className="agent-settings-doc-link" onClick={() => onOpenExternal(flow.auth!.url)}>
                   <span>{t.providerOAuth.openSignInPage}</span>
-                  <OpenIcon size={ICON_SIZE.tiny} />
+                  <OpenInBrowserIcon size={ICON_SIZE.tiny} />
                 </ButtonControl>
               </div>
             ) : null}
@@ -303,7 +303,7 @@ export function ProviderOAuthForm({
             {docsUrl ? (
               <ButtonControl className="agent-settings-doc-link" onClick={() => onOpenExternal(docsUrl)}>
                 <span>{docsLabel ?? t.providerOAuth.learnMore}</span>
-                <OpenIcon size={ICON_SIZE.tiny} />
+                <OpenInBrowserIcon size={ICON_SIZE.tiny} />
               </ButtonControl>
             ) : null}
           </div>

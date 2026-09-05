@@ -436,21 +436,45 @@ scale font size with viewport width.
 
 ### Icons
 
-- **Style:** line (outline) icons aligned to SF Symbols' metrics and weight on
-  macOS so they sit native beside system glyphs. Use filled variants only for
-  selected/active toggles where a fill reads clearer.
-- **Delivery:** `lucide-react` is the single product icon library rendered in the
-  WebView — *not* the SF Symbols font. SF Symbols is licensed for system UI only
-  and cannot be embedded, so we use lucide outline glyphs sized to the product
-  grid and painted with `currentColor` so they inherit text-colour tokens. Keep
-  one product icon source; provider logos and inline-file masks are separate
-  identity/file-kind assets, not a second control icon library.
-- **Grid & sizing:** icons live in fixed slots — `--icon-size-xs … --icon-size-lg`
-  (12/14/16/18). The outliner bullet/chevron slot is `15px`; sidebar and tab icon
-  slots are `16px` (bullets, emoji, and svg icons share the slot so titles do not
-  shift).
-- **Stroke:** ~`1.5px` optical at 16px, scaling with size; match the surrounding
-  font weight so icons never look heavier than text.
+- **Delivery:** Iconoir is the single functional icon library. Only
+  `src/renderer/ui/icons.ts` imports `iconoir-react/regular`; consumers import
+  semantic components with vendor-independent `AppIcon` / `AppIconProps` types.
+  Use static imports and tree-shakable declarations, with no runtime catalog,
+  global provider, or universal icon-name protocol. User emoji, app/provider
+  logos, speaker artwork, native controls, and structural bullets retain their
+  identity or structural roles.
+- **Semantics:** select from actual objects, actions, and states in renderer
+  domain rules. Internal navigation, split pane, browser opening, and local
+  default-app opening have separate names and glyphs. Number and Supertag have
+  separate semantic names even though both use Hashtag. Highlight uses
+  DesignPencil; outline uses List; heading uses HSquare. Startup Retry uses
+  Refresh, pending Retry uses Loader, and Quit uses LogOut. Labels and tooltips
+  remain the control's responsibility; never infer identity from translated text.
+- **Grid & sizing:** `ICON_SIZE` supplies size roles resolved by the component
+  to CSS tokens: tiny/tag/rowGlyph/compact/menu/rowChevron/toolbar/large/panel/badge
+  are 10/11/12/13/14/15/16/18/20/22px. Both SVG dimensions use the same token and
+  forward the SVG ref without a wrapper. Object emoji/bullet/empty slots share
+  these lengths. Consumers cannot override geometry, arbitrary dimensions,
+  stroke, fill, or rotation.
+- **Stroke and motion:** use Iconoir's native 1.5-unit outline weight in its
+  24-unit viewBox. Explicit optical exceptions live in semantic components:
+  CheckboxCheck has a 3-unit check, Stop is a filled Square, Checkbox is an
+  outline Square, and top-toolbar hide/show rotate 90 degrees clockwise. Loader
+  owns the shared rotating Refresh and reduced-motion fallback in `icons.css`.
+  Decorative glyphs are aria-hidden and non-focusable; controls and status copy
+  carry accessible meaning.
+- **Rail actions:** the left sidebar uses SidebarCollapse while open and
+  SidebarExpand while closed. The right Agent panel uses the same pair mirrored
+  horizontally, so the pane and arrow both match the right edge. `WindowChrome`
+  selects the next action from the actual open state; tooltip and aria-expanded
+  follow that state. Mirror geometry belongs to the semantic components.
+- **File masks:** `FILE_ICONS` maps every `InlineFileIconKind` to one semantic
+  component for React and `scripts/generate-file-icon-masks.ts`. Its committed
+  CSS output contains self-contained SVGs generated through an SVG parser,
+  with concrete paint and no inherited document tokens. Regenerate with
+  `bun scripts/generate-file-icon-masks.ts`; `--check` and the renderer tests
+  reject stale output. Layout stays in `inline-ref.css`; no copied paths or
+  runtime SVG serialization.
 - **Color:** icons inherit text-color tokens (`--text-secondary` at rest,
   `--text-primary` when active); persistent configured/on glyphs may use
   `--control-on`. Icons are never brand-colored except true brand marks.

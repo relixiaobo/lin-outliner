@@ -89,7 +89,7 @@ describe('FilePreviewShell media controls', () => {
     expect(rendered.document.querySelector('media-seek-forward-button')?.getAttribute('seekoffset')).toBe('15');
     expect(rendered.document.querySelector('media-mute-button > svg.file-preview-media-glyph[slot="off"]')).not.toBeNull();
     expect(rendered.document.querySelector('media-play-button > svg.file-preview-media-glyph[slot="play"]')).not.toBeNull();
-    expect(rendered.document.querySelector('media-play-button > svg.file-preview-media-glyph--pause[slot="pause"]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-play-button > svg.file-preview-media-glyph[slot="pause"][data-icon="Pause"]')).not.toBeNull();
     expect(rendered.document.querySelector('media-seek-backward-button > svg.file-preview-media-glyph[slot="icon"]')).not.toBeNull();
     expect(rendered.document.querySelector('media-seek-forward-button > svg.file-preview-media-glyph[slot="icon"]')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-media-center-play')).toBeNull();
@@ -139,7 +139,7 @@ describe('FilePreviewShell media controls', () => {
     expect(rendered.document.querySelector('media-seek-forward-button')?.getAttribute('seekoffset')).toBe('15');
     expect(rendered.document.querySelector('media-mute-button > svg.file-preview-media-glyph[slot="off"]')).not.toBeNull();
     expect(rendered.document.querySelector('media-play-button > svg.file-preview-media-glyph[slot="play"]')).not.toBeNull();
-    expect(rendered.document.querySelector('media-play-button > svg.file-preview-media-glyph--pause[slot="pause"]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-play-button > svg.file-preview-media-glyph[slot="pause"][data-icon="Pause"]')).not.toBeNull();
     expect(rendered.document.querySelector('media-seek-backward-button > svg.file-preview-media-glyph[slot="icon"]')).not.toBeNull();
     expect(rendered.document.querySelector('media-seek-forward-button > svg.file-preview-media-glyph[slot="icon"]')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-media-center-play')).toBeNull();

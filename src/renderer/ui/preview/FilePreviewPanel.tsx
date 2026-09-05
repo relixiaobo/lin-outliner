@@ -29,7 +29,7 @@ import {
   LibraryIcon,
   LoaderIcon,
   MoreIcon,
-  OpenIcon,
+  SplitPaneIcon,
   UrlIcon,
 } from '../icons';
 import { Button } from '../primitives/Button';
@@ -49,6 +49,7 @@ import { buildPanelBreadcrumb } from '../panelBreadcrumb';
 import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock, type PanelDragHandle } from '../PanelShared';
 import { canAddPreviewTargetToOutline, requestAddPreviewTargetToOutline } from './previewIngest';
 import type { FilePreviewMenuAction } from './FilePreviewPill';
+import { previewOpenAction } from './previewOpenAction';
 import {
   FilePreviewShell,
   canCopyPreviewSource,
@@ -79,7 +80,7 @@ import type { UrlPageTranslationStatus } from './urlPageTranslationController';
 import { isProviderUsable } from '../agent/providerUsability';
 import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
 
-const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
+const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 'compact' as const;
 
 interface FilePreviewPanelProps {
   activePanel: boolean;
@@ -363,15 +364,11 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const primaryOpen = readerMode
     ? null
     : canOpen
-      // A url opens in the browser; an on-disk source opens with its default app.
-      ? {
-          label: props.target.kind === 'url' ? previewLabels.openInBrowser : previewLabels.openWithDefault,
-          run: openOriginal,
-        }
+      ? previewOpenAction(props.target, previewLabels, openOriginal)
       : null;
   const menuActions: FilePreviewMenuAction[] = [
         ...(openSplitReader
-          ? [{ key: 'open-in-split', label: previewLabels.openInSplitPane, icon: OpenIcon, run: openSplitReader }]
+          ? [{ key: 'open-in-split', label: previewLabels.openInSplitPane, icon: SplitPaneIcon, run: openSplitReader }]
           : []),
         ...(canReveal
           ? [{ key: 'reveal', label: previewLabels.reveal, icon: FolderIcon, run: revealOriginal }]
@@ -391,21 +388,15 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
           : []),
       ];
   const looseUrlOpenAction = !readerMode && !boundOwner && props.target.kind === 'url' && canOpen
-    ? {
-        label: previewLabels.openInBrowser,
-        run: openOriginal,
-      }
+    ? previewOpenAction(props.target, previewLabels, openOriginal)
     : null;
   const readerOpenAction = readerMode && canOpen
-    ? {
-        label: props.target.kind === 'url' ? previewLabels.openInBrowser : previewLabels.openWithDefault,
-        run: openOriginal,
-      }
+    ? previewOpenAction(props.target, previewLabels, openOriginal)
     : null;
   const readerMenuActions: FilePreviewMenuAction[] = readerMode
     ? [
         ...(readerOpenAction
-          ? [{ key: 'open', label: readerOpenAction.label, icon: OpenIcon, run: readerOpenAction.run }]
+          ? [readerOpenAction]
           : []),
         ...menuActions,
       ]
@@ -488,12 +479,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const headerMenuActions = readerMode
     ? readerMenuActions
     : looseUrlOpenAction
-      ? [{
-          key: 'open',
-          label: looseUrlOpenAction.label,
-          icon: OpenIcon,
-          run: looseUrlOpenAction.run,
-        }]
+      ? [looseUrlOpenAction]
       : [];
   const headerActions = translationControl || headerMenuActions.length > 0 ? (
     <>

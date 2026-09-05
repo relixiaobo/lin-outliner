@@ -117,6 +117,13 @@ The registered accelerator is **shown**, in two places, both formatted by
 
 ## The modeless model (`src/renderer/launcher/`)
 
+Launcher result rows and context chips use the same `ObjectGlyph` as menu
+parameter candidates. Its input is the typed `ObjectPresentation`, not a graphic
+name or a parsed title/ref. User emoji takes precedence; system keys and document
+types determine the default. Ordinary Source-backed nodes remain document
+objects. Known HTTP(S) context uses the web-page globe; app/unknown captured
+context uses AppWindow. Existing context never uses the draft creation marker.
+
 ONE always-focused input is simultaneously a **command filter**, a **live node
 search**, and a **live capture draft** — there is no mode and no "pick New Capture
 first" step. The result list is built purely by `buildLauncherItems` (in

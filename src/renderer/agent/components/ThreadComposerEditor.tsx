@@ -28,26 +28,15 @@ import { PopoverEmpty, PopoverListbox, PopoverListItem } from '../../ui/outliner
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import {
   CommandIcon,
-  DatabaseIcon,
-  FileArchiveIcon,
-  FileAudioIcon,
-  FileCodeIcon,
-  FileImageIcon,
-  FileSpreadsheetIcon,
-  FileTextIcon,
-  FileVideoIcon,
-  FolderIcon,
   ICON_SIZE,
-  PresentationIcon,
   RecentsIcon,
-  type AppIcon,
 } from '../../ui/icons';
 import { textOf } from '../../ui/shared';
 import {
   inlineFileIconKind,
   inlineFileMentionDomChildren,
-  type InlineFileIconKind,
 } from '../../ui/editor/inlineFileIcon';
+import { FILE_ICONS } from '../../ui/editor/fileIcons';
 import { inlineFilePreviewAttrs } from '../../ui/editor/inlineFilePreviewData';
 import { inlineReferenceTextColor } from '../../ui/tags/tagColors';
 import { useT } from '../../i18n/I18nProvider';
@@ -1791,7 +1780,7 @@ function MentionFileIcon({ file }: { file: ThreadComposerLocalFileCandidate }) {
     );
   }
   const iconKind = inlineFileIconKind(file);
-  const Icon = iconForLocalFileKind(iconKind);
+  const Icon = FILE_ICONS[iconKind];
   return <Icon data-file-icon={iconKind} size={ICON_SIZE.menu} />;
 }
 
@@ -1886,19 +1875,6 @@ function middleTruncateFilenameParts(name: string): { start: string; end: string
     start: stem.slice(0, -tailStemLength),
     end: `${stem.slice(-tailStemLength)}${extension}`,
   };
-}
-
-function iconForLocalFileKind(kind: InlineFileIconKind): AppIcon {
-  if (kind === 'archive') return FileArchiveIcon;
-  if (kind === 'audio') return FileAudioIcon;
-  if (kind === 'code') return FileCodeIcon;
-  if (kind === 'database') return DatabaseIcon;
-  if (kind === 'folder') return FolderIcon;
-  if (kind === 'image') return FileImageIcon;
-  if (kind === 'presentation') return PresentationIcon;
-  if (kind === 'spreadsheet') return FileSpreadsheetIcon;
-  if (kind === 'video') return FileVideoIcon;
-  return FileTextIcon;
 }
 
 function mentionMenuItems({

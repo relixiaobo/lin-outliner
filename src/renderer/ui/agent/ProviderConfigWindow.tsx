@@ -21,6 +21,7 @@ import { buildProviderChoices } from './settingsProviderModel';
 import { ProviderOAuthForm } from './ProviderOAuthForm';
 import { Button } from '../primitives/Button';
 import { ErrorState } from '../primitives/FeedbackState';
+import { AddIcon, ICON_SIZE } from '../icons';
 
 // Root rendered in the dedicated per-provider config window (?surface=provider-config),
 // a modal child of the settings window. It fetches its own provider settings, derives
@@ -181,7 +182,7 @@ export function ProviderConfigWindow() {
       <ProviderConfigForm
         authNote={authNote}
         avatar={isCustom
-          ? <span className="settings-provider-avatar is-large" aria-hidden="true">+</span>
+          ? <span className="settings-provider-avatar is-large" aria-hidden="true"><AddIcon size={ICON_SIZE.panel} /></span>
           : <ProviderAvatar large providerId={providerId} />}
         baseUrlPlaceholder={catalog?.defaultBaseUrl ?? 'https://api.example.com/v1'}
         capabilities={catalog?.capabilities}
@@ -243,7 +244,7 @@ function ProviderConfigLoadingShell({
       <header className="settings-sheet-head">
         <span aria-hidden="true" className="settings-sheet-avatar">
           {isCustom
-            ? <span className="settings-provider-avatar is-large">+</span>
+            ? <span className="settings-provider-avatar is-large"><AddIcon size={ICON_SIZE.panel} /></span>
             : <ProviderAvatar large providerId={providerId} />}
         </span>
         <div className="settings-sheet-head-text">

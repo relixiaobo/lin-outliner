@@ -3502,11 +3502,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     waitingOnUserInput,
     workingTextEnabled,
   });
-  const workingTextOwnsMotion = workingTextEnabled && motionOwner !== 'none';
-  // A blocked Turn cannot use a progressive cue. Keep the fallback response
-  // shape static as well, otherwise it becomes the only moving element while
-  // the agent waits for the user.
-  const shapeMotionSuppressed = !workingTextEnabled;
   // `groupTurnContent` omits the process block entirely for a Turn with no
   // process Items, so "no response Item" alone does not mean a divider exists
   // to own the terminal status.
@@ -3590,8 +3585,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         onRerun={recovery?.canRerun ? rerunTurn : null}
         rerunRequiresConfirmation={recovery?.rerunRequiresConfirmation ?? false}
         providerRetry={providerRetry}
-        shapeMotionSuppressed={shapeMotionSuppressed}
-        workingTextOwnsMotion={workingTextOwnsMotion}
         // The process divider states the terminal status when there is no
         // response Item — but only if a process block renders at all. Without
         // one, suppressing it here would erase the status from the Turn.
@@ -3608,10 +3601,8 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       responseTailTurn,
       recovery,
       rerunTurn,
-      shapeMotionSuppressed,
       standaloneContextBoundary,
       statusOwnedElsewhere,
-      workingTextOwnsMotion,
     ],
   );
   const renderItem = (item: ThreadItem, showMessageActions: boolean) => (
@@ -3794,10 +3785,8 @@ function ThreadResponseTail({
   onRerun,
   providerRetry,
   rerunRequiresConfirmation,
-  shapeMotionSuppressed,
   statusOwnedElsewhere,
   turn,
-  workingTextOwnsMotion,
 }: {
   /**
    * Forking a Thread starts a conversation, which a read-only embedded view
@@ -3812,10 +3801,8 @@ function ThreadResponseTail({
   readonly onRerun: ((confirmToolReplay: boolean) => Promise<void>) | null;
   readonly providerRetry: ProviderRetryStatus | null;
   readonly rerunRequiresConfirmation: boolean;
-  readonly shapeMotionSuppressed: boolean;
   readonly statusOwnedElsewhere: boolean;
   readonly turn: Turn;
-  readonly workingTextOwnsMotion: boolean;
 }) {
   const t = useT();
   const [trajectoryHoverOpen, setTrajectoryHoverOpen] = useState(false);
@@ -3858,14 +3845,7 @@ function ThreadResponseTail({
       ) : null}
       <div className="thread-response-footer">
         {streaming ? (
-          providerRetry
-            ? <ThreadProviderRetryStatus status={providerRetry} />
-            : (
-              <ThreadStreamingIndicator
-                shapeMotionSuppressed={shapeMotionSuppressed}
-                workingTextOwnsMotion={workingTextOwnsMotion}
-              />
-            )
+          providerRetry ? <ThreadProviderRetryStatus status={providerRetry} /> : null
         ) : (
           <div className="thread-message-actions thread-response-actions">
             {onContinue ? (
@@ -4412,35 +4392,6 @@ export function turnMotionOwner(
   return 'summary';
 }
 
-
-function ThreadStreamingIndicator({
-  shapeMotionSuppressed,
-  workingTextOwnsMotion,
-}: {
-  readonly shapeMotionSuppressed: boolean;
-  readonly workingTextOwnsMotion: boolean;
-}) {
-  const t = useT();
-  const gradientId = `thread-shape-${useId().replaceAll(':', '')}`;
-  return (
-    <div className="thread-streaming-indicator" aria-label={t.agent.message.assistantResponding}>
-      <svg
-        aria-hidden
-        className={`thread-streaming-shape${workingTextOwnsMotion ? ' is-working-text-owned' : ''}${shapeMotionSuppressed ? ' is-motion-suppressed' : ''}`}
-        viewBox="0 0 48 48"
-      >
-        <defs>
-          <linearGradient className="thread-shape-gradient" id={gradientId} x1="0" x2="0" y1="0" y2="1">
-            <stop className="thread-shape-stop-0" offset="0%" />
-            <stop className="thread-shape-stop-1" offset="55%" />
-            <stop className="thread-shape-stop-2" offset="100%" />
-          </linearGradient>
-        </defs>
-        <path fill={`url(#${gradientId})`} />
-      </svg>
-    </div>
-  );
-}
 
 /**
  * Wall-clock elapsed since the Turn started — the same span the server records

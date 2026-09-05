@@ -72,7 +72,7 @@ describe('streaming Turn item memoization', () => {
       ...baseProps,
       expandState: {
         ...baseProps.expandState,
-        isExpanded: (id: string) => id.startsWith('tools:'),
+        isExpanded: (id: string, defaultExpanded = false) => id.startsWith('tools:') || defaultExpanded,
       },
     };
 

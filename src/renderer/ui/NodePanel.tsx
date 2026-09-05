@@ -44,7 +44,6 @@ import {
   selectFocusState,
 } from './focus/focusModel';
 import {
-  HashIcon,
   ICON_SIZE,
   FilterIcon,
   LibraryIcon,
@@ -79,8 +78,8 @@ import {
 import { useT } from '../i18n/I18nProvider';
 import { referenceSummaryForIndex } from '../state/referenceSummary';
 
-const PANEL_HEADER_ICON_SIZE = 20;
-const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
+const PANEL_HEADER_ICON_SIZE = 'panel' as const;
+const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 'compact' as const;
 
 interface NodePanelProps {
   panelId: string;
@@ -284,7 +283,7 @@ export function NodePanel(props: NodePanelProps) {
       // background instead left the dark accent hash near-invisible in dark mode.
       return (
         <span className="panel-header-tag-icon" style={{ background: resolveTagColor(rootNode, props.index.byId).text }}>
-          <HashIcon size={ICON_SIZE.rowGlyph} />
+          <SupertagIcon size={ICON_SIZE.rowGlyph} />
         </span>
       );
     }
@@ -470,7 +469,7 @@ export function NodePanel(props: NodePanelProps) {
     <IconButton
       className="panel-title-more-button"
       icon={MoreIcon}
-      iconSize={14}
+      iconSize="menu"
       label={t.nodePanel.moreActionsLabel}
       onClick={openHeaderMoreMenu}
       onMouseDown={(event) => {
@@ -486,7 +485,7 @@ export function NodePanel(props: NodePanelProps) {
     <IconButton
       className={`panel-title-more-button ${searchQueryOpen ? 'is-active' : ''}`}
       icon={FilterIcon}
-      iconSize={14}
+      iconSize="menu"
       label={searchQueryOpen ? t.nodePanel.hideQuery : t.nodePanel.showQuery}
       onClick={(event) => {
         event.preventDefault();

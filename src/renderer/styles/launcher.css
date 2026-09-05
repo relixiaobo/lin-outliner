@@ -179,34 +179,6 @@ body {
   color: var(--text-secondary);
 }
 
-/* A node search result without its own icon: the outliner bullet (a small neutral
- * disc), sized to the same 16px slot as a Lucide glyph so titles stay aligned. */
-.launcher-row-bullet {
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.launcher-row-bullet::before {
-  content: "";
-  width: 5px;
-  height: 5px;
-  border-radius: var(--radius-pill);
-  background: var(--text-tertiary);
-}
-
-/* A node's own emoji icon, in the same 16px slot. */
-.launcher-row-emoji {
-  flex-shrink: 0;
-  width: 16px;
-  text-align: center;
-  font-size: var(--font-ui-sm);
-  line-height: 1;
-}
-
 .launcher-row.is-active .launcher-row-icon {
   color: var(--text-primary);
 }

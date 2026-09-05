@@ -21,7 +21,7 @@ import type {
 function item(params: {
   ref: string;
   title: string;
-  kind?: SurfaceItemPresentation['object']['kind'];
+  kind?: 'node' | 'externalPage';
   typeLabel?: string;
   subtitle?: string;
   primary?: string;
@@ -29,10 +29,11 @@ function item(params: {
   return {
     object: {
       objectRef: params.ref as ObjectRef,
-      kind: params.kind ?? 'node',
+      ...(params.kind === 'externalPage'
+        ? { kind: 'externalPage' as const, sourceKind: 'web' as const }
+        : { kind: 'node' as const, node: { kind: 'document' as const, nodeType: null } }),
       name: { source: 'literal', value: params.title },
       ...(params.subtitle ? { subtitle: { source: 'literal' as const, value: params.subtitle } } : {}),
-      iconId: 'node',
       typeLabel: { en: params.typeLabel ?? 'Node', 'zh-Hans': params.typeLabel ?? '节点' },
     },
     ...(params.primary
@@ -42,7 +43,6 @@ function item(params: {
           subjectRef: params.ref as ObjectRef,
           names: { en: params.primary, 'zh-Hans': `${params.primary}-zh` },
           aliases: [],
-          iconId: 'open',
           surfaces: ['actionPanel'],
           evaluation: { status: 'applicable' },
           binding: { state: 'ready', arguments: {} },

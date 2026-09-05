@@ -17,6 +17,7 @@ import {
   CloseIcon,
   FilterIcon,
   RefreshIcon,
+  LoaderIcon,
 } from '../icons';
 import { Button } from '../primitives/Button';
 import { IconButton } from '../primitives/IconButton';
@@ -107,7 +108,7 @@ export function SearchQueryBuilderPanel({ index, nodeId, run, onClose }: SearchQ
     <section className="search-query-builder-panel" data-search-query-builder>
       <div className="search-query-builder-header">
         <div className="search-query-builder-title">
-          <FilterIcon size={14} />
+          <FilterIcon size="menu" />
           <span>{builder.title}</span>
           {resultCount !== null && (
             <span className="search-query-builder-count">
@@ -119,7 +120,7 @@ export function SearchQueryBuilderPanel({ index, nodeId, run, onClose }: SearchQ
           <IconButton
             className={`search-query-refresh-button ${refreshing ? 'is-refreshing' : ''}`}
             disabled={refreshing}
-            icon={RefreshIcon}
+            icon={refreshing ? LoaderIcon : RefreshIcon}
             label={builder.refreshLabel}
             onClick={() => void refresh()}
             title={builder.refreshTitle}

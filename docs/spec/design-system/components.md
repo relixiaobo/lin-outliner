@@ -117,8 +117,10 @@ keyboard focus remains visible inside `overflow: hidden`.
 
 Inline references render as text-flow links, not chips. Node references are plain
 text; local file/directory/image references add one leading monochrome masked icon
-from `inlineFileIcon.ts`, painted with `currentColor`, and keep icon + first name
+classified by `inlineFileIcon.ts`, painted with `currentColor`, and keep icon + first name
 segment together. Render sites must not invent a second inline-file species.
+`fileIcons.ts` supplies the exhaustive shared component table. React file badges
+and the generated CSS masks consume that table, with no independent geometry.
 
 Path-backed local-file refs expose shared preview metadata, open the Tenon preview
 surface through the preload/main bridge, and use `preview-local://` or `asset://`
@@ -165,10 +167,14 @@ to the fixed HUD foreground required over pixels. The readable owner title is pr
 internal asset identifier. Video places the remaining HUD directly over the
 bottom pixels with a frameless contrast scrim; it never introduces an inset
 control card, border, second rounded container, or duplicate playback control.
-Player transport and output controls use filled Lucide media glyphs with a
-weight-matched pause state; application-level corner actions remain in the
-shared Lucide stroke family. Seek direction glyphs carry exact 15-second
-semantics through their accessible labels rather than unreadable icon microtype.
+Player transport, output controls, and corner actions use the shared Iconoir
+outline family without consumer fill/stroke overrides. Backward15Seconds and
+Forward15Seconds match the 15-second offset and retain accessible labels. The
+off/low/medium/high slots use SoundOff/SoundMin/SoundLow/SoundHigh respectively.
+Preview opening resolves label, component, and callback together from the typed
+URL/file target: OpenInBrowser for URLs, OpenInWindow for the local default app.
+Internal split-pane actions use ViewColumns2. Pills and menus reuse the resolved
+action instead of selecting a graphic again.
 Media Chrome owns playback, seeking, keyboard shortcuts, and activity state so
 each keypress performs one action and controls auto-hide without React tracking
 time or pointer movement. Audio disables only the video-specific `F` fullscreen
@@ -185,7 +191,10 @@ chrome, overlays, selection handles, and HUD controls stay tokenized.
 
 Process summaries, tool-call disclosures, run activity rows, and similar compact
 status rows reserve one measured disclosure/status slot. Labels must not jump
-between rest, hover, focus, loading, and expansion. Stop/close actions in dense
+between rest, hover, focus, loading, and expansion. The shared tool slot remains
+14px, while its hover/open chevron uses the 15px row-chevron role to balance
+Iconoir's smaller native ink bounds against the 14px tool glyph. Both layers
+stay centered in the same slot. Stop/close actions in dense
 rows default to unboxed icon controls whose glyph colour deepens on hover/focus.
 Active tool and Tool Task rows retain their semantic glyph and apply
 `WorkingText` only to the advancing action/status phrase; an in-progress tool
@@ -195,8 +204,15 @@ When reduced motion or increased contrast removes that sweep, only the active
 tool glyph deepens from `--text-faint` to `--text-soft`; its label does not
 change colour, weight, or geometry.
 A collapsed running group owns
-the sweep on its summary, while expansion freezes that summary and transfers the
-sweep to its running members. Finished members remain static.
+the sweep on its summary, while expansion freezes that summary and shows the
+sweep on every running member. Concurrent operations in separate groups and an
+empty live Thinking placeholder sweep independently; finished members remain
+static. A folded live process transfers motion to its Working summary; an expanded process always
+keeps that summary static, even when no operation owns motion. Plan summaries stay
+static. The composer Stop uses a row-sized filled Square in the existing
+circular hit target with neutral fill and text, avoiding the send button's
+inverse treatment. Unmodified mouse disclosures retain an already-focused
+composer so its focus material does not blink; keyboard focus remains native.
 Turn-local Plan progress uses the same compact status register above the
 composer; its level-1 checklist popover appears on hover or summary activation
 without moving the composer or transcript. The summary is a disclosure button;

@@ -61,6 +61,24 @@ Selection members keep the shipped **single-hop** content target; only the
 anchored row resolves a reference chain. That asymmetry is shipped behaviour,
 preserved deliberately.
 
+Object and action presentation carry business facts, never graphic identifiers.
+`ObjectPresentation` is discriminated by its object kind: nodes carry a system
+key or document node type (null when unavailable), drafts carry their purpose,
+app surfaces carry their destination, and external context carries a
+`web` / `application` / `unknown` source kind. `presentObject` is also the producer
+for parameter candidates. User emoji and backing node identity remain available.
+An HTTP(S) URL in captured browser/source evidence establishes web identity;
+a browser name by itself does not.
+
+The renderer's shared `ObjectGlyph` resolves emoji first, then those facts;
+ordinary documents use a structural bullet, tag definitions use Supertag, and
+unknown inspection data records a diagnostic with an empty slot. Launcher and
+menu candidates reuse the same rule. `ActionPresentation` already supplies its
+typed `actionId` and binding; `iconForAction` resolves the desired end state,
+move direction, view mode, toolbar visibility, and view section directly.
+Parameter seeds are not cast to complete arguments. Rejection changes status,
+not the action meaning. No `IconId` catalog crosses the process boundary.
+
 ## Invocation membership
 
 An action subject is admissible only when its ref is in `fixedObjects` or in the

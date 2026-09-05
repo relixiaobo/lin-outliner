@@ -1,6 +1,6 @@
 import type { AutomationRun } from '../../../core/agent/automation';
 import { useT } from '../../i18n/I18nProvider';
-import { OpenIcon, PinIcon } from '../../ui/icons';
+import { NavigateIcon, PinIcon, UnpinIcon } from '../../ui/icons';
 import { Button } from '../../ui/primitives/Button';
 import { userFacingAgentError } from '../threadErrorMessage';
 
@@ -68,12 +68,12 @@ export function AutomationRunsView(props: AutomationRunsViewProps) {
                       </span>
                     ) : null}
                   </span>
-                  {navigable ? <OpenIcon className="automation-run-open" aria-hidden size={12} /> : null}
+                  {navigable ? <NavigateIcon className="automation-run-open" size="rowGlyph" /> : null}
                 </button>
                 {run.worktree?.removedAt === null ? (
                   <div className="automation-run-actions">
                     <Button onClick={() => void props.onPin(run, !run.pinned)} size="sm" variant="ghost">
-                      <PinIcon size={12} />{run.pinned ? t.unpin : t.pin}
+                      {run.pinned ? <UnpinIcon size="rowGlyph" /> : <PinIcon size="rowGlyph" />}{run.pinned ? t.unpin : t.pin}
                     </Button>
                   </div>
                 ) : null}

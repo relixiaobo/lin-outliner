@@ -63,7 +63,9 @@ async function installLauncherMock(page: Page) {
       objectRef: ref,
       kind,
       name: { source: 'localized', values: { en: name, 'zh-Hans': name } },
-      iconId: 'node',
+      ...(kind === 'node'
+        ? { node: { kind: 'system', key: 'today' } }
+        : { surface: 'settings' }),
       typeLabel: { en: 'App', 'zh-Hans': 'App' },
     });
     const openAction = (ref: string) => ({
@@ -71,7 +73,6 @@ async function installLauncherMock(page: Page) {
       subjectRef: ref,
       names: { en: 'Open', 'zh-Hans': '打开' },
       aliases: [],
-      iconId: 'open',
       surfaces: ['actionPanel'],
       evaluation: { status: 'applicable' },
       binding: { state: 'ready', arguments: {} },

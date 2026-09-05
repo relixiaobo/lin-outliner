@@ -38,10 +38,10 @@ describe('WorkingText', () => {
     expect(tokensCss).toContain('--motion-working-delay: 300ms;');
     expect(tokensCss).not.toContain('--motion-working-stagger');
     expect(workingTextCss).toMatch(
-      /animation:\s*working-text-sweep var\(--motion-working-cycle\) linear var\(--motion-working-delay\) infinite;/,
+      /animation:\s*working-text-sweep var\(--motion-working-cycle\) ease-in-out var\(--motion-working-delay\) infinite;/,
     );
     expect(workingTextCss).not.toMatch(/steps\(/);
-    expect(workingTextCss).toMatch(/60%,\s*100% \{[^}]*background-position:\s*250% 0;/s);
+    expect(workingTextCss).toMatch(/60%,\s*100% \{[^}]*background-position:\s*calc\(100% \+ 3em\) 0;/s);
     expect(workingTextCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\), \(prefers-contrast: more\) \{\s*\.working-text-base \{[^}]*animation:\s*none;[^}]*background:\s*none;[^}]*-webkit-text-fill-color:\s*currentColor;/s,
     );
@@ -49,9 +49,9 @@ describe('WorkingText', () => {
 
   test('WorkingText confines animation to one paint-contained glyph layer without changing typography', () => {
     expect(workingTextBaseRule).toMatch(/background-color:\s*currentColor;/);
-    expect(workingTextBaseRule).toMatch(/background-image:\s*linear-gradient\(/);
-    expect(workingTextBaseRule).toMatch(/background-position:\s*-100% 0;/);
-    expect(workingTextBaseRule).toMatch(/background-size:\s*50% 100%;/);
+    expect(workingTextBaseRule).toMatch(/background-image:\s*linear-gradient\(\s*110deg,/);
+    expect(workingTextBaseRule).toMatch(/background-position:\s*calc\(0% - 3em\) 0;/);
+    expect(workingTextBaseRule).toMatch(/background-size:\s*3em 100%;/);
     expect(workingTextBaseRule).toMatch(/-webkit-background-clip:\s*text;/);
     expect(workingTextBaseRule).toMatch(/(?:^|\s)background-clip:\s*text;/);
     expect(workingTextBaseRule).toMatch(/-webkit-text-fill-color:\s*transparent;/);

@@ -280,7 +280,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           onClick={acceptInheritedDefault}
           title={tf.acceptInheritedDefault({ value: inheritedDefaultText })}
         >
-          <CheckIcon size={ICON_SIZE.rowGlyph} strokeWidth={2} />
+          <CheckIcon size={ICON_SIZE.rowGlyph} />
         </ButtonControl>
       ) : null}
     </div>

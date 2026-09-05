@@ -1,5 +1,5 @@
 import { forwardRef, type ButtonHTMLAttributes } from 'react';
-import { ICON_SIZE, type AppIcon } from '../icons';
+import { ICON_SIZE, type AppIcon, type IconSize } from '../icons';
 import { cx } from './cx';
 
 type IconButtonVariant =
@@ -11,7 +11,7 @@ type IconButtonVariant =
   | 'composerAction'
   | 'tabClose';
 
-const DEFAULT_ICON_SIZE: Record<IconButtonVariant, number> = {
+const DEFAULT_ICON_SIZE: Record<IconButtonVariant, IconSize> = {
   chrome: ICON_SIZE.toolbar,
   panel: ICON_SIZE.menu,
   toolbar: ICON_SIZE.menu,
@@ -23,9 +23,8 @@ const DEFAULT_ICON_SIZE: Record<IconButtonVariant, number> = {
 
 interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'children'> {
   icon: AppIcon;
-  iconSize?: number;
+  iconSize?: IconSize;
   label: string;
-  strokeWidth?: number;
   variant?: IconButtonVariant;
 }
 
@@ -34,7 +33,6 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   icon: Icon,
   iconSize,
   label,
-  strokeWidth,
   title,
   type = 'button',
   variant = 'chrome',
@@ -51,7 +49,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       title={title ?? label}
       type={type}
     >
-      <Icon size={iconSize ?? DEFAULT_ICON_SIZE[variant]} strokeWidth={strokeWidth} />
+      <Icon size={iconSize ?? DEFAULT_ICON_SIZE[variant]} />
     </button>
   );
 });

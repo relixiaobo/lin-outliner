@@ -29,8 +29,8 @@ export function AppliedTag({
       <span className="tag-badge trashed" ref={rootRef} title={t.tags.deletedTitle({ label })}>
         <span className="tag-badge-hash">#</span>
         <span className="tag-badge-label">{label}</span>
-        <WarningIcon size={ICON_SIZE.tiny + 1} />
-        <TrashIcon size={ICON_SIZE.tiny + 1} />
+        <WarningIcon size={ICON_SIZE.tag} />
+        <TrashIcon size={ICON_SIZE.tag} />
       </span>
     );
   }
@@ -63,7 +63,7 @@ export function AppliedTag({
         }}
       >
         <span className="tag-badge-hash">#</span>
-        <CloseIcon className="tag-badge-x" size={ICON_SIZE.tiny + 1} strokeWidth={2.5} />
+        <CloseIcon className="tag-badge-x" size={ICON_SIZE.tag} />
       </ButtonControl>
       <ButtonControl
         aria-label={t.tags.openAriaLabel({ label })}

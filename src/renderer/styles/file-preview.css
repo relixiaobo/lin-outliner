@@ -312,10 +312,6 @@
   color: var(--text-primary);
 }
 
-.file-preview-translation-toggle.is-starting > svg {
-  animation: file-preview-translation-spin var(--motion-spin-cycle) linear infinite;
-}
-
 .file-preview-translation-toggle[data-translation-completed='true']:not(.is-starting) {
   background: var(--fill-2);
 }
@@ -404,12 +400,6 @@
 
 .file-preview-translation-command-label > svg {
   flex: 0 0 auto;
-}
-
-@keyframes file-preview-translation-spin {
-  to {
-    transform: rotate(1turn);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -727,13 +717,6 @@
 
 .file-preview-media-glyph {
   color: var(--media-icon-color);
-  fill: currentColor;
-  stroke: currentColor;
-}
-
-.file-preview-media-glyph--pause {
-  fill: none;
-  stroke-width: 3;
 }
 
 .file-preview-media-button:hover,

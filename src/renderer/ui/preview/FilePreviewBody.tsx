@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import type { PreviewTarget } from '../../../core/preview';
 import { useT } from '../../i18n/I18nProvider';
-import { CloseIcon, CopyIcon, FolderIcon, OpenIcon } from '../icons';
+import { CloseIcon, CopyIcon, FolderIcon, SplitPaneIcon } from '../icons';
+import { previewOpenAction } from './previewOpenAction';
 import { IconButton } from '../primitives/IconButton';
 import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
@@ -41,7 +42,7 @@ export function FilePreviewBody({
     const openInSplit: FilePreviewMenuAction = {
       key: 'open-in-split',
       label: labels.openInSplitPane,
-      icon: OpenIcon,
+      icon: SplitPaneIcon,
       run: () => onOpenTarget(target, { newPane: true, nodeId: ownerId, presentation: 'reader' }),
     };
     if (state.status !== 'ready') {
@@ -49,10 +50,7 @@ export function FilePreviewBody({
     }
     const source = state.source;
     const primaryOpen = canOpenPreviewSource(source)
-      ? {
-          label: source.kind === 'url' ? labels.openInBrowser : labels.openWithDefault,
-          run: () => void openPreviewSource(source),
-        }
+      ? previewOpenAction(source, labels, () => void openPreviewSource(source))
       : null;
     const menuActions: FilePreviewMenuAction[] = [openInSplit];
     if (canRevealPreviewSource(source)) {
