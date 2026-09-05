@@ -9,6 +9,7 @@ import type { DelegationModelSelection, DelegationRunnerAdapter } from './Delega
 
 export const CODEX_SUPPORTED_VERSION = 'codex-cli 0.153.4';
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+const MAX_RESULT_TEXT_BYTES = 1024 * 1024;
 const MAX_CONFIG_BYTES = 512 * 1024;
 const REASONING_LEVELS: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const CONTROLLED_FEATURES: readonly [string, boolean | string][] = [
@@ -48,6 +49,17 @@ export interface CodexCliRunnerOptions {
   readonly now?: () => number;
 }
 
+export function resolveCodexExecutionCwd(session: Parameters<NonNullable<DelegationRunnerAdapter['run']>>[0]['session']): string {
+  if (session.policy.worktreePolicy === 'dedicated') {
+    if (session.worktree.kind !== 'active' && session.worktree.kind !== 'unchanged'
+      && session.worktree.kind !== 'changed' && session.worktree.kind !== 'retained') {
+      throw new Error('Codex workspace-write Session has no active managed worktree.');
+    }
+    return resolve(session.worktree.metadata.path);
+  }
+  return resolve(session.policy.cwd);
+}
+
 export function createCodexCliRunnerAdapter(options: CodexCliRunnerOptions = {}): DelegationRunnerAdapter {
   const executable = options.executable
     ? (existsSync(options.executable) ? options.executable : null)
@@ -55,14 +67,18 @@ export function createCodexCliRunnerAdapter(options: CodexCliRunnerOptions = {})
   const version = executable ? probeVersion(executable, options.env ?? process.env) : null;
   const config = readCodexConfig(options.env ?? process.env, options.cwd ?? process.cwd());
   const usageBaselines = new Map<string, { input: number; output: number }>();
-  const ready = Boolean(executable && version === CODEX_SUPPORTED_VERSION && config && !config.diagnostic);
+  const capability = executable ? probeCapabilities(executable, options.env ?? process.env) : null;
+  const ready = Boolean(executable && version === CODEX_SUPPORTED_VERSION && capability?.ok
+    && config && !config.diagnostic);
   const diagnostic = !executable
     ? 'Codex CLI executable was not found.'
     : version === null
       ? 'Codex CLI version probe failed.'
       : version !== CODEX_SUPPORTED_VERSION
         ? `Unsupported Codex CLI version: ${version}`
-        : config?.diagnostic ?? null;
+        : capability && !capability.ok
+          ? capability.diagnostic
+          : config?.diagnostic ?? null;
   return {
     id: 'codex',
     version,
@@ -74,7 +90,7 @@ export function createCodexCliRunnerAdapter(options: CodexCliRunnerOptions = {})
       ? { providerId: config.providerId, modelId: parent.modelId, effort, supportedEfforts: REASONING_LEVELS }
       : null,
     run: ready && executable && config
-      ? (input) => runCodexTurn(executable, config, input, options.env ?? process.env, options.now ?? Date.now, usageBaselines)
+      ? (input) => runCodexTurn(executable, input, options.env ?? process.env, options.now ?? Date.now, usageBaselines)
       : undefined,
   };
 }
@@ -119,26 +135,35 @@ export function buildCodexArgs(input: {
 
 async function runCodexTurn(
   executable: string,
-  config: CodexConfigSnapshot,
   input: Parameters<NonNullable<DelegationRunnerAdapter['run']>>[0],
   env: NodeJS.ProcessEnv,
   now: () => number,
   usageBaselines: Map<string, { input: number; output: number }>,
 ): Promise<DelegateExecutionResult> {
   const startedAt = now();
+  if (input.signal.aborted) {
+    return result(input, startedAt, now(), 'cancelled', null, 'Codex execution was cancelled before start.', '');
+  }
   const resumeId = input.session.adapterSessionId;
+  const cwd = resolveCodexExecutionCwd(input.session);
+  const runtimeConfig = readCodexConfig(env, cwd);
+  if (!runtimeConfig || runtimeConfig.diagnostic) {
+    return result(input, startedAt, now(), 'failed', null, runtimeConfig?.diagnostic ?? 'Codex configuration is unavailable.', '');
+  }
+  const skillFiles = [...new Set([...runtimeConfig.skillFiles, ...discoverSkillFiles(env, cwd)])].sort();
+  const effectiveConfig = { ...runtimeConfig, skillFiles };
   const args = buildCodexArgs({
     executable,
-    config,
+    config: effectiveConfig,
     model: input.session.policy.modelId ?? 'default',
     effort: input.session.policy.effort ?? 'medium',
     access: input.session.policy.access,
-    cwd: input.session.policy.cwd,
+    cwd,
     resumeId,
   });
-  const childEnv = codexEnvironment(env, config);
+  const childEnv = codexEnvironment(env, effectiveConfig);
   const child = spawn(executable, args, {
-    cwd: input.session.policy.cwd,
+    cwd,
     env: childEnv,
     shell: false,
     detached: process.platform !== 'win32',
@@ -162,7 +187,10 @@ async function runCodexTurn(
   child.stderr.on('data', (chunk) => append('diagnostics', chunk));
   const abort = () => terminate(child);
   input.signal.addEventListener('abort', abort, { once: true });
-  child.stdin.end([...input.messages.map((message) => message.text), input.prompt].filter(Boolean).join('\n\n'));
+  const prompt = input.messages.length > 0
+    ? input.messages.map((message) => message.text).filter((text): text is string => text !== null).join('\n\n')
+    : input.prompt;
+  child.stdin.end(prompt);
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit, reject) => {
     child.once('error', reject);
     child.once('close', (code, signal) => resolveExit({ code, signal }));
@@ -180,10 +208,11 @@ async function runCodexTurn(
   const adapterSessionId = typeof started?.thread_id === 'string' ? started.thread_id : null;
   const completed = events.find((event) => event.type === 'turn.completed');
   const failed = events.find((event) => event.type === 'turn.failed');
-  const text = events
+  const rawText = events
     .filter((event) => event.type === 'item.completed' && isRecord(event.item) && event.item.type === 'agent_message')
     .map((event) => isRecord(event.item) && typeof event.item.text === 'string' ? event.item.text : '')
     .filter(Boolean).join('\n') || null;
+  const text = rawText === null ? null : truncateUtf8(rawText, MAX_RESULT_TEXT_BYTES);
   const aborted = input.signal.aborted;
   const outcome = aborted ? 'cancelled' : failed || exit.code !== 0 ? 'failed' : completed ? 'succeeded' : 'lost';
   const error = failed && isRecord(failed.error) && typeof failed.error.message === 'string'
@@ -193,7 +222,7 @@ async function runCodexTurn(
   const cumulativeUsage = usageFromEvents(events);
   const usage = usageForTurn(cumulativeUsage, resumeId, adapterSessionId, usageBaselines);
   return {
-    ...result(input, startedAt, now(), outcome, text, error, diagnostics),
+    ...result(input, startedAt, now(), outcome, text, error, diagnostics, rawText !== text),
     ...(adapterSessionId === null ? {} : { adapterSessionId }),
     usage,
   };
@@ -207,6 +236,7 @@ function result(
   text: string | null,
   error: string | null,
   diagnostics: string,
+  partialEvidence = false,
 ): DelegateExecutionResult {
   return {
     version: 1,
@@ -220,7 +250,7 @@ function result(
     durationMs: Math.max(0, endedAt - startedAt),
     text,
     error: error ?? (outcome === 'succeeded' ? null : diagnostics.trim() || null),
-    partialEvidence: outcome !== 'succeeded' && text !== null,
+    partialEvidence: partialEvidence || (outcome !== 'succeeded' && text !== null),
     committedMessageSequence: input.messages.at(-1)?.sequence ?? input.session.messageSequence,
     continuation: outcome === 'succeeded' ? 'available' : 'blocked',
     usage: { state: 'unknown' },
@@ -236,6 +266,13 @@ function usageFromEvents(events: readonly Record<string, unknown>[]): DelegateUs
     return { state: 'unknown' };
   }
   return { state: 'known', inputTokens: usage.input_tokens, outputTokens: usage.output_tokens };
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
+  let end = Math.min(value.length, maxBytes);
+  while (end > 0 && Buffer.byteLength(value.slice(0, end), 'utf8') > maxBytes) end -= 1;
+  return value.slice(0, end);
 }
 
 function usageForTurn(
@@ -292,6 +329,11 @@ function readCodexConfig(env: NodeJS.ProcessEnv, cwd: string): CodexConfigSnapsh
     if (isRecord(provider.auth) && provider.requires_openai_auth !== true && typeof provider.env_key !== 'string') {
       return { providerId, provider, mcpIds: [], skillFiles: [], diagnostic: 'Command-backed provider authentication cannot be reconstructed safely.' };
     }
+    for (const key of ['plugins', 'hooks', 'apps', 'notifications']) {
+      if (isRecord(raw[key]) && Object.keys(raw[key]).length > 0) {
+        return { providerId, provider, mcpIds: [], skillFiles: [], diagnostic: `Codex ${key} configuration cannot be closed safely.` };
+      }
+    }
     const mcp = isRecord(raw.mcp_servers) ? raw.mcp_servers : isRecord(raw.mcp) ? raw.mcp : {};
     const mcpIds = Object.keys(mcp);
     const configuredSkills = isRecord(raw.skills) && Array.isArray(raw.skills.config)
@@ -335,6 +377,22 @@ function discoverSkillFiles(env: NodeJS.ProcessEnv, cwd: string): readonly strin
 function probeVersion(executable: string, env: NodeJS.ProcessEnv): string | null {
   const result = spawnSync(executable, ['--version'], { env, stdio: ['ignore', 'pipe', 'ignore'], timeout: 3_000, encoding: 'utf8' });
   return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function probeCapabilities(executable: string, env: NodeJS.ProcessEnv): { ok: true } | { ok: false; diagnostic: string } {
+  const result = spawnSync(executable, ['features', 'list'], {
+    env,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 3_000,
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) return { ok: false, diagnostic: 'Codex capability probe failed.' };
+  const features = result.stdout.trim().split('\n').map((line) => line.trim().split(/\s+/)[0]);
+  const required = ['skip_host_skill_discovery', 'multi_agent', 'hooks', 'apps', 'browser_use', 'computer_use'];
+  if (required.some((feature) => !features.includes(feature))) {
+    return { ok: false, diagnostic: 'Codex capability controls are not available for the supported Runner.' };
+  }
+  return { ok: true };
 }
 
 function findExecutable(env: NodeJS.ProcessEnv): string | null {

@@ -7,6 +7,7 @@ import {
   CODEX_SUPPORTED_VERSION,
   createCodexCliRunnerAdapter,
   type CodexConfigSnapshot,
+  resolveCodexExecutionCwd,
 } from '../../src/main/agent/delegation/CodexCliRunnerAdapter';
 
 const config: CodexConfigSnapshot = {
@@ -60,6 +61,7 @@ describe('Codex CLI Runner adapter', () => {
     const script = [
       '#!/bin/sh',
       'if [ "$1" = "--version" ]; then echo "codex-cli 0.153.4"; exit 0; fi',
+      'if [ "$1" = "features" ]; then printf "skip_host_skill_discovery\\n multi_agent\\n hooks\\n apps\\n browser_use\\n computer_use\\n"; exit 0; fi',
       'echo \'{"type":"thread.started","thread_id":"01aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa"}\'',
       'echo \'{"type":"item.completed","item":{"type":"agent_message","text":"OK"}}\'',
       'echo \'{"type":"turn.completed","usage":{"input_tokens":4,"output_tokens":2}}\'',
@@ -111,6 +113,7 @@ describe('Codex CLI Runner adapter', () => {
     await writeFile(executable, [
       '#!/bin/sh',
       'if [ "$1" = "--version" ]; then echo "codex-cli 0.153.4"; exit 0; fi',
+      'if [ "$1" = "features" ]; then printf "skip_host_skill_discovery\\n multi_agent\\n hooks\\n apps\\n browser_use\\n computer_use\\n"; exit 0; fi',
       'if [ "$CODEX_FAILURE" = "malformed" ]; then echo not-json; exit 0; fi',
       'sleep 5',
     ].join('\n'));
@@ -134,6 +137,7 @@ describe('Codex CLI Runner adapter', () => {
       const malformed = createCodexCliRunnerAdapter({
         executable, cwd: root, env: { HOME: root, CODEX_HOME: root, PATH: '/usr/bin:/bin', CODEX_FAILURE: 'malformed' },
       });
+      expect(malformed.ready).toBe(true);
       const malformedResult = await malformed.run?.({
         session, turnId: '01dddddd-dddd-7ddd-8ddd-dddddddddddd', prompt: 'hello', messages: [], signal: new AbortController().signal,
       });
@@ -150,6 +154,48 @@ describe('Codex CLI Runner adapter', () => {
       setTimeout(() => controller.abort(), 20);
       const cancelledResult = await running;
       expect(cancelledResult?.outcome).toBe('cancelled');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('uses the managed worktree for workspace-write Sessions', () => {
+    expect(resolveCodexExecutionCwd({
+      sessionId: '01bbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb', ownerThreadId: '01cccccc-cccc-7ccc-8ccc-cccccccccccc',
+      state: 'open', revision: 1, adapterSessionId: null, currentTaskId: null, previousTaskId: null,
+      messageSequence: 0, stopFence: null, lastResume: null, createdAt: 0, updatedAt: 0, closedAt: null,
+      worktree: { kind: 'active', metadata: {
+        sourceCwd: '/tmp/source', path: '/tmp/managed-worktree', branch: 'tenon/test',
+        baseCommit: 'a'.repeat(40), gitCommonDir: '/tmp/source/.git', gitWorktreeDir: '/tmp/managed-worktree/.git',
+        managed: true, removedAt: null,
+      } },
+      policy: {
+        runnerId: 'codex', runnerVersion: CODEX_SUPPORTED_VERSION, modelProvider: 'custom', modelId: 'gpt-5-codex',
+        effort: 'high', profile: 'general', access: 'workspace-write', capabilityCeilingDigest: 'x',
+        schedulingPolicyDigest: 'x', configurationRevision: 'x', cwd: '/tmp/source', worktreePolicy: 'dedicated',
+      },
+    } as never)).toBe('/tmp/managed-worktree');
+  });
+
+  test('does not spawn when already cancelled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-codex-adapter-abort-'));
+    const executable = join(root, 'codex');
+    await writeFile(executable, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "codex-cli 0.153.4"; exit 0; fi\nif [ "$1" = "features" ]; then printf "skip_host_skill_discovery\\n multi_agent\\n hooks\\n apps\\n browser_use\\n computer_use\\n"; exit 0; fi\nexit 99\n', 'utf8');
+    await chmod(executable, 0o700);
+    await writeFile(join(root, 'config.toml'), 'model_provider="custom"\n[model_providers.custom]\nbase_url="https://provider.invalid/v1"\nwire_api="responses"\nrequires_openai_auth=true\n');
+    try {
+      const adapter = createCodexCliRunnerAdapter({ executable, cwd: root, env: { HOME: root, CODEX_HOME: root, PATH: root } });
+      const controller = new AbortController();
+      controller.abort();
+      const result = await adapter.run?.({ session: {
+        sessionId: '01bbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb', ownerThreadId: '01cccccc-cccc-7ccc-8ccc-cccccccccccc',
+        state: 'open', revision: 1, adapterSessionId: null, currentTaskId: null, previousTaskId: null,
+        messageSequence: 0, stopFence: null, lastResume: null, createdAt: 0, updatedAt: 0, closedAt: null,
+        worktree: { kind: 'none' }, policy: { runnerId: 'codex', runnerVersion: CODEX_SUPPORTED_VERSION,
+          modelProvider: 'custom', modelId: 'gpt-5-codex', effort: 'high', profile: 'explore', access: 'read-only',
+          capabilityCeilingDigest: 'x', schedulingPolicyDigest: 'x', configurationRevision: 'x', cwd: root, worktreePolicy: 'none' },
+      } as never, turnId: '01dddddd-dddd-7ddd-8ddd-dddddddddddd', prompt: 'hello', messages: [], signal: controller.signal });
+      expect(result?.outcome).toBe('cancelled');
     } finally {
       await rm(root, { recursive: true, force: true });
     }

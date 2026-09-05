@@ -158,7 +158,10 @@ The Codex CLI Runner starts `codex exec --json` with a closed reconstructed
 provider configuration, `--ignore-user-config`, `--ignore-rules`, and an
 explicit sandbox. It closes native multi-agent, hooks, apps, web search,
 history persistence, MCP, and custom Skills; an extension source that cannot be
-enumerated and disabled leaves the Runner Detected but Not Ready. Provider
+enumerated and disabled leaves the Runner Detected but Not Ready. Readiness also
+requires the installed CLI capability probe to expose the controls used for
+Skill discovery and native extension closure; an exact version string alone is
+not sufficient. Provider
 authentication remains in Codex's own `CODEX_HOME`; Tenon never reads, copies,
 or persists credential contents. A continuation uses `exec resume` with the
 stored thread identity and reasserts the frozen sandbox through `--config
