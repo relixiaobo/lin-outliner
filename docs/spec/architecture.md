@@ -320,6 +320,11 @@ implicitly retries failed startup. A failed parallel branch drains its siblings
 before retry or teardown. Failure of the fixed pre-window essentials still uses
 failed-start rollback and exits.
 
+If the document opens before Agent startup fails, the renderer Thread store clears
+its failed initialization cache. Remounting the dock after Host recovery reloads
+the thread list and restores existing conversations. Pending and successful
+initialization remain shared, so ordinary remounts do not repeat a successful read.
+
 A quit request synchronously closes Outline mutation admission and wins before
 the next awaited startup step may begin. Agent startup applies the same ownership
 check after Thread initialization and around each parallel producer, and records

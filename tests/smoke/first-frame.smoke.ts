@@ -10,11 +10,12 @@ import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
 test.describe('first frame', () => {
   let smoke: SmokeApp;
 
-  test.beforeAll(async () => {
+  // Keep the Electron process and its evaluation handles within one test lifetime.
+  test.beforeEach(async () => {
     smoke = await launchSmokeApp();
   });
 
-  test.afterAll(async () => {
+  test.afterEach(async () => {
     await closeSmokeApp(smoke);
   });
 

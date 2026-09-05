@@ -1,8 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { resolveAgentScratchRoot } from '../../src/main/agent/capabilities/agentLocalRoot';
+import { threadTranscriptRoot } from '../../src/main/agent/thread/ThreadTranscriptArtifact';
 import { closeSmokeApp, launchSmokeApp, REPO_ROOT, type SmokeApp } from './electronApp';
 
 async function workspaceFixture() {
@@ -17,24 +19,30 @@ async function cleanup(smoke: SmokeApp | undefined, userDataDir: string) {
   else await rm(userDataDir, { recursive: true, force: true });
 }
 
-test('the native window paints while the document snapshot read is still blocked', async () => {
-  const fixture = await workspaceFixture();
-  const held = `${fixture.snapshotPath}.held`;
-  await rename(fixture.snapshotPath, held);
-  execFileSync('mkfifo', [fixture.snapshotPath]);
+async function holdFileRead(filePath: string) {
+  const content = await readFile(filePath);
+  const held = `${filePath}.held`;
+  await rename(filePath, held);
+  execFileSync('mkfifo', [filePath]);
   let released = false;
   let release: Promise<void> | undefined;
   const releaseRead = () => release ??= new Promise<void>((resolve, reject) => {
-    const writer = createWriteStream(fixture.snapshotPath);
+    const writer = createWriteStream(filePath);
     writer.on('error', reject);
     writer.on('open', () => {
-      void rename(held, fixture.snapshotPath).then(() => {
+      void rename(held, filePath).then(() => {
         released = true;
-        writer.end(fixture.snapshot);
+        writer.end(content);
       }, reject);
     });
     writer.on('finish', resolve);
   });
+  return { releaseRead, isReleased: () => released };
+}
+
+test('the native window paints while the document snapshot read is still blocked', async () => {
+  const fixture = await workspaceFixture();
+  const { releaseRead, isReleased } = await holdFileRead(fixture.snapshotPath);
   // Also release a regressed build so a failed assertion cannot strand Runtime.
   const deadline = setTimeout(() => { void releaseRead(); }, 12_000);
   let smoke: SmokeApp | undefined;
@@ -44,7 +52,7 @@ test('the native window paints while the document snapshot read is still blocked
     await expect.poll(() => smoke!.app.evaluate(({ BrowserWindow }) => (
       BrowserWindow.getAllWindows().some((window) => /index\.html/.test(window.webContents.getURL()) && window.isVisible())
     ))).toBe(true);
-    expect(released).toBe(false);
+    expect(isReleased()).toBe(false);
     expect(await smoke.window.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'starting' });
     let agentSettled = false;
     const earlyAgent = smoke.window.evaluate(() => window.lin!.agentCoreRequest('thread/list', {}))
@@ -95,6 +103,61 @@ test('a document startup failure persists and Retry recovers in the same window'
     await expect(smoke.window.locator('.workspace-canvas')).toBeVisible({ timeout: 30_000 });
     await expect.poll(() => smoke!.window.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'ready' });
   } finally {
+    await cleanup(smoke, fixture.userDataDir);
+  }
+});
+
+test('Retry restores existing conversations after the document opens before Agent startup fails', async () => {
+  const fixture = await workspaceFixture();
+  let smoke: SmokeApp | undefined;
+  let releaseRead: (() => Promise<void>) | undefined;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    smoke = await launchSmokeApp({ userDataDir: fixture.userDataDir });
+    const existingThreadId = await smoke.window.evaluate(async (cwd) => {
+      const { thread } = await window.lin!.agentCoreRequest('thread/start', {
+        name: 'Recovered conversation', modelProvider: 'openai', cwd,
+      });
+      return thread.id;
+    }, fixture.userDataDir);
+    await closeSmokeApp(smoke, { keepUserData: true });
+    smoke = undefined;
+
+    const transcriptRoot = threadTranscriptRoot(fixture.userDataDir);
+    await mkdir(transcriptRoot, { recursive: true });
+    const exclusionsPath = join(transcriptRoot, 'excluded.txt');
+    await writeFile(exclusionsPath, '');
+    const held = await holdFileRead(exclusionsPath);
+    releaseRead = held.releaseRead;
+    const uploadsPath = join(resolveAgentScratchRoot({ userDataPath: fixture.userDataDir }), 'uploads');
+    await rm(uploadsPath, { recursive: true, force: true });
+    await writeFile(uploadsPath, 'Injected Agent startup conflict');
+    deadline = setTimeout(() => { void held.releaseRead(); }, 20_000);
+
+    smoke = await launchSmokeApp({ userDataDir: fixture.userDataDir });
+    await expect(smoke.window.locator('.workspace-canvas')).toBeVisible();
+    await expect(smoke.window.locator('.thread-empty-copy')).toHaveCount(1);
+    await smoke.window.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(held.isReleased()).toBe(false);
+    expect(await smoke.window.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'starting' });
+    await releaseRead();
+    const failure = smoke.window.locator('.startup-failure');
+    await expect(failure).toContainText('EEXIST');
+    expect(await smoke.window.evaluate(() => window.lin!.startup.get())).toMatchObject({
+      status: 'failed', step: 'agent',
+    });
+
+    await rm(uploadsPath);
+    await failure.getByRole('button', { name: 'Retry', exact: true }).click();
+    await expect.poll(() => smoke!.window.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'ready' });
+    await expect(smoke.window.locator('.workspace-canvas')).toBeVisible();
+    await expect(smoke.window.locator('.thread-dock-title')).toHaveText('Recovered conversation');
+    await expect(smoke.window.locator('.thread-dock-error')).toHaveCount(0);
+    const threads = await smoke.window.evaluate(() => window.lin!.agentCoreRequest('thread/list', {}));
+    expect(threads.data.map((thread) => thread.id)).toContain(existingThreadId);
+  } finally {
+    clearTimeout(deadline);
+    await releaseRead?.();
     await cleanup(smoke, fixture.userDataDir);
   }
 });
