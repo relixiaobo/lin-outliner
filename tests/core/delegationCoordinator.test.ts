@@ -51,6 +51,7 @@ describe('DelegationCoordinator', () => {
 
     await expect(fixture.coordinator.settleFinalReceipt({
       taskId: 'task-run',
+      state: 'succeeded',
       preparedResultDigest: settlement!.preparedResultDigest,
       receiptDigest: digest('final-receipt'),
     })).resolves.toMatchObject({
@@ -121,6 +122,7 @@ describe('DelegationCoordinator', () => {
     const initial = fixture.store.settlementForTask('task-run')!;
     await fixture.coordinator.settleFinalReceipt({
       taskId: 'task-run',
+      state: 'succeeded',
       preparedResultDigest: initial.preparedResultDigest,
       receiptDigest: digest('initial-final-receipt'),
     });
@@ -167,6 +169,7 @@ describe('DelegationCoordinator', () => {
       const settlement = fixture.store.settlementForTask('task-run')!;
       await expect(fixture.coordinator.settleFinalReceipt({
         taskId: 'task-run',
+        state: 'succeeded',
         preparedResultDigest: settlement.preparedResultDigest,
         receiptDigest: digest(`${outcome}-final-receipt`),
       })).resolves.toMatchObject({ outcome: 'committed', result: { outcome } });
@@ -184,6 +187,65 @@ describe('DelegationCoordinator', () => {
       expect(fixture.runtime.active).toBeNull();
     },
   );
+
+  test('blocks queued input when the process receipt fails despite a successful prepared result', async () => {
+    const fixture = coordinatorFixture();
+    fixture.runtime.deliverSteering = false;
+    const running = fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+    await waitUntil(() => fixture.runtime.active !== null);
+    const sending = fixture.coordinator.execute(sendExecution({
+      capabilityId: 'capability-send',
+      taskId: 'task-send',
+      sessionRevision: fixture.store.readSession(SESSION_ID)!.revision,
+      message: 'Do not run after a failed process receipt.',
+    }));
+    await waitUntil(() => fixture.store.readMessage('capability-send')?.state === 'queued');
+
+    fixture.runtime.finish();
+    await running;
+    const settlement = fixture.store.settlementForTask('task-run')!;
+    await expect(fixture.coordinator.settleFinalReceipt({
+      taskId: 'task-run',
+      state: 'timed_out',
+      preparedResultDigest: settlement.preparedResultDigest,
+      receiptDigest: digest('timed-out-final-receipt'),
+    })).resolves.toMatchObject({ outcome: 'blocked' });
+
+    await expect(sending).resolves.toMatchObject({ state: 'blocked', taskId: null });
+    expect(fixture.runtime.active).toBeNull();
+  });
+
+  test('blocks a queued send message when its execution is cancelled', async () => {
+    const fixture = coordinatorFixture();
+    fixture.runtime.deliverSteering = false;
+    const running = fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+    await waitUntil(() => fixture.runtime.active !== null);
+    const controller = new AbortController();
+    const cancelled = fixture.coordinator.execute({
+      ...sendExecution({
+        capabilityId: 'capability-send-cancelled',
+        taskId: 'task-send-cancelled',
+        sessionRevision: fixture.store.readSession(SESSION_ID)!.revision,
+        message: 'This cancelled message must never run.',
+      }),
+      signal: controller.signal,
+    });
+    await waitUntil(() => fixture.store.readMessage('capability-send-cancelled')?.state === 'queued');
+    controller.abort();
+
+    await expect(cancelled).rejects.toThrow('cancelled');
+    expect(fixture.store.readMessage('capability-send-cancelled')).toMatchObject({ state: 'blocked' });
+    fixture.runtime.finish();
+    await running;
+    const settlement = fixture.store.settlementForTask('task-run')!;
+    await fixture.coordinator.settleFinalReceipt({
+      taskId: 'task-run',
+      state: 'succeeded',
+      preparedResultDigest: settlement.preparedResultDigest,
+      receiptDigest: digest('cancelled-send-final-receipt'),
+    });
+    expect(fixture.store.queuedMessages(SESSION_ID)).toEqual([]);
+  });
 
   test('does not redeliver accepted steering while unrelated Session changes wake the sender', async () => {
     const fixture = coordinatorFixture();
@@ -213,6 +275,7 @@ describe('DelegationCoordinator', () => {
     const initial = fixture.store.settlementForTask('task-run')!;
     await fixture.coordinator.settleFinalReceipt({
       taskId: 'task-run',
+      state: 'succeeded',
       preparedResultDigest: initial.preparedResultDigest,
       receiptDigest: digest('initial-final-receipt'),
     });
@@ -252,6 +315,7 @@ describe('DelegationCoordinator', () => {
     const settlement = fixture.store.settlementForTask('task-run')!;
     await fixture.coordinator.settleFinalReceipt({
       taskId: 'task-run',
+      state: 'succeeded',
       preparedResultDigest: settlement.preparedResultDigest,
       receiptDigest: digest('final-receipt'),
     });
@@ -309,6 +373,7 @@ describe('DelegationCoordinator', () => {
     fixture.runtime.failCommit = false;
     await fixture.coordinator.settleFinalReceipt({
       taskId: 'task-run',
+      state: 'succeeded',
       preparedResultDigest: prepared.preparedResultDigest,
       receiptDigest: digest('final-receipt'),
     });
@@ -328,6 +393,7 @@ describe('DelegationCoordinator', () => {
 
     await expect(fixture.coordinator.settleFinalReceipt({
       taskId: 'task-run',
+      state: 'succeeded',
       preparedResultDigest: null,
       receiptDigest: digest('final-receipt'),
     })).resolves.toMatchObject({
@@ -353,6 +419,7 @@ describe('DelegationCoordinator', () => {
 
     await fixture.coordinator.settleFinalReceipt({
       taskId: 'task-run',
+      state: 'succeeded',
       preparedResultDigest: null,
       receiptDigest: digest('failed-final-receipt'),
     });
@@ -381,6 +448,7 @@ describe('DelegationCoordinator', () => {
     const settlement = fixture.store.settlementForTask('task-run')!;
     const committed = await fixture.coordinator.settleFinalReceipt({
       taskId: 'task-run',
+      state: 'succeeded',
       preparedResultDigest: settlement.preparedResultDigest,
       receiptDigest: digest('final-receipt'),
     });
@@ -411,6 +479,7 @@ describe('DelegationCoordinator', () => {
     const settlement = fixture.store.settlementForTask('task-run')!;
     await fixture.coordinator.settleFinalReceipt({
       taskId: 'task-run',
+      state: 'succeeded',
       preparedResultDigest: settlement.preparedResultDigest,
       receiptDigest: digest('final-receipt'),
     });
@@ -718,10 +787,11 @@ function execution(input: {
   command: DelegateStateCommand;
   payload: unknown;
   session: DelegateCapabilityExecution['admission']['session'];
+  signal?: AbortSignal;
 }): DelegateCapabilityExecution {
   return {
     capabilityId: input.capabilityId,
-    signal: new AbortController().signal,
+    signal: input.signal ?? new AbortController().signal,
     admission: {
       toolTaskId: input.taskId,
       toolTaskNonce: `nonce-${input.taskId}`,

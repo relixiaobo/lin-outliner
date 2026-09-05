@@ -11,7 +11,7 @@ import {
   type DelegateMessageReceipt,
 } from '../../../delegate/contract';
 import { uuidV7 } from '../uuid';
-import type { ToolTaskProducerReconciliation } from '../tasks/toolTaskTypes';
+import type { ToolTaskFinalReceipt, ToolTaskProducerReconciliation } from '../tasks/toolTaskTypes';
 import {
   DelegateCapabilityRefusal,
   type DelegateCapabilityExecution,
@@ -69,6 +69,7 @@ export interface DelegationPreparedResultStore {
 
 export interface DelegationFinalReceiptEvidence {
   readonly taskId: string;
+  readonly state: ToolTaskFinalReceipt['state'];
   readonly preparedResultDigest: string | null;
   readonly receiptDigest: string;
 }
@@ -262,6 +263,16 @@ export class DelegationCoordinator {
     return this.gates.run(initial.sessionId, async () => {
       let settlement = this.options.store.settlementForTask(evidence.taskId);
       if (!settlement) return { outcome: 'unrelated' } as const;
+      if (evidence.state !== 'succeeded') {
+        const blocked = this.options.store.blockSettlement(
+          settlement.settlementId,
+          `Delegation Tool Task finished with ${evidence.state}`,
+          this.now(),
+        );
+        this.options.store.releaseExecution(settlement.sessionId, evidence.taskId, this.now());
+        this.notifySession(settlement.sessionId);
+        return { outcome: 'blocked', reason: blocked.blockedReason! } as const;
+      }
       if (!evidence.preparedResultDigest) {
         const blocked = this.options.store.blockSettlement(
           settlement.settlementId,
@@ -362,7 +373,10 @@ export class DelegationCoordinator {
     let messageAdmitted = false;
     let steeringTaskId: string | null = null;
     while (true) {
-      if (execution.signal.aborted) throw unavailable('Delegate message execution was cancelled.');
+      if (execution.signal.aborted) {
+        await this.blockCancelledMessage(execution);
+        throw unavailable('Delegate message execution was cancelled.');
+      }
       const step = await this.gates.run(sessionBinding.sessionId, async () => {
         let session = this.requireOwnedSession(execution);
         if (!messageAdmitted) {
@@ -425,6 +439,22 @@ export class DelegationCoordinator {
       if (step.kind === 'turn') return this.executePreparedTurn(step.value);
       await step.value;
     }
+  }
+
+  private async blockCancelledMessage(execution: DelegateCapabilityExecution): Promise<void> {
+    if (execution.admission.session.kind !== 'send') return;
+    const sessionId = execution.admission.session.sessionId;
+    await this.gates.run(sessionId, async () => {
+      const session = this.options.store.readSession(sessionId);
+      if (!session || session.ownerThreadId !== execution.admission.source.rootThreadId) return;
+      this.options.store.blockQueuedMessagesForSourceTask(
+        session.sessionId,
+        execution.admission.toolTaskId,
+        'Delegation message was blocked because its send was cancelled',
+        this.now(),
+      );
+    });
+    this.notifySession(sessionId);
   }
 
   private async close(execution: DelegateCapabilityExecution): Promise<DelegateCloseReceipt> {

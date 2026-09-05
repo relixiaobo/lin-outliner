@@ -538,10 +538,15 @@ describe('ToolTaskService', () => {
 
   test('stops the owned process group and preserves the first terminal race result', async () => {
     const fixture = await createFixture();
-    const service = await createService(fixture, passiveHost());
+    let observedSourceTurnId: string | undefined;
+    const service = await createService(fixture, {
+      ...passiveHost(),
+      beforeStop: async (_task, sourceTurnId) => { observedSourceTurnId = sourceTurnId; },
+    });
     const started = await startHidden(service, 'sleep 30 & wait');
     const stopped = await service.stop(started.taskId, OWNER_ID);
     expect(stopped?.state).toBe('cancelled');
+    expect(observedSourceTurnId).toBe(SOURCE_TURN_ID);
     const childPid = fixture.store.read(started.taskId)?.childPid;
     expect(childPid).not.toBeNull();
     if (childPid && process.platform !== 'win32') {

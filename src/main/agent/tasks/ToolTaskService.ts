@@ -549,7 +549,7 @@ export class ToolTaskService {
     let task = this.store.owned(taskId, ownerThreadId);
     if (!task) return null;
     if (isToolTaskTerminal(task.state)) return task;
-    await this.host?.beforeStop?.(task, sourceTurnId);
+    await this.host?.beforeStop?.(task, sourceTurnId ?? task.sourceTurnId);
     if (this.store.readLease(taskId)?.state === 'queued') {
       return this.settleWithoutProcess(task, 'cancelled', 'user_stop', null);
     }

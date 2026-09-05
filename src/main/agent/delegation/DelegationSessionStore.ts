@@ -846,6 +846,20 @@ export class DelegationSessionStore {
     `).run(reason, now, sessionId);
   }
 
+  blockQueuedMessagesForSourceTask(
+    sessionId: ThreadId,
+    sourceTaskId: string,
+    reason: string,
+    now: number,
+  ): number {
+    if (!sourceTaskId || !reason) throw new DelegationStateError('invalid', 'Delegation message block requires identity and reason');
+    return this.transaction(() => Number(this.db.prepare(`
+      UPDATE delegation_root_messages
+      SET body = NULL, state = 'blocked', blocked_reason = ?, updated_at = ?
+      WHERE session_id = ? AND source_task_id = ? AND state = 'queued'
+    `).run(reason, now, sessionId, sourceTaskId).changes));
+  }
+
   private blockedSettlementForSession(sessionId: ThreadId): DelegationExecutionSettlement | null {
     const row = this.db.prepare(`
       SELECT * FROM delegation_execution_settlements

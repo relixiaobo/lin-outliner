@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
@@ -37,6 +38,27 @@ afterEach(async () => {
 });
 
 describe('Delegate capability broker', () => {
+  test('recovers a stale Unix socket after an abrupt broker termination', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'delegate-broker-crash-'));
+    roots.push(root);
+    const socketPath = path.join(root, 'broker.sock');
+    const child = spawn(process.execPath, ['-e', [
+      "const net = require('node:net');",
+      `net.createServer().listen(${JSON.stringify(socketPath)});`,
+    ].join('')], { stdio: 'ignore' });
+    await waitUntil(() => existsSync(socketPath));
+    child.kill('SIGKILL');
+    await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+
+    const broker = new DelegateCapabilityBroker({
+      socketPath,
+      currentConfigurationRevision: () => 'revision-1',
+      execute: async () => ({ ok: true }),
+    });
+    await expect(broker.start()).resolves.toBeUndefined();
+    await broker.stop();
+  });
+
   test('builds one source direct process and binds its allocated Tool Task identity', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'delegate-runtime-host-'));
     roots.push(root);

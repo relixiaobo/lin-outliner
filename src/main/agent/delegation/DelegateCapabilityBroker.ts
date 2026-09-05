@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { chmod, lstat, mkdir, rm } from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
+import { createConnection } from 'node:net';
 import type { Socket } from 'node:net';
 import {
   canonicalDelegateCommand,
@@ -123,7 +124,15 @@ export class DelegateCapabilityBroker {
       if (isErrorCode(error, 'ENOENT')) return null;
       throw error;
     });
-    if (existing) throw new Error(`Delegate capability broker socket already exists: ${this.options.socketPath}`);
+    if (existing) {
+      if (!existing.isSocket()) {
+        throw new Error(`Delegate capability broker path is not a socket: ${this.options.socketPath}`);
+      }
+      if (await unixSocketIsLive(this.options.socketPath)) {
+        throw new Error(`Delegate capability broker socket already exists: ${this.options.socketPath}`);
+      }
+      await rm(this.options.socketPath, { force: false });
+    }
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
         this.server.off('listening', onListening);
@@ -405,6 +414,22 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
 
 function isErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && 'code' in error && error.code === code;
+}
+
+async function unixSocketIsLive(socketPath: string): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(socketPath);
+    const finish = (live: boolean, error?: Error) => {
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(live);
+    };
+    socket.once('connect', () => finish(true));
+    socket.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ECONNREFUSED' || error.code === 'ENOENT') finish(false);
+      else finish(false, error);
+    });
+  });
 }
 
 function errorMessage(error: unknown): string {

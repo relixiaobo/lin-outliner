@@ -573,6 +573,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         }
         return delegationTaskReconciliation(await coordinator.settleFinalReceipt({
           taskId: task.taskId,
+          state: receipt.state,
           preparedResultDigest: receipt.preparedResultDigest,
           receiptDigest: receipt.receiptDigest,
         }));
@@ -583,14 +584,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
         if (!coordinator) throw new Error('Delegation coordinator is unavailable.');
         if (!sourceTurnId) throw new Error('Delegated Tool Task stop requires its source root Turn.');
         const source = this.delegationAdmissionContext(task.ownerThreadId, sourceTurnId);
-        if (source.rootUserIntentRevision === null) {
+        const currentRootIntentRevision = this.currentRootUserIntentRevision(task.ownerThreadId);
+        if (source.rootUserIntentRevision === null || currentRootIntentRevision === null) {
           throw new Error('Delegated Tool Task stop requires a user-authored root Turn.');
         }
         await coordinator.fenceUserStop({
           taskId: task.taskId,
           ownerThreadId: task.ownerThreadId,
           stoppedByRootTurnId: sourceTurnId,
-          currentRootIntentRevision: source.rootUserIntentRevision,
+          currentRootIntentRevision,
         });
       },
       startCompletionTurn: async (input) => Boolean(await this.turnLifecycle.tryStartTurnIfIdle({
@@ -1054,6 +1056,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const rootUserIntentRevision = turns.slice(0, sourceIndex + 1)
       .filter((turn) => turn.provenance.trigger.kind === 'user').length || null;
     return { thread: record.thread, configuration: record.configuration, rootUserIntentRevision };
+  }
+
+  currentRootUserIntentRevision(threadId: ThreadId): number | null {
+    const record = this.core.requireThread(threadId);
+    if (record.archived || record.thread.parentThreadId !== null || record.thread.threadSource !== 'user') {
+      throw new Error('Delegation may be stopped only by an active root Thread.');
+    }
+    const revision = this.core.allTurns(threadId)
+      .filter((turn) => turn.provenance.trigger.kind === 'user').length;
+    return revision || null;
   }
   async ensureDelegationThread(session: DelegationSessionBinding): Promise<Thread> {
     const cwd = delegationSessionCwd(session);
