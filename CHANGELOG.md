@@ -553,6 +553,16 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Fixed
 
+- **Renderer interaction chrome now batches scroll work (PR #630, codex-2)** -
+  anchored overlays coalesce geometry updates per animation frame and ignore
+  unrelated scroll targets; virtualized Flat/Table outliners share one capture
+  dispatcher, panel title docking uses its existing frame scheduler, and the
+  workspace keyboard listener remains stable across projection updates. This
+  completes PR-1 of the `interaction-jank-cleanups` plan; definition caches,
+  preview translation geometry, and Runtime index reuse remain separate units.
+  Verified with typecheck, `docs:check`, 1,524 renderer tests, and whitespace
+  checks; the non-gating five-sample GitHub E2E signal was queued at merge.
+
 - **The desktop window appears before service startup (PR #629, codex-2)** -
   large workspaces now show the native window while document, provider, Agent,
   and search services initialize behind their owning readiness boundaries.
