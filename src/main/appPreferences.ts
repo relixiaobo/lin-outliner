@@ -91,6 +91,10 @@ export function saveLanguagePreference(language: Locale): void {
   updateFilePreferences(app.getPath('userData'), [{ path: ['appearance', 'language'], value: language }]);
 }
 
+export function saveAutomaticChecksPreference(enabled: boolean): void {
+  updateFilePreferences(app.getPath('userData'), [{ path: ['updates', 'checkAutomatically'], value: enabled }]);
+}
+
 export function saveTranslationLanguagePreference(translationLanguage: TranslationLanguage): void {
   savePreferences({ translationLanguage });
 }

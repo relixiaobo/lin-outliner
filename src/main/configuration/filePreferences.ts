@@ -45,6 +45,7 @@ export interface FilePreferencesLoadResult {
   readonly sourceBytes: string | null;
   readonly sourceDigest: string | null;
   readonly acceptedDigest: string | null;
+  readonly recoveryError: string | null;
   readonly preferences: FilePreferences;
   readonly error: string | null;
 }
@@ -86,23 +87,28 @@ export function loadFilePreferences(userDataDir: string): FilePreferencesLoadRes
   } catch (error) {
     if (isNotFoundError(error)) {
       const recovery = readRecovery(userDataDir);
-      return result(path, 'missing', null, DEFAULT_FILE_PREFERENCES, null, recovery.sourceDigest);
+      return result(path, 'missing', null, DEFAULT_FILE_PREFERENCES, null, recovery.sourceDigest, recovery.error);
     }
     const recovery = readRecovery(userDataDir);
-    return result(path, 'rejected', null, recovery.preferences, errorMessage(error), recovery.sourceDigest);
+    return result(path, 'rejected', null, recovery.preferences, errorMessage(error), recovery.sourceDigest, recovery.error);
   }
   if (Buffer.byteLength(sourceBytes, 'utf8') > MAX_FILE_PREFERENCES_BYTES) {
     const recovery = readRecovery(userDataDir);
-    return result(path, 'rejected', sourceBytes, recovery.preferences, `Source exceeds ${MAX_FILE_PREFERENCES_BYTES} bytes`, recovery.sourceDigest);
+    return result(path, 'rejected', sourceBytes, recovery.preferences, `Source exceeds ${MAX_FILE_PREFERENCES_BYTES} bytes`, recovery.sourceDigest, recovery.error);
   }
   try {
     const parsed = parseJsonc(sourceBytes);
     const preferences = decodeFilePreferences(parsed);
-    writeRecovery(userDataDir, sourceBytes, preferences);
-    return result(path, 'accepted', sourceBytes, preferences, null, digest(sourceBytes));
+    let recoveryError: string | null = null;
+    try {
+      writeRecovery(userDataDir, sourceBytes, preferences);
+    } catch (error) {
+      recoveryError = errorMessage(error);
+    }
+    return result(path, 'accepted', sourceBytes, preferences, null, digest(sourceBytes), recoveryError);
   } catch (error) {
     const recovery = readRecovery(userDataDir);
-    return result(path, 'rejected', sourceBytes, recovery.preferences, errorMessage(error), recovery.sourceDigest);
+    return result(path, 'rejected', sourceBytes, recovery.preferences, errorMessage(error), recovery.sourceDigest, recovery.error);
   }
 }
 
@@ -221,6 +227,7 @@ function result(
   preferences: FilePreferences,
   error: string | null,
   acceptedDigest: string | null = null,
+  recoveryError: string | null = null,
 ): FilePreferencesLoadResult {
   return Object.freeze({
     path,
@@ -228,6 +235,7 @@ function result(
     sourceBytes,
     sourceDigest: sourceBytes === null ? null : digest(sourceBytes),
     acceptedDigest,
+    recoveryError,
     preferences,
     error,
   });
@@ -314,15 +322,19 @@ function recoveryPath(userDataDir: string): string {
   return join(userDataDir, RECOVERY_FILE);
 }
 
-function readRecovery(userDataDir: string): { readonly preferences: FilePreferences; readonly sourceDigest: string | null } {
+function readRecovery(userDataDir: string): {
+  readonly preferences: FilePreferences;
+  readonly sourceDigest: string | null;
+  readonly error: string | null;
+} {
   try {
     const raw = JSON.parse(readFileSync(recoveryPath(userDataDir), 'utf8')) as Record<string, unknown>;
     if (typeof raw.sourceBytes !== 'string' || Buffer.byteLength(raw.sourceBytes, 'utf8') > MAX_FILE_PREFERENCES_BYTES) {
-      return { preferences: DEFAULT_FILE_PREFERENCES, sourceDigest: null };
+      return { preferences: DEFAULT_FILE_PREFERENCES, sourceDigest: null, error: 'Recovery source exceeds the settings size limit' };
     }
-    return { preferences: decodeFilePreferences(parseJsonc(raw.sourceBytes)), sourceDigest: digest(raw.sourceBytes) };
-  } catch {
-    return { preferences: DEFAULT_FILE_PREFERENCES, sourceDigest: null };
+    return { preferences: decodeFilePreferences(parseJsonc(raw.sourceBytes)), sourceDigest: digest(raw.sourceBytes), error: null };
+  } catch (error) {
+    return { preferences: DEFAULT_FILE_PREFERENCES, sourceDigest: null, error: errorMessage(error) };
   }
 }
 

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { writeJsonFileSync } from '../jsonFileStore';
-import type { FilePreferencesLoadResult } from './filePreferences';
+import { DEFAULT_FILE_PREFERENCES, type FilePreferences, type FilePreferencesLoadResult } from './filePreferences';
 
 export const FILE_PREFERENCES_STATUS_RELATIVE_PATH = join('config', 'status.json');
 
@@ -13,6 +13,11 @@ export interface FilePreferencesStatus {
     readonly status: FilePreferencesLoadResult['sourceStatus'];
     readonly observedDigest: string | null;
     readonly acceptedDigest: string | null;
+    readonly error: string | null;
+    readonly recoveryError: string | null;
+  };
+  readonly application: {
+    readonly status: 'pending' | 'applied' | 'failed';
     readonly error: string | null;
   };
   readonly effective: {
@@ -29,7 +34,13 @@ export function writeFilePreferencesStatus(
   userDataDir: string,
   hostSessionId: string,
   loaded: FilePreferencesLoadResult,
+  options: {
+    readonly effective?: FilePreferences;
+    readonly applicationStatus?: FilePreferencesStatus['application']['status'];
+    readonly applicationError?: string | null;
+  } = {},
 ): FilePreferencesStatus {
+  const effective = options.effective ?? DEFAULT_FILE_PREFERENCES;
   const status: FilePreferencesStatus = Object.freeze({
     schemaVersion: 1,
     hostSessionId,
@@ -40,13 +51,18 @@ export function writeFilePreferencesStatus(
       observedDigest: loaded.sourceDigest,
       acceptedDigest: loaded.acceptedDigest,
       error: loaded.error,
+      recoveryError: loaded.recoveryError,
+    },
+    application: {
+      status: options.applicationStatus ?? (loaded.sourceStatus === 'rejected' ? 'failed' : 'pending'),
+      error: options.applicationError ?? (loaded.sourceStatus === 'rejected' ? loaded.error : null),
     },
     effective: {
-      appearance: loaded.preferences.appearance,
+      appearance: effective.appearance,
       agent: {
-        memoryEnabled: loaded.preferences.agent.memory.enabled,
-        disabledSkills: loaded.preferences.agent.skills.disabled,
-        disabledTools: loaded.preferences.agent.tools.disabled,
+        memoryEnabled: effective.agent.memory.enabled,
+        disabledSkills: effective.agent.skills.disabled,
+        disabledTools: effective.agent.tools.disabled,
       },
     },
   });

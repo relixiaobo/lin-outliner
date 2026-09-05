@@ -157,7 +157,7 @@ import {
   loadAppPreferences,
   saveLastAgentThreadConfiguration,
 } from './appPreferences';
-import { loadFilePreferences } from './configuration/filePreferences';
+import { DEFAULT_FILE_PREFERENCES, loadFilePreferences } from './configuration/filePreferences';
 import { writeFilePreferencesStatus } from './configuration/status';
 import { writeFilePreferencesSchema } from './configuration/schema';
 import type { ThemeMode } from '../core/theme';
@@ -345,14 +345,27 @@ function startFilePreferencesWatcher(): void {
   writeFilePreferencesSchema(resolvedUserDataDir);
   let timer: ReturnType<typeof setTimeout> | null = null;
   let applying = false;
+  let pendingApply = false;
+  let effectivePreferences = DEFAULT_FILE_PREFERENCES;
   const apply = () => {
-    if (applying) return;
+    if (applying) {
+      pendingApply = true;
+      return;
+    }
     applying = true;
     timer = null;
     const loaded = loadFilePreferences(resolvedUserDataDir);
-    writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded);
+    writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
+      effective: effectivePreferences,
+      applicationStatus: loaded.sourceStatus === 'rejected' ? 'failed' : 'pending',
+      applicationError: loaded.sourceStatus === 'rejected' ? loaded.error : loaded.recoveryError,
+    });
     if (loaded.sourceStatus === 'rejected') {
       applying = false;
+      if (pendingApply) {
+        pendingApply = false;
+        queueMicrotask(apply);
+      }
       return;
     }
     const { appearance } = loaded.preferences;
@@ -371,8 +384,24 @@ function startFilePreferencesWatcher(): void {
         return current.status.featureMode === mode ? undefined : agentHost.memory.setFeatureMode(mode);
       }),
       windowApplicationHost.updates.applyAutomaticChecksEnabled(loaded.preferences.updates.checkAutomatically),
-    ]).catch(() => undefined).finally(() => {
+    ]).then(() => {
+      effectivePreferences = loaded.preferences;
+      writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
+        effective: effectivePreferences,
+        applicationStatus: 'applied',
+      });
+    }).catch((error) => {
+      writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
+        effective: effectivePreferences,
+        applicationStatus: 'failed',
+        applicationError: error instanceof Error ? error.message : String(error),
+      });
+    }).finally(() => {
       applying = false;
+      if (pendingApply) {
+        pendingApply = false;
+        queueMicrotask(apply);
+      }
     });
   };
   applyFilePreferencesNow = apply;
@@ -381,11 +410,12 @@ function startFilePreferencesWatcher(): void {
     if (timer !== null) clearTimeout(timer);
     timer = setTimeout(apply, 100);
   });
-  writeFilePreferencesStatus(
-    resolvedUserDataDir,
-    hostSessionId,
-    loadFilePreferences(resolvedUserDataDir),
-  );
+  const initial = loadFilePreferences(resolvedUserDataDir);
+  writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, initial, {
+    effective: effectivePreferences,
+    applicationStatus: initial.sourceStatus === 'rejected' ? 'failed' : 'pending',
+    applicationError: initial.sourceStatus === 'rejected' ? initial.error : initial.recoveryError,
+  });
   resources.defer('file-preferences-watcher', () => {
     watcher.close();
     if (timer !== null) clearTimeout(timer);

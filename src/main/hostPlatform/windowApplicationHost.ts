@@ -74,6 +74,7 @@ import { ActionInvocationService, type RendererStepAck } from '../actionInvocati
 import {
   loadAppPreferences,
   saveLanguagePreference,
+  saveAutomaticChecksPreference,
   saveThemePreference,
   saveTranslationLanguagePreference,
   saveUrlPageTranslationPreferences,
@@ -798,7 +799,10 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       view: () => appUpdateService.view(),
       checkExplicitly: () => appUpdateService.checkExplicitly(),
       checkInBackground: () => appUpdateService.checkInBackground(),
-      setAutomaticChecksEnabled: (enabled) => appUpdateService.setAutomaticChecksEnabled(enabled),
+      setAutomaticChecksEnabled: async (enabled) => {
+        saveAutomaticChecksPreference(enabled);
+        return appUpdateService.applyAutomaticChecksEnabled(enabled);
+      },
       applyAutomaticChecksEnabled: (enabled) => appUpdateService.applyAutomaticChecksEnabled(enabled),
       openAvailableUpdate: () => appUpdateService.openAvailableUpdate(),
     },
