@@ -209,10 +209,63 @@ describe('DelegationCoordinator', () => {
       state: 'timed_out',
       preparedResultDigest: settlement.preparedResultDigest,
       receiptDigest: digest('timed-out-final-receipt'),
-    })).resolves.toMatchObject({ outcome: 'blocked' });
+    })).resolves.toMatchObject({ outcome: 'committed' });
 
     await expect(sending).resolves.toMatchObject({ state: 'blocked', taskId: null });
     expect(fixture.runtime.active).toBeNull();
+
+    fixture.runtime.immediate = true;
+    fixture.runtime.outcome = 'succeeded';
+    const continuation = await fixture.coordinator.execute(sendExecution({
+      capabilityId: 'capability-send-after-failure',
+      taskId: 'task-send-after-failure',
+      sessionRevision: fixture.store.readSession(SESSION_ID)!.revision,
+      message: 'Continue only after an explicit fresh request.',
+    }));
+    expect(continuation).toMatchObject({
+      kind: 'delegate.execution-result',
+      outcome: 'succeeded',
+    });
+  });
+
+  test('allows a fresh explicit send after a fenced non-success process receipt', async () => {
+    const fixture = coordinatorFixture();
+    const running = fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+    await waitUntil(() => fixture.runtime.active !== null);
+    const session = fixture.store.readSession(SESSION_ID)!;
+    await fixture.coordinator.fenceUserStop({
+      taskId: 'task-run',
+      ownerThreadId: OWNER_ID,
+      stoppedByRootTurnId: ROOT_TURN_ID,
+      currentRootIntentRevision: 1,
+    });
+
+    fixture.runtime.outcome = 'cancelled';
+    fixture.runtime.finish();
+    await running;
+    const settlement = fixture.store.settlementForTask('task-run')!;
+    await expect(fixture.coordinator.settleFinalReceipt({
+      taskId: 'task-run',
+      state: 'cancelled',
+      preparedResultDigest: settlement.preparedResultDigest,
+      receiptDigest: digest('fenced-cancelled-final-receipt'),
+    })).resolves.toMatchObject({ outcome: 'committed' });
+
+    fixture.runtime.immediate = true;
+    fixture.runtime.outcome = 'succeeded';
+    const continuation = await fixture.coordinator.execute(sendExecution({
+      capabilityId: 'capability-send-after-stop',
+      taskId: 'task-send-after-stop',
+      sessionRevision: fixture.store.readSession(SESSION_ID)!.revision,
+      rootIntentRevision: 2,
+      message: 'Continue after the user explicitly resumed the Session.',
+    }));
+    expect(continuation).toMatchObject({
+      kind: 'delegate.execution-result',
+      outcome: 'succeeded',
+    });
+    expect(fixture.store.readSession(SESSION_ID)?.stopFence).toBeNull();
+    expect(fixture.store.readSession(SESSION_ID)?.revision).toBeGreaterThan(session.revision);
   });
 
   test('blocks a queued send message when its execution is cancelled', async () => {
@@ -752,6 +805,7 @@ function sendExecution(input: {
   taskId: string;
   sessionRevision: number;
   message: string;
+  rootIntentRevision?: number;
 }): DelegateCapabilityExecution {
   return execution({
     capabilityId: input.capabilityId,
@@ -766,6 +820,7 @@ function sendExecution(input: {
       sessionRevision: input.sessionRevision,
       minimumResumeRevision: null,
     },
+    rootIntentRevision: input.rootIntentRevision,
   });
 }
 
@@ -788,6 +843,7 @@ function execution(input: {
   payload: unknown;
   session: DelegateCapabilityExecution['admission']['session'];
   signal?: AbortSignal;
+  rootIntentRevision?: number;
 }): DelegateCapabilityExecution {
   return {
     capabilityId: input.capabilityId,
@@ -803,7 +859,7 @@ function execution(input: {
         rootThreadId: OWNER_ID,
         sourceTurnId: ROOT_TURN_ID,
         sourceItemId: `item-${input.capabilityId}`,
-        rootUserIntentRevision: 1,
+        rootUserIntentRevision: input.rootIntentRevision ?? 1,
       },
       policy: {
         configurationRevision: 'configuration-1',

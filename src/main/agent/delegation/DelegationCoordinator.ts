@@ -263,16 +263,6 @@ export class DelegationCoordinator {
     return this.gates.run(initial.sessionId, async () => {
       let settlement = this.options.store.settlementForTask(evidence.taskId);
       if (!settlement) return { outcome: 'unrelated' } as const;
-      if (evidence.state !== 'succeeded') {
-        const blocked = this.options.store.blockSettlement(
-          settlement.settlementId,
-          `Delegation Tool Task finished with ${evidence.state}`,
-          this.now(),
-        );
-        this.options.store.releaseExecution(settlement.sessionId, evidence.taskId, this.now());
-        this.notifySession(settlement.sessionId);
-        return { outcome: 'blocked', reason: blocked.blockedReason! } as const;
-      }
       if (!evidence.preparedResultDigest) {
         const blocked = this.options.store.blockSettlement(
           settlement.settlementId,
@@ -319,7 +309,8 @@ export class DelegationCoordinator {
           now: this.now(),
         });
       }
-      if (reconciled.state !== 'blocked' && result.outcome !== 'succeeded') {
+      if (reconciled.state !== 'blocked'
+        && (result.outcome !== 'succeeded' || evidence.state !== 'succeeded')) {
         const session = this.options.store.readSession(settlement.sessionId);
         if (session) {
           this.options.store.blockQueuedMessages(
