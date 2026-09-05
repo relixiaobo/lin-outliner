@@ -12,6 +12,8 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **File-backed preferences and the configuration Skill now ship (PR #636)** - `config/settings.jsonc` is the public JSONC source for the delivered preference fields, with a generated schema, bounded status, last-known-good recovery, atomic comment-preserving writes, and live Host application. Skill/tool availability, Memory enablement, appearance, provider runtime limits, and automatic update checks use their owning consumers; the built-in configuration Skill reports accepted/effective/pending/rejected outcomes. Verified with typecheck, `docs:check`, focused configuration/runtime tests, whitespace checks, and five E2E signal samples.
+
 - **Renderer icons now follow semantic object, action, and tool meaning (PR
   #631)** — the app uses a shared Iconoir presentation layer for actions,
   launcher and picker surfaces, attachments, previews, and agent tools. Tool

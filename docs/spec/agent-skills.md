@@ -270,11 +270,16 @@ Final Agent answers link an ordinary persisted `node:UUID` as
 `[[node://UUID]]`, removing the internal prefix.
 ## Settings
 
-Agent settings control additional directories and disabled Skill identities.
-Changes apply to newly assembled tool catalogs and to active per-Turn Skill
-runtimes through a catalog refresh. Undo also reloads the restored bytes and
-appends a catalog delta before the next provider request when the content hash
-changed. Settings never rewrite Thread history.
+Agent settings control additional directories and disabled Skill identities. The
+delivered public source is `config/settings.jsonc`, with a generated
+`settings.schema.json` and bounded `status.json` beside it. The Host validates
+JSONC (including duplicate-key rejection), preserves source text on rejected
+edits, records a private last-known-good snapshot, and applies accepted or
+recovered values through the owning runtime. Changes apply to newly assembled
+tool catalogs and to active per-Turn Skill runtimes through a catalog refresh.
+Undo also reloads the restored bytes and appends a catalog delta before the next
+provider request when the content hash changed. Settings never rewrite Thread
+history.
 
 ### The Skill library
 
