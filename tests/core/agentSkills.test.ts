@@ -347,88 +347,6 @@ describe('skill provenance and undo', () => {
 });
 
 describe('agent skills', () => {
-  test('does not resolve Role-preloaded Skills when the skill tool is unavailable', async () => {
-    let runtimeReads = 0;
-    const runtime = {
-      getSkill: async () => {
-        runtimeReads += 1;
-        throw new Error('preload runtime must remain unreachable');
-      },
-    } as unknown as AgentSkillRuntime;
-
-    const resolved = await resolvePreloadedSkillInvocations(runtime, ['deploy'], 42, false);
-
-    expect(runtimeReads).toBe(0);
-    expect(resolved.invocations).toEqual([]);
-    expect(resolved.diagnostics).toEqual([
-      'Role-preloaded Skills were skipped because the skill tool is unavailable.',
-    ]);
-  });
-
-  test('preloads explicit inline Skills in Role order and degrades unavailable entries', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-preload-'));
-    await createSkillInRoot(root, 'alpha', {
-      frontmatter: ['description: Alpha preload'],
-      body: 'ALPHA ROLE PRELOAD BODY',
-    });
-    await createSkillInRoot(root, 'beta', {
-      frontmatter: ['description: Beta preload'],
-      body: 'BETA ROLE PRELOAD BODY',
-    });
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      enabledSkills: ['alpha', 'beta', 'missing'],
-    });
-
-    const resolved = await resolvePreloadedSkillInvocations(
-      runtime,
-      ['beta', 'missing', 'alpha'],
-      42,
-    );
-
-    expect(resolved.invocations.map((invocation) => invocation.name)).toEqual(['beta', 'alpha']);
-    expect(resolved.invocations.map((invocation) => invocation.invocationSource)).toEqual(['runtime', 'runtime']);
-    expect(resolved.invocations.map((invocation) => invocation.invokedAt)).toEqual([42, 42]);
-    expect(resolved.invocations[0]?.instructions).toContain('BETA ROLE PRELOAD BODY');
-    expect(resolved.invocations[1]?.instructions).toContain('ALPHA ROLE PRELOAD BODY');
-    expect(resolved.diagnostics).toEqual([
-      'Role-preloaded Skill "missing" is unavailable and was skipped.',
-    ]);
-  });
-
-  test('never executes isolated Role-preloaded Skills', async () => {
-    const root = await createSkillFixture('isolated', {
-      frontmatter: [
-        'description: Isolated preload',
-        'execution: isolated',
-        'allowed-tools: bash',
-      ],
-      body: 'Do isolated work.',
-    });
-    let isolatedExecutions = 0;
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeIsolatedSkill: async () => {
-        isolatedExecutions += 1;
-        return {
-          threadId: 'must-not-run',
-          agentRole: 'default',
-          status: 'completed',
-        };
-      },
-    });
-
-    const resolved = await resolvePreloadedSkillInvocations(runtime, ['isolated'], 42);
-
-    expect(resolved.invocations).toEqual([]);
-    expect(isolatedExecutions).toBe(0);
-    expect(resolved.diagnostics).toEqual([
-      'Role-preloaded Skill "isolated" uses isolated execution and was skipped.',
-    ]);
-  });
-
   test('builds deterministic admission-time catalogs and refreshes existing Threads', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: ['description: Demo skill', 'when_to_use: Use for demo work'],
@@ -481,68 +399,6 @@ describe('agent skills', () => {
     });
   });
 
-  test('advertises load-only, parameterized, and isolated Skill input contracts', async () => {
-    const root = await createSkillFixture('load-only', {
-      frontmatter: ['description: Load-only skill'],
-      body: 'Follow the loaded workflow.',
-    });
-    await createSkillInRoot(root, 'hinted', {
-      frontmatter: [
-        'description: Hinted skill',
-        'argument-hint: "<PR_NUMBER> [--summary]"',
-        'arguments: ignored fallback',
-      ],
-      body: 'Review $0.',
-    });
-    await createSkillInRoot(root, 'named', {
-      frontmatter: [
-        'description: Named skill',
-        'arguments: target format',
-      ],
-      body: 'Convert $target to $format.',
-    });
-    await createSkillInRoot(root, 'placeholder', {
-      frontmatter: ['description: Placeholder skill'],
-      body: 'Review $ARGUMENTS and $0.',
-    });
-    await createSkillInRoot(root, 'isolated', {
-      frontmatter: [
-        'description: Isolated skill',
-        'execution: isolated',
-      ],
-      body: 'Complete the exact task.',
-    });
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      builtInSkillDirectories: [],
-      builtInSkills: [],
-    });
-
-    const catalog = await runtime.buildSkillCatalogSnapshot();
-    const placeholderInvocation = await runtime.invokeSkill({
-      skill: 'placeholder',
-      args: '"pull request" extra',
-      trigger: 'agent',
-    });
-
-    expect(catalog.entries.find((entry) => entry.name === 'load-only')?.description)
-      .toBe('Load-only skill Invoke without args.');
-    expect(catalog.entries.find((entry) => entry.name === 'hinted')?.description)
-      .toBe('Hinted skill Args: <PR_NUMBER> [--summary].');
-    expect(catalog.entries.find((entry) => entry.name === 'named')?.description)
-      .toBe('Named skill Args: target format.');
-    expect(catalog.entries.find((entry) => entry.name === 'placeholder')?.description)
-      .toBe('Placeholder skill Args: input.');
-    expect(catalog.entries.find((entry) => entry.name === 'isolated')?.description)
-      .toBe('Isolated skill Isolated; args=user task; no Subagents; parent fans out.');
-    expect(placeholderInvocation.ok).toBe(true);
-    if (placeholderInvocation.ok) {
-      expect(placeholderInvocation.renderedContent)
-        .toContain('Review "pull request" extra and pull request.');
-    }
-  });
-
   test('keeps Skill args optional and describes their catalog-governed use', () => {
     const tool = createSkillTool(new AgentSkillRuntime({ includeUserSkills: false }));
     const parameters = tool.parameters as {
@@ -552,12 +408,10 @@ describe('agent skills', () => {
 
     expect(parameters.required).toEqual(['skill']);
     expect(parameters.properties.args.description).toContain('Omit for load-only Skills');
-    expect(parameters.properties.args.description).toContain('parameterized inline Skills');
-    expect(parameters.properties.args.description).toContain('exact user task for isolated Skills');
+    expect(parameters.properties.args.description).toContain('parameterized Skills');
     expect(tool.description).toContain('The canonical user message already carries the task.');
-    expect(tool.description).toContain('an entry without a full or compact input label is load-only');
-    expect(tool.description).toContain('`[A]` means parameterized inline `args`');
-    expect(tool.description).toContain('`[I+]` and `[I-]`');
+    expect(tool.description).toContain('an entry without an input label is load-only');
+    expect(tool.description).toContain('`[A]` means the Skill accepts parameterized `args`');
     expect(tool.description).toContain('pass only the declared variable input');
   });
 
@@ -596,10 +450,6 @@ describe('agent skills', () => {
         'description: |',
         '  Demo skill',
         '  with wrapped text',
-        'allowed-tools:',
-        '  - Bash(git status:*)',
-        '  - file_read',
-        'execution: isolated',
         'paths:',
         '  - src/**',
         '  - docs/**/*.md',
@@ -613,14 +463,10 @@ describe('agent skills', () => {
     const listing = await runtime.buildSkillCatalogSnapshot();
 
     expect(skill?.description).toBe('Demo skill with wrapped text');
-    expect(skill?.allowedTools).toEqual(['Bash(git status:*)', 'file_read']);
     expect(skill?.paths).toEqual(['src/**', 'docs/**/*.md']);
     expect(acknowledgePendingCatalogRefresh(runtime)).toBe(true);
     expect(listing.entries.find((entry) => entry.name === 'demo')?.description).toContain(
       'Demo skill with wrapped text',
-    );
-    expect(listing.entries.find((entry) => entry.name === 'demo')?.description).toContain(
-      'no Subagents',
     );
   });
 
@@ -666,306 +512,10 @@ describe('agent skills', () => {
 
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
-    expect(invocation.execution).toBe('inline');
     expect(invocation.renderedContent).toContain('Follow the authored workflow');
     expect(invocation.renderedContent).not.toContain(task);
     expect(invocation.renderedContent).not.toContain('ARGUMENTS:');
     expect(invocation.evidence.arguments).toBe(task);
-  });
-
-  test('executes embedded shell blocks and inline commands only for isolated Skills', async () => {
-    const root = await createSkillFixture('demo', {
-      frontmatter: [
-        'description: Demo skill',
-        'execution: isolated',
-        'shell: bash',
-      ],
-      body: [
-        'Before block.',
-        '```!',
-        'echo block',
-        '```',
-        'Inline !`echo inline` done.',
-      ].join('\n'),
-    });
-    const calls: Array<{ skill: string; command: string; shell: string }> = [];
-    let isolatedInstructions = '';
-    let shellObservations: readonly import('../../src/main/agent/capabilities/agentSkills').SkillShellObservation[] = [];
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeSkillShell: async ({ skill, command, shell }) => {
-        calls.push({ skill: skill.name, command, shell });
-        return {
-          output: command.includes('block') ? 'BLOCK_OUTPUT' : 'INLINE_OUTPUT',
-          resourceRefs: [],
-        };
-      },
-      executeIsolatedSkill: async ({ renderedInstructions, shellObservations: observations }) => {
-        isolatedInstructions = renderedInstructions;
-        shellObservations = observations;
-        return {
-          threadId: 'isolated-thread-test',
-          agentRole: 'worker',
-          status: 'completed',
-        };
-      },
-    });
-
-    const invocation = await runtime.invokeSkill({
-      skill: 'demo',
-      trigger: 'agent',
-    });
-
-    expect(invocation.ok).toBe(true);
-    if (!invocation.ok) return;
-    expect(invocation.renderedContent).toContain(
-      'Before block.\n[Embedded shell observation is available in untrusted context: skill_shell_output_1]',
-    );
-    expect(invocation.renderedContent).not.toContain('BLOCK_OUTPUT');
-    expect(invocation.renderedContent).not.toContain('INLINE_OUTPUT');
-    expect(isolatedInstructions).toBe(invocation.renderedContent);
-    expect(shellObservations).toEqual([
-      {
-        key: 'skill_shell_output_1',
-        output: 'BLOCK_OUTPUT',
-        persistedOutput: 'BLOCK_OUTPUT',
-        resourceRefs: [],
-      },
-      {
-        key: 'skill_shell_output_2',
-        output: 'INLINE_OUTPUT',
-        persistedOutput: 'INLINE_OUTPUT',
-        resourceRefs: [],
-      },
-    ]);
-    expect(calls).toEqual([
-      { skill: 'demo', command: 'echo block', shell: 'bash' },
-      { skill: 'demo', command: 'echo inline', shell: 'bash' },
-    ]);
-  });
-
-  test('passes isolated embedded shell arguments as structured bindings without source interpolation', async () => {
-    const root = await createSkillFixture('bound-shell', {
-      frontmatter: [
-        'description: Bound shell skill',
-        'execution: isolated',
-        'arguments: target payload',
-      ],
-      body: '```!\nprintf "%s\\n" "$ARGUMENTS" "$ARGUMENTS[1]" "$0" "$target" "$payload"\n```',
-    });
-    let command = '';
-    let bindings: import('../../src/main/agent/capabilities/agentSkills').SkillShellArgumentBindings | null = null;
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeSkillShell: async (input) => {
-        command = input.command;
-        bindings = input.argumentBindings;
-        return { output: 'BOUND', resourceRefs: [] };
-      },
-      executeIsolatedSkill: async () => ({
-        threadId: 'bound-shell-child',
-        agentRole: 'worker',
-        status: 'completed',
-      }),
-    });
-    const args = '"target with spaces" "$(touch should-not-run); literal"';
-
-    const invocation = await runtime.invokeSkill({ skill: 'bound-shell', args, trigger: 'agent' });
-
-    expect(invocation.ok).toBe(true);
-    expect(command).toBe('printf "%s\\n" "$ARGUMENTS" "$ARGUMENTS[1]" "$0" "$target" "$payload"');
-    expect(bindings).toEqual({
-      aggregate: args,
-      positional: ['target with spaces', '$(touch should-not-run); literal'],
-      named: [
-        { name: 'target', value: 'target with spaces', index: 0 },
-        { name: 'payload', value: '$(touch should-not-run); literal', index: 1 },
-      ],
-    });
-  });
-
-  test('keeps embedded shell paths live while persisting only stable Skill evidence', async () => {
-    const root = await createSkillFixture('artifact-skill', {
-      frontmatter: [
-        'description: Artifact-producing skill',
-        'execution: isolated',
-        'shell: bash',
-      ],
-      body: 'Inspect this output:\n```!\nproduce-report\n```',
-    });
-    const resourceRef = {
-      id: 'a'.repeat(64),
-      mimeType: 'application/pdf',
-      byteLength: 120,
-      fileName: 'report.pdf',
-    };
-    const readablePath = '/tmp/turn-artifacts/report.pdf';
-    let isolatedInstructions = '';
-    let isolatedShellOutput = '';
-    let persistedShellOutput = '';
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeSkillShell: async () => ({
-        output: `file=${resourceRef.fileName}, bytes=${resourceRef.byteLength}\nCurrent readable path: ${readablePath}`,
-        persistedOutput: `file=${resourceRef.fileName}, bytes=${resourceRef.byteLength}`,
-        resourceRefs: [resourceRef],
-        artifacts: [{ ref: resourceRef, readablePath, label: 'Generated report' }],
-      }),
-      executeIsolatedSkill: async ({ renderedInstructions, shellObservations }) => {
-        isolatedInstructions = renderedInstructions;
-        isolatedShellOutput = shellObservations[0]?.output ?? '';
-        persistedShellOutput = shellObservations[0]?.persistedOutput ?? '';
-        return {
-          threadId: 'artifact-skill-child',
-          agentRole: 'worker',
-          status: 'completed',
-          result: 'Report inspected',
-        };
-      },
-    });
-
-    const invocation = await runtime.invokeSkill({ skill: 'artifact-skill', trigger: 'agent' });
-    expect(invocation.ok).toBe(true);
-    if (!invocation.ok) return;
-    expect(isolatedInstructions).not.toContain(readablePath);
-    expect(isolatedInstructions).toContain('skill_shell_output_1');
-    expect(isolatedShellOutput).toContain(readablePath);
-    expect(persistedShellOutput).not.toContain(readablePath);
-    expect(persistedShellOutput).toContain('file=report.pdf, bytes=120');
-    expect(persistedShellOutput).not.toContain(resourceRef.id);
-    expect(invocation.renderedContent).not.toContain(readablePath);
-    expect(invocation.evidence.instructions).not.toContain(readablePath);
-    expect(invocation.evidence.instructions).not.toContain(resourceRef.id);
-    expect(invocation.resourceRefs).toEqual([resourceRef]);
-
-    const result = await createSkillTool(runtime).execute('artifact-skill-call', {
-      skill: 'artifact-skill',
-    });
-    expect(result.data.artifacts).toEqual([{
-      label: 'Generated report',
-      fileName: 'report.pdf',
-      mimeType: 'application/pdf',
-      byteLength: 120,
-      filePath: readablePath,
-    }]);
-    expect(JSON.stringify(result.data)).not.toContain(resourceRef.id);
-    expect(result.resourceRefs).toEqual([resourceRef]);
-    expect(JSON.stringify(result.details)).not.toContain(readablePath);
-  });
-
-  test('preserves embedded shell artifacts when isolated Skill execution fails', async () => {
-    const root = await createSkillFixture('failed-isolated-artifact-skill', {
-      frontmatter: [
-        'description: Failed isolated artifact skill',
-        'execution: isolated',
-        'shell: bash',
-      ],
-      body: 'Inspect this output:\n```!\nproduce-report\n```',
-    });
-    const resourceRef = {
-      id: 'c'.repeat(64),
-      mimeType: 'application/pdf',
-      byteLength: 120,
-      fileName: 'failed-report.pdf',
-    };
-    const readablePath = '/tmp/turn-artifacts/failed-report.pdf';
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeSkillShell: async () => ({
-        output: `file=${resourceRef.fileName}, bytes=${resourceRef.byteLength}\nCurrent readable path: ${readablePath}`,
-        persistedOutput: `file=${resourceRef.fileName}, bytes=${resourceRef.byteLength}`,
-        resourceRefs: [resourceRef],
-        artifacts: [{ ref: resourceRef, readablePath, label: 'Generated report' }],
-      }),
-      executeIsolatedSkill: async () => {
-        throw new Error('Child execution failed');
-      },
-    });
-
-    const invocation = await runtime.invokeSkill({
-      skill: 'failed-isolated-artifact-skill',
-      trigger: 'agent',
-    });
-    expect(invocation).toMatchObject({
-      ok: false,
-      code: 'isolated_execution_failed',
-      resourceRefs: [resourceRef],
-      artifactObservations: [{ ref: resourceRef, readablePath, label: 'Generated report' }],
-    });
-
-    const result = await createSkillTool(runtime).execute('failed-isolated-artifact-call', {
-      skill: 'failed-isolated-artifact-skill',
-    });
-    expect(result.outcome).toEqual({
-      ok: false,
-      error: { code: 'isolated_execution_failed', message: 'Child execution failed' },
-    });
-    expect(result.data).toMatchObject({ artifacts: [{
-      filePath: readablePath,
-      fileName: 'failed-report.pdf',
-      mimeType: 'application/pdf',
-      byteLength: 120,
-    }] });
-    expect(JSON.stringify(result.data)).not.toContain(resourceRef.id);
-    expect(result.resourceRefs).toEqual([resourceRef]);
-    expect(JSON.stringify(result.details)).not.toContain(readablePath);
-  });
-
-  test('preserves artifact ownership when embedded shell expansion fails', async () => {
-    const root = await createSkillFixture('failing-artifact-skill', {
-      frontmatter: [
-        'description: Failing artifact skill',
-        'execution: isolated',
-        'shell: bash',
-      ],
-      body: '```!\nproduce-partial\n```',
-    });
-    const resourceRef = {
-      id: 'b'.repeat(64),
-      mimeType: 'text/plain',
-      byteLength: 7,
-      fileName: 'partial.txt',
-    };
-    const readablePath = '/tmp/turn-artifacts/partial.txt';
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeSkillShell: async () => {
-        throw Object.assign(new Error(`Command failed; readable path: ${readablePath}`), {
-          persistedMessage: `Command failed; file=${resourceRef.fileName}`,
-          resourceRefs: [resourceRef],
-          artifacts: [{ ref: resourceRef, readablePath, label: 'Partial output' }],
-        });
-      },
-    });
-
-    const invocation = await runtime.invokeSkill({ skill: 'failing-artifact-skill', trigger: 'agent' });
-    expect(invocation).toMatchObject({
-      ok: false,
-      code: 'skill_shell_failed',
-      persistedMessage: 'Command failed; file=partial.txt',
-      resourceRefs: [resourceRef],
-    });
-    const result = await createSkillTool(runtime).execute('failing-artifact-skill-call', {
-      skill: 'failing-artifact-skill',
-    });
-    expect(result.outcome).toEqual({
-      ok: false,
-      error: { code: 'skill_shell_failed', message: 'Command failed; file=partial.txt' },
-    });
-    expect(result.data).toMatchObject({ artifacts: [{
-      filePath: readablePath,
-      fileName: 'partial.txt',
-      mimeType: 'text/plain',
-      byteLength: 7,
-    }] });
-    expect(JSON.stringify(result.data)).not.toContain(resourceRef.id);
-    expect(JSON.stringify(result.details)).not.toContain(readablePath);
-    expect(result.resourceRefs).toEqual([resourceRef]);
   });
 
   test('rejects unsupported skill shell frontmatter at load time', async () => {
@@ -1031,7 +581,6 @@ describe('agent skills', () => {
       name: 'demo',
       arguments: 'arg one',
       invocationSource: 'user',
-      execution: 'inline',
       invokedAt: 42,
     });
     expect(invocation.evidence.instructions).toContain('Loaded by slash.');
@@ -1124,12 +673,8 @@ describe('agent skills', () => {
     expect(body).toContain('request_user_input');
     expect(body).not.toContain('Save, revise, or cancel choices');
 
-    expect(body).toContain('Separate authoring tools from runtime tools');
-    expect(body).toContain('omitted `allowed-tools` creates a tool-free child Thread');
-    expect(body).toContain('`allowed-tools` selects whole tools, not command patterns');
-    expect(body).toContain('Flag broad `allowed-tools` in the preview summary');
-    expect(body).toContain('Default to `execution: inline`');
-    expect(body).toContain('Use `execution: isolated` only for self-contained work');
+    expect(body).toContain('A Skill loads instructions into the current Turn');
+    expect(body).toContain('does not select a model, run embedded shell, or create another Agent');
 
     expect(body).toContain('available immediately');
     expect(body).toContain('slash invocation works immediately');
@@ -1183,12 +728,6 @@ describe('agent skills', () => {
   test('teaches the built-in outline Skill to use the agent-first model without shell choreography', async () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
-      executeIsolatedSkill: async () => ({
-        threadId: 'outline-skill-contract',
-        agentRole: 'default',
-        status: 'completed',
-        result: 'contract inspected',
-      }),
     });
     const invocation = await runtime.invokeSkill({ skill: 'outline', trigger: 'agent' });
 
@@ -1252,7 +791,6 @@ describe('agent skills', () => {
       modelInvocable: true,
       userInvocable: true,
       canUndoLastAgentEdit: false,
-      allowedTools: [],
     });
     expect(typeof skill?.contentHash).toBe('string');
     expect(catalog.entries.find((entry) => entry.name === 'bundled-demo')?.description)
@@ -1459,28 +997,20 @@ describe('agent skills', () => {
     expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'outline', source: 'built-in' } });
     const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
+      'delegate',
       'outline',
       'skillify',
     ]);
   });
 
   test('ships public outline workflows without legacy document authorities', async () => {
-    let isolatedExecutionCount = 0;
-    const runtime = new AgentSkillRuntime({
-      includeUserSkills: false,
-      executeIsolatedSkill: async () => {
-        isolatedExecutionCount += 1;
-        throw new Error('The inline Outline Skill must not start an isolated child.');
-      },
-    });
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const outline = await runtime.getSkill('outline');
     const outlineCatalogEntry = (await runtime.buildSkillCatalogSnapshot()).entries
       .find((entry) => entry.name === 'outline');
 
     expect(await runtime.getSkill('data-cleanup')).toBeNull();
     expect(await runtime.getSkill('outline-import')).toBeNull();
-    expect(outline?.allowedTools).toEqual([]);
-    expect(outline?.execution).toBe('inline');
     expect(outlineCatalogEntry?.description).toContain('Invoke without args.');
     expect(outline?.body).toContain('# Outline');
     expect(outline?.body).toContain('## Model');
@@ -1504,12 +1034,10 @@ describe('agent skills', () => {
         skill: 'outline',
         status: 'loaded',
         invocationEvidence: {
-          execution: 'inline',
           arguments: 'Create a native table view in today\'s note.',
         },
       },
     });
-    expect(isolatedExecutionCount).toBe(0);
     expect(outline?.body).not.toContain(['outline import', 'helper tana SOURCE'].join('-'));
     const retiredToolPattern = new RegExp(`\\b(?:${[
       ['node', 'search'],
@@ -1530,6 +1058,29 @@ describe('agent skills', () => {
     }
   });
 
+  test('loads delegate as a model-only built-in Skill', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const delegate = await runtime.getSkill('delegate');
+
+    expect(delegate).toMatchObject({
+      name: 'delegate',
+      source: 'built-in',
+      userInvocable: false,
+      modelInvocable: true,
+    });
+    expect(delegate?.body).toContain('delegate run --input - --output json');
+    expect(delegate?.body).toContain('Completion is pushed; do not poll');
+    expect(delegate?.body).toContain('After user cancellation');
+    expect(delegate?.body).toContain('without a new user request.');
+
+    runtime.updateDisabledSkills(['delegate']);
+    expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => entry.name === 'delegate')).toBe(false);
+    expect(await runtime.invokeSkill({ skill: 'delegate', trigger: 'agent' })).toMatchObject({
+      ok: false,
+      code: 'skill_disabled',
+    });
+  });
+
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {
     const repoRoot = path.join(path.sep, 'repo');
     const resourcesPath = path.join(path.sep, 'Applications', 'Tenon.app', 'Contents', 'Resources');
@@ -1538,46 +1089,6 @@ describe('agent skills', () => {
       .toBe(path.join(repoRoot, 'src', 'main', 'builtInSkills'));
     expect(resolveBuiltInSkillResourceRoot({ isPackaged: true, resourcesPath }))
       .toBe(path.join(resourcesPath, 'built-in-skills'));
-  });
-
-  test('preserves isolated invocation contracts when the catalog description budget is shared', async () => {
-    const runtime = new AgentSkillRuntime({
-      includeUserSkills: false,
-      builtInSkills: [
-        {
-          name: 'isolated-budget',
-          description: `Isolated catalog entry ${'x'.repeat(220)}`,
-          body: 'Complete the isolated task.',
-          execution: 'isolated',
-          allowedTools: ['file_read'],
-          modelInvocable: true,
-        },
-        ...Array.from({ length: 99 }, (_, index) => ({
-          name: `budget-${String(index).padStart(2, '0')}`,
-          description: `Catalog pressure ${index} ${'y'.repeat(220)}`,
-          body: 'Complete the task.',
-          execution: 'isolated' as const,
-          allowedTools: ['file_read'],
-          modelInvocable: true,
-        })),
-      ],
-    });
-
-    const catalog = await runtime.buildSkillCatalogSnapshot();
-    const isolated = catalog.entries.find((entry) => entry.name === 'isolated-budget');
-
-    expect(catalog.entries.length).toBeGreaterThanOrEqual(100);
-    expect(isolated?.description).toContain('Isolated; args=user task');
-    expect(isolated?.description).toContain('no Subagents');
-    expect(isolated?.description).toContain('parent fans out');
-    expect(catalog.entries.filter((entry) => entry.name.startsWith('budget-')).every((entry) => (
-      entry.description.includes('args=user task')
-      && entry.description.includes('no Subagents')
-      && entry.description.includes('parent fans out')
-    ))).toBe(true);
-    expect(catalog.entries.reduce((total, entry) => (
-      total + entry.name.length + entry.description.length + 4
-    ), 0)).toBeLessThanOrEqual(8_000);
   });
 
   test('elides repeated load-only contracts before they exceed the catalog budget', async () => {
@@ -1602,7 +1113,7 @@ describe('agent skills', () => {
     ), 0)).toBeLessThanOrEqual(8_000);
   });
 
-  test('uses compact input labels before fixed contracts exceed the catalog budget', async () => {
+  test('uses compact argument labels before fixed contracts exceed the catalog budget', async () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
       builtInSkillDirectories: [],
@@ -1615,19 +1126,15 @@ describe('agent skills', () => {
           modelInvocable: true,
         })),
         {
-          name: 'z-isolated-minus',
-          description: 'Isolated without Agent fan-out',
+          name: 'z-load-only-one',
+          description: 'Load-only reference one',
           body: 'Complete the task.',
-          execution: 'isolated' as const,
-          allowedTools: ['file_read'],
           modelInvocable: true,
         },
         {
-          name: 'z-isolated-plus',
-          description: 'Isolated with Agent fan-out',
+          name: 'z-load-only-two',
+          description: 'Load-only reference two',
           body: 'Complete the task.',
-          execution: 'isolated' as const,
-          allowedTools: ['agent'],
           modelInvocable: true,
         },
       ],
@@ -1638,8 +1145,8 @@ describe('agent skills', () => {
 
     expect(parameterized).toHaveLength(400);
     expect(parameterized.every((entry) => entry.description === '[A]')).toBe(true);
-    expect(catalog.entries.find((entry) => entry.name === 'z-isolated-minus')?.description).toBe('[I-]');
-    expect(catalog.entries.find((entry) => entry.name === 'z-isolated-plus')?.description).toBe('[I+]');
+    expect(catalog.entries.find((entry) => entry.name === 'z-load-only-one')?.description).toBe('');
+    expect(catalog.entries.find((entry) => entry.name === 'z-load-only-two')?.description).toBe('');
     expect(catalog.entries.reduce((total, entry) => (
       total + entry.name.length + entry.description.length + 4
     ), 0)).toBeLessThanOrEqual(8_000);
@@ -1684,35 +1191,6 @@ describe('agent skills', () => {
     expect(invocation.code).toBe('skill_disabled');
   });
 
-  test('labels failed isolated Skill output as partial evidence', async () => {
-    const runtime = new AgentSkillRuntime({
-      includeUserSkills: false,
-      builtInSkills: [{
-        name: 'isolated-failure',
-        description: 'Isolated failure fixture',
-        body: 'Inspect the failure path for $ARGUMENTS.',
-        execution: 'isolated',
-        allowedTools: ['file_read'],
-      }],
-      executeIsolatedSkill: async () => ({
-        threadId: 'failed-isolated-thread',
-        agentRole: 'default',
-        status: 'failed',
-        result: 'Partial evidence',
-        error: 'Provider unavailable',
-      }),
-    });
-
-    const toolResult = await createSkillTool(runtime).execute('failed-isolated-tool-call', {
-      skill: 'isolated-failure',
-      args: 'inspect the failure path',
-    });
-    const text = toolResult.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
-    expect(text).toContain('outcome: failed');
-    expect(text).toContain('partial evidence only');
-    expect(text).not.toContain('Synthesize the completed result');
-  });
-
   test('rejects execution overrides on inline Skills', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: [
@@ -1730,254 +1208,6 @@ describe('agent skills', () => {
       trigger: 'agent',
     });
 
-    expect(invocation).toMatchObject({ ok: false, code: 'unknown_skill' });
-  });
-
-  test('lists isolated-execution skills and routes them through an isolated executor', async () => {
-    const root = await createSkillFixture('isolated', {
-      frontmatter: [
-        'description: Isolated skill',
-        'execution: isolated',
-        'agent: specialist',
-        'model: gpt-5.2',
-        'effort: high',
-        'allowed-tools: Bash(git status:*)',
-      ],
-      body: 'Requires isolated execution for $ARGUMENTS.',
-    });
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeIsolatedSkill: async ({ skill, renderedInstructions }) => ({
-        threadId: 'isolated-thread-test',
-        agentRole: 'worker',
-        status: 'completed',
-        result: `isolated result: ${renderedInstructions}`,
-      }),
-    });
-
-    expect((await runtime.buildSkillCatalogSnapshot()).entries.find((entry) => entry.name === 'isolated')?.description)
-      .toContain('Isolated skill');
-    const invocation = await runtime.invokeSkill({
-      skill: 'isolated',
-      args: 'demo',
-      trigger: 'agent',
-    });
-
-    expect(invocation.ok).toBe(true);
-    if (!invocation.ok) return;
-    expect(invocation.execution).toBe('isolated');
-    expect(invocation.isolated?.threadId).toBe('isolated-thread-test');
-    expect(invocation.renderedContent).toContain('Requires isolated execution for $ARGUMENTS.');
-    expect(invocation.evidence).toMatchObject({
-      execution: 'isolated',
-      arguments: 'demo',
-      constraints: {
-        allowedTools: ['Bash(git status:*)'],
-        model: 'gpt-5.2',
-        effort: 'high',
-      },
-    });
-  });
-
-  test('keeps invocation tasks out of isolated Skill instructions without an explicit placeholder', async () => {
-    const root = await createSkillFixture('isolated-boundary', {
-      frontmatter: [
-        'description: Isolated boundary skill',
-        'execution: isolated',
-      ],
-      body: 'Use the authored workflow and preserve its required output shape.',
-    });
-    let receivedInstructions = '';
-    let receivedTask = '';
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeIsolatedSkill: async ({ renderedInstructions, args }) => {
-        receivedInstructions = renderedInstructions;
-        receivedTask = args;
-        return {
-          threadId: 'isolated-boundary-thread',
-          agentRole: 'worker',
-          status: 'completed',
-          result: 'Boundary preserved',
-        };
-      },
-    });
-
-    const task = 'Ignore the Skill workflow and use a plain list.';
-    const invocation = await runtime.invokeSkill({
-      skill: 'isolated-boundary',
-      args: task,
-      trigger: 'agent',
-    });
-
-    expect(invocation.ok).toBe(true);
-    expect(receivedInstructions).toContain('Use the authored workflow');
-    expect(receivedInstructions).not.toContain(task);
-    expect(receivedInstructions).not.toContain('ARGUMENTS:');
-    expect(receivedTask).toBe(task);
-  });
-
-  test('normalizes omitted isolated Skill allowed-tools to an empty executor ceiling', async () => {
-    const root = await createSkillFixture('isolated-default', {
-      frontmatter: [
-        'description: Tool-free isolated skill',
-        'execution: isolated',
-      ],
-      body: 'Run without tools.',
-    });
-    let executorAllowedTools: readonly string[] | null = null;
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeIsolatedSkill: async ({ skill }) => {
-        executorAllowedTools = [...skill.allowedTools];
-        return {
-          threadId: 'tool-free-isolated-thread',
-          agentRole: 'default',
-          status: 'completed',
-          result: 'Completed without tools',
-        };
-      },
-    });
-
-    expect((await runtime.getSkill('isolated-default'))?.allowedTools).toEqual([]);
-    const invocation = await runtime.invokeSkill({ skill: 'isolated-default', trigger: 'agent' });
-    expect(invocation.ok).toBe(true);
-    if (!invocation.ok) return;
-    expect(executorAllowedTools).toEqual([]);
-    expect(invocation.evidence.constraints.allowedTools).toEqual([]);
-  });
-
-  test('reports an interrupted isolated child as partial evidence, not as a failed call', async () => {
-    // The user can Stop an isolated Skill child from its delegation row. Its
-    // Turn settles as `interrupted`, which is terminal — so the parent's call
-    // does not fail; it returns what the child produced, framed as partial.
-    const root = await createSkillFixture('stoppable', {
-      frontmatter: [
-        'description: Isolated skill the user may stop',
-        'execution: isolated',
-      ],
-      body: 'Work that may be stopped.',
-    });
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeIsolatedSkill: async () => ({
-        threadId: 'isolated-thread-stopped',
-        agentRole: 'worker',
-        status: 'interrupted',
-        result: 'Partial findings before the stop',
-        transcriptPath: '/tmp/isolated-thread-stopped.md',
-      }),
-    });
-
-    const invocation = await runtime.invokeSkill({ skill: 'stoppable', trigger: 'agent' });
-    expect(invocation.ok).toBe(true);
-    if (!invocation.ok) return;
-    expect(invocation.isolated?.status).toBe('interrupted');
-
-    const tool = createSkillTool(runtime);
-    const result = await tool.execute('call-stoppable', { skill: 'stoppable' });
-    const text = result.content.map((part) => part.type === 'text' ? part.text : '').join('\n');
-    expect(text).toContain('outcome: interrupted');
-    expect(text).toContain('Treat the text below as partial evidence only');
-    expect(text).toContain('Partial findings before the stop');
-    expect(result.details).toMatchObject({ ok: true, data: { outcome: 'interrupted' } });
-  });
-
-  test('does not retain the legacy context-fork execution alias', async () => {
-    const root = await createSkillFixture('forked', {
-      frontmatter: [
-        'description: Unsupported legacy fork skill',
-        'context: fork',
-      ],
-      body: 'Requires isolated execution.',
-    });
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeIsolatedSkill: async ({ renderedInstructions }) => ({
-        threadId: 'isolated-thread-test',
-        agentRole: 'worker',
-        status: 'completed',
-        result: renderedInstructions,
-      }),
-    });
-
-    const skill = await runtime.getSkill('forked');
-    expect(skill?.execution).toBe('inline');
-    const invocation = await runtime.invokeSkill({ skill: 'forked', trigger: 'agent' });
-    expect(invocation.ok).toBe(true);
-    if (!invocation.ok) return;
-    expect(invocation.execution).toBe('inline');
-  });
-
-  test('keeps isolated slash Skills out of direct admission', async () => {
-    const root = await createSkillFixture('isolated', {
-      frontmatter: [
-        'description: Isolated skill',
-        'execution: isolated',
-      ],
-      body: 'Requires isolated execution.',
-    });
-    const runtime = new AgentSkillRuntime({
-      localRoot: root,
-      includeUserSkills: false,
-      executeIsolatedSkill: async () => ({
-        threadId: 'isolated-thread-test',
-        agentRole: 'worker',
-        status: 'completed',
-        result: 'one-shot isolated result',
-      }),
-    });
-
-    expect(await resolveUserSkillInvocation(runtime, '/isolated demo')).toBeNull();
-    const invocation = await runtime.invokeSkill({ skill: 'isolated', args: 'demo', trigger: 'agent' });
-    expect(invocation.ok).toBe(true);
-    if (!invocation.ok) return;
-    expect(invocation.execution).toBe('isolated');
-    expect(invocation.evidence.execution).toBe('isolated');
-  });
-
-  test('rejects isolated-execution skills when no isolated executor is available', async () => {
-    const root = await createSkillFixture('isolated', {
-      frontmatter: [
-        'description: Isolated skill',
-        'execution: isolated',
-      ],
-      body: 'Requires isolated execution.',
-    });
-    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-
-    const invocation = await runtime.invokeSkill({ skill: 'isolated', trigger: 'agent' });
-
-    expect(invocation.ok).toBe(false);
-    if (invocation.ok) return;
-    expect(invocation.code).toBe('isolated_execution_not_supported');
-  });
-
-  test('skips skills with invalid execution frontmatter instead of loading them inline', async () => {
-    const root = await createSkillFixture('bad-execution', {
-      frontmatter: [
-        'description: Invalid execution skill',
-        'execution: fork',
-      ],
-      body: 'This must not load inline.',
-    });
-    await createSkillInRoot(root, 'good-skill', {
-      frontmatter: [
-        'description: Good skill',
-        'execution: Isolated',
-      ],
-      body: 'This should load isolated.',
-    });
-    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-
-    expect(await runtime.getSkill('bad-execution')).toBeNull();
-    expect((await runtime.getSkill('good-skill'))?.execution).toBe('isolated');
-    const invocation = await runtime.invokeSkill({ skill: 'bad-execution', trigger: 'agent' });
     expect(invocation).toMatchObject({ ok: false, code: 'unknown_skill' });
   });
 
@@ -2177,11 +1407,18 @@ describe('agent skills', () => {
 });
 
 describe('built-in skill resource packaging', () => {
-  test('stages the complete public outline workflow into one packaged Skill', async () => {
+  test('stages the complete public workflows into packaged Skills', async () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
     await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
-    expect((await readdir(generatedRoot)).sort()).toEqual(['outline']);
+    expect((await readdir(generatedRoot)).sort()).toEqual(['delegate', 'outline']);
+    const delegateRoot = path.join(generatedRoot, 'delegate');
+    const delegateRaw = await readFile(path.join(delegateRoot, 'SKILL.md'), 'utf8');
+    expect(delegateRaw).toContain('delegate run --input - --output json');
+    expect(delegateRaw).toContain('run_in_background: true');
+    expect(delegateRaw).toContain('After user cancellation');
+    expect(delegateRaw).toContain('without a new user request.');
+    expect((await readdir(delegateRoot)).sort()).toEqual(['SKILL.md']);
     const outlineRoot = path.join(generatedRoot, 'outline');
     expect(await readFile(path.join(outlineRoot, 'SKILL.md'), 'utf8'))
       .toContain('outline example edit complete');

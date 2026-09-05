@@ -2,15 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-
-import type { AgentEditorView, AgentProviderSettingsView } from '../../src/renderer/api/types';
+import type { AgentEditorView } from '../../src/renderer/api/types';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
 const VIEW: AgentEditorView = {
-  // Nothing is re-skinned: every built-in identity below is the resolved
-  // default, which is exactly the case the editor must not write back.
   presentationOverrides: [],
-  executionSelections: [],
   profile: {
     name: 'default',
     layer: null,
@@ -20,91 +16,14 @@ const VIEW: AgentEditorView = {
     tools: null,
     skills: null,
   },
-  builtInDefinitions: [
-    { agentType: 'explore', description: 'Explores.', developerInstructions: 'Search, never write.' },
-  ],
   capabilities: {
     tools: [
       { key: 'file_read', description: 'Read a file.' },
-      { key: 'file_write', description: 'Write a file.' },
       { key: 'bash', description: 'Run a command.' },
     ],
-    skills: ['review', 'summarize'],
+    skills: ['review'],
   },
-  entries: [
-    { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
-    { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
-    { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
-    { agentType: 'auditor', persona: 'Wren', color: 'violet', source: 'user' },
-  ],
-  roles: [{
-    name: 'auditor',
-    layer: 'user',
-    description: 'Audits a change.',
-    developerInstructions: 'Read the diff.',
-    persona: 'Wren',
-    color: 'violet',
-    tools: null,
-    skills: null,
-  }],
-};
-
-const PROVIDER_SETTINGS: AgentProviderSettingsView = {
-  activeProviderId: 'anthropic',
-  providers: [
-    {
-      providerId: 'anthropic',
-      enabled: true,
-      hasApiKey: true,
-      auth: { authKind: 'api-key', credentialed: true },
-    },
-    {
-      providerId: 'openai',
-      enabled: true,
-      hasApiKey: true,
-      auth: { authKind: 'api-key', credentialed: true },
-    },
-  ],
-  availableProviders: [
-    {
-      providerId: 'anthropic',
-      authKind: 'api-key',
-      hasEnvApiKey: false,
-      envKeyNames: ['ANTHROPIC_API_KEY'],
-      models: [{
-        id: 'claude-opus-5',
-        name: 'Claude Opus 5',
-        reasoning: true,
-        supportedThinkingLevels: ['low', 'medium', 'high'],
-        contextWindow: 200_000,
-        maxTokens: 64_000,
-      }],
-    },
-    {
-      providerId: 'openai',
-      authKind: 'api-key',
-      hasEnvApiKey: false,
-      envKeyNames: ['OPENAI_API_KEY'],
-      models: [{
-        id: 'gpt-5.6',
-        name: 'GPT-5.6',
-        reasoning: true,
-        supportedThinkingLevels: ['medium', 'high', 'xhigh'],
-        contextWindow: 256_000,
-        maxTokens: 64_000,
-      }],
-    },
-  ],
-  agent: {
-    additionalSkillDirectories: [],
-    subagentTokenBudget: null,
-    providerTimeoutMs: null,
-    providerMaxRetries: null,
-    providerMaxRetryDelayMs: null,
-    providerCacheRetention: 'short',
-    disabledSkills: [],
-  },
-  imageGeneration: {},
+  entries: [{ agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' }],
 };
 
 const mounted: Array<() => void> = [];
@@ -121,539 +40,57 @@ afterEach(() => {
   delete (globalThis as Record<string, unknown>).lin;
 });
 
-describe('the Agents editor', () => {
-  test('lists the agents a user may edit apart from the ones they may only re-skin', async () => {
-    const { document } = await renderAgents();
-
-    const groups = [...document.querySelectorAll('.inset-group')];
-    const named = (group: Element) => [...group.querySelectorAll('.inset-row-label')]
-      .map((row) => row.textContent);
-
-    expect(named(groups[0]!)).toEqual(['Wren']);
-    // `auditor` is an Agent type like any other and appears in `entries` too.
-    // Listing it in both groups would offer two editors for one identity —
-    // one of which could not delete it.
-    expect(named(groups[1]!)).toEqual(['Aspen', 'Bruno', 'Rena']);
-  });
-
-  test('offers no Delete for a built-in, because there is nothing of the user\'s to remove', async () => {
-    const { document, click } = await renderAgents();
-
-    await click(rowByLabel(document, 'Rena'));
-
-    expect(document.querySelector('.agent-editor-delete')).toBeNull();
-    // Its behaviour is not editable either: only the identity fields are shown.
-    expect(document.querySelector('.agent-editor-dialog textarea')).toBeNull();
-  });
-
-  test('starts every child Agent on Follow parent and keeps Execution off main', async () => {
-    const child = await renderAgents();
-    await child.click(rowByLabel(child.document, 'Rena'));
-    expect((selectByLabel(child.document, 'Model') as HTMLSelectElement).value).toBe('');
-    expect((selectByLabel(child.document, 'Reasoning') as HTMLSelectElement).value).toBe('');
-    expect(selectByLabel(child.document, 'Model').textContent).toContain('Follow parent');
-
-    await child.click(child.document.querySelector('.agent-editor-actions .button-ghost')!);
-    await child.click(rowByLabel(child.document, 'Aspen'));
-    expect(() => selectByLabel(child.document, 'Model')).toThrow();
-    expect(() => selectByLabel(child.document, 'Reasoning')).toThrow();
-  });
-
-  test('offers usable models across providers and filters reasoning by the selected model', async () => {
+describe('the main Agent editor', () => {
+  test('shows only the conversation Agent and no create control', async () => {
     const rendered = await renderAgents();
-    await rendered.click(rowByLabel(rendered.document, 'Rena'));
-    const model = selectByLabel(rendered.document, 'Model');
-    expect(model.textContent).toContain('Claude Opus 5 (anthropic)');
-    expect(model.textContent).toContain('GPT-5.6 (openai)');
-
-    await rendered.changeSelect(model, 'openai/gpt-5.6');
-    expect([...selectByLabel(rendered.document, 'Reasoning').querySelectorAll('option')]
-      .map((option) => option.textContent)).toEqual(['Follow parent', 'medium', 'high', 'xhigh']);
-    await rendered.changeSelect(selectByLabel(rendered.document, 'Reasoning'), 'xhigh');
-    await rendered.changeSelect(model, 'anthropic/claude-opus-5');
-    expect(selectByLabel(rendered.document, 'Reasoning').textContent).not.toContain('xhigh');
-    await rendered.click(rendered.document.querySelector('.agent-editor-actions .button-primary')!);
-    expect((rendered.calls[1]!.args as { execution: { reasoningEffort: unknown } }).execution.reasoningEffort)
-      .toBeNull();
+    expect(rendered.document.querySelectorAll('.inset-row-main')).toHaveLength(1);
+    expect(rendered.document.body.textContent).toContain('Aspen');
+    expect(rendered.document.querySelector('.rail-toggle')).toBeNull();
   });
 
-  test('saves execution as a sibling payload instead of a Role field', async () => {
+  test('saves identity, instructions, and inherited capability ceilings atomically', async () => {
     const rendered = await renderAgents();
-    await rendered.click(rowByLabel(rendered.document, 'Wren'));
-    await rendered.changeSelect(selectByLabel(rendered.document, 'Model'), 'openai/gpt-5.6');
-    await rendered.changeSelect(selectByLabel(rendered.document, 'Reasoning'), 'xhigh');
-    await rendered.click(rendered.document.querySelector('.agent-editor-actions .button-primary')!);
-
-    expect(rendered.calls[1]!.args).toMatchObject({
-      role: { name: 'auditor' },
-      execution: {
-        modelProvider: 'openai',
-        model: 'openai/gpt-5.6',
-        reasoningEffort: 'xhigh',
-      },
-    });
-    expect((rendered.calls[1]!.args as { role: Record<string, unknown> }).role.model).toBeUndefined();
-  });
-
-  test('keeps an unavailable saved model visible in the list, editor, and unchanged save', async () => {
-    const rendered = await renderAgents({
-      view: {
-        ...VIEW,
-        executionSelections: [{
-          agentType: 'explore',
-          layer: 'user',
-          modelProvider: 'openai',
-          model: 'openai/retired-model',
-          reasoningEffort: 'high',
-        }],
-      },
-    });
-    expect(rowByLabel(rendered.document, 'Rena').textContent).toContain('Unavailable');
-
-    await rendered.click(rowByLabel(rendered.document, 'Rena'));
-    expect(selectByLabel(rendered.document, 'Model').textContent).toContain('retired-model');
-    expect(selectByLabel(rendered.document, 'Model').textContent).toContain('Unavailable');
-    const executionGroup = [...rendered.document.querySelectorAll('.inset-group')]
-      .find((group) => group.querySelector('.inset-group-header')?.textContent === 'Execution');
-    expect(executionGroup?.querySelector('.inset-group-footnote')?.textContent)
-      .toContain('New runs will follow their parent');
-    await rendered.click(rendered.document.querySelector('.agent-editor-actions .button-primary')!);
-    expect(rendered.calls[1]!.args).toMatchObject({
-      execution: {
-        modelProvider: 'openai',
-        model: 'openai/retired-model',
-        reasoningEffort: 'high',
+    await rendered.click(rendered.document.querySelector('.inset-row-main')!);
+    await rendered.input(rendered.document.querySelector('input')!, 'Juniper');
+    await rendered.input(rendered.document.querySelector('textarea')!, 'Answer directly.');
+    await rendered.click([...rendered.document.querySelectorAll('button')].find((button) => button.textContent === 'Save')!);
+    expect(rendered.calls.at(-1)).toEqual({
+      name: 'agent_write_profile',
+      args: {
+        layer: 'user',
+        name: 'default',
+        presentation: { persona: 'Juniper', color: '' },
+        profile: {
+          developerInstructions: 'Answer directly.',
+          tools: null,
+          skills: null,
+        },
       },
     });
   });
 
-  test('marks a disabled provider unavailable and exposes only its saved model', async () => {
-    const anthropic = PROVIDER_SETTINGS.availableProviders[0]!;
-    const rendered = await renderAgents({
-      settings: {
-        ...PROVIDER_SETTINGS,
-        providers: PROVIDER_SETTINGS.providers.map((provider) => (
-          provider.providerId === 'anthropic' ? { ...provider, enabled: false } : provider
-        )),
-        availableProviders: [{
-          ...anthropic,
-          models: [
-            ...anthropic.models,
-            {
-              id: 'claude-sonnet-5',
-              name: 'Claude Sonnet 5',
-              reasoning: true,
-              supportedThinkingLevels: ['low', 'medium', 'high'],
-              contextWindow: 200_000,
-              maxTokens: 64_000,
-            },
-          ],
-        }, PROVIDER_SETTINGS.availableProviders[1]!],
-      },
-      view: {
-        ...VIEW,
-        executionSelections: [{
-          agentType: 'explore',
-          layer: 'user',
-          modelProvider: 'anthropic',
-          model: 'anthropic/claude-opus-5',
-          reasoningEffort: 'high',
-        }],
-      },
-    });
-
-    expect(rowByLabel(rendered.document, 'Rena').textContent).toContain('Unavailable');
-    await rendered.click(rowByLabel(rendered.document, 'Rena'));
-    const model = selectByLabel(rendered.document, 'Model');
-    expect(model.textContent).toContain('Claude Opus 5 (anthropic) - Unavailable');
-    expect(model.textContent).not.toContain('Claude Sonnet 5');
-    expect(model.textContent).toContain('GPT-5.6 (openai)');
-  });
-
-  test('edits a custom Role execution row from the Role\'s own layer', async () => {
-    const rendered = await renderAgents({
-      view: {
-        ...VIEW,
-        roles: [
-          VIEW.roles[0]!,
-          { ...VIEW.roles[0]!, layer: 'project', persona: 'Project Wren' },
-        ],
-        executionSelections: [
-          {
-            agentType: 'auditor',
-            layer: 'user',
-            modelProvider: 'openai',
-            model: 'openai/gpt-5.6',
-            reasoningEffort: 'xhigh',
-          },
-          {
-            agentType: 'auditor',
-            layer: 'project',
-            modelProvider: 'anthropic',
-            model: 'anthropic/claude-opus-5',
-            reasoningEffort: 'high',
-          },
-        ],
-      },
-    });
-
-    await rendered.click(rowByLabel(rendered.document, 'Wren'));
-    expect(selectByLabel(rendered.document, 'Model').value).toBe('openai/gpt-5.6');
-    expect(selectByLabel(rendered.document, 'Reasoning').value).toBe('xhigh');
-    await rendered.click(rendered.document.querySelector('.agent-editor-actions .button-primary')!);
-    expect(rendered.calls[1]!.args).toMatchObject({
-      layer: 'user',
-      execution: {
-        modelProvider: 'openai',
-        model: 'openai/gpt-5.6',
-        reasoningEffort: 'xhigh',
-      },
-    });
-  });
-
-  test('opens the requested Agent editor without fetching provider settings again', async () => {
-    const rendered = await renderAgents({ initialAgentType: 'auditor' });
-
-    expect(rendered.document.querySelector('.agent-editor-dialog')).not.toBeNull();
-    expect((fieldByLabel(rendered.document, 'Type') as HTMLInputElement).value).toBe('auditor');
-    expect(rendered.calls.map((call) => call.name)).toEqual(['agent_identity_catalog']);
-  });
-
-  test('a fallback deep link opens the winning project Role and its own execution row', async () => {
-    const rendered = await renderAgents({
-      initialAgentType: 'auditor',
-      view: {
-        ...VIEW,
-        roles: [
-          VIEW.roles[0]!,
-          {
-            ...VIEW.roles[0]!,
-            layer: 'project',
-            description: 'Project audit.',
-            developerInstructions: 'Use the project workflow.',
-            persona: 'Project Wren',
-          },
-        ],
-        executionSelections: [{
-          agentType: 'auditor',
-          layer: 'user',
-          modelProvider: 'openai',
-          model: 'openai/gpt-5.6',
-          reasoningEffort: 'xhigh',
-        }],
-      },
-    });
-
-    expect((fieldByLabel(rendered.document, 'Use it for') as HTMLInputElement).value)
-      .toBe('Project audit.');
-    expect(selectByLabel(rendered.document, 'Model').value).toBe('');
-    expect(selectByLabel(rendered.document, 'Reasoning').value).toBe('');
-  });
-
-  test('tells the write which agent already exists, so create cannot replace', async () => {
-    const { document, click, calls } = await renderAgents();
-
-    await click(rowByLabel(document, 'Wren'));
-    await click(document.querySelector('.agent-editor-actions .button-primary')!);
-
-    // Editing an existing Role is an update; only the + dialog creates.
-    expect(calls[1]!.args).toMatchObject({ mode: 'update' });
-  });
-
-  test('re-skinning a built-in writes a presentation, never a Role', async () => {
-    const { document, click, calls } = await renderAgents();
-    await click(rowByLabel(document, 'Rena'));
-
-    await click(swatch(document, 'Pink'));
-    await click(document.querySelector('.agent-editor-actions .button-primary')!);
-
-    expect(calls.map((call) => call.name)).toEqual(['agent_identity_catalog', 'agent_write_presentation']);
-    expect(calls[1]!.args).toMatchObject({ agentType: 'explore', layer: 'user' });
-    const written = (calls[1]!.args as { presentation: Record<string, unknown> }).presentation;
-    expect(written.color).toBe('pink');
-    // The persona was NOT touched, so it must not be written. Seeding the field
-    // from the resolved catalog would save `Rena` as a permanent override and
-    // opt this user out of every future change to the built-in's name.
-    expect(written.persona).toBeFalsy();
-  });
-
-  test('a built-in with nothing written down offers Default as the chosen colour', async () => {
-    const { document, click } = await renderAgents();
-
-    await click(rowByLabel(document, 'Rena'));
-
-    // Eight swatches: the palette plus "Default", which is the only way to send
-    // an empty colour and so the only way the documented reset is reachable.
-    const dialog = document.querySelector('.agent-editor-dialog');
-    expect(dialog?.querySelectorAll('.agent-colour-choice').length).toBe(8);
-    expect(dialog?.querySelector('.agent-colour-choice.is-selected')?.classList.contains('is-default'))
-      .toBe(true);
-  });
-
-  test('an existing re-skin seeds the fields it actually wrote', async () => {
-    const { document, click } = await renderAgents({
-      view: {
-        ...VIEW,
-        presentationOverrides: [{ agentType: 'explore', layer: 'user', persona: null, color: 'pink' }],
-      },
-    });
-
-    await click(rowByLabel(document, 'Rena'));
-
-    expect((fieldByLabel(document, 'Name') as { value?: string }).value).toBe('');
-    const selected = document.querySelector('.agent-editor-dialog .agent-colour-choice.is-selected');
-    expect(selected?.getAttribute('aria-label')).toBe('Pink');
-  });
-
-
-
-  test('the conversation agent gets its own editor: instructions and the ceiling', async () => {
-    const { document, click, calls } = await renderAgents();
-
-    await click(rowByLabel(document, 'Aspen'));
-
-    const dialog = document.querySelector('.agent-editor-dialog');
-    // No type and no "use it for": there is one of it and the reader is already
-    // talking to it. What it has is standing instructions and the ceiling.
-    expect(fieldByLabel(document, 'Instructions')).not.toBeNull();
-    expect(() => fieldByLabel(document, 'Type')).toThrow();
-    expect(dialog?.textContent).toContain('Capabilities');
-
-    await click(document.querySelector('.agent-editor-actions .button-primary')!);
-    // ONE write, carrying both halves: identity and configuration live in the
-    // same file, and as two sequential writes a refused second one left the
-    // first already on disk.
-    expect(calls.map((call) => call.name))
-      .toEqual(['agent_identity_catalog', 'agent_write_profile']);
-    expect(calls[1]!.args).toMatchObject({ agentType: 'main' });
-  });
-
-  test('a refused write reports inside the dialog, not behind its backdrop', async () => {
-    const { document, click } = await renderAgents({
-      onInvoke: (name) => {
-        if (name !== 'agent_identity_catalog') throw new Error('Refused: roles.x must use letters');
-        return VIEW;
-      },
-    });
-    await click(rowByLabel(document, 'Wren'));
-
-    await click(document.querySelector('.agent-editor-actions .button-primary')!);
-
-    // The pane's shared feedback block is behind the modal backdrop, so an
-    // error raised there made Save look like it did nothing at all.
-    const dialog = document.querySelector('.agent-editor-dialog');
-    expect(dialog?.querySelector('[role="alert"]')?.textContent).toContain('Refused:');
-  });
-
-  test('everything-checked and nothing-checked are opposite payloads, never the same one', async () => {
-    // The two intents used to be asserted separately, each as `[]`, one
-    // commented "inherit" and one "ban" — so the pair passed while the save
-    // path folded them together and a brand-new Role got zero tools. Asserted
-    // together here: whatever they are, they cannot be equal.
-    const untouched = await renderAgents();
-    await untouched.click(rowByLabel(untouched.document, 'Wren'));
-    await untouched.click(untouched.document.querySelector('.agent-editor-actions .button-primary')!);
-    const inherit = (untouched.calls[1]!.args as { role: { tools: unknown; skills: unknown } }).role;
-
-    // Every box checked: nothing is narrowed. `null` REMOVES the narrowing —
-    // writing the three tools out would freeze the set and silently exclude the
-    // fourth tool Tenon gains next month.
-    expect(inherit.tools).toBeNull();
-    expect(inherit.skills).toBeNull();
-
-    const banned = await renderAgents();
-    await banned.click(rowByLabel(banned.document, 'Wren'));
-    for (const key of ['file_read', 'file_write', 'bash']) {
-      await banned.click(capability(banned.document, key));
+  test('writes an exact empty capability set instead of treating it as inheritance', async () => {
+    const rendered = await renderAgents();
+    await rendered.click(rendered.document.querySelector('.inset-row-main')!);
+    for (const checkbox of rendered.document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')) {
+      await rendered.click(checkbox);
     }
-    await banned.click(banned.document.querySelector('.agent-editor-actions .button-primary')!);
-    const ban = (banned.calls[1]!.args as { role: { tools: unknown } }).role;
-
-    expect(ban.tools).toEqual([]);
-    expect(ban.tools).not.toEqual(inherit.tools);
+    await rendered.click([...rendered.document.querySelectorAll('button')].find((button) => button.textContent === 'Save')!);
+    expect((rendered.calls.at(-1)?.args as { profile: { tools: string[]; skills: string[] } }).profile)
+      .toMatchObject({ tools: [], skills: [] });
   });
 
-  test('unchecking a tool narrows the agent to what is left', async () => {
-    const { document, click, calls } = await renderAgents();
-    await click(rowByLabel(document, 'Wren'));
-
-    await click(capability(document, 'file_write'));
-    await click(document.querySelector('.agent-editor-actions .button-primary')!);
-
-    const role = (calls[1]!.args as { role: { tools: string[] } }).role;
-    expect(role.tools).toEqual(['file_read', 'bash']);
-  });
-
-  test('unchecking every tool is a ban, not a grant of everything', async () => {
-    const { document, click, calls } = await renderAgents();
-    await click(rowByLabel(document, 'Wren'));
-
-    for (const key of ['file_read', 'file_write', 'bash']) await click(capability(document, key));
-    await click(document.querySelector('.agent-editor-actions .button-primary')!);
-
-    // `[]`, not `null`. A user who unchecks every row means none; writing "no
-    // narrowing" would hand the Role its parent's entire tool set instead.
-    expect((calls[1]!.args as { role: { tools: string[] } }).role.tools).toEqual([]);
-  });
-
-  test('a narrowing the catalogue does not know about is shown and kept', async () => {
-    const { document, click, calls } = await renderAgents({
-      view: {
-        ...VIEW,
-        roles: [{ ...VIEW.roles[0]!, tools: ['file_read', 'mcp.search'] }],
-      },
-    });
-
-    await click(rowByLabel(document, 'Wren'));
-
-    // An MCP or extension tool is stored but absent from the catalogue. It has
-    // to be RENDERED, or saving would silently delete it.
-    expect(() => capability(document, 'mcp.search')).not.toThrow();
-    await click(document.querySelector('.agent-editor-actions .button-primary')!);
-    expect((calls[1]!.args as { role: { tools: string[] } }).role.tools)
-      .toEqual(['file_read', 'mcp.search']);
-  });
-
-  test('the conversation agent\'s ceiling can be widened back after it is narrowed', async () => {
-    const { document, click, calls } = await renderAgents({
-      view: { ...VIEW, profile: { ...VIEW.profile, layer: 'user', tools: ['file_read'] } },
-    });
-
-    await click(rowByLabel(document, 'Aspen'));
-    // Re-check what was excluded, so every box is checked again.
-    await click(capability(document, 'file_write'));
-    await click(capability(document, 'bash'));
-    await click(document.querySelector('.agent-editor-actions .button-primary')!);
-
-    // `null` REMOVES the stored list. Omitting the key would leave the stale
-    // narrowing on disk while the UI showed the tools enabled.
-    const profile = (calls[1]!.args as { profile: { tools: unknown } }).profile;
-    expect(profile.tools).toBeNull();
-  });
-
-  test('duplicating a built-in seeds a Role from its real definition', async () => {
-    const { document, click } = await renderAgents();
-    await click(rowByLabel(document, 'Rena'));
-
-    await click(document.querySelector('.agent-editor-builtin button')!);
-
-    // Seeded from the built-in's real definition rather than a blank form —
-    // otherwise "duplicate" would mean "start over". (The instructions textarea
-    // is asserted in the browser: linkedom exposes a controlled textarea's value
-    // through neither `.value` nor its text.)
-    expect((fieldByLabel(document, 'Use it for') as { value?: string }).value).toBe('Explores.');
-    // And it is a NEW Role: its type is open, because the built-in's name is
-    // reserved and the copy must be the user's own.
-    expect((fieldByLabel(document, 'Type') as { value?: string }).value).toBe('');
-  });
-
-  test('a Role is saved with the whole definition, not just what was retyped', async () => {
-    const { document, click, calls } = await renderAgents();
-    await click(rowByLabel(document, 'Wren'));
-
-    await click(document.querySelector('.agent-editor-actions .button-primary')!);
-
-    // Saving after changing only the colour must still carry the description
-    // and instructions: the write replaces the Role wholesale, so a form that
-    // sent only its own fields would erase the rest.
-    expect(calls[1]!.name).toBe('agent_write_role');
-    expect(calls[1]!.args).toMatchObject({
-      layer: 'user',
-      role: {
-        name: 'auditor',
-        description: 'Audits a change.',
-        developerInstructions: 'Read the diff.',
-        persona: 'Wren',
-        color: 'violet',
-      },
-    });
-  });
-
-  test('an existing Role\'s type is fixed, because renaming would orphan its identity', async () => {
-    const { document, click } = await renderAgents();
-
-    await click(rowByLabel(document, 'Wren'));
-
-    expect((fieldByLabel(document, 'Type') as { disabled?: boolean }).disabled).toBe(true);
-    // A new Role's type is of course still open.
-    await click(document.querySelector('.agent-editor-actions .button-ghost')!);
-    await click(document.querySelector('.inset-group-header button')!);
-    expect((fieldByLabel(document, 'Type') as { disabled?: boolean }).disabled).toBe(false);
-  });
-
-  test('a refused write reports why and leaves the editor standing', async () => {
-    const { document, click } = await renderAgents({
-      onInvoke: (name) => {
-        if (name !== 'agent_identity_catalog') throw new Error("Refused: Unknown identity colour 'chartreuse'");
-        return VIEW;
-      },
-    });
-    await click(rowByLabel(document, 'Wren'));
-
-    await click(document.querySelector('.agent-editor-actions .button-primary')!);
-
-    // The loader's own words reach the user: "refused" is the whole story, and
-    // paraphrasing it would lose which field it was about. It is said INSIDE the
-    // dialog, because the pane's feedback block sits behind the modal backdrop.
-    expect(document.querySelector('.agent-editor-dialog [role="alert"]')?.textContent)
-      .toBe("Refused: Unknown identity colour 'chartreuse'");
-    // Still open, still populated. Closing on failure would discard the edit
-    // the user is being asked to correct.
-    expect(document.querySelector('.agent-editor-dialog')).not.toBeNull();
-    expect((fieldByLabel(document, 'Name') as { value?: string }).value).toBe('Wren');
+  test('keeps a refused write visible inside the editor', async () => {
+    const rendered = await renderAgents({ rejectWrite: true });
+    await rendered.click(rendered.document.querySelector('.inset-row-main')!);
+    await rendered.click([...rendered.document.querySelectorAll('button')].find((button) => button.textContent === 'Save')!);
+    expect(rendered.document.querySelector('.agent-editor-dialog')).not.toBeNull();
+    expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('Refused');
   });
 });
 
-function capability(document: Document, key: string): Element {
-  const found = [...document.querySelectorAll('.agent-capability-item')]
-    .find((node) => node.textContent?.trim() === key);
-  if (!found) throw new Error(`No capability row for ${key}`);
-  return found.querySelector('input') ?? found;
-}
-
-function swatch(document: Document, label: string): Element {
-  const found = [...document.querySelectorAll('.agent-colour-choice')]
-    .find((node) => node.getAttribute('aria-label') === label);
-  if (!found) throw new Error(`No colour swatch labelled ${label}`);
-  return found;
-}
-
-function rowByLabel(document: Document, label: string): Element {
-  const row = [...document.querySelectorAll('.inset-row-label')]
-    .find((node) => node.textContent === label);
-  if (!row) throw new Error(`No row labelled ${label}`);
-  return row.closest('button')!;
-}
-
-function fieldByLabel(document: Document, label: string): Element {
-  const field = [...document.querySelectorAll('.settings-sheet-row')]
-    .find((row) => row.querySelector('.settings-sheet-row-label')?.textContent === label)
-    ?.querySelector('input, textarea');
-  if (!field) throw new Error(`No field labelled ${label}`);
-  return field;
-}
-
-function selectByLabel(document: Document, label: string): HTMLSelectElement {
-  const field = [...document.querySelectorAll('select')]
-    .find((candidate) => candidate.getAttribute('aria-label') === label);
-  if (!field) throw new Error(`No select labelled ${label}`);
-  return field as HTMLSelectElement;
-}
-
-async function renderAgents(options: {
-  initialAgentType?: string;
-  onInvoke?: (name: string) => unknown;
-  settings?: AgentProviderSettingsView | null;
-  view?: AgentEditorView;
-} = {}): Promise<{
-  readonly document: Document;
-  readonly calls: Array<{ name: string; args: unknown }>;
-  readonly onError: string[];
-  readonly click: (element: Element) => Promise<void>;
-  readonly changeSelect: (element: Element, value: string) => Promise<void>;
-}> {
+async function renderAgents(options: { rejectWrite?: boolean } = {}) {
   const calls: Array<{ name: string; args: unknown }> = [];
-  const onError: string[] = [];
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   if (savedGlobals.length === 0) {
@@ -668,7 +105,8 @@ async function renderAgents(options: {
   (globalThis as Record<string, unknown>).lin = {
     invoke: async (name: string, args: unknown) => {
       calls.push({ name, args });
-      return options.onInvoke ? options.onInvoke(name) : (options.view ?? VIEW);
+      if (options.rejectWrite && name === 'agent_write_profile') throw new Error('Refused by test');
+      return VIEW;
     },
   };
   (window as unknown as Record<string, unknown>).lin = (globalThis as Record<string, unknown>).lin;
@@ -678,36 +116,30 @@ async function renderAgents(options: {
   await act(async () => {
     root.render(
       <I18nProvider>
-        <AgentsSettings
-          initialAgentType={options.initialAgentType}
-          onError={(message) => { if (message !== null) onError.push(message); }}
-          onNotice={() => undefined}
-          settings={options.settings === undefined ? PROVIDER_SETTINGS : options.settings}
-        />
+        <AgentsSettings onError={() => undefined} onNotice={() => undefined} settings={null} />
       </I18nProvider>,
     );
   });
-  // Drain the catalog load in its own act, so the tree under test is the
-  // settled page rather than its empty first paint.
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => { await Promise.resolve(); });
   mounted.push(() => act(() => root.unmount()));
 
   return {
     document: document as unknown as Document,
     calls,
-    onError,
-    click: async (element) => {
+    click: async (element: Element) => {
       await act(async () => {
         element.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+        await Promise.resolve();
       });
-      // A click that starts a write settles a tick later; draining here keeps
-      // every resulting state update inside act.
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     },
-    changeSelect: async (element, value) => {
+    input: async (element: Element, value: string) => {
       await act(async () => {
-        Object.defineProperty(element, 'value', { configurable: true, value });
-        element.dispatchEvent(new window.Event('change', { bubbles: true, cancelable: true }));
+        const propsKey = Object.keys(element).find((key) => key.startsWith('__reactProps$'));
+        const props = propsKey
+          ? (element as unknown as Record<string, { onChange?: (event: { target: { value: string } }) => void }>)[propsKey]
+          : undefined;
+        if (!props?.onChange) throw new Error('Missing React change handler');
+        props.onChange({ target: { value } });
       });
     },
   };

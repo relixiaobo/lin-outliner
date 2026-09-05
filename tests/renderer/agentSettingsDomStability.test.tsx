@@ -115,7 +115,6 @@ const PROVIDER_SETTINGS: AgentProviderSettingsView = {
   ],
   agent: {
     additionalSkillDirectories: [],
-    subagentTokenBudget: null,
     providerTimeoutMs: null,
     providerMaxRetries: null,
     providerMaxRetryDelayMs: null,
@@ -232,19 +231,7 @@ const INVOKE_RESULTS: Record<string, unknown> = {
   agent_identity_catalog: {
     entries: [
       { agentType: 'main', persona: 'Aspen', color: 'teal' },
-      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber' },
     ],
-    roles: [{
-      name: 'auditor',
-      layer: 'user',
-      description: 'Audits a change.',
-      developerInstructions: 'Read the diff.',
-      persona: 'Wren',
-      color: 'violet',
-      model: null,
-      reasoningEffort: null,
-      tools: null,
-    }],
     presentationOverrides: [],
   },
   agent_managed_skill_list: { ok: true, value: MANAGED_SKILLS },

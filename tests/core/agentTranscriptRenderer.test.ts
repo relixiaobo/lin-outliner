@@ -74,7 +74,7 @@ cwd: /w
 detail: brief
 
 ## Turn 1 — completed
-trigger: subagent (parent thread-parent)
+trigger: user
 duration: 500ms
 model: anthropic/test-model (medium)
 tokens: total=126 in=100 out=20 cacheRead=5 cacheWrite=1
@@ -104,14 +104,7 @@ Image geometry: observation=2000x1000; source=4000x2000
 Source pixels per observation pixel: x=2, y=2
 Observation-to-source matrix: [2, 0, 0, 2, 0, 0]
 
-### Tool collaboration.spawn_agent — completed
-args: {"task_name":"parser","message":"Audit the parser.","fork_turns":"all"}
-output:
-{"status":"completed","receiverThreadIds":["thread-grandchild"],"agentsStates":{"thread-grandchild":{"status":"running","taskPath":"/root/audit/parser","nickname":"Parser","role":"worker"}}}
-
-- [subagent:completed] /root/audit/parser (thread-grandchild)
-
-- [context-compaction:automaticPreflight] covered turn-child-1/item-user -> turn-child-1/item-spawn
+- [context-compaction:automaticPreflight] covered turn-child-1/item-user -> turn-child-1/item-read
 
 ### Assistant (final_answer)
 Two files: a.ts and b.ts.
@@ -347,50 +340,12 @@ function completedTurn(diagnosticsRef: TurnDiagnosticsPayloadReference | null = 
       modelCall: replayableModelCall('file_read', { file_path: '/w/a.ts' }),
     },
     {
-      type: 'collabAgentToolCall',
-      id: 'item-spawn',
-      provenance: provenance('item-spawn'),
-      status: 'completed',
-      outputRef: null,
-      tool: 'spawn_agent',
-      senderThreadId: THREAD_ID,
-      receiverThreadIds: ['thread-grandchild'],
-      prompt: 'Audit the parser.',
-      summary: null,
-      model: null,
-      reasoningEffort: null,
-      agentsStates: {
-        'thread-grandchild': {
-          status: 'running',
-          taskPath: '/root/audit/parser',
-          nickname: 'Parser',
-          role: 'worker',
-        },
-      },
-      modelCall: replayableModelCall('collaboration__spawn_agent', {
-        task_name: 'parser',
-        message: 'Audit the parser.',
-        fork_turns: 'all',
-      }),
-    },
-    {
-      type: 'subAgentActivity',
-      id: 'item-activity',
-      provenance: provenance('item-activity'),
-      kind: 'completed',
-      agentThreadId: 'thread-grandchild',
-      agentTurnId: null,
-      agentPath: '/root/audit/parser',
-      error: null,
-      spawnItemId: null,
-    },
-    {
       type: 'contextCompaction',
       id: 'item-compaction',
       provenance: provenance('item-compaction'),
       trigger: 'automaticPreflight',
       coveredFrom: { turnId: TURN_ID, itemId: 'item-user' },
-      coveredThrough: { turnId: TURN_ID, itemId: 'item-spawn' },
+      coveredThrough: { turnId: TURN_ID, itemId: 'item-read' },
       preservedFrom: null,
       summaryRef: contextReference('compaction-summary'),
       restoredStateRef: contextReference('compaction-restored'),
@@ -438,7 +393,7 @@ function turnWith(items: readonly ThreadItem[]): Turn {
     provenance: {
       originThreadId: THREAD_ID,
       originTurnId: TURN_ID,
-      trigger: { kind: 'subagent', parentThreadId: 'thread-parent', parentItemId: 'item-parent' },
+      trigger: { kind: 'user' },
     },
     status: 'completed',
     error: null,

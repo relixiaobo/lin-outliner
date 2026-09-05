@@ -32,10 +32,8 @@ import {
   ICON_SIZE,
   ImageIcon,
   LoaderIcon,
-  OpenIcon,
 } from '../../../ui/icons';
 import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
-import { Button } from '../../../ui/primitives/Button';
 import { EmptyState, ErrorState } from '../../../ui/primitives/FeedbackState';
 import { ThreadMarkdown } from '../ThreadMarkdown';
 import {
@@ -61,7 +59,6 @@ type InspectorTab =
 
 interface TrajectoryInspectorProps {
   readonly onClose: () => void;
-  readonly onOpenChildTrajectory: (threadId: string) => void;
   readonly onOpenRecord: (recordId: string) => void;
   readonly record: ThreadTrajectoryRecordSummary;
   readonly threadId: string;
@@ -82,7 +79,6 @@ const DETAILS_RESIZE_STEP = 16;
 
 export const TrajectoryInspector = memo(function TrajectoryInspector({
   onClose,
-  onOpenChildTrajectory,
   onOpenRecord,
   record,
   threadId,
@@ -243,7 +239,6 @@ export const TrajectoryInspector = memo(function TrajectoryInspector({
           <>
             <InspectorBody
               detail={detailBody}
-              onOpenChildTrajectory={onOpenChildTrajectory}
               onOpenRecord={onOpenRecord}
               record={resolvedRecord}
               tab={activeTab}
@@ -260,7 +255,6 @@ export const TrajectoryInspector = memo(function TrajectoryInspector({
 
 function InspectorBody({
   detail,
-  onOpenChildTrajectory,
   onOpenRecord,
   record,
   tab,
@@ -268,7 +262,6 @@ function InspectorBody({
   toolCallRecordIds,
 }: {
   readonly detail: ThreadTrajectoryRecordDetail;
-  readonly onOpenChildTrajectory: (threadId: string) => void;
   readonly onOpenRecord: (recordId: string) => void;
   readonly record: ThreadTrajectoryRecordSummary;
   readonly tab: InspectorTab;
@@ -327,7 +320,6 @@ function InspectorBody({
     <SummaryEvidence
       detail={detail}
       imageAttachments={imageAttachments}
-      onOpenChildTrajectory={onOpenChildTrajectory}
       onOpenRecord={onOpenRecord}
       record={record}
       threadId={threadId}
@@ -339,7 +331,6 @@ function InspectorBody({
 function SummaryEvidence({
   detail,
   imageAttachments,
-  onOpenChildTrajectory,
   onOpenRecord,
   record,
   threadId,
@@ -347,7 +338,6 @@ function SummaryEvidence({
 }: {
   readonly detail: ThreadTrajectoryRecordDetail;
   readonly imageAttachments: ReadonlyMap<string, TrajectoryImageAttachment>;
-  readonly onOpenChildTrajectory: (threadId: string) => void;
   readonly onOpenRecord: (recordId: string) => void;
   readonly record: ThreadTrajectoryRecordSummary;
   readonly threadId: string;
@@ -385,16 +375,6 @@ function SummaryEvidence({
       <InspectorSection title={t.agent.trajectory.requestTiming}>
         <TimingFacts timing={record.timing} usage={record.usage} />
       </InspectorSection>
-      {detail.kind === 'delegation' && detail.childThreadId ? (
-        <Button
-          onClick={() => onOpenChildTrajectory(detail.childThreadId!)}
-          type="button"
-          variant="secondary"
-        >
-          <OpenIcon size={ICON_SIZE.menu} />
-          {t.agent.trajectory.openChildTrajectory}
-        </Button>
-      ) : null}
     </div>
   );
 }
@@ -889,7 +869,7 @@ function tabsForRecord(
 
 function previewText(detail: ThreadTrajectoryRecordDetail): string | null {
   if (detail.kind === 'context') return detail.modelContextText;
-  if (detail.kind === 'tool' || detail.kind === 'delegation') return detail.outputText;
+  if (detail.kind === 'tool') return detail.outputText;
   if (detail.kind === 'compaction') return detail.summaryText;
   return null;
 }
@@ -952,7 +932,6 @@ function evidenceSource(record: ThreadTrajectoryRecordSummary, labels: Trajector
   if (evidence.type === 'threadItem') return trajectoryRecordLabel(record, labels);
   if (evidence.type === 'stablePrompt') return labels.record.stablePrompt;
   if (evidence.type === 'toolCatalog') return labels.requestNumber({ index: evidence.callIndex + 1 });
-  if (evidence.type === 'subagent') return labels.record.childThread;
   return labels.turnLabel({ index: record.turnIndex + 1 });
 }
 

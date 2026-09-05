@@ -1770,8 +1770,6 @@ function rootThread(turns: readonly Turn[]): Thread {
     sessionId: THREAD_ID,
     parentThreadId: null,
     forkedFromId: null,
-    agentNickname: null,
-    agentRole: null,
     name: null,
     preview: '',
     ephemeral: false,
@@ -1796,11 +1794,9 @@ function userTurn(
   originThreadId = THREAD_ID,
 ): Turn {
   const startedAt = new Date(2026, 6, 24).getTime();
-  const author = trigger.kind === 'user'
-    ? { kind: 'reader' as const }
-    : trigger.kind === 'subagent'
-      ? { kind: 'agent' as const, threadId: trigger.parentThreadId }
-      : { kind: 'feature' as const, feature: trigger.feature, ...(trigger.ref ? { ref: trigger.ref } : {}) };
+  const author = trigger.kind === 'feature'
+    ? { kind: 'feature' as const, feature: trigger.feature, ...(trigger.ref ? { ref: trigger.ref } : {}) }
+    : { kind: 'reader' as const };
   const item: ThreadItem = {
     type: 'userMessage',
     author,

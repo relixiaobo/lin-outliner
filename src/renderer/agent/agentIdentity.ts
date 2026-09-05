@@ -5,16 +5,15 @@ import {
 } from '../../core/agent/configuration';
 import type { AgentIdentityEntry } from '../../core/agent/protocol';
 
-/** The conversation's own agent, where an Agent type would go. */
+/** The stable presentation key for the conversation's own Agent. */
 export const MAIN_IDENTITY_KEY = 'main';
 
 /**
  * What to draw for one participant: its name and the hue its mark wears.
  *
  * Resolved at RENDER time from configuration rather than read off the Thread
- * that produced a message. A persona is a property of the identity, not of the
- * words it once said — renaming `Rena` has to rename the speaker of every
- * message that Agent ever sent, and only a live lookup does that.
+ * that produced a message. A persona is a property of the presentation, not of
+ * the words it once said; only a live lookup can apply a rename to history.
  */
 export interface AgentIdentity {
   /** Display name: a persona if one is configured, else the type's own name. */
@@ -43,8 +42,8 @@ export function identityCatalogFrom(entries: readonly AgentIdentityEntry[]): Age
  * unconfigured custom Role looks like on first run, so the fallback is also
  * the intended first appearance rather than an error state.
  *
- * `fallbackName` carries the caller's own best name for participants that are
- * not types at all: an isolated Skill is named by the Skill.
+ * `fallbackName` carries the caller's own best name for an uncatalogued
+ * participant.
  */
 export function resolveAgentIdentity(
   catalog: AgentIdentityCatalog,

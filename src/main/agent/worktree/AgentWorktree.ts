@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, realpath, stat } from 'node:fs/promises';
+import { mkdir, opendir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import {
   assertContained,
@@ -7,6 +7,7 @@ import {
   directoryRealpath,
   git,
   gitOutput,
+  gitRawOutput,
   isMissing,
 } from '../automations/AutomationWorktree';
 
@@ -80,6 +81,11 @@ export interface AgentWorktreeSandboxPaths {
   readonly protectedGitObjectStores: readonly string[];
 }
 
+export interface AgentWorktreeInspection {
+  readonly changedFiles: readonly string[];
+  readonly patch: string;
+}
+
 export class AgentWorktree {
   private readonly managedRoot: string;
 
@@ -88,7 +94,7 @@ export class AgentWorktree {
     private readonly now: () => number = Date.now,
     private readonly onWorktreeCreated?: (path: string) => void | Promise<void>,
   ) {
-    this.managedRoot = join(userDataPath, 'agent', 'subagent-worktrees');
+    this.managedRoot = join(userDataPath, 'agent', 'delegation-worktrees');
   }
 
   /** Resolves repository identity and the exact base without mutating Git or disk. */
@@ -277,6 +283,24 @@ export class AgentWorktree {
         `${branchLog}.lock`,
       ]),
       protectedGitObjectStores: Object.freeze([join(metadata.gitCommonDir, 'objects')]),
+    });
+  }
+
+  async inspect(metadata: AgentWorktreeMetadata): Promise<AgentWorktreeInspection> {
+    if (!metadata.managed || metadata.removedAt !== null) {
+      throw new Error('Agent worktree inspection requires an active Host-managed worktree');
+    }
+    const repository = await resolveRepository(metadata.sourceCwd);
+    const prepared = await this.resumePrepared(metadata, repository, metadata.path, metadata.branch);
+    await assertNoUnrecoverableContent(prepared.cwd);
+    await git(['-C', prepared.cwd, 'add', '--intent-to-add', '.']);
+    const [patch, names] = await Promise.all([
+      gitRawOutput(['-C', prepared.cwd, 'diff', '--binary', '--no-ext-diff', metadata.baseCommit]),
+      gitRawOutput(['-C', prepared.cwd, 'diff', '--name-only', '-z', metadata.baseCommit]),
+    ]);
+    return Object.freeze({
+      changedFiles: Object.freeze(names.split('\0').filter(Boolean)),
+      patch,
     });
   }
 
@@ -527,6 +551,29 @@ export class AgentWorktree {
       managed: true,
       removedAt: null,
     });
+  }
+}
+
+async function assertNoUnrecoverableContent(worktreePath: string): Promise<void> {
+  const ignored = (await gitRawOutput([
+    '-C', worktreePath, 'ls-files', '--others', '--ignored', '--exclude-standard', '-z',
+  ])).split('\0').filter(Boolean);
+  if (ignored.length > 0) {
+    throw new Error(`Agent worktree contains ignored content that cannot be represented in its patch: ${ignored.slice(0, 3).join(', ')}`);
+  }
+
+  const directories = [worktreePath];
+  while (directories.length > 0) {
+    const directoryPath = directories.pop()!;
+    const directory = await opendir(directoryPath);
+    for await (const entry of directory) {
+      const entryPath = join(directoryPath, entry.name);
+      if (directoryPath === worktreePath && entry.name === '.git') continue;
+      if (entry.name === '.git') {
+        throw new Error(`Agent worktree contains an embedded repository that cannot be represented in its patch: ${entryPath}`);
+      }
+      if (entry.isDirectory()) directories.push(entryPath);
+    }
   }
 }
 

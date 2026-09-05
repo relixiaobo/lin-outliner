@@ -75,8 +75,8 @@ function isOpenAIResponsesApi(api: Api): boolean {
     || api === 'azure-openai-responses';
 }
 
-function isAgentTaskToolName(value: string): value is 'agent' | 'agent_message' | 'task_stop' {
-  return value === 'agent' || value === 'agent_message' || value === 'task_stop';
+function isAgentTaskToolName(value: string): value is 'task_status' | 'task_stop' {
+  return value === 'task_status' || value === 'task_stop';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

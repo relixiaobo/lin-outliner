@@ -534,7 +534,7 @@ describe('Agent worktrees', () => {
     );
   });
 
-  test('anchors nested Agents at the canonical repository instead of nesting worktrees', async () => {
+  test('anchors delegated Sessions at the canonical repository instead of nesting worktrees', async () => {
     const fixture = await repositoryFixture();
     const parent = await gitOutput(fixture.source, ['rev-parse', 'HEAD']);
     const linkedPath = join(fixture.root, 'parent-worktree');
@@ -569,6 +569,44 @@ describe('Agent worktrees', () => {
       intent,
       worktree: changed,
     })).rejects.toThrow('identity changed');
+  });
+
+  test('inspects tracked and untracked changes without mutating the source checkout', async () => {
+    const fixture = await repositoryFixture();
+    const worktrees = new AgentWorktree(fixture.userData);
+    const prepared = await planAndPrepare(worktrees, {
+      agentId: 'agent-inspection',
+      cwd: fixture.source,
+    });
+    await writeFile(join(prepared.cwd, 'tracked.txt'), 'changed in worktree\n');
+    await writeFile(join(prepared.cwd, 'untracked.txt'), 'new worktree file\n');
+
+    const inspection = await worktrees.inspect(prepared.worktree);
+
+    expect(inspection.changedFiles).toEqual(['tracked.txt', 'untracked.txt']);
+    expect(inspection.patch).toContain('changed in worktree');
+    expect(inspection.patch).toContain('new worktree file');
+    expect(inspection.patch).toContain('diff --git a/tracked.txt b/tracked.txt');
+    expect(inspection.patch).toContain('diff --git a/untracked.txt b/untracked.txt');
+    expect(await readFile(join(fixture.source, 'tracked.txt'), 'utf8')).toBe('before\n');
+    await expect(readFile(join(fixture.source, 'untracked.txt'), 'utf8')).rejects.toThrow();
+  });
+
+  test('rejects ignored content that cannot be represented in patch evidence', async () => {
+    const fixture = await repositoryFixture();
+    await writeFile(join(fixture.source, '.gitignore'), 'ignored.txt\n');
+    await git(fixture.source, ['add', '.gitignore']);
+    await git(fixture.source, ['commit', '-m', 'Add ignore rule']);
+    const worktrees = new AgentWorktree(fixture.userData);
+    const prepared = await planAndPrepare(worktrees, {
+      agentId: 'agent-ignored-content',
+      cwd: fixture.source,
+    });
+    await writeFile(join(prepared.cwd, 'ignored.txt'), 'not representable\n');
+
+    await expect(worktrees.inspect(prepared.worktree)).rejects.toThrow(
+      'Agent worktree contains ignored content that cannot be represented in its patch',
+    );
   });
 });
 

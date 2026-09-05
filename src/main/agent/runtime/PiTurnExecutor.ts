@@ -27,7 +27,6 @@ import type {
   MessagePhase,
   ModelToolCallHistory,
   SkillInvocationContextPayload,
-  SubagentExecutionState,
   ThreadItem,
   ThreadImageArtifactReference,
   ThreadItemOutputReference,
@@ -475,10 +474,6 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         transformContext,
         sessionId: cacheAffinity,
         providerOptions,
-        remainingTokenBudget: context.remainingTokenBudget
-          ? () => context.remainingTokenBudget?.() ?? null
-          : undefined,
-        onBudgetWarning: context.onBudgetWarning,
       });
       if (context.signal.aborted) {
         agent.abort();
@@ -1038,11 +1033,6 @@ export class PiEventNormalizer {
     if (completion === 'terminal') {
       this.executionObserver?.assistantCompleted?.({ itemId: messageItem.id, message });
       addUsage(this.usage, message.usage);
-      try {
-        this.context.onModelCallUsage?.(message.usage.totalTokens);
-      } catch (error) {
-        console.error('[agent][subagent-budget-audit] model-call usage observation failed', error);
-      }
       this.stopReason = message.stopReason;
       this.errorMessage = message.errorMessage ?? null;
     }
@@ -1151,28 +1141,6 @@ function startedToolItem(
     resourceRefs: [],
     modelCall,
   };
-  if (identity.namespace === null && isAgentTaskToolName(identity.name)) {
-    const input = isRecord(args) ? args : {};
-    return {
-      ...base,
-      type: 'collabAgentToolCall',
-      tool: identity.name,
-      status: 'inProgress',
-      senderThreadId: context.thread.id,
-      receiverThreadIds: [],
-      prompt: identity.name === 'agent'
-        ? optionalToolArgumentText(input.prompt)
-        : identity.name === 'agent_message'
-          ? optionalToolArgumentText(input.message)
-          : null,
-      summary: identity.name === 'agent_message'
-        ? optionalToolArgumentText(input.summary)
-        : null,
-      model: optionalToolArgumentText(input.model),
-      reasoningEffort: null,
-      agentsStates: {},
-    };
-  }
   if (identity.name === 'bash' && identity.namespace === null) {
     const input = isRecord(args) ? args : {};
     return {
@@ -1316,28 +1284,6 @@ async function completedToolItem(
         success: !isError,
         durationMs,
       };
-    case 'collabAgentToolCall': {
-      const views = collaborationViews(result);
-      const agentsStates: Record<string, SubagentExecutionState> = {};
-      for (const view of views) {
-        const threadId = collaborationThreadId(view);
-        if (threadId === null) continue;
-        agentsStates[threadId] = {
-          status: collaborationStatus(view.status, isError),
-          taskPath: collaborationText(view.taskPath ?? view.task_name),
-          nickname: collaborationText(view.nickname),
-          role: collaborationText(view.role),
-        };
-      }
-      return {
-        ...item,
-        status,
-        outputRef,
-        resourceRefs,
-        receiverThreadIds: Object.keys(agentsStates),
-        agentsStates,
-      };
-    }
     default:
       throw new Error(`Unexpected executable Thread Item: ${item.type}`);
   }
@@ -1600,7 +1546,6 @@ function toolItemIdentity(item: ThreadItem): { namespace: string | null; name: s
     case 'webSearch': return { namespace: null, name: 'web_search' };
     case 'mcpToolCall': return { namespace: item.server, name: item.tool };
     case 'dynamicToolCall': return { namespace: item.namespace, name: item.tool };
-    case 'collabAgentToolCall': return { namespace: null, name: item.tool };
     default: return { namespace: null, name: 'tool' };
   }
 }
@@ -1644,13 +1589,8 @@ function toolItemLabel(item: ThreadItem): string {
     case 'webSearch': return 'Web search';
     case 'mcpToolCall': return `${item.server}.${item.tool}`;
     case 'dynamicToolCall': return item.namespace ? `${item.namespace}.${item.tool}` : item.tool;
-    case 'collabAgentToolCall': return `Agent task ${item.tool}`;
     default: return 'Tool';
   }
-}
-
-function isAgentTaskToolName(value: string): value is Extract<ThreadItem, { type: 'collabAgentToolCall' }>['tool'] {
-  return ['agent', 'agent_message', 'task_stop'].includes(value);
 }
 
 function isFileMutationTool(value: string): boolean {
@@ -1682,49 +1622,6 @@ function webResults(result: unknown): Array<{ title: string; url: string; snippe
         : {}),
     }];
   });
-}
-
-function collaborationViews(result: unknown): Array<Record<string, unknown>> {
-  const details = toolDetails(result);
-  if (Array.isArray(details)) return details.filter(isRecord);
-  if (!isRecord(details)) return [];
-  if (Array.isArray(details.agents)) return details.agents.filter(isRecord);
-  if (typeof details.agentId === 'string') {
-    return [{ ...details, threadId: details.agentId, status: 'running' }];
-  }
-  if (typeof details.resumedAgentId === 'string') {
-    return [{ ...details, threadId: details.resumedAgentId, status: 'running' }];
-  }
-  if (isRecord(details.pin) && typeof details.pin.id === 'string') {
-    return [{ ...details, threadId: details.pin.id, status: 'running' }];
-  }
-  if (typeof details.thread_id === 'string') {
-    return [{ ...details, status: 'running' }];
-  }
-  return [details];
-}
-
-function collaborationThreadId(view: Record<string, unknown>): string | null {
-  const value = view.threadId ?? view.thread_id;
-  return typeof value === 'string' && value.trim() ? value : null;
-}
-
-function collaborationText(value: unknown): string | null {
-  return typeof value === 'string' && value.trim()
-    ? boundedText(value.trim(), MAX_PERSISTED_TOOL_STRING_CHARS)
-    : null;
-}
-
-function collaborationStatus(value: unknown, isError: boolean): 'pendingInit' | 'running' | 'interrupted' | 'completed' | 'errored' | 'notFound' {
-  if (
-    value === 'pendingInit'
-    || value === 'running'
-    || value === 'interrupted'
-    || value === 'completed'
-    || value === 'errored'
-    || value === 'notFound'
-  ) return value;
-  return isError ? 'notFound' : 'completed';
 }
 
 function messagePhase(message: AssistantMessage): MessagePhase {

@@ -14,13 +14,12 @@ Tenon does not add an agent filesystem sandbox, permission mode, approval policy
 or pause/resume authorization flow. `request_user_input` gathers missing product
 input only and must never be used as a risk confirmation prompt.
 
-This boundary is unchanged for child Agents. An `agent_message` to an Agent or
-the reserved `main` route is task direction authored by a model, not user
-authority. It cannot approve a plan, answer a pending user question, change
-configuration or capability blocks, clear user-stop provenance, or turn a
-denied operation into an allowed one. A recipient must refuse permission
-laundering and surface the blocked need to the user through the ordinary product
-flow.
+A delegated Session receives only a narrower derivative of this authority.
+Model-authored delegation prompts and later messages are task direction, not
+user authority. They cannot approve a plan, answer a pending user question,
+change Settings or capability blocks, clear user-stop provenance, or turn a
+denied operation into an allowed one. The root remains responsible for
+surfacing blocked needs through the ordinary product flow.
 
 That extends to Skills. There is no per-Skill ratification gate: a Skill does not
 have to be accepted before the model may invoke it, and installing one enables it.
@@ -32,7 +31,7 @@ may instead be acquired and enabled by product policy as specified in
 but enabling the Skill puts its text into the agent's context.
 
 Default availability does not widen execution authority. Browser Pilot remains
-subject to the effective Configuration Profile or Role Skill ceiling, the
+subject to the effective Configuration Profile and Skill ceiling, the
 ordinary tool ceiling, `disabledSkills`, and explicit capability blocks. Its
 preflight and every `bp` command execute through ordinary `bash` under Full
 Access; missing network access, installer ownership conflicts, and operating-
@@ -55,59 +54,41 @@ an agent capability mode.
 Execution authority is shaped by four mechanisms:
 
 1. The canonical model-tool catalog determines what the product can expose.
-2. The effective Configuration Profile and Agent Role select a subset.
-3. Parent configuration places a hard ceiling on every child capability source.
+2. The effective Configuration Profile selects a subset.
+3. A delegated Session narrows the root ceiling through its frozen Task Profile
+   and access policy.
 4. Explicit user blocks make matching action kinds unavailable.
 
 Selection controls availability, not host-account authority. A tool that survives
 selection runs directly; a tool that does not survive is absent or returns its
 owner's structured unavailable result.
 
-### Read-only delegated execution
+### Delegated Execution
 
-`agent.execution: "read-only"` adds a Host-enforced action ceiling to one
-delegated Agent. It is narrower than Full Access, is persisted in the Agent
-execution policy, and is inherited by nested Agents and isolated Skills. A
-descendant cannot clear it by selecting another Agent type, Role, tool list,
-worktree mode, or Skill execution mode. Historical execution policies that
-predate the field decode as mutable rather than being retroactively narrowed.
+Delegation admission snapshots the root's effective tool ceiling, the selected
+Task Profile, and the narrower of requested access and the Runner's configured
+maximum. `explore` and `plan` require `read-only`; `general` may use
+`read-only` or `workspace-write`.
 
-Static catalog selection removes direct file mutation and other tools whose
-declared action kinds are not read-only. Read tools and narrowly scoped Host
-coordination controls may remain visible so the Agent can inspect, report,
-delegate under the same ceiling, and invoke a Skill without laundering
-authority. At execution time, extension/MCP calls and dynamically classified
-`bash` calls must consist entirely of read-only action kinds. File writes and
-deletes, Outline mutations, local code or project-script execution, dependency
-installation, background processes, network writes, publishing, destructive
-cleanup, and unknown shell behavior return structured unavailability before
-the underlying action starts. The ceiling does not rewrite commands or infer
-safety from the Agent's stated intent.
+Every delegated Session excludes root-only coordination: user-input requests,
+Goal create/read/update, Automation management, background process creation,
+Tool Task inspect/stop, Thread-history search/read, and nested delegation. Skill
+loading and Turn-local plan updates may remain, but neither can widen authority.
 
-For a Bash call with `stdin`, capability evaluation parses the command once and returns
-both its action descriptors and one Host-private consumer class. Omitted input is
-`absent`; exact registry-backed `outline COMMAND --input -` forms are
-`registered-data`; known interpreter stdin-source forms are `executable`; every nested
-shell wrapper, pipeline, alternate input source, or unproved consumer is `unknown`. Stdin text is opaque
-to this classifier. Explore, plan, read-only, and worktree Agents reject `executable` and
-`unknown` before spawn; `registered-data` remains governed by the command's ordinary
-Outline read/edit descriptors, including the worktree mutation prohibition.
+Static catalog selection removes tools whose declared action kinds exceed the
+frozen ceiling. Extension and MCP calls are checked again at execution. Bash is
+also classified at execution because its static contract is broad. Delegated
+Bash must be foreground, and read-only policy accepts only proven read actions.
+With stdin, only absent input or a registry-backed data consumer is eligible;
+executable and unknown consumers reject before spawn. Unknown shell behavior is
+never inferred safe from the task description.
 
-`thread_search` and text-only `thread_read` declare the read-only local-system actions
-`thread.history.search` and `thread.history.read`, so an admitted read-only child may use
-them without file-write authority. Read-only classification never grants either tool:
-the canonical catalog, effective profile, inherited parent pool, Role, and explicit
-allowed-tool ceiling must still admit its exact name. Same-profile validation remains a
-data check inside the history service rather than an action grant.
+A writable `general` Session may execute otherwise admitted workspace-write
+actions under the host account. It still cannot use hard-blocked root controls
+or background processes. The complete policy is specified in
+[`agent-delegation.md`](agent-delegation.md).
 
-A `thread_read` call selecting one or more historical file citations derives both the
-history-read descriptor and a separate `file.read.local_path` descriptor before
-execution. Blocking either action prevents the call. The citation key, Thread URI,
-same-profile relationship, and read-only role grant no file access by themselves;
-runtime selection revalidates page ownership and the requested `reveal`, `replay`,
-`edit`, or `observe` representation before linking one canonical resource.
-
-## Admission Is Not Permission
+## Admission Is Not Permission## Admission Is Not Permission
 
 Full Access authorizes a valid operation exposed in the Thread; it does not make an
 unknown tool or malformed argument object valid. Each provider call resolves the

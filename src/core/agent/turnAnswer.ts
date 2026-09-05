@@ -1,12 +1,9 @@
 /**
  * What a Turn answered, as every reader of a finished Turn means it.
  *
- * Three call sites derive this — a collaboration child's terminal outcome, an
- * isolated Skill's result, and an Automation run's continuity digest — and they
- * must agree: they describe the same Turn to different audiences, so a Turn that
- * answers one way here and another way there is a bug the reader cannot see. It
- * lives in core beside the other Turn-shaped helpers so that what counts as the
- * answer (which Item types, which phases) is changed in one place.
+ * Readers of completed Turns must agree on which Item types and phases form the
+ * answer. This lives in core so Automation continuity and future projections do
+ * not quietly invent different definitions.
  */
 import type { RendererThreadItem, ThreadItem } from './protocol';
 

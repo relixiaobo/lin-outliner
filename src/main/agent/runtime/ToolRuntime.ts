@@ -18,20 +18,12 @@ import {
 import type { JsonValue } from '../../../core/agent/protocol';
 import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGenerationTool';
 import {
-  hasBackgroundShellTask,
-  stopBackgroundShellTaskResult,
   type AgentFileReadImageNormalizer,
   type AgentLocalWorkspaceContext,
+  type DelegateCommandRuntime,
 } from '../capabilities/agentLocalTools';
 import type { AgentSkillRuntime } from '../capabilities/agentSkills';
 import { evaluateAgentToolCapability } from '../capabilities/agentCapabilities';
-import {
-  resolveSubagentToolRequest,
-  subagentBashExecutionAllowed,
-  subagentToolExecutionAllowed,
-  subagentToolAllowed,
-  type PersistedSubagentToolPolicy,
-} from '../capabilities/subagentToolPolicy';
 import { redactSecretLikeJsonAsync } from '../capabilities/agentSecretRedaction';
 import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules';
 import type { ThreadService } from '../ThreadService';
@@ -40,6 +32,12 @@ import type { TurnExecutionContext } from './types';
 import { compileToolParameters } from './kernel/exactToolArguments';
 import { createToolArtifactSink, type ToolArtifactSink } from './ToolArtifactSink';
 import { HostToolDenial } from './kernel/HostToolDenial';
+import {
+  delegatedBashExecutionAllowed,
+  delegatedToolContractAllowed,
+  delegatedToolExecutionAllowed,
+  type DelegatedToolPolicy,
+} from '../delegation/delegatedToolPolicy';
 
 export interface ToolRuntimeOptions {
   readonly localWorkspace?: AgentLocalWorkspaceContext | ((context: TurnExecutionContext) => AgentLocalWorkspaceContext);
@@ -55,6 +53,10 @@ export interface ToolRuntimeOptions {
   readonly assembleRegistry?: boolean;
   readonly dynamicTools?: (context: TurnExecutionContext) => readonly AgentTool[] | Promise<readonly AgentTool[]>;
   readonly capabilityConfig?: AgentCapabilityConfig | (() => AgentCapabilityConfig | Promise<AgentCapabilityConfig>);
+  readonly delegateCommandRuntime?: (
+    context: TurnExecutionContext,
+  ) => DelegateCommandRuntime | undefined | Promise<DelegateCommandRuntime | undefined>;
+  readonly delegationPolicy?: (threadId: string) => DelegatedToolPolicy | null;
 }
 
 export class ToolRuntime {
@@ -70,7 +72,12 @@ export class ToolRuntime {
     const toolTaskService = typeof this.service.toolTaskService === 'function'
       ? this.service.toolTaskService()
       : undefined;
-    const subagentPolicy = this.subagentPolicy(context);
+    const delegationPolicy = context.thread.threadSource === 'delegation'
+      ? this.options.delegationPolicy?.(context.thread.id) ?? null
+      : null;
+    if (context.thread.threadSource === 'delegation' && !delegationPolicy) {
+      throw new Error(`Delegation Session ${context.thread.id} has no persisted tool policy`);
+    }
     const skillRuntime = await this.skillRuntime(context);
     const workspace = typeof this.options.localWorkspace === 'function'
       ? this.options.localWorkspace(context)
@@ -78,6 +85,7 @@ export class ToolRuntime {
     const imageGeneration = typeof this.options.imageGeneration === 'function'
       ? this.options.imageGeneration(context)
       : this.options.imageGeneration;
+    const delegateCommandRuntime = await this.options.delegateCommandRuntime?.(context);
     const capabilityTools = this.options.capabilityTools
       ? this.options.capabilityTools(context)
       : (await import('../capabilities/agentTools')).createAgentTools({
@@ -89,17 +97,13 @@ export class ToolRuntime {
           artifactSink,
           ...(toolTaskService === undefined ? {} : { toolTaskService }),
           turnId: context.turn.id,
+          ...(delegateCommandRuntime === undefined ? {} : { delegateCommandRuntime }),
         });
     const dynamicTools = await this.options.dynamicTools?.(context) ?? [];
-    const collaborationTools = await this.service.collaborationToolContributions({
-      threadId: context.thread.id,
-      turnId: context.turn.id,
-    });
     const dynamicToolSet = new Set(dynamicTools);
     const tools = [
       ...capabilityTools,
       ...this.createControlTools(context, artifactSink),
-      ...collaborationTools,
       ...dynamicTools,
     ];
     const extensionContributions = await this.service.extensionToolContributions(context.thread.id);
@@ -130,21 +134,6 @@ export class ToolRuntime {
       canonicalModelToolKey(contract.identity),
       contract,
     ]));
-    const policyRegistry = registry ?? [...MODEL_TOOL_CATALOG, ...extensionContracts];
-    const requestedTools = subagentPolicy
-      ? resolveSubagentToolRequest(subagentPolicy.requestedTools, policyRegistry)
-      : null;
-    const requestedSet = requestedTools?.requestedTools === null
-      ? null
-      : requestedTools
-        ? new Set(requestedTools.recognizedTools)
-        : null;
-    if (subagentPolicy && requestedTools && requestedTools.unrecognizedTools.length > 0) {
-      this.reportSubagentToolDiagnostic(
-        context,
-        `Ignoring unrecognized Role tools: [${requestedTools.unrecognizedTools.join(', ')}]`,
-      );
-    }
     const allowed = new Set(context.configuration.tools);
     const enabledExtensions = new Set([...context.configuration.plugins, ...context.configuration.mcpServers]);
     const unique = new Map<string, AgentTool>();
@@ -175,28 +164,10 @@ export class ToolRuntime {
       const identity = registry
         ? decodeProviderToolName(tool.name, 'flat', registry)
         : providerIdentity;
-      if (!identity) {
-        if (subagentPolicy && dynamicToolSet.has(tool)) {
-          this.reportSubagentToolDiagnostic(
-            context,
-            `Skipping dynamic model tool without a canonical contract: ${tool.name}`,
-          );
-          continue;
-        }
-        throw new Error(`Runtime model tool has no canonical contract: ${tool.name}`);
-      }
+      if (!identity) throw new Error(`Runtime model tool has no canonical contract: ${tool.name}`);
       const canonical = canonicalModelToolKey(identity);
       const contract = contracts.get(canonical) ?? modelToolContract(canonical);
-      if (!contract) {
-        if (subagentPolicy && dynamicToolSet.has(tool)) {
-          this.reportSubagentToolDiagnostic(
-            context,
-            `Skipping dynamic model tool without a canonical contract: ${canonical}`,
-          );
-          continue;
-        }
-        throw new Error(`Runtime model tool has no canonical contract: ${canonical}`);
-      }
+      if (!contract) throw new Error(`Runtime model tool has no canonical contract: ${canonical}`);
       if (registry && !sameSchema(tool.parameters, contract.inputSchema)) {
         if (dynamicToolSet.has(tool) || extensionOwners.has(canonical)) {
           unavailableCanonical.add(canonical);
@@ -205,8 +176,7 @@ export class ToolRuntime {
         }
         throw new Error(`Runtime model-tool schema does not match its contract: ${canonical}`);
       }
-      if (subagentPolicy && !subagentToolAllowed(contract, subagentPolicy)) continue;
-      if (requestedSet !== null && !requestedSet.has(canonical)) continue;
+      if (delegationPolicy && !delegatedToolContractAllowed(contract, delegationPolicy)) continue;
       const extensionOwner = extensionOwners.get(canonical);
       const enabled = extensionOwner
         ? allowed.has(canonical) || enabledExtensions.has(extensionOwner)
@@ -214,7 +184,7 @@ export class ToolRuntime {
       if (!enabled) continue;
       if (contract?.scope === 'rootThread' && context.thread.parentThreadId !== null) continue;
       if (unique.has(tool.name)) throw new Error(`Duplicate runtime model tool: ${tool.name}`);
-      unique.set(tool.name, this.instrumentTool(context, tool, identity, contract));
+      unique.set(tool.name, this.instrumentTool(context, tool, identity, contract, delegationPolicy));
       enabledCanonical.add(canonical);
     }
     for (const contract of extensionContracts) {
@@ -222,63 +192,17 @@ export class ToolRuntime {
       const owner = extensionOwners.get(canonical)!;
       if (
         !unavailableCanonical.has(canonical)
-        && (!subagentPolicy || subagentToolAllowed(contract, subagentPolicy))
-        && (requestedSet === null || requestedSet.has(canonical))
         && (allowed.has(canonical) || enabledExtensions.has(owner))
         && !enabledCanonical.has(canonical)
       ) {
-        if (subagentPolicy) {
-          // A child must not lose its whole turn because an optional extension
-          // failed to contribute its runtime handler. The requested-tool
-          // admission check below still rejects a Role that resolves to zero.
-          this.reportSubagentToolDiagnostic(
-            context,
-            `Skipping extension model tool without a runtime implementation: ${canonical}`,
-          );
-          continue;
-        }
         throw new Error(`Enabled extension model tool has no runtime implementation: ${canonical}`);
-      }
-    }
-    if (
-      subagentPolicy
-      && requestedTools
-      && requestedTools.requestedTools !== null
-      // An isolated Skill with an empty requested ceiling intentionally runs
-      // tool-free. Authoring omission is normalized to this empty array before
-      // spawn; every model-addressable Agent Role must instead admit a real tool.
-      && (requestedTools.requestedTools.length > 0 || this.subagentType(context) !== 'isolated-skill')
-    ) {
-      const admittedRequested = requestedTools.recognizedTools.filter((key) => enabledCanonical.has(key));
-      if (admittedRequested.length === 0) {
-        const canonicalType = this.subagentType(context);
-        const unavailableRecognized = requestedTools.recognizedTools.filter((key) => !enabledCanonical.has(key));
-        const reasons = [
-          ...(requestedTools.unrecognizedTools.length === 0
-            ? []
-            : [`unrecognized [${requestedTools.unrecognizedTools.join(', ')}]`]),
-          ...(unavailableRecognized.length === 0
-            ? []
-            : [`not available under this Agent policy [${unavailableRecognized.join(', ')}]`]),
-        ];
-        throw new Error(
-          `Agent '${canonicalType}' would be spawned with zero tools — refusing. `
-          + `Its tools list resolved to nothing: ${reasons.join('; ') || 'no admitted tools'}. `
-          + `Fix the Role's tools configuration or pass a different subagent_type.`,
-        );
       }
     }
     return [...unique.values()];
   }
 
   async prepareProviderContext(context: TurnExecutionContext): Promise<void> {
-    const subagentPolicy = this.subagentPolicy(context);
     if (!context.configuration.tools.includes('skill')) return;
-    if (subagentPolicy && (subagentPolicy.kind === 'explore' || subagentPolicy.kind === 'plan')) {
-      // Specialized children intentionally have no Skill catalog in either
-      // their startup evidence or later provider-context refreshes.
-      return;
-    }
     const runtime = await this.skillRuntime(context);
     const checkpoint = runtime?.catalogRefreshCheckpoint() ?? null;
     if (!runtime || checkpoint === null) return;
@@ -291,37 +215,6 @@ export class ToolRuntime {
     return typeof this.options.skillRuntime === 'function'
       ? this.options.skillRuntime(context)
       : this.options.skillRuntime;
-  }
-
-  private subagentPolicy(context: TurnExecutionContext): PersistedSubagentToolPolicy | null {
-    if (context.thread.parentThreadId === null) return null;
-    const execution = this.service.subagentExecution(context.thread.id);
-    if (!execution) {
-      throw new Error(`Delegated Agent ${context.thread.id} has no execution record`);
-    }
-    if (execution.initialAdmissionState !== 'committed') {
-      throw new Error(`Delegated Agent ${context.thread.id} initial admission is not committed`);
-    }
-    if (!execution.toolPolicy) {
-      throw new Error(`Delegated Agent ${context.thread.id} has no persisted tool policy`);
-    }
-    return execution.toolPolicy;
-  }
-
-  private subagentType(context: TurnExecutionContext): string {
-    const host = this.service as unknown as {
-      subagentExecution?: (threadId: string) => { readonly agentType?: string } | null;
-    };
-    return host.subagentExecution?.(context.thread.id)?.agentType
-      ?? context.thread.agentRole
-      ?? 'general-purpose';
-  }
-
-  private reportSubagentToolDiagnostic(context: TurnExecutionContext, message: string): void {
-    const key = `${context.thread.id}:${message}`;
-    if (this.reportedUnavailableToolSchemas.has(key)) return;
-    this.reportedUnavailableToolSchemas.add(key);
-    console.warn(`[agent] ${message}.`);
   }
 
   private createControlTools(context: TurnExecutionContext, artifactSink: ToolArtifactSink): AgentTool[] {
@@ -429,11 +322,11 @@ export class ToolRuntime {
       }, normalizeTaskStatusToolInput),
       coreResultTool('task_stop', 'Task Stop', async (_itemId, params) => {
         const input = normalizeTaskStopToolInput(params);
-        const taskId = input.task_id!;
+        const taskId = input.task_id;
         const toolTasks = typeof this.service.toolTaskService === 'function'
           ? this.service.toolTaskService()
           : null;
-        const toolTask = await toolTasks?.stop(taskId, threadId) ?? null;
+        const toolTask = await toolTasks?.stop(taskId, threadId, turnId) ?? null;
         if (toolTask) {
           return toolResult('task_stop', {
             taskId: toolTask.taskId,
@@ -441,32 +334,10 @@ export class ToolRuntime {
             state: toolTask.state,
           });
         }
-        const shellOwnsTask = hasBackgroundShellTask(taskId, threadId);
-        const agentOwnsTask = this.service.hasAgentTask(threadId, taskId);
-        if (agentOwnsTask && shellOwnsTask) {
-          throw new AgentToolFailure(
-            'task_ambiguous',
-            `Task ID is ambiguous between an Agent and shell task: ${taskId}`,
-            'Inspect the active task identifiers and retry task_stop with an unambiguous ID.',
-          );
-        }
-        const agent = await this.service.stopAgentTask(threadId, turnId, taskId);
-        if (agent !== null) return toolResult('task_stop', agent);
-        const shell = await stopBackgroundShellTaskResult(taskId, threadId, artifactSink);
-        if (shell !== null) {
-          const details = shell.details as unknown as ToolEnvelope<JsonValue>;
-          return {
-            ...agentToolResult(details, { taskId, taskType: 'shell', state: 'stopped' }),
-            ...(shell.resourceRefs === undefined ? {} : { resourceRefs: shell.resourceRefs }),
-            ...(shell.persistedTextReplacements === undefined
-              ? {}
-              : { persistedTextReplacements: shell.persistedTextReplacements }),
-          };
-        }
         throw new AgentToolFailure(
           'task_not_found',
           `No task found with ID: ${taskId}`,
-          'Use a task ID returned by agent or bash. If the task already ended, continue without stopping it.',
+          'Use a task ID returned by a background-producing tool in this Thread.',
         );
       }, normalizeTaskStopToolInput),
     ];
@@ -477,6 +348,7 @@ export class ToolRuntime {
     tool: AgentTool,
     identity: ModelToolIdentity,
     contract: ModelToolContract,
+    delegationPolicy: DelegatedToolPolicy | null,
   ): AgentTool {
     return {
       ...tool,
@@ -501,51 +373,23 @@ export class ToolRuntime {
             capabilityConfig: await this.capabilityConfig(),
           },
         });
-        let activeSubagentPolicy: PersistedSubagentToolPolicy;
-        if (context.thread.parentThreadId === null) {
-          activeSubagentPolicy = ROOT_SUBAGENT_POLICY;
-        } else {
-          const persistedPolicy = this.subagentPolicy(context);
-          if (!persistedPolicy) {
-            throw new Error(`Delegated Agent ${context.thread.id} has no persisted tool policy`);
-          }
-          activeSubagentPolicy = persistedPolicy;
-        }
-        const bashPolicyBlocked = canonicalIdentity === 'bash'
-          && !subagentBashExecutionAllowed(
-            activeSubagentPolicy,
-            capability.descriptors.map((descriptor) => descriptor.actionKind),
-            capability.bashStdinConsumer,
-          );
-        const worktreeBashOutlineBlocked = bashPolicyBlocked
-          && activeSubagentPolicy.worktree
-          && capability.descriptors.some((descriptor) => (
-            descriptor.actionKind === 'outline.edit' || descriptor.actionKind === 'outline.delete'
-          ));
-        const extensionPolicyBlocked = contract.schemaOwner === 'extension'
-          && !subagentToolExecutionAllowed(
-            activeSubagentPolicy,
-            capability.descriptors.map((descriptor) => descriptor.actionKind),
-          );
-        const subagentPolicyBlocked = bashPolicyBlocked || extensionPolicyBlocked;
-        if (capability.behavior === 'unavailable' || subagentPolicyBlocked) {
+        const delegatedPolicyBlocked = delegationPolicy !== null && (canonicalIdentity === 'bash'
+          ? !delegatedBashExecutionAllowed(
+              delegationPolicy,
+              capability.descriptors.map((descriptor) => descriptor.actionKind),
+              capability.bashStdinConsumer ?? 'absent',
+              params !== null && typeof params === 'object' && !Array.isArray(params)
+                && (params as Record<string, unknown>).run_in_background === true,
+            )
+          : !delegatedToolExecutionAllowed(
+              delegationPolicy,
+              capability.descriptors.map((descriptor) => descriptor.actionKind),
+            ));
+        if (capability.behavior === 'unavailable' || delegatedPolicyBlocked) {
           const reason = capability.behavior === 'unavailable'
             ? capability.reason
-            : bashPolicyBlocked
-              ? activeSubagentPolicy.readOnly
-                ? 'Read-only Agents may use Bash only for inspection commands.'
-                : worktreeBashOutlineBlocked
-                  ? 'Worktree Agents cannot mutate the live outline through Bash.'
-                  : 'Explore and Plan Agents may use Bash only for repository inspection.'
-              : activeSubagentPolicy.readOnly
-                ? 'Read-only Agents cannot execute mutating extension tools.'
-                : 'Explore and Plan Agents cannot execute repository mutations.';
-          const policyCode = capability.behavior === 'unavailable'
-            ? null
-            : activeSubagentPolicy.readOnly
-              ? 'subagent_read_only_restricted'
-              : 'subagent_repository_mutation_restricted';
-          const code = capability.behavior === 'unavailable' ? capability.code : policyCode!;
+            : 'This operation is unavailable in the delegated Session capability ceiling.';
+          const code = capability.behavior === 'unavailable' ? capability.code : 'delegation_policy_restricted';
           const details: ToolEnvelope<JsonValue> & { readonly capabilityAudit: JsonValue } = {
             ok: false,
             tool: canonicalIdentity,
@@ -558,7 +402,7 @@ export class ToolRuntime {
               details: { reason: code },
             },
             instructions: 'This operation is unavailable in the current context. Continue with another available approach.',
-            capabilityAudit: capabilityAudit(capability, policyCode),
+            capabilityAudit: capabilityAudit(capability),
           };
           await this.service.notifyToolCompleted(
             context.thread.id,
@@ -637,29 +481,15 @@ export class ToolRuntime {
   }
 }
 
-const ROOT_SUBAGENT_POLICY: PersistedSubagentToolPolicy = {
-  kind: 'general-purpose',
-  runInBackground: false,
-  worktree: false,
-  readOnly: false,
-  allowNesting: true,
-  requestedTools: null,
-};
-
 function capabilityAudit(
   capability: ReturnType<typeof evaluateAgentToolCapability>,
-  policyCode: 'subagent_read_only_restricted' | 'subagent_repository_mutation_restricted' | null = null,
 ): JsonValue {
   return jsonValue({
-    behavior: policyCode === null ? capability.behavior : 'unavailable',
+    behavior: capability.behavior,
     access: capability.access,
-    source: policyCode === null ? capability.source : 'subagent_policy',
+    source: capability.source,
     descriptors: capability.descriptors,
-    ...(policyCode !== null
-      ? { code: policyCode }
-      : capability.behavior === 'unavailable'
-        ? { code: capability.code }
-        : {}),
+    ...(capability.behavior === 'unavailable' ? { code: capability.code } : {}),
   });
 }
 

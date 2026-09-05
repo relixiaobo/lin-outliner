@@ -5,14 +5,15 @@ Agent Core. It is a contract checklist, not project status.
 
 ## Core Contract
 
-- Use Thread, Turn, Item, Goal, Role, Subagent, and Tool Task as the product vocabulary.
+- Use Thread, Turn, Item, Goal, Tool Task, Agent Session, Runner, and Task Profile
+  as distinct product vocabulary.
 - Cross the strict request/response codecs; do not add parallel IPC.
 - Persist execution history only through canonical notifications and rollouts.
 - Give every completed fact immutable provenance.
 - Keep one active Turn per Thread and require exact identity preconditions.
 - Preserve history-only fork semantics.
-- Represent each Agent as a child Thread plus one stable Agent execution ID;
-  deliver background completion only to its direct parent.
+- Represent internal delegation as one root-owned Session bound to a hidden
+  canonical Thread; keep process and delivery truth in the generic Tool Task.
 - Route scheduled work through Automation claims and canonical feature Turn
   provenance; do not confuse scheduled product work with the generic local
   admission leases that bound processes Tool Tasks start.
@@ -38,8 +39,8 @@ Agent Core. It is a contract checklist, not project status.
 - Treat a committed-state verified semantic receipt as proof for its covered
   postconditions. Read again only for facts outside that receipt, and recover
   unknown settlement through exact idempotency history rather than retrying.
-- Keep the Agent orchestration surface to `agent`, `agent_message`, and unified
-  `task_stop`; do not add a roster, inbox, follow-up, wait, or polling alias.
+- Keep delegation out of the model-tool catalog. Expose it only through the
+  built-in Skill, canonical `delegate` CLI commands, and ordinary Bash.
 - Run background-capable Bash through durable Tool Tasks. Keep producer tools
   responsible for creating domain work and reserve `task_status` / `task_stop`
   for inspecting or cancelling a returned task handle; do not add `task_start`.
@@ -50,10 +51,10 @@ Agent Core. It is a contract checklist, not project status.
   fixed completion handling rules instructional. Commit exactly-once delivery
   at canonical `turn/started`, not at an IPC return or model response.
 - Declare Core scope and action kinds.
-- Apply effective configuration and parent capability ceilings.
-- Keep collaboration Agent model/reasoning choices out of Role definitions and
-  the model-visible `agent` schema. Resolve per-type Settings over the direct
-  parent before admission, and reuse the child snapshot on resume.
+- Apply effective configuration, explicit blocks, and delegated Session ceilings.
+- Keep Runner, model, effort, scheduling, timeout, and maximum-access policy in
+  Settings. Resolve and snapshot them before admission; reject unavailable
+  explicit selections without fallback.
 - Return native structured unavailable or failure results.
 - Emit one started and one terminal Item.
 - Mint a fresh UUIDv7 internal identity for every provider tool call. Keep raw provider
@@ -68,11 +69,11 @@ Agent Core. It is a contract checklist, not project status.
 - Let a resolved tool opt specific canonical RFC 6901 string paths into the
   shared large-text contract. Keep exact UTF-8 dependencies Thread-private,
   replay them exactly for the provider, and use bounded projections for display.
-- Treat Bash `stdin` as literal foreground UTF-8 data, not shell syntax. Classify
+- Treat Bash `stdin` as literal UTF-8 data, not shell syntax. Classify
   its effective consumer from the command once, keep the payload opaque to
-  permissions, and reject background input before spawn.
-- Start every new Agent from fresh context; reuse its own history only when the
-  same stable ID is resumed.
+  permissions, and preserve exact bytes for foreground and background tasks.
+- Start every new Agent Session from fresh context; reuse only its hidden
+  canonical history when the same root-owned Session is explicitly continued.
 - For historical context, expose bounded lazy `thread_search` / `thread_read`
   facades rather than renderer history IPC or eager transcript injection. Keep
   same-profile validation, current-Thread exclusion, tool ceilings, action blocks,
@@ -111,11 +112,8 @@ Agent Core. It is a contract checklist, not project status.
   for menu, transcript, copy, and history presentation without putting titles in the
   canonical URI. Keep missing/current/corrupt/denied targets non-fatal.
 - Cover empty, idle, active, failed, interrupted, and input-request states.
-- Derive Agent rows from canonical lineage, execution generation, child Turn,
-  and pending-notification state, never a model wait Item.
-- Render unavailable-selection fallback once at the live chip or delivered
-  report, preserve it across reload, and deep-link its action to the matching
-  Agent editor.
+- Keep delegation Threads and Session state out of renderer projections. Render
+  delegated execution only as generic Bash Items and Tool Tasks.
 - Verify light and dark appearance for changed surfaces.
 
 ## Persistence Contract
@@ -130,16 +128,15 @@ Agent Core. It is a contract checklist, not project status.
   and working-set contract; it does not create an alternate file or retention store.
 - Keep rollout JSONL append-only and projections rebuildable.
 - Account content-addressed internal text in the owning Thread quota and carry
-  its reachability through fork, child inheritance, rollback, prune, startup
+  its reachability through fork, rollback, prune, startup
   reconciliation, and Thread deletion.
 - Keep feature stores explicitly owned and keyed by canonical IDs.
 - Separate compact Tool Task truth from expandable detail. Preserve terminal
   and delivery facts until Thread deletion; apply per-task, per-Thread, and
   application detail ceilings, delivery-based TTL, reference-aware GC, and
   visible storage-pressure refusal.
-- Persist Agent identity, recorded configuration, stop provenance, retained
-  worktree metadata, bounded execution-selection fallback, and pending
-  `{agentId, generation}` delivery without adding a second transcript.
+- Persist Agent Session policy, ordered root-message control facts, and
+  settlement links without adding another transcript or task ledger.
 - Serialize Automation claims with pause, delete, Start now, and dispatch; keep
   Memory eligibility based on immutable Turn provenance.
 - Test crash recovery and idempotent reconciliation.
@@ -153,9 +150,10 @@ Agent Core. It is a contract checklist, not project status.
   quiescent receipt races, artifact settlement, output limits, retention,
   storage pressure, owner deletion, exactly-once delivery, and source/packaged
   supervisor resolution.
-- Prove a settings change affects only fresh Agent identities: existing Agents
-  keep their effective provider/model/reasoning snapshot across resume and
-  restart, while nested Agents inherit what their direct parent actually runs.
+- Prove a Settings change affects only fresh Agent Sessions: existing Sessions
+  keep their Runner/model/effort/access snapshot across continuation and restart.
+- Prove failed, timed-out, cancelled, and lost delegation outcomes block queued
+  input and never trigger another Turn.
 - Add renderer tests for each visible canonical state.
 - Add E2E coverage for the user workflow.
 - Verify Thread-reference URI parsing does not expand Outline `ReferenceTarget`,

@@ -16,7 +16,7 @@ describe('Agent composer input history', () => {
     const turns = [
       turn('turn-1', [userItem('reader-1', 'reader'), userItem('feature-1', 'feature')]),
       turn('turn-2', [userItem('host-1', 'host'), userItem('reader-2', 'reader')]),
-      turn('turn-3', [userItem('agent-1', 'agent'), userItem('reader-3', 'reader')]),
+      turn('turn-3', [userItem('reader-3', 'reader')]),
     ];
 
     expect(selectReaderComposerHistoryEntries(turns).map((item) => item.id))
@@ -177,13 +177,11 @@ function turn(id: string, items: readonly ThreadItem[]): Turn {
 
 function userItem(
   id: string,
-  authorKind: 'reader' | 'agent' | 'feature' | 'host',
+  authorKind: 'reader' | 'feature' | 'host',
 ): Extract<ThreadItem, { readonly type: 'userMessage' }> {
-  const author = authorKind === 'agent'
-    ? { kind: 'agent' as const, threadId: '01910000-0000-7000-8000-000000000002' }
-    : authorKind === 'feature'
-      ? { kind: 'feature' as const, feature: 'automation' }
-      : { kind: authorKind };
+  const author = authorKind === 'feature'
+    ? { kind: 'feature' as const, feature: 'automation' }
+    : { kind: authorKind };
   return {
     type: 'userMessage',
     id,

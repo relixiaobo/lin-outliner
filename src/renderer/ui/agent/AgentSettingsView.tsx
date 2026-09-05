@@ -4,6 +4,7 @@ import type {
   AgentProviderConfigView,
   AgentProviderSettingsView,
   AgentCapabilitySettingsView,
+  AgentDelegationSettingsInput,
 } from '../../api/types';
 import { api } from '../../api/client';
 import {
@@ -17,7 +18,6 @@ import {
   WarningIcon,
 } from '../icons';
 import {
-  isSettingsAgentTypeTarget,
   isSettingsAnchorTarget,
   settingsPageCategory,
   type SettingsCategoryTarget,
@@ -60,7 +60,6 @@ type SettingsRoute = {
   category: SettingsCategory;
   page?: SettingsPageTarget;
   anchor?: string;
-  agentType?: string;
 };
 
 /**
@@ -99,15 +98,11 @@ const SETTINGS_CATEGORY_ICONS = {
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
   const anchor = isSettingsAnchorTarget(target?.anchor) ? target.anchor : undefined;
-  const agentType = target?.page === 'agents' && isSettingsAgentTypeTarget(target.agentType)
-    ? target.agentType
-    : undefined;
   if (target?.page) {
     return {
       category: settingsPageCategory(target.page),
       page: target.page,
       ...(anchor ? { anchor } : {}),
-      ...(agentType ? { agentType } : {}),
     };
   }
   if (target?.category && SETTINGS_CATEGORY_IDS.includes(target.category)) {
@@ -129,8 +124,7 @@ function routeCategory(route: SettingsRoute): SettingsCategory {
 function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
   return left.category === right.category
     && left.page === right.page
-    && left.anchor === right.anchor
-    && left.agentType === right.agentType;
+    && left.anchor === right.anchor;
 }
 
 /**
@@ -470,6 +464,23 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     return updated.agent.additionalSkillDirectories;
   }
 
+  async function changeDelegation(input: AgentDelegationSettingsInput): Promise<void> {
+    try {
+      const updated = await api.agentUpdateRuntimeSettings({ delegation: input });
+      setSettings((current) => current ? {
+        ...current,
+        agent: { ...current.agent, delegation: updated.agent.delegation },
+      } : updated);
+      setError(null);
+      setNotice(t.settings.agent.delegation.saved);
+      await reportAppliedRefreshFailure(onApplied, 'delegation-settings-refresh', 'delegation');
+    } catch (caught) {
+      setNotice(null);
+      setError(t.settings.agent.delegation.saveFailed);
+      reportSettingsMutationError('delegation-settings-write-failed', 'delegation', caught);
+    }
+  }
+
   /**
    * Persists one Skill's `disabledSkills` membership immediately.
    *
@@ -771,8 +782,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
               />
             ) : route.page === 'agents' ? (
               <AgentsSettings
-                key={`agents:${targetGeneration}:${route.agentType ?? ''}`}
-                initialAgentType={route.agentType}
+                key={`agents:${targetGeneration}`}
                 onError={setError}
                 onNotice={setNotice}
                 settings={settings}
@@ -795,6 +805,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
               <SettingsAgentSection
                 blockErrors={capabilityMutationErrors}
                 blocks={capabilityBlocks}
+                onDelegationChange={changeDelegation}
                 onError={setError}
                 onNotice={setNotice}
                 onOpenPage={openPage}

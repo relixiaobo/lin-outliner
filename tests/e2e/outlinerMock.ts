@@ -109,13 +109,6 @@ type E2EWindow = Window & {
     projection: () => unknown;
     clipboardText: () => string;
     emitAgentCoreNotification: (notification: unknown) => void;
-    /** Registers a child Thread in the mock catalog, as a spawn would. */
-    createMockSubagentThread: (input: {
-      parentThreadId: string;
-      name: string;
-      active?: boolean;
-      queuedWork?: boolean;
-    }) => { id: string };
     /**
      * Seeds a Thread's canonical history. A drawer or a selection READS history
      * from the host, so a Turn only pushed as a notification is replaced by the
@@ -124,13 +117,6 @@ type E2EWindow = Window & {
     setMockThreadTurns: (threadId: string, turns: readonly unknown[]) => void;
     /** Flips a mock Thread between idle and active, as a Turn boundary would. */
     setMockThreadActive: (threadId: string, active: boolean) => void;
-    /**
-     * Overrides one Agent's execution record — the canonical lifecycle state
-     * the renderer's registry is built from. Every delegated mock Thread gets a
-     * default record; this is for the states a Thread alone cannot express,
-     * such as a user stop, a retained worktree, or foreground placement.
-     */
-    setMockSubagentExecution: (agentId: string, patch: Record<string, unknown>) => void;
     /** Applies one delayed or failed outcome to the next thread/start call. */
     setNextThreadStartBehavior: (behavior: { delayMs?: number; error?: string }) => void;
     emitDocumentEvent: (event: unknown) => void;
@@ -712,37 +698,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     // to be correct in that state, and a spec that wants rows opts into them.
     const managedSkills = (options.managedSkills ?? []).map((skill) => ({ ...skill }));
     const managedCatalogEntries = options.managedCatalogEntries ?? [];
-    const IDENTITY_COLOR_NAMES = ['orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink'];
     const agentIdentityEntries = [
       { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
-      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
-      { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
-      { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
     ];
-    const agentRoles: Array<{
-      name: string; layer: string; description: string; developerInstructions: string;
-      persona: string | null; color: string | null;
-      tools: string[] | null; skills: string[] | null;
-    }> = [{
-      name: 'auditor',
-      layer: 'user',
-      description: 'Audits a change before it is proposed.',
-      developerInstructions: 'Read the diff and report what is wrong.',
-      persona: 'Wren',
-      color: 'violet',
-      tools: null,
-      skills: null,
-    }];
-    const agentPresentationOverrides: Array<{
-      agentType: string; layer: string; persona: string | null; color: string | null;
-    }> = [];
-    const agentExecutionSelections: Array<{
-      agentType: string;
-      layer: 'user' | 'project';
-      modelProvider: string | null;
-      model: string | null;
-      reasoningEffort: string | null;
-    }> = [];
+
     const agentProfile = {
       name: 'default',
       layer: null as string | null,
@@ -752,6 +711,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       tools: null as string[] | null,
       skills: null as string[] | null,
     };
+    const agentPresentationOverrides: Array<{
+      agentType: string; layer: string; persona: string | null; color: string | null;
+    }> = [];
     const agentCapabilityCatalog = {
       tools: [
         { key: 'file_read', description: 'Read a file.' },
@@ -760,50 +722,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       ],
       skills: ['review', 'summarize'],
     };
-    const agentBuiltInDefinitions = [
-      { agentType: 'general-purpose', description: 'General-purpose agent.', developerInstructions: 'Do the task fully.' },
-      { agentType: 'explore', description: 'Fast codebase explorer.', developerInstructions: 'Search, never write.' },
-      { agentType: 'plan', description: 'Software architect.', developerInstructions: 'Design, never write.' },
-    ];
-    const applyAgentExecution = (agentType: string, layer: 'user' | 'project', value: unknown) => {
-      if (value === undefined) return;
-      const draft = value as {
-        modelProvider?: string | null;
-        model?: string | null;
-        reasoningEffort?: string | null;
-      };
-      const index = agentExecutionSelections.findIndex((row) => (
-        row.agentType === agentType && row.layer === layer
-      ));
-      if (!draft.model && !draft.reasoningEffort) {
-        if (index >= 0) agentExecutionSelections.splice(index, 1);
-        return;
-      }
-      const row = {
-        agentType,
-        layer,
-        modelProvider: draft.modelProvider ?? null,
-        model: draft.model ?? null,
-        reasoningEffort: draft.reasoningEffort ?? null,
-      };
-      if (index >= 0) agentExecutionSelections[index] = row;
-      else agentExecutionSelections.push(row);
-    };
+
     const agentIdentityView = () => ({
-      entries: [
-        ...agentIdentityEntries,
-        ...agentRoles.map((role) => ({
-          agentType: role.name,
-          persona: role.persona ?? role.name,
-          color: role.color ?? 'green',
-          source: role.layer,
-        })),
-      ],
-      roles: agentRoles,
+      entries: agentIdentityEntries,
       presentationOverrides: agentPresentationOverrides,
-      executionSelections: agentExecutionSelections,
       profile: { ...agentProfile },
-      builtInDefinitions: agentBuiltInDefinitions,
       capabilities: agentCapabilityCatalog,
     });
     const agentSkills = [{
@@ -835,7 +758,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const delay = (ms: number) => new Promise((resolve) => { window.setTimeout(resolve, ms); });
     type MockThreadInputAuthor =
       | { kind: 'reader' }
-      | { kind: 'agent'; threadId: string }
       | { kind: 'host' }
       | { kind: 'feature'; feature: string; ref?: string }
       | { kind: 'unknown' };
@@ -920,8 +842,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       sessionId: string;
       parentThreadId: string | null;
       forkedFromId: string | null;
-      agentNickname: string | null;
-      agentRole: string | null;
       name: string | null;
       preview: string;
       ephemeral: boolean;
@@ -1041,125 +961,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
       }
       for (const listener of agentCoreListeners) listener(clone(notification));
-      // A delegated child's Turn boundary IS an execution change: the host
-      // advances the record's current generation Turn and announces it.
-      if (
-        (event.type === 'turn/started' || event.type === 'turn/completed')
-        && typeof event.threadId === 'string'
-        && typeof event.turnId === 'string'
-      ) {
-        mockCurrentTurnByThread.set(event.threadId, event.turnId);
-      }
-      if (
-        (event.type === 'thread/started' || event.type === 'turn/started' || event.type === 'turn/completed')
-        && typeof event.threadId === 'string'
-      ) {
-        const execution = subagentExecutionFor(event.threadId);
-        if (execution) {
-          for (const listener of agentCoreListeners) {
-            listener(clone({
-              type: 'subagent/execution/changed',
-              threadId: execution.parentThreadId,
-              execution,
-            }));
-          }
-        }
-      }
     };
     const emitAutomationNotification = (notification: unknown) => {
       for (const listener of automationListeners) listener(clone(notification));
     };
-    const mockQueuedWorkThreadIds = new Set<string>();
-    const mockSubagentExecutionPatches = new Map<string, Record<string, unknown>>();
-    /** The generation Turn a delegated Thread is on, as its record would say. */
-    const mockCurrentTurnByThread = new Map<string, string>();
-    /**
-     * The canonical Agent execution record for a delegated mock Thread.
-     *
-     * Every delegated child has one in the real host, so the mock derives a
-     * default from the Thread rather than making each test build one; a test
-     * that needs a state the Thread cannot express patches it.
-     */
-    const subagentExecutionFor = (agentId: string): Record<string, unknown> | null => {
-      const thread = mockThreads.find((candidate) => candidate.id === agentId);
-      if (!thread || thread.parentThreadId === null) return null;
-      const isolatedSkill = thread.source === 'agent.skill';
-      const turns = mockTurns.get(agentId) ?? [];
-      const latestTurn = turns.at(-1) ?? null;
-      const terminalStatus = latestTurn?.status === 'completed'
-        ? 'finished'
-        : latestTurn?.status === 'failed'
-          ? 'failed'
-          : latestTurn?.status === 'interrupted'
-            ? 'interrupted'
-            : null;
-      const terminalError = latestTurn?.status === 'failed' && latestTurn.error
-        ? {
-          code: latestTurn.error.code ?? 'subagent_failed',
-          messagePreview: latestTurn.error.message,
-          omittedBytes: 0,
-        }
-        : null;
-      const patch = mockSubagentExecutionPatches.get(agentId) ?? {};
-      const projectedTerminalStatus = (patch.terminalStatus ?? terminalStatus) as string | null;
-      const projectedTerminalError = patch.terminalError ?? terminalError;
-      const projectedNotificationState = String(patch.notificationState ?? 'none');
-      const projectedDeliveryTurnId = typeof patch.deliveryTurnId === 'string' ? patch.deliveryTurnId : null;
-      const latestTrigger = latestTurn?.provenance.trigger;
-      const projectedParentItemId = String(
-        patch.parentItemId
-        ?? (latestTrigger?.kind === 'subagent' ? latestTrigger.parentItemId : `${thread.id}-parent-item`),
-      );
-      const projectedStopProvenance = String(patch.stopProvenance ?? 'none');
-      const generationReceipts = projectedTerminalStatus === null
-        ? []
-        : [{
-            generation: Number(patch.generation ?? 1),
-            turnId: String(patch.currentTurnId ?? latestTurn?.id ?? `${thread.id}-generation-1`),
-            parentItemId: projectedParentItemId,
-            terminalStatus: projectedTerminalStatus,
-            stopProvenance: projectedStopProvenance,
-            durationMs: latestTurn?.durationMs ?? null,
-            error: projectedTerminalError,
-            partialOutputAvailable: latestTurn?.items.some((item) => (
-              item.type === 'agentMessage' && typeof item.text === 'string' && item.text.trim().length > 0
-            )) ?? false,
-            parentThreadId: thread.parentThreadId,
-            notificationState: projectedNotificationState,
-            deliveryTurnId: projectedDeliveryTurnId,
-          }];
-      return {
-        agentId: thread.id,
-        parentThreadId: thread.parentThreadId,
-        description: thread.agentNickname ?? thread.name ?? '',
-        agentType: isolatedSkill ? 'isolated-skill' : thread.agentRole ?? 'general-purpose',
-        runMode: isolatedSkill ? 'foreground' : 'background',
-        generation: 1,
-        currentTurnId: mockCurrentTurnByThread.get(agentId)
-          ?? latestTurn?.id
-          ?? `${thread.id}-generation-1`,
-        parentItemId: projectedParentItemId,
-        stopProvenance: projectedStopProvenance,
-        terminalStatus: projectedTerminalStatus,
-        notificationState: 'none',
-        terminalError: projectedTerminalError,
-        deliveryTurnId: null,
-        deliveryClass: null,
-        eligibleAfterGeneration: null,
-        coverageDisposition: null,
-        omittedOutputBytes: 0,
-        omittedOutputTokens: 0,
-        generationReceipts,
-        notificationCutoff: 'open',
-        executionMode: 'ordinary',
-        settlementCoverage: null,
-        executionSelectionFallback: null,
-        worktree: null,
-        createdAt: thread.createdAt,
-        updatedAt: latestTurn?.completedAt ?? thread.updatedAt,
-        ...patch,
-      };
-    };
+
     const createMockThread = (input: Record<string, unknown>, forkedFromId: string | null = null) => {
       const timestamp = ++now;
       const thread: MockThread = {
@@ -1167,8 +973,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         sessionId: nextCanonicalId(),
         parentThreadId: null,
         forkedFromId,
-        agentNickname: null,
-        agentRole: null,
         name: typeof input.name === 'string' ? input.name : null,
         preview: '',
         ephemeral: input.ephemeral === true,
@@ -3773,37 +3577,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       setMockThreadTurns: (threadId, turns) => {
         mockTurns.set(threadId, clone(turns) as MockTurn[]);
       },
-      createMockSubagentThread: ({ parentThreadId, name, active, queuedWork }) => {
-        const parent = threadById(parentThreadId);
-        const thread = createMockThread({ name });
-        thread.parentThreadId = parent.id;
-        thread.sessionId = parent.sessionId;
-        thread.threadSource = 'subagent';
-        thread.source = 'collaboration';
-        thread.agentNickname = name;
-        thread.agentRole = 'worker';
-        if (active) thread.status = { type: 'active', activeFlags: [] };
-        if (queuedWork) mockQueuedWorkThreadIds.add(thread.id);
-        emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
-        return { id: thread.id };
-      },
       setMockThreadActive: (threadId, active) => {
         const thread = threadById(threadId);
         thread.status = active ? { type: 'active', activeFlags: [] } : { type: 'idle' };
         thread.updatedAt = ++now;
         emitAgentCoreNotification({ type: 'thread/status/changed', threadId, status: clone(thread.status) });
-      },
-      setMockSubagentExecution: (agentId, patch) => {
-        const merged = { ...mockSubagentExecutionPatches.get(agentId) ?? {}, ...clone(patch) };
-        mockSubagentExecutionPatches.set(agentId, merged);
-        const execution = subagentExecutionFor(agentId);
-        if (execution) {
-          emitAgentCoreNotification({
-            type: 'subagent/execution/changed',
-            threadId: execution.parentThreadId,
-            execution,
-          });
-        }
       },
       setNextThreadStartBehavior: (behavior) => {
         nextThreadStartBehavior = {
@@ -4165,43 +3943,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           });
           return clone({ data }) as T;
         }
-        if (method === 'thread/descendants') {
-          const rootId = String(input.threadId);
-          const data: MockThread[] = [];
-          const pending = [rootId];
-          while (pending.length > 0) {
-            const parentId = pending.shift()!;
-            for (const thread of mockThreads) {
-              if (thread.parentThreadId !== parentId || data.some((seen) => seen.id === thread.id)) continue;
-              data.push(thread);
-              pending.push(thread.id);
-            }
-          }
-          data.sort((left, right) => right.updatedAt - left.updatedAt);
-          return clone({
-            data,
-            queuedWorkThreadIds: data
-              .filter((thread) => mockQueuedWorkThreadIds.has(thread.id))
-              .map((thread) => thread.id),
-          }) as T;
-        }
-        if (method === 'thread/subagents/list') {
-          const rootId = String(input.threadId);
-          const data: Array<Record<string, unknown>> = [];
-          const pending = [rootId];
-          while (pending.length > 0) {
-            const parentId = pending.shift()!;
-            for (const thread of mockThreads) {
-              if (thread.parentThreadId !== parentId) continue;
-              if (data.some((seen) => seen.agentId === thread.id)) continue;
-              const execution = subagentExecutionFor(thread.id);
-              if (execution) data.push(execution);
-              pending.push(thread.id);
-            }
-          }
-          data.sort((left, right) => Number(left.createdAt) - Number(right.createdAt));
-          return clone({ data }) as T;
-        }
+
         if (method === 'thread/tasks/list') {
           const ownerThreadId = String(input.threadId);
           const data = [...mockToolTasks.values()]
@@ -4693,7 +4435,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 primaryEvidence: { type: 'threadItem', threadId: thread.id, turnId: turn.id, itemId: userItem.id },
                 relatedEvidence: [],
                 availability: [],
-                childThreadId: null,
               });
             }
             if (agentItem) {
@@ -4729,7 +4470,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 primaryEvidence: { type: 'providerCall', threadId: thread.id, turnId: turn.id, callIndex: 0 },
                 relatedEvidence: [{ type: 'threadItem', threadId: thread.id, turnId: turn.id, itemId: agentItem.id }],
                 availability: [],
-                childThreadId: null,
               });
             }
             compactionItems.forEach((item, index) => {
@@ -4752,7 +4492,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 primaryEvidence: { type: 'threadItem', threadId: thread.id, turnId: turn.id, itemId: item.id },
                 relatedEvidence: [],
                 availability: [{ reason: 'diagnosticsUnavailable' }],
-                childThreadId: null,
               });
             });
             return entries;
@@ -4853,7 +4592,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               : { type: 'threadItem', threadId: thread.id, turnId: turn.id, itemId: item?.id ?? turn.items[0]?.id ?? 'missing' },
             relatedEvidence: [],
             availability: [],
-            childThreadId: null,
           };
           const turnEvidence = {
             id: turn.id,
@@ -5625,51 +5363,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             : {};
           return clone(agentSettings) as T;
         }
-        // The Agents editor's whole surface: one read, three writes, all
-        // answering with the refreshed view — the same contract the real
-        // commands have, so a spec that drives the editor drives it for real.
+        // The conversation Agent editor reads and writes one refreshed view.
         if (cmd === 'agent_identity_catalog') {
           return clone(agentIdentityView()) as T;
         }
-        if (cmd === 'agent_write_role') {
-          const role = args.role as {
-            name: string; description: string; developerInstructions: string;
-            persona?: string; color?: string;
-            tools?: string[] | null; skills?: string[] | null;
-          };
-          const layer = args.layer === 'project' ? 'project' : 'user';
-          const clash = agentRoles.find((candidate) => candidate.name === role.name);
-          if (args.mode === 'create' && clash) {
-            throw new Error(`An agent named '${role.name}' already exists in this layer`);
-          }
-          const next = {
-            name: role.name,
-            layer,
-            description: role.description,
-            developerInstructions: role.developerInstructions,
-            persona: role.persona ?? null,
-            color: role.color ?? null,
-            tools: role.tools === undefined ? clash?.tools ?? null : role.tools,
-            skills: role.skills === undefined ? clash?.skills ?? null : role.skills,
-          };
-          const index = agentRoles.findIndex((candidate) => candidate.name === role.name);
-          if (index >= 0) agentRoles[index] = next;
-          else agentRoles.push(next);
-          applyAgentExecution(role.name, layer, args.execution);
-          return clone(agentIdentityView()) as T;
-        }
-        if (cmd === 'agent_delete_role') {
-          const name = String(args.name ?? '');
-          const index = agentRoles.findIndex((candidate) => candidate.name === name);
-          if (index < 0) throw new Error(`No Agent Role named '${name}' in this configuration`);
-          const layer = agentRoles[index]!.layer;
-          agentRoles.splice(index, 1);
-          const executionIndex = agentExecutionSelections.findIndex((row) => (
-            row.agentType === name && row.layer === layer
-          ));
-          if (executionIndex >= 0) agentExecutionSelections.splice(executionIndex, 1);
-          return clone(agentIdentityView()) as T;
-        }
+
         if (cmd === 'agent_write_profile') {
           const profile = (args.profile ?? {}) as {
             developerInstructions?: string; tools?: string[] | null; skills?: string[] | null;
@@ -5683,38 +5381,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           // The paired re-skin lands in the same write, not a second one.
           const presentation = args.presentation as { persona?: string; color?: string } | undefined;
           if (presentation) {
-            const agentType = String(args.agentType ?? '');
-            const entry = agentIdentityEntries.find((candidate) => candidate.agentType === agentType);
-            if (entry && presentation.persona) entry.persona = presentation.persona;
-            if (entry && presentation.color) entry.color = presentation.color;
+            const layer = args.layer === 'project' ? 'project' : 'user';
+            const entry = agentIdentityEntries[0]!;
+            entry.persona = presentation.persona || 'Aspen';
+            entry.color = presentation.color || 'teal';
+            agentPresentationOverrides.splice(0, agentPresentationOverrides.length);
+            if (presentation.persona || presentation.color) {
+              agentPresentationOverrides.push({
+                agentType: 'main',
+                layer,
+                persona: presentation.persona || null,
+                color: presentation.color || null,
+              });
+            }
           }
           return clone(agentIdentityView()) as T;
         }
-        if (cmd === 'agent_write_presentation') {
-          const agentType = String(args.agentType ?? '');
-          const presentation = (args.presentation ?? {}) as { persona?: string; color?: string };
-          if (presentation.color && !IDENTITY_COLOR_NAMES.includes(presentation.color)) {
-            throw new Error(`Refused: Unknown identity colour '${presentation.color}'`);
-          }
-          const entry = agentIdentityEntries.find((candidate) => candidate.agentType === agentType);
-          if (entry) {
-            if (presentation.persona) entry.persona = presentation.persona;
-            if (presentation.color) entry.color = presentation.color;
-          }
-          const layer = args.layer === 'project' ? 'project' : 'user';
-          const index = agentPresentationOverrides.findIndex((row) => row.agentType === agentType);
-          if (index >= 0) agentPresentationOverrides.splice(index, 1);
-          if (presentation.persona || presentation.color) {
-            agentPresentationOverrides.push({
-              agentType,
-              layer,
-              persona: presentation.persona || null,
-              color: presentation.color || null,
-            });
-          }
-          applyAgentExecution(agentType, layer, args.execution);
-          return clone(agentIdentityView()) as T;
-        }
+
         if (cmd === 'agent_list_all_skills') {
           if (options.agentSkillsDelayMs) await delay(options.agentSkillsDelayMs);
           const skills = args.userInvocableOnly === true

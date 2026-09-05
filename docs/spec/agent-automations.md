@@ -137,9 +137,8 @@ renderer-authored input.
 ## Run Continuity
 
 A standalone run is a Thread with no history, so on its own it repeats a failed
-predecessor without knowing there was one. Its Thread materializes the same
-transcript artifact every delegated Thread does (mechanism:
-`agent-subagent-threads.md`), and `automation_info` carries a `recentRuns`
+predecessor without knowing there was one. Its Thread materializes the canonical
+transcript artifact owned by Agent Core, and `automation_info` carries a `recentRuns`
 digest of the runs before it. Everything stays pull-based: the digest is a
 pointer, and the transcript enters context only if the model reads it with the
 existing file tools. No model tool is added.

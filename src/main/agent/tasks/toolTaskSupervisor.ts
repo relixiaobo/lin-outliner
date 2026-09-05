@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { closeSync, openSync, statSync, writeSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, statSync, writeSync } from 'node:fs';
 import { access, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
@@ -13,6 +13,7 @@ const STOP_POLL_MS = 100;
 const HEARTBEAT_INTERVAL_MS = 500;
 const QUIESCENCE_GRACE_MS = 500;
 const TERMINATION_GRACE_MS = 1_000;
+const PRIVATE_CONTROL_MAX_BYTES = 64 * 1024;
 const SUPERVISOR_ONLY_ENV_KEYS = ['ELECTRON_RUN_AS_NODE'] as const;
 let activeConfig: ToolTaskSupervisorConfig | null = null;
 let activeChildPid: number | null = null;
@@ -27,22 +28,22 @@ async function main(): Promise<void> {
   const stdin = openSync(config.stdinPath, 'r');
   const stdout = openSync(config.stdoutPath, 'a');
   const stderr = openSync(config.stderrPath, 'a');
-  const shell = process.platform === 'win32'
-    ? process.env.ComSpec ?? 'cmd.exe'
-    : process.env.SHELL && path.isAbsolute(process.env.SHELL) ? process.env.SHELL : '/bin/zsh';
-  const args = process.platform === 'win32'
-    ? ['/d', '/s', '/c', config.command]
-    : ['-c', config.command];
+  const privateControl = config.process.kind === 'exec' && config.process.privateControl
+    ? readPrivateControl(3)
+    : null;
+  const target = resolveProcess(config);
   let child: ReturnType<typeof spawn>;
   try {
-    child = spawn(shell, args, {
+    child = spawn(target.executable, [...target.args], {
       cwd: config.cwd,
-      env: commandEnvironment(process.env),
+      env: target.env,
       shell: false,
-      stdio: [stdin, 'pipe', 'pipe'],
+      stdio: privateControl ? [stdin, 'pipe', 'pipe', 'pipe'] : [stdin, 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
     });
+    if (child.pid) activeChildPid = child.pid;
+    if (privateControl) await writePrivateControl(child, privateControl);
   } catch (error) {
     closeSync(stdin);
     closeSync(stdout);
@@ -145,6 +146,7 @@ async function main(): Promise<void> {
 
   const quiescedAt = Date.now();
   const sizes = outputSizes(config);
+  const preparedResult = preparedResultEvidence(config);
   const outcome = stopReason === 'requested'
     ? { state: 'cancelled' as const, reason: 'stop_requested' }
     : stopReason === 'timed_out'
@@ -161,7 +163,7 @@ async function main(): Promise<void> {
               ? { state: 'succeeded' as const, reason: 'exit_zero' }
               : { state: 'failed' as const, reason: result.signal ? 'signal' : 'exit_nonzero' };
   const unsigned = {
-    version: 1 as const,
+    version: 2 as const,
     taskId: config.taskId,
     nonce: config.nonce,
     state: outcome.state,
@@ -175,7 +177,8 @@ async function main(): Promise<void> {
     quiescedAt,
     stdoutBytes: sizes.stdout,
     stderrBytes: sizes.stderr,
-    preparedResultDigest: null,
+    preparedResultDigest: preparedResult.sha256,
+    preparedResultBytes: preparedResult.byteLength,
   };
   const receipt: ToolTaskFinalReceipt = {
     ...unsigned,
@@ -190,22 +193,106 @@ function commandEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return env;
 }
 
+function resolveProcess(config: ToolTaskSupervisorConfig): {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly env: NodeJS.ProcessEnv;
+} {
+  const environment = commandEnvironment(process.env);
+  if (config.process.kind === 'exec') {
+    return {
+      executable: config.process.executable,
+      args: config.process.args,
+      env: { ...config.process.env },
+    };
+  }
+  const shell = process.platform === 'win32'
+    ? process.env.ComSpec ?? 'cmd.exe'
+    : process.env.SHELL && path.isAbsolute(process.env.SHELL) ? process.env.SHELL : '/bin/zsh';
+  return {
+    executable: shell,
+    args: process.platform === 'win32'
+      ? ['/d', '/s', '/c', config.process.command]
+      : ['-c', config.process.command],
+    env: environment,
+  };
+}
+
+function readPrivateControl(fd: number): Buffer {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const chunk = Buffer.allocUnsafe(Math.min(8 * 1024, PRIVATE_CONTROL_MAX_BYTES + 1 - total));
+      const count = readSync(fd, chunk, 0, chunk.byteLength, null);
+      if (count === 0) break;
+      total += count;
+      if (total > PRIVATE_CONTROL_MAX_BYTES) throw new Error('Tool Task private control input exceeds its limit');
+      chunks.push(chunk.subarray(0, count));
+    }
+  } finally {
+    closeSync(fd);
+  }
+  if (total === 0) throw new Error('Tool Task private control input is empty');
+  return Buffer.concat(chunks, total);
+}
+
+async function writePrivateControl(child: ReturnType<typeof spawn>, value: Buffer): Promise<void> {
+  const stream = child.stdio[3];
+  if (!stream || typeof (stream as NodeJS.WritableStream).write !== 'function') {
+    throw new Error('Tool Task child private control pipe is unavailable');
+  }
+  const writable = stream as NodeJS.WritableStream;
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    writable.once('error', onError);
+    writable.end(value, () => {
+      writable.removeListener('error', onError);
+      resolve();
+    });
+  });
+}
+
 function decodeConfig(value: unknown): ToolTaskSupervisorConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid Tool Task config');
   const record = value as Record<string, unknown>;
   const strings = [
-    'taskId', 'nonce', 'command', 'cwd', 'stdinPath', 'stdoutPath', 'stderrPath', 'progressPath',
-    'identityPath', 'heartbeatPath', 'stopRequestPath', 'finalReceiptPath',
+    'taskId', 'nonce', 'cwd', 'stdinPath', 'stdoutPath', 'stderrPath', 'progressPath',
+    'identityPath', 'heartbeatPath', 'stopRequestPath', 'finalReceiptPath', 'preparedResultPath',
   ] as const;
-  if (record.version !== 1 || strings.some((key) => typeof record[key] !== 'string' || !record[key])) {
+  if (record.version !== 2 || strings.some((key) => typeof record[key] !== 'string' || !record[key])
+    || !validProcessSpec(record.process)) {
     throw new Error('Invalid Tool Task config identity');
   }
   if (!Number.isFinite(record.startedAt)
     || !Number.isSafeInteger(record.timeoutMs) || Number(record.timeoutMs) < 1
-    || !Number.isSafeInteger(record.maxOutputBytes) || Number(record.maxOutputBytes) < 1) {
+    || !Number.isSafeInteger(record.maxOutputBytes) || Number(record.maxOutputBytes) < 1
+    || !Number.isSafeInteger(record.maxPreparedResultBytes) || Number(record.maxPreparedResultBytes) < 1) {
     throw new Error('Invalid Tool Task config limits');
   }
   return record as unknown as ToolTaskSupervisorConfig;
+}
+
+function validProcessSpec(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const processSpec = value as Record<string, unknown>;
+  if (processSpec.kind === 'shell') {
+    return typeof processSpec.command === 'string'
+      && processSpec.command.length > 0
+      && !processSpec.command.includes('\0');
+  }
+  if (processSpec.kind !== 'exec'
+    || typeof processSpec.executable !== 'string' || processSpec.executable.length === 0
+    || processSpec.executable.includes('\0')
+    || !Array.isArray(processSpec.args) || processSpec.args.some((arg) => typeof arg !== 'string' || arg.includes('\0'))
+    || typeof processSpec.privateControl !== 'boolean'
+    || !processSpec.env || typeof processSpec.env !== 'object' || Array.isArray(processSpec.env)) {
+    return false;
+  }
+  return Object.entries(processSpec.env).every(([key, entry]) => (
+    key.length > 0 && !key.includes('=') && !key.includes('\0')
+    && typeof entry === 'string' && !entry.includes('\0')
+  ));
 }
 
 function outputSizes(config: ToolTaskSupervisorConfig): { stdout: number; stderr: number } {
@@ -213,6 +300,30 @@ function outputSizes(config: ToolTaskSupervisorConfig): { stdout: number; stderr
     try { return statSync(candidate).size; } catch { return 0; }
   };
   return { stdout: size(config.stdoutPath), stderr: size(config.stderrPath) };
+}
+
+function preparedResultEvidence(config: ToolTaskSupervisorConfig): {
+  readonly sha256: string | null;
+  readonly byteLength: number;
+} {
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(config.preparedResultPath);
+  } catch (error) {
+    if (isErrorCode(error, 'ENOENT')) return { sha256: null, byteLength: 0 };
+    throw error;
+  }
+  if (bytes.byteLength < 1 || bytes.byteLength > config.maxPreparedResultBytes) {
+    throw new Error('Tool Task prepared result exceeds its byte limit');
+  }
+  return {
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    byteLength: bytes.byteLength,
+  };
+}
+
+function isErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && 'code' in error && error.code === code;
 }
 
 function waitForChild(child: ReturnType<typeof spawn>): Promise<{
@@ -287,8 +398,9 @@ void main().catch(async (error) => {
       }
       if (!activeChildPid || !await executionExists(activeChildPid)) {
         const sizes = outputSizes(config);
+        const preparedResult = preparedResultEvidence(config);
         const unsigned = {
-          version: 1 as const,
+          version: 2 as const,
           taskId: config.taskId,
           nonce: config.nonce,
           state: 'failed' as const,
@@ -302,7 +414,8 @@ void main().catch(async (error) => {
           quiescedAt: Date.now(),
           stdoutBytes: sizes.stdout,
           stderrBytes: sizes.stderr,
-          preparedResultDigest: null,
+          preparedResultDigest: preparedResult.sha256,
+          preparedResultBytes: preparedResult.byteLength,
         };
         const receipt: ToolTaskFinalReceipt = {
           ...unsigned,
