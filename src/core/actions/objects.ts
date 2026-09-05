@@ -6,6 +6,7 @@
 // call sites pass as `targetId` and `openId` today.
 
 import { isContentBearingNode, type NodeId, type NodeProjection } from '../types';
+import type { ExternalContext } from '../launcher/context';
 import { objectName, objectTypeLabel } from './names';
 import { resolveReferenceChainTargetId } from './rowFacets';
 import type {
@@ -13,7 +14,6 @@ import type {
   LocalizedNames,
   NodeObject,
   NodeObjectRef,
-  IconId,
   ObjectPresentation,
   ObjectRef,
   SurfaceObject,
@@ -102,14 +102,6 @@ export function nodeText(
   return isContentBearingNode(node) ? node.content.text || untitled : untitled;
 }
 
-const SYSTEM_OBJECT_ICONS: Record<SystemNodeKey, IconId> = {
-  today: 'node',
-  library: 'library',
-  schema: 'schema',
-  savedSearches: 'savedSearches',
-  trash: 'trash',
-};
-
 const SYSTEM_OBJECT_NAMES: Record<SystemNodeKey, LocalizedNames> = {
   today: objectName('today'),
   library: objectName('library'),
@@ -121,8 +113,24 @@ const SYSTEM_OBJECT_NAMES: Record<SystemNodeKey, LocalizedNames> = {
 /** How main describes a captured page to the surface, without shipping context. */
 export interface ExternalPageDescription {
   title: string;
+  sourceKind: 'web' | 'application' | 'unknown';
   /** Where it is from — a hostname or app name. */
   subtitle?: string;
+}
+
+export function externalContextSourceKind(context: ExternalContext | null): ExternalPageDescription['sourceKind'] {
+  if (!context) return 'unknown';
+  const urls = [context.browser?.url, context.source?.url, context.source?.canonicalUrl];
+  for (const value of urls) {
+    if (!value) continue;
+    try {
+      const url = new URL(value);
+      if (url.protocol === 'http:' || url.protocol === 'https:') return 'web';
+    } catch {
+      // Partial capture metadata can still identify the source application.
+    }
+  }
+  return context.app.name.trim() ? 'application' : 'unknown';
 }
 
 export function presentObject(
@@ -139,9 +147,7 @@ export function presentObject(
           objectRef: object.objectRef,
           kind: 'node',
           name: { source: 'localized', values: SYSTEM_OBJECT_NAMES[systemKey] },
-          // Each system node reads as ITSELF; one generic glyph for all five
-          // makes the empty-query list a column of identical rows.
-          iconId: SYSTEM_OBJECT_ICONS[systemKey],
+          node: { kind: 'system', key: systemKey },
           typeLabel: objectTypeLabel('node'),
         };
       }
@@ -164,7 +170,7 @@ export function presentObject(
         // Only a real emoji icon: an image / generated icon identifier is not
         // an emoji, and emitting it as one renders the raw id.
         ...(contentNode?.icon && contentNode.iconKind === 'emoji' ? { emoji: contentNode.icon } : {}),
-        iconId: 'node',
+        node: { kind: 'document', nodeType: node?.type ?? null },
         typeLabel: objectTypeLabel('node'),
         backingNodeId: contentId,
       };
@@ -174,7 +180,6 @@ export function presentObject(
         objectRef: object.objectRef,
         kind: 'nodeSelection',
         name: { source: 'literal', value: `${object.nodes.length}` },
-        iconId: 'node',
         typeLabel: objectTypeLabel('nodeSelection'),
       };
     case 'externalPage': {
@@ -188,7 +193,7 @@ export function presentObject(
         ...(described?.subtitle
           ? { subtitle: { source: 'literal' as const, value: described.subtitle } }
           : {}),
-        iconId: 'open',
+        sourceKind: described?.sourceKind ?? 'unknown',
         typeLabel: objectTypeLabel('externalPage'),
       };
     }
@@ -197,7 +202,7 @@ export function presentObject(
         objectRef: object.objectRef,
         kind: 'draft',
         name: { source: 'literal', value: object.text },
-        iconId: object.purpose === 'tag' ? 'supertag' : 'node',
+        purpose: object.purpose,
         typeLabel: objectTypeLabel(object.purpose === 'tag' ? 'draftTag' : 'draftNode'),
       };
     case 'appSurface':
@@ -208,9 +213,7 @@ export function presentObject(
           source: 'localized',
           values: objectName(object.surface === 'settings' ? 'settings' : 'mainWindow'),
         },
-        // By DISCRIMINANT. Comparing the English display string never matched
-        // under a non-English locale, so the row got the wrong icon.
-        iconId: object.surface === 'settings' ? 'settings' : 'mainWindow',
+        surface: object.surface,
         typeLabel: objectTypeLabel('appSurface'),
       };
   }

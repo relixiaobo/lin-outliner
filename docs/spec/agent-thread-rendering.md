@@ -497,13 +497,18 @@ reach it.
   narrow, the outcome never does. A truncatable outcome would leave a failed
   row asserting the act succeeded, and would strip a collapsed group of its only
   failure cue
-- every tool a row can show resolves to a **distinct** glyph, judged at the
-  14px the transcript actually renders: opposite actions never differ by a
-  single stroke (file delete is an X, not a minus beside create's plus), a
-  connected MCP tool never wears the unknown-tool fallback glyph, and a fetched
-  page is not drawn as a document; a group's glyph is the same size whether its
-  members agree on a tool or not. Glyph choices app-wide remain
-  `docs/plans/icon-semantics.md`'s; these tool-row rows are recorded there
+- `toolPresentation` resolves an operation meaning and semantic component once
+  for rows and groups. A group inherits a glyph only when every operation agrees;
+  raw Item types, activity-summary buckets, and component equality cannot decide
+  this. Empty/mixed groups use Wrench at the same 14px size. File write may
+  overwrite and uses PageEdit with write/wrote wording; explicit additions use PagePlus, deletion uses
+  Trash, and moves use the movement glyph. Path/content search use
+  DocMagnifyingGlass/TextMagnifyingGlass; web search/fetch use Search/Language.
+  MCP uses ServerConnection. Agent start/message/status/stop use
+  Brain/ChatBubble/InfoCircle/filled Square. Unknown tools retain their labels
+  and generic glyph. Distinct operations may share geometry; the actual meaning
+  and label determine the choice. The component and visual contracts live in
+  [design-system foundations](design-system/foundations.md#icons)
 - a counted activity group summarizes mixed outcomes, so it is **not** painted by
   its worst member: its glyph and its activity phrase stay neutral, and only the
   appended tally of what went wrong ("Ran 3 commands · 1 failed · 1 interrupted")

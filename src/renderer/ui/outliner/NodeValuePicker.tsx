@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { AddIcon, CloseIcon, ICON_SIZE, SupertagIcon } from '../icons';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useT } from '../../i18n/I18nProvider';
 import { CheckboxMark } from '../primitives/CheckboxMark';
@@ -312,7 +313,7 @@ function NodeValueMarker({
   if (marker === 'hash') {
     return (
       <span className="field-option-picker-hash" style={color ? { color } : undefined} aria-hidden="true">
-        #
+        <SupertagIcon size={ICON_SIZE.rowGlyph} />
       </span>
     );
   }
@@ -334,7 +335,7 @@ function PopoverMarker({ option }: { option: NodeValuePickerOption }) {
         style={option.color ? { color: option.color } : undefined}
         aria-hidden="true"
       >
-        #
+        <SupertagIcon size={ICON_SIZE.menu} />
       </span>
     );
   }
@@ -350,7 +351,8 @@ function PopoverMarker({ option }: { option: NodeValuePickerOption }) {
 
 function actionIcon(action: PickerAction) {
   if (action.type === 'option') return <PopoverMarker option={action.option} />;
-  return <PopoverBulletIcon />;
+  const Icon = action.type === 'create' ? AddIcon : CloseIcon;
+  return <span className="popover-item-icon"><Icon size={ICON_SIZE.menu} /></span>;
 }
 
 function actionKey(action: PickerAction): string {

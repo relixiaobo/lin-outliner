@@ -8,6 +8,7 @@ import { installInputModalityTracking } from '../ui/focus/inputModality';
 // sheets — no JS, no editor graph — so the launcher inherits the app's color /
 // type / spacing / elevation system (design-system.md) while staying light.
 import '../styles/tokens.css';
+import '../styles/icons.css';
 import '../styles/theme-dark.css';
 // a11y.css MUST follow theme-dark.css (shared :root specificity, source order
 // wins): it honors prefers-contrast / reduced-transparency / reduced-motion by

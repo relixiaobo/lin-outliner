@@ -3,7 +3,7 @@ import type { RendererUserViewHints, ThreadId } from '../../../core/agent/protoc
 import type { Turn } from '../projectionTypes';
 import type { DocumentIndexStore } from '../../state/documentIndexStore';
 import { useT } from '../../i18n/I18nProvider';
-import { BackIcon, GitForkIcon, ICON_SIZE, StopIcon } from '../../ui/icons';
+import { BackIcon, GitBranchIcon, ICON_SIZE, StopIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { api } from '../../api/client';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
@@ -242,7 +242,7 @@ export function SubagentDetailTitle({
             role="img"
             title={t.agent.thread.agent.worktree}
           >
-            <GitForkIcon aria-hidden size={ICON_SIZE.tiny} />
+            <GitBranchIcon aria-hidden size={ICON_SIZE.tiny} />
           </span>
         ) : null}
       </button>
@@ -303,7 +303,7 @@ function SubagentWorktreeFooter({
   return (
     <footer className="thread-agent-worktree">
       <div className="thread-agent-worktree-line">
-        <GitForkIcon aria-hidden size={ICON_SIZE.tiny} />
+        <GitBranchIcon aria-hidden size={ICON_SIZE.tiny} />
         <span className="thread-agent-worktree-branch">
           {changes === null
             ? t.agent.thread.agent.worktreeFooterUnknown({ branch })

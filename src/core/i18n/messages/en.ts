@@ -1535,6 +1535,8 @@ export const en = {
         ranCommands: ({ count }: { count: number }) => `Ran ${count === 1 ? 'a command' : `${count} commands`}`,
         creatingFiles: ({ count }: { count: number }) => `Creating ${count === 1 ? 'a file' : `${count} files`}`,
         createdFiles: ({ count }: { count: number }) => `Created ${count === 1 ? 'a file' : `${count} files`}`,
+        writingFiles: ({ count }: { count: number }) => `Writing ${count === 1 ? 'a file' : `${count} files`}`,
+        wroteFiles: ({ count }: { count: number }) => `Wrote ${count === 1 ? 'a file' : `${count} files`}`,
         editingFiles: ({ count }: { count: number }) => `Editing ${count === 1 ? 'a file' : `${count} files`}`,
         editedFiles: ({ count }: { count: number }) => `Edited ${count === 1 ? 'a file' : `${count} files`}`,
         deletingFiles: ({ count }: { count: number }) => `Deleting ${count === 1 ? 'a file' : `${count} files`}`,
@@ -1595,6 +1597,8 @@ export const en = {
         // intro.xhtml". One verb pair serves files and nodes alike.
         creatingNamed: ({ subjects }: { subjects: string }) => `Creating ${subjects}`,
         createdNamed: ({ subjects }: { subjects: string }) => `Created ${subjects}`,
+        writingNamed: ({ subjects }: { subjects: string }) => `Writing ${subjects}`,
+        wroteNamed: ({ subjects }: { subjects: string }) => `Wrote ${subjects}`,
         editingNamed: ({ subjects }: { subjects: string }) => `Editing ${subjects}`,
         editedNamed: ({ subjects }: { subjects: string }) => `Edited ${subjects}`,
         deletingNamed: ({ subjects }: { subjects: string }) => `Deleting ${subjects}`,

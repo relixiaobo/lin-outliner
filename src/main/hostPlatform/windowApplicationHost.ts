@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { EffectStep } from '../../core/actions/bindings';
 import { externalPageLabel } from '../../core/actions/registry';
+import { externalContextSourceKind } from '../../core/actions/objects';
 import {
   ACTION_AMBIENT_CHANGED_CHANNEL,
   ACTION_AMBIENT_SEED_REQUEST_CHANNEL,
@@ -404,7 +405,11 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       const context = launcherContext?.id === contextId ? launcherContext : null;
       if (!context) return null;
       const subtitle = context.browser?.hostname ?? context.app.name;
-      return { title: externalPageLabel(context), ...(subtitle ? { subtitle } : {}) };
+      return {
+        title: externalPageLabel(context),
+        sourceKind: externalContextSourceKind(context),
+        ...(subtitle ? { subtitle } : {}),
+      };
     },
     newCaptureId: () => `cap:${randomUUID()}`,
     confirmNatively: async (spec) => {

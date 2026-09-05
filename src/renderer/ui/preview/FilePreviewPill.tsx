@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState, type ComponentType, type RefObject } from 'react';
+import { useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/I18nProvider';
-import { ICON_SIZE, MoreIcon, OpenIcon } from '../icons';
+import { ICON_SIZE, MoreIcon, type AppIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
@@ -12,7 +12,7 @@ import { useMenuKeyboard, type MenuInitialFocus } from '../primitives/useMenuKey
 export interface FilePreviewMenuAction {
   key: string;
   label: string;
-  icon: ComponentType<{ size?: number }>;
+  icon: AppIcon;
   run: () => void;
 }
 
@@ -24,7 +24,7 @@ interface FilePreviewPillProps {
   /** Direct image and audio/video previews omit the document Expand primary. */
   primaryMode?: 'toggle' | 'open' | 'none';
   /** Open with the OS default app (asset / local file / url). Null when not openable. */
-  primaryOpen?: { label: string; run: () => void } | null;
+  primaryOpen?: FilePreviewMenuAction | null;
   /** Secondary actions for the `⋯` menu (reveal in Finder, copy, add to outline). */
   menuActions?: FilePreviewMenuAction[];
   /** A quiet caption (type · size · pages) shown as the `⋯` menu header. */
@@ -53,7 +53,7 @@ export function FilePreviewPill({
   const dismissIgnoreRefs = useMemo(() => [triggerRef], []);
 
   const allMenuActions: FilePreviewMenuAction[] = previewable && primaryOpen
-    ? [{ key: 'open', label: primaryOpen.label, icon: OpenIcon, run: primaryOpen.run }, ...menuActions]
+    ? [primaryOpen, ...menuActions]
     : menuActions;
 
   const hasPrimary = primaryMode !== 'none' && (primaryMode === 'toggle' || Boolean(primaryOpen));

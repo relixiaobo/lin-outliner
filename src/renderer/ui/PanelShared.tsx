@@ -123,7 +123,7 @@ export function PanelStickyBreadcrumb(props: PanelStickyBreadcrumbProps) {
           className="panel-page-back-button"
           disabled={!props.canGoBack}
           icon={ChevronLeftIcon}
-          iconSize={14}
+          iconSize="menu"
           label={props.previousPageLabel}
           onClick={props.onBack}
           title={props.previousPageLabel}

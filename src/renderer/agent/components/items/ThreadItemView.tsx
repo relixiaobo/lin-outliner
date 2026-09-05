@@ -30,34 +30,22 @@ import type { DocumentIndexStore } from '../../../state/documentIndexStore';
 import { usePreviewObjectUrl } from '../../../ui/preview/usePreviewObjectUrl';
 import { dispatchPreviewTargetOpen } from '../../../ui/preview/previewEvents';
 import {
-  AgentIcon,
   AddChildIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CopyIcon,
-  FileDeleteToolIcon,
-  FileEditToolIcon,
-  FileGlobToolIcon,
-  FileGrepToolIcon,
   FileImageIcon,
-  FileReadToolIcon,
-  FileWriteToolIcon,
-  GenericToolIcon,
   ICON_SIZE,
   InfoIcon,
   LoaderIcon,
-  McpToolIcon,
   PencilIcon,
-  PlanToolIcon,
-  QuestionToolIcon,
   RestoreIcon,
-  SkillIcon,
   StopIcon,
-  TerminalIcon,
-  WebFetchToolIcon,
-  WebSearchToolIcon,
+  type IconSize,
 } from '../../../ui/icons';
+import { normalizedToolIdentity, toolGroupPresentation, toolPresentation, type ThreadToolItem } from './toolPresentation';
+export type { ThreadToolItem } from './toolPresentation';
 import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
 import { IconButton } from '../../../ui/primitives/IconButton';
 import { ButtonControl } from '../../../ui/primitives/ButtonControl';
@@ -91,16 +79,6 @@ import {
   collaborationResultSnapshot,
   type SubagentAnchor,
 } from '../../subagentPresentation';
-
-export type ThreadToolItem = Extract<ThreadItem, {
-  type:
-    | 'commandExecution'
-    | 'fileChange'
-    | 'mcpToolCall'
-    | 'dynamicToolCall'
-    | 'collabAgentToolCall'
-    | 'webSearch';
-}>;
 
 interface ThreadItemViewProps {
   readonly active: boolean;
@@ -721,7 +699,7 @@ function UserMessageCollapsibleContent({
             aria-hidden
             className={`thread-user-expand-chevron${expanded ? ' is-expanded' : ''}`}
             size={ICON_SIZE.tiny}
-          />
+ />
         </ButtonControl>
       ) : null}
     </div>
@@ -852,7 +830,7 @@ function ReasoningDisclosure({
           aria-hidden
           className={`thread-reasoning-chevron${expanded ? ' is-expanded' : ''}`}
           size={ICON_SIZE.menu}
-        />
+ />
       </ButtonControl>
       {expanded && presentation.details ? (
         <div className="thread-reasoning-body">
@@ -1107,7 +1085,7 @@ export function ThreadMessageCopyButton({
   onCopy,
   text,
 }: {
-  readonly iconSize?: number;
+  readonly iconSize?: IconSize;
   readonly label: string;
   readonly onCopy?: () => Promise<void>;
   readonly text: string;
@@ -1433,54 +1411,13 @@ function collaborationAct(
 }
 
 function toolIcon(item: ThreadToolItem): ReactNode {
-  switch (item.type) {
-    case 'commandExecution': return <TerminalIcon size={ICON_SIZE.menu} />;
-    case 'fileChange': {
-      const kinds = new Set(item.changes.map((change) => change.kind));
-      if (kinds.size === 1 && kinds.has('add')) return <FileWriteToolIcon size={ICON_SIZE.menu} />;
-      if (kinds.size === 1 && kinds.has('delete')) return <FileDeleteToolIcon size={ICON_SIZE.menu} />;
-      return <FileEditToolIcon size={ICON_SIZE.menu} />;
-    }
-    case 'webSearch': return <WebSearchToolIcon size={ICON_SIZE.menu} />;
-    case 'collabAgentToolCall': return <AgentIcon size={ICON_SIZE.menu} />;
-    case 'mcpToolCall': return <McpToolIcon size={ICON_SIZE.menu} />;
-    case 'dynamicToolCall': return dynamicToolIcon(item);
-    default: return assertNever(item);
-  }
-}
-
-function dynamicToolIcon(item: Extract<ThreadToolItem, { type: 'dynamicToolCall' }>): ReactNode {
-  const identity = normalizedToolIdentity(item.namespace, item.tool);
-  const Icon = identity === 'file_write' ? FileWriteToolIcon
-    : identity === 'file_edit' ? FileEditToolIcon
-      : identity === 'file_delete' ? FileDeleteToolIcon
-        : identity === 'file_read' ? FileReadToolIcon
-          : identity === 'file_glob' ? FileGlobToolIcon
-            : identity === 'file_grep' ? FileGrepToolIcon
-              : identity === 'web_search' ? WebSearchToolIcon
-                          : identity === 'web_fetch' ? WebFetchToolIcon
-                            : identity === 'update_plan' ? PlanToolIcon
-                              : identity === 'skill' ? SkillIcon
-                                : identity === 'request_user_input' ? QuestionToolIcon
-                                  : GenericToolIcon;
+  const { Icon } = toolPresentation(item);
   return <Icon size={ICON_SIZE.menu} />;
 }
 
-/**
- * A group of six file reads showed a generic wrench while every row inside it
- * showed the file-read glyph. When the members agree on one tool, the group
- * wears that tool's icon; the wrench is for genuinely mixed groups.
- */
 function groupGlyph(items: readonly ThreadToolItem[]): ReactNode {
-  const first = items[0];
-  // Same slot, same size: the shared-tool path renders at ICON_SIZE.menu, so
-  // the mixed fallback must too or the group glyph visibly changes size.
-  if (first === undefined) return <GenericToolIcon size={ICON_SIZE.menu} />;
-  const shared = items.every((item) => item.type === first.type
-    && (item.type !== 'dynamicToolCall' || dynamicToolActivityKind(item) === dynamicToolActivityKind(
-      first as Extract<ThreadToolItem, { type: 'dynamicToolCall' }>,
-    )));
-  return shared ? toolIcon(first) : <GenericToolIcon size={ICON_SIZE.menu} />;
+  const { Icon } = toolGroupPresentation(items);
+  return <Icon size={ICON_SIZE.menu} />;
 }
 
 function groupStatus(items: readonly ThreadToolItem[]): ItemExecutionStatus {
@@ -1493,6 +1430,7 @@ function groupStatus(items: readonly ThreadToolItem[]): ItemExecutionStatus {
 type ToolActivityKind =
   | 'command'
   | 'fileCreate'
+  | 'fileWrite'
   | 'fileEdit'
   | 'fileDelete'
   | 'fileRead'
@@ -1508,6 +1446,7 @@ type ToolActivityKind =
 const TOOL_ACTIVITY_ORDER: readonly ToolActivityKind[] = [
   'command',
   'fileCreate',
+  'fileWrite',
   'fileEdit',
   'fileDelete',
   'fileRead',
@@ -1662,6 +1601,7 @@ const SUBJECT_VERBS: Partial<Record<
   { readonly past: SubjectPhraseKey; readonly present: SubjectPhraseKey }
 >> = {
   fileCreate: { past: 'createdNamed', present: 'creatingNamed' },
+  fileWrite: { past: 'wroteNamed', present: 'writingNamed' },
   fileEdit: { past: 'editedNamed', present: 'editingNamed' },
   fileDelete: { past: 'deletedNamed', present: 'deletingNamed' },
   fileRead: { past: 'readNamed', present: 'readingNamed' },
@@ -1697,6 +1637,7 @@ function toolActivityPhrase(
   switch (kind) {
     case 'command': return running ? labels.runningCommands({ count }) : labels.ranCommands({ count });
     case 'fileCreate': return running ? labels.creatingFiles({ count }) : labels.createdFiles({ count });
+    case 'fileWrite': return running ? labels.writingFiles({ count }) : labels.wroteFiles({ count });
     case 'fileEdit': return running ? labels.editingFiles({ count }) : labels.editedFiles({ count });
     case 'fileDelete': return running ? labels.deletingFiles({ count }) : labels.deletedFiles({ count });
     case 'fileRead': return running ? labels.readingFiles({ count }) : labels.readFiles({ count });
@@ -1750,7 +1691,7 @@ function sentenceFragment(value: string): string {
 function dynamicToolActivityKind(item: Extract<ThreadToolItem, { type: 'dynamicToolCall' }>): ToolActivityKind {
   const identity = normalizedToolIdentity(item.namespace, item.tool);
   switch (identity) {
-    case 'file_write': return 'fileCreate';
+    case 'file_write': return 'fileWrite';
     case 'file_edit': return 'fileEdit';
     case 'file_delete': return 'fileDelete';
     case 'file_read': return 'fileRead';
@@ -1778,6 +1719,7 @@ interface ToolActivitySubjects {
 
 const SUBJECT_ARGUMENT_KEYS: Partial<Record<ToolActivityKind, readonly string[]>> = {
   fileCreate: ['file_path', 'path'],
+  fileWrite: ['file_path', 'path'],
   fileEdit: ['file_path', 'path'],
   fileDelete: ['file_path', 'path'],
   fileRead: ['file_path', 'path'],
@@ -1821,15 +1763,6 @@ function subjectDisplayName(
   if (kind === 'fileSearch' || kind === 'web') return quoteSubject(value);
   if (kind === 'webFetch') return quoteSubject(value);
   return basenameForPath(value) || value;
-}
-
-function normalizedToolIdentity(namespace: string | null, tool: string): string {
-  return [namespace, tool]
-    .filter((part): part is string => Boolean(part))
-    .join('_')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
 }
 
 function dynamicToolArgument(

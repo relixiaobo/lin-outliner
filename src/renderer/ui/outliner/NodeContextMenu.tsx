@@ -32,7 +32,9 @@ import {
   stageComposerObject,
 } from '../interactions/actionSteps';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
-import { ChevronRightIcon, CheckIcon, ICON_SIZE, MoveToIcon, SupertagIcon } from '../icons';
+import { ChevronRightIcon, CheckIcon, ICON_SIZE } from '../icons';
+import { ActionGlyph, ViewModeGlyph } from '../presentation/actionIcons';
+import { ObjectGlyph } from '../presentation/ObjectGlyph';
 import { Button } from '../primitives/Button';
 import { Input } from '../primitives/Input';
 import { MenuItem } from '../primitives/MenuItem';
@@ -43,7 +45,6 @@ import { useFlyoutOverlay } from '../primitives/useFlyoutOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { resolveTagColor } from '../tags/tagColors';
 import type { NavigateRootOptions } from '../shared';
-import { actionIcon } from './actionIcons';
 
 interface NodeContextMenuProps {
   x: number;
@@ -373,7 +374,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
             aria-expanded={viewModeMenuOpen}
             aria-haspopup="menu"
             className="node-context-item"
-            icon={actionIcon(activeViewModeIcon(viewModeActions, props, props.index))}
+            icon={<ViewModeGlyph mode={currentViewMode(props)} size={ICON_SIZE.menu} />}
             label={nameFor(ACTION_FAMILY_NAMES.setViewMode, locale)}
             meta={<ChevronRightIcon size={ICON_SIZE.menu} />}
             onClick={() => setViewModeMenuState('keyboard')}
@@ -408,7 +409,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
           key={`${action.actionId}:${JSON.stringify(action.binding.state === 'ready' ? action.binding.arguments : 'parameter')}`}
           className={`node-context-item ${isDangerAction(action) ? 'is-danger' : ''}`}
           disabled={disabled}
-          icon={actionIcon(action.iconId)}
+          icon={<ActionGlyph action={action} size={ICON_SIZE.menu} />}
           label={nameFor(action.names, locale)}
           onClick={() => activate(action)}
           onFocus={closeViewModeMenu}
@@ -456,7 +457,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
             active={active}
             aria-checked={active}
             className="node-context-item"
-            icon={actionIcon(action.iconId)}
+            icon={<ActionGlyph action={action} size={ICON_SIZE.menu} />}
             label={nameFor(action.names, locale)}
             meta={active ? <CheckIcon size={ICON_SIZE.menu} /> : null}
             onClick={() => activate(action)}
@@ -515,7 +516,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         <MenuItem
           key={candidate.objectRef}
           className="node-context-item"
-          icon={candidateIcon(candidate, parameterMode, props.index)}
+          icon={candidateIcon(candidate, props.index)}
           label={candidateLabel(candidate, locale)}
           onClick={() => pickCandidate(candidate)}
         />
@@ -575,19 +576,6 @@ function currentViewMode(props: NodeContextMenuProps): 'outline' | 'table' {
   return 'outline';
 }
 
-function activeViewModeIcon(
-  actions: readonly ActionPresentation[],
-  props: NodeContextMenuProps,
-  _index: DocumentIndex,
-): ActionPresentation['iconId'] {
-  const active = currentViewMode(props);
-  const match = actions.find((action) => (
-    action.binding.state === 'ready'
-    && (action.binding.arguments as { mode?: string }).mode === active
-  ));
-  return match?.iconId ?? 'outline';
-}
-
 function candidateLabel(candidate: ObjectPresentation, locale: Parameters<typeof nameFor>[1]): string {
   return candidate.name.source === 'literal'
     ? candidate.name.value
@@ -596,21 +584,17 @@ function candidateLabel(candidate: ObjectPresentation, locale: Parameters<typeof
 
 function candidateIcon(
   candidate: ObjectPresentation,
-  mode: Extract<MenuMode, { kind: 'parameter' }>,
   index: DocumentIndex,
 ) {
-  if (mode.slot.parameterId !== 'tag') return <MoveToIcon size={ICON_SIZE.menu} />;
-  if (candidate.kind === 'draft') return <SupertagIcon size={ICON_SIZE.menu} />;
-  // By IDENTITY, not by rendered label: two tags can share a name and differ in
-  // colour, and an untitled tag renders a fallback that matches nothing.
-  const tag = candidate.backingNodeId ? index.byId.get(candidate.backingNodeId) : undefined;
+  const tag = candidate.kind === 'node' && candidate.node.kind === 'document'
+    && candidate.node.nodeType === 'tagDef' && candidate.backingNodeId
+    ? index.byId.get(candidate.backingNodeId) : undefined;
   return (
     <span
-      className="tag-selector-hash"
       style={tag ? { color: resolveTagColor(tag, index.byId).text } : undefined}
       aria-hidden="true"
     >
-      #
+      <ObjectGlyph object={candidate} size={ICON_SIZE.menu} />
     </span>
   );
 }

@@ -468,7 +468,7 @@ export const ThreadDock = memo(function ThreadDock({
                 <ChevronDownIcon
                   className={`thread-title-chevron${listOpen ? ' is-open' : ''}`}
                   size={ICON_SIZE.menu}
-                />
+ />
               </button>
             </div>
           ) : null}
@@ -522,7 +522,7 @@ export const ThreadDock = memo(function ThreadDock({
                 setListOpen(false);
                 setSurface('automations');
               }}
-              strokeWidth={1.7}
+
               variant="chrome"
             />
           ) : null}

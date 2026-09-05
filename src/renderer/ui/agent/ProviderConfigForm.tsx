@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { CheckIcon, CopyIcon, HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
+import { CheckIcon, CopyIcon, HideIcon, ICON_SIZE, LoaderIcon, OpenInBrowserIcon, PasswordIcon, ShowIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import type { AgentProviderCapabilityKind, AgentProviderCapabilitySummary } from '../../../core/types';
 import type { Messages } from '../../../core/i18n';
@@ -268,7 +268,7 @@ export function ProviderConfigForm({
                 onClick={() => onOpenExternal(authNote.docsUrl as string)}
               >
                 <span>{authNote.docsLabel ?? t.providerConfig.learnMore}</span>
-                <OpenIcon size={ICON_SIZE.tiny} />
+                <OpenInBrowserIcon size={ICON_SIZE.tiny} />
               </ButtonControl>
             ) : null}
           </div>
@@ -340,7 +340,7 @@ export function ProviderConfigForm({
         {!authNote && !hasCredential && docsUrl ? (
           <ButtonControl className="agent-settings-doc-link settings-sheet-getkey" onClick={() => onOpenExternal(docsUrl)}>
             <span>{t.providerConfig.getApiKey}</span>
-            <OpenIcon size={ICON_SIZE.tiny} />
+            <OpenInBrowserIcon size={ICON_SIZE.tiny} />
           </ButtonControl>
         ) : null}
 

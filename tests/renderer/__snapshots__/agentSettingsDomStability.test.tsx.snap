@@ -6,15 +6,15 @@ exports[`settings page DOM renders the general category byte-stably 1`] = `
     <div class="settings-toolbar">
       <div class="settings-history-nav">
         <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-left" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m15 18-6-6 6-6" />
+          <svg data-icon="ChevronLeft" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M15 6L9 12L15 18" />
           </svg>
         </button>
         <span aria-hidden="true" class="settings-history-divider">
         </span>
         <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m9 18 6-6-6-6" />
+          <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
           </svg>
         </button>
       </div>
@@ -27,9 +27,9 @@ exports[`settings page DOM renders the general category byte-stably 1`] = `
       <nav aria-label="Settings categories" class="settings-nav">
         <button type="button" class="settings-nav-item is-active" aria-current="page">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-settings" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
-              <circle r="3" cy="12" cx="12" />
+            <svg data-icon="Settings" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M19.6224 10.3954L18.5247 7.7448L20 6L18 4L16.2647 5.48295L13.5578 4.36974L12.9353 2H10.981L10.3491 4.40113L7.70441 5.51596L6 4L4 6L5.45337 7.78885L4.3725 10.4463L2 11V13L4.40111 13.6555L5.51575 16.2997L4 18L6 20L7.79116 18.5403L10.397 19.6123L11 22H13L13.6045 19.6132L16.2551 18.5155C16.6969 18.8313 18 20 18 20L20 18L18.5159 16.2494L19.6139 13.598L21.9999 12.9772L22 11L19.6224 10.3954Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -40,10 +40,10 @@ exports[`settings page DOM renders the general category byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
-              <path d="M22 10v6" />
-              <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+            <svg data-icon="Skill" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M2.57331 8.46334L11.2317 4.13416C11.4006 4.04971 11.5994 4.04971 11.7683 4.13416L20.4267 8.46334C20.8689 8.68446 20.8689 9.31554 20.4267 9.53666L11.7683 13.8658C11.5994 13.9503 11.4006 13.9503 11.2317 13.8658L2.57331 9.53666C2.13108 9.31554 2.13108 8.68446 2.57331 8.46334Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M22.5 13L22.5 9.5L20.5 8.5" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 10.5V15.9121C4.5 16.6843 4.94459 17.3876 5.6422 17.7188L10.6422 20.0928C11.185 20.3505 11.815 20.3505 12.3578 20.0928L17.3578 17.7188C18.0554 17.3876 18.5 16.6843 18.5 15.9121V10.5" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -52,10 +52,10 @@ exports[`settings page DOM renders the general category byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-database" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <ellipse ry="3" rx="9" cy="5" cx="12" />
-              <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-              <path d="M3 12A9 3 0 0 0 21 12" />
+            <svg data-icon="Database" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke="currentColor" d="M5 12V18C5 18 5 21 12 21C19 21 19 18 19 18V12" />
+              <path stroke="currentColor" d="M5 6V12C5 12 5 15 12 15C19 15 19 12 19 12V6" />
+              <path stroke="currentColor" d="M12 3C19 3 19 6 19 6C19 6 19 9 12 9C5 9 5 6 5 6C5 6 5 3 12 3Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -97,8 +97,8 @@ exports[`settings page DOM renders the general category byte-stably 1`] = `
                     <option selected value="en">English</option>
                     <option value="zh-Hans">简体中文</option>
                   </select>
-                  <svg aria-hidden="true" class="lucide lucide-chevron-down select-popup-chevron" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="12" width="12" xmlns="http://www.w3.org/2000/svg">
-                    <path d="m6 9 6 6 6-6" />
+                  <svg data-icon="ChevronDown" class="app-icon select-popup-chevron" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-xs)" width="var(--icon-size-xs)">
+                    <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 9L12 15L18 9" />
                   </svg>
                 </span>
               </div>
@@ -155,8 +155,8 @@ exports[`settings page DOM renders the general category byte-stably 1`] = `
                 <span class="settings-status-dot is-hidden" aria-hidden="true">
                 </span>
                 <span aria-hidden="true" class="settings-drilldown-chevron">
-                  <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                    <path d="m9 18 6-6-6-6" />
+                  <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                    <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
                   </svg>
                 </span>
               </button>
@@ -175,15 +175,15 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
     <div class="settings-toolbar">
       <div class="settings-history-nav">
         <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-left" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m15 18-6-6 6-6" />
+          <svg data-icon="ChevronLeft" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M15 6L9 12L15 18" />
           </svg>
         </button>
         <span aria-hidden="true" class="settings-history-divider">
         </span>
         <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m9 18 6-6-6-6" />
+          <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
           </svg>
         </button>
       </div>
@@ -196,9 +196,9 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
       <nav aria-label="Settings categories" class="settings-nav">
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-settings" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
-              <circle r="3" cy="12" cx="12" />
+            <svg data-icon="Settings" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M19.6224 10.3954L18.5247 7.7448L20 6L18 4L16.2647 5.48295L13.5578 4.36974L12.9353 2H10.981L10.3491 4.40113L7.70441 5.51596L6 4L4 6L5.45337 7.78885L4.3725 10.4463L2 11V13L4.40111 13.6555L5.51575 16.2997L4 18L6 20L7.79116 18.5403L10.397 19.6123L11 22H13L13.6045 19.6132L16.2551 18.5155C16.6969 18.8313 18 20 18 20L20 18L18.5159 16.2494L19.6139 13.598L21.9999 12.9772L22 11L19.6224 10.3954Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -209,10 +209,10 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item is-active" aria-current="page">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
-              <path d="M22 10v6" />
-              <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+            <svg data-icon="Skill" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M2.57331 8.46334L11.2317 4.13416C11.4006 4.04971 11.5994 4.04971 11.7683 4.13416L20.4267 8.46334C20.8689 8.68446 20.8689 9.31554 20.4267 9.53666L11.7683 13.8658C11.5994 13.9503 11.4006 13.9503 11.2317 13.8658L2.57331 9.53666C2.13108 9.31554 2.13108 8.68446 2.57331 8.46334Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M22.5 13L22.5 9.5L20.5 8.5" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 10.5V15.9121C4.5 16.6843 4.94459 17.3876 5.6422 17.7188L10.6422 20.0928C11.185 20.3505 11.815 20.3505 12.3578 20.0928L17.3578 17.7188C18.0554 17.3876 18.5 16.6843 18.5 15.9121V10.5" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -221,10 +221,10 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-database" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <ellipse ry="3" rx="9" cy="5" cx="12" />
-              <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-              <path d="M3 12A9 3 0 0 0 21 12" />
+            <svg data-icon="Database" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke="currentColor" d="M5 12V18C5 18 5 21 12 21C19 21 19 18 19 18V12" />
+              <path stroke="currentColor" d="M5 6V12C5 12 5 15 12 15C19 15 19 12 19 12V6" />
+              <path stroke="currentColor" d="M12 3C19 3 19 6 19 6C19 6 19 9 12 9C5 9 5 6 5 6C5 6 5 3 12 3Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -244,8 +244,8 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
                   <span class="inset-row-sublabel">No model service connected</span>
                 </span>
                 <span aria-hidden="true" class="settings-drilldown-chevron">
-                  <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                    <path d="m9 18 6-6-6-6" />
+                  <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                    <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
                   </svg>
                 </span>
               </button>
@@ -257,8 +257,8 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
                   <span class="inset-row-sublabel">1 agent</span>
                 </span>
                 <span aria-hidden="true" class="settings-drilldown-chevron">
-                  <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                    <path d="m9 18 6-6-6-6" />
+                  <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                    <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
                   </svg>
                 </span>
               </button>
@@ -270,8 +270,8 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
                   <span class="inset-row-sublabel">5 skills</span>
                 </span>
                 <span aria-hidden="true" class="settings-drilldown-chevron">
-                  <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                    <path d="m9 18 6-6-6-6" />
+                  <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                    <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
                   </svg>
                 </span>
               </button>
@@ -383,15 +383,15 @@ exports[`settings page DOM renders the preview category byte-stably 1`] = `
     <div class="settings-toolbar">
       <div class="settings-history-nav">
         <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-left" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m15 18-6-6 6-6" />
+          <svg data-icon="ChevronLeft" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M15 6L9 12L15 18" />
           </svg>
         </button>
         <span aria-hidden="true" class="settings-history-divider">
         </span>
         <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m9 18 6-6-6-6" />
+          <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
           </svg>
         </button>
       </div>
@@ -404,9 +404,9 @@ exports[`settings page DOM renders the preview category byte-stably 1`] = `
       <nav aria-label="Settings categories" class="settings-nav">
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-settings" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
-              <circle r="3" cy="12" cx="12" />
+            <svg data-icon="Settings" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M19.6224 10.3954L18.5247 7.7448L20 6L18 4L16.2647 5.48295L13.5578 4.36974L12.9353 2H10.981L10.3491 4.40113L7.70441 5.51596L6 4L4 6L5.45337 7.78885L4.3725 10.4463L2 11V13L4.40111 13.6555L5.51575 16.2997L4 18L6 20L7.79116 18.5403L10.397 19.6123L11 22H13L13.6045 19.6132L16.2551 18.5155C16.6969 18.8313 18 20 18 20L20 18L18.5159 16.2494L19.6139 13.598L21.9999 12.9772L22 11L19.6224 10.3954Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -417,10 +417,10 @@ exports[`settings page DOM renders the preview category byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
-              <path d="M22 10v6" />
-              <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+            <svg data-icon="Skill" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M2.57331 8.46334L11.2317 4.13416C11.4006 4.04971 11.5994 4.04971 11.7683 4.13416L20.4267 8.46334C20.8689 8.68446 20.8689 9.31554 20.4267 9.53666L11.7683 13.8658C11.5994 13.9503 11.4006 13.9503 11.2317 13.8658L2.57331 9.53666C2.13108 9.31554 2.13108 8.68446 2.57331 8.46334Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M22.5 13L22.5 9.5L20.5 8.5" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 10.5V15.9121C4.5 16.6843 4.94459 17.3876 5.6422 17.7188L10.6422 20.0928C11.185 20.3505 11.815 20.3505 12.3578 20.0928L17.3578 17.7188C18.0554 17.3876 18.5 16.6843 18.5 15.9121V10.5" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -429,10 +429,10 @@ exports[`settings page DOM renders the preview category byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item is-active" aria-current="page">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-database" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <ellipse ry="3" rx="9" cy="5" cx="12" />
-              <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-              <path d="M3 12A9 3 0 0 0 21 12" />
+            <svg data-icon="Database" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke="currentColor" d="M5 12V18C5 18 5 21 12 21C19 21 19 18 19 18V12" />
+              <path stroke="currentColor" d="M5 6V12C5 12 5 15 12 15C19 15 19 12 19 12V6" />
+              <path stroke="currentColor" d="M12 3C19 3 19 6 19 6C19 6 19 9 12 9C5 9 5 6 5 6C5 6 5 3 12 3Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -511,8 +511,8 @@ exports[`settings page DOM renders the preview category byte-stably 1`] = `
                     <option value="si">සිංහල</option>
                     <option value="my">မြန်မာ</option>
                   </select>
-                  <svg aria-hidden="true" class="lucide lucide-chevron-down select-popup-chevron" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="12" width="12" xmlns="http://www.w3.org/2000/svg">
-                    <path d="m6 9 6 6 6-6" />
+                  <svg data-icon="ChevronDown" class="app-icon select-popup-chevron" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-xs)" width="var(--icon-size-xs)">
+                    <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 9L12 15L18 9" />
                   </svg>
                 </span>
               </div>
@@ -561,8 +561,8 @@ exports[`settings page DOM renders the preview category byte-stably 1`] = `
                   <select class="select-popup-input" aria-label="Translation model">
                     <option selected value="">Agent model</option>
                   </select>
-                  <svg aria-hidden="true" class="lucide lucide-chevron-down select-popup-chevron" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="12" width="12" xmlns="http://www.w3.org/2000/svg">
-                    <path d="m6 9 6 6 6-6" />
+                  <svg data-icon="ChevronDown" class="app-icon select-popup-chevron" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-xs)" width="var(--icon-size-xs)">
+                    <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 9L12 15L18 9" />
                   </svg>
                 </span>
               </div>
@@ -608,15 +608,15 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
     <div class="settings-toolbar">
       <div class="settings-history-nav">
         <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-left" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m15 18-6-6 6-6" />
+          <svg data-icon="ChevronLeft" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M15 6L9 12L15 18" />
           </svg>
         </button>
         <span aria-hidden="true" class="settings-history-divider">
         </span>
         <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m9 18 6-6-6-6" />
+          <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
           </svg>
         </button>
       </div>
@@ -629,9 +629,9 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
       <nav aria-label="Settings categories" class="settings-nav">
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-settings" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
-              <circle r="3" cy="12" cx="12" />
+            <svg data-icon="Settings" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M19.6224 10.3954L18.5247 7.7448L20 6L18 4L16.2647 5.48295L13.5578 4.36974L12.9353 2H10.981L10.3491 4.40113L7.70441 5.51596L6 4L4 6L5.45337 7.78885L4.3725 10.4463L2 11V13L4.40111 13.6555L5.51575 16.2997L4 18L6 20L7.79116 18.5403L10.397 19.6123L11 22H13L13.6045 19.6132L16.2551 18.5155C16.6969 18.8313 18 20 18 20L20 18L18.5159 16.2494L19.6139 13.598L21.9999 12.9772L22 11L19.6224 10.3954Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -642,10 +642,10 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item is-active" aria-current="page">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
-              <path d="M22 10v6" />
-              <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+            <svg data-icon="Skill" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M2.57331 8.46334L11.2317 4.13416C11.4006 4.04971 11.5994 4.04971 11.7683 4.13416L20.4267 8.46334C20.8689 8.68446 20.8689 9.31554 20.4267 9.53666L11.7683 13.8658C11.5994 13.9503 11.4006 13.9503 11.2317 13.8658L2.57331 9.53666C2.13108 9.31554 2.13108 8.68446 2.57331 8.46334Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M22.5 13L22.5 9.5L20.5 8.5" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 10.5V15.9121C4.5 16.6843 4.94459 17.3876 5.6422 17.7188L10.6422 20.0928C11.185 20.3505 11.815 20.3505 12.3578 20.0928L17.3578 17.7188C18.0554 17.3876 18.5 16.6843 18.5 15.9121V10.5" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -654,10 +654,10 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-database" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <ellipse ry="3" rx="9" cy="5" cx="12" />
-              <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-              <path d="M3 12A9 3 0 0 0 21 12" />
+            <svg data-icon="Database" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke="currentColor" d="M5 12V18C5 18 5 21 12 21C19 21 19 18 19 18V12" />
+              <path stroke="currentColor" d="M5 6V12C5 12 5 15 12 15C19 15 19 12 19 12V6" />
+              <path stroke="currentColor" d="M12 3C19 3 19 6 19 6C19 6 19 9 12 9C5 9 5 6 5 6C5 6 5 3 12 3Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -684,8 +684,8 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
                     <select class="select-popup-input" aria-label="Default model">
                       <option selected value="">Auto</option>
                     </select>
-                    <svg aria-hidden="true" class="lucide lucide-chevron-down select-popup-chevron" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="12" width="12" xmlns="http://www.w3.org/2000/svg">
-                      <path d="m6 9 6 6 6-6" />
+                    <svg data-icon="ChevronDown" class="app-icon select-popup-chevron" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-xs)" width="var(--icon-size-xs)">
+                      <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 9L12 15L18 9" />
                     </svg>
                   </span>
                 </div>
@@ -718,10 +718,10 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
                       </span>
                     </button>
                     <button type="button" class="settings-row-menu-trigger" aria-label="Anthropic actions" aria-haspopup="menu" aria-expanded="false">
-                      <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                        <circle r="1" cy="12" cx="12" />
-                        <circle r="1" cy="12" cx="19" />
-                        <circle r="1" cy="12" cx="5" />
+                      <svg data-icon="More" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M20 12.5C20.2761 12.5 20.5 12.2761 20.5 12C20.5 11.7239 20.2761 11.5 20 11.5C19.7239 11.5 19.5 11.7239 19.5 12C19.5 12.2761 19.7239 12.5 20 12.5Z" />
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M12 12.5C12.2761 12.5 12.5 12.2761 12.5 12C12.5 11.7239 12.2761 11.5 12 11.5C11.7239 11.5 11.5 11.7239 11.5 12C11.5 12.2761 11.7239 12.5 12 12.5Z" />
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M4 12.5C4.27614 12.5 4.5 12.2761 4.5 12C4.5 11.7239 4.27614 11.5 4 11.5C3.72386 11.5 3.5 11.7239 3.5 12C3.5 12.2761 3.72386 12.5 4 12.5Z" />
                       </svg>
                     </button>
                   </div>
@@ -750,10 +750,10 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
                       </span>
                     </button>
                     <button type="button" class="settings-row-menu-trigger" aria-label="OpenAI actions" aria-haspopup="menu" aria-expanded="false">
-                      <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                        <circle r="1" cy="12" cx="12" />
-                        <circle r="1" cy="12" cx="19" />
-                        <circle r="1" cy="12" cx="5" />
+                      <svg data-icon="More" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M20 12.5C20.2761 12.5 20.5 12.2761 20.5 12C20.5 11.7239 20.2761 11.5 20 11.5C19.7239 11.5 19.5 11.7239 19.5 12C19.5 12.2761 19.7239 12.5 20 12.5Z" />
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M12 12.5C12.2761 12.5 12.5 12.2761 12.5 12C12.5 11.7239 12.2761 11.5 12 11.5C11.7239 11.5 11.5 11.7239 11.5 12C11.5 12.2761 11.7239 12.5 12 12.5Z" />
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M4 12.5C4.27614 12.5 4.5 12.2761 4.5 12C4.5 11.7239 4.27614 11.5 4 11.5C3.72386 11.5 3.5 11.7239 3.5 12C3.5 12.2761 3.72386 12.5 4 12.5Z" />
                       </svg>
                     </button>
                   </div>
@@ -768,9 +768,8 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
                 <button type="button" class="inset-row-main" aria-label="Add custom provider">
                   <span class="inset-row-leading">
                     <span aria-hidden="true" class="settings-provider-add-leading">
-                      <svg aria-hidden="true" class="lucide lucide-plus" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M5 12h14" />
-                        <path d="M12 5v14" />
+                      <svg data-icon="Add" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 12H12M18 12H12M12 12V6M12 12V18" />
                       </svg>
                     </span>
                   </span>
@@ -794,15 +793,15 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
     <div class="settings-toolbar">
       <div class="settings-history-nav">
         <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-left" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m15 18-6-6 6-6" />
+          <svg data-icon="ChevronLeft" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M15 6L9 12L15 18" />
           </svg>
         </button>
         <span aria-hidden="true" class="settings-history-divider">
         </span>
         <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m9 18 6-6-6-6" />
+          <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
           </svg>
         </button>
       </div>
@@ -815,9 +814,9 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
       <nav aria-label="Settings categories" class="settings-nav">
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-settings" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
-              <circle r="3" cy="12" cx="12" />
+            <svg data-icon="Settings" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M19.6224 10.3954L18.5247 7.7448L20 6L18 4L16.2647 5.48295L13.5578 4.36974L12.9353 2H10.981L10.3491 4.40113L7.70441 5.51596L6 4L4 6L5.45337 7.78885L4.3725 10.4463L2 11V13L4.40111 13.6555L5.51575 16.2997L4 18L6 20L7.79116 18.5403L10.397 19.6123L11 22H13L13.6045 19.6132L16.2551 18.5155C16.6969 18.8313 18 20 18 20L20 18L18.5159 16.2494L19.6139 13.598L21.9999 12.9772L22 11L19.6224 10.3954Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -828,10 +827,10 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item is-active" aria-current="page">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
-              <path d="M22 10v6" />
-              <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+            <svg data-icon="Skill" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M2.57331 8.46334L11.2317 4.13416C11.4006 4.04971 11.5994 4.04971 11.7683 4.13416L20.4267 8.46334C20.8689 8.68446 20.8689 9.31554 20.4267 9.53666L11.7683 13.8658C11.5994 13.9503 11.4006 13.9503 11.2317 13.8658L2.57331 9.53666C2.13108 9.31554 2.13108 8.68446 2.57331 8.46334Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M22.5 13L22.5 9.5L20.5 8.5" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 10.5V15.9121C4.5 16.6843 4.94459 17.3876 5.6422 17.7188L10.6422 20.0928C11.185 20.3505 11.815 20.3505 12.3578 20.0928L17.3578 17.7188C18.0554 17.3876 18.5 16.6843 18.5 15.9121V10.5" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -840,10 +839,10 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-database" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <ellipse ry="3" rx="9" cy="5" cx="12" />
-              <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-              <path d="M3 12A9 3 0 0 0 21 12" />
+            <svg data-icon="Database" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke="currentColor" d="M5 12V18C5 18 5 21 12 21C19 21 19 18 19 18V12" />
+              <path stroke="currentColor" d="M5 6V12C5 12 5 15 12 15C19 15 19 12 19 12V6" />
+              <path stroke="currentColor" d="M12 3C19 3 19 6 19 6C19 6 19 9 12 9C5 9 5 6 5 6C5 6 5 3 12 3Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -859,17 +858,14 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
             <span class="inset-group-header-label">Skills</span>
             <span class="inset-group-header-action">
               <button type="button" title="Check managed skills for updates" class="icon-button icon-button-chrome rail-toggle" aria-label="Check managed skills for updates">
-                <svg aria-hidden="true" class="lucide lucide-refresh-cw" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                  <path d="M21 3v5h-5" />
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                  <path d="M8 16H3v5" />
+                <svg data-icon="Refresh" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M21.8883 13.5C21.1645 18.3113 17.013 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C16.1006 2 19.6248 4.46819 21.1679 8" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M17 8H21.4C21.7314 8 22 7.73137 22 7.4V3" />
                 </svg>
               </button>
               <button type="button" title="Add a skill" class="icon-button icon-button-chrome rail-toggle" aria-label="Add a skill" aria-haspopup="menu" aria-expanded="false">
-                <svg aria-hidden="true" class="lucide lucide-plus" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M5 12h14" />
-                  <path d="M12 5v14" />
+                <svg data-icon="Add" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 12H12M18 12H12M12 12V6M12 12V18" />
                 </svg>
               </button>
             </span>
@@ -888,10 +884,10 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
             </div>
             <div class="inset-row-trailing">
               <button type="button" class="settings-row-menu-trigger" aria-label="pdf actions" aria-haspopup="menu" aria-expanded="false">
-                <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                  <circle r="1" cy="12" cx="12" />
-                  <circle r="1" cy="12" cx="19" />
-                  <circle r="1" cy="12" cx="5" />
+                <svg data-icon="More" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M20 12.5C20.2761 12.5 20.5 12.2761 20.5 12C20.5 11.7239 20.2761 11.5 20 11.5C19.7239 11.5 19.5 11.7239 19.5 12C19.5 12.2761 19.7239 12.5 20 12.5Z" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M12 12.5C12.2761 12.5 12.5 12.2761 12.5 12C12.5 11.7239 12.2761 11.5 12 11.5C11.7239 11.5 11.5 11.7239 11.5 12C11.5 12.2761 11.7239 12.5 12 12.5Z" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M4 12.5C4.27614 12.5 4.5 12.2761 4.5 12C4.5 11.7239 4.27614 11.5 4 11.5C3.72386 11.5 3.5 11.7239 3.5 12C3.5 12.2761 3.72386 12.5 4 12.5Z" />
                 </svg>
               </button>
               <button type="button" role="switch" aria-label="Enable pdf" aria-checked="true">
@@ -914,10 +910,10 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
           </div>
           <div class="inset-row-trailing">
             <button type="button" class="settings-row-menu-trigger" aria-label="project-lint actions" aria-haspopup="menu" aria-expanded="false">
-              <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                <circle r="1" cy="12" cx="12" />
-                <circle r="1" cy="12" cx="19" />
-                <circle r="1" cy="12" cx="5" />
+              <svg data-icon="More" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M20 12.5C20.2761 12.5 20.5 12.2761 20.5 12C20.5 11.7239 20.2761 11.5 20 11.5C19.7239 11.5 19.5 11.7239 19.5 12C19.5 12.2761 19.7239 12.5 20 12.5Z" />
+                <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M12 12.5C12.2761 12.5 12.5 12.2761 12.5 12C12.5 11.7239 12.2761 11.5 12 11.5C11.7239 11.5 11.5 11.7239 11.5 12C11.5 12.2761 11.7239 12.5 12 12.5Z" />
+                <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M4 12.5C4.27614 12.5 4.5 12.2761 4.5 12C4.5 11.7239 4.27614 11.5 4 11.5C3.72386 11.5 3.5 11.7239 3.5 12C3.5 12.2761 3.72386 12.5 4 12.5Z" />
               </svg>
             </button>
             <button type="button" role="switch" aria-label="Toggle project-lint" aria-checked="false">
@@ -940,10 +936,10 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
         </div>
         <div class="inset-row-trailing">
           <button type="button" class="settings-row-menu-trigger" aria-label="project-undoable actions" aria-haspopup="menu" aria-expanded="false">
-            <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <circle r="1" cy="12" cx="12" />
-              <circle r="1" cy="12" cx="19" />
-              <circle r="1" cy="12" cx="5" />
+            <svg data-icon="More" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M20 12.5C20.2761 12.5 20.5 12.2761 20.5 12C20.5 11.7239 20.2761 11.5 20 11.5C19.7239 11.5 19.5 11.7239 19.5 12C19.5 12.2761 19.7239 12.5 20 12.5Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M12 12.5C12.2761 12.5 12.5 12.2761 12.5 12C12.5 11.7239 12.2761 11.5 12 11.5C11.7239 11.5 11.5 11.7239 11.5 12C11.5 12.2761 11.7239 12.5 12 12.5Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M4 12.5C4.27614 12.5 4.5 12.2761 4.5 12C4.5 11.7239 4.27614 11.5 4 11.5C3.72386 11.5 3.5 11.7239 3.5 12C3.5 12.2761 3.72386 12.5 4 12.5Z" />
             </svg>
           </button>
           <button type="button" role="switch" aria-label="Toggle project-undoable" aria-checked="true">
@@ -966,10 +962,10 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
       </div>
       <div class="inset-row-trailing">
         <button type="button" class="settings-row-menu-trigger" aria-label="skillify actions" aria-haspopup="menu" aria-expanded="false">
-          <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-            <circle r="1" cy="12" cx="12" />
-            <circle r="1" cy="12" cx="19" />
-            <circle r="1" cy="12" cx="5" />
+          <svg data-icon="More" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M20 12.5C20.2761 12.5 20.5 12.2761 20.5 12C20.5 11.7239 20.2761 11.5 20 11.5C19.7239 11.5 19.5 11.7239 19.5 12C19.5 12.2761 19.7239 12.5 20 12.5Z" />
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M12 12.5C12.2761 12.5 12.5 12.2761 12.5 12C12.5 11.7239 12.2761 11.5 12 11.5C11.7239 11.5 11.5 11.7239 11.5 12C11.5 12.2761 11.7239 12.5 12 12.5Z" />
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M4 12.5C4.27614 12.5 4.5 12.2761 4.5 12C4.5 11.7239 4.27614 11.5 4 11.5C3.72386 11.5 3.5 11.7239 3.5 12C3.5 12.2761 3.72386 12.5 4 12.5Z" />
           </svg>
         </button>
         <button type="button" role="switch" aria-label="Toggle skillify" aria-checked="true">
@@ -992,10 +988,10 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
     </div>
     <div class="inset-row-trailing">
       <button type="button" class="settings-row-menu-trigger" aria-label="user-notes actions" aria-haspopup="menu" aria-expanded="false">
-        <svg aria-hidden="true" class="lucide lucide-ellipsis" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-          <circle r="1" cy="12" cx="12" />
-          <circle r="1" cy="12" cx="19" />
-          <circle r="1" cy="12" cx="5" />
+        <svg data-icon="More" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+          <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M20 12.5C20.2761 12.5 20.5 12.2761 20.5 12C20.5 11.7239 20.2761 11.5 20 11.5C19.7239 11.5 19.5 11.7239 19.5 12C19.5 12.2761 19.7239 12.5 20 12.5Z" />
+          <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M12 12.5C12.2761 12.5 12.5 12.2761 12.5 12C12.5 11.7239 12.2761 11.5 12 11.5C11.7239 11.5 11.5 11.7239 11.5 12C11.5 12.2761 11.7239 12.5 12 12.5Z" />
+          <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" fill="currentColor" d="M4 12.5C4.27614 12.5 4.5 12.2761 4.5 12C4.5 11.7239 4.27614 11.5 4 11.5C3.72386 11.5 3.5 11.7239 3.5 12C3.5 12.2761 3.72386 12.5 4 12.5Z" />
         </svg>
       </button>
       <button type="button" role="switch" aria-label="Toggle user-notes" aria-checked="true">
@@ -1020,15 +1016,15 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
     <div class="settings-toolbar">
       <div class="settings-history-nav">
         <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-left" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m15 18-6-6 6-6" />
+          <svg data-icon="ChevronLeft" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M15 6L9 12L15 18" />
           </svg>
         </button>
         <span aria-hidden="true" class="settings-history-divider">
         </span>
         <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
-          <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.7" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
-            <path d="m9 18 6-6-6-6" />
+          <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
           </svg>
         </button>
       </div>
@@ -1041,9 +1037,9 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
       <nav aria-label="Settings categories" class="settings-nav">
         <button type="button" class="settings-nav-item is-active" aria-current="page">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-settings" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
-              <circle r="3" cy="12" cx="12" />
+            <svg data-icon="Settings" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M19.6224 10.3954L18.5247 7.7448L20 6L18 4L16.2647 5.48295L13.5578 4.36974L12.9353 2H10.981L10.3491 4.40113L7.70441 5.51596L6 4L4 6L5.45337 7.78885L4.3725 10.4463L2 11V13L4.40111 13.6555L5.51575 16.2997L4 18L6 20L7.79116 18.5403L10.397 19.6123L11 22H13L13.6045 19.6132L16.2551 18.5155C16.6969 18.8313 18 20 18 20L20 18L18.5159 16.2494L19.6139 13.598L21.9999 12.9772L22 11L19.6224 10.3954Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -1054,10 +1050,10 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-graduation-cap" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
-              <path d="M22 10v6" />
-              <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+            <svg data-icon="Skill" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M2.57331 8.46334L11.2317 4.13416C11.4006 4.04971 11.5994 4.04971 11.7683 4.13416L20.4267 8.46334C20.8689 8.68446 20.8689 9.31554 20.4267 9.53666L11.7683 13.8658C11.5994 13.9503 11.4006 13.9503 11.2317 13.8658L2.57331 9.53666C2.13108 9.31554 2.13108 8.68446 2.57331 8.46334Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M22.5 13L22.5 9.5L20.5 8.5" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 10.5V15.9121C4.5 16.6843 4.94459 17.3876 5.6422 17.7188L10.6422 20.0928C11.185 20.3505 11.815 20.3505 12.3578 20.0928L17.3578 17.7188C18.0554 17.3876 18.5 16.6843 18.5 15.9121V10.5" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -1066,10 +1062,10 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
         </button>
         <button type="button" class="settings-nav-item">
           <span aria-hidden="true" class="settings-nav-icon">
-            <svg aria-hidden="true" class="lucide lucide-database" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-              <ellipse ry="3" rx="9" cy="5" cx="12" />
-              <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-              <path d="M3 12A9 3 0 0 0 21 12" />
+            <svg data-icon="Database" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke="currentColor" d="M5 12V18C5 18 5 21 12 21C19 21 19 18 19 18V12" />
+              <path stroke="currentColor" d="M5 6V12C5 12 5 15 12 15C19 15 19 12 19 12V6" />
+              <path stroke="currentColor" d="M12 3C19 3 19 6 19 6C19 6 19 9 12 9C5 9 5 6 5 6C5 6 5 3 12 3Z" />
             </svg>
           </span>
           <span class="settings-nav-copy">
@@ -1150,10 +1146,11 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
                 </span>
               </button>
               <div class="inset-row-trailing">
-                <svg aria-hidden="true" class="lucide lucide-external-link" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="10" width="10" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M15 3h6v6" />
-                  <path d="M10 14 21 3" />
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                <svg data-icon="OpenInBrowser" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M8 21H20.4C20.7314 21 21 20.7314 21 20.4V3.6C21 3.26863 20.7314 3 20.4 3H3.6C3.26863 3 3 3.26863 3 3.6V16" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M10 6L18 6" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 6H7" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M3.5 20.5L12 12M12 12V16M12 12H8" />
                 </svg>
               </div>
             </div>
@@ -1169,10 +1166,11 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
                 </span>
               </button>
               <div class="inset-row-trailing">
-                <svg aria-hidden="true" class="lucide lucide-external-link" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="10" width="10" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M15 3h6v6" />
-                  <path d="M10 14 21 3" />
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                <svg data-icon="OpenInBrowser" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M8 21H20.4C20.7314 21 21 20.7314 21 20.4V3.6C21 3.26863 20.7314 3 20.4 3H3.6C3.26863 3 3 3.26863 3 3.6V16" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M10 6L18 6" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 6H7" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M3.5 20.5L12 12M12 12V16M12 12H8" />
                 </svg>
               </div>
             </div>
@@ -1183,10 +1181,11 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
                 </span>
               </button>
               <div class="inset-row-trailing">
-                <svg aria-hidden="true" class="lucide lucide-external-link" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="10" width="10" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M15 3h6v6" />
-                  <path d="M10 14 21 3" />
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                <svg data-icon="OpenInBrowser" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M8 21H20.4C20.7314 21 21 20.7314 21 20.4V3.6C21 3.26863 20.7314 3 20.4 3H3.6C3.26863 3 3 3.26863 3 3.6V16" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M10 6L18 6" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 6H7" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M3.5 20.5L12 12M12 12V16M12 12H8" />
                 </svg>
               </div>
             </div>
@@ -1202,10 +1201,11 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
                 </span>
               </button>
               <div class="inset-row-trailing">
-                <svg aria-hidden="true" class="lucide lucide-external-link" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="10" width="10" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M15 3h6v6" />
-                  <path d="M10 14 21 3" />
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                <svg data-icon="OpenInBrowser" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M8 21H20.4C20.7314 21 21 20.7314 21 20.4V3.6C21 3.26863 20.7314 3 20.4 3H3.6C3.26863 3 3 3.26863 3 3.6V16" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M10 6L18 6" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 6H7" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M3.5 20.5L12 12M12 12V16M12 12H8" />
                 </svg>
               </div>
             </div>

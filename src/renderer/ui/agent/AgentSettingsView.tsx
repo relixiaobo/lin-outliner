@@ -681,7 +681,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
               iconSize={ICON_SIZE.toolbar}
               label={t.settings.navigation.back}
               onClick={goBack}
-              strokeWidth={1.7}
+
               variant="chrome"
             />
             <span className="settings-history-divider" aria-hidden="true" />
@@ -692,7 +692,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
               iconSize={ICON_SIZE.toolbar}
               label={t.settings.navigation.forward}
               onClick={goForward}
-              strokeWidth={1.7}
+
               variant="chrome"
             />
           </div>
@@ -714,7 +714,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                   onClick={() => navigateCategory(id)}
                 >
                   <span className="settings-nav-icon" aria-hidden="true">
-                    <CategoryIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+                    <CategoryIcon size={ICON_SIZE.menu} />
                   </span>
                   <span className="settings-nav-copy">
                     <span className="settings-nav-label">{cat.label}</span>

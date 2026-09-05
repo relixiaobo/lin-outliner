@@ -262,11 +262,6 @@
 
 .settings-sheet-spinner {
   flex: 0 0 auto;
-  animation: settings-sheet-spin var(--motion-spin-fast-cycle) linear infinite;
-}
-
-@keyframes settings-sheet-spin {
-  to { transform: rotate(360deg); }
 }
 
 .settings-sheet-actions {

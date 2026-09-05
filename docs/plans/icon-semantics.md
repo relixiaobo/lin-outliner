@@ -221,6 +221,8 @@ Re-scan final consumers instead of freezing acceptance to an old row count.
 | Muted or zero / low / medium / high volume | SoundOff / SoundMin / SoundLow / SoundHigh. Preserve Media Chrome's existing thresholds. |
 | Stop / unchecked checkbox / Busy | Filled Square / outline Square / continuously rotating Refresh. The checkbox primitive retains its real checked state. |
 | Hide / show top toolbar | SidebarCollapse / SidebarExpand rotated 90 degrees clockwise. |
+| Collapse / expand the left sidebar | SidebarCollapse / SidebarExpand, selected from the actual open state. |
+| Collapse / expand the right Agent panel | The same pair mirrored horizontally, matching the right edge and action direction. |
 
 Semantic families may share a graphic. Do not require globally unique glyphs or
 expose alternative candidates as runtime configuration. Evaluate the actual

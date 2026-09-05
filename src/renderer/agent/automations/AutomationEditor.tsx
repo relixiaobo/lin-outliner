@@ -9,7 +9,7 @@ import { REASONING_EFFORTS, type ReasoningEffort } from '../../../core/agent/con
 import type { Thread } from '../projectionTypes';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
-import { AddIcon, TrashIcon } from '../../ui/icons';
+import { AddIcon, CloseIcon } from '../../ui/icons';
 import { formatProviderName } from '../../ui/agent/providerNames';
 import { buildModelChoices, flattenModelChoices, type ModelChoiceGroup } from '../../ui/agent/modelChoices';
 import { Button } from '../../ui/primitives/Button';
@@ -342,7 +342,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
                   {index > 0 ? (
                     <IconButton
                       disabled={props.busy}
-                      icon={TrashIcon}
+                      icon={CloseIcon}
                       label={t.removeProject({ index: index + 1 })}
                       onClick={() => setState({
                         ...state,
@@ -367,7 +367,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
                   size="sm"
                   variant="ghost"
                 >
-                  <AddIcon size={12} />{t.addProject}
+                  <AddIcon size="rowGlyph" />{t.addProject}
                 </Button>
               ) : null}
             </div>

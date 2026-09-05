@@ -201,7 +201,7 @@ export function SourcePreviewAffordance({
       onClick={() => view.show(valueId)}
       title={label}
     >
-      <ShowIcon size={13} strokeWidth={1.8} />
+      <ShowIcon size="compact" />
     </ButtonControl>
   );
 }
@@ -314,7 +314,7 @@ function SourceSwitcher({
         title={labels.switchSource}
       >
         <span>{selectedLabel}</span>
-        <ChevronDownIcon aria-hidden="true" size={13} />
+        <ChevronDownIcon aria-hidden="true" size="compact" />
       </ButtonControl>
       {open ? createPortal(
         <MenuSurface
@@ -330,7 +330,7 @@ function SourceSwitcher({
               key={value.sourceValueId}
               active={value.sourceValueId === selected.sourceValueId}
               className="node-source-menu-item"
-              icon={value.sourceValueId === selected.sourceValueId ? <CheckIcon size={14} /> : null}
+              icon={value.sourceValueId === selected.sourceValueId ? <CheckIcon size="menu" /> : null}
               label={sourceDisplayLabel(value)}
               labelClassName="node-source-menu-label"
               meta={value.resolving ? labels.loading : availabilityLabel(value.availability, labels)}
@@ -433,7 +433,7 @@ function SourceActionsMenu({
         >
           <MenuItem
             className="node-source-menu-item"
-            icon={<AttachmentIcon size={14} />}
+            icon={<AttachmentIcon size="menu" />}
             label={labels.linkFile}
             role="menuitem"
             onClick={() => void runHostAction(async () => {
@@ -442,7 +442,7 @@ function SourceActionsMenu({
           />
           <MenuItem
             className="node-source-menu-item"
-            icon={<AttachmentIcon size={14} />}
+            icon={<AttachmentIcon size="menu" />}
             label={labels.replaceWithFile}
             role="menuitem"
             onClick={() => void runHostAction(async () => {
@@ -483,7 +483,7 @@ function SourceActionsMenu({
           ) : null}
           <MenuItem
             className="node-source-menu-item"
-            icon={<CopyIcon size={14} />}
+            icon={<CopyIcon size="menu" />}
             label={labels.copyUri}
             role="menuitem"
             onClick={() => {
@@ -503,7 +503,7 @@ function SourceActionsMenu({
           ) : null}
           <MenuItem
             className="node-source-menu-item is-destructive"
-            icon={<TrashIcon size={14} />}
+            icon={<TrashIcon size="menu" />}
             label={labels.remove}
             role="menuitem"
             onClick={() => void runHostAction(async () => {

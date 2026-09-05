@@ -33,13 +33,14 @@ interface LauncherMock {
   bridge: Record<string, unknown>;
 }
 
-function item(name: string, kind: SurfaceItemPresentation['object']['kind'], ref: string, primary?: string): SurfaceItemPresentation {
+function item(name: string, kind: 'node' | 'appSurface', ref: string, primary?: string): SurfaceItemPresentation {
   return {
     object: {
       objectRef: ref as ObjectRef,
-      kind,
+      ...(kind === 'node'
+        ? { kind: 'node' as const, node: { kind: 'document' as const, nodeType: null } }
+        : { kind: 'appSurface' as const, surface: 'settings' as const }),
       name: { source: 'localized', values: { en: name, 'zh-Hans': name } },
-      iconId: 'node',
       typeLabel: { en: 'App', 'zh-Hans': 'App' },
     },
     ...(primary
@@ -49,7 +50,6 @@ function item(name: string, kind: SurfaceItemPresentation['object']['kind'], ref
           subjectRef: ref as ObjectRef,
           names: { en: primary, 'zh-Hans': primary },
           aliases: [],
-          iconId: 'open',
           surfaces: ['actionPanel'],
           evaluation: { status: 'applicable' },
           binding: { state: 'ready', arguments: {} },
@@ -79,8 +79,7 @@ function fileSourceOpening(): InvocationOpened {
   resource.object = {
     ...resource.object,
     name: { source: 'literal', value: 'Quarterly call recording.wav' },
-    iconId: 'file',
-    typeLabel: { en: 'File', 'zh-Hans': '文件' },
+    typeLabel: { en: 'Node', 'zh-Hans': '节点' },
   };
   return { ...opening(), resultItems: [resource] };
 }
@@ -209,13 +208,13 @@ describe('LauncherApp rows are objects', () => {
     expect(rows(r)).toHaveLength(0);
   });
 
-  test('a file Source presentation keeps its file glyph and localized type label', async () => {
+  test('a Source-backed document keeps its node identity and authored title', async () => {
     const r = await renderLauncher({ opening: fileSourceOpening() });
     const row = rows(r)[0]!;
     expect(row.querySelector('.launcher-row-title')?.textContent).toBe('Quarterly call recording.wav');
-    expect(row.querySelector('.launcher-row-type')?.textContent).toBe('File');
-    expect(row.querySelector('.launcher-row-bullet')).toBeNull();
-    expect(row.querySelector('.launcher-row-icon')).not.toBeNull();
+    expect(row.querySelector('.launcher-row-type')?.textContent).toBe('Node');
+    expect(row.querySelector('.object-glyph-bullet')).not.toBeNull();
+    expect(row.querySelector('[data-icon="File"]')).toBeNull();
   });
 });
 

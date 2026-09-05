@@ -1,0 +1,32 @@
+.app-icon {
+  flex: none;
+  transform-origin: center;
+}
+
+.app-icon-busy {
+  animation: app-icon-spin var(--motion-spin-cycle) linear infinite;
+}
+
+@keyframes app-icon-spin {
+  to { transform: rotate(360deg); }
+}
+
+.object-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  line-height: 1;
+}
+
+.object-glyph-bullet::before {
+  content: '';
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-icon-busy { animation: none; }
+}

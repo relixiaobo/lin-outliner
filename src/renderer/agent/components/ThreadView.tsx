@@ -68,6 +68,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  CloseIcon,
   GitForkIcon,
   ICON_SIZE,
   InfoIcon,
@@ -3310,7 +3311,7 @@ export function ThreadView({
                           setStagedContexts(pendingComposerContexts());
                         }}
                       >
-                        ×
+                        <CloseIcon size={ICON_SIZE.rowGlyph} />
                       </button>
                     </li>
                   ))}
@@ -4601,7 +4602,7 @@ function ThreadProcessSummary({
           aria-hidden
           className={`thread-process-chevron${expanded ? ' is-expanded' : ''}`}
           size={ICON_SIZE.menu}
-        />
+ />
       </ButtonControl>
     );
   }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ThreadId } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
 import { useDismissibleOverlay } from '../../ui/primitives/useDismissibleOverlay';
-import { AgentIcon, GitForkIcon, ICON_SIZE, LoaderIcon, StopIcon } from '../../ui/icons';
+import { AgentIcon, GitBranchIcon, ICON_SIZE, LoaderIcon, StopIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { WorkingText } from '../../ui/primitives/WorkingText';
 import type { SubagentRegistryEntry } from '../subagentPresentation';
@@ -106,7 +106,7 @@ function SubagentStripRow({ entry }: { readonly entry: SubagentRegistryEntry }) 
         {entry.agentType ? <span className="thread-work-strip-type">{entry.agentType}</span> : null}
         {entry.worktree ? (
           <span aria-label={t.agent.thread.agent.worktree} role="img">
-            <GitForkIcon aria-hidden size={ICON_SIZE.tiny} />
+            <GitBranchIcon aria-hidden size={ICON_SIZE.tiny} />
           </span>
         ) : null}
         {running

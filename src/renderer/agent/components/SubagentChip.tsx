@@ -8,7 +8,7 @@ import type { Messages } from '../../../core/i18n';
 import {
   AgentIcon,
   ChevronRightIcon,
-  GitForkIcon,
+  GitBranchIcon,
   ICON_SIZE,
   RefreshIcon,
   SkillIcon,
@@ -120,7 +120,7 @@ export function SubagentChip({
             role="img"
             title={t.agent.thread.agent.worktree}
           >
-            <GitForkIcon aria-hidden size={ICON_SIZE.tiny} />
+            <GitBranchIcon aria-hidden size={ICON_SIZE.tiny} />
           </span>
         ) : null}
         {running

@@ -1,4 +1,6 @@
 @import './tokens.css';
+@import './icons.css';
+@import './file-icon-masks.generated.css';
 @import './theme-dark.css';
 /* a11y.css MUST follow theme-dark.css: its user-preference token overrides share
    :root specificity with the dark block, so source order decides when both match. */

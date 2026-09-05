@@ -1,4 +1,4 @@
-import { AgentToggleIcon, ICON_SIZE, SidebarToggleIcon } from './icons';
+import { CollapseAgentPanelIcon, CollapseSidebarIcon, ExpandAgentPanelIcon, ExpandSidebarIcon, ICON_SIZE } from './icons';
 import { IconButton } from './primitives/IconButton';
 import { useT } from '../i18n/I18nProvider';
 
@@ -31,11 +31,11 @@ export function WindowChrome(props: WindowChromeProps) {
         <div className="window-chrome-cluster window-chrome-cluster-left">
           <IconButton
             className="rail-toggle sidebar-toggle"
-            icon={SidebarToggleIcon}
+            aria-expanded={props.sidebarOpen}
+            icon={props.sidebarOpen ? CollapseSidebarIcon : ExpandSidebarIcon}
             iconSize={ICON_SIZE.toolbar}
             label={sidebarToggleLabel}
             onClick={props.onToggleSidebar}
-            strokeWidth={1.7}
             title={sidebarToggleLabel}
             variant="chrome"
           />
@@ -46,11 +46,11 @@ export function WindowChrome(props: WindowChromeProps) {
         <div className="window-chrome-cluster window-chrome-cluster-right">
           <IconButton
             className="rail-toggle agent-toggle"
-            icon={AgentToggleIcon}
+            aria-expanded={props.agentOpen}
+            icon={props.agentOpen ? CollapseAgentPanelIcon : ExpandAgentPanelIcon}
             iconSize={ICON_SIZE.toolbar}
             label={agentToggleLabel}
             onClick={props.onToggleAgent}
-            strokeWidth={1.7}
             title={agentToggleLabel}
             variant="chrome"
           />

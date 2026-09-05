@@ -10,26 +10,16 @@ import {
 } from 'react';
 import type { ThreadAttachmentContent } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
-import { inlineFileIconKind, type InlineFileIconKind } from '../../ui/editor/inlineFileIcon';
+import { inlineFileIconKind } from '../../ui/editor/inlineFileIcon';
+import { FILE_ICONS } from '../../ui/editor/fileIcons';
 import { dispatchPreviewTargetOpen } from '../../ui/preview/previewEvents';
 import { wantsNewPaneFromClick } from '../../ui/shared';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CloseIcon,
-  DatabaseIcon,
-  FileArchiveIcon,
-  FileAudioIcon,
-  FileCodeIcon,
-  FileImageIcon,
-  FileSpreadsheetIcon,
-  FileTextIcon,
-  FileVideoIcon,
-  FolderIcon,
   ICON_SIZE,
   LoaderIcon,
-  PresentationIcon,
-  type AppIcon,
 } from '../../ui/icons';
 import type {
   ThreadComposerDraft,
@@ -313,11 +303,11 @@ function TrayKindBadge({
       </span>
     );
   }
-  const Icon = iconForKind(inlineFileIconKind({
+  const Icon = FILE_ICONS[inlineFileIconKind({
     entryKind: item.reference.entryKind,
     mimeType: item.attachment.mimeType,
     name: item.attachment.name,
-  }));
+  })];
   return (
     <span className="thread-composer-attachment-kind">
       <Icon size={ICON_SIZE.tiny} />
@@ -410,19 +400,6 @@ function updateScrollEdges(
   const left = scroll.scrollLeft > 1;
   const right = scroll.scrollLeft + scroll.clientWidth < scroll.scrollWidth - 1;
   setEdges((current) => current.left === left && current.right === right ? current : { left, right });
-}
-
-function iconForKind(kind: InlineFileIconKind): AppIcon {
-  if (kind === 'archive') return FileArchiveIcon;
-  if (kind === 'audio') return FileAudioIcon;
-  if (kind === 'code') return FileCodeIcon;
-  if (kind === 'database') return DatabaseIcon;
-  if (kind === 'folder') return FolderIcon;
-  if (kind === 'image') return FileImageIcon;
-  if (kind === 'presentation') return PresentationIcon;
-  if (kind === 'spreadsheet') return FileSpreadsheetIcon;
-  if (kind === 'video') return FileVideoIcon;
-  return FileTextIcon;
 }
 
 function formatBytes(bytes: number): string {

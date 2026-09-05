@@ -137,7 +137,7 @@ describe('the main-list query generation', () => {
     const item = result.resultItems.find((candidate) => candidate.object.backingNodeId === attachment);
     expect(item?.object.kind).toBe('node');
     expect(item?.object.name).toEqual({ source: 'literal', value: 'Quarterly call recording.wav' });
-    expect(item?.object.iconId).toBe('node');
+    expect(item?.object).toMatchObject({ kind: 'node', node: { kind: 'document', nodeType: null } });
     expect(item?.object.typeLabel).toEqual({ en: 'Node', 'zh-Hans': '节点' });
     expect(item?.primaryAction?.actionId).toBe('open');
     expect(result.resultItems.some((candidate) => candidate.object.kind === 'draft')).toBe(false);

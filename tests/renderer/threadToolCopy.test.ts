@@ -115,7 +115,7 @@ function changes(...paths: readonly string[]): ThreadToolItem {
 
 describe('every built-in tool says what it did, not which API was called', () => {
   const cases: ReadonlyArray<readonly [string, ThreadToolItem, string]> = [
-    ['file_write', dynamic('file_write', { file_path: '/w/src/out.md' }), 'Created out.md'],
+    ['file_write', dynamic('file_write', { file_path: '/w/src/out.md' }), 'Wrote out.md'],
     ['file_edit', dynamic('file_edit', { file_path: '/w/ThreadItemView.tsx' }), 'Edited ThreadItemView.tsx'],
     ['file_delete', dynamic('file_delete', { file_path: '/w/tmp/old.log' }), 'Deleted old.log'],
     ['file_read', dynamic('file_read', { file_path: '/w/OEBPS/intro.xhtml' }), 'Read intro.xhtml'],
@@ -167,7 +167,7 @@ describe('every built-in tool says what it did, not which API was called', () =>
 
 describe('a tool with no usable argument degrades to an honest generic', () => {
   const cases: ReadonlyArray<readonly [string, ThreadToolItem, string]> = [
-    ['file_write', dynamic('file_write', {}), 'Created a file'],
+    ['file_write', dynamic('file_write', {}), 'Wrote a file'],
     ['file_read', dynamic('file_read', {}), 'Read a file'],
     ['file_grep', dynamic('file_grep', {}), 'Searched files'],
     ['skill', dynamic('skill', {}), 'Used a skill'],

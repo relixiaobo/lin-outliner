@@ -32,7 +32,7 @@ import {
   ICON_SIZE,
   ImageIcon,
   LoaderIcon,
-  OpenIcon,
+  NavigateIcon,
 } from '../../../ui/icons';
 import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
 import { Button } from '../../../ui/primitives/Button';
@@ -391,7 +391,7 @@ function SummaryEvidence({
           type="button"
           variant="secondary"
         >
-          <OpenIcon size={ICON_SIZE.menu} />
+          <NavigateIcon size={ICON_SIZE.menu} />
           {t.agent.trajectory.openChildTrajectory}
         </Button>
       ) : null}

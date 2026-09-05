@@ -129,7 +129,7 @@ import {
   fieldValueOpenHref,
   validateFieldValue,
 } from '../fields/fieldValueValidation';
-import { CalendarIcon, ICON_SIZE, OpenIcon, WarningIcon } from '../icons';
+import { CalendarIcon, EmailIcon, ICON_SIZE, OpenInBrowserIcon, WarningIcon } from '../icons';
 import {
   createPlaceholderInlineField,
   createPlaceholderInlineFieldAfterNode,
@@ -2996,7 +2996,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           aria-label={tf.openLink}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => void api.openExternalUrl(fieldValueHref)}
-        ><OpenIcon size={12} strokeWidth={1.8} /></ButtonControl>
+        >{props.fieldValue?.fieldType === 'email'
+          ? <EmailIcon size={ICON_SIZE.rowGlyph} />
+          : <OpenInBrowserIcon size={ICON_SIZE.rowGlyph} />}</ButtonControl>
       )}
       {showDateTrigger && (
         <ButtonControl
@@ -3006,7 +3008,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => setDateOverlayOpen((open) => !open)}
         >
-          <CalendarIcon size={13} strokeWidth={1.8} />
+          <CalendarIcon size="compact" />
         </ButtonControl>
       )}
       {sourcePreviewAction}

@@ -26,7 +26,7 @@ import {
   type EffectStep,
   type StepRef,
 } from '../core/actions/bindings';
-import { createTagCandidateName, objectTypeLabel } from '../core/actions/names';
+import { createTagCandidateName } from '../core/actions/names';
 import {
   nodeIdForFacet,
   nodeObjectForRow,
@@ -798,17 +798,7 @@ export class ActionInvocationService {
           const object = nodeObjectForRow(candidate.tag.id, context.projection.byId, mint);
           objects.push(object);
           record.objects.set(object.objectRef, object);
-          items.push({
-            objectRef: object.objectRef,
-            kind: 'node',
-            name: {
-              source: 'literal',
-              value: nodeText(candidate.tag, context.untitled),
-            },
-            iconId: 'supertag',
-            typeLabel: objectTypeLabel('node'),
-            backingNodeId: candidate.tag.id,
-          });
+          items.push(presentObject(object, context.projection, context.untitled));
           continue;
         }
         const draft: SurfaceObject = {
@@ -820,11 +810,8 @@ export class ActionInvocationService {
         objects.push(draft);
         record.objects.set(draft.objectRef, draft);
         items.push({
-          objectRef: draft.objectRef,
-          kind: 'draft',
+          ...presentObject(draft, context.projection, context.untitled),
           name: { source: 'localized', values: createTagCandidateName(candidate.name) },
-          iconId: 'supertag',
-          typeLabel: objectTypeLabel('draftTag'),
         });
       }
       return { objects, items };

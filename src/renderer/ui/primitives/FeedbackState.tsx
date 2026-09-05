@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ICON_SIZE, WarningIcon, type AppIcon } from '../icons';
+import { ICON_SIZE, LoaderIcon, WarningIcon, type AppIcon } from '../icons';
 import { Button } from './Button';
 import { cx } from './cx';
 
@@ -31,13 +31,14 @@ export function EmptyState({
   action,
   body,
   className,
-  icon: Icon,
+  icon,
   iconClassName,
   loading = false,
   role,
   size = 'panel',
   title,
 }: EmptyStateProps) {
+  const Icon = loading ? LoaderIcon : icon;
   const classes = cx(
     'feedback-state',
     `feedback-state-${size}`,

@@ -15,7 +15,7 @@ import { serializeUnknownError, type AppInfo } from '../../../core/errorObservab
 import { api } from '../../api/client';
 import { useI18n } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
-import { ICON_SIZE, OpenIcon } from '../icons';
+import { ICON_SIZE, OpenInBrowserIcon } from '../icons';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
@@ -306,7 +306,7 @@ export function SettingsAboutSection({
           <InsetRow
             label={t.settings.about.fullChangelogAction}
             onSelect={() => void api.openExternalUrl(`${HELP_URL}/blob/${changelogSectionPath(release)}`)}
-            trailing={<OpenIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
+            trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
           />
         </InsetGroup>
       ) : null}
@@ -315,12 +315,12 @@ export function SettingsAboutSection({
         <InsetRow
           label={t.settings.about.helpAction}
           onSelect={() => void api.openExternalUrl(HELP_URL)}
-          trailing={<OpenIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
+          trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
         />
         <InsetRow
           label={t.settings.about.reportIssueAction}
           onSelect={() => void api.openExternalUrl(ISSUES_URL)}
-          trailing={<OpenIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
+          trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
         />
       </InsetGroup>
 
@@ -333,7 +333,7 @@ export function SettingsAboutSection({
         <InsetRow
           label={t.settings.about.license}
           onSelect={() => void api.openExternalUrl(`${HELP_URL}/blob/main/LICENSE`)}
-          trailing={<OpenIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
+          trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
         />
       </InsetGroup>
     </section>

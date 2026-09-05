@@ -1,7 +1,7 @@
-import type { ComponentType, CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import type { FieldType } from '../../api/types';
 import { conicColorStyle } from '../tags/tagColors';
-import { ICON_SIZE } from '../icons';
+import { ICON_SIZE, SupertagIcon, type AppIcon } from '../icons';
 import { FieldTypeIcon } from './fieldTypePresentation';
 import { NodeBulletDot } from './NodeBulletDot';
 
@@ -15,7 +15,7 @@ interface RowMarkerProps {
   // An explicit marker icon for a field-variant row, overriding the field-type
   // glyph. System fields use it (e.g. the command Schedule / Agent rows) so they
   // carry a meaningful icon instead of the default plain-text one.
-  icon?: ComponentType<{ size?: number }>;
+  icon?: AppIcon;
   bulletColors?: readonly string[];
   tagDefColor?: string;
   className?: string;
@@ -53,7 +53,7 @@ export function RowMarker({
       {variant === 'field' || variant === 'fieldDef' ? (
         Icon ? <Icon size={ICON_SIZE.rowGlyph} /> : <FieldTypeIcon fieldType={fieldType} />
       ) : variant === 'tag' ? (
-        <span aria-hidden="true" className="row-bullet-tag-glyph">#</span>
+        <SupertagIcon className="row-bullet-tag-glyph" size={ICON_SIZE.rowGlyph} />
       ) : (
         <NodeBulletDot style={bulletDotStyle} />
       )}

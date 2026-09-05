@@ -157,15 +157,15 @@ export const InsetRow = memo(function InsetRow({
       ) : null}
       {drillsDown ? (
         <span className="settings-drilldown-chevron" aria-hidden="true">
-          <ChevronRightIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+          <ChevronRightIcon size={ICON_SIZE.menu} />
         </span>
       ) : null}
       {disclosure ? (
         <span className="settings-drilldown-chevron" aria-hidden="true">
           {disclosure === 'expanded' ? (
-            <ChevronDownIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+            <ChevronDownIcon size={ICON_SIZE.menu} />
           ) : (
-            <ChevronRightIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+            <ChevronRightIcon size={ICON_SIZE.menu} />
           )}
         </span>
       ) : null}

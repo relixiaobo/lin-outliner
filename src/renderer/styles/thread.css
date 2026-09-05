@@ -1175,7 +1175,6 @@
 
 .thread-provider-retry svg {
   flex: 0 0 auto;
-  animation: thread-tool-spin var(--motion-spin-cycle) linear infinite;
 }
 
 .thread-provider-retry span {
@@ -1991,10 +1990,6 @@
   padding-left: 20px;
 }
 
-@keyframes thread-tool-spin {
-  to { transform: rotate(360deg); }
-}
-
 .thread-tool-images {
   display: flex;
   min-width: 0;
@@ -2301,10 +2296,6 @@
 
 .thread-tool-file-result > .icon-button:hover:not(:disabled) {
   color: var(--text-strong);
-}
-
-.thread-tool-file-result > .icon-button:disabled svg {
-  animation: thread-tool-spin var(--motion-spin-cycle) linear infinite;
 }
 
 .thread-compaction::before,
@@ -2699,10 +2690,6 @@
   height: 100%;
   border-radius: inherit;
   object-fit: cover;
-}
-
-.thread-composer-attachment-kind.is-pending svg {
-  animation: thread-tool-spin var(--motion-spin-cycle) linear infinite;
 }
 
 .thread-composer-attachment-copy {
@@ -3154,11 +3141,6 @@
 .thread-composer .icon-button-composerAction {
   background: var(--surface-inverse);
   color: var(--bg-content);
-}
-
-.thread-composer .icon-button-composerAction.is-stop svg {
-  fill: currentColor;
-  stroke: currentColor;
 }
 
 .thread-composer .icon-button-composerAction:hover:not(:disabled) {
@@ -3724,10 +3706,6 @@
   color: var(--text-strong);
 }
 
-/* The same spin the in-progress tool rows use — one live cue, one cadence. */
-.thread-work-strip-spinner {
-  animation: thread-tool-spin var(--motion-spin-cycle) linear infinite;
-}
 
 /* Full width under the header rather than a side-hung popover: 344px of deck
    has no side to hang one from. */

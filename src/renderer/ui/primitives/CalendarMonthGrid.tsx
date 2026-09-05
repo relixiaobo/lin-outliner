@@ -179,7 +179,7 @@ export function CalendarMonthGrid({
           className="calendar-month-nav"
           onClick={() => onMoveMonth(-1)}
         >
-          <ChevronLeftIcon size={13} strokeWidth={1.8} />
+          <ChevronLeftIcon size="compact" />
         </ButtonControl>
         <span>{calendarMonthLabel(year, month, locale)}</span>
         <ButtonControl
@@ -187,7 +187,7 @@ export function CalendarMonthGrid({
           className="calendar-month-nav"
           onClick={() => onMoveMonth(1)}
         >
-          <ChevronRightIcon size={13} strokeWidth={1.8} />
+          <ChevronRightIcon size="compact" />
         </ButtonControl>
       </div>
       <div className="calendar-month-weekdays" aria-hidden="true">

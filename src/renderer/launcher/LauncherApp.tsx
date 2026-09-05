@@ -20,7 +20,8 @@ import {
   rowKey,
   stepActiveRef,
 } from './launcherModel';
-import { iconForObject, LauncherInputIcon, LauncherRemediationIcon } from './launcherIcons';
+import { CloseIcon, SearchIcon, WarningIcon } from '../ui/icons';
+import { ObjectGlyph } from '../ui/presentation/ObjectGlyph';
 import { useI18n, useT } from '../i18n/I18nProvider';
 import { APP_NAME } from '../../core/brand';
 import { Button } from '../ui/primitives/Button';
@@ -362,7 +363,7 @@ export function LauncherApp() {
   return (
     <div className="launcher" role="dialog" aria-label={t.launcher.rootAriaLabel({ app: APP_NAME })} onKeyDown={onKeyDown}>
       <div className="launcher-inputrow">
-        <LauncherInputIcon className="launcher-input-icon" size={18} strokeWidth={1.75} aria-hidden="true" />
+        <SearchIcon className="launcher-input-icon" size="large" />
         <Input
           ref={inputRef}
           className="launcher-input"
@@ -382,7 +383,7 @@ export function LauncherApp() {
 
       {remediation ? (
         <div className={`launcher-remediation is-${remediation.kind}`} role="status">
-          <LauncherRemediationIcon className="launcher-remediation-icon" size={16} strokeWidth={1.75} aria-hidden="true" />
+          <WarningIcon className="launcher-remediation-icon" size="toolbar" />
           <div className="launcher-remediation-text">
             <div className="launcher-remediation-title">{remediation.title}</div>
             <div className="launcher-remediation-detail">{remediation.detail}</div>
@@ -537,7 +538,7 @@ function LauncherRow(props: {
           onMouseDown={(event) => event.preventDefault()}
           onClick={(event) => { event.stopPropagation(); onRemove?.(); }}
         >
-          ×
+          <CloseIcon size="tiny" />
         </button>
       ) : null}
     </div>
@@ -545,15 +546,5 @@ function LauncherRow(props: {
 }
 
 function LauncherRowIcon({ item }: { item: SurfaceItemPresentation }) {
-  const { object } = item;
-  // Ordinary nodes show their own emoji or the outliner bullet. Typed node
-  // presentations such as attachments keep their semantic glyph.
-  if (object.emoji) {
-    return <span className="launcher-row-emoji" aria-hidden="true">{object.emoji}</span>;
-  }
-  if (object.kind === 'node' && object.name.source === 'literal' && object.iconId === 'node') {
-    return <span className="launcher-row-bullet" aria-hidden="true" />;
-  }
-  const Icon = iconForObject(object);
-  return <Icon className="launcher-row-icon" size={16} strokeWidth={1.75} aria-hidden="true" />;
+  return <ObjectGlyph object={item.object} size="toolbar" className="launcher-row-icon" />;
 }

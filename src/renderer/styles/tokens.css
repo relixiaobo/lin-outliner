@@ -333,10 +333,15 @@
      track (see design-system spec) — so it carries its own width rather than
      aliasing --control-size-xl. */
   --switch-mark-width: 30px;
+  --icon-size-tiny: 10px;
+  --icon-size-tag: 11px;
   --icon-size-xs: 12px;
+  --icon-size-compact: 13px;
   --icon-size-sm: 14px;
+  --icon-size-disclosure: 15px;
   --icon-size-md: 16px;
   --icon-size-lg: 18px;
+  --icon-size-panel: 20px;
   --icon-size-xl: 22px;
   /* Settings row furniture: the avatar/tile a provider row leads with, and the
      larger one the config window's header uses. Named because they were written

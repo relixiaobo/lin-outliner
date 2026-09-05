@@ -1,4 +1,4 @@
-import { RotateCcw, LogOut } from 'lucide-react';
+import { LoaderIcon, QuitIcon, RefreshIcon } from './icons';
 import { useT } from '../i18n/I18nProvider';
 import { Button } from './primitives/Button';
 
@@ -19,10 +19,11 @@ export function StartupFailure(props: {
       <p>{props.failure.message}</p>
       <div className="startup-failure-actions">
         <Button onClick={props.onRetry} disabled={props.retrying}>
-          <RotateCcw size={16} aria-hidden="true" />{props.retrying ? t.retrying : t.retry}
+          {props.retrying ? <LoaderIcon size="toolbar" /> : <RefreshIcon size="toolbar" />}
+          {props.retrying ? t.retrying : t.retry}
         </Button>
         <Button onClick={props.onQuit}>
-          <LogOut size={16} aria-hidden="true" />{t.quit}
+          <QuitIcon size="toolbar" />{t.quit}
         </Button>
       </div>
     </section>

@@ -16,7 +16,9 @@ import {
   ChevronRightIcon,
   ICON_SIZE,
   LibraryIcon,
-  OpenIcon,
+  NavigateIcon,
+  SplitPaneIcon,
+  UnpinIcon,
   PinIcon,
   RecentsIcon,
   SearchIcon,
@@ -143,8 +145,8 @@ const WorkspaceTreeBranch = memo(function WorkspaceTreeBranch({
         >
           {hasChildren && (
             expanded
-              ? <ChevronDownIcon size={ICON_SIZE.menu} strokeWidth={2} />
-              : <ChevronRightIcon size={ICON_SIZE.menu} strokeWidth={2} />
+              ? <ChevronDownIcon size={ICON_SIZE.menu} />
+              : <ChevronRightIcon size={ICON_SIZE.menu} />
           )}
         </ButtonControl>
         <ButtonControl
@@ -328,7 +330,7 @@ export function Sidebar(props: SidebarProps) {
           className="sidebar-nav-item"
           onClick={props.onOpenSearch}
         >
-          <SearchIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} strokeWidth={1.8} />
+          <SearchIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} />
           <span>{t.shell.sidebar.search}</span>
           {searchShortcutHint ? (
             <span aria-hidden="true" className="sidebar-nav-hint">{searchShortcutHint}</span>
@@ -353,7 +355,7 @@ export function Sidebar(props: SidebarProps) {
                 else props.onNavigateRoot(target);
               }}
             >
-              <NavIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} strokeWidth={1.8} />
+              <NavIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} />
               <span>{t.shell.sidebar.primaryNav[item.key]}</span>
             </ButtonControl>
           );
@@ -369,7 +371,7 @@ export function Sidebar(props: SidebarProps) {
         <div className="sidebar-section-title">{t.shell.sidebar.pinnedSection}</div>
         {props.pinnedNodeIds.length === 0 ? (
           <div className="sidebar-pin-dropzone">
-            <PinIcon className="sidebar-empty-icon" size={ICON_SIZE.menu} strokeWidth={1.7} />
+            <PinIcon className="sidebar-empty-icon" size={ICON_SIZE.menu} />
             <span>{t.shell.sidebar.noPinnedHint}</span>
           </div>
         ) : (
@@ -466,7 +468,7 @@ export function Sidebar(props: SidebarProps) {
           className="sidebar-bottom-item"
           onClick={props.onOpenSettings}
         >
-          <SettingsIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} strokeWidth={1.8} />
+          <SettingsIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} />
           <span>{t.shell.sidebar.settings}</span>
         </ButtonControl>
       </div>
@@ -556,9 +558,9 @@ function SidebarNodeContextMenu(props: SidebarNodeContextMenuProps) {
       onKeyDown={onKeyDown}
       onMouseDown={(event) => event.stopPropagation()}
     >
-      {item(tc.openNode, <OpenIcon size={ICON_SIZE.menu} />, props.onOpen)}
-      {item(tc.openInSplitPane, <OpenIcon size={ICON_SIZE.menu} />, props.onOpenPanel)}
-      {item(props.isPinned ? tc.unpinNode : tc.pinNode, <PinIcon size={ICON_SIZE.menu} />, props.onTogglePin)}
+      {item(tc.openNode, <NavigateIcon size={ICON_SIZE.menu} />, props.onOpen)}
+      {item(tc.openInSplitPane, <SplitPaneIcon size={ICON_SIZE.menu} />, props.onOpenPanel)}
+      {item(props.isPinned ? tc.unpinNode : tc.pinNode, props.isPinned ? <UnpinIcon size={ICON_SIZE.menu} /> : <PinIcon size={ICON_SIZE.menu} />, props.onTogglePin)}
     </MenuSurface>,
     document.body,
   );

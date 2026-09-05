@@ -28,15 +28,16 @@ import {
   FieldIcon,
   FilterIcon,
   GroupIcon,
-  HashIcon,
+  NumberFieldIcon,
   ICON_SIZE,
   OptionsIcon,
   PlainTextIcon,
   SearchIcon,
   SortAscIcon,
   SortDescIcon,
+  SupertagIcon,
+  type AppIcon,
 } from '../icons';
-import type { ComponentType } from 'react';
 import { resolveFieldOptions, type FieldOption } from '../interactions/fieldOptions';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -95,11 +96,10 @@ function defaultFilterOperator(kind: FilterKind): FilterOperator {
   return kind === 'text' ? 'contains' : 'is';
 }
 
-type IconComponent = ComponentType<{ size?: number; className?: string }>;
-const KIND_ICONS: Record<FilterKind, IconComponent> = {
+const KIND_ICONS: Record<FilterKind, AppIcon> = {
   boolean: CheckboxIcon,
   date: CalendarIcon,
-  number: HashIcon,
+  number: NumberFieldIcon,
   options: OptionsIcon,
   text: PlainTextIcon,
 };
@@ -107,7 +107,7 @@ const KIND_ICONS: Record<FilterKind, IconComponent> = {
 // Field-type glyph shown beside a field name so date/text/option fields read
 // apart at a glance.
 export function FieldKindIcon({ fieldId, byId }: { fieldId: string; byId: DocumentIndex['byId'] }) {
-  const Icon = fieldId === TAGS_FIELD ? HashIcon : KIND_ICONS[filterFieldKind(fieldId, byId)];
+  const Icon = fieldId === TAGS_FIELD ? SupertagIcon : KIND_ICONS[filterFieldKind(fieldId, byId)];
   return <Icon className="view-toolbar-field-kind" size={ICON_SIZE.menu} />;
 }
 
