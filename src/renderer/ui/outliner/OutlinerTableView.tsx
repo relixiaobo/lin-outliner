@@ -287,7 +287,7 @@ const TABLE_FIELD_CHOICE_GROUP_ORDER: readonly TableFieldChoiceGroup[] = [
   'system',
 ];
 
-interface TableFieldChoice {
+export interface TableFieldChoice {
   id: string;
   label: string;
   group: TableFieldChoiceGroup;
@@ -299,8 +299,7 @@ function tableFieldChoiceGroupLabel(group: TableFieldChoiceGroup, tt: TableMessa
   return tt.systemFieldGroup;
 }
 
-function tableFieldChoices(
-  parent: NodeProjection,
+function tableFieldCatalog(
   index: DocumentIndex,
   tt: TableMessages,
 ): TableFieldChoice[] {
@@ -314,7 +313,6 @@ function tableFieldChoices(
     OWNER_FIELD,
     TAGS_FIELD,
   ];
-  const usedFieldIds = customViewFieldIdsOnRows(parent, index.byId);
   const choices: TableFieldChoice[] = [];
   const schema = index.byId.get(index.projection.schemaId);
   for (const fieldId of schema?.children ?? []) {
@@ -323,13 +321,26 @@ function tableFieldChoices(
     choices.push({
       id: field.id,
       label: field.content.text || field.id,
-      group: usedFieldIds.has(field.id) ? 'used' : 'custom',
+      group: 'custom',
     });
   }
   for (const id of systemIds) {
     choices.push({ id, label: tableFieldLabel(id, index, tt), group: 'system' });
   }
   return choices;
+}
+
+export function tableFieldChoices(
+  parent: NodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+  catalog: readonly TableFieldChoice[],
+): TableFieldChoice[] {
+  const usedFieldIds = customViewFieldIdsOnRows(parent, byId);
+  return catalog.map((choice) => (
+    choice.group === 'custom'
+      ? { ...choice, group: usedFieldIds.has(choice.id) ? 'used' : 'custom' }
+      : choice
+  ));
 }
 
 function tableRenderRows(
@@ -585,9 +596,13 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     column.id,
     column.label?.trim() || tableFieldLabel(column.field, props.index, tt),
   ])), [columns, props.index, tt]);
+  const fieldCatalog = useMemo(
+    () => tableFieldCatalog(props.index, tt),
+    [props.index.semanticRevisions.definitionOptions, tt],
+  );
   const fieldChoices = useMemo(
-    () => parent ? tableFieldChoices(parent, props.index, tt) : [],
-    [parent, props.index, tt],
+    () => parent ? tableFieldChoices(parent, props.index.byId, fieldCatalog) : [],
+    [fieldCatalog, parent, props.index.byId],
   );
   const gridRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);

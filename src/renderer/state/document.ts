@@ -55,6 +55,7 @@ import {
   projectionStructureChanged,
   projectionTagCandidatesChanged,
   projectionTagDefinitionsChanged,
+  projectionDefinitionOptionsChanged,
   type ProjectionDeltaFacts,
   type ProjectionSemanticRevisions,
   type SparseNodeIdSet,
@@ -250,6 +251,13 @@ export function reduceProjection(
     removedIds: update.removedIds,
     trashMembershipChangedIds: trashPatch.changedIds,
   });
+  const definitionOptionsChanged = projectionDefinitionOptionsChanged({
+    previousById: prev.index.byId,
+    nextById: byId,
+    changedNodes: update.changedNodes,
+    removedIds: update.removedIds,
+    trashMembershipChangedIds: trashPatch.changedIds,
+  });
   const tagCandidatesChanged = projectionTagCandidatesChanged({
     previousById: prev.index.byId,
     nextById: byId,
@@ -261,6 +269,7 @@ export function reduceProjection(
     structure: prev.index.semanticRevisions.structure + Number(structureChanged),
     referenceGraph: prev.index.semanticRevisions.referenceGraph + Number(referenceGraphChanged),
     tagDefinitions: prev.index.semanticRevisions.tagDefinitions + Number(tagDefinitionsChanged),
+    definitionOptions: prev.index.semanticRevisions.definitionOptions + Number(definitionOptionsChanged),
     trashMembership: prev.index.semanticRevisions.trashMembership + Number(trashPatch.changedIds.size > 0),
   };
   const referenceSummary = patchLinkedReferenceSummary({
@@ -322,7 +331,7 @@ export function fieldSlotsForIndex(index: DocumentIndex, nodeId: NodeId): readon
 }
 
 function initialSemanticRevisions(): ProjectionSemanticRevisions {
-  return { structure: 1, referenceGraph: 1, tagDefinitions: 1, trashMembership: 1 };
+  return { structure: 1, referenceGraph: 1, tagDefinitions: 1, definitionOptions: 1, trashMembership: 1 };
 }
 
 function nextFullSemanticRevisions(
@@ -333,6 +342,7 @@ function nextFullSemanticRevisions(
     structure: previous.structure + 1,
     referenceGraph: previous.referenceGraph + 1,
     tagDefinitions: previous.tagDefinitions + 1,
+    definitionOptions: previous.definitionOptions + 1,
     trashMembership: previous.trashMembership + 1,
   };
 }
