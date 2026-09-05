@@ -26,7 +26,7 @@ import type {
   ToolTaskSupervisorConfig,
 } from '../../src/main/agent/tasks/toolTaskTypes';
 import { resolveToolTaskSupervisorRuntime } from '../../src/main/agent/tasks/toolTaskRuntime';
-import { DelegateRuntimeHost } from '../../src/main/agent/delegation';
+import { DelegateRuntimeHost, schedulingPolicyDigest } from '../../src/main/agent/delegation';
 import { resolveDelegateCliRuntime } from '../../src/main/delegateRuntime';
 import { parseDelegateCommand, type DelegateStateCommand } from '../../src/delegate/contract';
 
@@ -34,6 +34,12 @@ const OWNER_ID = '00000000-0000-7000-8000-000000000001' as ThreadId;
 const SOURCE_TURN_ID = '00000000-0000-7000-8000-000000000002' as TurnId;
 const DELIVERY_TURN_ID = '00000000-0000-7000-8000-000000000003' as TurnId;
 const DAY_MS = 24 * 60 * 60_000;
+const DELEGATION_SCHEDULER_LIMITS = Object.freeze({
+  maxConcurrentGlobal: 8,
+  maxConcurrentThread: 4,
+  maxQueuedGlobal: 32,
+  maxQueuedThread: 8,
+});
 
 const roots: string[] = [];
 const services: ToolTaskService[] = [];
@@ -282,6 +288,28 @@ describe('ToolTaskService', () => {
     }]);
   });
 
+  test('disposes prepared private control when task launch fails', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    let disposed = 0;
+    const terminal = await startHidden(service, 'invalid prepared command', {
+      prepareProcess: async () => ({
+        process: {
+          kind: 'exec',
+          executable: '/definitely/missing/tenon-test-command',
+          args: [],
+          env: {},
+          privateControl: true,
+        },
+        privateControlInput: Buffer.from('private capability'),
+        disposePrivateControl: () => { disposed += 1; },
+      }),
+    });
+
+    expect(terminal).toMatchObject({ state: 'failed', outcomeReason: 'admission_failed' });
+    expect(disposed).toBe(1);
+  });
+
   test('commits an optional prepared result only after its bytes match the final receipt', async () => {
     const fixture = await createFixture();
     const service = await createService(fixture, passiveHost());
@@ -437,7 +465,7 @@ describe('ToolTaskService', () => {
           profile: 'explore',
           access: 'read-only',
           timeoutMs: 60_000,
-          schedulingPolicyDigest: 'b'.repeat(64),
+          schedulingPolicyDigest: schedulingPolicyDigest(scheduling),
         },
         session: {
           kind: 'run',
@@ -451,7 +479,11 @@ describe('ToolTaskService', () => {
     });
     await broker.start();
     try {
-      const commandRuntime = broker.commandRuntime(scheduling);
+      const commandRuntime = broker.commandRuntime(() => ({
+        scheduling,
+        schedulerLimits: DELEGATION_SCHEDULER_LIMITS,
+        timeoutMs: 60_000,
+      }));
       const started = await startHidden(service, 'delegate run --input - --output json', {
         producer: 'delegate',
         stdin,
@@ -462,6 +494,7 @@ describe('ToolTaskService', () => {
           ownerThreadId: OWNER_ID,
           sourceTurnId: SOURCE_TURN_ID,
           sourceItemId: 'source-item',
+          scheduling,
           env: process.env,
         }),
       });
@@ -848,6 +881,34 @@ describe('ToolTaskService', () => {
     expect((await waitForTerminal(service, queued.taskId)).state).toBe('succeeded');
     expect(fixture.store.readLease(second.taskId)?.state).toBe('released');
     expect((await service.output(second.taskId, OWNER_ID))?.stdout).toBe('after capacity');
+  });
+
+  test('freezes per-admission scheduler limits for active and queued delegated work', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const schedulerLimits: ToolTaskSchedulerLimits = {
+      maxConcurrentGlobal: 1,
+      maxConcurrentThread: 1,
+      maxQueuedGlobal: 1,
+      maxQueuedThread: 1,
+    };
+    const first = await service.start(startInput('sleep 30', { schedulerLimits }));
+    expect(fixture.store.readLease(first.taskId)?.state).toBe('active');
+
+    const second = await service.start(startInput(`printf 'after delegated capacity'`, { schedulerLimits }));
+    await waitUntil(() => fixture.store.queuedLeases().length === 1);
+    expect(fixture.store.read(second.taskId)?.progress).toMatchObject({ phase: 'queued' });
+
+    const refused = await service.start(startInput(`printf 'must not spawn'`, { schedulerLimits }));
+    expect(refused).toMatchObject({
+      state: 'failed',
+      outcomeReason: 'queue_limit',
+      childPid: null,
+    });
+
+    expect((await service.stop(first.taskId, OWNER_ID))?.state).toBe('cancelled');
+    expect((await waitForTerminal(service, second.taskId)).state).toBe('succeeded');
+    expect((await service.output(second.taskId, OWNER_ID))?.stdout).toBe('after delegated capacity');
   });
 
   test('cancels queued foreground admission before spawn when its Turn is interrupted', async () => {

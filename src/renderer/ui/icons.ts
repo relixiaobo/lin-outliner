@@ -6,8 +6,7 @@ import { Square, type LucideIcon, type LucideProps } from 'lucide-react';
 /**
  * Stop is a FILLED square. Lucide's `Square` is the very glyph this module also
  * exports as `CheckboxIcon`, so an unfilled stop control is drawn as an
- * unchecked checkbox — which is what the Subagent row's Stop looked like beside
- * its label. The composer filled the same glyph in its own CSS; stating it once
+ * unchecked checkbox. The composer filled the same glyph in its own CSS; stating it once
  * here means every Stop is a stop, wherever it is mounted. Callers may still
  * override `fill`, since the spread wins.
  */

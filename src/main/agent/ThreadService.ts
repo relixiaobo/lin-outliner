@@ -3,9 +3,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
 decodeAgentCoreRequest,
-decodeAgentCoreResponse
+decodeAgentCoreResponse,
+decodeThreadResourceReference,
 } from '../../core/agent/codec';
-import type { AgentRole,EffectiveThreadConfiguration } from '../../core/agent/configuration';
+import type { EffectiveThreadConfiguration } from '../../core/agent/configuration';
 import {
 type ExtensionToolContribution,
 type HostRootTurnAdmissionBarrierSnapshot,
@@ -30,7 +31,6 @@ RendererTurnStartRequest,
 RendererTurnSteerRequest,
 RendererTurnSubmitRequest,
 RequestUserInputResponse,
-RoleCatalogContextPayload,
 SkillCatalogContextPayload,
 SkillInvocationContextPayload,
 Thread,
@@ -49,8 +49,6 @@ ThreadItemOutputReadResponse,
 ThreadItemsListRequest,
 ThreadItemsListResponse,
 ThreadListRequest,
-ThreadDescendantsRequest,
-ThreadDescendantsResponse,
 ThreadListResponse,
 ThreadReadRequest,
 ThreadReadResponse,
@@ -58,13 +56,10 @@ ThreadReferenceResolveRequest,
 ThreadReferenceResolveResponse,
 ThreadReferenceSearchRequest,
 ThreadReferenceSearchResponse,
-ThreadSubagentsRequest,
-ThreadSubagentsResponse,
 ThreadToolTasksRequest,
 ThreadToolTasksResponse,
 ToolTaskReadRequest,
 ToolTaskReadResponse,
-SubagentExecutionProjection,
 ThreadImageArtifactReference,
 ThreadResourceReference,
 ThreadRollbackRequest,
@@ -92,6 +87,10 @@ TurnRerunRequest,
 TurnRerunResponse
 } from '../../core/agent/protocol';
 import { isRerunnableTurn } from '../../core/agent/turnRerun';
+import type { DelegationSessionBinding } from './delegation/delegationSessionTypes';
+import type { DelegationCoordinator } from './delegation/DelegationCoordinator';
+import { delegationTaskReconciliation } from './delegation/DelegationCoordinator';
+import { decodeDelegateExecutionResult } from '../../delegate/contract';
 import {
 normalizeUpdatePlanToolInput,
 type ModelToolIdentity,
@@ -100,15 +99,14 @@ type UpdatePlanToolInput
 import type { DocumentProjection } from '../../core/types';
 import type { ErrorReport } from '../../core/errorObservability';
 import {
-BUILT_IN_AGENT_ROLE_DEFINITIONS,
 defaultEffectiveThreadConfiguration,
 type AgentConfigurationReadFailureReporter,
-type ResolvedAgentType,
 } from './AgentConfigurationLoader';
 import type { ReferencedAssetResolution } from './capabilities/agentReferencedAssets';
 import {
   AgentStartupContextResolver,
   AgentStartupContextStore,
+  type AgentStartupContextSnapshot,
 } from './context/AgentStartupContext';
 import { ExtensionRegistry } from './ExtensionRegistry';
 import { GoalExtension } from './extensions/goal/GoalExtension';
@@ -116,30 +114,10 @@ import { GoalStore } from './extensions/goal/GoalStore';
 import { KeyedMutex } from './Mutex';
 import {
 RolloutStore,
-type RolloutEntry,
 type ThreadHistoryRollbackMarker
 } from './persistence/RolloutStore';
 import { openSqlite } from './persistence/sqlite';
 import { AgentResourceStore } from './persistence/AgentResourceStore';
-import { SubagentRequestLedger } from './persistence/SubagentRequestLedger';
-import {
-  type AgentStartupContextSnapshot,
-  SubagentExecutionLedger,
-  type SubagentExecutionRecord,
-  type SubagentRecordedToolPolicy,
-} from './persistence/SubagentExecutionLedger';
-import {
-  projectSubagentExecution,
-  projectSubagentGenerationReceipt,
-} from './thread/subagentExecutionProjection';
-import type {
-AgentWorktreeMetadata,
-AgentWorktreeIntentInput,
-AgentWorktreeRecoveryInput,
-AgentWorktreeRecoveryIntent,
-AgentWorktreeRecoveryResult,
-SettleAgentWorktreeOptions
-} from './worktree/AgentWorktree';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
 import {
 ThreadMetadataStore
@@ -150,8 +128,6 @@ OutputImageObservationNormalizer,
 ThreadNameGenerator,
 TurnExecutor
 } from './runtime/types';
-import type { AgentTool } from './runtime/kernel/types';
-import { SubagentCollaboration,type StagedContextEvidence } from './thread/SubagentCollaboration';
 import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
@@ -168,7 +144,11 @@ import { ThreadTranscriptExclusions } from './thread/ThreadTranscriptExclusions'
 import { ThreadTranscriptIndex } from './thread/ThreadTranscriptIndex';
 import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
 import type { TranscriptSubject } from './thread/TranscriptRenderer';
-import { TurnLifecycle,type CanonicalTurnRerunInputBatch } from './thread/TurnLifecycle';
+import {
+  TurnLifecycle,
+  type CanonicalTurnRerunInputBatch,
+  type StagedContextEvidence,
+} from './thread/TurnLifecycle';
 import { ToolTaskService } from './tasks/ToolTaskService';
 import { ToolTaskStore } from './tasks/ToolTaskStore';
 import type { ToolTaskSupervisorRuntime } from './tasks/toolTaskRuntime';
@@ -182,84 +162,6 @@ const THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS = 2_000;
 
 /** Shared empty result, so "no drift" allocates nothing on the common path. */
 const NO_DOCUMENT_DRIFT = Object.freeze({ context: null, settle: () => undefined });
-
-interface RerunDeliveryAliasIndex {
-  readonly currentTurnIds: ReadonlySet<TurnId>;
-  readonly directAliases: ReadonlyMap<TurnId, TurnId | null>;
-  readonly nonRerunRemovedTurnIds: ReadonlySet<TurnId>;
-}
-
-function buildRerunDeliveryAliasIndex(entries: readonly RolloutEntry[]): RerunDeliveryAliasIndex {
-  const currentTurnIds = new Set<TurnId>();
-  const directAliases = new Map<TurnId, TurnId | null>();
-  const targetOwners = new Map<TurnId, TurnId | null>();
-  const nonRerunRemovedTurnIds = new Set<TurnId>();
-  for (const entry of entries) {
-    const event = entry.event;
-    if (event.type === 'turn/started') {
-      currentTurnIds.add(event.turnId);
-      continue;
-    }
-    if (event.type === 'history/rerun') {
-      const source = event.omittedTurnIds[0]!;
-      const target = event.replacement.turnId;
-      currentTurnIds.delete(source);
-      currentTurnIds.add(target);
-      addRerunDeliveryAlias(directAliases, targetOwners, source, target);
-      continue;
-    }
-    if (event.type === 'history/rollback') {
-      for (const omittedTurnId of event.omittedTurnIds) {
-        currentTurnIds.delete(omittedTurnId);
-        if (!directAliases.has(omittedTurnId)) nonRerunRemovedTurnIds.add(omittedTurnId);
-      }
-    }
-  }
-  return { currentTurnIds, directAliases, nonRerunRemovedTurnIds };
-}
-
-function addRerunDeliveryAlias(
-  directAliases: Map<TurnId, TurnId | null>,
-  targetOwners: Map<TurnId, TurnId | null>,
-  source: TurnId,
-  target: TurnId,
-): void {
-  if (directAliases.has(source)) {
-    directAliases.set(source, null);
-    return;
-  }
-  const owner = targetOwners.get(target);
-  if (owner === null) {
-    directAliases.set(source, null);
-    return;
-  }
-  if (owner !== undefined && owner !== source) {
-    directAliases.set(owner, null);
-    directAliases.set(source, null);
-    targetOwners.set(target, null);
-    return;
-  }
-  targetOwners.set(target, source);
-  directAliases.set(source, target);
-}
-
-function resolveRerunDeliveryAlias(index: RerunDeliveryAliasIndex, deliveryRootId: TurnId): TurnId | null {
-  const visited = new Set<TurnId>();
-  let current = deliveryRootId;
-  while (true) {
-    if (visited.has(current)) return null;
-    visited.add(current);
-    const next = index.directAliases.get(current);
-    if (next === null) return null;
-    if (next !== undefined) {
-      current = next;
-      continue;
-    }
-    if (index.currentTurnIds.has(current)) return current;
-    if (index.nonRerunRemovedTurnIds.has(current)) return null;
-    return null;
-  }
-}
 
 export interface AgentCorePaths {
   readonly root: string;
@@ -279,8 +181,6 @@ export interface ThreadServiceStores {
   readonly history: ThreadHistoryProjectionStore;
   readonly rollout: RolloutStore;
   readonly goals: GoalStore;
-  readonly subagentBudgets: SubagentRequestLedger;
-  readonly subagentExecutions: SubagentExecutionLedger;
   readonly agentStartupContexts: AgentStartupContextStore;
   readonly payloads: ToolPayloadStore;
   readonly resources: AgentResourceStore;
@@ -326,17 +226,6 @@ export interface ThreadServiceOptions {
   readonly resolveSkillAdmission?: (
     input: SkillAdmissionResolutionInput,
   ) => SkillAdmissionResolution | Promise<SkillAdmissionResolution>;
-  readonly resolveRole?: (name: string, cwd: string) => AgentRole;
-  readonly resolveAgentType?: (name: string | undefined, cwd: string) => ResolvedAgentType;
-  readonly resolveAgentExecution?: (
-    agentType: string,
-    cwd: string,
-    parent: ThreadConfigurationSummary,
-  ) => AgentExecutionResolution | Promise<AgentExecutionResolution>;
-  readonly resolveRoleCatalog?: (
-    cwd: string,
-    reportFailure?: AgentConfigurationReadFailureReporter,
-  ) => RoleCatalogContextPayload | null | Promise<RoleCatalogContextPayload | null>;
   readonly resolveIdentityCatalog?: (
     cwd: string,
     reportFailure?: AgentConfigurationReadFailureReporter,
@@ -349,40 +238,15 @@ export interface ThreadServiceOptions {
     thread: Thread,
     reportFailure?: AgentConfigurationReadFailureReporter,
   ) => string;
-  readonly resolveSubagentTokenBudget?: () => number | null | Promise<number | null>;
-  readonly resolveSubagentLimits?: () => {
-    readonly maxDepth: number;
-    readonly maxConcurrent: number;
-  } | Promise<{ readonly maxDepth: number; readonly maxConcurrent: number }>;
   readonly resolveAgentStartupContext?: (
     parent: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
   ) => AgentStartupContextSnapshot | null | Promise<AgentStartupContextSnapshot | null>;
-  readonly planAgentWorktree?: (
-    input: AgentWorktreeIntentInput,
-  ) => Promise<AgentWorktreeRecoveryIntent>;
-  readonly prepareAgentWorktree?: (input: {
-    readonly agentId: ThreadId;
-    readonly intent: AgentWorktreeRecoveryIntent;
-    readonly worktree: AgentWorktreeMetadata | null;
-  }) => Promise<{ readonly cwd: string; readonly worktree: AgentWorktreeMetadata }>;
-  readonly settleAgentWorktree?: (
-    worktree: AgentWorktreeMetadata,
-    options?: SettleAgentWorktreeOptions,
-  ) => Promise<{
-    readonly worktree: AgentWorktreeMetadata;
-    readonly retained: boolean;
-  }>;
-  readonly recoverAgentWorktree?: (
-    input: AgentWorktreeRecoveryInput,
-  ) => Promise<AgentWorktreeRecoveryResult>;
-  readonly cleanupResidualAgentWorktree?: (
-    input: AgentWorktreeRecoveryInput,
-  ) => Promise<AgentWorktreeRecoveryResult>;
   readonly reportError?: (report: ErrorReport) => void | Promise<void>;
   readonly normalizeOutputImage?: OutputImageObservationNormalizer;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
   readonly toolTaskSupervisorRuntime?: ToolTaskSupervisorRuntime;
   readonly toolTaskDetailRoot?: string;
+  readonly delegationCoordinator?: () => DelegationCoordinator | null;
   readonly now?: () => number;
 }
 
@@ -461,82 +325,6 @@ export interface PersistentThreadExecutionContext {
   readonly configuration: EffectiveThreadConfiguration;
 }
 
-export interface SpawnChildThreadInput {
-  readonly id?: ThreadId;
-  readonly turnId?: TurnId;
-  readonly parentThreadId: ThreadId;
-  readonly parentTurnId: string;
-  readonly parentItemId: string;
-  readonly prompt: string;
-  /** Host-loaded Skill guidance. Required only for isolated Skill children. */
-  readonly skillInstructions?: string;
-  readonly taskPath: string;
-  /**
-   * What the child is called for a human reader. Defaults to the task path's
-   * last segment, which is the readable answer for a collaboration child and
-   * the WRONG one for an isolated Skill, whose segment carries a uniqueness
-   * suffix that is host addressing rather than a name.
-   */
-  readonly displayName?: string;
-  readonly cwd?: string;
-  readonly role?: string | AgentRole;
-  readonly nickname?: string;
-  readonly model?: string;
-  readonly modelProvider?: string;
-  readonly reasoningEffort?: EffectiveThreadConfiguration['reasoningEffort'];
-  /** Additional child-only ceiling. Values absent from the parent/role result are ignored. */
-  readonly allowedTools?: readonly string[];
-  readonly additionalContext?: AdditionalContext;
-  /** Stable context resources copied from the parent before child admission. */
-  readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
-  /** Host-owned provenance label for direct additional-context entries. */
-  readonly additionalContextSource?: string;
-  /** Selects the parent-facing result channel while retaining one child-Thread mechanism. */
-  readonly childKind: 'collaboration' | 'isolatedSkill';
-  /** Host-owned execution policy prepared before any child state is written. */
-  readonly execution: {
-    readonly description: string;
-    readonly agentType: string;
-    readonly runMode: 'foreground' | 'background';
-    readonly worktree: AgentWorktreeMetadata | null;
-    /** Requests a new managed worktree before the child Thread is admitted. */
-    readonly initialWorktreeCwd: string | null;
-    readonly toolPolicy: SubagentRecordedToolPolicy;
-    readonly startupContext: AgentStartupContextSnapshot | null;
-    readonly executionSelectionFallback: import('./persistence/SubagentExecutionLedger').AgentExecutionSelectionFallback | null;
-  };
-}
-
-export interface AgentExecutionResolution extends ThreadConfigurationSummary {
-  readonly fallback: {
-    readonly requestedModelProvider: string | null;
-    readonly requestedModel: string | null;
-    readonly requestedReasoningEffort: EffectiveThreadConfiguration['reasoningEffort'] | null;
-    readonly reason: 'unavailable';
-  } | null;
-}
-
-export interface SpawnChildThreadResult {
-  readonly thread: Thread;
-  readonly turn: Turn;
-  readonly taskPath: string;
-}
-
-export interface SpawnIsolatedSkillThreadInput {
-  readonly parentThreadId: ThreadId;
-  readonly parentTurnId: string;
-  readonly parentItemId: string;
-  readonly skillName: string;
-  readonly skillInstructions: string;
-  readonly prompt: string;
-  readonly allowedTools: readonly string[];
-  readonly additionalContext?: AdditionalContext;
-  readonly additionalContextResourceRefs?: readonly ThreadResourceReference[];
-  readonly additionalContextSource?: string;
-  readonly model?: string;
-  readonly reasoningEffort?: EffectiveThreadConfiguration['reasoningEffort'];
-}
-
 export class ThreadService implements ThreadServiceExtensionHost {
   private readonly core: ThreadCore;
   private readonly executor: TurnExecutor;
@@ -546,9 +334,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly resolveSkillAdmission: (
     input: SkillAdmissionResolutionInput,
   ) => Promise<SkillAdmissionResolution>;
-  private readonly resolveRoleCatalog: (
-    cwd: string,
-  ) => Promise<RoleCatalogContextPayload | null>;
   private readonly resolveIdentityCatalog: (cwd: string) => readonly AgentIdentityEntry[];
   private readonly resolvePersona: (thread: Thread) => string | null;
   private readonly resolveAgentStartupContext: (
@@ -558,15 +343,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly now: () => number;
   private readonly goals: GoalExtension;
   private readonly goalStore: GoalStore;
-  private readonly subagentBudgets: SubagentRequestLedger;
-  private readonly subagentExecutions: SubagentExecutionLedger;
   private readonly toolTasks: ToolTaskService;
-  private readonly recoverAgentWorktree: ThreadServiceOptions['recoverAgentWorktree'];
-  private readonly cleanupResidualAgentWorktree: ThreadServiceOptions['cleanupResidualAgentWorktree'];
-  private readonly settleAgentWorktree: ThreadServiceOptions['settleAgentWorktree'];
+  private readonly delegationCoordinator: () => DelegationCoordinator | null;
   private readonly reportError: (report: ErrorReport) => Promise<void>;
   private readonly startupQuarantinedThreadIds = new Set<ThreadId>();
-  private readonly rerunDeliveryAliases = new Map<ThreadId, RerunDeliveryAliasIndex>();
   /**
    * The subset quarantined because their recorded history does not decode. Kept
    * apart from the admission-recovery quarantine above: those Threads read fine
@@ -578,7 +358,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly historyReferences: ThreadHistoryReferenceService;
   private readonly catalogOps: ThreadCatalogOps;
   private readonly trajectory: ThreadTrajectoryProjection;
-  private readonly collaboration: SubagentCollaboration;
   private readonly transcripts: ThreadTranscriptWriter;
   private readonly transcriptIndex: ThreadTranscriptIndex;
   private readonly transcriptExclusions: ThreadTranscriptExclusions;
@@ -610,16 +389,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
       preloadedInvocations: [],
       invocation: null,
     };
-    const resolveRole = options.resolveRole ?? defaultAgentRole;
-    const resolveAgentType = options.resolveAgentType ?? defaultResolvedAgentType;
     const reportConfigurationReadFailure: AgentConfigurationReadFailureReporter = (report) => {
       void this.reportError(report).catch((error) => {
         console.warn('[agent] Failed to report a degraded configuration read', error);
       });
     };
-    this.resolveRoleCatalog = async (cwd) => (
-      await options.resolveRoleCatalog?.(cwd, reportConfigurationReadFailure) ?? null
-    );
     this.resolveIdentityCatalog = (cwd) => (
       options.resolveIdentityCatalog?.(cwd, reportConfigurationReadFailure) ?? []
     );
@@ -666,13 +440,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
     };
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
+    this.delegationCoordinator = options.delegationCoordinator ?? (() => null);
     this.goalStore = options.stores.goals;
-    this.subagentBudgets = options.stores.subagentBudgets;
-    this.subagentExecutions = options.stores.subagentExecutions;
-    this.subagentExecutions.observeChanges((agentId) => this.publishSubagentExecution(agentId));
-    this.recoverAgentWorktree = options.recoverAgentWorktree;
-    this.cleanupResidualAgentWorktree = options.cleanupResidualAgentWorktree;
-    this.settleAgentWorktree = options.settleAgentWorktree;
     this.toolTasks = new ToolTaskService(
       options.stores.toolTasks,
       options.toolTaskDetailRoot ?? join(options.transcriptRoot, '..', 'tool-tasks'),
@@ -724,43 +493,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
         deleteThread: (threadId) => this.catalogOps.deleteThread(threadId),
         setInitialPreview: (...args) => this.catalogOps.setInitialPreview(...args),
         scheduleAutomaticThreadName: (...args) => this.catalogOps.scheduleAutomaticThreadName(...args),
-        hasPendingDelegatedThreadStart: (threadId) => this.catalogOps.hasPendingDelegatedThreadStart(threadId),
-        publishDelegatedThreadStart: (threadId) => this.catalogOps.publishDelegatedThreadStart(threadId),
         replaceLatestTurnForRerunWithLocksHeld: (...args) => (
           this.catalogOps.replaceLatestTurnForRerunWithLocksHeld(...args)
-        ),
-      },
-      {
-        pendingActivities: (threadId) => this.collaboration.pendingActivities(threadId),
-        canSpawnAgent: (threadId, configuration) => this.collaboration.canSpawnAgent(threadId, configuration),
-        materializePendingActivityItems: (...args) => this.collaboration.materializePendingActivityItems(...args),
-        consumePendingSubagentActivities: (...args) => this.collaboration.consumePendingSubagentActivities(...args),
-        hasPendingActivities: (threadId) => this.collaboration.hasPendingActivities(threadId),
-        takePendingCollaborationActivity: (threadId) => this.collaboration.takePendingCollaborationActivity(threadId),
-        signalCollaborationActivity: (threadId) => this.collaboration.signalCollaborationActivity(threadId),
-        flushPendingSubagentActivities: (...args) => this.collaboration.flushPendingSubagentActivities(...args),
-        queueChildTurnActivity: (...args) => this.collaboration.queueChildTurnActivity(...args),
-        prepareChildTerminalSettlement: (...args) => this.collaboration.prepareChildTerminalSettlement(...args),
-        threadBecameIdle: (threadId) => this.collaboration.threadBecameIdle(threadId),
-        startupContextForTurn: (threadId, turnId) => options.stores.subagentExecutions.startupContextForTurn(threadId, turnId),
-        commitInitialAdmission: (threadId, turnId) => this.collaboration.commitInitialAdmission(threadId, turnId),
-        commitDeliveryAdmission: (threadId, turnId, admission) => (
-          this.collaboration.commitDeliveryAdmission(threadId, turnId, admission)
-        ),
-        detachCarryForwardSidecarForOverflow: (threadId, turnId, batchId) => (
-          this.collaboration.detachCarryForwardSidecarForOverflow(threadId, turnId, batchId)
         ),
       },
       { enqueueTurn: (...args) => this.transcripts.enqueueTurn(...args) },
       { noticeFor: async () => NO_DOCUMENT_DRIFT },
       this.executor,
       this.extensions,
-      this.subagentBudgets,
-      this.subagentExecutions,
       this.getDocumentProjection,
       this.resolveReferencedAsset,
       this.resolveSkillAdmission,
-      this.resolveRoleCatalog,
       (thread) => this.resolvePersona(thread),
       { addUsage: (...args) => this.goals.addUsage(...args) },
       options.normalizeOutputImage,
@@ -772,37 +515,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.core,
       this.now,
       (threadId, turnId) => this.turnLifecycle.activeTurnDiagnosticsForInspection(threadId, turnId),
-    );
-    this.collaboration = new SubagentCollaboration(
-      this.core,
-      this.resourceOps,
-      {
-        createThread: (...args) => this.catalogOps.createThread(...args),
-        deleteThread: (threadId) => this.catalogOps.deleteThread(threadId),
-      },
-      this.turnLifecycle,
-      this.subagentBudgets,
-      options.stores.subagentExecutions,
-      resolveRole,
-      resolveAgentType,
-      async () => await options.resolveSubagentTokenBudget?.() ?? null,
-      async () => await options.resolveSubagentLimits?.() ?? {
-        maxDepth: 3,
-        maxConcurrent: 20,
-      },
-      this.resolveAgentStartupContext,
-      options.planAgentWorktree,
-      options.prepareAgentWorktree,
-      options.settleAgentWorktree,
-      this.now,
-      applyToolCeiling,
-      (threadId) => this.assertStartupThreadAvailable(threadId),
-      (message, rendererSubmissionRetryable) => new ThreadBusyError(message, rendererSubmissionRetryable),
-      this.transcripts,
-      async (agentType, cwd, parent) => await options.resolveAgentExecution?.(agentType, cwd, parent) ?? {
-        ...parent,
-        fallback: null,
-      },
     );
     this.catalogOps = new ThreadCatalogOps(
       this.core,
@@ -819,16 +531,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.now,
       () => this.closing,
       this.turnLifecycle,
-      this.collaboration,
-      (threadId) => options.stores.subagentExecutions.hasUndeliveredWork(threadId)
-        || options.stores.toolTasks.hasBlockingWork(threadId),
+      (threadId) => options.stores.toolTasks.hasBlockingWork(threadId),
       {
         delete: (threadId) => this.transcripts.delete(threadId),
         forgetExclusions: (sessionIds) => this.transcriptExclusions.forget(sessionIds),
       },
       (threadId) => this.goals.clear(threadId),
-      (threadId) => { this.subagentBudgets.clearThread(threadId); },
-      (threadIds) => { options.stores.subagentExecutions.retireAgents(threadIds); },
       (sessionIds) => { options.stores.agentStartupContexts.delete(sessionIds); },
       async (thread) => { await this.resolveAgentStartupContext(thread); },
       (message) => new ThreadBusyError(message),
@@ -852,6 +560,39 @@ export class ThreadService implements ThreadServiceExtensionHost {
         }
         return null;
       },
+      reconcileTask: async (task, _producerContext, receipt) => {
+        if (task.producer !== 'delegate') return { outcome: 'preserve' };
+        const coordinator = options.delegationCoordinator?.();
+        if (!coordinator) {
+          return {
+            outcome: 'replace',
+            state: 'failed',
+            reason: 'delegation_coordination_failed',
+            error: 'Delegation coordinator is unavailable.',
+          };
+        }
+        return delegationTaskReconciliation(await coordinator.settleFinalReceipt({
+          taskId: task.taskId,
+          preparedResultDigest: receipt.preparedResultDigest,
+          receiptDigest: receipt.receiptDigest,
+        }));
+      },
+      beforeStop: async (task, sourceTurnId) => {
+        if (task.producer !== 'delegate') return;
+        const coordinator = options.delegationCoordinator?.();
+        if (!coordinator) throw new Error('Delegation coordinator is unavailable.');
+        if (!sourceTurnId) throw new Error('Delegated Tool Task stop requires its source root Turn.');
+        const source = this.delegationAdmissionContext(task.ownerThreadId, sourceTurnId);
+        if (source.rootUserIntentRevision === null) {
+          throw new Error('Delegated Tool Task stop requires a user-authored root Turn.');
+        }
+        await coordinator.fenceUserStop({
+          taskId: task.taskId,
+          ownerThreadId: task.ownerThreadId,
+          stoppedByRootTurnId: sourceTurnId,
+          currentRootIntentRevision: source.rootUserIntentRevision,
+        });
+      },
       startCompletionTurn: async (input) => Boolean(await this.turnLifecycle.tryStartTurnIfIdle({
         threadId: input.threadId,
         turnId: input.turnId,
@@ -865,6 +606,38 @@ export class ThreadService implements ThreadServiceExtensionHost {
         toolTaskAdmission: input.admission,
       })),
       settleTask: async (task, producerContext, maxArtifactBytes) => {
+        if (task.producer === 'delegate') {
+          const bytes = await this.toolTasks.readPreparedResult(task.taskId, task.ownerThreadId);
+          if (!bytes) return { artifacts: [], warnings: ['Delegation result evidence is unavailable.'] };
+          const result = decodeDelegateExecutionResult(JSON.parse(bytes.toString('utf8')) as unknown);
+          const artifacts = [];
+          const warnings: string[] = [];
+          let artifactBytes = 0;
+          for (const artifact of result.artifacts) {
+            try {
+              const ref = decodeThreadResourceReference(JSON.parse(artifact.ref) as unknown, 'delegate.artifact.ref');
+              const available = await this.readThreadResource(task.ownerThreadId, ref);
+              if (!available) {
+                warnings.push(`Delegation ${artifact.kind} artifact is unavailable.`);
+                continue;
+              }
+              if (artifactBytes + ref.byteLength > maxArtifactBytes) {
+                warnings.push(`Delegation ${artifact.kind} artifact exceeds the task detail limit.`);
+                continue;
+              }
+              artifactBytes += ref.byteLength;
+              const resolved = await this.resolveThreadResourceFile(task.ownerThreadId, ref);
+              artifacts.push({
+                ref,
+                readablePath: resolved?.path ?? null,
+                label: artifact.kind === 'patch' ? 'Delegation patch' : `Delegation ${artifact.kind}`,
+              });
+            } catch {
+              warnings.push(`Delegation ${artifact.kind} artifact reference is invalid.`);
+            }
+          }
+          return { artifacts, warnings };
+        }
         const plan = decodeDeclaredOutputArtifactPlan(producerContext);
         if (!plan) {
           return producerContext === null
@@ -949,8 +722,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
         history: new ThreadHistoryProjectionStore(paths.history),
         rollout: new RolloutStore(paths.rollouts),
         goals: new GoalStore(paths.goals, goalsDatabase),
-        subagentBudgets: new SubagentRequestLedger(goalsDatabase),
-        subagentExecutions: new SubagentExecutionLedger(goalsDatabase),
         toolTasks: new ToolTaskStore(goalsDatabase),
         agentStartupContexts,
         payloads: new ToolPayloadStore(paths.payloads),
@@ -968,10 +739,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (this.initialized) return;
     // Before any Turn can complete: the subject resolver reads this synchronously.
     await this.transcriptExclusions.load();
-    await this.recoverInitialSubagentAdmissions();
-    await this.collaboration.reconcilePreparedDeliveryAdmissions();
-    await this.recoverOrphanSubagentExecutions();
-    await this.removeDelegatedThreadsWithoutExecutions();
     const knownThreadIds: ThreadId[] = [];
     const reconciledThreadIds: ThreadId[] = [];
     const resumableThreadIds: ThreadId[] = [];
@@ -981,14 +748,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
         const page = this.core.metadata.list({ archived, cursor, limit: 100 });
         for (const thread of page.data) {
           knownThreadIds.push(thread.id);
-          if (this.startupQuarantinedThreadIds.has(thread.id)) {
-            // Held back by delegated-Agent admission recovery, which says nothing
-            // about whether its history decodes. Ask anyway: without this its reads
-            // would leak the raw codec failure instead of the contracted refusal,
-            // and the guard keys off unreadability, not off quarantine.
-            await this.quarantineThreadIfUnreadable(thread.id);
-            continue;
-          }
           let reconciled = false;
           try {
             await this.catalogOps.reconcileThread(thread.id);
@@ -1020,14 +779,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       } while (cursor);
     }
     const knownThreads = new Set(knownThreadIds);
-    try {
-      this.subagentExecutions.sweepOrphanEnvelopes(knownThreads);
-    } catch (error) {
-      // Collaboration rows are secondary to the Thread catalog. Tombstoned
-      // identities stay inert in this process and the next launch retries.
-      console.warn('[agent] Agent ledger orphan cleanup deferred during startup', error);
-    }
-    await this.rebuildRerunDeliveryAliases(reconciledThreadIds);
     const liveResourceReferences = new Map<ThreadId, readonly ThreadResourceReference[]>();
     let resourceSnapshotComplete = true;
     for (const threadId of knownThreadIds) {
@@ -1049,19 +800,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await Promise.all([
       // Transcript reclamation is the same kind of work as payload pruning, so it
       // joins the same startup batch rather than adding a serial step.
-      // Reclaim the pre-rename directory first, THEN sweep: the relocation is
-      // what puts those artifacts back within reach of the sweep and of the
-      // deletion cascade, so ordering them decides whether an orphan among them
-      // is reclaimed on this launch or the next.
-      this.transcripts.reclaimLegacyDirectory()
-        .then(() => this.transcripts.sweepOrphans((threadId) => (
+      this.transcripts.sweepOrphans((threadId) => (
           // Reconciliation, not just reclamation: an artifact whose removal
           // failed or was interrupted mid-exclusion is still on disk, and
           // nothing else would ever come back for it — the Thread is excluded,
           // so it never rewrites the file that would notice.
-          (knownThreads.has(threadId) || this.subagentExecutions.read(threadId) !== null)
-          && !this.isSessionExcluded(threadId)
-        )))
+          knownThreads.has(threadId) && !this.isSessionExcluded(threadId)
+        ))
         // Rebuild the index once the artifact set has settled: it is a
         // projection of that set, so recomputing it earlier would only describe
         // a directory that is about to change.
@@ -1097,7 +842,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
         await this.reportUnreadableThread(threadId, 'resume', error);
       }
     }
-    await this.collaboration.recoverPendingNotifications();
     await this.toolTasks.initialize();
     await this.beforeInitialTurnAdmission();
     this.initialized = true;
@@ -1108,376 +852,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
   }
 
-  private async recoverInitialSubagentAdmissions(): Promise<void> {
-    for (const snapshot of this.subagentExecutions.pendingInitialAdmissions()) {
-      const execution = this.subagentExecutions.read(snapshot.agentId);
-      if (!execution || execution.initialAdmissionState !== 'pending') continue;
-      try {
-        const rollout = await this.core.rollout.read(execution.agentId);
-        const committed = rollout.some((entry) => (
-          entry.event.type === 'turn/started'
-          && entry.event.threadId === execution.agentId
-          && entry.event.turnId === execution.currentTurnId
-          && entry.event.turn.id === execution.currentTurnId
-        ));
-        if (committed) {
-          const completed = this.subagentExecutions.completeInitialAdmissionIfCurrent(
-            execution.agentId,
-            execution.currentTurnId,
-            this.now(),
-          );
-          if (!completed && this.subagentExecutions.read(execution.agentId)?.initialAdmissionState !== 'committed') {
-            throw new Error(`Agent initial admission recovery raced for ${execution.agentId}`);
-          }
-          continue;
-        }
-        if (!await this.removeStartupSubtree(execution.agentId)) {
-          this.quarantineStartupSubtree(execution.agentId);
-          await this.reportStartupQuarantine({
-            threadId: execution.agentId,
-            turnId: execution.currentTurnId,
-          }, 'worktree-retained');
-        }
-      } catch (error) {
-        this.quarantineStartupSubtree(execution.agentId);
-        console.warn(`[agent] Initial Agent admission recovery deferred for ${execution.agentId}`);
-        await this.reportStartupQuarantine({
-          threadId: execution.agentId,
-          turnId: execution.currentTurnId,
-        }, 'cleanup-failed');
-      }
-    }
-  }
-
-  private async recoverOrphanSubagentExecutions(): Promise<void> {
-    const knownThreads = new Set(this.persistentThreads().map((thread) => thread.id));
-    for (const snapshot of this.subagentExecutions.orphanExecutions(knownThreads)) {
-      const execution = this.subagentExecutions.read(snapshot.agentId);
-      if (!execution) continue;
-      // A failed pending-admission recovery already quarantined this identity
-      // for this launch. Do not immediately retry it through the orphan pass:
-      // the ledger is the next-startup retry authority, and a second attempt in
-      // the same initialization would make quarantine timing depend on which
-      // cleanup stage happened to fail first.
-      if (this.startupQuarantinedThreadIds.has(execution.agentId)) continue;
-      try {
-        const thread = this.core.metadata.read(execution.agentId)?.thread ?? null;
-        if (thread) {
-          if (!await this.removeStartupSubtree(thread.id)) {
-            this.quarantineStartupSubtree(thread.id);
-            await this.reportStartupQuarantine({
-              threadId: execution.agentId,
-              turnId: execution.currentTurnId,
-            }, 'worktree-retained');
-          }
-          continue;
-        }
-        if (!await this.settleRecordedStartupWorktree(execution)) {
-          this.quarantineStartupSubtree(execution.agentId);
-          await this.reportStartupQuarantine({
-            threadId: execution.agentId,
-            turnId: execution.currentTurnId,
-          }, 'worktree-retained');
-          continue;
-        }
-        await this.removeOrphanStartupArtifacts(execution.agentId);
-      } catch (error) {
-        this.quarantineStartupSubtree(execution.agentId);
-        console.warn(`[agent] Orphan Agent recovery deferred for ${execution.agentId}`);
-        await this.reportStartupQuarantine({
-          threadId: execution.agentId,
-          turnId: execution.currentTurnId,
-        }, 'cleanup-failed');
-      }
-    }
-  }
-
-  private async removeDelegatedThreadsWithoutExecutions(): Promise<void> {
-    for (const thread of this.persistentThreads()) {
-      if (
-        thread.parentThreadId === null
-        || this.startupQuarantinedThreadIds.has(thread.id)
-        || !this.core.metadata.read(thread.id)
-        || this.subagentExecutions.read(thread.id)
-      ) continue;
-      try {
-        if (!await this.removeStartupSubtree(thread.id)) {
-          this.quarantineStartupSubtree(thread.id);
-          await this.reportStartupQuarantine({ threadId: thread.id }, 'worktree-retained');
-        }
-      } catch (error) {
-        this.quarantineStartupSubtree(thread.id);
-        console.warn(`[agent] Delegated Thread without execution quarantined: ${thread.id}`);
-        await this.reportStartupQuarantine({ threadId: thread.id }, 'cleanup-failed');
-      }
-    }
-  }
-
-  private async removeStartupSubtree(threadId: ThreadId): Promise<boolean> {
-    const root = this.core.metadata.read(threadId)?.thread ?? null;
-    if (!root) {
-      const execution = this.subagentExecutions.read(threadId);
-      if (!execution || !await this.settleRecordedStartupWorktree(execution)) return false;
-      await this.removeOrphanStartupArtifacts(threadId);
-      return true;
-    }
-    const subtreeIds = [
-      threadId,
-      ...this.core.metadata.childEdges(threadId, true).map((edge) => edge.childThreadId),
-    ];
-    for (const descendantId of [...subtreeIds].reverse()) {
-      const execution = this.subagentExecutions.read(descendantId);
-      if (execution) {
-        if (!await this.settleRecordedStartupWorktree(execution)) return false;
-        continue;
-      }
-      const descendant = this.core.metadata.read(descendantId)?.thread;
-      if (!descendant?.parentThreadId) continue;
-      const parent = this.core.metadata.read(descendant.parentThreadId)?.thread;
-      if (parent && !this.unrecordedStartupWorktreeIsAbsent(descendant.cwd, parent.cwd)) return false;
-    }
-    try {
-      // Recovery is deliberately separate from the user deletion lifecycle:
-      // incomplete admissions must not run extension hooks or change the
-      // surviving conversation's transcript-exclusion decision.
-      for (const descendantId of [...subtreeIds].reverse()) {
-        await this.transcripts.deleteForRecovery(descendantId);
-        this.goalStore.clear(descendantId);
-        this.core.history.deleteThread(descendantId);
-        await this.core.rollout.delete(descendantId);
-        await this.core.payloads.deleteThread(descendantId);
-        await this.core.resources.deleteThread(descendantId);
-      }
-      this.subagentBudgets.clearThreadsForRecovery(subtreeIds);
-      this.core.metadata.delete(threadId);
-      this.collaboration.clearThreadCoordinationState(subtreeIds);
-      this.core.clearThreadAdmissionBarriers(subtreeIds);
-      // The execution rows are the cross-store retry authority and therefore
-      // the final durable state removed by startup recovery.
-      this.subagentExecutions.deleteAgents(subtreeIds);
-      return true;
-    } catch (error) {
-      for (const descendantId of subtreeIds) this.startupQuarantinedThreadIds.add(descendantId);
-      throw error;
-    }
-  }
-
-  private async settleRecordedStartupWorktree(executionInput: SubagentExecutionRecord): Promise<boolean> {
-    let execution = this.subagentExecutions.read(executionInput.agentId) ?? executionInput;
-    if (execution.worktree?.removedAt !== null && execution.worktree !== null) return true;
-    if (!execution.worktree && execution.initialWorktreeIntent !== null) {
-      if (!this.recoverAgentWorktree) return false;
-      const recoveryInput = {
-        agentId: execution.agentId,
-        intent: execution.initialWorktreeIntent,
-        previous: null,
-      } satisfies AgentWorktreeRecoveryInput;
-      let recovered = await this.recoverAgentWorktree(recoveryInput);
-      if (recovered.status === 'residual') {
-        if (!this.cleanupResidualAgentWorktree) return false;
-        recovered = await this.cleanupResidualAgentWorktree(recoveryInput);
-      }
-      if (recovered.status === 'residual') return false;
-      if (recovered.status === 'absent') {
-        this.subagentExecutions.clearInitialWorktreeIntentIfPending({
-          agentId: execution.agentId,
-          turnId: execution.currentTurnId,
-          updatedAt: this.now(),
-        });
-        return true;
-      }
-      const recorded = this.subagentExecutions.recordInitialWorktreeIfPending({
-        agentId: execution.agentId,
-        turnId: execution.currentTurnId,
-        worktree: recovered.prepared.worktree,
-        updatedAt: this.now(),
-      });
-      if (!recorded) throw new Error(`Recovered Agent worktree admission raced for ${execution.agentId}`);
-      execution = recorded;
-    }
-    if (!execution.worktree) return true;
-    if (this.recoverAgentWorktree) {
-      const recoveryInput = {
-        agentId: execution.agentId,
-        intent: worktreeRecoveryIntent(execution.worktree),
-        previous: execution.worktree,
-      } satisfies AgentWorktreeRecoveryInput;
-      let recovered = await this.recoverAgentWorktree(recoveryInput);
-      if (recovered.status === 'residual') {
-        if (!this.cleanupResidualAgentWorktree) return false;
-        await this.beginStartupWorktreeCleanup(execution, execution.worktree);
-        recovered = await this.cleanupResidualAgentWorktree(recoveryInput);
-      }
-      if (recovered.status === 'residual') return false;
-      if (recovered.status === 'absent') {
-        await this.beginStartupWorktreeCleanup(execution, execution.worktree);
-        this.completeStartupWorktreeCleanup(
-          execution,
-          execution.worktree,
-          Object.freeze({ ...execution.worktree, removedAt: this.now() }),
-        );
-        return true;
-      }
-      execution = this.subagentExecutions.setWorktreeIfCurrent({
-        agentId: execution.agentId,
-        generation: execution.generation,
-        turnId: execution.currentTurnId,
-        worktree: recovered.prepared.worktree,
-        updatedAt: this.now(),
-      }) ?? execution;
-    }
-    if (!this.settleAgentWorktree) return false;
-    const worktree = execution.worktree;
-    if (!worktree) return true;
-    const settled = await this.settleAgentWorktree(worktree, {
-      cleanupStarted: execution.worktreeCleanupStartedAt !== null,
-      beforeCleanRemoval: async () => {
-        const started = this.subagentExecutions.beginWorktreeCleanupIfCurrent({
-          agentId: execution.agentId,
-          generation: execution.generation,
-          turnId: execution.currentTurnId,
-          worktree,
-          startedAt: this.now(),
-        });
-        if (!started) throw new Error(`Agent worktree cleanup recovery raced for ${execution.agentId}`);
-      },
-    });
-    if (settled.retained) {
-      if (execution.worktreeCleanupStartedAt !== null) {
-        this.subagentExecutions.cancelWorktreeCleanupIfCurrent({
-          agentId: execution.agentId,
-          generation: execution.generation,
-          turnId: execution.currentTurnId,
-          worktree: settled.worktree,
-          updatedAt: this.now(),
-        });
-      }
-      return false;
-    }
-    const current = this.subagentExecutions.read(execution.agentId);
-    if (!current) return true;
-    const updated = current.worktreeCleanupStartedAt !== null
-      ? this.subagentExecutions.completeWorktreeCleanupIfCurrent({
-        agentId: current.agentId,
-        generation: current.generation,
-        turnId: current.currentTurnId,
-        expectedWorktree: worktree,
-        worktree: settled.worktree,
-        updatedAt: this.now(),
-      })
-      : this.subagentExecutions.setWorktreeIfCurrent({
-        agentId: current.agentId,
-        generation: current.generation,
-        turnId: current.currentTurnId,
-        worktree: settled.worktree,
-        updatedAt: this.now(),
-      });
-    if (!updated) throw new Error(`Agent worktree cleanup completion raced for ${execution.agentId}`);
-    return true;
-  }
-
-  private async beginStartupWorktreeCleanup(
-    execution: SubagentExecutionRecord,
-    worktree: AgentWorktreeMetadata,
-  ): Promise<void> {
-    const current = this.subagentExecutions.read(execution.agentId);
-    if (!current || current.worktreeCleanupStartedAt !== null) return;
-    if (!this.subagentExecutions.beginWorktreeCleanupIfCurrent({
-      agentId: current.agentId,
-      generation: current.generation,
-      turnId: current.currentTurnId,
-      worktree,
-      startedAt: this.now(),
-    })) throw new Error(`Agent worktree cleanup recovery raced for ${execution.agentId}`);
-  }
-
-  private completeStartupWorktreeCleanup(
-    execution: SubagentExecutionRecord,
-    expectedWorktree: AgentWorktreeMetadata,
-    worktree: AgentWorktreeMetadata,
-  ): void {
-    const current = this.subagentExecutions.read(execution.agentId);
-    if (!current) return;
-    const updated = current.worktreeCleanupStartedAt !== null
-      ? this.subagentExecutions.completeWorktreeCleanupIfCurrent({
-        agentId: current.agentId,
-        generation: current.generation,
-        turnId: current.currentTurnId,
-        expectedWorktree,
-        worktree,
-        updatedAt: this.now(),
-      })
-      : this.subagentExecutions.setWorktreeIfCurrent({
-        agentId: current.agentId,
-        generation: current.generation,
-        turnId: current.currentTurnId,
-        worktree,
-        updatedAt: this.now(),
-      });
-    if (!updated) throw new Error(`Agent worktree cleanup completion raced for ${execution.agentId}`);
-  }
-
-  private unrecordedStartupWorktreeIsAbsent(childCwd: string, parentCwd: string): boolean {
-    // Without a persisted recovery intent, deriving the base from the current
-    // checkout could misclassify a crash-era worktree after HEAD advances.
-    // Only equal parent/child cwd proves that this reverse orphan never entered
-    // a separate checkout. Any distinct cwd stays visible and quarantined.
-    return childCwd === parentCwd;
-  }
-
-  private async removeOrphanStartupArtifacts(threadId: ThreadId): Promise<void> {
-    this.goalStore.clear(threadId);
-    this.core.history.deleteThread(threadId);
-    await this.core.rollout.delete(threadId);
-    await this.core.payloads.deleteThread(threadId);
-    await this.core.resources.deleteThread(threadId);
-    await this.transcripts.deleteForRecovery(threadId);
-    this.subagentBudgets.clearThreadsForRecovery([threadId]);
-    this.subagentExecutions.deleteAgentOnly(threadId);
-  }
-
-  private async reportStartupQuarantine(
-    subject: { readonly threadId: ThreadId; readonly turnId?: TurnId },
-    status: 'worktree-retained' | 'cleanup-failed',
-  ): Promise<void> {
-    try {
-      await this.reportError({
-        domain: 'persistence',
-        severity: 'warn',
-        code: 'subagent-initial-admission-quarantined',
-        message: 'Agent admission recovery retained incomplete state for a later retry.',
-        context: {
-          operation: 'recover-initial-subagent-admission',
-          status,
-          threadId: subject.threadId,
-          ...(subject.turnId === undefined ? {} : { turnId: subject.turnId }),
-        },
-      });
-    } catch {
-      console.warn(`[agent] Failed to report Agent admission quarantine for ${subject.threadId}`);
-    }
-  }
-
-  private persistentThreads(): readonly Thread[] {
-    const threads: Thread[] = [];
-    for (const archived of [false, true]) {
-      let cursor: string | null = null;
-      do {
-        const page = this.core.metadata.list({ archived, cursor, limit: 100 });
-        threads.push(...page.data);
-        cursor = page.nextCursor;
-      } while (cursor);
-    }
-    return threads;
-  }
-
-  /**
-   * Decode this Thread's recorded history once, at startup, and quarantine it if
-   * that fails. The read is the check: the same `allTurns` walk that every later
-   * consumer performs, so a Thread that survives here cannot fail on them.
-   * Quarantine is in-memory and recomputed every launch, so a build that can
-   * read the Thread again picks it back up with nothing to undo.
-   */
   private async quarantineThreadIfUnreadable(threadId: ThreadId): Promise<void> {
     if (this.unreadableThreadIds.has(threadId)) return;
     try {
@@ -1544,13 +918,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
   }
 
-  /**
-   * Unreadable-history quarantine only — deliberately not the full
-   * `assertStartupThreadAvailable`, whose delegated-Agent admission checks belong
-   * to write paths and cover Threads that decode perfectly well. History reads
-   * need this narrow one so an unreadable Thread answers with what actually
-   * happened instead of leaking the raw codec failure through IPC.
-   */
+  /** History reads use the narrow unreadable-history quarantine. */
   private assertThreadHistoryReadable(threadId: ThreadId): void {
     if (!this.unreadableThreadIds.has(threadId)) return;
     throw new ThreadBusyError(
@@ -1560,21 +928,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
   private assertStartupThreadAvailable(threadId: ThreadId): void {
     if (this.startupQuarantinedThreadIds.has(threadId)) {
-      throw new ThreadBusyError(`Thread is quarantined pending Agent admission recovery: ${threadId}`);
-    }
-    const thread = this.core.requireThread(threadId).thread;
-    if (thread.threadSource !== 'subagent') return;
-    const execution = this.subagentExecutions.read(threadId);
-    if (!execution) {
-      throw new ThreadBusyError(`Delegated Agent execution is unavailable: ${threadId}`);
-    }
-    if (execution.initialAdmissionState !== 'committed') {
-      throw new ThreadBusyError(`Delegated Agent admission is incomplete: ${threadId}`);
+      throw new ThreadBusyError(`Thread is quarantined because its history is unreadable: ${threadId}`);
     }
   }
   async close(drainTimeoutMs = THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS): Promise<void> {
     this.closing = true;
-    this.collaboration.beginClose();
     await this.toolTasks.close(drainTimeoutMs);
     const drainDeadline = Date.now() + Math.max(0, drainTimeoutMs);
     const pendingNames = this.catalogOps.pendingNameShutdownHandles();
@@ -1591,7 +949,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
     )) {
       console.warn(`[agent] Thread shutdown timed out with ${pendingNames.length} name generation(s) pending`);
     }
-    let collaborationDrained: boolean | null = null;
     while (Date.now() < drainDeadline) {
       const active = [...this.activeTurns.values()];
       for (const turn of active) turn.controller.abort();
@@ -1600,17 +957,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
         drainDeadline,
       );
       if (!turnsDrained) break;
-      collaborationDrained = await this.collaboration.drainForClose(drainDeadline);
-      if (!collaborationDrained) break;
       if (this.activeTurns.size === 0) break;
     }
-    collaborationDrained ??= await this.collaboration.drainForClose(drainDeadline);
     if (this.activeTurns.size > 0) {
       for (const turn of this.activeTurns.values()) turn.controller.abort();
       console.warn(`[agent] Thread shutdown timed out with ${this.activeTurns.size} active Turn(s)`);
-    }
-    if (!collaborationDrained) {
-      console.warn('[agent] Thread shutdown timed out with collaboration work pending');
     }
     if (!await this.transcripts.flushAll(drainDeadline)) {
       console.warn('[agent] Thread shutdown timed out with transcript writes pending');
@@ -1646,6 +997,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (failures.length > 0) throw new AggregateError(failures, 'ThreadService failed to close cleanly');
   }
   subscribe(listener: NotificationListener): () => void { return this.core.subscribe(listener); }
+  subscribeRenderer(listener: NotificationListener): () => void {
+    return this.core.subscribe((notification) => {
+      const hidden = notification.type === 'thread/started'
+        ? notification.thread.threadSource === 'delegation'
+        : this.isDelegationThread(notification.threadId);
+      if (!hidden) listener(notification);
+    });
+  }
   async waitForIdle(threadId: ThreadId): Promise<void> { return this.turnLifecycle.waitForIdle(threadId); }
   /**
    * Host-facing enumeration, so it must exclude quarantined Threads: extensions
@@ -1680,6 +1039,69 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   persistentThreadExecutionContext(threadId: ThreadId): PersistentThreadExecutionContext { return this.catalogOps.persistentThreadExecutionContext(threadId); }
   readTurnForHost(threadId: ThreadId, turnId: TurnId): Turn | null { return this.core.readTurn(threadId, turnId); }
+  delegationAdmissionContext(threadId: ThreadId, turnId: TurnId): {
+    readonly thread: Thread;
+    readonly configuration: EffectiveThreadConfiguration;
+    readonly rootUserIntentRevision: number | null;
+  } {
+    const record = this.core.requireThread(threadId);
+    if (record.archived || record.thread.parentThreadId !== null || record.thread.threadSource !== 'user') {
+      throw new Error('Delegation may be launched only by an active root Thread.');
+    }
+    const turns = this.core.allTurns(threadId);
+    const sourceIndex = turns.findIndex((turn) => turn.id === turnId);
+    if (sourceIndex < 0) throw new Error(`Delegation source Turn is unavailable: ${turnId}`);
+    const rootUserIntentRevision = turns.slice(0, sourceIndex + 1)
+      .filter((turn) => turn.provenance.trigger.kind === 'user').length || null;
+    return { thread: record.thread, configuration: record.configuration, rootUserIntentRevision };
+  }
+  async ensureDelegationThread(session: DelegationSessionBinding): Promise<Thread> {
+    const cwd = delegationSessionCwd(session);
+    const existing = this.core.metadata.read(session.sessionId);
+    if (existing) {
+      if (existing.archived
+        || existing.thread.parentThreadId !== session.ownerThreadId
+        || existing.thread.threadSource !== 'delegation'
+        || existing.thread.cwd !== cwd) {
+        throw new Error(`Existing Thread does not match the Delegation Session: ${session.sessionId}`);
+      }
+      return existing.thread;
+    }
+    const owner = this.core.requireThread(session.ownerThreadId);
+    const configuration = Object.freeze({
+      ...owner.configuration,
+      model: session.policy.modelId ?? owner.configuration.model,
+      reasoningEffort: session.policy.effort ?? owner.configuration.reasoningEffort,
+      preloadedSkills: Object.freeze([]),
+    });
+    return this.catalogOps.createThread({
+      id: session.sessionId,
+      name: 'Delegated session',
+      ephemeral: false,
+      source: 'agent.delegation',
+      threadSource: 'delegation',
+      modelProvider: session.policy.modelProvider ?? owner.thread.modelProvider,
+      cwd,
+    }, {
+      sessionId: session.sessionId,
+      parentThreadId: session.ownerThreadId,
+      forkedFromId: null,
+      configuration,
+      toolCeiling: owner.toolCeiling,
+      taskPath: `/delegation/${session.sessionId}`,
+      nameOrigin: 'derived',
+      hidden: true,
+    });
+  }
+  async interruptDelegationTurn(threadId: ThreadId, turnId: TurnId): Promise<void> {
+    await this.turnLifecycle.interruptTurn(threadId, turnId);
+  }
+  async closeDelegationThread(threadId: ThreadId): Promise<void> {
+    const thread = this.core.metadata.read(threadId)?.thread ?? this.core.ephemeral.get(threadId)?.record.thread;
+    if (!thread) return;
+    if (thread.threadSource !== 'delegation') throw new Error(`Thread is not a Delegation Session: ${threadId}`);
+    await this.waitForIdle(threadId);
+  }
   readTurnByClientUserMessageIdForHost(threadId: ThreadId, clientId: string): Turn | null { return this.turnLifecycle.readTurnByClientUserMessageIdForHost(threadId, clientId); }
   async ensureFeatureRootThread(input: FeatureRootThreadInput): Promise<Thread> {
     return this.catalogOps.ensureFeatureRootThread(input);
@@ -1704,6 +1126,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
     input: AgentCoreRequestByMethod[Method],
   ): Promise<AgentCoreResponseByMethod[Method]> {
     const decoded = decodeAgentCoreRequest(method, input);
+    if (method === 'thread/start') {
+      const source = (decoded as AgentCoreRequestByMethod['thread/start']).threadSource;
+      if (source !== undefined && source !== 'user') {
+        throw new Error('Renderer-created Threads must use the user Thread source');
+      }
+    } else {
+      const threadId = rendererRequestThreadId(decoded);
+      if (threadId !== null && this.isDelegationThread(threadId)) {
+        throw new Error('Delegation Threads are available only to privileged Host operations.');
+      }
+    }
     const response = await this.dispatchRequest(method, decoded);
     return decodeAgentCoreResponse(method, response);
   }
@@ -1722,14 +1155,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       case 'thread/references/resolve':
         return this.resolveThreadReferences(
           decoded as AgentCoreRequestByMethod['thread/references/resolve'],
-        ) as AgentCoreResponseByMethod[Method];
-      case 'thread/descendants':
-        return this.listThreadDescendants(
-          decoded as AgentCoreRequestByMethod['thread/descendants'],
-        ) as AgentCoreResponseByMethod[Method];
-      case 'thread/subagents/list':
-        return this.listThreadSubagents(
-          decoded as AgentCoreRequestByMethod['thread/subagents/list'],
         ) as AgentCoreResponseByMethod[Method];
       case 'thread/tasks/list':
         return this.listThreadToolTasks(
@@ -1991,121 +1416,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return this.catalogOps.listItems(request);
   }
   listThreads(request: ThreadListRequest = {}): ThreadListResponse { return this.catalogOps.listThreads(request); }
-  listThreadDescendants(request: ThreadDescendantsRequest): ThreadDescendantsResponse {
-    return this.catalogOps.listThreadDescendants(request);
-  }
-  /**
-   * Every Agent this conversation has delegated, at any depth.
-   *
-   * Scoped to one conversation subtree rather than the installation: the
-   * delegating conversation is the only place these Agents are addressable, so
-   * a global roster would describe work no visible surface can act on.
-   */
-  listThreadSubagents(request: ThreadSubagentsRequest): ThreadSubagentsResponse {
-    const subtree = this.catalogOps.subtreeThreadIds(request.threadId);
-    const records = subtree
-      .flatMap((threadId) => this.subagentExecutions.listByParent(threadId))
-      // An uncommitted admission may still be rolled back, and the host
-      // publishes no start for one; projecting it would put a chip in the
-      // conversation for a delegation that never happened.
-      .filter((record) => record.initialAdmissionState === 'committed')
-      .sort((left, right) => left.createdAt - right.createdAt || left.agentId.localeCompare(right.agentId));
-    const notificationsByAgent = this.subagentExecutions.terminalNotificationsForAgents(
-      records.map((record) => record.agentId),
-    );
-    const data = records.map((record) => this.projectExecution(
-      record,
-      notificationsByAgent.get(record.agentId) ?? [],
-    ));
-    return { data };
-  }
-  private projectExecution(
-    record: SubagentExecutionRecord,
-    notifications = this.subagentExecutions.terminalNotificationsForAgents([record.agentId])
-      .get(record.agentId) ?? [],
-  ): SubagentExecutionProjection {
-    const terminal = this.subagentExecutions.terminalNotification(record.agentId, record.generation);
-    const resolvedTerminal = terminal?.deliveryTurnId
-      ? {
-          ...terminal,
-          deliveryTurnId: this.resolveDeliveryTurnId(
-            record.parentThreadId,
-            terminal.deliveryTurnId,
-          ),
-      }
-      : terminal;
-    const receipts = notifications.map((notification) => projectSubagentGenerationReceipt(
-      notification,
-      this.core.readTurn(notification.agentId, notification.turnId),
-      notification.deliveryTurnId === null
-        ? null
-        : this.resolveDeliveryTurnId(notification.parentThreadId, notification.deliveryTurnId),
-    ));
-    return projectSubagentExecution(
-      record,
-      resolvedTerminal,
-      receipts,
-    );
-  }
-
-  private async rebuildRerunDeliveryAliases(threadIds: readonly ThreadId[]): Promise<void> {
-    await Promise.all(threadIds.map((threadId) => this.refreshRerunDeliveryAliases(threadId)));
-  }
-
-  private async refreshRerunDeliveryAliases(threadId: ThreadId): Promise<void> {
-    const record = this.core.metadata.read(threadId);
-    if (
-      !record
-      || record.thread.ephemeral
-      || record.thread.parentThreadId !== null
-      || record.thread.threadSource !== 'user'
-    ) {
-      this.rerunDeliveryAliases.delete(threadId);
-      return;
-    }
-    try {
-      this.rerunDeliveryAliases.set(
-        threadId,
-        buildRerunDeliveryAliasIndex(await this.core.rollout.read(threadId)),
-      );
-    } catch (error) {
-      this.rerunDeliveryAliases.delete(threadId);
-      console.warn(`[agent] Rerun delivery alias rebuild deferred for ${threadId}`, error);
-    }
-  }
-
-  private resolveDeliveryTurnId(parentThreadId: ThreadId, deliveryRootId: TurnId): TurnId | null {
-    const index = this.rerunDeliveryAliases.get(parentThreadId);
-    const resolved = index ? resolveRerunDeliveryAlias(index, deliveryRootId) : deliveryRootId;
-    return resolved && this.core.readTurn(parentThreadId, resolved) ? resolved : null;
-  }
-
-  private publishSubagentExecutionsForParent(parentThreadId: ThreadId): void {
-    for (const execution of this.subagentExecutions.listByParent(parentThreadId)) {
-      if (execution.initialAdmissionState === 'committed') this.publishSubagentExecution(execution.agentId);
-    }
-  }
-  /**
-   * Announces one Agent's execution state to the conversation that delegated
-   * it. Transient by construction: the record is derived orchestration state,
-   * while the Agent's canonical history is its own Thread, Turns, and Items.
-   */
-  private publishSubagentExecution(agentId: ThreadId): void {
-    const record = this.subagentExecutions.read(agentId);
-    if (!record || record.initialAdmissionState !== 'committed') return;
-    if (!this.core.metadata.read(record.parentThreadId) && !this.core.ephemeral.has(record.parentThreadId)) return;
-    try {
-      this.core.emitTransientNotification({
-        type: 'subagent/execution/changed',
-        threadId: record.parentThreadId,
-        execution: this.projectExecution(record),
-      });
-    } catch (error) {
-      // Presentation state, never the write's problem: a parent that vanished
-      // between the write and this publication has no surface left to update.
-      console.warn(`[agent] Subagent execution notification skipped for ${agentId}`, error);
-    }
-  }
   readThread(request: ThreadReadRequest): ThreadReadResponse {
     // Only the history read is refused. A metadata-only read never touches the
     // codec, and the sidebar still has to name the Thread it cannot open.
@@ -2155,6 +1465,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (archived && subtreeIds.some((candidate) => this.toolTasks.store.hasBlockingWork(candidate))) {
       throw new ThreadBusyError('Cannot archive a Thread with active or undelivered Tool Tasks');
     }
+    if (archived) await this.delegationCoordinator()?.closeOwnerSessions(threadId);
     await this.catalogOps.setThreadArchived(threadId, archived);
     this.transcriptIndex.schedule();
   }
@@ -2163,8 +1474,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     if (subtreeIds.some((candidate) => this.toolTasks.store.hasBlockingWork(candidate))) {
       throw new ThreadBusyError('Cannot delete a Thread with active or undelivered Tool Tasks');
     }
+    const delegation = this.delegationCoordinator();
+    await delegation?.prepareOwnerDeletion(threadId);
     await this.catalogOps.deleteThread(threadId);
     for (const candidate of subtreeIds) await this.toolTasks.deleteOwner(candidate);
+    delegation?.deleteOwnerSessions(threadId);
   }
 
   private threadSubtreeIds(threadId: ThreadId): readonly ThreadId[] {
@@ -2175,15 +1489,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> {
     this.assertStartupThreadAvailable(request.threadId);
-    return this.collaboration.startRendererTurn(request);
+    return this.turnLifecycle.startRendererTurn(request);
   }
   async submitRendererInput(request: RendererTurnSubmitRequest): Promise<TurnSubmitResponse> {
     this.assertStartupThreadAvailable(request.threadId);
     const submission = this.rendererSubmissionMutex.run(request.threadId, async () => {
       this.assertRendererSubmissionOpen();
       if (this.turnLifecycle.isRendererContextCommand(request.input)) {
-        const response = await this.collaboration.startRendererTurn(
+        const response = await this.turnLifecycle.startRendererTurn(
           request,
+          undefined,
           () => this.assertRendererSubmissionOpen(),
         );
         return {
@@ -2212,8 +1527,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
         }
 
         try {
-          const response = await this.collaboration.startRendererTurn(
+          const response = await this.turnLifecycle.startRendererTurn(
             request,
+            undefined,
             () => this.assertRendererSubmissionOpen(),
           );
           return {
@@ -2398,8 +1714,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
           inputBatches,
           replacedTurn: target,
         }, () => this.assertRendererSubmissionOpen());
-        await this.refreshRerunDeliveryAliases(request.threadId);
-        this.publishSubagentExecutionsForParent(request.threadId);
         return {
           thread: this.core.requireThread(request.threadId).thread,
           turn: started.turn,
@@ -2444,82 +1758,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async interruptUserWork(threadId: ThreadId, turnId: string): Promise<void> {
     this.assertStartupThreadAvailable(threadId);
     this.assertUserOwnedLineage(threadId);
-    let settling: readonly {
-      readonly memberThreadId: ThreadId;
-      readonly execution: SubagentExecutionRecord | null;
-      readonly activeTurnId: string | null;
-    }[] = [];
-    await this.core.threadTreeMutex.run(async () => {
-      const addressedExecution = this.collaboration.execution(threadId);
-      // Spawn and Stop share this admission lock. A child committed first is in
-      // this snapshot; a spawn arriving second observes the aborted parent and
-      // is rejected by requireActiveTurn.
-      if (addressedExecution) this.collaboration.recordUserStopIfCurrent(addressedExecution);
-      await this.turnLifecycle.interruptTurn(threadId, turnId);
-      this.subagentBudgets.closeRequest(turnId, this.now());
-      settling = this.requestMembersUnder(threadId, turnId).map((memberThreadId) => ({
-        memberThreadId,
-        execution: this.collaboration.execution(memberThreadId),
-        activeTurnId: this.turnLifecycle.activeTurnId(memberThreadId),
-      }));
-    });
-    // Stopped work stays stopped: a member holding only queued work has no Turn
-    // to abort, and the queue would otherwise outlive the request.
-    for (const { memberThreadId, execution, activeTurnId } of settling) {
-      if (activeTurnId === null) {
-        if (execution) this.collaboration.recordUserStopIfCurrent(execution);
-        continue;
-      }
-      if (execution) this.collaboration.recordUserStopIfCurrent(execution);
-      await this.turnLifecycle.interruptTurn(memberThreadId, activeTurnId)
-        .then(() => true, () => false);
-    }
+    await this.turnLifecycle.interruptTurn(threadId, turnId);
   }
-  /**
-   * The work the addressed Turn delegated, transitively.
-   *
-   * `originTurnId` records one hop, so the Turn's own members are its direct
-   * children; a grandchild records ITS parent's Turn. Membership is therefore
-   * the lineage closure of those direct members — not the raw per-hop set,
-   * which would leave a grandchild running with an interrupted consumer.
-   * Token spend is generation-local and deliberately not part of this request
-   * ownership closure.
-   */
-  private requestMembersUnder(threadId: ThreadId, turnId: string): readonly ThreadId[] {
-    const direct = new Set(this.subagentBudgets.childrenForOriginTurn(turnId)
-      .map((child) => child.threadId)
-      .filter((childThreadId) => this.isSelfOrDescendant(childThreadId, threadId)));
-    if (direct.size === 0) return [];
-    const subtree = this.catalogOps.listThreadDescendants({ threadId }).data;
-    return [
-      ...direct,
-      ...subtree
-        .map((thread) => thread.id)
-        .filter((candidate) => !direct.has(candidate)
-          && [...direct].some((member) => this.isSelfOrDescendant(candidate, member))),
-    ];
-  }
-  /** Stop reaches only a user's own conversations, at any depth. */
+  /** Stop reaches only a user's own conversations. */
   private assertUserOwnedLineage(threadId: ThreadId): void {
-    const visited = new Set<ThreadId>();
-    let thread = this.core.requireThread(threadId).thread;
-    while (thread.parentThreadId !== null && !visited.has(thread.id)) {
-      visited.add(thread.id);
-      thread = this.core.requireThread(thread.parentThreadId).thread;
-    }
+    const thread = this.core.requireThread(threadId).thread;
     if (thread.parentThreadId !== null || thread.threadSource !== 'user') {
-      throw new Error(`Thread is not part of a user conversation: ${threadId}`);
+      throw new Error(`Thread is not a user conversation: ${threadId}`);
     }
-  }
-  private isSelfOrDescendant(threadId: ThreadId, ancestorThreadId: ThreadId): boolean {
-    const visited = new Set<ThreadId>();
-    let current: ThreadId | null = threadId;
-    while (current !== null && !visited.has(current)) {
-      if (current === ancestorThreadId) return true;
-      visited.add(current);
-      current = this.core.requireThread(current).thread.parentThreadId;
-    }
-    return false;
   }
   async requestUserInput(
     threadId: ThreadId,
@@ -2592,8 +1838,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       error,
     });
   }
-  async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnChild(input); }
-  async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnIsolatedSkillThread(input); }
   /** Test seam: settle a Thread's pending transcript appends. */
   async flushThreadTranscript(threadId: ThreadId): Promise<void> { return this.transcripts.flush(threadId); }
   /** Account layer for a Thread that keeps one: the artifact path, or null when it is not on disk (A12). */
@@ -2602,19 +1846,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
   get threadTranscriptIndexPath(): string { return this.transcriptIndex.path; }
   /** Test seam: settle the index rewrite in flight and anything it owes. */
   async flushThreadTranscriptIndex(): Promise<void> { return this.transcriptIndex.flush(); }
-  /**
-   * The ONE answer to whether a Thread keeps an account and what its header
-   * says. Delegation is asked first because spawn metadata is the authority for
-   * a child; the other branch is roots only, so the two can never both match —
-   * and an orphaned child, whose spawn edge is gone, is not silently promoted
-   * into a root.
-   */
   private transcriptSubject(thread: Thread): TranscriptSubject | null {
-    // The user's choice is the first word, ahead of every kind: a conversation
-    // taken out of the records keeps none, and neither does the work it
-    // delegated — the whole subtree shares this session.
     if (this.transcriptExclusions.isExcluded(thread.sessionId)) return null;
-    return this.collaboration.delegatedTranscriptSubject(thread) ?? rootTranscriptSubject(thread);
+    return rootTranscriptSubject(thread);
   }
 
   /**
@@ -2631,21 +1865,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return !this.isSessionExcluded(threadId);
   }
 
-  /**
-   * Take a conversation out of the records, or put it back.
-   *
-   * The unit is the SESSION, not the Thread: a root's Subagents write their own
-   * artifacts, so excluding the root alone would leave the delegated work
-   * readable and still listed in the index — the excluded content advertised to
-   * every later Thread by the very doctrine this feature adds.
-   *
-   * Excluding removes what is already there, because a switch that only stopped
-   * FUTURE appends would leave the conversation the user just excluded sitting
-   * on disk. Re-including rebuilds each artifact from canonical history straight
-   * away rather than waiting for a next Turn that a finished conversation will
-   * never have — otherwise undoing an accidental exclusion would silently keep
-   * nothing while the menu claimed the record was back.
-   */
+  /** Take a conversation out of the records, or put it back. */
   async setThreadRecorded(threadId: ThreadId, recorded: boolean): Promise<void> {
     const thread = this.core.metadata.read(threadId)?.thread;
     if (!thread) return;
@@ -2661,27 +1881,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     this.transcriptIndex.schedule();
   }
-  async collaborationToolContributions(
-    turn: { threadId: ThreadId; turnId: string },
-  ): Promise<readonly AgentTool[]> {
-    return this.collaboration.collaborationToolContributions(turn);
-  }
-  subagentExecution(threadId: ThreadId): SubagentExecutionRecord | null {
-    return this.collaboration.execution(threadId);
-  }
-  agentWorktree(threadId: ThreadId): AgentWorktreeMetadata | null {
-    return this.collaboration.worktreeForThread(threadId);
-  }
-  async stopAgentTask(
-    senderThreadId: ThreadId,
-    senderTurnId: TurnId,
-    agentId: string,
-  ): Promise<JsonValue | null> {
-    return this.collaboration.stopAgentTask(senderThreadId, senderTurnId, agentId);
-  }
-  hasAgentTask(senderThreadId: ThreadId, agentId: string): boolean {
-    return this.collaboration.hasAgentTask(senderThreadId, agentId);
-  }
   async withThreadAdmissionBarrier<T>(
     threadId: ThreadId,
     operation: (snapshot: ThreadAdmissionBarrierSnapshot) => Promise<T>,
@@ -2691,6 +1890,27 @@ export class ThreadService implements ThreadServiceExtensionHost {
     operation: (snapshot: HostRootTurnAdmissionBarrierSnapshot) => Promise<T>,
   ): Promise<T> { return this.core.withHostRootTurnAdmissionBarrier(operation); }
 
+  private isDelegationThread(threadId: ThreadId): boolean {
+    const thread = this.core.metadata.read(threadId)?.thread
+      ?? this.core.ephemeral.get(threadId)?.record.thread;
+    return thread?.threadSource === 'delegation';
+  }
+
+}
+
+function delegationSessionCwd(session: DelegationSessionBinding): string {
+  if (session.policy.worktreePolicy === 'none') return session.policy.cwd;
+  if (session.worktree.kind === 'active' || session.worktree.kind === 'unchanged'
+    || session.worktree.kind === 'changed' || session.worktree.kind === 'retained') {
+    return session.worktree.metadata.path;
+  }
+  throw new Error(`Delegation Session has no usable worktree: ${session.sessionId}`);
+}
+
+function rendererRequestThreadId(value: unknown): ThreadId | null {
+  if (!value || typeof value !== 'object' || !('threadId' in value)) return null;
+  const threadId = (value as { readonly threadId?: unknown }).threadId;
+  return typeof threadId === 'string' ? threadId : null;
 }
 
 type ContextCommand =
@@ -2713,7 +1933,6 @@ function turnHasSettledTool(turn: Turn): boolean {
       || item.type === 'fileChange'
       || item.type === 'mcpToolCall'
       || item.type === 'dynamicToolCall'
-      || item.type === 'collabAgentToolCall'
       || item.type === 'webSearch')
     && item.status !== 'inProgress'
   ));
@@ -2742,41 +1961,6 @@ function missingRendererStartDefaults(): never {
   throw new Error('Thread start requires a model provider and working directory.');
 }
 
-function defaultAgentRole(name: string): AgentRole {
-  const role = BUILT_IN_AGENT_ROLE_DEFINITIONS[name];
-  if (!role) throw new Error(`Unknown Agent Role: ${name}`);
-  return role;
-}
-
-function defaultResolvedAgentType(name: string | undefined): ResolvedAgentType {
-  const canonicalType = name ?? 'general-purpose';
-  const backingRole = canonicalType === 'general-purpose'
-    ? 'default'
-    : canonicalType === 'explore'
-      ? 'explorer'
-      : canonicalType;
-  const role = defaultAgentRole(backingRole);
-  return {
-    canonicalType,
-    role,
-    kind: canonicalType === 'general-purpose' || canonicalType === 'explore' || canonicalType === 'plan'
-      ? canonicalType
-      : 'role',
-  };
-}
-
-function applyToolCeiling(
-  configuration: EffectiveThreadConfiguration,
-  toolCeiling: readonly string[] | null,
-): EffectiveThreadConfiguration {
-  if (toolCeiling === null) return configuration;
-  const allowed = new Set(toolCeiling);
-  return Object.freeze({
-    ...configuration,
-    tools: Object.freeze(configuration.tools.filter((tool) => allowed.has(tool))),
-  });
-}
-
 function nonEmptyAgentStartupContext(
   snapshot: AgentStartupContextSnapshot,
 ): AgentStartupContextSnapshot | null {
@@ -2791,18 +1975,6 @@ function emptyResponse(): EmptyAgentCoreResponse {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function worktreeRecoveryIntent(
-  worktree: AgentWorktreeMetadata,
-): AgentWorktreeRecoveryIntent {
-  return Object.freeze({
-    sourceCwd: worktree.sourceCwd,
-    path: worktree.path,
-    branch: worktree.branch,
-    baseCommit: worktree.baseCommit,
-    gitCommonDir: worktree.gitCommonDir,
-  });
 }
 
 async function settleBeforeDeadline(work: Promise<unknown>, deadline: number): Promise<boolean> {

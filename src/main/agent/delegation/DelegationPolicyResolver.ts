@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   AgentDelegationSettings,
   AgentReasoningLevel,
@@ -145,6 +146,73 @@ export class DelegationRunnerRegistry {
       },
     };
   }
+
+  async resolveContinuation(input: {
+    readonly settings: AgentDelegationSettings;
+    readonly configurationRevision: string;
+    readonly runnerId: string;
+    readonly runnerVersion: string | null;
+    readonly modelProvider: string;
+    readonly modelId: string;
+    readonly effort: AgentReasoningLevel;
+    readonly profile: DelegateTaskProfile;
+    readonly access: DelegateAccess;
+  }): Promise<DelegationAdmissionPolicy> {
+    const { settings } = input;
+    if (!settings.enabled) {
+      throw new DelegationAdmissionRefusal('disabled', 'Experimental delegation is disabled in Settings.');
+    }
+    const adapter = this.adapters.get(input.runnerId);
+    const runnerSettings = settings.runners[input.runnerId];
+    if (!adapter || !adapter.detected || !adapter.ready || !runnerSettings?.enabled
+      || adapter.version !== input.runnerVersion) {
+      throw new DelegationAdmissionRefusal(
+        'runner_unavailable',
+        `Delegation Session Runner is not ready: ${input.runnerId}`,
+      );
+    }
+    const qualifiedModel = `${input.modelProvider}/${input.modelId}`;
+    const model = await adapter.resolveExplicitModel(qualifiedModel, input.effort);
+    if (!model || model.providerId !== input.modelProvider || model.modelId !== input.modelId) {
+      throw new DelegationAdmissionRefusal(
+        'model_unavailable',
+        `Delegation Session model is unavailable: ${qualifiedModel}`,
+      );
+    }
+    if (!model.supportedEfforts.includes(input.effort)) {
+      throw new DelegationAdmissionRefusal(
+        'effort_unavailable',
+        `Delegation Session effort ${input.effort} is unavailable for ${qualifiedModel}`,
+      );
+    }
+    return {
+      runnerId: input.runnerId,
+      runnerVersion: input.runnerVersion,
+      modelProvider: input.modelProvider,
+      modelId: input.modelId,
+      effort: input.effort,
+      profile: input.profile,
+      access: input.access,
+      timeoutMs: runnerSettings.timeoutMs,
+      configurationRevision: input.configurationRevision,
+      scheduling: {
+        pool: runnerSettings.pool,
+        configurationRevision: input.configurationRevision,
+        maxConcurrentProducer: runnerSettings.maxConcurrent,
+        maxConcurrentPool: runnerSettings.maxConcurrentPool,
+      },
+      schedulerLimits: {
+        maxConcurrentGlobal: settings.maxConcurrentGlobal,
+        maxConcurrentThread: settings.maxConcurrentThread,
+        maxQueuedGlobal: settings.maxQueuedGlobal,
+        maxQueuedThread: settings.maxQueuedThread,
+      },
+    };
+  }
+}
+
+export function delegationSettingsRevision(settings: AgentDelegationSettings): string {
+  return createHash('sha256').update(JSON.stringify(settings)).digest('hex');
 }
 
 export function internalDelegationRunnerAdapter(

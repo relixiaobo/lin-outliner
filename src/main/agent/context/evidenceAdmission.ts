@@ -6,7 +6,6 @@ import type {
   ContextEvidenceThreadItem,
   ContextPayloadKind,
   RendererUserViewHints,
-  RoleCatalogContextPayload,
   SkillCatalogContextPayload,
   SkillInvocationContextPayload,
   Thread,
@@ -42,7 +41,6 @@ export async function admitContextEvidence(input: {
   readonly additionalContextSource?: string;
   readonly extensionContext: readonly AdmittedThreadContextContribution[];
   readonly skillCatalog?: SkillCatalogContextPayload | null;
-  readonly roleCatalog?: RoleCatalogContextPayload | null;
   readonly preloadedSkillInvocations?: readonly SkillInvocationContextPayload[];
   readonly skillInvocation?: SkillInvocationContextPayload | null;
   readonly includeHostContext: boolean;
@@ -89,9 +87,6 @@ export async function admitContextEvidence(input: {
     if (userView) await publish(userView, userViewSummary(userView));
     if (input.skillCatalog) {
       await publish(input.skillCatalog, `Available Skills (${input.skillCatalog.entries.length})`);
-    }
-    if (input.roleCatalog) {
-      await publish(input.roleCatalog, `Available Roles (${input.roleCatalog.entries.length})`);
     }
     for (const invocation of input.preloadedSkillInvocations ?? []) {
       await publish(invocation, `Preloaded Skill: ${invocation.displayName}`);
@@ -167,11 +162,8 @@ function turnEnvironment(input: {
     executionMode: executionMode(input.thread),
     // The configured name, not a constant: the reader is told who they are
     // talking to by the header, and the agent must not answer with a different
-    // name when asked. An isolated Skill keeps its own name, which IS what it is.
-    replyIdentity: input.persona?.trim()
-      || (input.thread.parentThreadId === null
-        ? null
-        : input.thread.agentNickname ?? input.thread.agentRole),
+    // name when asked.
+    replyIdentity: input.persona?.trim() || null,
     todayNodeId: input.projection?.todayId ?? null,
     todayNodeTitle: todayNode ? nodeTitle(todayNode) : null,
   };
@@ -248,9 +240,8 @@ function userViewSummary(payload: NonNullable<ReturnType<typeof buildUserViewPay
 }
 
 function executionMode(thread: Thread): TurnEnvironmentContextPayload['executionMode'] {
-  if (thread.parentThreadId !== null) return 'child';
+  if (thread.threadSource === 'delegation') return 'delegation';
   if (thread.threadSource === 'memory_consolidation') return 'memory';
-  if (thread.threadSource === 'subagent') return 'child';
   if (thread.threadSource === 'user') return 'root';
   return thread.source === 'automation' ? 'automation' : 'feature';
 }

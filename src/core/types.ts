@@ -735,9 +735,6 @@ export interface AgentDelegationSettingsInput extends Partial<Omit<AgentDelegati
 
 export interface AgentRuntimeSettings {
   additionalSkillDirectories: string[];
-  subagentTokenBudget: number | null;
-  subagentMaxDepth: number;
-  subagentMaxConcurrent: number;
   providerTimeoutMs: number | null;
   providerMaxRetries: number | null;
   providerMaxRetryDelayMs: number | null;
@@ -748,9 +745,6 @@ export interface AgentRuntimeSettings {
 
 export interface AgentRuntimeSettingsInput {
   additionalSkillDirectories?: string[];
-  subagentTokenBudget?: number | null;
-  subagentMaxDepth?: number;
-  subagentMaxConcurrent?: number;
   providerTimeoutMs?: number | null;
   providerMaxRetries?: number | null;
   providerMaxRetryDelayMs?: number | null;
@@ -792,14 +786,9 @@ export interface SkillDefinition {
   contentHash?: string;
   /** Whole-subtree hash for a pinned Tenon-managed skill version. */
   managedContentHash?: string;
-  allowedTools: string[];
   argumentHint?: string;
   argumentNames: string[];
   version?: string;
-  model?: string;
-  effort?: string;
-  shell?: string;
-  execution: 'inline' | 'isolated';
   paths?: string[];
   contentLength: number;
   body: string;
@@ -1158,69 +1147,15 @@ export interface AgentProviderOption {
   models: AgentModelOption[];
 }
 
-/** One user- or project-defined Role, as the Agents editor edits it. */
-export interface AgentEditableRole {
-  readonly name: string;
-  readonly layer: 'user' | 'project';
-  readonly description: string;
-  readonly developerInstructions: string;
-  readonly persona: string | null;
-  readonly color: string | null;
-  /**
-   * Null means "inherit", not "none". A capability list only ever NARROWS what
-   * the parent has, so an absent list is the full inherited set and an empty one
-   * would be a deliberate ban.
-   */
-  readonly tools: readonly string[] | null;
-  readonly skills: readonly string[] | null;
-}
-
-/** What the editor writes: everything optional except the identity itself. */
-export interface AgentRoleDraft {
-  readonly name: string;
-  readonly description: string;
-  readonly developerInstructions: string;
-  readonly persona?: string;
-  readonly color?: string;
-  /**
-   * A capability narrowing has THREE states and the protocol carries all three:
-   * `undefined` leaves whatever is on disk (the draft did not mention it),
-   * `null` removes the narrowing so everything is inherited, and an array —
-   * INCLUDING an empty one — is the exact set allowed. `[]` is a ban, not a
-   * shorthand for "inherit": `constrainChildCapabilities` honours it.
-   */
-  readonly tools?: readonly string[] | null;
-  readonly skills?: readonly string[] | null;
-}
-
-/** One execution preference exactly as stored in a user or project layer. */
-export interface AgentExecutionSelectionRow {
-  readonly agentType: string;
-  readonly layer: 'user' | 'project';
-  readonly modelProvider: string | null;
-  readonly model: string | null;
-  readonly reasoningEffort: string | null;
-}
-
-/** Sibling payload written atomically with an Agent definition or presentation. */
-export interface AgentExecutionSelectionDraft {
-  readonly modelProvider?: string | null;
-  readonly model?: string | null;
-  readonly reasoningEffort?: string | null;
-}
-
 /**
- * The conversation agent's own configuration — its standing instructions and the
- * capability ceiling every Subagent is narrowed from. Written as a Configuration
- * Profile; the editor never says the word, because from the reader's side this
- * is simply "the agent I talk to".
+ * The conversation agent's standing instructions and capability ceiling.
  */
 export interface AgentProfileDraft {
   /** Omitted leaves what is on disk; empty removes it so the default returns. */
   readonly developerInstructions?: string;
   readonly model?: string;
   readonly reasoningEffort?: string;
-  /** Three states, as on `AgentRoleDraft`. */
+  /** Null inherits the current catalogue; an array is the exact allowed set. */
   readonly tools?: readonly string[] | null;
   readonly skills?: readonly string[] | null;
 }
@@ -1235,16 +1170,6 @@ export interface AgentProfileView {
   readonly reasoningEffort: string | null;
   readonly tools: readonly string[] | null;
   readonly skills: readonly string[] | null;
-}
-
-/**
- * A built-in Agent type's frozen definition, carried so the editor can seed a
- * duplicate from it. Read-only everywhere else: this is code, not configuration.
- */
-export interface AgentBuiltInDefinition {
-  readonly agentType: string;
-  readonly description: string;
-  readonly developerInstructions: string;
 }
 
 /**
@@ -1273,18 +1198,12 @@ export interface AgentPresentationOverrideRow {
 }
 
 /**
- * The Agents editor's whole view in one answer: what the transcript can draw
- * (`entries`, the same catalog the renderer resolves identities from) beside
- * what the user may change (`roles`). Built-in types appear only in `entries`
- * — their definitions are frozen, and the editor re-skins them instead.
+ * The main Agent editor's whole view in one answer.
  */
 export interface AgentEditorView {
   readonly entries: readonly AgentIdentityEntry[];
-  readonly roles: readonly AgentEditableRole[];
   readonly presentationOverrides: readonly AgentPresentationOverrideRow[];
-  readonly executionSelections: readonly AgentExecutionSelectionRow[];
   readonly profile: AgentProfileView;
-  readonly builtInDefinitions: readonly AgentBuiltInDefinition[];
   readonly capabilities: AgentCapabilityCatalog;
 }
 

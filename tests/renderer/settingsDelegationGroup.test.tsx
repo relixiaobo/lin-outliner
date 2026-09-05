@@ -114,9 +114,6 @@ function settings(enabled: boolean): AgentProviderSettingsView {
     }],
     agent: {
       additionalSkillDirectories: [],
-      subagentTokenBudget: null,
-      subagentMaxDepth: 3,
-      subagentMaxConcurrent: 20,
       providerTimeoutMs: null,
       providerMaxRetries: null,
       providerMaxRetryDelayMs: 60_000,

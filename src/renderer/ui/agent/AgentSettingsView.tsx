@@ -18,7 +18,6 @@ import {
   WarningIcon,
 } from '../icons';
 import {
-  isSettingsAgentTypeTarget,
   isSettingsAnchorTarget,
   settingsPageCategory,
   type SettingsCategoryTarget,
@@ -61,7 +60,6 @@ type SettingsRoute = {
   category: SettingsCategory;
   page?: SettingsPageTarget;
   anchor?: string;
-  agentType?: string;
 };
 
 /**
@@ -100,15 +98,11 @@ const SETTINGS_CATEGORY_ICONS = {
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
   const anchor = isSettingsAnchorTarget(target?.anchor) ? target.anchor : undefined;
-  const agentType = target?.page === 'agents' && isSettingsAgentTypeTarget(target.agentType)
-    ? target.agentType
-    : undefined;
   if (target?.page) {
     return {
       category: settingsPageCategory(target.page),
       page: target.page,
       ...(anchor ? { anchor } : {}),
-      ...(agentType ? { agentType } : {}),
     };
   }
   if (target?.category && SETTINGS_CATEGORY_IDS.includes(target.category)) {
@@ -130,8 +124,7 @@ function routeCategory(route: SettingsRoute): SettingsCategory {
 function routesEqual(left: SettingsRoute, right: SettingsRoute): boolean {
   return left.category === right.category
     && left.page === right.page
-    && left.anchor === right.anchor
-    && left.agentType === right.agentType;
+    && left.anchor === right.anchor;
 }
 
 /**
@@ -789,8 +782,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
               />
             ) : route.page === 'agents' ? (
               <AgentsSettings
-                key={`agents:${targetGeneration}:${route.agentType ?? ''}`}
-                initialAgentType={route.agentType}
+                key={`agents:${targetGeneration}`}
                 onError={setError}
                 onNotice={setNotice}
                 settings={settings}

@@ -134,6 +134,91 @@ describe('DelegationRunnerRegistry', () => {
       requestedAccess: 'read-only',
     })).rejects.toMatchObject<Partial<DelegationAdmissionRefusal>>({ code: 'runner_unavailable' });
   });
+
+  test('continues with the Session Runner after the default Runner changes', async () => {
+    const registry = fixtureRegistry();
+    const configured = settings({ enabled: true, defaultRunnerId: 'claude' });
+    configured.runners.claude = {
+      ...configured.runners.internal!,
+      enabled: false,
+      pool: 'claude-provider',
+    };
+
+    const resolved = await registry.resolveContinuation({
+      settings: configured,
+      configurationRevision: 'revision-two',
+      runnerId: 'internal',
+      runnerVersion: '1',
+      modelProvider: 'anthropic',
+      modelId: 'claude-parent',
+      effort: 'high',
+      profile: 'general',
+      access: 'workspace-write',
+    });
+
+    expect(resolved).toMatchObject({
+      runnerId: 'internal',
+      runnerVersion: '1',
+      modelProvider: 'anthropic',
+      modelId: 'claude-parent',
+      effort: 'high',
+      profile: 'general',
+      access: 'workspace-write',
+      configurationRevision: 'revision-two',
+      scheduling: { pool: 'agent-provider' },
+    });
+  });
+
+  test('refuses continuation when the Session Runner is disabled or changes version', async () => {
+    const registry = fixtureRegistry();
+    const disabled = settings({ enabled: true });
+    disabled.runners.internal!.enabled = false;
+
+    await expect(registry.resolveContinuation({
+      settings: disabled,
+      configurationRevision: 'revision-two',
+      runnerId: 'internal',
+      runnerVersion: '1',
+      modelProvider: 'anthropic',
+      modelId: 'claude-parent',
+      effort: 'high',
+      profile: 'general',
+      access: 'read-only',
+    })).rejects.toMatchObject<Partial<DelegationAdmissionRefusal>>({ code: 'runner_unavailable' });
+
+    await expect(registry.resolveContinuation({
+      settings: settings({ enabled: true }),
+      configurationRevision: 'revision-two',
+      runnerId: 'internal',
+      runnerVersion: '0',
+      modelProvider: 'anthropic',
+      modelId: 'claude-parent',
+      effort: 'high',
+      profile: 'general',
+      access: 'read-only',
+    })).rejects.toMatchObject<Partial<DelegationAdmissionRefusal>>({ code: 'runner_unavailable' });
+  });
+
+  test('refuses continuation when the pinned Session model disappears without fallback', async () => {
+    let requestedModel: string | null = null;
+    const registry = fixtureRegistry(async (model) => {
+      requestedModel = model;
+      return null;
+    });
+
+    await expect(registry.resolveContinuation({
+      settings: settings({ enabled: true }),
+      configurationRevision: 'revision-two',
+      runnerId: 'internal',
+      runnerVersion: '1',
+      modelProvider: 'anthropic',
+      modelId: 'claude-parent',
+      effort: 'high',
+      profile: 'general',
+      access: 'read-only',
+    })).rejects.toMatchObject<Partial<DelegationAdmissionRefusal>>({ code: 'model_unavailable' });
+    expect(requestedModel).toBe('anthropic/claude-parent');
+  });
 });
 
 function fixtureRegistry(

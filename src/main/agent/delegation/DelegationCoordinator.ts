@@ -45,6 +45,7 @@ export interface DelegationSessionRuntime {
     onDelivered: () => void,
   ): boolean;
   close(session: DelegationSessionBinding): Promise<void>;
+  prepareOwnerDeletion(session: DelegationSessionBinding): Promise<void>;
 }
 
 export interface DelegationSessionCommitInput {
@@ -99,6 +100,8 @@ export interface DelegationCoordinatorOptions {
   readonly now?: () => number;
 }
 
+export const DELEGATION_SESSION_IDLE_TTL_MS = 30 * 24 * 60 * 60_000;
+
 interface PreparedDelegationTurn {
   readonly execution: DelegateCapabilityExecution;
   readonly session: DelegationSessionBinding;
@@ -120,6 +123,101 @@ export class DelegationCoordinator {
 
   constructor(private readonly options: DelegationCoordinatorOptions) {
     this.now = options.now ?? Date.now;
+  }
+
+  async initialize(): Promise<void> {
+    const expiring = new Set(
+      this.options.store.idleSessionsUpdatedBefore(this.now() - DELEGATION_SESSION_IDLE_TTL_MS)
+        .map((session) => session.sessionId),
+    );
+    for (const snapshot of this.options.store.openSessions()) {
+      try {
+        await this.gates.run(snapshot.sessionId, async () => {
+          let session = this.options.store.readSession(snapshot.sessionId);
+          if (!session || session.state !== 'open') return;
+          await this.options.runtime.ensureSession(session);
+          session = this.options.store.readSession(snapshot.sessionId);
+          if (!session || session.state !== 'open' || !expiring.has(session.sessionId)) return;
+          await this.options.runtime.close(session);
+          const current = this.options.store.readSession(session.sessionId);
+          if (current?.state === 'open') {
+            this.options.store.closeSession(current.sessionId, current.revision, this.now());
+          }
+        });
+      } catch (error) {
+        console.warn(`[agent] Delegation Session recovery deferred for ${snapshot.sessionId}`, error);
+      }
+    }
+  }
+
+  async closeOwnerSessions(ownerThreadId: ThreadId): Promise<void> {
+    for (const snapshot of this.options.store.sessionsForOwner(ownerThreadId)) {
+      await this.gates.run(snapshot.sessionId, async () => {
+        const session = this.options.store.readSession(snapshot.sessionId);
+        if (!session || session.state === 'closed') return;
+        if (session.currentTaskId !== null || this.options.store.queuedMessages(session.sessionId).length > 0) {
+          throw new DelegateCapabilityRefusal(
+            'unavailable',
+            'Delegation Session has active or queued work and cannot close with its owner.',
+          );
+        }
+        await this.options.runtime.close(session);
+        const current = this.options.store.readSession(session.sessionId);
+        if (current?.state === 'open') {
+          this.options.store.closeSession(current.sessionId, current.revision, this.now());
+        }
+      });
+      this.notifySession(snapshot.sessionId);
+    }
+  }
+
+  async prepareOwnerDeletion(ownerThreadId: ThreadId): Promise<void> {
+    for (const snapshot of this.options.store.sessionsForOwner(ownerThreadId)) {
+      await this.gates.run(snapshot.sessionId, async () => {
+        let session = this.options.store.readSession(snapshot.sessionId);
+        if (!session) return;
+        if (session.currentTaskId !== null || this.options.store.queuedMessages(session.sessionId).length > 0) {
+          throw new DelegateCapabilityRefusal(
+            'unavailable',
+            'Delegation Session has active or queued work and cannot be deleted with its owner.',
+          );
+        }
+        if (session.worktree.kind === 'ambiguous') {
+          throw retainedWorkspaceRefusal(session.sessionId);
+        }
+        try {
+          await this.options.runtime.prepareOwnerDeletion(session);
+        } catch (error) {
+          session = this.options.store.readSession(session.sessionId) ?? session;
+          if (session.worktree.kind === 'changed' || session.worktree.kind === 'retained'
+            || session.worktree.kind === 'ambiguous') {
+            throw retainedWorkspaceRefusal(session.sessionId);
+          }
+          throw error;
+        }
+        session = this.options.store.readSession(session.sessionId);
+        if (session?.state === 'open') {
+          this.options.store.closeSession(session.sessionId, session.revision, this.now());
+        }
+      });
+      this.notifySession(snapshot.sessionId);
+    }
+  }
+
+  deleteOwnerSessions(ownerThreadId: ThreadId): void {
+    const unsafe = this.options.store.sessionsForOwner(ownerThreadId).find((session) => (
+      session.state === 'open'
+      || session.worktree.kind === 'changed'
+      || session.worktree.kind === 'retained'
+      || session.worktree.kind === 'ambiguous'
+    ));
+    if (unsafe) {
+      throw new DelegateCapabilityRefusal(
+        'unavailable',
+        `Delegation Session ${unsafe.sessionId} cannot be deleted with its owner.`,
+      );
+    }
+    this.options.store.deleteSessionsForOwner(ownerThreadId);
   }
 
   execute(execution: DelegateCapabilityExecution): Promise<unknown> {
@@ -209,6 +307,17 @@ export class DelegationCoordinator {
           finalReceiptDigest: evidence.receiptDigest,
           now: this.now(),
         });
+      }
+      if (reconciled.state !== 'blocked' && result.outcome !== 'succeeded') {
+        const session = this.options.store.readSession(settlement.sessionId);
+        if (session) {
+          this.options.store.blockQueuedMessages(
+            session.sessionId,
+            session.revision,
+            `Delegation message was blocked because delegated execution ${result.outcome}`,
+            this.now(),
+          );
+        }
       }
       this.options.store.releaseExecution(settlement.sessionId, evidence.taskId, this.now());
       this.notifySession(settlement.sessionId);
@@ -329,8 +438,13 @@ export class DelegationCoordinator {
       if (session.revision !== sessionBinding.sessionRevision) {
         throw unavailable('Delegate Session changed before closure was admitted.');
       }
+      if (session.currentTaskId !== null || this.options.store.queuedMessages(session.sessionId).length > 0) {
+        throw unavailable('Delegate Session must be idle before closure.');
+      }
       await this.options.runtime.close(session);
-      this.options.store.closeSession(session.sessionId, session.revision, this.now());
+      const current = this.options.store.readSession(session.sessionId);
+      if (!current) throw unavailable('Delegate Session disappeared during closure.');
+      this.options.store.closeSession(current.sessionId, current.revision, this.now());
       return {
         version: 1,
         kind: 'delegate.close-receipt',
@@ -603,6 +717,13 @@ function policySnapshot(execution: DelegateCapabilityExecution): DelegationPolic
     cwd: admission.cwd,
     worktreePolicy: admission.policy.access === 'workspace-write' ? 'dedicated' : 'none',
   };
+}
+
+function retainedWorkspaceRefusal(sessionId: ThreadId): DelegateCapabilityRefusal {
+  return new DelegateCapabilityRefusal(
+    'unavailable',
+    `Delegation Session ${sessionId} retains workspace changes and must be resolved before owner deletion.`,
+  );
 }
 
 function executionDigest(execution: DelegateCapabilityExecution, messageSequenceDigest: string): string {

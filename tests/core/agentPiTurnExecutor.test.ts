@@ -12,12 +12,8 @@ import { stream as streamAnthropicMessages } from '@earendil-works/pi-ai/api/ant
 import { convertResponsesMessages } from '@earendil-works/pi-ai/api/openai-responses-shared';
 import { decodeThread, decodeTurn } from '../../src/core/agent/codec';
 import {
-  AGENT_MESSAGE_INPUT_SCHEMA,
-  AGENT_MESSAGE_TOOL_DESCRIPTION,
-  AGENT_TOOL_DESCRIPTION,
   TASK_STOP_INPUT_SCHEMA,
   TASK_STOP_TOOL_DESCRIPTION,
-  agentInputSchema,
 } from '../../src/core/agent/tools';
 import type {
   AgentCoreNotification,
@@ -435,14 +431,14 @@ describe('PiTurnExecutor event normalization', () => {
       result: {
         // The shape a refusal actually takes: an ordinary result whose envelope
         // reports its own failure and carries guidance written for the model.
-        content: [{ type: 'text', text: 'Subagent token budget exhausted; the child refuses new work.' }],
+        content: [{ type: 'text', text: 'Skill validation failed; repair the definition before retrying.' }],
         details: {
           ok: false,
           tool: 'skill',
           status: 'error',
-          error: { code: 'subagent_budget_exhausted', message: 'exhausted' },
+          error: { code: 'invalid_skill_definition', message: 'invalid definition' },
           data: { success: false, skill: 'research' },
-          instructions: 'Interrupt, review its output, or spawn a fresh child.',
+          instructions: 'Repair the Skill definition and retry.',
         },
       },
       isError: false,
@@ -458,27 +454,6 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
-  test('reads Agent task arguments into the retained orchestration Item shape', async () => {
-    // A provider that fills an omitted optional parameter with "" rather than
-    // omitting the key: the empty string reached the Item, the Item failed to
-    // decode, and the Turn died before anything was recorded.
-    const fixture = createContext();
-    const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle(toolAdmissionEvent(
-      'call-collab-blank',
-      'agent',
-      { description: 'Check weather', prompt: 'Check the weather', model: '' },
-    ));
-    await normalizer.flush();
-
-    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
-      type: 'collabAgentToolCall',
-      prompt: 'Check the weather',
-      model: null,
-      reasoningEffort: null,
-    });
-  });
-
   test('names a blank file path unknown, the same as an absent one', async () => {
     const fixture = createContext();
     const normalizer = new PiEventNormalizer(fixture.context);
@@ -488,155 +463,6 @@ describe('PiTurnExecutor event normalization', () => {
     expect(fixture.recorder.orderedItems()[0]).toMatchObject({
       type: 'fileChange',
       changes: [{ path: '(unknown path)' }],
-    });
-  });
-
-  test('records agentId from an Agent launch result', async () => {
-    const fixture = createContext();
-    const childThreadId = uuidV7(1_720_000_001_000);
-    const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle(toolAdmissionEvent(
-      'call-collab-1',
-      'agent',
-      { description: 'Inspect code', prompt: 'Inspect it' },
-    ));
-    normalizer.handle({
-      type: 'tool_execution_end',
-      toolCallId: 'call-collab-1',
-      toolName: 'agent',
-      result: {
-        content: [{ type: 'text', text: 'spawned' }],
-        details: { agentId: childThreadId },
-      },
-      isError: false,
-    });
-    await normalizer.flush();
-    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
-      type: 'collabAgentToolCall',
-      id: 'call-collab-1',
-      tool: 'agent',
-      status: 'completed',
-      prompt: 'Inspect it',
-      agentsStates: {
-        [childThreadId]: {
-          status: 'running',
-          taskPath: null,
-          nickname: null,
-          role: null,
-        },
-      },
-    });
-  });
-
-  test('records resumedAgentId from an Agent message result', async () => {
-    const fixture = createContext();
-    const childThreadId = uuidV7(1_720_000_001_100);
-    const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle(toolAdmissionEvent(
-      'call-collab-wait',
-      'agent_message',
-      { to: childThreadId, summary: 'Continue inspection', message: 'Continue' },
-    ));
-    normalizer.handle({
-      type: 'tool_execution_end',
-      toolCallId: 'call-collab-wait',
-      toolName: 'agent_message',
-      result: {
-        content: [{ type: 'text', text: 'completed child result' }],
-        details: {
-          resumedAgentId: childThreadId,
-          pin: { id: childThreadId, name: childThreadId, ref: 'short-ref' },
-        },
-      },
-      isError: false,
-    });
-    await normalizer.flush();
-
-    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
-      type: 'collabAgentToolCall',
-      id: 'call-collab-wait',
-      tool: 'agent_message',
-      status: 'completed',
-      receiverThreadIds: [childThreadId],
-      agentsStates: {
-        [childThreadId]: {
-          status: 'running',
-          taskPath: null,
-          nickname: null,
-          role: null,
-        },
-      },
-    });
-  });
-
-  test('writes the prepared Agent message summary without mutating canonical model history', async () => {
-    const fixture = createContext();
-    const normalizer = new PiEventNormalizer(fixture.context);
-    const rawArguments = {
-      to: uuidV7(1_720_000_001_150),
-      message: 'First line\nSecond line',
-    };
-    const modelCall = replayableModelCall('agent_message', rawArguments);
-    normalizer.handle({
-      type: 'tool_call_admission',
-      toolCallId: 'call-collab-summary',
-      providerToolCallId: 'call-collab-summary',
-      providerResponsePartIndex: 0,
-      toolName: 'agent_message',
-      decision: {
-        execute: true,
-        modelCall,
-        displayArguments: { ...rawArguments, summary: 'First line' },
-      },
-    });
-    await normalizer.flush();
-
-    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
-      type: 'collabAgentToolCall',
-      prompt: rawArguments.message,
-      summary: 'First line',
-      modelCall,
-    });
-    expect(modelCall).toEqual(replayableModelCall('agent_message', rawArguments));
-  });
-
-  test('does not turn a collaboration tool failure into a child failure', async () => {
-    const fixture = createContext();
-    const childThreadId = uuidV7(1_720_000_001_200);
-    const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle(toolAdmissionEvent(
-      'call-collab-send',
-      'agent_message',
-      { to: childThreadId, summary: 'Continue inspection', message: 'Continue' },
-    ));
-    normalizer.handle({
-      type: 'tool_execution_end',
-      toolCallId: 'call-collab-send',
-      toolName: 'agent_message',
-      result: {
-        content: [{ type: 'text', text: 'message delivery failed' }],
-        details: {
-          taskPath: '/root/worker',
-          threadId: childThreadId,
-          nickname: null,
-          role: 'worker',
-          status: 'running',
-        },
-      },
-      isError: true,
-    });
-    await normalizer.flush();
-
-    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
-      type: 'collabAgentToolCall',
-      status: 'failed',
-      agentsStates: {
-        [childThreadId]: {
-          status: 'running',
-          taskPath: '/root/worker',
-          role: 'worker',
-        },
-      },
     });
   });
 
@@ -2192,22 +2018,6 @@ describe('PiTurnExecutor event normalization', () => {
         description: 'ALPHA CATALOG BASELINE',
       }],
     };
-    const roleCatalog = {
-      schemaVersion: 1 as const,
-      kind: 'roleCatalog' as const,
-      mode: 'baseline' as const,
-      previousCatalogHash: null,
-      catalogHash: '3'.repeat(64),
-      entries: [{
-        change: 'available' as const,
-        name: 'worker',
-        displayName: 'Worker',
-        source: 'built-in' as const,
-        identity: 'built-in:worker',
-        contentHash: '4'.repeat(64),
-        description: 'WORKER ROLE BASELINE',
-      }],
-    };
     const activeSkill = {
       schemaVersion: 1 as const,
       kind: 'skillInvocation' as const,
@@ -2219,9 +2029,7 @@ describe('PiTurnExecutor event normalization', () => {
       contentHash: '2'.repeat(64),
       instructions: 'ACTIVE ALPHA INSTRUCTIONS',
       arguments: '',
-      execution: 'inline' as const,
       invocationSource: 'model' as const,
-      constraints: { allowedTools: [], model: null, effort: null },
       invokedAt: 1_719_990_000_010,
     };
     const baselineView = {
@@ -2261,7 +2069,6 @@ describe('PiTurnExecutor event normalization', () => {
       projection: { type: 'full' as const },
     };
     const skillCatalogItem = evidence(skillCatalog, 'skill-catalog-before-compact');
-    const roleCatalogItem = evidence(roleCatalog, 'role-catalog-before-compact');
     const activeSkillItem = evidence(activeSkill, 'active-skill-before-compact');
     const viewItem = evidence(baselineView, 'view-before-compact');
     const additionalItem = evidence(baselineAdditional, 'additional-before-compact');
@@ -2270,7 +2077,6 @@ describe('PiTurnExecutor event normalization', () => {
     const priorToolId = uuidV7(1_719_990_000_021);
     const priorItems: ThreadItem[] = [
       skillCatalogItem,
-      roleCatalogItem,
       activeSkillItem,
       viewItem,
       additionalItem,
@@ -2324,8 +2130,6 @@ describe('PiTurnExecutor event normalization', () => {
         contentHash: activeSkill.contentHash,
         payloadRef: activeSkillItem.payloadRef,
       }],
-      roleCatalogHash: roleCatalog.catalogHash,
-      announcedRoles: [{ name: 'worker', identity: 'built-in:worker', contentHash: '4'.repeat(64) }],
       userViewBaselineRef: viewItem.payloadRef,
       additionalContextBaselineRef: additionalItem.payloadRef,
       activeObservations: [{
@@ -2441,7 +2245,6 @@ describe('PiTurnExecutor event normalization', () => {
     await expect(executor.execute(context)).resolves.toMatchObject({ status: 'completed' });
     const providerText = JSON.stringify(providerMessages);
     expect(providerText).toContain('ALPHA CATALOG BASELINE');
-    expect(providerText).toContain('WORKER ROLE BASELINE');
     expect(providerText).toContain('ACTIVE ALPHA INSTRUCTIONS');
     expect(providerText).toContain('BASELINE VIEW NODE');
     expect(providerText).toContain('CHANGED VIEW NODE');
@@ -2581,8 +2384,6 @@ describe('PiTurnExecutor event normalization', () => {
           skillCatalogHash: null,
           announcedSkills: [],
           activeSkills: [],
-          roleCatalogHash: null,
-          announcedRoles: [],
           userViewBaselineRef: null,
           additionalContextBaselineRef: null,
           activeObservations: [],
@@ -2900,7 +2701,7 @@ describe('PiTurnExecutor event normalization', () => {
         },
         {
           type: 'userMessage',
-          author: { kind: 'agent', threadId: sourceThreadId },
+          author: { kind: 'feature', feature: 'delegation', ref: sourceThreadId },
           id: currentUserId,
           provenance: fixture.recorder.localProvenance(currentUserId),
           clientId: null,
@@ -3444,8 +3245,8 @@ describe('PiTurnExecutor event normalization', () => {
     await normalizer.flush();
 
     const item = fixture.recorder.orderedItems()[0];
-    expect(item?.type).toBe('collabAgentToolCall');
-    if (item?.type !== 'collabAgentToolCall' || !item.outputRef) {
+    expect(item?.type).toBe('dynamicToolCall');
+    if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
       throw new Error('Expected task_stop output reference');
     }
     const persistedOutput = await fixture.context.readOutput(item.outputRef);
@@ -4011,13 +3812,9 @@ describe('PiTurnExecutor provider payload', () => {
     expect(agentProviderPayload({ model: 'test-model' }, testModel)).toBeUndefined();
   });
 
-  test('restores the canonical Agent schemas after the real Anthropic tool conversion', async () => {
+  test('restores the canonical task_stop schema after the real Anthropic tool conversion', async () => {
     const models = ['claude-sonnet-test', 'claude-opus-test'];
-    const tools: AgentTool[] = [
-      parityTool('agent', AGENT_TOOL_DESCRIPTION, agentInputSchema()),
-      parityTool('agent_message', AGENT_MESSAGE_TOOL_DESCRIPTION, AGENT_MESSAGE_INPUT_SCHEMA),
-      parityTool('task_stop', TASK_STOP_TOOL_DESCRIPTION, TASK_STOP_INPUT_SCHEMA),
-    ];
+    const tools: AgentTool[] = [parityTool('task_stop', TASK_STOP_TOOL_DESCRIPTION, TASK_STOP_INPUT_SCHEMA)];
     const rawPayloads: unknown[] = [];
     const restoredPayloads: unknown[] = [];
     const client = {
@@ -4045,32 +3842,16 @@ describe('PiTurnExecutor provider payload', () => {
 
     expect(result.stopReason).toBe('stop');
     const rawTools = providerPayloadTools(rawPayloads[0]);
-    expect(rawTools.map((tool) => Object.keys(tool.input_schema as object))).toEqual([
-      ['type', 'properties', 'required'],
-      ['type', 'properties', 'required'],
-      ['type', 'properties', 'required'],
-    ]);
-    expect(rawTools[2]?.input_schema).toMatchObject({ required: [] });
+    expect(rawTools.map((tool) => Object.keys(tool.input_schema as object)))
+      .toEqual([['type', 'properties', 'required']]);
+    expect(rawTools[0]?.input_schema).toMatchObject({ required: ['task_id'] });
 
     const restoredTools = providerPayloadTools(restoredPayloads[0]);
-    expect(restoredTools.map((tool) => Object.keys(tool))).toEqual([
-      ['name', 'description', 'input_schema', 'eager_input_streaming'],
-      ['name', 'description', 'input_schema', 'eager_input_streaming'],
-      ['name', 'description', 'input_schema', 'eager_input_streaming', 'cache_control'],
-    ]);
-    expect(restoredTools.map((tool) => tool.input_schema)).toEqual([
-      agentInputSchema(),
-      AGENT_MESSAGE_INPUT_SCHEMA,
-      TASK_STOP_INPUT_SCHEMA,
-    ]);
+    expect(restoredTools.map((tool) => Object.keys(tool)))
+      .toEqual([['name', 'description', 'input_schema', 'eager_input_streaming', 'cache_control']]);
+    expect(restoredTools.map((tool) => tool.input_schema)).toEqual([TASK_STOP_INPUT_SCHEMA]);
     expect(Object.keys(restoredTools[0]!.input_schema as object)).toEqual([
       '$schema', 'type', 'properties', 'required', 'additionalProperties',
-    ]);
-    expect(Object.keys((restoredTools[0]!.input_schema as Record<string, any>).properties)).toEqual([
-      'description', 'prompt', 'subagent_type', 'run_in_background', 'execution', 'isolation',
-    ]);
-    expect(Object.keys(restoredTools[2]!.input_schema as object)).toEqual([
-      '$schema', 'type', 'properties', 'additionalProperties',
     ]);
   });
 
@@ -4410,66 +4191,10 @@ describe('PiTurnExecutor provider payload', () => {
     ]);
   });
 
-  test('maps kernel budget exhaustion to an interrupted Turn with recorded usage', async () => {
-    const fixture = createContext();
-    let observedTokens = 0;
-    const context: TurnExecutionContext = {
-      ...fixture.context,
-      remainingTokenBudget: () => ({
-        remaining: 4 - observedTokens,
-        total: 10,
-        used: 6 + observedTokens,
-      }),
-      onModelCallUsage: (tokens) => { observedTokens += tokens; },
-    };
-    let providerCalls = 0;
-    const executor = new PiTurnExecutor({
-      resolveRuntime: async () => runtimeSelection(),
-      resolveRuntimeSettings: async () => runtimeSettings(),
-      createTools: async () => [testTool('budget_tool', 'Budget boundary tool')],
-      createGateway: (hooks) => new PiModelGateway({
-        ...hooks,
-        streamSimple: () => {
-          providerCalls += 1;
-          const stream = createAssistantMessageEventStream();
-          const message: AssistantMessage = providerCalls === 1
-            ? {
-                ...assistantMessage([{
-                  type: 'toolCall',
-                  id: 'budget-call',
-                  name: 'budget_tool',
-                  arguments: {},
-                }]),
-                stopReason: 'toolUse',
-              }
-            : assistantMessage([{ type: 'text', text: 'must not run' }]);
-          queueMicrotask(() => {
-            stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
-            stream.end(message);
-          });
-          return stream;
-        },
-      }),
-    });
-
-    await expect(executor.execute(context)).resolves.toMatchObject({
-      status: 'interrupted',
-      error: {
-        code: 'subagent_budget_exhausted',
-        message: 'Token budget exhausted mid-Turn (13 of 10 tokens)',
-      },
-      execution: { usage: { totalTokens: 7 } },
-    });
-    expect(providerCalls).toBe(1);
-  });
 
   test('keeps runtime usage tally when diagnostics cannot match a provider response', async () => {
     const fixture = createContext();
-    const observedTokens: number[] = [];
-    const context: TurnExecutionContext = {
-      ...fixture.context,
-      onModelCallUsage: (tokens) => observedTokens.push(tokens),
-    };
+    const context: TurnExecutionContext = fixture.context;
     const executor = new PiTurnExecutor({
       resolveRuntime: async () => runtimeSelection(),
       resolveRuntimeSettings: async () => runtimeSettings(),
@@ -4491,56 +4216,9 @@ describe('PiTurnExecutor provider payload', () => {
       status: 'completed',
       execution: { usage: { totalTokens: 7 } },
     });
-    expect(observedTokens).toEqual([7]);
     expect(fixture.diagnosticsPayloads[0]?.providerCalls).toEqual([]);
   });
 
-  test('keeps an exhausted child user Turn unlimited across provider calls', async () => {
-    const fixture = createContext();
-    const context: TurnExecutionContext = {
-      ...fixture.context,
-      thread: {
-        ...fixture.context.thread,
-        parentThreadId: uuidV7(1_720_000_000_010),
-      },
-      remainingTokenBudget: () => null,
-    };
-    let providerCalls = 0;
-    const executor = new PiTurnExecutor({
-      resolveRuntime: async () => runtimeSelection(),
-      resolveRuntimeSettings: async () => runtimeSettings(),
-      createTools: async () => [testTool('user_budget_tool', 'User budget override tool')],
-      createGateway: (hooks) => new PiModelGateway({
-        ...hooks,
-        streamSimple: () => {
-          providerCalls += 1;
-          const stream = createAssistantMessageEventStream();
-          const message: AssistantMessage = providerCalls === 1
-            ? {
-                ...assistantMessage([{
-                  type: 'toolCall',
-                  id: 'user-budget-call',
-                  name: 'user_budget_tool',
-                  arguments: {},
-                }]),
-                stopReason: 'toolUse',
-              }
-            : assistantMessage([{ type: 'text', text: 'user Turn complete' }]);
-          queueMicrotask(() => {
-            stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
-            stream.end(message);
-          });
-          return stream;
-        },
-      }),
-    });
-
-    await expect(executor.execute(context)).resolves.toMatchObject({
-      status: 'completed',
-      execution: { usage: { totalTokens: 14 } },
-    });
-    expect(providerCalls).toBe(2);
-  });
 
   test('uses raw environment credentials only for the live Turn and redacted history afterward', async () => {
     const fixture = createContext();
@@ -4983,7 +4661,6 @@ function runtimeSelection() {
 function runtimeSettings() {
   return {
     additionalSkillDirectories: [],
-    subagentTokenBudget: 1_500_000,
     providerTimeoutMs: null,
     providerMaxRetries: null,
     providerMaxRetryDelayMs: 60_000,
@@ -5014,8 +4691,6 @@ function createContext(): {
     sessionId: uuidV7(1_720_000_000_001),
     parentThreadId: null,
     forkedFromId: null,
-    agentNickname: null,
-    agentRole: null,
     name: null,
     preview: '',
     ephemeral: true,

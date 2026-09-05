@@ -18,8 +18,6 @@ import type {
   RendererThreadItem,
   ThreadItemDelta,
   ThreadListResponse as CanonicalThreadListResponse,
-  SubagentExecutionProjection,
-  ThreadSubagentsResponse,
   ThreadToolTasksResponse,
   ToolTaskReadResponse,
   ToolTaskProjection,
@@ -56,12 +54,6 @@ export interface ActiveTurnPlan extends TurnPlanSnapshot {
   readonly turnId: TurnId;
 }
 
-export interface ThreadDescendantsView {
-  readonly threads: readonly Thread[];
-  /** Children holding queued work that has not started a Turn yet. */
-  readonly queuedWorkThreadIds: ReadonlySet<ThreadId>;
-}
-
 export interface ThreadStoreSnapshot {
   readonly threads: readonly Thread[];
   readonly selectedThreadId: ThreadId | null;
@@ -72,17 +64,10 @@ export interface ThreadStoreSnapshot {
   readonly userInputByThread: ReadonlyMap<ThreadId, RequestUserInputRequest>;
   readonly providerRetryByThread: ReadonlyMap<ThreadId, { readonly turnId: string; readonly status: ProviderRetryStatus }>;
   readonly planByThread: ReadonlyMap<ThreadId, ActiveTurnPlan>;
-  /**
-   * Canonical Agent execution records for the loaded conversations, keyed by
-   * the stable Agent ID. This is the registry's input: a delegated child spans
-   * many Turns, so its lifecycle cannot be read off the Turn that spawned it.
-   */
-  readonly subagentExecutionsByAgentId: ReadonlyMap<ThreadId, SubagentExecutionProjection>;
   readonly toolTasksById: ReadonlyMap<string, ToolTaskProjection>;
   /**
-   * Who each Thread's participants are and what they look like, keyed first by
-   * Thread and then by Agent type. A Thread owns the cwd that resolves its
-   * project configuration, so a worktree child cannot borrow its root's roster.
+   * How each visible Thread's conversation Agent looks, keyed by Thread and the
+   * stable `main` presentation key. The Thread cwd resolves its project override.
    */
   readonly identityCatalogByThread: ReadonlyMap<ThreadId, AgentIdentityCatalog>;
   readonly loading: boolean;
@@ -99,7 +84,6 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
   userInputByThread: new Map(),
   providerRetryByThread: new Map(),
   planByThread: new Map(),
-  subagentExecutionsByAgentId: new Map(),
   toolTasksById: new Map(),
   identityCatalogByThread: new Map(),
   loading: true,
@@ -226,20 +210,13 @@ export class ThreadStore {
       threads.push(...page.data);
       cursor = page.nextCursor;
     } while (cursor);
-    // `thread/list` is root conversations only, but the store's Thread map is
-    // the renderer's catalog, not the list: child Threads already known stay,
-    // or every Subagent row in the open transcript would lose its identity and
-    // live status on a reload.
-    const known = [...threads, ...this.snapshot.threads.filter((thread) => (
-      thread.parentThreadId !== null && !threads.some((root) => root.id === thread.id)
-    ))];
-    const selected = this.snapshot.selectedThreadId && known.some((thread) => thread.id === this.snapshot.selectedThreadId)
+    const selected = this.snapshot.selectedThreadId && threads.some((thread) => thread.id === this.snapshot.selectedThreadId)
       ? this.snapshot.selectedThreadId
       : threads[0]?.id ?? null;
     this.patch({
-      threads: sortThreads(known),
+      threads: sortThreads(threads),
       selectedThreadId: selected,
-      latestTurnByThread: filterMapKeys(this.snapshot.latestTurnByThread, new Set(known.map((thread) => thread.id))),
+      latestTurnByThread: filterMapKeys(this.snapshot.latestTurnByThread, new Set(threads.map((thread) => thread.id))),
       planByThread: new Map(),
       // A reload rebuilds from the server's view, so a banner recorded before
       // it describes an attempt that no longer exists — but only those.
@@ -255,8 +232,6 @@ export class ThreadStore {
       // The same two reads a selection makes: `thread/list` is roots-only, so a
       // restored conversation knows neither its Agents nor their child Threads
       // until these land.
-      void this.listDescendants(selected).catch(() => undefined);
-      void this.loadSubagentExecutions(selected).catch(() => undefined);
       void this.loadToolTasks(selected).catch(() => undefined);
       await this.loadTurns(selected);
     }
@@ -265,35 +240,11 @@ export class ThreadStore {
   async selectThread(threadId: ThreadId): Promise<void> {
     if (!this.snapshot.threads.some((thread) => thread.id === threadId)) throw new Error(`Thread not found: ${threadId}`);
     this.patch({ selectedThreadId: threadId, error: null });
-    // Children are no longer listed, so a fresh renderer knows none of them and
-    // every Subagent row in this transcript would read "Not found" for a child
-    // that merely finished. One subtree read per selection restores the catalog
-    // this conversation needs, and prunes children the server no longer has.
-    void this.listDescendants(threadId).catch(() => undefined);
-    void this.loadSubagentExecutions(threadId).catch(() => undefined);
     void this.loadToolTasks(threadId).catch(() => undefined);
     // A different conversation can mean a different working directory, and a
     // project layer names its own participants.
     void this.reloadIdentityCatalog(threadId);
     await this.loadTurns(threadId);
-  }
-
-  /**
-   * The conversation's Agent registry input, read once per selection.
-   *
-   * Live changes arrive as `subagent/execution/changed`, so this read is the
-   * cold-start half only: a conversation reopened days later still knows which
-   * Agents it delegated, which of them the user stopped, and which left a
-   * worktree behind.
-   */
-  async loadSubagentExecutions(threadId: ThreadId): Promise<void> {
-    const response: ThreadSubagentsResponse = await this.client.agentCoreRequest(
-      'thread/subagents/list',
-      { threadId },
-    );
-    const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
-    for (const execution of response.data) subagentExecutionsByAgentId.set(execution.agentId, execution);
-    this.patch({ subagentExecutionsByAgentId });
   }
 
   async loadToolTasks(threadId: ThreadId): Promise<void> {
@@ -374,32 +325,6 @@ export class ThreadStore {
     this.patch({ threads: sortThreads(upsertById(this.snapshot.threads, response.thread)) });
   }
 
-  /**
-   * The parent-side browse surface for children, which are no longer list rows.
-   * Results are folded into the catalog so their names and live status are
-   * available to the transcript without a second read.
-   *
-   * It is also the only thing that can retire a child record: `thread/list`
-   * never mentions children, so absence from a subtree read is the sole
-   * evidence one is gone — a spawn that failed after broadcasting
-   * `thread/started` would otherwise leave a row that never dies. Only records
-   * that existed BEFORE the request are eligible, so a child created while it
-   * was in flight is never pruned by a snapshot that predates it.
-   */
-  async listDescendants(threadId: ThreadId): Promise<ThreadDescendantsView> {
-    const knownBefore = descendantThreadIds(this.snapshot.threads, threadId);
-    const response = await this.client.agentCoreRequest('thread/descendants', { threadId });
-    const returned = new Set(response.data.map((thread) => thread.id));
-    let threads = this.snapshot.threads.filter((thread) => (
-      thread.id === threadId || !knownBefore.has(thread.id) || returned.has(thread.id)
-    ));
-    for (const thread of response.data) threads = upsertById(threads, thread);
-    if (threads.length !== this.snapshot.threads.length || response.data.length > 0) {
-      this.patch({ threads: sortThreads(threads) });
-    }
-    return { threads: response.data, queuedWorkThreadIds: new Set(response.queuedWorkThreadIds) };
-  }
-
   async createThread(input: { name?: string } = {}): Promise<Thread> {
     const response = await this.client.agentCoreRequest('thread/start', {
       source: 'app',
@@ -437,7 +362,6 @@ export class ThreadStore {
     const userInputByThread = new Map(this.snapshot.userInputByThread);
     const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
     const planByThread = new Map(this.snapshot.planByThread);
-    const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
     const toolTasksById = new Map(this.snapshot.toolTasksById);
     const identityCatalogByThread = new Map(this.snapshot.identityCatalogByThread);
     for (const deletedId of deletedIds) {
@@ -451,7 +375,6 @@ export class ThreadStore {
       userInputByThread.delete(deletedId);
       providerRetryByThread.delete(deletedId);
       planByThread.delete(deletedId);
-      subagentExecutionsByAgentId.delete(deletedId);
       for (const [taskId, task] of toolTasksById) {
         if (task.ownerThreadId === deletedId) toolTasksById.delete(taskId);
       }
@@ -460,9 +383,6 @@ export class ThreadStore {
     const selectedThreadWasDeleted = Boolean(
       this.snapshot.selectedThreadId && deletedIds.has(this.snapshot.selectedThreadId),
     );
-    // The catalog retains children, so the first entry can be a Subagent that
-    // just ran. Falling back to one would open a Thread the user never chose,
-    // with no matching row in the roots-only history list.
     const replacementThreadId = selectedThreadWasDeleted
       ? threads.find((thread) => thread.parentThreadId === null)?.id ?? null
       : this.snapshot.selectedThreadId;
@@ -475,7 +395,6 @@ export class ThreadStore {
       userInputByThread,
       providerRetryByThread,
       planByThread,
-      subagentExecutionsByAgentId,
       toolTasksById,
       identityCatalogByThread,
       selectedThreadId: replacementThreadId,
@@ -516,12 +435,6 @@ export class ThreadStore {
 
   /**
    * Submit user-authored work to a specific Thread without selecting it.
-   *
-   * Agent transcripts are embedded in their parent conversation, so selecting
-   * the child would navigate the dock away from the user's conversation. A
-   * deliberate message here still uses the ordinary renderer Turn boundary;
-   * the host can therefore distinguish it from model-authored `agent_message`
-   * traffic and clear user-stop provenance for this Agent only.
    */
   async sendToThread(
     threadId: ThreadId,
@@ -574,35 +487,6 @@ export class ThreadStore {
     const active = findLastInProgressTurn(this.turns(threadId));
     if (!active) return;
     await this.client.agentCoreRequest('turn/interrupt', { threadId, turnId: active.id });
-  }
-
-  /**
-   * Stop one delegated child, from the card or from its own Thread header.
-   *
-   * The Turn id comes from the retained latest-Turn cache when that child's
-   * history is not loaded — which is the normal case for a card line. It is
-   * still sent explicitly: the host refuses a Turn that is no longer the active
-   * one, so a stale click can never stop newer work than the user was looking at.
-   */
-  async interruptThread(threadId: ThreadId): Promise<void> {
-    const loaded = findLastInProgressTurn(this.turns(threadId));
-    const latest = this.snapshot.latestTurnByThread.get(threadId);
-    // A conversation reopened cold loads no child Turns at all, so a delegated
-    // Agent that is verifiably mid-Turn had NOTHING here to interrupt and every
-    // Stop on it failed with "that work already finished" while it kept running.
-    // Its execution record names the Turn it is running; that is the same
-    // authority the chip read to decide it was still running at all.
-    const running = this.snapshot.subagentExecutionsByAgentId.get(threadId);
-    const active = loaded
-      ?? (latest?.status === 'inProgress' ? latest : undefined)
-      ?? (running?.currentTurnId === null ? undefined : running);
-    // Reported rather than swallowed: a Stop that resolves without issuing a
-    // request looks identical to one that worked, which is the worst of the
-    // three outcomes. The caller surfaces this.
-    if (!active) throw new Error(`No active Turn to interrupt: ${threadId}`);
-    const turnId = 'currentTurnId' in active ? active.currentTurnId : active.id;
-    if (turnId === null) throw new Error(`No active Turn to interrupt: ${threadId}`);
-    await this.client.agentCoreRequest('turn/interrupt', { threadId, turnId });
   }
 
   async continueInNewChat(threadId: ThreadId, turnId: string): Promise<Thread> {
@@ -734,7 +618,6 @@ export class ThreadStore {
   }
 
   readItemOutput(threadId: ThreadId, turnId: string, item: ThreadItem): Promise<string | null> {
-    if (item.type === 'collabAgentToolCall') return Promise.resolve(null);
     if (!('outputRef' in item) || !item.outputRef) return Promise.resolve(null);
     const key = `${item.provenance.originThreadId}:${item.outputRef.id}`;
     let pending = this.outputTextCache.get(key);
@@ -1008,16 +891,6 @@ export class ThreadStore {
         const goalsByThread = new Map(this.snapshot.goalsByThread);
         goalsByThread.delete(notification.threadId);
         this.patch({ goalsByThread });
-        return;
-      }
-      case 'subagent/execution/changed': {
-        const current = this.snapshot.subagentExecutionsByAgentId.get(notification.execution.agentId);
-        // Field-equal records keep their identity so the registry — and every
-        // memoized row projected from it — sees no change at all.
-        if (current && subagentExecutionEqual(current, notification.execution)) return;
-        const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
-        subagentExecutionsByAgentId.set(notification.execution.agentId, notification.execution);
-        this.patch({ subagentExecutionsByAgentId });
         return;
       }
       case 'toolTask/changed': {
@@ -1299,7 +1172,6 @@ type ExecutableThreadItem = Extract<ThreadItem, {
     | 'fileChange'
     | 'mcpToolCall'
     | 'dynamicToolCall'
-    | 'collabAgentToolCall'
     | 'webSearch';
 }>;
 
@@ -1320,7 +1192,6 @@ function executableItemStatus(item: ThreadItem): ExecutableThreadItem['status'] 
     case 'fileChange':
     case 'mcpToolCall':
     case 'dynamicToolCall':
-    case 'collabAgentToolCall':
     case 'webSearch':
       return item.status;
     default:
@@ -1356,63 +1227,6 @@ function appendReasoningDelta(
   if (values.length === 0) values.push(delta);
   else values[values.length - 1] = values.at(-1)! + delta;
   return { ...item, [key]: values };
-}
-
-/**
- * Whether two execution projections say the same thing to the renderer.
- *
- * Compared over the record's OWN KEYS rather than a hand-written list: the list
- * had already fallen behind the projection once, and a field it forgets is a
- * change that silently never reaches the screen.
- *
- * `updatedAt` is the one deliberate exclusion. The ledger stamps it on every
- * touch, including ones that change nothing anybody can see, and treating those
- * as changes would patch the store — and re-render every chip — for nothing.
- */
-const SUBAGENT_EXECUTION_UNRENDERED_KEYS = new Set(['updatedAt']);
-
-function subagentExecutionEqual(
-  left: SubagentExecutionProjection,
-  right: SubagentExecutionProjection,
-): boolean {
-  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-  for (const key of keys) {
-    if (SUBAGENT_EXECUTION_UNRENDERED_KEYS.has(key)) continue;
-    if (key === 'worktree') {
-      if (left.worktree?.branch !== right.worktree?.branch) return false;
-      if (left.worktree?.path !== right.worktree?.path) return false;
-      continue;
-    }
-    if (key === 'generationReceipts') {
-      if (!generationReceiptsEqual(left.generationReceipts, right.generationReceipts)) return false;
-      continue;
-    }
-    const field = key as keyof SubagentExecutionProjection;
-    if (left[field] !== right[field]) return false;
-  }
-  return true;
-}
-
-function generationReceiptsEqual(
-  left: SubagentExecutionProjection['generationReceipts'],
-  right: SubagentExecutionProjection['generationReceipts'],
-): boolean {
-  if (left.length !== right.length) return false;
-  return left.every((receipt, index) => (
-    receipt.generation === right[index]?.generation
-    && receipt.turnId === right[index]?.turnId
-    && receipt.parentItemId === right[index]?.parentItemId
-    && receipt.terminalStatus === right[index]?.terminalStatus
-    && receipt.stopProvenance === right[index]?.stopProvenance
-    && receipt.durationMs === right[index]?.durationMs
-    && receipt.error?.code === right[index]?.error?.code
-    && receipt.error?.messagePreview === right[index]?.error?.messagePreview
-    && receipt.error?.omittedBytes === right[index]?.error?.omittedBytes
-    && receipt.partialOutputAvailable === right[index]?.partialOutputAvailable
-    && receipt.parentThreadId === right[index]?.parentThreadId
-    && receipt.notificationState === right[index]?.notificationState
-    && receipt.deliveryTurnId === right[index]?.deliveryTurnId
-  ));
 }
 
 function errorMessage(error: unknown): string {

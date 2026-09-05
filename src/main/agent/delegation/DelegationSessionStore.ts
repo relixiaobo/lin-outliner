@@ -224,6 +224,27 @@ export class DelegationSessionStore {
     `).all(ownerThreadId) as SessionRow[]).map(sessionFromRow);
   }
 
+  openSessions(): readonly DelegationSessionBinding[] {
+    return (this.db.prepare(`
+      SELECT * FROM delegation_sessions WHERE state = 'open' ORDER BY created_at, session_id
+    `).all() as SessionRow[]).map(sessionFromRow);
+  }
+
+  idleSessionsUpdatedBefore(cutoff: number): readonly DelegationSessionBinding[] {
+    if (!Number.isSafeInteger(cutoff)) throw new DelegationStateError('invalid', 'Delegation idle cutoff is invalid');
+    return (this.db.prepare(`
+      SELECT * FROM delegation_sessions AS session
+      WHERE session.state = 'open'
+        AND session.current_task_id IS NULL
+        AND session.updated_at <= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM delegation_root_messages AS message
+          WHERE message.session_id = session.session_id AND message.state = 'queued'
+        )
+      ORDER BY session.updated_at, session.session_id
+    `).all(cutoff) as SessionRow[]).map(sessionFromRow);
+  }
+
   appendMessage(input: AppendDelegationMessageInput): DelegationRootMessage {
     if (!input.messageId || !input.sourceTaskId || !input.sourceRootItemId || !input.text) {
       throw new DelegationStateError('invalid', 'Delegation message identity and text must be non-empty');
@@ -710,7 +731,7 @@ export class DelegationSessionStore {
   ): DelegationSessionBinding {
     validateWorktree(worktree);
     return this.transaction(() => {
-      const session = this.requireOpenSession(sessionId);
+      const session = this.requireSession(sessionId);
       if (JSON.stringify(session.worktree) === JSON.stringify(worktree)) return session;
       this.assertRevision(session, expectedRevision);
       this.advanceSession(sessionId, now, 'worktree_json = ?', JSON.stringify(worktree));
@@ -735,6 +756,20 @@ export class DelegationSessionStore {
         WHERE session_id = ?
       `).run(now, now, sessionId);
       return this.requireSession(sessionId);
+    });
+  }
+
+  deleteSessionsForOwner(ownerThreadId: ThreadId): number {
+    return this.transaction(() => {
+      const open = this.db.prepare(`
+        SELECT session_id FROM delegation_sessions
+        WHERE owner_thread_id = ? AND state = 'open' LIMIT 1
+      `).get(ownerThreadId) as { session_id: string } | undefined;
+      if (open) {
+        throw new DelegationStateError('conflict', 'Open Delegation Sessions must close before owner deletion');
+      }
+      return Number(this.db.prepare('DELETE FROM delegation_sessions WHERE owner_thread_id = ?')
+        .run(ownerThreadId).changes);
     });
   }
 
@@ -980,13 +1015,51 @@ function decodePolicy(value: string): DelegationPolicySnapshot {
 
 function validateWorktree(worktree: DelegationWorktreeDisposition): void {
   if (worktree.kind === 'none') return;
+  if (worktree.kind === 'planned') {
+    validateWorktreeIntent(worktree.intent);
+    return;
+  }
   if (worktree.kind === 'cleaned') {
     if (!worktree.baseRevision) throw new DelegationStateError('invalid', 'Cleaned worktree requires a base revision');
     return;
   }
-  if (!['active', 'unchanged', 'changed', 'retained', 'ambiguous'].includes(worktree.kind)
-    || !worktree.path || !worktree.baseRevision) {
+  if (worktree.kind === 'ambiguous') {
+    validateWorktreeIntent(worktree.intent);
+    if (worktree.metadata !== null) validateWorktreeMetadata(worktree.metadata);
+    return;
+  }
+  if (!['active', 'unchanged', 'changed', 'retained'].includes(worktree.kind)) {
     throw new DelegationStateError('invalid', 'Delegation worktree disposition is invalid');
+  }
+  validateWorktreeMetadata(worktree.metadata);
+}
+
+function validateWorktreeIntent(intent: {
+  readonly sourceCwd: string;
+  readonly path: string;
+  readonly branch: string;
+  readonly baseCommit: string;
+  readonly gitCommonDir: string;
+}): void {
+  if (!intent.sourceCwd || !intent.path || !intent.branch || !intent.baseCommit || !intent.gitCommonDir) {
+    throw new DelegationStateError('invalid', 'Delegation worktree intent is invalid');
+  }
+}
+
+function validateWorktreeMetadata(metadata: {
+  readonly sourceCwd: string;
+  readonly path: string;
+  readonly branch: string;
+  readonly baseCommit: string;
+  readonly gitCommonDir: string;
+  readonly gitWorktreeDir: string;
+  readonly managed: true;
+  readonly removedAt: number | null;
+}): void {
+  validateWorktreeIntent(metadata);
+  if (!metadata.gitWorktreeDir || metadata.managed !== true
+    || (metadata.removedAt !== null && !Number.isSafeInteger(metadata.removedAt))) {
+    throw new DelegationStateError('invalid', 'Delegation worktree metadata is invalid');
   }
 }
 

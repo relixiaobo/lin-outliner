@@ -265,22 +265,16 @@ export function ThreadList({
 
 function threadIdentity(
   thread: Thread,
-  labels: { readonly subagent: string; readonly memory: string; readonly automation: string; readonly feature: string },
+  labels: { readonly memory: string; readonly automation: string; readonly feature: string },
 ): string | null {
-  const agent = thread.agentNickname && thread.agentRole
-    ? `${thread.agentNickname} [${thread.agentRole}]`
-    : thread.agentNickname ?? thread.agentRole;
   const source = thread.threadSource === 'user'
     ? null
-    : thread.threadSource === 'subagent'
-      ? labels.subagent
-      : thread.threadSource === 'memory_consolidation'
+    : thread.threadSource === 'memory_consolidation'
         ? labels.memory
         : thread.threadSource === 'automation'
           ? labels.automation
           : labels.feature;
-  if (!source) return agent;
-  return agent ? `${source} · ${agent}` : source;
+  return source;
 }
 
 function formatRelativeTime(timestamp: number): string {

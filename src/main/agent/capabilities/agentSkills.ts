@@ -7,11 +7,8 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type {
-  AdditionalContext,
   SkillCatalogContextPayload,
   SkillInvocationContextPayload,
-  ThreadResourceReference,
-  TurnStatus,
 } from '../../../core/agent/protocol';
 import type { SkillDefinition } from '../../../core/types';
 // Runtime-only cycle: agentSkillAuthoring imports the shared resolver/hash from this
@@ -63,10 +60,9 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - Never edit built-in skills.',
     '',
     '3. Draft the supported `SKILL.md` shape.',
-    '   - Use YAML frontmatter only for supported fields: `description`, `when_to_use`, `argument-hint`, `arguments`, `allowed-tools`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `execution`, `shell`, and `paths`.',
+    '   - Use YAML frontmatter only for supported fields: `description`, `when_to_use`, `argument-hint`, `arguments`, `disable-model-invocation`, `user-invocable`, and `paths`.',
     '   - Write a concise `description` and a precise `when_to_use` that includes positive examples and negative guidance for when not to auto-invoke.',
     '   - Add arguments only when future invocations need variable input.',
-    '   - Default to `execution: inline`. Use `execution: isolated` only for self-contained work that benefits from context isolation.',
     '   - Keep instructions step-by-step with success criteria, expected artifacts, hard rules, and human checkpoints where they matter.',
     '',
     '4. Keep creation and update paths distinct.',
@@ -74,12 +70,8 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - For an existing skill, resolve and read the current `SKILL.md` first. Preserve existing frontmatter unless the user explicitly asked to change it or the workflow requires the change.',
     '   - Prefer a focused `file_edit` patch for existing skills. Use `file_write` for new skills, major rewrites, or malformed files that cannot be safely patched.',
     '',
-    '5. Treat `allowed-tools` as an authored runtime contract.',
-    '   - Separate authoring tools from runtime tools: tools used to create the skill are not automatically visible to a future isolated child Thread.',
-    '   - For `execution: isolated`, list every tool the child Thread needs; omitted `allowed-tools` creates a tool-free child Thread.',
-    '   - `allowed-tools` selects whole tools, not command patterns. Inline skills keep the parent Turn catalog unchanged and cannot contain embedded shell expansion.',
-    '   - Embedded shell expansion is isolated execution only and supports `shell: bash` (the default).',
-    '   - Flag broad `allowed-tools` in the preview summary.',
+    '5. Keep runtime behavior explicit.',
+    '   - A Skill loads instructions into the current Turn. It does not select a model, run embedded shell, or create another Agent.',
     '',
     '6. Resolve ambiguity, then write.',
     '   - When the explicit request and Thread context determine the skill contract, write it directly without a second confirmation.',
@@ -108,7 +100,7 @@ const SKILL_TOOL_PARAMETERS = {
     },
     args: {
       type: 'string',
-      description: 'Optional input governed by the selected Skill catalog entry. Omit for load-only Skills; pass only declared values for parameterized inline Skills; pass the exact user task for isolated Skills.',
+      description: 'Optional input governed by the selected Skill catalog entry. Omit for load-only Skills; pass only declared values for parameterized Skills.',
     },
   },
 };
@@ -124,8 +116,6 @@ export interface SkillLoadOptions {
   builtInSkillRoots?: string[];
   builtInSkills?: BuiltInSkillInput[];
   threadId?: string;
-  executeSkillShell?: SkillShellExecutor;
-  executeIsolatedSkill?: SkillIsolatedExecutor;
   provenanceStore?: AgentSkillProvenanceStore;
   managedSkillRoots?: () => Promise<Array<{
     id: string;
@@ -190,58 +180,10 @@ export interface BuiltInSkillInput {
   whenToUse?: string;
   userInvocable?: boolean;
   modelInvocable?: boolean;
-  allowedTools?: string[];
   argumentHint?: string;
   argumentNames?: string[];
   version?: string;
-  model?: string;
-  effort?: string;
-  execution?: 'inline' | 'isolated';
   paths?: string[];
-}
-
-export interface SkillShellExecutionInput {
-  skill: SkillDefinition;
-  command: string;
-  shell: string;
-  argumentBindings: SkillShellArgumentBindings;
-  signal?: AbortSignal;
-}
-
-export interface SkillShellArgumentBindings {
-  readonly aggregate: string;
-  readonly positional: readonly string[];
-  readonly named: readonly {
-    readonly name: string;
-    readonly value: string;
-    readonly index: number;
-  }[];
-}
-
-export interface SkillShellExecutionResult {
-  /** Output for the current invocation; it may contain Turn-scoped readable paths. */
-  readonly output: string;
-  /** Stable output stored in Skill invocation evidence. Defaults to `output`. */
-  readonly persistedOutput?: string;
-  readonly resourceRefs: readonly ThreadResourceReference[];
-  readonly artifacts?: readonly SkillShellArtifactObservation[];
-}
-
-export type SkillShellExecutor = (input: SkillShellExecutionInput) => Promise<SkillShellExecutionResult>;
-
-export interface SkillShellArtifactObservation {
-  readonly ref: ThreadResourceReference;
-  readonly readablePath: string | null;
-  readonly label: string;
-}
-
-export interface SkillShellObservation {
-  readonly key: string;
-  /** Current-process output; it may contain Turn-scoped readable paths. */
-  readonly output: string;
-  /** Stable output safe to persist in the child Thread. */
-  readonly persistedOutput: string;
-  readonly resourceRefs: readonly ThreadResourceReference[];
 }
 
 interface InvokeSkillInput {
@@ -253,63 +195,17 @@ interface InvokeSkillInput {
   signal?: AbortSignal;
 }
 
-export interface SkillIsolatedExecutionInput {
-  skill: SkillDefinition;
-  renderedInstructions: string;
-  shellObservations: readonly SkillShellObservation[];
-  args: string;
-  trigger: 'agent' | 'slash' | 'runtime';
-  parentToolCallId?: string;
-}
-
-export interface SkillIsolatedExecutionResult {
-  threadId: string;
-  agentRole: string;
-  status: Exclude<TurnStatus, 'inProgress'>;
-  result?: string;
-  /** Account layer: the child transcript artifact, absent when the write failed (A12). */
-  transcriptPath?: string;
-  error?: string;
-}
-
-export type SkillIsolatedExecutor = (input: SkillIsolatedExecutionInput) => Promise<SkillIsolatedExecutionResult>;
-
-export function isolatedSkillShellContext(
-  observations: readonly SkillShellObservation[],
-): {
-  readonly additionalContext: AdditionalContext | undefined;
-  readonly resourceRefs: readonly ThreadResourceReference[];
-} {
-  if (observations.length === 0) return { additionalContext: undefined, resourceRefs: [] };
-  const resourceRefs = new Map<string, ThreadResourceReference>();
-  const additionalContext = Object.fromEntries(observations.map((observation) => {
-    for (const ref of observation.resourceRefs) resourceRefs.set(skillResourceKey(ref), ref);
-    return [observation.key, {
-      kind: 'untrusted' as const,
-      value: observation.persistedOutput || 'The embedded shell command completed without output.',
-    }];
-  }));
-  return { additionalContext, resourceRefs: [...resourceRefs.values()] };
-}
-
 export type SkillInvocationResult =
   | {
     ok: true;
-    execution: 'inline' | 'isolated';
     skill: SkillDefinition;
     renderedContent: string;
-    resourceRefs: readonly ThreadResourceReference[];
-    artifactObservations: readonly SkillShellArtifactObservation[];
     evidence: SkillInvocationContextPayload;
-    isolated?: SkillIsolatedExecutionResult;
   }
   | {
     ok: false;
     code: string;
     message: string;
-    persistedMessage?: string;
-    resourceRefs?: readonly ThreadResourceReference[];
-    artifactObservations?: readonly SkillShellArtifactObservation[];
     skill?: SkillDefinition;
   };
 
@@ -322,23 +218,12 @@ export interface SkillToolData {
   success: boolean;
   skill: string;
   invocationEvidence?: SkillInvocationContextPayload;
-  status?: 'loaded' | 'isolated';
-  outcome?: Exclude<TurnStatus, 'inProgress'>;
-  allowedTools?: string[];
-  model?: string;
-  effort?: string;
-  threadId?: string;
-  agentRole?: string;
-  result?: string;
-  transcriptPath?: string;
-  error?: string;
+  status?: 'loaded';
 }
 
 export class AgentSkillRuntime {
   private readonly registry: SkillRegistry;
   private readonly threadId: string;
-  private readonly executeSkillShell?: SkillShellExecutor;
-  private readonly executeIsolatedSkill?: SkillIsolatedExecutor;
   private readonly assertManagedSkillInvocable?: SkillLoadOptions['assertManagedSkillInvocable'];
   private readonly enabledSkills: ReadonlySet<string> | null;
   private catalogRefreshVersion = 0;
@@ -348,8 +233,6 @@ export class AgentSkillRuntime {
   constructor(options: SkillLoadOptions = {}) {
     this.registry = new SkillRegistry(options);
     this.threadId = options.threadId?.trim() || 'lin-agent-thread';
-    this.executeSkillShell = options.executeSkillShell;
-    this.executeIsolatedSkill = options.executeIsolatedSkill;
     this.assertManagedSkillInvocable = options.assertManagedSkillInvocable;
     this.enabledSkills = options.enabledSkills === undefined || options.enabledSkills.includes('*')
       ? null
@@ -530,89 +413,14 @@ export class AgentSkillRuntime {
         };
       }
     }
-    let renderedContent: string;
-    let persistedContent: string;
-    let resourceRefs: readonly ThreadResourceReference[];
-    let artifactObservations: readonly SkillShellArtifactObservation[];
-    let shellObservations: readonly SkillShellObservation[];
-    try {
-      const rendered = await renderSkillContent(
-        skill,
-        input.args ?? '',
-        this.threadId,
-        this.executeSkillShell,
-        input.signal,
-      );
-      renderedContent = rendered.content;
-      persistedContent = rendered.persistedContent;
-      resourceRefs = rendered.resourceRefs;
-      artifactObservations = rendered.artifacts;
-      shellObservations = rendered.shellObservations;
-    } catch (error) {
-      const shellFailure = skillShellFailure(error);
-      return {
-        ok: false,
-        code: 'skill_shell_failed',
-        message: error instanceof Error ? error.message : String(error),
-        ...(shellFailure.persistedMessage ? { persistedMessage: shellFailure.persistedMessage } : {}),
-        ...(shellFailure.resourceRefs.length > 0 ? { resourceRefs: shellFailure.resourceRefs } : {}),
-        ...(shellFailure.artifacts.length > 0 ? { artifactObservations: shellFailure.artifacts } : {}),
-        skill,
-      };
-    }
-
-    if (skill.execution === 'isolated') {
-      if (!this.executeIsolatedSkill) {
-        return {
-          ok: false,
-          code: 'isolated_execution_not_supported',
-          message: `Skill ${skill.name} requests isolated execution, but no isolated executor is available in this runtime.`,
-          skill,
-        };
-      }
-      try {
-        const isolated = await this.executeIsolatedSkill({
-          skill,
-          renderedInstructions: renderedContent,
-          shellObservations,
-          args: input.args ?? '',
-          trigger: input.trigger,
-          parentToolCallId: input.parentToolCallId,
-        });
-        return {
-          ok: true,
-          execution: 'isolated',
-          skill,
-          renderedContent,
-          resourceRefs,
-          artifactObservations,
-          evidence: skillInvocationEvidence(skill, persistedContent, input),
-          isolated,
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          ok: false,
-          code: 'isolated_execution_failed',
-          message,
-          ...(resourceRefs.length > 0 ? { resourceRefs } : {}),
-          ...(artifactObservations.length > 0 ? { artifactObservations } : {}),
-          skill,
-        };
-      }
-    }
-
+    const renderedContent = renderSkillContent(skill, input.args ?? '', this.threadId);
     return {
       ok: true,
-      execution: 'inline',
       skill,
       renderedContent,
-      resourceRefs,
-      artifactObservations,
-      evidence: skillInvocationEvidence(skill, persistedContent, input),
+      evidence: skillInvocationEvidence(skill, renderedContent, input),
     };
   }
-
   private isDisabledByRuntimeSettings(skill: SkillDefinition): boolean {
     return !isSkillEnabled(skill, {
       disabledSkills: this.disabledSkills,
@@ -631,9 +439,8 @@ export class AgentSkillRuntime {
 }
 
 /**
- * Resolve Role-declared startup Skills without turning an unavailable entry into
- * a failed Agent spawn. Preloading is instruction admission, so one-shot isolated
- * Skills are intentionally skipped rather than executed as a side effect.
+ * Resolve configuration-preloaded startup Skills without turning an unavailable entry into
+ * a failed Turn. Preloading is instruction admission.
  */
 export async function resolvePreloadedSkillInvocations(
   runtime: AgentSkillRuntime,
@@ -646,7 +453,7 @@ export async function resolvePreloadedSkillInvocations(
       invocations: [],
       diagnostics: names.length === 0
         ? []
-        : ['Role-preloaded Skills were skipped because the skill tool is unavailable.'],
+        : ['Preloaded Skills were skipped because the skill tool is unavailable.'],
     };
   }
   const invocations: SkillInvocationContextPayload[] = [];
@@ -655,11 +462,7 @@ export async function resolvePreloadedSkillInvocations(
     try {
       const skill = await runtime.getSkill(requestedName);
       if (!skill) {
-        diagnostics.push(`Role-preloaded Skill "${requestedName}" is unavailable and was skipped.`);
-        continue;
-      }
-      if (skill.execution === 'isolated') {
-        diagnostics.push(`Role-preloaded Skill "${skill.name}" uses isolated execution and was skipped.`);
+        diagnostics.push(`Preloaded Skill "${requestedName}" is unavailable and was skipped.`);
         continue;
       }
       const invocation = await runtime.invokeSkill({
@@ -669,13 +472,13 @@ export async function resolvePreloadedSkillInvocations(
         invokedAt,
       });
       if (!invocation.ok) {
-        diagnostics.push(`Role-preloaded Skill "${skill.name}" was skipped: ${invocation.message}`);
+        diagnostics.push(`Preloaded Skill "${skill.name}" was skipped: ${invocation.message}`);
         continue;
       }
       invocations.push(invocation.evidence);
     } catch (error) {
       diagnostics.push(
-        `Role-preloaded Skill "${requestedName}" was skipped: ${error instanceof Error ? error.message : String(error)}`,
+        `Preloaded Skill "${requestedName}" was skipped: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -698,15 +501,7 @@ function skillInvocationEvidence(
     contentHash: skill.contentHash ?? codeRegisteredSkillContentHash(skill),
     instructions: renderedContent,
     arguments: input.args ?? '',
-    execution: skill.execution,
     invocationSource: input.trigger === 'agent' ? 'model' : input.trigger === 'slash' ? 'user' : 'runtime',
-    constraints: skill.execution === 'isolated'
-      ? {
-          allowedTools: [...skill.allowedTools],
-          model: skill.model ?? null,
-          effort: skill.effort ?? null,
-        }
-      : { allowedTools: [], model: null, effort: null },
     invokedAt: input.invokedAt ?? Date.now(),
   };
 }
@@ -760,12 +555,11 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       'How to invoke:',
       '- Use this tool with the Skill name and follow that catalog entry\'s input contract.',
       '- Omit `args` when the catalog says `Invoke without args.` The canonical user message already carries the task.',
-      '- Catalog pressure labels: `[A]` means parameterized inline `args`; `[I+]` and `[I-]` mean isolated exact-task `args` with and without Subagents; an entry without a full or compact input label is load-only.',
-      '- For `Args: ...`, pass only the declared variable input. For an isolated Skill, pass the exact user task and explicit constraints without adding an implementation plan.',
+      '- Catalog pressure label `[A]` means the Skill accepts parameterized `args`; an entry without an input label is load-only.',
+      '- For `Args: ...`, pass only the declared variable input.',
       '- Examples:',
       '  - `skill: "outline"` - load an inline Skill without arguments',
       '  - `skill: "commit", args: "-m \'Fix bug\'"` - invoke with arguments',
-      '  - `skill: "research", args: "Compare the two exact targets"` - pass a task to an isolated Skill',
       'Important:',
       '- Available skills are listed in the current Skill catalog context.',
       `- When a skill matches the user's request, this is a BLOCKING REQUIREMENT: invoke the relevant ${SKILL_TOOL_NAME} tool BEFORE generating any other response about the task.`,
@@ -773,8 +567,6 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       '- Do not invoke a skill that is already running.',
       '- Do not use this tool for built-in commands.',
       '- If the current context already contains a matching Skill invocation, follow the loaded instructions instead of calling this tool again.',
-      '- An isolated Skill runs once in one child Thread; its catalog entry states whether Subagent fan-out must stay in the parent.',
-      '- An isolated Skill does not inherit the parent conversation. Pass the relevant user task in arguments without adding your own implementation plan.',
     ].join('\n'),
     parameters: SKILL_TOOL_PARAMETERS,
     executionMode: 'sequential',
@@ -789,74 +581,25 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
       });
 
       if (!invocation.ok) {
-        const stableMessage = invocation.persistedMessage ?? invocation.message;
         const data = { success: false, skill: normalizeSkillName(params.skill) || params.skill };
-        const envelope = errorEnvelope<SkillToolData>(SKILL_TOOL_NAME, invocation.code, stableMessage, {
+        const envelope = errorEnvelope<SkillToolData>(SKILL_TOOL_NAME, invocation.code, invocation.message, {
           data,
           instructions: 'Use only Skills listed in the current Skill catalog context, or continue without a Skill.',
         });
-        const modelData = skillToolModelData({ skill: data.skill }, invocation.artifactObservations ?? []);
-        return {
-          ...agentToolResult(envelope, modelData),
-          ...(invocation.resourceRefs?.length ? { resourceRefs: invocation.resourceRefs } : {}),
-        };
+        return agentToolResult(envelope, { skill: data.skill });
       }
 
       const data: SkillToolData = {
         success: true,
         skill: invocation.skill.name,
         invocationEvidence: invocation.evidence,
-        status: invocation.execution === 'isolated' ? 'isolated' : 'loaded',
-        outcome: invocation.isolated?.status,
-        allowedTools: invocation.skill.allowedTools.length > 0 ? invocation.skill.allowedTools : undefined,
-        model: invocation.skill.model,
-        effort: invocation.skill.effort,
-        threadId: invocation.isolated?.threadId,
-        agentRole: invocation.isolated?.agentRole,
-        result: invocation.isolated?.result,
-        transcriptPath: invocation.isolated?.transcriptPath,
-        error: invocation.isolated?.error,
+        status: 'loaded',
       };
-      const modelData = skillToolModelData({
+      return agentToolResult(successEnvelope(SKILL_TOOL_NAME, data), {
         skill: invocation.skill.name,
-        status: invocation.execution === 'isolated' ? 'isolated' : 'loaded',
-        ...(invocation.execution === 'isolated'
-          ? {
-              outcome: invocation.isolated?.status,
-              threadId: invocation.isolated?.threadId,
-              agentRole: invocation.isolated?.agentRole,
-            }
-          : {}),
-      }, invocation.artifactObservations);
-      const supplemental = invocation.execution === 'isolated'
-        ? [{
-            type: 'text' as const,
-            text: formatIsolatedSkillToolResult(invocation.skill, invocation.isolated),
-          }]
-        : [];
-      return {
-        ...agentToolResult(successEnvelope(SKILL_TOOL_NAME, data), modelData, supplemental),
-        ...(invocation.resourceRefs.length > 0 ? { resourceRefs: invocation.resourceRefs } : {}),
-      };
+        status: 'loaded',
+      });
     },
-  };
-}
-
-function skillToolModelData<T extends Record<string, unknown>>(
-  data: T,
-  artifacts: readonly SkillShellArtifactObservation[],
-): T & { artifacts?: unknown[] } {
-  return {
-    ...data,
-    ...(artifacts.length > 0 ? {
-      artifacts: artifacts.map((artifact) => ({
-        label: artifact.label,
-        fileName: artifact.ref.fileName,
-        mimeType: artifact.ref.mimeType,
-        byteLength: artifact.ref.byteLength,
-        ...(artifact.readablePath ? { filePath: artifact.readablePath } : {}),
-      })),
-    } : {}),
   };
 }
 
@@ -880,7 +623,7 @@ export async function resolveUserSkillInvocation(
   const requested = slash ?? parseNaturalLanguageSkillifyRequest(input);
   if (!requested) return null;
   const skill = await runtime.getSkill(requested.skill);
-  if (!skill || skill.execution === 'isolated') return null;
+  if (!skill) return null;
   const invocation = await runtime.invokeSkill({
     skill: requested.skill,
     args: requested.args,
@@ -1794,10 +1537,7 @@ function createSkillDefinition(input: {
   const argumentNames = parseArgumentNames(input.frontmatter.arguments);
   const whenToUse = coerceString(input.frontmatter.when_to_use)
     ?? coerceString(input.frontmatter['when-to-use']);
-  const { execution, allowedTools, model, effort, shell } = parseSkillExecutionContract(
-    input.frontmatter,
-    input.body,
-  );
+  assertNoRetiredSkillExecutionContract(input.frontmatter, input.body);
   return {
     name: input.name,
     displayName: input.source === 'built-in' ? undefined : coerceString(input.frontmatter.name),
@@ -1811,51 +1551,28 @@ function createSkillDefinition(input: {
     modelInvocable: !parseBooleanFrontmatter(input.frontmatter['disable-model-invocation'], false),
     contentHash: input.contentHash,
     managedContentHash: input.managedContentHash,
-    allowedTools,
     argumentHint: coerceString(input.frontmatter['argument-hint']),
     argumentNames,
     version: coerceString(input.frontmatter.version)
       ?? (isPlainRecord(input.frontmatter.metadata) ? coerceString(input.frontmatter.metadata.version) : undefined),
-    model,
-    effort,
-    shell,
-    execution,
     paths: parsePathsFrontmatter(input.frontmatter.paths),
     contentLength: input.body.length,
     body: input.body,
   };
 }
 
-export function parseSkillExecutionContract(frontmatter: Record<string, unknown>, body = ''): {
-  readonly execution: 'inline' | 'isolated';
-  readonly allowedTools: string[];
-  readonly model: string | undefined;
-  readonly effort: string | undefined;
-  readonly shell: string | undefined;
-} {
-  const execution = parseSkillExecutionFrontmatter(frontmatter);
-  const allowedTools = parseToolListFromFrontmatter(frontmatter['allowed-tools']);
-  const model = coerceString(frontmatter.model) === 'inherit'
-    ? undefined
-    : coerceString(frontmatter.model);
-  const effort = coerceString(frontmatter.effort);
-  const shell = coerceString(frontmatter.shell)?.trim().toLowerCase();
-  if (
-    execution === 'inline'
-    && (
-      allowedTools.length > 0
-      || model !== undefined
-      || effort !== undefined
-      || shell !== undefined
-      || containsEmbeddedSkillShell(body)
-    )
-  ) {
-    throw new Error('Inline Skills cannot declare allowed-tools, model, effort, shell, or embedded shell commands; use execution: isolated.');
+export function assertNoRetiredSkillExecutionContract(
+  frontmatter: Record<string, unknown>,
+  body: string,
+): void {
+  const retiredFields = ['execution', 'allowed-tools', 'model', 'effort', 'shell']
+    .filter((field) => Object.hasOwn(frontmatter, field));
+  if (retiredFields.length > 0 || containsEmbeddedSkillShell(body)) {
+    const detail = retiredFields.length > 0
+      ? `retired fields: ${retiredFields.join(', ')}`
+      : 'embedded shell commands';
+    throw new Error(`Skill uses a retired execution contract (${detail}). Use the delegate CLI for Agent execution.`);
   }
-  if (shell !== undefined && shell !== 'bash') {
-    throw new Error(`Unsupported Skill shell "${shell}". Tenon supports shell: bash only.`);
-  }
-  return { execution, allowedTools, model, effort, shell };
 }
 
 function createBuiltInSkillDefinition(input: BuiltInSkillInput): SkillDefinition {
@@ -1864,13 +1581,9 @@ function createBuiltInSkillDefinition(input: BuiltInSkillInput): SkillDefinition
     ...(input.whenToUse ? { when_to_use: input.whenToUse } : {}),
     ...(input.userInvocable === false ? { 'user-invocable': false } : {}),
     ...(input.modelInvocable === false ? { 'disable-model-invocation': true } : {}),
-    ...(input.allowedTools?.length ? { 'allowed-tools': input.allowedTools } : {}),
     ...(input.argumentHint ? { 'argument-hint': input.argumentHint } : {}),
     ...(input.argumentNames?.length ? { arguments: input.argumentNames.join(' ') } : {}),
     ...(input.version ? { version: input.version } : {}),
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.effort ? { effort: input.effort } : {}),
-    ...(input.execution === 'isolated' ? { execution: 'isolated' } : {}),
     ...(input.paths?.length ? { paths: input.paths } : {}),
   };
   return createSkillDefinition({
@@ -1913,46 +1626,25 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-const SKILL_SHELL_BLOCK_PATTERN = /```!\s*\n?([\s\S]*?)\n?```/g;
-const SKILL_SHELL_INLINE_PATTERN = /(?<=^|\s)!`([^`]+)`/gm;
+const SKILL_SHELL_BLOCK_PATTERN = /```!\s*\n?[\s\S]*?\n?```/;
+const SKILL_SHELL_INLINE_PATTERN = /(?<=^|\s)!`[^`]+`/m;
 
 function containsEmbeddedSkillShell(content: string): boolean {
-  return collectSkillShellMatches(content).length > 0;
+  return SKILL_SHELL_BLOCK_PATTERN.test(content) || SKILL_SHELL_INLINE_PATTERN.test(content);
 }
 
-async function renderSkillContent(
-  skill: SkillDefinition,
-  args: string,
-  threadId: string,
-  executeSkillShell?: SkillShellExecutor,
-  signal?: AbortSignal,
-): Promise<{
-  readonly content: string;
-  readonly persistedContent: string;
-  readonly resourceRefs: readonly ThreadResourceReference[];
-  readonly artifacts: readonly SkillShellArtifactObservation[];
-  readonly shellObservations: readonly SkillShellObservation[];
-}> {
+function renderSkillContent(skill: SkillDefinition, args: string, threadId: string): string {
   const skillDir = skillDirectoryForPrompt(skill);
   let content = skillDir
     ? `Base directory for this skill: ${skillDir}\n\n${skill.body}`
     : skill.body;
-  if (skill.execution === 'inline') {
-    content = substituteArguments(content, args, skill.argumentNames);
-  }
+  content = substituteArguments(content, args, skill.argumentNames);
   if (skillDir) {
     content = content
       .replace(/\$\{AGENT_SKILL_DIR\}/g, skillDir)
       .replace(/\{baseDir\}/g, skillDir);
   }
-  content = content.replace(/\$\{AGENT_THREAD_ID\}/g, threadId);
-  return executeShellCommandsInSkillContent(
-    content,
-    skill,
-    createSkillShellArgumentBindings(args, skill.argumentNames),
-    executeSkillShell,
-    signal,
-  );
+  return content.replace(/\$\{AGENT_THREAD_ID\}/g, threadId);
 }
 
 function skillDirectoryForPrompt(skill: SkillDefinition): string | null {
@@ -1970,203 +1662,6 @@ function skillPathForPrompt(skill: SkillDefinition): string {
 
 function isResourceBackedBuiltInSkill(skill: SkillDefinition): boolean {
   return skill.source === 'built-in' && skill.contentHash !== undefined;
-}
-
-async function executeShellCommandsInSkillContent(
-  content: string,
-  skill: SkillDefinition,
-  argumentBindings: SkillShellArgumentBindings,
-  executeSkillShell?: SkillShellExecutor,
-  signal?: AbortSignal,
-): Promise<{
-  readonly content: string;
-  readonly persistedContent: string;
-  readonly resourceRefs: readonly ThreadResourceReference[];
-  readonly artifacts: readonly SkillShellArtifactObservation[];
-  readonly shellObservations: readonly SkillShellObservation[];
-}> {
-  const matches = collectSkillShellMatches(content);
-  if (matches.length === 0) {
-    return {
-      content,
-      persistedContent: content,
-      resourceRefs: [],
-      artifacts: [],
-      shellObservations: [],
-    };
-  }
-
-  const shell = (skill.shell ?? 'bash').trim().toLowerCase();
-  if (shell !== 'bash') {
-    throw new Error(`Skill ${skill.name} requests unsupported shell "${skill.shell}". Tenon currently supports bash skill shell expansion only.`);
-  }
-  if (!executeSkillShell) {
-    throw new Error(`Skill ${skill.name} contains embedded shell commands, but skill shell execution is not available.`);
-  }
-
-  let rendered = '';
-  let persisted = '';
-  let cursor = 0;
-  const resourceRefs = new Map<string, ThreadResourceReference>();
-  const artifacts = new Map<string, SkillShellArtifactObservation>();
-  const shellObservations: SkillShellObservation[] = [];
-  for (const [index, match] of matches.entries()) {
-    rendered += content.slice(cursor, match.index);
-    persisted += content.slice(cursor, match.index);
-    let result: SkillShellExecutionResult;
-    try {
-      result = await executeSkillShell({
-        skill,
-        command: match.command,
-        shell,
-        argumentBindings,
-        signal,
-      });
-    } catch (error) {
-      const failure = skillShellFailure(error);
-      for (const ref of failure.resourceRefs) resourceRefs.set(skillResourceKey(ref), ref);
-      for (const artifact of failure.artifacts) artifacts.set(skillArtifactKey(artifact), artifact);
-      throw new SkillShellExpansionError(
-        error instanceof Error ? error.message : String(error),
-        failure.persistedMessage,
-        [...resourceRefs.values()],
-        [...artifacts.values()],
-      );
-    }
-    const key = `skill_shell_output_${index + 1}`;
-    const marker = `[Embedded shell observation is available in untrusted context: ${key}]`;
-    rendered += marker;
-    persisted += marker;
-    shellObservations.push({
-      key,
-      output: result.output,
-      persistedOutput: result.persistedOutput ?? result.output,
-      resourceRefs: result.resourceRefs,
-    });
-    for (const ref of result.resourceRefs) resourceRefs.set(skillResourceKey(ref), ref);
-    for (const artifact of result.artifacts ?? []) artifacts.set(skillArtifactKey(artifact), artifact);
-    cursor = match.index + match.raw.length;
-  }
-  return {
-    content: rendered + content.slice(cursor),
-    persistedContent: persisted + content.slice(cursor),
-    resourceRefs: [...resourceRefs.values()],
-    artifacts: [...artifacts.values()],
-    shellObservations,
-  };
-}
-
-class SkillShellExpansionError extends Error {
-  constructor(
-    message: string,
-    readonly persistedMessage: string | undefined,
-    readonly resourceRefs: readonly ThreadResourceReference[],
-    readonly artifacts: readonly SkillShellArtifactObservation[],
-  ) {
-    super(message);
-    this.name = 'SkillShellExpansionError';
-  }
-}
-
-function skillShellFailure(error: unknown): {
-  readonly persistedMessage: string | undefined;
-  readonly resourceRefs: readonly ThreadResourceReference[];
-  readonly artifacts: readonly SkillShellArtifactObservation[];
-} {
-  if (!error || typeof error !== 'object') {
-    return { persistedMessage: undefined, resourceRefs: [], artifacts: [] };
-  }
-  const candidate = error as {
-    persistedMessage?: unknown;
-    resourceRefs?: unknown;
-    artifacts?: unknown;
-  };
-  return {
-    persistedMessage: typeof candidate.persistedMessage === 'string' ? candidate.persistedMessage : undefined,
-    resourceRefs: Array.isArray(candidate.resourceRefs)
-      ? candidate.resourceRefs.filter(isThreadResourceReference)
-      : [],
-    artifacts: Array.isArray(candidate.artifacts)
-      ? candidate.artifacts.filter(isSkillShellArtifactObservation)
-      : [],
-  };
-}
-
-function isThreadResourceReference(value: unknown): value is ThreadResourceReference {
-  return !!value
-    && typeof value === 'object'
-    && typeof (value as { id?: unknown }).id === 'string'
-    && typeof (value as { fileName?: unknown }).fileName === 'string';
-}
-
-function isSkillShellArtifactObservation(value: unknown): value is SkillShellArtifactObservation {
-  return !!value
-    && typeof value === 'object'
-    && isThreadResourceReference((value as { ref?: unknown }).ref)
-    && (typeof (value as { readablePath?: unknown }).readablePath === 'string'
-      || (value as { readablePath?: unknown }).readablePath === null)
-    && typeof (value as { label?: unknown }).label === 'string';
-}
-
-function skillResourceKey(ref: ThreadResourceReference): string {
-  return `${ref.id}\0${ref.fileName}`;
-}
-
-function skillArtifactKey(artifact: SkillShellArtifactObservation): string {
-  return `${skillResourceKey(artifact.ref)}\0${artifact.label}`;
-}
-
-function collectSkillShellMatches(content: string): Array<{ raw: string; command: string; index: number }> {
-  const matches: Array<{ raw: string; command: string; index: number; kind: 'block' | 'inline' }> = [];
-  for (const match of content.matchAll(SKILL_SHELL_BLOCK_PATTERN)) {
-    const command = match[1]?.trim();
-    if (!command || match.index === undefined) continue;
-    matches.push({ raw: match[0], command, index: match.index, kind: 'block' });
-  }
-  if (content.includes('!`')) {
-    for (const match of content.matchAll(SKILL_SHELL_INLINE_PATTERN)) {
-      const command = match[1]?.trim();
-      if (!command || match.index === undefined) continue;
-      matches.push({ raw: match[0], command, index: match.index, kind: 'inline' });
-    }
-  }
-
-  matches.sort((a, b) => a.index - b.index || (a.kind === 'block' ? -1 : 1));
-  const nonOverlapping: Array<{ raw: string; command: string; index: number }> = [];
-  let cursor = 0;
-  for (const match of matches) {
-    if (match.index < cursor) continue;
-    nonOverlapping.push(match);
-    cursor = match.index + match.raw.length;
-  }
-  return nonOverlapping;
-}
-
-function formatIsolatedSkillToolResult(
-  skill: SkillDefinition,
-  result: SkillIsolatedExecutionResult | undefined,
-): string {
-  if (!result) return `Skill ${skill.name} finished in an isolated child Thread without a recorded outcome.`;
-  const completed = result.status === 'completed';
-  return [
-    `Skill ${skill.name} finished in an isolated child Thread.`,
-    `outcome: ${result.status}`,
-    `threadId: ${result.threadId}`,
-    `agentRole: ${result.agentRole}`,
-    result.transcriptPath ? `transcriptPath: ${result.transcriptPath}` : '',
-    result.error ? `error: ${result.error}` : '',
-    '',
-    completed
-      ? 'The child already executed this Skill. Synthesize the completed result below; do not repeat covered work unless it reports a gap or independent verification is explicitly required.'
-      : 'Treat the text below as partial evidence only; the isolated Skill did not complete successfully.',
-    result.transcriptPath
-      ? 'To verify or debug it, read or grep the child transcript at transcriptPath with the file tools.'
-      : '',
-    '',
-    '<skill-result>',
-    result.result || 'Skill execution produced no text result.',
-    '</skill-result>',
-  ].filter(Boolean).join('\n');
 }
 
 function skillListingIdentity(skill: SkillDefinition): string {
@@ -2248,11 +1743,6 @@ function authoredSkillDescription(skill: SkillDefinition): string {
 }
 
 function skillInvocationContract(skill: SkillDefinition): string {
-  if (skill.execution === 'isolated') {
-    return skill.allowedTools.includes('agent')
-      ? 'Isolated; args=user task; Subagents allowed; parent ceiling.'
-      : 'Isolated; args=user task; no Subagents; parent fans out.';
-  }
   const argumentHint = inlineSkillArgumentHint(skill);
   return argumentHint
     ? `Args: ${truncate(argumentHint, MAX_LISTING_ARGUMENT_HINT_CHARS)}.`
@@ -2260,13 +1750,10 @@ function skillInvocationContract(skill: SkillDefinition): string {
 }
 
 function skillRequiresInvocationArgs(skill: SkillDefinition): boolean {
-  return skill.execution === 'isolated' || inlineSkillArgumentHint(skill) !== '';
+  return inlineSkillArgumentHint(skill) !== '';
 }
 
 function compactSkillInvocationContract(skill: SkillDefinition): string {
-  if (skill.execution === 'isolated') {
-    return skill.allowedTools.includes('agent') ? '[I+]' : '[I-]';
-  }
   return skillRequiresInvocationArgs(skill) ? '[A]' : '';
 }
 
@@ -2284,12 +1771,8 @@ function codeRegisteredSkillContentHash(skill: SkillDefinition): string {
     displayName: skill.displayName ?? null,
     description: skill.description,
     whenToUse: skill.whenToUse ?? null,
-    allowedTools: skill.allowedTools,
     argumentHint: skill.argumentHint ?? null,
     argumentNames: skill.argumentNames,
-    model: skill.model ?? null,
-    effort: skill.effort ?? null,
-    execution: skill.execution,
     body: skill.body,
   })).digest('hex');
 }
@@ -2385,17 +1868,6 @@ function parseBooleanFrontmatter(value: unknown, fallback: boolean): boolean {
   return parseBoolean(value) ?? fallback;
 }
 
-function parseSkillExecutionFrontmatter(frontmatter: Record<string, unknown>): SkillDefinition['execution'] {
-  const rawExecution = coerceString(frontmatter.execution);
-  const execution = rawExecution?.toLowerCase();
-  if (execution === 'isolated') return 'isolated';
-  if (execution === 'inline') return 'inline';
-  if (rawExecution !== undefined) {
-    throw new Error(`Invalid skill execution value "${rawExecution}". Use "inline" or "isolated".`);
-  }
-  return 'inline';
-}
-
 function parseBoolean(value: unknown): boolean | undefined {
   if (typeof value === 'boolean') return value;
   if (typeof value !== 'string') return undefined;
@@ -2429,27 +1901,6 @@ function parsePathsFrontmatter(value: unknown): string[] | undefined {
   return patterns;
 }
 
-export function parseToolListFromFrontmatter(value: unknown): string[] {
-  const tools = splitFrontmatterList(value);
-  const result: string[] = [];
-  for (const toolString of tools) {
-    let current = '';
-    let inParens = false;
-    for (const char of toolString) {
-      if (char === '(') inParens = true;
-      if (char === ')') inParens = false;
-      if ((char === ',' || char === ' ') && !inParens) {
-        if (current.trim()) result.push(current.trim());
-        current = '';
-        continue;
-      }
-      current += char;
-    }
-    if (current.trim()) result.push(current.trim());
-  }
-  return result;
-}
-
 function splitFrontmatterList(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value
@@ -2477,22 +1928,6 @@ function extractDescriptionFromMarkdown(markdown: string, name: string): string 
 
 function compactInlineText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
-}
-
-function createSkillShellArgumentBindings(
-  args: string,
-  argumentNames: readonly string[],
-): SkillShellArgumentBindings {
-  const positional = parseArguments(args);
-  return {
-    aggregate: args,
-    positional,
-    named: argumentNames.map((name, index) => ({
-      name,
-      index,
-      value: positional[index] ?? '',
-    })),
-  };
 }
 
 function substituteArguments(

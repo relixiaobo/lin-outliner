@@ -78,6 +78,7 @@ import {
   createResilientResponsesFetch,
   type ResilientResponsesFetchOptions,
 } from '../runtime/sseResilientFetch';
+import { delegationSettingsRevision } from '../delegation/DelegationPolicyResolver';
 import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
   ccSwitchModelOptionId,
@@ -197,10 +198,6 @@ const DEFAULT_DELEGATION_SETTINGS: AgentDelegationSettings = {
 };
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   additionalSkillDirectories: [],
-  // Captured once for each delegated execution generation's local breaker.
-  subagentTokenBudget: 1_500_000,
-  subagentMaxDepth: 3,
-  subagentMaxConcurrent: 20,
   providerTimeoutMs: null,
   providerMaxRetries: null,
   providerMaxRetryDelayMs: 60_000,
@@ -282,9 +279,7 @@ export async function getAgentDelegationConfiguration(): Promise<{
 }
 
 export function delegationConfigurationRevision(settings: AgentDelegationSettings): string {
-  return createHash('sha256')
-    .update(JSON.stringify(normalizeDelegationSettings(settings)))
-    .digest('hex');
+  return delegationSettingsRevision(normalizeDelegationSettings(settings));
 }
 
 export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRuntimeConfig | null> {
@@ -741,18 +736,6 @@ function normalizeImageGenerationSettings(input?: StoredImageGenerationSettings 
 function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null): AgentRuntimeSettings {
   return {
     additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories, MAX_ADDITIONAL_SKILL_DIRECTORIES),
-    subagentTokenBudget: normalizeNullablePositiveInteger(
-      input?.subagentTokenBudget,
-      DEFAULT_AGENT_RUNTIME_SETTINGS.subagentTokenBudget,
-    ),
-    subagentMaxDepth: normalizePositiveInteger(
-      input?.subagentMaxDepth,
-      DEFAULT_AGENT_RUNTIME_SETTINGS.subagentMaxDepth,
-    ),
-    subagentMaxConcurrent: normalizePositiveInteger(
-      input?.subagentMaxConcurrent,
-      DEFAULT_AGENT_RUNTIME_SETTINGS.subagentMaxConcurrent,
-    ),
     providerTimeoutMs: normalizeNullablePositiveInteger(input?.providerTimeoutMs, DEFAULT_AGENT_RUNTIME_SETTINGS.providerTimeoutMs),
     providerMaxRetries: normalizeNullableNonNegativeInteger(input?.providerMaxRetries, DEFAULT_AGENT_RUNTIME_SETTINGS.providerMaxRetries),
     providerMaxRetryDelayMs: normalizeNullableNonNegativeInteger(

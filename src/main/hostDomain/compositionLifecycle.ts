@@ -4,6 +4,12 @@ import type { DocumentProjection, ProjectionSnapshot } from '../../core/types';
 import { closeAgentServices } from '../agent/closeAgentServices';
 
 export interface AgentHostLifecycleDependencies {
+  readonly delegation?: {
+    start(): Promise<void>;
+    initialize?(): Promise<void>;
+    stop(): Promise<void>;
+    closeStore(): void;
+  };
   readonly memory: {
     initializeMutationIndex(projection: DocumentProjection): void;
     startWorker(): Promise<void>;
@@ -39,7 +45,9 @@ export function createAgentHostLifecycle(
         assertActive();
       }
       if (!completed.has('threads')) {
+        await dependencies.delegation?.start();
         await dependencies.threads.initialize();
+        await dependencies.delegation?.initialize?.();
         completed.add('threads');
         assertActive();
       }
@@ -54,11 +62,25 @@ export function createAgentHostLifecycle(
         assertActive();
       }
     },
-    close: () => closeAgentServices(
-      dependencies.memory,
-      dependencies.threads,
-      dependencies.automations,
-    ),
+    close: async () => {
+      const failures: unknown[] = [];
+      try {
+        await closeAgentServices(dependencies.memory, dependencies.threads, dependencies.automations);
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await dependencies.delegation?.stop();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        dependencies.delegation?.closeStore();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length > 0) throw new AggregateError(failures, 'Agent Host lifecycle failed to close cleanly');
+    },
   };
 }
 

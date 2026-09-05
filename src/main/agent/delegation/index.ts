@@ -5,3 +5,5 @@ export * from './DelegationCoordinator';
 export * from './DelegationSessionStore';
 export * from './delegationSessionTypes';
 export * from './delegatedToolPolicy';
+export * from './InternalDelegationSessionRuntime';
+export * from './internalDelegationRunnerRegistry';

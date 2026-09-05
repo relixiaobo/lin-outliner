@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import {
-  SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
   type JsonValue,
   type ModelProviderToolCall,
   type TurnError,
@@ -144,42 +143,12 @@ export async function runKernel(
     await emit({ type: 'message_end', message: prompt });
   }
   let providerCallCount = 0;
-  let budgetWarningSent = false;
   let pendingMessages = await getSteeringMessages();
   let hasMoreToolCalls = true;
   while (true) {
     if (providerCallCount > 0) {
-      const actuals = options.remainingTokenBudget?.() ?? null;
-      if (actuals && actuals.remaining <= 0) {
-        if (hasMoreToolCalls) {
-          const interruptionError = {
-            code: SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
-            message: `Token budget exhausted mid-Turn (${actuals.used} of ${actuals.total} tokens)`,
-          } satisfies TurnError;
-          await emit({ type: 'agent_end', messages: newMessages });
-          return { messages: newMessages, interruptionError };
-        }
-        break;
-      }
-
       pendingMessages = await getSteeringMessages();
       if (!hasMoreToolCalls && pendingMessages.length === 0) break;
-
-      if (
-        actuals
-        && actuals.used >= Math.ceil(actuals.total * 0.8)
-        && !budgetWarningSent
-        && options.onBudgetWarning
-      ) {
-        budgetWarningSent = true;
-        try {
-          await options.onBudgetWarning(actuals);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.warn(`[agent] Budget warning delivery failed: ${message}`);
-        }
-        pendingMessages.push(...await getSteeringMessages());
-      }
 
       await emit({ type: 'turn_start' });
     }

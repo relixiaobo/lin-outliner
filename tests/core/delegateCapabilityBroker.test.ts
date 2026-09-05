@@ -16,6 +16,7 @@ import {
   delegateCliProcessEnvironment,
   delegateProcessDigest,
   requestLifetime,
+  schedulingPolicyDigest,
   type DelegateCapabilityAdmission,
   type DelegateCapabilityExecution,
 } from '../../src/main/agent/delegation';
@@ -24,6 +25,12 @@ import { resolveDelegateCliRuntime } from '../../src/main/delegateRuntime';
 const repoRoot = path.resolve(import.meta.dir, '..', '..');
 const roots: string[] = [];
 const SESSION_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd';
+const SCHEDULER_LIMITS = Object.freeze({
+  maxConcurrentGlobal: 8,
+  maxConcurrentThread: 4,
+  maxQueuedGlobal: 32,
+  maxQueuedThread: 8,
+});
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -34,6 +41,12 @@ describe('Delegate capability broker', () => {
     const root = await mkdtemp(path.join(tmpdir(), 'delegate-runtime-host-'));
     roots.push(root);
     const executions: DelegateCapabilityExecution[] = [];
+    const scheduling = {
+      pool: 'delegate-local',
+      configurationRevision: 'revision-1',
+      maxConcurrentProducer: 2,
+      maxConcurrentPool: 2,
+    } as const;
     const runtime = new DelegateRuntimeHost({
       cli: resolveDelegateCliRuntime({
         isPackaged: false,
@@ -45,7 +58,12 @@ describe('Delegate capability broker', () => {
       currentConfigurationRevision: () => 'revision-1',
       resolveAdmission: async (input) => ({
         rootUserIntentRevision: 3,
-        policy: admission(runCommand(), input.stdin, 'revision-1').policy,
+        policy: admission(
+          runCommand(),
+          input.stdin,
+          'revision-1',
+          schedulingPolicyDigest(scheduling),
+        ).policy,
         session: { kind: 'run', preallocatedSessionId: SESSION_ID },
       }),
       execute: async (execution) => {
@@ -62,12 +80,11 @@ describe('Delegate capability broker', () => {
         profile: 'explore',
         access: 'read-only',
       });
-      const prepared = await runtime.commandRuntime({
-        pool: 'delegate-local',
-        configurationRevision: 'revision-1',
-        maxConcurrentProducer: 2,
-        maxConcurrentPool: 2,
-      }).prepare({
+      const prepared = await runtime.commandRuntime(() => ({
+        scheduling,
+        schedulerLimits: SCHEDULER_LIMITS,
+        timeoutMs: 60_000,
+      })).prepare({
         taskId: 'task_550e8400-e29b-41d4-a716-446655440000',
         nonce: '550e8400-e29b-41d4-a716-446655440001',
         cwd: repoRoot,
@@ -76,6 +93,7 @@ describe('Delegate capability broker', () => {
         ownerThreadId: 'root-thread',
         sourceTurnId: 'source-turn',
         sourceItemId: 'source-item',
+        scheduling,
         env: {
           PATH: process.env.PATH,
           HOME: process.env.HOME,
@@ -148,6 +166,75 @@ describe('Delegate capability broker', () => {
     });
   });
 
+  test('revokes a prepared launch capability when Tool Task admission does not complete', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'delegate-runtime-host-'));
+    roots.push(root);
+    const scheduling = {
+      pool: 'delegate-local',
+      configurationRevision: 'revision-1',
+      maxConcurrentProducer: 2,
+      maxConcurrentPool: 2,
+    } as const;
+    const runtime = new DelegateRuntimeHost({
+      cli: resolveDelegateCliRuntime({
+        isPackaged: false,
+        moduleDir: path.join(repoRoot, 'src', 'main'),
+        resourcesPath: '/unused',
+        processExecPath: '/unused/Tenon',
+      }),
+      socketPath: path.join(root, 'broker.sock'),
+      currentConfigurationRevision: () => 'revision-1',
+      resolveAdmission: async (input) => ({
+        rootUserIntentRevision: 3,
+        policy: admission(
+          runCommand(),
+          input.stdin,
+          'revision-1',
+          schedulingPolicyDigest(scheduling),
+        ).policy,
+        session: { kind: 'run', preallocatedSessionId: SESSION_ID },
+      }),
+      execute: async () => ({ unreachable: true }),
+    });
+    await runtime.start();
+    try {
+      const command = runCommand();
+      const rawInput = JSON.stringify({
+        version: 1,
+        prompt: 'This launch must be revoked.',
+        profile: 'explore',
+        access: 'read-only',
+      });
+      const prepared = await runtime.commandRuntime(() => ({
+        scheduling,
+        schedulerLimits: SCHEDULER_LIMITS,
+        timeoutMs: 60_000,
+      })).prepare({
+        taskId: 'task_550e8400-e29b-41d4-a716-446655440000',
+        nonce: '550e8400-e29b-41d4-a716-446655440001',
+        cwd: repoRoot,
+        stdin: rawInput,
+        command,
+        ownerThreadId: 'root-thread',
+        sourceTurnId: 'source-turn',
+        sourceItemId: 'source-item',
+        scheduling,
+        env: process.env,
+      });
+
+      prepared.disposePrivateControl?.();
+      const result = await runCliDirect(command, rawInput, prepared.privateControlInput!);
+
+      expect(result.exitCode).toBe(6);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        error: { code: 'unauthorized', message: expect.stringContaining('unknown or already consumed') },
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   test('admits one exact fd 3 invocation and rejects replay', async () => {
     const executions: DelegateCapabilityExecution[] = [];
     const fixture = await createBroker('revision-1', async (execution) => {
@@ -218,6 +305,42 @@ describe('Delegate capability broker', () => {
       expect(executions).toHaveLength(0);
     } finally {
       await fixture.broker.stop();
+    }
+  });
+
+  test('prunes an unconsumed capability at its exact expiry boundary', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'delegate-broker-'));
+    roots.push(root);
+    let now = 10_000;
+    const broker = new DelegateCapabilityBroker({
+      socketPath: path.join(root, 'broker.sock'),
+      currentConfigurationRevision: () => 'revision-1',
+      execute: async () => ({ unreachable: true }),
+      now: () => now,
+      capabilityTtlMs: 500,
+    });
+    await broker.start();
+    try {
+      const rawInput = JSON.stringify({
+        version: 1,
+        prompt: 'This capability must expire.',
+        profile: 'explore',
+        access: 'read-only',
+      });
+      const command = runCommand();
+      const expired = broker.issue(admission(command, rawInput, 'revision-1'));
+      now += 500;
+      broker.issue(admission(command, rawInput, 'revision-1'));
+
+      const result = await runCliDirect(command, rawInput, expired);
+
+      expect(result.exitCode).toBe(6);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        error: { code: 'unauthorized', message: expect.stringContaining('unknown or already consumed') },
+      });
+    } finally {
+      await broker.stop();
     }
   });
 
@@ -370,6 +493,7 @@ function admission(
   command: DelegateStateCommand,
   stdin: string,
   configurationRevision: string,
+  schedulingDigest = 'c'.repeat(64),
 ): DelegateCapabilityAdmission {
   return {
     toolTaskId: 'task_550e8400-e29b-41d4-a716-446655440000',
@@ -395,7 +519,7 @@ function admission(
       profile: 'explore',
       access: 'read-only',
       timeoutMs: 60_000,
-      schedulingPolicyDigest: 'c'.repeat(64),
+      schedulingPolicyDigest: schedulingDigest,
     },
     session: { kind: 'run', preallocatedSessionId: SESSION_ID },
   };

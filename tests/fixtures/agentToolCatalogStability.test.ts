@@ -48,19 +48,13 @@ describe('canonical provider tool catalog', () => {
       { AgentSkillRuntime },
       { canonicalizeAgentTools },
       { ToolRuntime },
-      { SubagentCollaboration },
     ] = await Promise.all([
       import('../../src/main/agent/capabilities/agentSkills'),
       import('../../src/main/agent/runtime/PiTurnExecutor'),
       import('../../src/main/agent/runtime/ToolRuntime'),
-      import('../../src/main/agent/thread/SubagentCollaboration'),
     ]);
-    const collaboration = Object.create(SubagentCollaboration.prototype) as SubagentCollaboration;
     const service = {
       extensionToolContributions: async () => [],
-      collaborationToolContributions: (turn: { threadId: string; turnId: string }) => (
-        collaboration.collaborationToolContributions(turn)
-      ),
     } as unknown as ThreadService;
     const skillRuntime = new AgentSkillRuntime({
       localRoot: context.thread.cwd,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { AgentTaskToolName, ThreadItem, Turn } from '../../src/core/agent/protocol';
+import type { ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { en } from '../../src/core/i18n';
 import {
   createTurnContentGrouper,
@@ -8,43 +8,7 @@ import {
   trajectoryHoverFacts,
   turnMotionOwner,
 } from '../../src/renderer/agent/components/ThreadView';
-import {
-  emptyTurnAnchors,
-  type SubagentTurnAnchors,
-} from '../../src/renderer/agent/subagentPresentation';
 import type { DocumentIndex } from '../../src/renderer/state/document';
-
-describe('active Turn process summary', () => {
-  test('does not infer waiting from live Agent projections', () => {
-    const launch = collaboration('launch', 'agent');
-
-    expect(threadProcessSummary(turn([launch]), [launch], false, 5_000, en, emptyIndex()))
-      .toBe('Working for 5s');
-  });
-
-  test('keeps the generic summary while Agent messaging is in progress', () => {
-    const launch = collaboration('launch', 'agent');
-    const message = collaboration('message', 'agent_message');
-    const items = [launch, message];
-
-    expect(threadProcessSummary(turn(items), items, false, 5_000, en, emptyIndex()))
-      .toBe('Working for 5s');
-  });
-
-  test('only an explicit user-input block replaces the active work summary', () => {
-    const message = collaboration('message', 'agent_message');
-
-    expect(threadProcessSummary(
-      turn([message]),
-      [message],
-      false,
-      5_000,
-      en,
-      emptyIndex(),
-      true,
-    )).toBe('Waiting for input');
-  });
-});
 
 describe('Turn process projection', () => {
   test('removes empty commentary before building process and item blocks', () => {
@@ -155,28 +119,19 @@ describe('Turn process projection', () => {
 
 describe('Turn motion ownership', () => {
   test('assigns the generic live summary when no specific leaf is active', () => {
-    expect(turnMotionOwner(turn([]), [], anchors(turn([])), new Set())).toBe('summary');
+    expect(turnMotionOwner(turn([]), [])).toBe('summary');
   });
 
-  test('assigns a live tool or Subagent to the leaf', () => {
-    const tool = collaboration('tool', 'list_agents');
-    const activity = subagentActivity('activity', 'child-a');
-    expect(turnMotionOwner(turn([tool]), [tool], anchors(turn([tool])), new Set())).toBe('leaf');
-    // A live chip anchored in this Turn is the more specific representation,
-    // even though the Item that anchors it is not a tool row.
-    expect(turnMotionOwner(
-      turn([activity]),
-      [activity],
-      { items: [activity], anchorByItemId: new Map(), agentIds: ['child-a'] },
-      new Set(['child-a']),
-    )).toBe('leaf');
+  test('assigns a live tool to the leaf', () => {
+    const tool = dynamicTool('tool');
+    expect(turnMotionOwner(turn([tool]), [tool])).toBe('leaf');
   });
 
   test('assigns empty Thinking to the leaf and populated streaming content to none', () => {
     const empty = reasoning('empty', ['', '   ']);
     const populated = reasoning('populated', ['Planning the next step.']);
-    expect(turnMotionOwner(turn([empty]), [empty], anchors(turn([empty])), new Set())).toBe('leaf');
-    expect(turnMotionOwner(turn([populated]), [populated], anchors(turn([populated])), new Set())).toBe('none');
+    expect(turnMotionOwner(turn([empty]), [empty])).toBe('leaf');
+    expect(turnMotionOwner(turn([populated]), [populated])).toBe('none');
   });
 
   test('does not assign motion to settled Turns or readable commentary', () => {
@@ -187,19 +142,14 @@ describe('Turn motion ownership', () => {
       completedAt: 2,
       durationMs: 1,
     };
-    expect(turnMotionOwner(
-      turn([commentaryItem]),
-      [commentaryItem],
-      anchors(turn([commentaryItem])),
-      new Set(),
-    )).toBe('none');
-    expect(turnMotionOwner(settled, [], anchors(settled), new Set())).toBe('none');
+    expect(turnMotionOwner(turn([commentaryItem]), [commentaryItem])).toBe('none');
+    expect(turnMotionOwner(settled, [])).toBe('none');
   });
 });
 
 describe('Trajectory hover facts', () => {
   test('shows only total tokens and cost', () => {
-    const tool = collaboration('tool', 'list_agents');
+    const tool = dynamicTool('tool', 'completed');
     const base = turn([tool]);
     const completed: Turn = {
       ...base,
@@ -261,24 +211,22 @@ function turn(items: readonly ThreadItem[]): Turn {
   };
 }
 
-function collaboration(
+function dynamicTool(
   id: string,
-  tool: AgentTaskToolName,
-): Extract<ThreadItem, { type: 'collabAgentToolCall' }> {
+  status: Extract<ThreadItem, { type: 'dynamicToolCall' }>['status'] = 'inProgress',
+): Extract<ThreadItem, { type: 'dynamicToolCall' }> {
   return {
     id,
     provenance: { originThreadId: 'thread-parent', originTurnId: 'turn-parent', originItemId: id },
-    type: 'collabAgentToolCall',
-    tool,
-    status: 'inProgress',
+    type: 'dynamicToolCall',
+    namespace: null,
+    tool: 'task_status',
+    status,
     outputRef: null,
-    senderThreadId: 'thread-parent',
-    receiverThreadIds: [],
-    prompt: null,
-    summary: null,
-    model: null,
-    reasoningEffort: null,
-    agentsStates: {},
+    arguments: { task_id: 'task-1' },
+    result: null,
+    error: null,
+    durationMs: status === 'completed' ? 1 : null,
   };
 }
 
@@ -315,22 +263,6 @@ function reasoning(id: string, parts: readonly string[]): Extract<ThreadItem, { 
   };
 }
 
-function subagentActivity(
-  id: string,
-  agentThreadId: string,
-): Extract<ThreadItem, { type: 'subAgentActivity' }> {
-  return {
-    id,
-    provenance: { originThreadId: 'thread-parent', originTurnId: 'turn-parent', originItemId: id },
-    type: 'subAgentActivity',
-    kind: 'started',
-    agentThreadId,
-    agentPath: `/root/${agentThreadId}`,
-    error: null,
-    spawnItemId: null,
-  };
-}
-
 function agentResponse(id: string): Extract<ThreadItem, { type: 'agentMessage' }> {
   return {
     id,
@@ -348,10 +280,6 @@ function interruptedResponse(id: string): Extract<ThreadItem, { type: 'agentMess
     text: 'Partial response.',
     phase: 'interrupted',
   };
-}
-
-function anchors(value: Turn): SubagentTurnAnchors {
-  return emptyTurnAnchors(value);
 }
 
 function emptyIndex(): DocumentIndex {

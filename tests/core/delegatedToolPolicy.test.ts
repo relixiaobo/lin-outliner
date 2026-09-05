@@ -18,8 +18,6 @@ describe('delegated tool policy', () => {
   test('hard-blocks recursive, interactive, root-control, task-control, and history tools', () => {
     const keys = filterDelegatedToolContracts(MODEL_TOOL_CATALOG, GENERAL_WRITE).map(canonicalModelToolKeyForTest);
     for (const blocked of [
-      'agent',
-      'agent_message',
       'task_status',
       'task_stop',
       'request_user_input',
@@ -63,7 +61,7 @@ describe('delegated tool policy', () => {
     const tools = [
       contract('docs', 'lookup', ['web.fetch']),
       contract('docs', 'rewrite', ['file.write.local_path']),
-      contract(null, 'future_agent', ['agent.subagent.spawn']),
+      contract(null, 'future_control', ['task.stop']),
       contract(null, 'future_unknown', []),
     ];
     expect(filterDelegatedToolContracts(tools, GENERAL_WRITE).map(canonicalModelToolKeyForTest))
@@ -74,7 +72,7 @@ describe('delegated tool policy', () => {
 
   test('fails closed at execution for empty, unclassified, or hard-blocked action sets', () => {
     expect(delegatedToolExecutionAllowed(GENERAL_WRITE, [])).toBe(false);
-    expect(delegatedToolExecutionAllowed(GENERAL_WRITE, ['agent.subagent.spawn'])).toBe(false);
+    expect(delegatedToolExecutionAllowed(GENERAL_WRITE, ['task.stop'])).toBe(false);
     expect(delegatedToolExecutionAllowed(GENERAL_WRITE, ['file.write.local_path'])).toBe(true);
     expect(delegatedToolExecutionAllowed(GENERAL_READ, ['file.read.local_path'])).toBe(true);
     expect(delegatedToolExecutionAllowed(GENERAL_READ, ['file.write.local_path'])).toBe(false);

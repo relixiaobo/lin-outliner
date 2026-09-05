@@ -8,7 +8,6 @@ import { createThreadHistoryRollbackContext } from '../../src/core/agent/extensi
 import type { AgentCoreNotification, Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
-import { SubagentRequestLedger } from '../../src/main/agent/persistence/SubagentRequestLedger';
 import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { uuidV7 } from '../../src/main/agent/uuid';
@@ -75,8 +74,6 @@ function thread(id: string, updatedAt: number, overrides: Partial<Thread> = {}):
     sessionId: overrides.sessionId ?? uuidV7(updatedAt),
     parentThreadId: null,
     forkedFromId: null,
-    agentNickname: null,
-    agentRole: null,
     name: `Thread ${updatedAt}`,
     preview: '',
     ephemeral: false,
@@ -141,8 +138,7 @@ describe('Agent Core persistence', () => {
       thread: thread(childId, 400, {
         sessionId: firstSessionId,
         parentThreadId: ids[0]!,
-        threadSource: 'subagent',
-        agentRole: 'worker',
+        threadSource: 'delegation',
       }),
       nameOrigin: 'manual',
       archived: false,
@@ -170,8 +166,7 @@ describe('Agent Core persistence', () => {
       thread: thread(secondChildId, 450, {
         sessionId: secondSessionId,
         parentThreadId: ids[1]!,
-        threadSource: 'subagent',
-        agentRole: 'worker',
+        threadSource: 'delegation',
       }),
       nameOrigin: 'manual',
       archived: false,
@@ -261,7 +256,7 @@ describe('Agent Core persistence', () => {
       thread: thread(childId, 760, {
         sessionId: cached.thread.sessionId,
         parentThreadId: threadId,
-        threadSource: 'subagent',
+        threadSource: 'delegation',
       }),
       nameOrigin: 'none',
       archived: false,
@@ -1106,151 +1101,6 @@ describe('Agent Core persistence', () => {
     goals.close();
   });
 
-  test('persists request ownership while keeping ephemeral ownership in memory', async () => {
-    const root = await tempRoot();
-    const goalsPath = join(root, 'goals.sqlite');
-    const goalsDatabase = testDatabase(goalsPath);
-    const goals = new GoalStore(goalsPath, goalsDatabase);
-    const budgets = new SubagentRequestLedger(goalsDatabase);
-    const persistentHolderId = uuidV7(3100);
-    const persistentOriginTurnId = uuidV7(3150);
-    const persistentChildId = uuidV7(3200);
-    const persistentSiblingId = uuidV7(3300);
-    const ephemeralHolderId = uuidV7(3400);
-    const ephemeralOriginTurnId = uuidV7(3450);
-    const ephemeralChildId = uuidV7(3500);
-
-    goals.create(persistentChildId, 'Child-owned Goal', null, 10);
-    budgets.createAdmission({
-      request: { originThreadId: persistentHolderId, originTurnId: persistentOriginTurnId },
-      child: { threadId: persistentChildId, originTurnId: persistentOriginTurnId },
-    }, false);
-    budgets.createAdmission({
-      request: { originThreadId: persistentHolderId, originTurnId: persistentOriginTurnId },
-      child: { threadId: persistentSiblingId, originTurnId: persistentOriginTurnId },
-    }, false);
-    budgets.createAdmission({
-      request: { originThreadId: ephemeralHolderId, originTurnId: ephemeralOriginTurnId },
-      child: { threadId: ephemeralChildId, originTurnId: ephemeralOriginTurnId },
-    }, true);
-    expect(goals.read(persistentChildId)?.goal.objective).toBe('Child-owned Goal');
-    expect(budgets.readRequest(persistentOriginTurnId)).toMatchObject({
-      originTurnId: persistentOriginTurnId,
-      originThreadId: persistentHolderId,
-      closedAt: null,
-    });
-    expect(budgets.childrenForOriginTurn(persistentOriginTurnId).map((child) => child.threadId))
-      .toEqual([persistentChildId, persistentSiblingId]);
-    expect(budgets.readRequest(ephemeralOriginTurnId)).toMatchObject({
-      originTurnId: ephemeralOriginTurnId,
-      originThreadId: ephemeralHolderId,
-      closedAt: null,
-    });
-    expect(budgets.readChild(ephemeralChildId)).toMatchObject({
-      threadId: ephemeralChildId,
-      originTurnId: ephemeralOriginTurnId,
-    });
-    goals.close();
-
-    const reopenedDatabase = testDatabase(goalsPath);
-    const reopened = new SubagentRequestLedger(reopenedDatabase);
-    expect(reopened.readRequest(persistentOriginTurnId)).not.toBeNull();
-    expect(reopened.readChild(persistentChildId)).not.toBeNull();
-    expect(reopened.readRequest(ephemeralOriginTurnId)).toBeNull();
-    expect(reopened.readChild(ephemeralChildId)).toBeNull();
-    expect(reopened.clearThread(persistentChildId)).toBe(true);
-    expect(reopened.readRequest(persistentOriginTurnId)).not.toBeNull();
-    expect(reopened.readChild(persistentSiblingId)).not.toBeNull();
-    // Deleting the Thread that originated the request takes the owner and every
-    // remaining child with it.
-    expect(reopened.clearThread(persistentHolderId)).toBe(true);
-    expect(reopened.readRequest(persistentOriginTurnId)).toBeNull();
-    expect(reopened.readChild(persistentSiblingId)).toBeNull();
-    reopenedDatabase.close();
-  });
-
-  test('rolls back a new Subagent request owner when atomic child admission fails', async () => {
-    const root = await tempRoot();
-    const goalsPath = join(root, 'goals.sqlite');
-    const goalsDatabase = testDatabase(goalsPath);
-    const budgets = new SubagentRequestLedger(goalsDatabase);
-    const originThreadId = uuidV7(3_600);
-    const originTurnId = uuidV7(3_610);
-    const childThreadId = uuidV7(3_620);
-    goalsDatabase.exec(`
-      CREATE TRIGGER fail_subagent_child_admission
-      BEFORE INSERT ON subagent_request_children
-      BEGIN
-        SELECT RAISE(ABORT, 'simulated child admission failure');
-      END;
-    `);
-
-    expect(() => budgets.createAdmission({
-      request: { originThreadId, originTurnId },
-      child: { threadId: childThreadId, originTurnId },
-    }, false)).toThrow('simulated child admission failure');
-
-    expect(budgets.readRequest(originTurnId)).toBeNull();
-    expect(budgets.readChild(childThreadId)).toBeNull();
-    goalsDatabase.close();
-  });
-
-  test('restores Subagent ownership when atomic startup cleanup fails', async () => {
-    const root = await tempRoot();
-    const goalsPath = join(root, 'goals.sqlite');
-    const goalsDatabase = testDatabase(goalsPath);
-    const budgets = new SubagentRequestLedger(goalsDatabase);
-    const originThreadId = uuidV7(3_700);
-    const originTurnId = uuidV7(3_710);
-    const childThreadId = uuidV7(3_720);
-    budgets.createAdmission({
-      request: { originThreadId, originTurnId },
-      child: { threadId: childThreadId, originTurnId },
-    }, false);
-    goalsDatabase.exec(`
-      CREATE TRIGGER fail_subagent_child_recovery_cleanup
-      BEFORE DELETE ON subagent_request_children
-      BEGIN
-        SELECT RAISE(ABORT, 'simulated request recovery cleanup failure');
-      END;
-    `);
-
-    expect(() => budgets.clearThreadsForRecovery([childThreadId]))
-      .toThrow('simulated request recovery cleanup failure');
-
-    expect(budgets.readRequest(originTurnId)).not.toBeNull();
-    expect(budgets.readChild(childThreadId)).not.toBeNull();
-    goalsDatabase.close();
-  });
-
-  test('keeps request owners that still cover surviving children during recovery', async () => {
-    const root = await tempRoot();
-    const goalsPath = join(root, 'goals.sqlite');
-    const goalsDatabase = testDatabase(goalsPath);
-    const budgets = new SubagentRequestLedger(goalsDatabase);
-    const originThreadId = uuidV7(3_800);
-    const originTurnId = uuidV7(3_810);
-    const parentThreadId = uuidV7(3_820);
-    const descendantThreadId = uuidV7(3_840);
-    budgets.createAdmission({
-      request: { originThreadId, originTurnId },
-      child: { threadId: parentThreadId, originTurnId },
-    }, false);
-    budgets.createAdmission({
-      request: { originThreadId, originTurnId },
-      child: { threadId: descendantThreadId, originTurnId },
-    }, false);
-
-    expect(budgets.clearThreadsForRecovery([parentThreadId])).toBe(true);
-
-    expect(budgets.readChild(parentThreadId)).toBeNull();
-    expect(budgets.readChild(descendantThreadId)).toMatchObject({
-      threadId: descendantThreadId,
-      originTurnId,
-    });
-    expect(budgets.readRequest(originTurnId)).not.toBeNull();
-    goalsDatabase.close();
-  });
 });
 
 function lifecycle(threadId: string, seed = 4_000): AgentCoreNotification[] {

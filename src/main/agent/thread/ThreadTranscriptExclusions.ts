@@ -9,11 +9,8 @@
  * all of them, and the writer, the sweep and the index need no store read to
  * agree.
  *
- * KEYED BY SESSION, NOT BY THREAD. Excluding a conversation has to cover the
- * work it delegated: a root's Subagents write their own artifacts, and leaving
- * those behind would keep the excluded content readable and, worse, keep
- * advertising it in the index. Every Thread in a delegation subtree shares one
- * `sessionId`, so one entry covers the subtree and the check stays O(1) on the
+ * KEYED BY SESSION, NOT BY THREAD. Every Thread in one conversation shares a
+ * `sessionId`, so one entry covers its retained transcript set and stays O(1) on the
  * turn-completion path — a parent walk would be a store read per Turn. A fork
  * starts a new session, which is right: it is a new conversation.
  *

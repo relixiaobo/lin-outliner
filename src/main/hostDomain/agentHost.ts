@@ -1,8 +1,14 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import type {
+  AgentDelegationSettings,
+  AgentRuntimeSettings,
+  DocumentProjection,
+  ProjectionUpdate,
+} from '../../core/types';
 import type { EffectiveThreadConfiguration } from '../../core/agent/configuration';
 import type { AutomationConfiguration } from '../../core/agent/automation';
 import type { ErrorReport } from '../../core/errorObservability';
-import type { DocumentProjection, ProjectionUpdate } from '../../core/types';
 import type { Operation } from '../../outline/contract';
 import {
   createAgentLocalWorkspaceContext,
@@ -28,6 +34,23 @@ import { MemoryExtension } from '../agent/extensions/memory/MemoryExtension';
 import { TimelineMemoryStore, type TimelineMemoryHost } from '../agent/extensions/memory/TimelineMemoryStore';
 import { PiTurnExecutor, type PiTurnExecutorOptions } from '../agent/runtime/PiTurnExecutor';
 import { ToolRuntime, type ToolRuntimeOptions } from '../agent/runtime/ToolRuntime';
+import {
+  DelegateRuntimeHost,
+  DelegationCoordinator,
+  DelegationSessionStore,
+  InternalDelegationSessionRuntime,
+  createInternalDelegationRunnerRegistry,
+  delegationSettingsRevision,
+  resolveConfiguredInternalModel,
+  schedulingPolicyDigest,
+} from '../agent/delegation';
+import { decodeDelegateRunInput, type DelegateStateCommand } from '../../delegate/contract';
+import {
+  type DelegateCliRuntimeConfig,
+  withDelegateCliShellEnvironment,
+} from '../delegateRuntime';
+import { openSqlite } from '../agent/persistence/sqlite';
+import { uuidV7 } from '../agent/uuid';
 import type { TurnExecutionContext } from '../agent/runtime/types';
 import { AgentWorktree } from '../agent/worktree/AgentWorktree';
 import type { ToolTaskSupervisorRuntime } from '../agent/tasks/toolTaskRuntime';
@@ -61,11 +84,8 @@ export interface AgentHostOptions {
   readonly defaultCwd: string;
   readonly appVersion: string;
   readonly toolTaskSupervisorRuntime?: ToolTaskSupervisorRuntime;
-  readonly loadRuntimeSettings: () => Promise<{
-    readonly additionalSkillDirectories: readonly string[];
-    readonly disabledSkills?: readonly string[];
-    readonly delegation?: { readonly enabled: boolean };
-  }>;
+  readonly delegateCliRuntime: DelegateCliRuntimeConfig;
+  readonly loadRuntimeSettings: () => Promise<AgentRuntimeSettings>;
   readonly timeline: TimelineMemoryHost;
   readonly reportError: (report: ErrorReport) => void;
   readonly prepareImageArtifact: (
@@ -135,26 +155,15 @@ export type AgentToolContext = TurnExecutionContext;
 
 export interface AgentConfigurationCompositionCapability {
   resolveProfile: AgentConfigurationLoader['resolveProfile'];
-  resolveRole: AgentConfigurationLoader['resolveRole'];
-  resolveAgentType: AgentConfigurationLoader['resolveAgentType'];
-  resolveAgentExecution: AgentConfigurationLoader['resolveAgentExecution'];
-  buildRoleCatalogSnapshotForUserPath: AgentConfigurationLoader['buildRoleCatalogSnapshotForUserPath'];
   resolveIdentityCatalogForUserPath: AgentConfigurationLoader['resolveIdentityCatalogForUserPath'];
   resolveThreadPersona: AgentConfigurationLoader['resolveThreadPersona'];
 }
 
 export interface AgentConfigurationCapability {
   resolveIdentityCatalog: AgentConfigurationLoader['resolveIdentityCatalog'];
-  listEditableRoles: AgentConfigurationLoader['listEditableRoles'];
   listPresentationOverrides: AgentConfigurationLoader['listPresentationOverrides'];
-  listAgentExecutionSelections: AgentConfigurationLoader['listAgentExecutionSelections'];
-  resolveAgentExecution: AgentConfigurationLoader['resolveAgentExecution'];
   resolveEditableProfile: AgentConfigurationLoader['resolveEditableProfile'];
-  listBuiltInDefinitions: AgentConfigurationLoader['listBuiltInDefinitions'];
-  writeRole: AgentConfigurationWriter['writeRole'];
-  deleteRole: AgentConfigurationWriter['deleteRole'];
   writeProfile: AgentConfigurationWriter['writeProfile'];
-  writePresentation: AgentConfigurationWriter['writePresentation'];
 }
 
 export interface AgentWorktreeCompositionCapability {
@@ -172,10 +181,8 @@ export interface AgentWorktreeCapability {
 export interface AgentThreadCapability {
   request: ThreadService['request'];
   subscribe: ThreadService['subscribe'];
-  subagentExecution: ThreadService['subagentExecution'];
-  agentWorktree: ThreadService['agentWorktree'];
+  subscribeRenderer: ThreadService['subscribeRenderer'];
   writeThreadResourceWithStatus: ThreadService['writeThreadResourceWithStatus'];
-  spawnIsolatedSkillThread: ThreadService['spawnIsolatedSkillThread'];
   waitForIdle: ThreadService['waitForIdle'];
   readThread: ThreadService['readThread'];
   threadTranscriptPath: ThreadService['threadTranscriptPath'];
@@ -258,14 +265,9 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   const threadReference = assignOnce<ThreadService>('ThreadService');
   const threadCapabilityReference = assignOnce<AgentThreadCapability>('Agent Thread capability');
   const toolReference = assignOnce<ToolRuntime>('ToolRuntime');
+  const delegationReference = assignOnce<DelegationCoordinator>('DelegationCoordinator');
   const configurationComposition: AgentConfigurationCompositionCapability = {
     resolveProfile: (...args) => configurationLoader.resolveProfile(...args),
-    resolveRole: (...args) => configurationLoader.resolveRole(...args),
-    resolveAgentType: (...args) => configurationLoader.resolveAgentType(...args),
-    resolveAgentExecution: (...args) => configurationLoader.resolveAgentExecution(...args),
-    buildRoleCatalogSnapshotForUserPath: (...args) => (
-      configurationLoader.buildRoleCatalogSnapshotForUserPath(...args)
-    ),
     resolveIdentityCatalogForUserPath: (...args) => (
       configurationLoader.resolveIdentityCatalogForUserPath(...args)
     ),
@@ -309,18 +311,143 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       input,
       options.createAdmissionSkillRuntimeOptions(input, composition),
     ),
+    delegationCoordinator: () => delegationReference.get(),
     ...(options.toolTaskSupervisorRuntime === undefined
       ? {}
       : { toolTaskSupervisorRuntime: options.toolTaskSupervisorRuntime }),
   });
   threadReference.set(threadService);
+  const delegationDatabase = openSqlite(join(options.userDataDir, 'agent', 'delegation.sqlite'));
+  const delegationStore = new DelegationSessionStore(delegationDatabase);
+  const delegationRuntime = new InternalDelegationSessionRuntime(threadService, delegationStore, worktree);
+  const delegationCoordinator = new DelegationCoordinator({
+    store: delegationStore,
+    runtime: delegationRuntime,
+    preparedResults: {
+      prepare: (taskId, ownerThreadId, bytes) => (
+        threadService.toolTaskService().prepareResult(taskId, ownerThreadId, bytes)
+      ),
+      read: (taskId, ownerThreadId) => (
+        threadService.toolTaskService().readPreparedResult(taskId, ownerThreadId)
+      ),
+    },
+  });
+  delegationReference.set(delegationCoordinator);
+  const runnerRegistry = createInternalDelegationRunnerRegistry();
+  const loadDelegationConfiguration = async () => {
+    const settings = (await options.loadRuntimeSettings()).delegation;
+    return { settings, revision: delegationSettingsRevision(settings) };
+  };
+  const delegationHost = new DelegateRuntimeHost({
+    cli: options.delegateCliRuntime,
+    socketPath: join(options.userDataDir, 'agent', 'delegate-broker.sock'),
+    currentConfigurationRevision: async () => (await loadDelegationConfiguration()).revision,
+    resolveAdmission: async (input) => {
+      const source = threadService.delegationAdmissionContext(
+        input.source.rootThreadId,
+        input.source.sourceTurnId,
+      );
+      const { settings, revision } = await loadDelegationConfiguration();
+      const capabilityCeilingDigest = digestJson([...source.configuration.tools].sort());
+      if (input.command.name === 'run') {
+        const request = decodeDelegateRunInput(JSON.parse(input.stdin) as unknown);
+        const parentModelId = source.configuration.model.includes('/')
+          ? source.configuration.model
+          : `${source.thread.modelProvider}/${source.configuration.model}`;
+        const parentModel = await resolveConfiguredInternalModel(
+          parentModelId,
+          source.configuration.reasoningEffort,
+        );
+        if (!parentModel) throw new Error(`Invoking root model is unavailable: ${parentModelId}`);
+        const policy = await runnerRegistry.resolve({
+          settings,
+          configurationRevision: revision,
+          parentModel,
+          profile: request.profile,
+          requestedAccess: request.access,
+        });
+        const { scheduling, schedulerLimits: _schedulerLimits, ...capabilityPolicy } = policy;
+        return {
+          rootUserIntentRevision: source.rootUserIntentRevision,
+          policy: {
+            ...capabilityPolicy,
+            capabilityCeilingDigest,
+            schedulingPolicyDigest: schedulingPolicyDigest(scheduling),
+          },
+          session: { kind: 'run', preallocatedSessionId: uuidV7() },
+        };
+      }
+      const sessionId = input.command.name === 'close'
+        ? input.command.sessionId
+        : input.command.target.kind === 'session'
+          ? input.command.target.id
+          : delegationStore.settlementForTask(input.command.target.id)?.sessionId;
+      if (!sessionId) throw new Error('Delegation Session target is unavailable.');
+      const session = delegationStore.readSession(sessionId);
+      if (!session || session.ownerThreadId !== source.thread.id) {
+        throw new Error('Delegation Session is not owned by the invoking root Thread.');
+      }
+      if (session.policy.modelProvider === null || session.policy.modelId === null || session.policy.effort === null) {
+        throw new Error('Delegation Session has no runnable model policy.');
+      }
+      const resolvedScheduling = delegationScheduling(input.command, settings, revision, delegationStore, source.thread.id);
+      const continuationPolicy = input.command.name === 'send'
+        ? await runnerRegistry.resolveContinuation({
+            settings,
+            configurationRevision: revision,
+            runnerId: session.policy.runnerId,
+            runnerVersion: session.policy.runnerVersion,
+            modelProvider: session.policy.modelProvider,
+            modelId: session.policy.modelId,
+            effort: session.policy.effort,
+            profile: session.policy.profile,
+            access: session.policy.access,
+          })
+        : null;
+      return {
+        rootUserIntentRevision: source.rootUserIntentRevision,
+        policy: continuationPolicy ? {
+          configurationRevision: continuationPolicy.configurationRevision,
+          capabilityCeilingDigest,
+          runnerId: continuationPolicy.runnerId,
+          runnerVersion: continuationPolicy.runnerVersion,
+          modelProvider: continuationPolicy.modelProvider,
+          modelId: continuationPolicy.modelId,
+          effort: continuationPolicy.effort,
+          profile: continuationPolicy.profile,
+          access: continuationPolicy.access,
+          timeoutMs: continuationPolicy.timeoutMs,
+          schedulingPolicyDigest: schedulingPolicyDigest(continuationPolicy.scheduling),
+        } : {
+          configurationRevision: revision,
+          capabilityCeilingDigest,
+          runnerId: session.policy.runnerId,
+          runnerVersion: session.policy.runnerVersion,
+          modelProvider: session.policy.modelProvider,
+          modelId: session.policy.modelId,
+          effort: session.policy.effort,
+          profile: session.policy.profile,
+          access: session.policy.access,
+          timeoutMs: resolvedScheduling.timeoutMs,
+          schedulingPolicyDigest: schedulingPolicyDigest(resolvedScheduling.scheduling),
+        },
+        session: input.command.name === 'close'
+          ? { kind: 'close', sessionId, sessionRevision: session.revision }
+          : {
+              kind: 'send',
+              sessionId,
+              sessionRevision: session.revision,
+              minimumResumeRevision: session.stopFence?.minimumResumeRevision ?? null,
+            },
+      };
+    },
+    execute: (execution) => delegationCoordinator.execute(execution),
+  });
   const threads: AgentThreadCapability = {
     request: (...args) => threadService.request(...args),
     subscribe: (...args) => threadService.subscribe(...args),
-    subagentExecution: (...args) => threadService.subagentExecution(...args),
-    agentWorktree: (...args) => threadService.agentWorktree(...args),
+    subscribeRenderer: (...args) => threadService.subscribeRenderer(...args),
     writeThreadResourceWithStatus: (...args) => threadService.writeThreadResourceWithStatus(...args),
-    spawnIsolatedSkillThread: (...args) => threadService.spawnIsolatedSkillThread(...args),
     waitForIdle: (...args) => threadService.waitForIdle(...args),
     readThread: (...args) => threadService.readThread(...args),
     threadTranscriptPath: (...args) => threadService.threadTranscriptPath(...args),
@@ -368,12 +495,33 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   automationReference.set(automationService);
   const localWorkspaceForContext = (context: TurnExecutionContext) => {
     const workspaceOptions = options.createLocalWorkspaceOptions(context, composition);
+    const delegationSession = context.thread.threadSource === 'delegation'
+      ? delegationStore.readSession(context.thread.id)
+      : null;
+    const delegationMetadata = delegationSession
+      && (delegationSession.worktree.kind === 'active'
+        || delegationSession.worktree.kind === 'unchanged'
+        || delegationSession.worktree.kind === 'changed'
+        || delegationSession.worktree.kind === 'retained')
+      ? delegationSession.worktree.metadata
+      : null;
+    const delegationSandbox = delegationMetadata ? worktree.sandboxPaths(delegationMetadata) : null;
+    const processEnvironment = context.thread.threadSource === 'user'
+      && context.thread.parentThreadId === null
+      ? withDelegateCliEnvironment(workspaceOptions.processEnvironment, options.delegateCliRuntime)
+      : workspaceOptions.processEnvironment;
     return createAgentLocalWorkspaceContext(
       context.thread.cwd,
       options.scratchRoot,
       managedSkills.runtimeForTurn(context.turn.id),
-      workspaceOptions.processEnvironment,
-      workspaceOptions.writeBoundary,
+      processEnvironment,
+      delegationSandbox
+        ? {
+            root: delegationMetadata!.path,
+            shellWritablePaths: delegationSandbox.writablePaths,
+            protectedGitObjectStores: delegationSandbox.protectedGitObjectStores,
+          }
+        : workspaceOptions.writeBoundary,
       context.thread.id,
     );
   };
@@ -389,6 +537,26 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       localWorkspaceForContext(context),
     ),
     dynamicTools: () => [createAutomationTool(automationService)],
+    delegationPolicy: (threadId) => {
+      const session = delegationStore.readSession(threadId);
+      return session ? { profile: session.policy.profile, access: session.policy.access } : null;
+    },
+    delegateCommandRuntime: async (context) => {
+      if (context.thread.threadSource !== 'user' || context.thread.parentThreadId !== null) return undefined;
+      const { settings } = await loadDelegationConfiguration();
+      if (!settings.enabled) return undefined;
+      return delegationHost.commandRuntime(async (command) => {
+        const current = await loadDelegationConfiguration();
+        const resolved = delegationScheduling(
+          command,
+          current.settings,
+          current.revision,
+          delegationStore,
+          context.thread.id,
+        );
+        return resolved;
+      });
+    },
   });
   toolReference.set(toolRuntime);
   threadService.subscribe((notification) => {
@@ -401,21 +569,20 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     memory,
     threads: threadService,
     automations: automationService,
+    delegation: {
+      start: () => delegationHost.start(),
+      initialize: () => delegationCoordinator.initialize(),
+      stop: () => delegationHost.stop(),
+      closeStore: () => delegationDatabase.close(),
+    },
   });
 
   return {
     configuration: {
       resolveIdentityCatalog: (...args) => configurationLoader.resolveIdentityCatalog(...args),
-      listEditableRoles: (...args) => configurationLoader.listEditableRoles(...args),
       listPresentationOverrides: (...args) => configurationLoader.listPresentationOverrides(...args),
-      listAgentExecutionSelections: (...args) => configurationLoader.listAgentExecutionSelections(...args),
-      resolveAgentExecution: (...args) => configurationLoader.resolveAgentExecution(...args),
       resolveEditableProfile: (...args) => configurationLoader.resolveEditableProfile(...args),
-      listBuiltInDefinitions: (...args) => configurationLoader.listBuiltInDefinitions(...args),
-      writeRole: (...args) => configurationWriter.writeRole(...args),
-      deleteRole: (...args) => configurationWriter.deleteRole(...args),
       writeProfile: (...args) => configurationWriter.writeProfile(...args),
-      writePresentation: (...args) => configurationWriter.writePresentation(...args),
     },
     worktrees: {
       sandboxPaths: (...args) => worktree.sandboxPaths(...args),
@@ -455,5 +622,69 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     },
     initialize: lifecycle.initialize,
     close: lifecycle.close,
+  };
+}
+
+function digestJson(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function withDelegateCliEnvironment(
+  base: AgentShellProcessEnvironmentProvider,
+  runtime: DelegateCliRuntimeConfig,
+): AgentShellProcessEnvironmentProvider {
+  return async (context: AgentShellProcessEnvironmentContext) => {
+    const environment = await base(context);
+    return withDelegateCliShellEnvironment(runtime, environment);
+  };
+}
+
+function delegationScheduling(
+  command: DelegateStateCommand,
+  settings: AgentDelegationSettings,
+  configurationRevision: string,
+  store: DelegationSessionStore,
+  ownerThreadId: string,
+): {
+  readonly scheduling: {
+    readonly pool: string;
+    readonly configurationRevision: string;
+    readonly maxConcurrentProducer: number;
+    readonly maxConcurrentPool: number;
+  };
+  readonly schedulerLimits: {
+    readonly maxConcurrentGlobal: number;
+    readonly maxConcurrentThread: number;
+    readonly maxQueuedGlobal: number;
+    readonly maxQueuedThread: number;
+  };
+  readonly timeoutMs: number;
+} {
+  const targetSessionId = command.name === 'run'
+    ? null
+    : command.name === 'close'
+      ? command.sessionId
+      : command.target.kind === 'session'
+        ? command.target.id
+        : store.settlementForTask(command.target.id)?.sessionId ?? null;
+  const targetSession = targetSessionId ? store.readSession(targetSessionId) : null;
+  const runnerId = targetSession?.ownerThreadId === ownerThreadId
+    ? targetSession.policy.runnerId
+    : settings.defaultRunnerId;
+  const runner = settings.runners[runnerId];
+  return {
+    scheduling: {
+      pool: runner?.pool ?? runnerId,
+      configurationRevision,
+      maxConcurrentProducer: runner?.maxConcurrent ?? 1,
+      maxConcurrentPool: runner?.maxConcurrentPool ?? 1,
+    },
+    schedulerLimits: {
+      maxConcurrentGlobal: settings.maxConcurrentGlobal,
+      maxConcurrentThread: settings.maxConcurrentThread,
+      maxQueuedGlobal: settings.maxQueuedGlobal,
+      maxQueuedThread: settings.maxQueuedThread,
+    },
+    timeoutMs: runner?.timeoutMs ?? 60_000,
   };
 }

@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { runDelegateCli, type DelegateCliIo } from '../../src/delegate/cli';
-import { resolveDelegateCliRuntime } from '../../src/main/delegateRuntime';
+import {
+  resolveDelegateCliRuntime,
+  withDelegateCliShellEnvironment,
+} from '../../src/main/delegateRuntime';
 
 const execFile = promisify(execFileCallback);
 const repoRoot = path.resolve(import.meta.dir, '..', '..');
@@ -96,6 +99,27 @@ describe('delegate CLI', () => {
       cliRuntime: '/app/Contents/MacOS/Tenon',
       runAsNode: true,
       packaged: true,
+    });
+  });
+
+  test('prepends launcher metadata and the CLI directory to a shell environment', () => {
+    const runtime = resolveDelegateCliRuntime({
+      isPackaged: false,
+      moduleDir: path.join(repoRoot, 'src', 'main'),
+      resourcesPath: '/unused',
+      processExecPath: '/unused/Tenon',
+    });
+
+    expect(withDelegateCliShellEnvironment(runtime, {
+      env: { HOME: '/tmp/home' },
+      leadingToolPathSegments: ['/existing/bin'],
+    })).toEqual({
+      env: {
+        HOME: '/tmp/home',
+        TENON_DELEGATE_CLI_ENTRY: runtime.cliEntry,
+        TENON_DELEGATE_CLI_RUNTIME: runtime.cliRuntime,
+      },
+      leadingToolPathSegments: [runtime.binDir, '/existing/bin'],
     });
   });
 

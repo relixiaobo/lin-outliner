@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import {
   canonicalDelegateArgv,
+  decodeDelegateLaunchCapability,
   type DelegateStateCommand,
 } from '../../../delegate/contract';
 import type { DelegateCliRuntimeConfig } from '../../delegateRuntime';
 import type { DelegateCommandRuntime } from '../capabilities/agentLocalTools';
-import type { ToolTaskSchedulingPolicy } from '../tasks/toolTaskTypes';
+import type { ToolTaskSchedulerLimits, ToolTaskSchedulingPolicy } from '../tasks/toolTaskTypes';
 import {
   DelegateCapabilityBroker,
   type DelegateCapabilityAdmission,
@@ -30,6 +31,12 @@ export interface DelegateRuntimeHostOptions {
     },
   ) => Promise<DelegateRuntimeAdmissionResolution>;
   readonly execute: DelegateCapabilityBrokerOptions['execute'];
+}
+
+export interface DelegateRuntimeScheduling {
+  readonly scheduling: ToolTaskSchedulingPolicy;
+  readonly schedulerLimits: ToolTaskSchedulerLimits;
+  readonly timeoutMs: number;
 }
 
 const DELEGATE_CLI_ENV_KEYS = new Set([
@@ -67,9 +74,13 @@ export class DelegateRuntimeHost {
     await this.broker.stop();
   }
 
-  commandRuntime(scheduling: ToolTaskSchedulingPolicy): DelegateCommandRuntime {
+  commandRuntime(
+    resolveScheduling: (
+      command: DelegateStateCommand
+    ) => DelegateRuntimeScheduling | Promise<DelegateRuntimeScheduling>,
+  ): DelegateCommandRuntime {
     return {
-      scheduling,
+      resolveScheduling: async (command) => resolveScheduling(command),
       prepare: async (input) => {
         const directEnv = delegateCliProcessEnvironment(input.env, this.options.cli.runAsNode);
         const args = [this.options.cli.cliEntry, ...canonicalDelegateArgv(input.command)];
@@ -93,8 +104,11 @@ export class DelegateRuntimeHost {
           },
         };
         const resolved = await this.options.resolveAdmission(unresolved);
-        if (resolved.policy.configurationRevision !== scheduling.configurationRevision) {
+        if (resolved.policy.configurationRevision !== input.scheduling.configurationRevision) {
           throw new Error('Delegation scheduling and capability configuration revisions do not match');
+        }
+        if (resolved.policy.schedulingPolicyDigest !== schedulingPolicyDigest(input.scheduling)) {
+          throw new Error('Delegation scheduling and capability policy do not match');
         }
         const capability = this.broker.issue({
           ...unresolved,
@@ -105,6 +119,9 @@ export class DelegateRuntimeHost {
           policy: resolved.policy,
           session: resolved.session,
         });
+        const capabilityId = decodeDelegateLaunchCapability(
+          JSON.parse(capability.toString('utf8')) as unknown,
+        ).capabilityId;
         return {
           process: {
             kind: 'exec',
@@ -114,10 +131,15 @@ export class DelegateRuntimeHost {
             privateControl: true,
           },
           privateControlInput: capability,
+          disposePrivateControl: () => this.broker.revoke(capabilityId),
         };
       },
     };
   }
+}
+
+export function schedulingPolicyDigest(scheduling: ToolTaskSchedulingPolicy): string {
+  return createHash('sha256').update(JSON.stringify(scheduling)).digest('hex');
 }
 
 export function delegateProcessDigest(input: {

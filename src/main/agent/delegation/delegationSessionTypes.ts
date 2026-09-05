@@ -1,6 +1,10 @@
 import type { ReasoningEffort } from '../../../core/agent/configuration';
 import type { ThreadId, TurnId } from '../../../core/agent/protocol';
 import type { DelegateAccess, DelegateTaskProfile } from '../../../delegate/contract';
+import type {
+  AgentWorktreeMetadata,
+  AgentWorktreeRecoveryIntent,
+} from '../worktree/AgentWorktree';
 
 export type DelegationSessionState = 'open' | 'closed';
 export type DelegationMessageState = 'queued' | 'committed' | 'blocked';
@@ -28,10 +32,15 @@ export interface DelegationPolicySnapshot {
 
 export type DelegationWorktreeDisposition =
   | { readonly kind: 'none' }
+  | { readonly kind: 'planned'; readonly intent: AgentWorktreeRecoveryIntent }
   | {
-    readonly kind: 'active' | 'unchanged' | 'changed' | 'retained' | 'ambiguous';
-    readonly path: string;
-    readonly baseRevision: string;
+    readonly kind: 'active' | 'unchanged' | 'changed' | 'retained';
+    readonly metadata: AgentWorktreeMetadata;
+  }
+  | {
+    readonly kind: 'ambiguous';
+    readonly intent: AgentWorktreeRecoveryIntent;
+    readonly metadata: AgentWorktreeMetadata | null;
   }
   | { readonly kind: 'cleaned'; readonly baseRevision: string };
 

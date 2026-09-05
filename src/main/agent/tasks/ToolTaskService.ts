@@ -83,6 +83,7 @@ export interface ToolTaskHost {
     producerContext: JsonValue | null,
     receipt: ToolTaskFinalReceipt,
   ): Promise<ToolTaskProducerReconciliation>;
+  beforeStop?(task: ToolTaskRecord, sourceTurnId: TurnId | undefined): Promise<void>;
   settleTask?(
     task: ToolTaskRecord,
     producerContext: JsonValue | null,
@@ -113,6 +114,7 @@ export interface StartToolTaskInput {
   readonly reserveForBackground?: boolean;
   readonly producerContext?: JsonValue;
   readonly scheduling?: Partial<ToolTaskSchedulingPolicy>;
+  readonly schedulerLimits?: ToolTaskSchedulerLimits;
   readonly signal?: AbortSignal;
 }
 
@@ -126,6 +128,7 @@ export interface ToolTaskProcessPreparationContext {
 export interface PreparedToolTaskProcess {
   readonly process: ToolTaskProcessSpec;
   readonly privateControlInput?: Uint8Array;
+  readonly disposePrivateControl?: () => void;
 }
 
 export interface ToolTaskOutput {
@@ -315,10 +318,11 @@ export class ToolTaskService {
           return terminal;
         }
       }
+      const schedulerLimits = input.schedulerLimits ?? this.schedulerLimits;
       const admission = this.store.admitLease(
         taskId,
         schedulingPolicy(input.producer, input.scheduling),
-        this.schedulerLimits,
+        schedulerLimits,
         this.now(),
       );
       if (admission.state === 'refused') {
@@ -338,10 +342,10 @@ export class ToolTaskService {
         }, this.now());
         this.publish(queued);
         if (queued.backgroundEnabled) {
-          this.continueQueuedAdmission(taskId, input);
+          this.continueQueuedAdmission(taskId, input, schedulerLimits);
           return queued;
         }
-        const acquired = await this.waitForLease(taskId, input.signal);
+        const acquired = await this.waitForLease(taskId, schedulerLimits, input.signal);
         if (!acquired || acquired.state === 'released') return this.store.read(taskId)!;
       }
       return await this.launchAdmittedTask(taskId, input);
@@ -359,8 +363,12 @@ export class ToolTaskService {
     }
   }
 
-  private continueQueuedAdmission(taskId: string, input: StartToolTaskInput): void {
-    const run = this.waitForLease(taskId)
+  private continueQueuedAdmission(
+    taskId: string,
+    input: StartToolTaskInput,
+    schedulerLimits: ToolTaskSchedulerLimits,
+  ): void {
+    const run = this.waitForLease(taskId, schedulerLimits)
       .then(async (lease) => {
         if (!lease || lease.state !== 'active') return;
         await this.launchAdmittedTask(taskId, input);
@@ -389,6 +397,8 @@ export class ToolTaskService {
     if (task.state !== 'running' || this.store.readLease(taskId)?.state !== 'active') return task;
     const paths = taskPaths(task.detailPath);
     let supervisor: ChildProcess | null = null;
+    let disposePrivateControl: (() => void) | undefined;
+    let launchCompleted = false;
     try {
       const prepared = input.prepareProcess
         ? await input.prepareProcess({
@@ -400,6 +410,7 @@ export class ToolTaskService {
         : { process: input.process ?? { kind: 'shell', command: input.command },
             ...(input.privateControlInput ? { privateControlInput: input.privateControlInput } : {}) };
       validatePreparedProcess(prepared);
+      disposePrivateControl = prepared.disposePrivateControl;
       const maxPreparedResultBytes = preparedResultMaxBytes(this.limits.taskDetailBytes);
       const config: ToolTaskSupervisorConfig = {
         version: 2,
@@ -470,6 +481,7 @@ export class ToolTaskService {
         await this.enforceRetention();
         this.wakeDelivery(current.ownerThreadId);
       }
+      launchCompleted = true;
       return current;
     } catch (error) {
       const current = this.store.read(taskId)!;
@@ -499,6 +511,8 @@ export class ToolTaskService {
       await atomicJsonWrite(paths.receipt, receipt).catch(() => undefined);
       await this.reconcileTask(current);
       return this.store.read(taskId)!;
+    } finally {
+      if (!launchCompleted) disposePrivateControl?.();
     }
   }
 
@@ -531,10 +545,11 @@ export class ToolTaskService {
     };
   }
 
-  async stop(taskId: string, ownerThreadId: ThreadId): Promise<ToolTaskRecord | null> {
+  async stop(taskId: string, ownerThreadId: ThreadId, sourceTurnId?: TurnId): Promise<ToolTaskRecord | null> {
     let task = this.store.owned(taskId, ownerThreadId);
     if (!task) return null;
     if (isToolTaskTerminal(task.state)) return task;
+    await this.host?.beforeStop?.(task, sourceTurnId);
     if (this.store.readLease(taskId)?.state === 'queued') {
       return this.settleWithoutProcess(task, 'cancelled', 'user_stop', null);
     }
@@ -1121,6 +1136,7 @@ export class ToolTaskService {
 
   private async waitForLease(
     taskId: string,
+    schedulerLimits: ToolTaskSchedulerLimits,
     signal?: AbortSignal,
   ): Promise<import('./toolTaskTypes').ToolTaskLease | null> {
     while (true) {
@@ -1135,7 +1151,7 @@ export class ToolTaskService {
         );
         return this.store.readLease(taskId);
       }
-      const lease = this.store.tryActivateLease(taskId, this.schedulerLimits, this.now());
+      const lease = this.store.tryActivateLease(taskId, schedulerLimits, this.now());
       if (!lease || lease.state !== 'queued') return lease;
       await delay(25);
     }
@@ -1255,6 +1271,9 @@ function validateProcessInput(input: StartToolTaskInput): void {
 }
 
 function validatePreparedProcess(input: PreparedToolTaskProcess): void {
+  if (input.disposePrivateControl && !input.privateControlInput) {
+    throw new Error('Private Tool Task control cleanup requires private control input');
+  }
   const processSpec = input.process;
   if (processSpec.kind === 'shell') {
     if (input.privateControlInput) throw new Error('Private Tool Task control input requires a direct process');

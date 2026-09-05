@@ -66,7 +66,7 @@ import type {
   ToolTaskProcessPreparationContext,
   ToolTaskService,
 } from '../tasks/ToolTaskService';
-import type { ToolTaskSchedulingPolicy } from '../tasks/toolTaskTypes';
+import type { ToolTaskSchedulerLimits, ToolTaskSchedulingPolicy } from '../tasks/toolTaskTypes';
 import type { ToolTaskExecutionState } from '../../../core/agent/protocol';
 import {
   parsePrivilegedDelegateCommand,
@@ -138,7 +138,11 @@ export interface AgentLocalWorkspaceContext {
 }
 
 export interface DelegateCommandRuntime {
-  readonly scheduling: ToolTaskSchedulingPolicy;
+  resolveScheduling(command: DelegateStateCommand): Promise<{
+    readonly scheduling: ToolTaskSchedulingPolicy;
+    readonly schedulerLimits: ToolTaskSchedulerLimits;
+    readonly timeoutMs: number;
+  }>;
   prepare(
     input: ToolTaskProcessPreparationContext & {
       readonly command: DelegateStateCommand;
@@ -146,6 +150,7 @@ export interface DelegateCommandRuntime {
       readonly sourceTurnId: string;
       readonly sourceItemId: string;
       readonly env: NodeJS.ProcessEnv;
+      readonly scheduling: ToolTaskSchedulingPolicy;
     },
   ): Promise<PreparedToolTaskProcess>;
 }
@@ -2438,6 +2443,9 @@ async function startSupervisedBackgroundCommand(
   const declaredOutputSnapshot = await snapshotDeclaredOutputRoots(declaredOutputRoots);
   const env = buildWorkspaceShellProcessEnv(shellEnvironment);
   const delegateRuntime = delegateCommand ? workspace.delegateCommandRuntime : undefined;
+  const delegateScheduling = delegateRuntime && delegateCommand
+    ? await delegateRuntime.resolveScheduling(delegateCommand)
+    : undefined;
   const task = await service.start({
     ownerThreadId: workspace.threadId!,
     sourceTurnId: turnId,
@@ -2447,12 +2455,13 @@ async function startSupervisedBackgroundCommand(
     command: params.command,
     cwd: workspace.root,
     ...(params.stdin === undefined ? {} : { stdin: params.stdin }),
-    timeoutMs: params.timeout ?? BASH_DEFAULT_TIMEOUT_MS,
+    timeoutMs: delegateScheduling?.timeoutMs ?? params.timeout ?? BASH_DEFAULT_TIMEOUT_MS,
     env,
     sandbox: workspaceShellSandbox(workspace),
     producerContext: encodeDeclaredOutputArtifactPlan(declaredOutputRoots, declaredOutputSnapshot),
     ...(delegateRuntime && delegateCommand ? {
-      scheduling: delegateRuntime.scheduling,
+      scheduling: delegateScheduling!.scheduling,
+      schedulerLimits: delegateScheduling!.schedulerLimits,
       prepareProcess: (context: ToolTaskProcessPreparationContext) => delegateRuntime.prepare({
         ...context,
         command: delegateCommand,
@@ -2460,6 +2469,7 @@ async function startSupervisedBackgroundCommand(
         sourceTurnId: turnId,
         sourceItemId: toolCallId,
         env,
+        scheduling: delegateScheduling!.scheduling,
       }),
     } : {}),
   });

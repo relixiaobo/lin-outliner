@@ -6,7 +6,6 @@ import {
   resolveUserSkillInvocation,
   type SkillLoadOptions,
 } from '../agent/capabilities/agentSkills';
-import { executeAgentSkillShellCommand } from '../agent/capabilities/agentSkillShell';
 import type {
   SkillAdmissionResolution,
   SkillAdmissionResolutionInput,
@@ -122,13 +121,6 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
     assertManagedSkillInvocable: (skillId, expectedContentHash) => (
       service.assertInvocable(skillId, expectedContentHash)
     ),
-    executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
-      skill,
-      command,
-      localRoot: options.localRoot,
-      scratchRoot: options.scratchRoot,
-      signal,
-    }),
   });
   runtimeReference.set(primaryRuntime);
 

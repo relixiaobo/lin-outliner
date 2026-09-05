@@ -16,9 +16,8 @@ import {
   type ThreadToolItem,
 } from '../../src/renderer/agent/components/items/ThreadItemView';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
-import type { SubagentAnchor, SubagentRegistryEntry } from '../../src/renderer/agent/subagentPresentation';
-import { SubagentRegistryProvider } from '../../src/renderer/agent/components/SubagentRegistryContext';
 import { buildIndex } from '../../src/renderer/state/document';
+import { DocumentIndexStore } from '../../src/renderer/state/documentIndexStore';
 import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
@@ -96,8 +95,6 @@ describe('ThreadItemView user message presentation', () => {
     };
     const rendered = renderItem(item, {
       canEditUserMessage: true,
-      hostAuthoredEvent: true,
-      hostAuthorName: 'main',
       showMessageActions: true,
     });
     await flush();
@@ -705,57 +702,6 @@ describe('ThreadItemView tool row status presentation', () => {
     expect(headers).toEqual(['Arguments']);
   });
 
-  test('keeps a failed collaboration result named for what it holds', async () => {
-    // A state snapshot is a Result even when the call failed; the colour says
-    // it failed. Calling the snapshot an Error would misname the content.
-    const item: ThreadItem = {
-      ...base('collab-1'),
-      type: 'collabAgentToolCall',
-      status: 'failed',
-      tool: 'agent',
-      arguments: { prompt: 'investigate' },
-      receiverThreadIds: [],
-      senderThreadId: 'thread-1',
-      prompt: 'investigate',
-      summary: null,
-      model: null,
-      reasoningEffort: null,
-      agentsStates: {},
-      modelCall: replayableModelCall('agent', { prompt: 'investigate' }),
-    };
-    const rendered = renderItem(item, { expanded: true });
-    await flush();
-
-    const outputSection = [...rendered.document.querySelectorAll('.thread-tool-section')].at(-1);
-    expect(outputSection?.querySelector('header')?.textContent).toBe('Result');
-    expect(outputSection?.className).toContain('is-failed');
-  });
-
-  test('uses Agent message summaries while preserving failed and interrupted outcomes', async () => {
-    for (const [status, expected] of [
-      ['inProgress', 'Request reviewer feedback'],
-      ['completed', 'Request reviewer feedback'],
-      ['failed', 'Request reviewer feedback · failed'],
-      ['interrupted', 'Request reviewer feedback · interrupted'],
-    ] as const) {
-      const rendered = renderItem(agentMessage({ status, summary: 'Request reviewer feedback' }));
-      await flush();
-
-      const label = rendered.document.querySelector<HTMLElement>('.thread-tool-label');
-      expect(label?.textContent).toBe(expected);
-      expect(label?.title).toBe(expected);
-      while (mounted.length > 0) mounted.pop()?.();
-    }
-  });
-
-  test('falls back to generic Agent message copy for legacy Items without a summary', async () => {
-    const rendered = renderItem(agentMessage({ summary: null }));
-    await flush();
-
-    expect(rendered.document.querySelector('.thread-tool-label')?.textContent)
-      .toBe('Messaged an agent');
-  });
-
   test('fills the produced-value section with a failed MCP call own message', async () => {
     const item: ThreadItem = {
       ...base('mcp-1'),
@@ -899,353 +845,6 @@ describe('ThreadItemView tool row status presentation', () => {
   });
 });
 
-describe('ThreadItemView Agent chips', () => {
-  test('names the Agent from the registry and marks only its live status as working', async () => {
-    const rendered = renderItem(spawnActivity('chip-running'), {
-      onInterruptThread: async () => undefined,
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-running', generation: null },
-      registry: registryOf({ startedAt: Date.now() - 5_000, status: 'running' }),
-    });
-    await flush();
-
-    const chip = rendered.document.querySelector('.thread-agent-chip');
-    expect(chip?.querySelector('.thread-agent-chip-name')?.textContent).toBe('survey the runtime');
-    expect(chip?.querySelector('.thread-agent-chip-name .working-text')).toBeNull();
-    // The type rides the title and the accessible name, not the chip's one
-    // line: it is `general-purpose` for almost every Agent, and spending the
-    // name's room on it truncated both.
-    expect(chip?.title).toMatch(/^survey the runtime · general-purpose · [4-6]s$/u);
-    expect(chip?.getAttribute('aria-label')).toContain('Open survey the runtime. general-purpose');
-    expect(chip?.textContent).not.toContain('general-purpose');
-    // A running Agent's clock IS its status: the word `Working` would spend
-    // half the chip's one line saying what the moving text already says.
-    expect(chip?.querySelector('.thread-agent-chip-meta .working-text-base')?.textContent)
-      .toMatch(/^[4-6]s$/u);
-    expect(rendered.document.querySelector('[aria-label="Stop survey the runtime"]')).not.toBeNull();
-  });
-
-  test('states the settled span from the generation, and keeps the chip in its slot', async () => {
-    const rendered = renderItem(spawnActivity('chip-settled'), {
-      onInterruptThread: async () => undefined,
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-settled', generation: null },
-      registry: registryOf({ durationMs: 192_000, status: 'finished' }),
-    });
-    await flush();
-
-    const chip = rendered.document.querySelector('.thread-agent-chip');
-    expect(chip?.querySelector('.thread-agent-chip-meta')?.textContent).toBe('Finished · 3m 12s');
-    expect(chip?.querySelector('.working-text')).toBeNull();
-    // A settled Agent has nothing left to stop; the chip keeps its slot anyway,
-    // so the delegation is still read where it was decided.
-    expect(rendered.document.querySelector('[aria-label="Stop survey the runtime"]')).toBeNull();
-  });
-
-  test('opens the Agent rather than expanding anything in place', async () => {
-    const opened: string[] = [];
-    const rendered = renderItem(spawnActivity('chip-open'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-open', generation: null },
-      onOpenAgent: (agentId) => opened.push(agentId),
-      registry: registryOf({ status: 'finished' }),
-    });
-    await flush();
-
-    const chip = rendered.document.querySelector<HTMLButtonElement>('.thread-agent-chip');
-    // The chip is a way in, not a disclosure: nothing about it claims an
-    // expandable region, and it carries the trailing mark of a control that
-    // opens somewhere rather than the leading one that expands in place.
-    expect(chip?.getAttribute('aria-expanded')).toBeNull();
-    expect(chip?.querySelector('.thread-agent-chip-open')).not.toBeNull();
-    expect(chip?.querySelector('.thread-disclosure-chevron')).toBeNull();
-    act(() => chip?.click());
-    expect(opened).toEqual(['thread-child']);
-  });
-
-  test('says a user stop outranks the model, without inventing a status for it', async () => {
-    const rendered = renderItem(spawnActivity('chip-stopped'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-stopped', generation: null },
-      registry: registryOf({ status: 'interrupted', stoppedByUser: true }),
-    });
-    await flush();
-
-    expect(rendered.document.querySelector('.thread-agent-chip-meta')?.textContent).toBe('Stopped');
-  });
-
-  test('marks a worktree-isolated Agent and counts its live descendants', async () => {
-    const rendered = renderItem(spawnActivity('chip-worktree'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-worktree', generation: null },
-      registry: registryOf({
-        liveDescendantCount: 2,
-        status: 'running',
-        worktree: { branch: 'tenon/agent-survey', path: '/tmp/agent-survey' },
-      }),
-    });
-    await flush();
-
-    const chip = rendered.document.querySelector('.thread-agent-chip');
-    expect(chip?.querySelector('.thread-agent-chip-worktree')).not.toBeNull();
-    expect(chip?.querySelector('.thread-agent-chip-meta')?.textContent).toContain('2 child tasks');
-  });
-
-  test('reports a budget failure in product copy, with no token quantity anywhere it can be read', async () => {
-    const rendered = renderItem(spawnActivity('chip-failed'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-failed', generation: null },
-      registry: registryOf({
-        error: {
-          message: 'Token budget exhausted (1234 of 1000 tokens)',
-          code: 'subagent_budget_exhausted',
-        },
-        status: 'errored',
-      }),
-    });
-    await flush();
-
-    const line = rendered.document.querySelector<HTMLElement>('.thread-agent-chip-block');
-    const chip = line?.querySelector<HTMLButtonElement>('.thread-agent-chip');
-    expect(line?.className).toContain('thread-subagent-errored');
-    expect(chip?.querySelector('.thread-agent-chip-meta')?.textContent).toBe('Failed');
-    expect(rendered.document.querySelector('.thread-agent-chip-error')?.textContent)
-      .toBe('Task reached the system resource limit. Results have been preserved.');
-    expect(`${line?.textContent} ${chip?.ariaLabel} ${chip?.title}`).not.toMatch(/token|\d/u);
-  });
-
-  test('keeps a failed historical run factual while the stable Agent works again', async () => {
-    const receipt = {
-      generation: 1,
-      turnId: 'child-turn-1',
-      parentItemId: 'chip-historical-failure',
-      terminalStatus: 'failed' as const,
-      stopProvenance: 'none' as const,
-      durationMs: 2_000,
-      error: { code: 'provider_failure', messagePreview: 'Provider unavailable', omittedBytes: 0 },
-      partialOutputAvailable: true,
-      parentThreadId: 'thread-1',
-      notificationState: 'delivered' as const,
-      deliveryTurnId: 'delivery-turn-1',
-    };
-    const rendered = renderItem(spawnActivity('chip-historical-failure'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-historical-failure', generation: 1 },
-      registry: registryOf({
-        generation: 2,
-        generationReceipts: new Map([[1, receipt]]),
-        status: 'running',
-        startedAt: Date.now() - 500,
-      }),
-    });
-    await flush();
-
-    const chip = rendered.document.querySelector('.thread-agent-chip');
-    expect(chip?.textContent).toContain('This run failed · 2s');
-    expect(chip?.textContent).toContain('main notified');
-    expect(chip?.textContent).toContain('Partial output available');
-    expect(chip?.textContent).not.toContain('Working');
-    expect(rendered.document.querySelector('.thread-agent-chip-error')?.textContent)
-      .toBe('Provider unavailable');
-  });
-
-  test('keeps a historical user stop factual while the stable Agent works again', async () => {
-    const receipt = {
-      generation: 1,
-      turnId: 'child-turn-1',
-      parentItemId: 'chip-historical-stop',
-      terminalStatus: 'interrupted' as const,
-      stopProvenance: 'user' as const,
-      durationMs: 2_000,
-      error: null,
-      partialOutputAvailable: false,
-      parentThreadId: 'thread-1',
-      notificationState: 'delivered' as const,
-      deliveryTurnId: 'delivery-turn-1',
-    };
-    const rendered = renderItem(spawnActivity('chip-historical-stop'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-historical-stop', generation: 1 },
-      registry: registryOf({
-        generation: 2,
-        generationReceipts: new Map([[1, receipt]]),
-        status: 'running',
-        stoppedByUser: false,
-      }),
-    });
-    await flush();
-
-    const chip = rendered.document.querySelector('.thread-agent-chip');
-    expect(chip?.textContent).toContain('This run was stopped · 2s');
-    expect(chip?.textContent).not.toContain('Working');
-  });
-
-  test('keeps historical budget failures on bounded product copy', async () => {
-    const receipt = {
-      generation: 1,
-      turnId: 'child-turn-1',
-      parentItemId: 'chip-historical-budget',
-      terminalStatus: 'failed' as const,
-      stopProvenance: 'budget' as const,
-      durationMs: 2_000,
-      error: {
-        code: 'subagent_budget_exhausted',
-        messagePreview: 'Token budget exhausted (1234 of 1000 tokens)',
-        omittedBytes: 0,
-      },
-      partialOutputAvailable: false,
-      parentThreadId: 'thread-1',
-      notificationState: 'delivered' as const,
-      deliveryTurnId: 'delivery-turn-1',
-    };
-    const rendered = renderItem(spawnActivity('chip-historical-budget'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-historical-budget', generation: 1 },
-      registry: registryOf({ generationReceipts: new Map([[1, receipt]]), status: 'errored' }),
-    });
-    await flush();
-
-    const line = rendered.document.querySelector<HTMLElement>('.thread-agent-chip-block');
-    const chip = line?.querySelector<HTMLButtonElement>('.thread-agent-chip');
-    expect(rendered.document.querySelector('.thread-agent-chip-error')?.textContent)
-      .toBe('Task reached the system resource limit. Results have been preserved.');
-    expect(`${line?.textContent} ${chip?.ariaLabel} ${chip?.title}`).not.toMatch(/token|1234|1000/iu);
-  });
-
-  test('keeps a historical foreground run scoped to its receipt after a background resume', async () => {
-    const receipt = {
-      generation: 1,
-      turnId: 'child-turn-1',
-      parentItemId: 'chip-historical-foreground',
-      terminalStatus: 'finished' as const,
-      stopProvenance: 'none' as const,
-      durationMs: 2_000,
-      error: null,
-      partialOutputAvailable: true,
-      parentThreadId: 'thread-1',
-      notificationState: 'none' as const,
-      deliveryTurnId: null,
-    };
-    const rendered = renderItem(spawnActivity('chip-historical-foreground'), {
-      anchor: { kind: 'foreground', agentId: 'thread-child', itemId: 'chip-historical-foreground', generation: 1 },
-      registry: registryOf({
-        generation: 2,
-        generationReceipts: new Map([[1, receipt]]),
-        runMode: 'background',
-        status: 'running',
-        startedAt: Date.now() - 500,
-      }),
-    });
-    await flush();
-
-    const chip = rendered.document.querySelector('.thread-agent-chip');
-    expect(chip?.textContent).toContain('This run finished · 2s');
-    expect(chip?.textContent).not.toContain('Working');
-    expect(chip?.textContent).not.toContain('notified');
-  });
-
-  test('renders nothing for a terminal activity: the chip already speaks for that Agent', async () => {
-    const rendered = renderItem({
-      ...base('terminal-activity'),
-      type: 'subAgentActivity',
-      kind: 'completed',
-      agentThreadId: 'thread-child',
-      agentTurnId: null,
-      agentPath: '/root/research',
-      error: null,
-      spawnItemId: null,
-    }, { registry: registryOf({ status: 'finished' }) });
-    await flush();
-
-    expect(rendered.document.querySelector('.thread-agent-chip')).toBeNull();
-    expect(rendered.document.querySelector('.thread-item')).toBeNull();
-  });
-
-  test('falls back to the canonical Item when the Agent record is gone', async () => {
-    const rendered = renderItem(spawnActivity('chip-orphan'), {
-      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-orphan', generation: null },
-    });
-    await flush();
-
-    expect(rendered.document.querySelector('.thread-agent-chip-name')?.textContent).toBe('research');
-    expect(rendered.document.querySelector('.thread-agent-chip-meta')?.textContent).toBe('Not found');
-  });
-
-  test('keeps collaboration snapshots in sanitized result JSON without loading raw model output', async () => {
-    let reads = 0;
-    const item: ThreadItem = {
-      ...base('collaboration-state'),
-      type: 'collabAgentToolCall',
-      tool: 'task_stop',
-      status: 'completed',
-      outputRef: {
-        id: 'c'.repeat(64),
-        mimeType: 'text/plain',
-        byteLength: 40,
-        summary: 'Raw collaboration result',
-      },
-      senderThreadId: 'thread-1',
-      receiverThreadIds: ['thread-child'],
-      prompt: null,
-      summary: null,
-      model: null,
-      reasoningEffort: null,
-      agentsStates: {
-        'thread-child': {
-          status: 'running',
-          taskPath: '/root/research',
-          nickname: 'Researcher',
-          role: 'worker',
-        },
-      },
-      modelCall: replayableModelCall('task_stop', { task_id: 'thread-child' }),
-    };
-    const rendered = renderItem(item, {
-      expanded: true,
-      onReadToolOutput: async () => {
-        reads += 1;
-        return 'tokensUsed: 1234';
-      },
-    });
-    await flush();
-
-    expect(reads).toBe(0);
-    expect(rendered.document.querySelector('.thread-tool-body')?.textContent)
-      .not.toContain('tokensUsed');
-    expect(rendered.document.querySelector('.thread-tool-body')?.textContent)
-      .toContain('taskPath');
-  });
-});
-
-function spawnActivity(id: string): ThreadItem {
-  return {
-    ...base(id),
-    type: 'subAgentActivity',
-    kind: 'started',
-    agentThreadId: 'thread-child',
-    agentTurnId: null,
-    agentPath: '/root/research',
-    error: null,
-    spawnItemId: null,
-  };
-}
-
-function registryOf(
-  overrides: Partial<SubagentRegistryEntry>,
-): ReadonlyMap<string, SubagentRegistryEntry> {
-  return new Map([['thread-child', {
-    agentId: 'thread-child',
-    parentThreadId: 'thread-1',
-    displayName: 'survey the runtime',
-    agentType: 'general-purpose',
-    form: 'agent' as const,
-    runMode: 'background' as const,
-    generation: 1,
-    generationReceipts: new Map(),
-    status: 'running' as const,
-    stoppedByUser: false,
-    startedAt: null,
-    durationMs: null,
-    settledAt: null,
-    error: null,
-    worktree: null,
-    liveDescendantCount: 0,
-    ...overrides,
-  }]]);
-}
-
-
 describe('ThreadToolActivityGroup glyph', () => {
   test('wears the shared tool glyph when every member agrees, the wrench when mixed', async () => {
     const reads = renderGroup([
@@ -1321,30 +920,6 @@ function command(overrides: Partial<CommandExecutionThreadItem> = {}): CommandEx
   };
 }
 
-function agentMessage(
-  overrides: Partial<Extract<ThreadItem, { type: 'collabAgentToolCall' }>> = {},
-): Extract<ThreadItem, { type: 'collabAgentToolCall' }> {
-  return {
-    ...base('agent-message-1'),
-    type: 'collabAgentToolCall',
-    tool: 'agent_message',
-    status: 'completed',
-    outputRef: null,
-    senderThreadId: 'thread-1',
-    receiverThreadIds: ['thread-child'],
-    prompt: 'Please review the findings.',
-    summary: 'Request reviewer feedback',
-    model: null,
-    reasoningEffort: null,
-    agentsStates: {},
-    modelCall: replayableModelCall('agent_message', {
-      to: 'thread-child',
-      message: 'Please review the findings.',
-    }),
-    ...overrides,
-  };
-}
-
 function base(id: string) {
   return {
     id,
@@ -1382,7 +957,6 @@ function ThreadToolGroupProbe({
         },
       }}
       items={items}
-      onOpenThread={async () => undefined}
       onReadToolArguments={async () => null}
       onReadToolOutput={async () => null}
       threadCwd="/workspace"
@@ -1397,8 +971,6 @@ interface RenderItemOptions {
   readonly expanded?: boolean;
   readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled?: ThreadDisclosureState['holdAnchorUntilSettled'];
-  readonly hostAuthoredEvent?: boolean;
-  readonly hostAuthorName?: string;
   readonly onReasoningResizeObserver?: () => void;
   readonly onReadToolOutput?: (item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments?: (item: ThreadToolItem) => Promise<import('../../src/core/agent/protocol').JsonValue | null>;
@@ -1406,12 +978,8 @@ interface RenderItemOptions {
     readonly clientWidth: number;
     readonly scrollWidth: number;
   };
-  readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly streaming?: boolean;
   readonly showMessageActions?: boolean;
-  readonly anchor?: SubagentAnchor;
-  readonly registry?: ReadonlyMap<string, SubagentRegistryEntry>;
-  readonly onOpenAgent?: (agentId: string) => void;
   readonly workingTextEnabled?: boolean;
 }
 
@@ -1429,18 +997,12 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
         expandState={next.expandState ?? options.expandState}
         holdAnchorUntilSettled={next.holdAnchorUntilSettled ?? options.holdAnchorUntilSettled ?? (() => null)}
         canEditUserMessage={next.canEditUserMessage ?? options.canEditUserMessage ?? false}
-        hostAuthoredEvent={next.hostAuthoredEvent ?? options.hostAuthoredEvent ?? false}
-        hostAuthorName={next.hostAuthorName ?? options.hostAuthorName}
         initiallyExpanded={(next.expanded ?? options.expanded) === true}
         item={nextItem}
-        onInterruptThread={options.onInterruptThread}
         onReadToolArguments={onReadToolArguments}
         onReadToolOutput={onReadToolOutput}
         streaming={(next.streaming ?? options.streaming) === true}
         showMessageActions={next.showMessageActions ?? options.showMessageActions ?? false}
-        anchor={next.anchor ?? options.anchor}
-        registry={next.registry ?? options.registry}
-        onOpenAgent={next.onOpenAgent ?? options.onOpenAgent}
         workingTextEnabled={next.workingTextEnabled ?? options.workingTextEnabled ?? true}
       />
     </I18nProvider>,
@@ -1523,47 +1085,29 @@ function ThreadItemProbe({
   expandState,
   holdAnchorUntilSettled,
   canEditUserMessage,
-  hostAuthoredEvent,
-  hostAuthorName,
   initiallyExpanded,
   item,
   onReadToolOutput,
   onReadToolArguments,
   streaming,
   showMessageActions,
-  anchor,
-  registry,
-  onOpenAgent,
-  onInterruptThread,
   workingTextEnabled,
 }: {
   readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled: ThreadDisclosureState['holdAnchorUntilSettled'];
   readonly canEditUserMessage: boolean;
-  readonly hostAuthoredEvent: boolean;
-  readonly hostAuthorName?: string;
   readonly initiallyExpanded: boolean;
   readonly item: ThreadItem;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<import('../../src/core/agent/protocol').JsonValue | null>;
-  readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly streaming: boolean;
   readonly showMessageActions: boolean;
-  readonly anchor?: SubagentAnchor;
-  readonly registry?: ReadonlyMap<string, SubagentRegistryEntry>;
-  readonly onOpenAgent?: (agentId: string) => void;
   readonly workingTextEnabled: boolean;
 }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   return (
-    <SubagentRegistryProvider
-      actions={{
-        openAgent: onOpenAgent ?? (() => undefined),
-        stopAgent: onInterruptThread ?? null,
-      }}
-      byAgentId={registry ?? new Map()}
-    >
     <ThreadItemView
+      active
       agentResponseTail={null}
       canEditUserMessage={canEditUserMessage}
       defaultReasoningExpanded={false}
@@ -1575,22 +1119,7 @@ function ThreadItemProbe({
         restoreAnchor: () => undefined,
         toggle: (_id, currentlyExpanded) => setExpanded(!currentlyExpanded),
       }}
-      index={buildIndex(emptyProjection())}
-      item={item}
-      hostAuthoredEvent={hostAuthoredEvent}
-      {...(hostAuthorName === undefined ? {} : { hostAuthorName })}
-      onEditUserMessage={async () => undefined}
-      onInterruptThread={onInterruptThread}
-      onOpenNodeReference={() => undefined}
-      onOpenThread={async () => undefined}
-      onReadToolArguments={onReadToolArguments}
-      onReadToolOutput={onReadToolOutput}
-      showMessageActions={showMessageActions}
-      streaming={streaming}
-      {...(anchor ? { anchor } : {})}
-      threadCwd="/workspace"
-      threadId="thread-1"
-      userView={{
+      getUserView={() => ({
         activePanelId: null,
         focusedPanelId: null,
         focusSurface: null,
@@ -1598,10 +1127,22 @@ function ThreadItemProbe({
         selectedNodeIds: [],
         panels: [],
         truncated: false,
-      }}
+      })}
+      index={buildIndex(emptyProjection())}
+      indexStore={new DocumentIndexStore(buildIndex(emptyProjection()))}
+      item={item}
+      onEditUserMessage={async () => undefined}
+      onOpenNodeReference={() => undefined}
+      onOpenThreadReference={async () => undefined}
+      onReadToolArguments={onReadToolArguments}
+      onReadToolOutput={onReadToolOutput}
+      showMessageActions={showMessageActions}
+      streaming={streaming}
+      threadCwd="/workspace"
+      threadId="thread-1"
+      threadReferences={new Map()}
       workingTextEnabled={workingTextEnabled}
     />
-    </SubagentRegistryProvider>
   );
 }
 

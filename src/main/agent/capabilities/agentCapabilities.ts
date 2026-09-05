@@ -143,13 +143,6 @@ export function deriveAgentToolActionDescriptors(input: {
   if (toolName === 'bash') return deriveBashCapability(getStringArg(input.args, 'command'), input.args).descriptors;
   if (toolName === 'task_stop') {
     return [
-      simpleDescriptor(toolName, input.args, 'agent.subagent.interrupt', 'Agent stop', 'Stop a running background Agent.'),
-      descriptor(toolName, 'shell.stop', {
-        accessScope: 'none',
-        title: 'process stop',
-        summary: 'Stop an agent-launched background process.',
-        consequence: 'Stop an agent-launched background process.',
-      }),
       descriptor(toolName, 'task.stop', {
         accessScope: 'none',
         title: 'Tool Task stop',

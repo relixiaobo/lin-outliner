@@ -1,7 +1,7 @@
 # Agent Authoring & Management
 
 > **Shipped as PR #167** (2026-06-08). Design folded into
-> `docs/spec/agent-subagent-threads.md` (Authoring & hot-reload / Disabling by
+> `docs/spec/agent-delegation.md` (current replacement and retirement boundary). The former Authoring & hot-reload / Disabling by
 > identity / Fresh-subagent system prompt). The four review-gate follow-ups
 > (parser consolidation, read-only render of `additionalAgentDirectories` agents,
 > out-of-catalog `effort` → `off`, `TOOL_CATALOG` guard test) live as small

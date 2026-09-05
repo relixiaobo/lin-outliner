@@ -103,33 +103,6 @@ describe('thread tool row status CSS guards', () => {
     );
   });
 
-  test('pins the Agent chip Stop action while its elapsed status changes', () => {
-    expect(threadCss).toMatch(
-      /\.thread-agent-chip-line \{\s*display:\s*flex;\s*width:\s*100%;\s*min-width:\s*0;/,
-    );
-    expect(threadCss).toMatch(
-      /\.thread-agent-chip-error \{[^}]*white-space:\s*normal;/s,
-    );
-    expect(threadCss).toMatch(
-      /\.thread-agent-chip \{[^}]*flex:\s*1 1 auto;/s,
-    );
-    expect(threadCss).toMatch(
-      /\.thread-agent-chip-meta \{[^}]*flex:\s*0 0 auto;[^}]*font-variant-numeric:\s*tabular-nums;/s,
-    );
-    expect(threadCss).toMatch(
-      /\.thread-agent-chip-line \.icon-button \{[^}]*width:\s*22px;[^}]*height:\s*22px;[^}]*flex:\s*0 0 auto;/s,
-    );
-  });
-
-  test('holds the work-strip Stop slot so a row never reflows under the pointer', () => {
-    expect(threadCss).toMatch(
-      /\.thread-work-strip-stop \{[^}]*flex:\s*0 0 auto;[^}]*opacity:\s*0;/s,
-    );
-    expect(threadCss).toMatch(
-      /\.thread-work-strip-row:hover \.thread-work-strip-stop,\s*\.thread-work-strip-stop:focus-visible \{\s*opacity:\s*1;/,
-    );
-  });
-
   test('lets running rows use the ordinary disclosure glyph and chevron handoff', () => {
     expect(threadCss).not.toContain('.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-status');
     expect(threadCss).not.toContain('.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-chevron');

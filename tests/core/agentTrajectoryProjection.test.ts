@@ -1825,8 +1825,6 @@ function trajectoryThread(): Thread {
     sessionId: 'trajectory-test',
     parentThreadId: null,
     forkedFromId: null,
-    agentNickname: null,
-    agentRole: null,
     name: 'Trajectory test',
     preview: 'Trajectory test',
     ephemeral: false,

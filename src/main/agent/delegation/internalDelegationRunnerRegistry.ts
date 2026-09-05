@@ -17,7 +17,7 @@ export function createInternalDelegationRunnerRegistry(): DelegationRunnerRegist
   ]);
 }
 
-async function resolveConfiguredInternalModel(
+export async function resolveConfiguredInternalModel(
   modelInput: string,
   effort: AgentReasoningLevel,
 ): Promise<DelegationModelSelection | null> {

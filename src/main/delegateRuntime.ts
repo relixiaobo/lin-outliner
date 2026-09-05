@@ -19,6 +19,11 @@ export interface DelegateCliRuntimeOptions {
   readonly processExecPath: string;
 }
 
+export interface DelegateCliShellEnvironment {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly leadingToolPathSegments?: readonly string[];
+}
+
 export function resolveDelegateCliRuntime(options: DelegateCliRuntimeOptions): DelegateCliRuntimeConfig {
   if (options.isPackaged) {
     const root = path.join(options.resourcesPath, 'delegate');
@@ -49,5 +54,19 @@ export function delegateLauncherEnvironment(
     [TENON_DELEGATE_CLI_ENTRY_ENV]: runtime.cliEntry,
     [TENON_DELEGATE_CLI_RUNTIME_ENV]: runtime.cliRuntime,
     ...(runtime.runAsNode ? { [TENON_DELEGATE_RUN_AS_NODE_ENV]: '1' } : {}),
+  };
+}
+
+export function withDelegateCliShellEnvironment(
+  runtime: DelegateCliRuntimeConfig,
+  source: DelegateCliShellEnvironment | undefined,
+): DelegateCliShellEnvironment {
+  return {
+    ...source,
+    env: delegateLauncherEnvironment(runtime, source?.env ?? {}),
+    leadingToolPathSegments: [
+      runtime.binDir,
+      ...(source?.leadingToolPathSegments ?? []),
+    ],
   };
 }

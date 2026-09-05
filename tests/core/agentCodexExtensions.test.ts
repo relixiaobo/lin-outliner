@@ -110,8 +110,6 @@ function thread(): Thread {
     sessionId: '018f0f24-7b2e-7a3f-8a4b-123456789ab0',
     parentThreadId: null,
     forkedFromId: null,
-    agentNickname: null,
-    agentRole: null,
     name: null,
     preview: '',
     ephemeral: false,

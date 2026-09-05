@@ -9,11 +9,13 @@ import type {
 import { parseDelegateCommand } from '../../src/delegate/contract';
 import {
   DelegationCoordinator,
+  DELEGATION_SESSION_IDLE_TTL_MS,
   DelegationSessionStore,
   delegationTaskReconciliation,
   type DelegateCapabilityExecution,
   type DelegationPreparedResultStore,
   type DelegationRootMessage,
+  type DelegationPolicySnapshot,
   type DelegationSessionBinding,
   type DelegationSessionCommitInput,
   type DelegationSessionRunInput,
@@ -143,6 +145,45 @@ describe('DelegationCoordinator', () => {
     expect(fixture.store.messagesForSession(SESSION_ID).map((message) => message.state))
       .toEqual(['committed', 'committed']);
   });
+
+  test.each(['failed', 'timed_out', 'cancelled'] as const)(
+    'blocks queued messages instead of continuing after a %s Turn',
+    async (outcome) => {
+      const fixture = coordinatorFixture();
+      fixture.runtime.outcome = outcome;
+      fixture.runtime.deliverSteering = false;
+      const running = fixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+      await waitUntil(() => fixture.runtime.active !== null);
+      const sending = fixture.coordinator.execute(sendExecution({
+        capabilityId: 'capability-send',
+        taskId: 'task-send',
+        sessionRevision: fixture.store.readSession(SESSION_ID)!.revision,
+        message: 'Continue only if the active Turn succeeds.',
+      }));
+      await waitUntil(() => fixture.store.readMessage('capability-send')?.state === 'queued');
+
+      fixture.runtime.finish();
+      await expect(running).resolves.toMatchObject({ outcome });
+      const settlement = fixture.store.settlementForTask('task-run')!;
+      await expect(fixture.coordinator.settleFinalReceipt({
+        taskId: 'task-run',
+        preparedResultDigest: settlement.preparedResultDigest,
+        receiptDigest: digest(`${outcome}-final-receipt`),
+      })).resolves.toMatchObject({ outcome: 'committed', result: { outcome } });
+
+      await expect(sending).resolves.toMatchObject({
+        kind: 'delegate.message-receipt',
+        state: 'blocked',
+        taskId: null,
+      });
+      expect(fixture.store.readMessage('capability-send')).toMatchObject({
+        state: 'blocked',
+        text: null,
+        blockedReason: expect.stringContaining(outcome),
+      });
+      expect(fixture.runtime.active).toBeNull();
+    },
+  );
 
   test('does not redeliver accepted steering while unrelated Session changes wake the sender', async () => {
     const fixture = coordinatorFixture();
@@ -382,11 +423,109 @@ describe('DelegationCoordinator', () => {
     expect(fixture.store.readSession(SESSION_ID)?.state).toBe('closed');
     expect(fixture.runtime.closed).toEqual([SESSION_ID]);
   });
+
+  test('refuses active or queued Session closure before runtime cleanup', async () => {
+    const activeFixture = coordinatorFixture();
+    const running = activeFixture.coordinator.execute(runExecution('capability-run', 'task-run'));
+    await waitUntil(() => activeFixture.runtime.active !== null);
+    const activeSession = activeFixture.store.readSession(SESSION_ID)!;
+
+    await expect(activeFixture.coordinator.execute(
+      closeExecution('capability-close-active', activeSession.revision),
+    )).rejects.toThrow('must be idle');
+    expect(activeFixture.runtime.closed).toEqual([]);
+    activeFixture.runtime.finish();
+    await running;
+
+    const queuedFixture = coordinatorFixture();
+    const initial = createStoredSession(queuedFixture.store, SESSION_ID, 1_900_000_000_000);
+    queuedFixture.store.appendMessage({
+      sessionId: SESSION_ID,
+      expectedRevision: initial.revision,
+      messageId: 'queued-message',
+      text: 'Keep this pending.',
+      sourceTaskId: 'task-send',
+      sourceRootTurnId: ROOT_TURN_ID,
+      sourceRootItemId: 'item-send',
+      sourceRootIntentRevision: 1,
+      now: 1_900_000_000_001,
+    });
+    const queuedSession = queuedFixture.store.readSession(SESSION_ID)!;
+
+    await expect(queuedFixture.coordinator.execute(
+      closeExecution('capability-close-queued', queuedSession.revision),
+    )).rejects.toThrow('must be idle');
+    expect(queuedFixture.runtime.closed).toEqual([]);
+    expect(queuedFixture.store.readSession(SESSION_ID)).toMatchObject({ state: 'open' });
+  });
+
+  test('recovers open Sessions and closes only those beyond the idle TTL', async () => {
+    const fixture = coordinatorFixture();
+    const now = 1_900_000_000_000;
+    const stale = createStoredSession(fixture.store, SESSION_ID, now - DELEGATION_SESSION_IDLE_TTL_MS - 1);
+    const recentId = '00000000-0000-7000-8000-000000000011' as ThreadId;
+    createStoredSession(fixture.store, recentId, now);
+
+    await fixture.coordinator.initialize();
+
+    expect(fixture.runtime.ensured).toEqual([stale.sessionId, recentId]);
+    expect(fixture.runtime.closed).toEqual([stale.sessionId]);
+    expect(fixture.store.readSession(stale.sessionId)?.state).toBe('closed');
+    expect(fixture.store.readSession(recentId)?.state).toBe('open');
+  });
+
+  test('continues Session recovery when one Session cannot be restored', async () => {
+    const fixture = coordinatorFixture();
+    const failedId = '00000000-0000-7000-8000-000000000011' as ThreadId;
+    const healthyId = '00000000-0000-7000-8000-000000000012' as ThreadId;
+    createStoredSession(fixture.store, failedId, 1_900_000_000_000);
+    createStoredSession(fixture.store, healthyId, 1_900_000_000_000);
+    fixture.runtime.ensureFailures.add(failedId);
+
+    await expect(fixture.coordinator.initialize()).resolves.toBeUndefined();
+
+    expect(fixture.runtime.ensured).toEqual([failedId, healthyId]);
+    expect(fixture.store.readSession(failedId)?.state).toBe('open');
+    expect(fixture.store.readSession(healthyId)?.state).toBe('open');
+  });
+
+  test('closes owner Sessions, removes clean control state, and refuses retained workspace state', async () => {
+    const fixture = coordinatorFixture();
+    const clean = createStoredSession(fixture.store, SESSION_ID, 1_900_000_000_000);
+
+    await fixture.coordinator.prepareOwnerDeletion(OWNER_ID);
+    expect(fixture.store.readSession(clean.sessionId)?.state).toBe('closed');
+    fixture.coordinator.deleteOwnerSessions(OWNER_ID);
+    expect(fixture.store.sessionsForOwner(OWNER_ID)).toEqual([]);
+
+    const retainedId = '00000000-0000-7000-8000-000000000013' as ThreadId;
+    fixture.store.createSession({
+      sessionId: retainedId,
+      ownerThreadId: OWNER_ID,
+      policy: storedPolicy(),
+      worktree: {
+        kind: 'ambiguous',
+        intent: {
+          sourceCwd: '/workspace',
+          path: '/managed/session',
+          branch: 'tenon-agent-session',
+          baseCommit: 'base-revision',
+          gitCommonDir: '/workspace/.git',
+        },
+        metadata: null,
+      },
+      now: 1_900_000_000_000,
+    });
+    await expect(fixture.coordinator.prepareOwnerDeletion(OWNER_ID))
+      .rejects.toThrow('retains workspace changes');
+    expect(fixture.store.readSession(retainedId)).not.toBeNull();
+  });
 });
 
 class FakeRuntime implements DelegationSessionRuntime {
   readonly ensured: ThreadId[] = [];
   readonly closed: ThreadId[] = [];
+  readonly ensureFailures = new Set<ThreadId>();
   active: DelegationSessionRunInput | null = null;
   immediate = false;
   failCommit = false;
@@ -400,6 +539,7 @@ class FakeRuntime implements DelegationSessionRuntime {
 
   async ensureSession(session: DelegationSessionBinding): Promise<void> {
     this.ensured.push(session.sessionId);
+    if (this.ensureFailures.has(session.sessionId)) throw new Error('simulated recovery failure');
   }
 
   async run(input: DelegationSessionRunInput): Promise<DelegateExecutionResult> {
@@ -446,6 +586,10 @@ class FakeRuntime implements DelegationSessionRuntime {
   async close(session: DelegationSessionBinding): Promise<void> {
     this.closed.push(session.sessionId);
   }
+
+  async prepareOwnerDeletion(session: DelegationSessionBinding): Promise<void> {
+    this.closed.push(session.sessionId);
+  }
 }
 
 class PreparedResults implements DelegationPreparedResultStore {
@@ -486,6 +630,36 @@ function coordinatorFixture() {
       preparedResults: prepared,
       now: () => now++,
     }),
+  };
+}
+
+function createStoredSession(
+  store: DelegationSessionStore,
+  sessionId: ThreadId,
+  now: number,
+): DelegationSessionBinding {
+  return store.createSession({
+    sessionId,
+    ownerThreadId: OWNER_ID,
+    policy: storedPolicy(),
+    now,
+  });
+}
+
+function storedPolicy(): DelegationPolicySnapshot {
+  return {
+    runnerId: 'internal',
+    runnerVersion: '1',
+    modelProvider: 'openai',
+    modelId: 'gpt-test',
+    effort: 'medium',
+    profile: 'explore',
+    access: 'read-only',
+    capabilityCeilingDigest: digest('ceiling'),
+    schedulingPolicyDigest: digest('scheduling'),
+    configurationRevision: 'configuration-1',
+    cwd: '/workspace',
+    worktreePolicy: 'none',
   };
 }
 

@@ -381,12 +381,21 @@ test('lowers only canonical background Delegate commands after Tool Task identit
       toolTaskService: service,
       turnId,
       delegateCommandRuntime: {
-        scheduling: {
-          pool: 'delegate-local',
-          configurationRevision: 'revision-1',
-          maxConcurrentProducer: 2,
-          maxConcurrentPool: 2,
-        },
+        resolveScheduling: async () => ({
+          scheduling: {
+            pool: 'delegate-local',
+            configurationRevision: 'revision-1',
+            maxConcurrentProducer: 2,
+            maxConcurrentPool: 2,
+          },
+          schedulerLimits: {
+            maxConcurrentGlobal: 8,
+            maxConcurrentThread: 4,
+            maxQueuedGlobal: 32,
+            maxQueuedThread: 8,
+          },
+          timeoutMs: 180_000,
+        }),
         prepare: async (input) => {
           preparations.push(input);
           return {
@@ -409,11 +418,13 @@ test('lowers only canonical background Delegate commands after Tool Task identit
       stdin,
       description: 'Inspect independently',
       run_in_background: true,
+      timeout: 7,
     });
     expect((exact.details as ToolEnvelope<BashData>).ok).toBe(true);
     expect(starts[0]).toMatchObject({
       producer: 'delegate',
       scheduling: { pool: 'delegate-local', configurationRevision: 'revision-1' },
+      timeoutMs: 180_000,
     });
     expect(starts[0]!.process).toBeUndefined();
     expect(preparations[0]).toMatchObject({
@@ -2402,8 +2413,6 @@ describe('agent local tools', () => {
           '---',
           'description: Draft skill for local authoring',
           'disable-model-invocation: true',
-          'allowed-tools: Bash(git status:*), file_read',
-          'execution: isolated',
           '---',
           'Use the draft workflow.',
           '',
@@ -2557,7 +2566,6 @@ describe('agent local tools', () => {
           content: [
             '---',
             `description: Admission test for ${testCase.name}`,
-            'execution: isolated',
             '---',
             '',
             'Use the prospective bundle.',
@@ -2834,9 +2842,8 @@ describe('agent local tools', () => {
       });
       const details = result.details as ToolEnvelope<unknown>;
       expect(details.ok).toBe(false);
-      expect(details.error?.message).toContain(
-        'Inline Skills cannot declare allowed-tools, model, effort, shell, or embedded shell commands',
-      );
+      expect(details.error?.message).toContain('retired execution contract');
+      expect(details.error?.message).toContain('Use the delegate CLI for Agent execution');
       expect(await skillRuntime.getSkill('risky-skill')).toBeNull();
     });
   });
@@ -2861,9 +2868,8 @@ describe('agent local tools', () => {
       const details = result.details as ToolEnvelope<unknown>;
 
       expect(details.ok).toBe(false);
-      expect(details.error?.message).toContain(
-        'Inline Skills cannot declare allowed-tools, model, effort, shell, or embedded shell commands',
-      );
+      expect(details.error?.message).toContain('retired execution contract');
+      expect(details.error?.message).toContain('Use the delegate CLI for Agent execution');
       await expect(readFile(skillFile, 'utf8')).rejects.toThrow();
       expect(await skillRuntime.getSkill('shell-skill')).toBeNull();
     });

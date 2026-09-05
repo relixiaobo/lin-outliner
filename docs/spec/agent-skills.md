@@ -6,220 +6,104 @@ execution entity or capability authority.
 
 ## Sources And Identity
 
-Skill discovery uses this precedence:
+Skills are instruction packages discovered from four ordered sources:
+built-in, Tenon-managed, user, and project. Canonical identity is normalized
+from frontmatter and path metadata. Later sources may shadow an earlier Skill
+with the same identity only through the documented precedence rules; duplicate
+or malformed identities within one source are unavailable with diagnostics.
 
-1. immutable code-registered or packaged built-ins
-2. project Skills under `.agents/skills/`
-3. user Skills under the configured user root
-4. explicitly configured additional Skill directories
-5. dynamically discovered nested Skill directories
+Built-in Skills are registered product capabilities. The `delegate` Skill is
+built in but enters the catalog only when experimental delegation and its
+configured Runner are enabled for a root Thread. Disabling the experiment
+removes the guidance; it does not restore any legacy Agent tool.
 
-Canonical identity is the directory name. A loaded Skill records source,
-resolved file identity, content hash, metadata, and resource root. Symlinked
-paths that resolve to the same file are deduplicated.
-
-Built-in identities are display-safe pseudo paths and are never presented as mutable
-Skill definitions. A resource-backed built-in may separately expose its normalized
-bundle directory as a live read locator. Mutable Skills resolve to their real
-`SKILL.md` files.
-
-**One failing source never takes out the registry (A12).** A registry load that
-throws clears every loaded Skill, built-ins included, so the managed source — the
-only one behind a user-writable JSON index — is loaded defensively: a managed
-index that cannot be decoded degrades to "no managed skills", and a managed root
-missing a readable `SKILL.md` drops that row alone. Otherwise one unreadable index
-costs the user every Skill they have: no slash commands, no library, and a throw
-on any turn that touches Skills.
-
-Decoding that index stays fail-closed — it admits records into the store — but the
-verdict is no longer permanent. `ManagedSkillStore.initialize()` moves an index it
-cannot decode aside (renamed, never deleted) and starts empty, after which the
-orphan-version prune reaps its content and the Skills are reinstallable. Pre-release
-we do not migrate formats, so a schema break is a reinstall, not a broken app.
+The effective Thread configuration supplies a Skill ceiling. `*` admits all
+otherwise eligible discovered Skills, a name list admits only those identities,
+and an empty list disables Skills. `disabledSkills` is an additional user
+block. A Skill cannot widen the Thread's tool, Skill, plugin, MCP, filesystem,
+network, or delegation authority.
 
 ## Format
 
-YAML frontmatter may define description, usage guidance, allowed tools,
-arguments, model, effort, path conditions, and execution mode. The Markdown body
-contains the instructions. Resource references resolve from the Skill directory.
+A filesystem Skill is a directory containing `SKILL.md`. YAML frontmatter may
+declare its canonical name, description, invocation visibility, argument hint
+or named arguments, version, and retained resource paths. The remaining
+Markdown body is the instruction source. Unknown or retired execution fields
+fail validation.
 
-Execution mode is `inline` or `isolated`:
+Skills are inline only. The retired fields `execution`, `allowed-tools`,
+`model`, `effort`, and `shell`, and embedded-shell expansion syntax are
+not accepted. A Skill cannot create a hidden Thread, select a model, run setup
+commands implicitly, or define a private tool catalog. When instructions need
+work performed, the active Agent invokes ordinary model tools under the active
+Thread's existing capability policy.
 
-- `inline` loads instructions into the current Turn.
-- `isolated` creates a child Thread with a bounded tool catalog and returns its
-  terminal output to the parent Item.
+Invocation arguments are data substituted only at placeholders explicitly
+authored in the body. They are never appended implicitly when no placeholder
+exists. Supported positional and named placeholders are expanded by the Skill
+runtime without promoting model-authored values to developer authority. A
+load-only Skill advertises no argument contract; a parameterized Skill exposes
+the compact authored hint or one derived from its declared placeholders.
 
-Inline Skills are side-effect-free instructions. `allowed-tools`, `model`, `effort`,
-`shell`, and embedded shell expansion are valid only with `execution: isolated`;
-file-tool authoring and runtime loading both reject an inline declaration or body
-containing any execution override. Invalid content fails instead of silently changing
-mode or partially applying metadata.
-
-Invocation arguments are task input, not a second instruction source. Inline Skills
-substitute values only at placeholders explicitly authored in the Skill body; arguments
-are never appended implicitly when no placeholder exists because the canonical user
-message already carries the task. Isolated Skill instructions never interpolate
-argument values. Their placeholders refer to the separate child user message that
-carries the exact invocation task, so model-authored arguments cannot acquire developer
-authority merely by appearing after the Skill body.
-
-The model-visible catalog states that distinction before invocation. An inline Skill
-without `argument-hint` or named `arguments` is load-only and tells the model to omit
-`args`, unless its body contains a supported argument placeholder. A parameterized
-inline Skill advertises its compact authored hint, falling back to its ordered argument
-names or a generic input hint derived from `$ARGUMENTS`, `$ARGUMENTS[n]`, or positional
-placeholders in the body. An isolated Skill tells the parent that `args` carries the
-user task. Contracts that require input are reserved ahead of authored descriptions
-inside the bounded catalog budget. Under catalog pressure, repeated load-only contracts
-and authored descriptions are elided; the shared tool rule defines an entry without a
-full or compact input label as load-only. If full input contracts themselves do not fit,
-every retained entry uses a shared compact label: `[A]` for parameterized inline,
-`[I+]` for isolated with Agent fan-out, and `[I-]` for isolated without it. If names plus
-those minimum labels still exceed the budget, the sorted catalog retains the longest
-prefix that fits. Omission affects model discovery only and does not change any Skill's
-existing model- or user-invocation eligibility. The shared tool field remains optional
-because one `skill` tool serves all three forms.
+Retained resource paths are resolved under the Skill root with traversal,
+symlink, file-count, byte, and content-type checks. Skill discovery and
+invocation retain stable labels and opaque Host references; transient absolute
+paths are not frozen into canonical history.
 
 ## Discovery And Invocation
 
-Every ordinary start or steering admission refreshes the current Skill registry and
-builds one deterministic bounded snapshot. The canonical reducer compares it with the
-Thread journal and records:
+Discovery merges the enabled sources, validates each candidate, and emits a
+bounded model catalog only when the canonical `skill` tool survives final
+runtime assembly. The catalog and direct slash/natural-language routing share
+that same gate. A configured or preloaded name cannot bypass it.
 
-- one complete `skillCatalog` baseline for the first model-visible Turn in an epoch;
-- no Item and no provider tokens when the catalog hash is unchanged; or
-- one delta containing only added, changed, and removed entries, chained to the
-  previous catalog hash.
+The model invokes one Skill by canonical identity through `skill`. Direct
+renderer invocation records the same structured Skill input beside the
+reader-authored message. Invocation resolves the current eligible definition,
+substitutes only declared arguments, retains eligible resources, and records
+one canonical `skillInvocation` context-evidence payload. Loading a Skill
+returns `status: "loaded"`; it does not report a child outcome, Thread ID,
+Agent Role, or execution mode.
 
-Registry results are filtered through the Turn-stable Configuration Profile or Role
-Skill ceiling before cataloging or invocation. `*` keeps every discovered Skill,
-an explicit name list is an allow-list, and an empty list disables all Skills. The same
-filter applies to catalog evidence, composer slash choices, direct slash admission, and
-the model `skill` tool.
+A Skill body is application instruction. Invocation arguments and dynamic
+resource observations remain untrusted data. The provider receives the
+instruction through canonical context projection, never through a second
+prompt overlay or private steering queue. Restart and replay resolve the
+persisted invocation payload; a later invocation of the same identity is
+authoritative from that point forward without rewriting history.
 
-Catalog evidence is appended at the current user tail, never interpolated into the
-stable system prompt, so a new or changed Skill preserves every previously exposed
-provider byte. Refresh preserves activated path-conditional Skills and dynamically
-discovered nested Skill directories. A Skill created through file tools can append a
-delta before the next provider request in the same Turn; a Skill added or edited
-outside Tenon appears on the next accepted input in an existing Thread.
-
-The runtime acknowledges a pending refresh checkpoint only after the canonical catalog
-Item is published. A failed publication therefore remains retryable, and a concurrent
-later refresh cannot be consumed by an older snapshot.
-
-The `skill` model tool invokes a selected Skill. User-invocable inline Skills may also
-be resolved from direct slash input. An isolated slash Skill remains ordinary user
-input until the model invokes it through the canonical `skill` tool. Both paths publish typed `skillInvocation`
-evidence before instructions can affect the model. Direct invocation evidence is
-admitted before the unchanged canonical `userMessage`; model invocation evidence is
-durable after the complete Skill tool Item and before the next provider request.
-
-An invocation snapshots canonical identity, content hash, exact rendered authored
-instructions, arguments, source, execution mode, resource root, constraints, invocation
-source, and time. Catalog availability projects as an application observation, while
-inline authored instructions project in a separate `application/instruction` context;
-isolated authored
-instructions remain child-only developer instructions, while the invocation task is the
-child's canonical user message. Dynamic embedded-shell results are excluded from the
-instruction snapshot and admitted separately as untrusted child observations. The parent
-receives identity, constraints, and the tool result for audit. The model-facing `skill`
-tool follows the catalog-governed input contract: it omits arguments for load-only
-inline Skills, supplies only declared variable input for parameterized inline Skills,
-and preserves the user's exact task and explicit constraints for isolated Skills
-without inventing an implementation plan or overriding the Skill workflow. There is no
-prompt overlay, private steering queue, or text parser. Invocation arguments are not
-repeated in reminder prose. Restart
-replays the same payload bytes from canonical Items. A later invocation of the same
-canonical name is authoritative from that point forward without deleting or rebinding
-older evidence.
-
-`resourceRoot` is deliberately a live Skill-bundle locator, not a Thread-owned payload
-or a compatibility copy. Skill support files are external executable inputs and are read
-through the ordinary Full Access file tools and capability policy; the runtime does not
-maintain a second Skill-specific read-root authority. Once read, their exact observed
-content is frozen by the canonical tool Item and complete output reference. If the live
-bundle later changes or disappears, a new read observes that current state or fails
-normally, while replay of prior instructions and tool results remains unchanged. Forking
-copies only resources already admitted into canonical Thread history; it does not clone
-an installed Skill bundle.
-
-Path-conditional Skills become available after matching files are touched.
-Dynamic discovery respects project ignore rules and can observe a Skill created
-after an earlier miss.
+Dynamic discovery respects project ignore rules and may observe a Skill created
+after an earlier miss. Catalog budgeting preserves complete invocation
+contracts before allocating space to optional authored descriptions, so
+pressure cannot turn a parameterized Skill into an ambiguous load-only entry.
 
 ## Tool Ceiling
 
-Only isolated Skill metadata may select tools or execution settings, and it cannot
-widen the effective parent catalog. Isolated execution intersects its declared tools
-with the parent ceiling. Plugins and MCP servers obey the same parent ceiling through
-child configuration. Generic `execution: isolated` remains; a Skill has no separate
-read-only mode of its own, but an isolated child inherits an enclosing Agent's durable
-`readOnly` ceiling and cannot reset it with `allowed-tools`.
+A Skill has no execution authority of its own. Tools named in its prose remain
+available only if they survive the active Thread's canonical catalog,
+Configuration Profile, explicit blocks, and any delegated Session ceiling.
+Invoking `skill` cannot grant a missing tool or change its action
+classification.
 
-Embedded shell snippets are valid only in isolated Skills and execute from the already
-recorded canonical `skill` tool Item through the standard shell capability and its Full
-Access capability evaluation. Invocation values for `$ARGUMENTS`, `$ARGUMENTS[n]`,
-`$0`/`$1`, and named placeholders travel through host-controlled environment bindings;
-argument bytes are never interpolated into the authored command source. A Skill never
-bypasses explicit blocks.
+For a delegated Session, Skill loading may remain available as session-local
+guidance. The delegated policy still blocks root-only coordination,
+background-process creation, Tool Task management, and every action outside its
+frozen access ceiling. The `delegate` Skill itself is root-only through its
+catalog eligibility and exact Bash admission path; a delegated Session cannot
+nest delegation.
 
 ## Compaction Restore
 
-The reducer reconstructs catalog state and the latest active inline invocation for each
-canonical name from Thread-owned payload Items. It validates any existing compaction
-checkpoint against full prior catalog entries and invocation payload references and
-records a typed degradation rather than inventing display metadata from a sparse or
-unavailable checkpoint. The affected catalog or invocation is omitted until a later
-baseline restores it; the provider request, compaction, fork, and delegation continue.
+Skill invocation is canonical typed context, not prose inferred from model
+messages. Compaction checkpoints the Skill catalog journal and active inline
+invocations, then restores only definitions that remain relevant after the
+covered cursor. A later invocation replaces the earlier active definition for
+future context while preserving both historical Items.
 
-The provider projector selects the latest context epoch and replaces compacted raw
-history with the summary plus validated checkpoint. It restores the exact active inline
-Skill payload references as application instructions. `/clear` ends the journal and
-active invocation set; the next ordinary admission records a complete baseline from the
-then-current registry. No reducer state is reconstructed from reminder text or current
-Skill files during replay.
-
-Reduction recursively includes typed inherited Turns and prior compaction checkpoints
-for history forks and old canonical payloads. Fresh Agents do not inherit the parent
-Skill journal: general/Role startup receives a newly assembled available catalog plus
-complete Role-preloaded Skill content, while `explore` and `plan` omit the catalog.
-Repeated compaction carries an Agent's own active invocation references forward instead
-of re-reading mutable Skill files.
-
-Isolated child output is not restored as reusable Skill guidance. A future call
-starts a new child Turn under current configuration.
-
-An isolated child receives the loaded Skill body as host-owned developer instructions
-and the invocation task as a separate user message. The developer block explicitly
-defines the user message as task input rather than workflow authority. An invocation
-with no task receives only a neutral execute-without-additional-input message; the host
-never manufactures task content from the parent conversation. Embedded shell syntax is
-replaced in that developer block by a stable observation marker. Each command result is
-persisted as an `untrusted` / `observation` additional-context entry, never as developer
-or system guidance. Related retained resources are linked into the child Thread before
-admission, and projection resolves disposable readable observations from opaque resource
-references so transient paths are not frozen into canonical history and exact bytes are
-not copied.
-
-Every isolated Skill catalog entry combines its input contract with a host-derived
-execution constraint. The constraint states that invocation runs once in a single
-isolated child Thread under an explicit tool ceiling. When that ceiling does not
-include `agent`, the catalog tells the parent that the Skill cannot perform Agent
-fan-out and that parallel orchestration belongs in the parent Thread. This capability
-fact is derived from the effective Skill definition; it is not hand-maintained prose
-in individual Skill bodies. Catalog budgeting reserves the complete combined contract
-before allocating space to authored descriptions, so pressure cannot silently remove
-either the input or capability boundary.
-
-The isolated Skill tool result records the child Turn outcome separately from the
-Skill execution mode. A completed outcome wraps the child's completed final
-text as a result to synthesize directly and tells the parent not to repeat covered
-work unless the result reports a gap or independent verification is explicitly
-required. The Skill tool is the only model-facing result channel for that isolated
-child; it never emits an Agent task notification or consumes Agent depth/concurrency.
-Failed or interrupted outcomes are labeled as partial evidence rather than being
-described as completed.
+Restore revalidates retained resource references and degrades unavailable
+inspection data instead of killing the Turn. It does not rerun commands, create
+a Session, rediscover authority from old prose, or expand a retired execution
+mode.
 
 ## Authoring And Provenance
 

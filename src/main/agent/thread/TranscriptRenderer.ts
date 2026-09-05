@@ -111,7 +111,7 @@ const MAX_TRANSCRIPT_TEXT_CHARS = MAX_PERSISTED_TOOL_OUTPUT_CHARS;
 /**
  * The once-per-file preamble. It deliberately carries no Turn count and no
  * Thread status: the file grows after this block is written, so anything that
- * changes over the child's life would be stale the moment the next Turn lands.
+ * changes over the Thread's life would be stale the moment the next Turn lands.
  */
 export function renderTranscriptHeader(
   subject: TranscriptSubject | undefined,
@@ -209,7 +209,6 @@ function triggerLabel(turn: Turn): string {
   switch (trigger.kind) {
     case 'user': return 'user';
     case 'continuation': return `continuation (source ${trigger.sourceTurnId})`;
-    case 'subagent': return `subagent (parent ${trigger.parentThreadId})`;
     case 'feature': return trigger.ref ? `feature ${trigger.feature} (${trigger.ref})` : `feature ${trigger.feature}`;
   }
 }
@@ -283,7 +282,6 @@ async function itemLines(
     case 'fileChange':
     case 'mcpToolCall':
     case 'dynamicToolCall':
-    case 'collabAgentToolCall':
     case 'webSearch': {
       const name = modelCallDisplayName(item.modelCall);
       const args = await transcriptToolArguments(item, reader);
@@ -310,8 +308,6 @@ async function itemLines(
         ...images,
       ];
     }
-    case 'subAgentActivity':
-      return [`- [subagent:${item.kind}] ${item.agentPath} (${item.agentThreadId})`];
     case 'imageView':
       return [`- [image] ${item.path}`];
     case 'contextEvidence':

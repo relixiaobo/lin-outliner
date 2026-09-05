@@ -73,7 +73,7 @@ export interface DelegateCapabilityExecution {
 
 export interface DelegateCapabilityBrokerOptions {
   readonly socketPath: string;
-  readonly currentConfigurationRevision: () => string;
+  readonly currentConfigurationRevision: () => string | Promise<string>;
   readonly execute: (execution: DelegateCapabilityExecution) => Promise<unknown>;
   readonly now?: () => number;
   readonly capabilityTtlMs?: number;
@@ -142,6 +142,7 @@ export class DelegateCapabilityBroker {
 
   issue(admission: DelegateCapabilityAdmission): Buffer {
     if (!this.server.listening || this.stopping) throw new Error('Delegate capability broker is unavailable');
+    this.pruneExpired();
     validateAdmission(admission);
     const capability: DelegateLaunchCapability = {
       version: DELEGATE_PROTOCOL_VERSION,
@@ -159,6 +160,11 @@ export class DelegateCapabilityBroker {
       admission: freezeAdmission(admission),
     });
     return Buffer.from(encoded);
+  }
+
+  revoke(capabilityId: string): void {
+    this.pruneExpired();
+    this.capabilities.delete(capabilityId);
   }
 
   async stop(): Promise<void> {
@@ -186,7 +192,7 @@ export class DelegateCapabilityBroker {
     try {
       const value = await readJsonBody(request);
       const decoded = decodeBrokerRequest(value);
-      const consumed = this.consume(decoded);
+      const consumed = await this.consume(decoded);
       this.activeExecutionControllers.add(lifetime.controller);
       try {
         const data = await this.options.execute({
@@ -214,7 +220,8 @@ export class DelegateCapabilityBroker {
     }
   }
 
-  private consume(request: DelegateBrokerRequest): CapabilityRecord {
+  private async consume(request: DelegateBrokerRequest): Promise<CapabilityRecord> {
+    this.pruneExpired();
     const record = this.capabilities.get(request.capability.capabilityId);
     if (!record) {
       throw new DelegateCapabilityRefusal('unauthorized', 'Delegate launch capability is unknown or already consumed.');
@@ -222,11 +229,11 @@ export class DelegateCapabilityBroker {
     if (!equalCapability(record.capability, request.capability)) {
       throw new DelegateCapabilityRefusal('unauthorized', 'Delegate launch capability was modified.');
     }
-    if (this.now() > record.capability.expiresAt) {
+    if (this.now() >= record.capability.expiresAt) {
       this.capabilities.delete(record.capability.capabilityId);
       throw new DelegateCapabilityRefusal('unavailable', 'Delegate launch capability expired before use.');
     }
-    if (record.admission.policy.configurationRevision !== this.options.currentConfigurationRevision()) {
+    if (record.admission.policy.configurationRevision !== await this.options.currentConfigurationRevision()) {
       this.capabilities.delete(record.capability.capabilityId);
       throw new DelegateCapabilityRefusal('unavailable', 'Delegation configuration changed before admission.');
     }
@@ -235,6 +242,13 @@ export class DelegateCapabilityBroker {
     }
     this.capabilities.delete(record.capability.capabilityId);
     return record;
+  }
+
+  private pruneExpired(): void {
+    const now = this.now();
+    for (const [capabilityId, record] of this.capabilities) {
+      if (now >= record.capability.expiresAt) this.capabilities.delete(capabilityId);
+    }
   }
 }
 

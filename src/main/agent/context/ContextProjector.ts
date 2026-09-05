@@ -20,7 +20,6 @@ import type {
   JsonValue,
   ModelProviderToolCall,
   ReferencedResourcesContextPayload,
-  RoleCatalogContextPayload,
   SkillCatalogContextPayload,
   ThreadContextPayload,
   ThreadContextPayloadReference,
@@ -45,7 +44,6 @@ import {
 } from '../../../core/referenceMarkup';
 import { assertContextPayloadDependencies, outputReferenceKey } from './contextDependencies';
 import { selectEffectiveContext } from './ContextEpoch';
-import { restoreRoleCatalogCheckpoint } from './RoleContextReducer';
 import { restoreSkillCatalogCheckpoint } from './SkillContextReducer';
 import { assertCanonicalUserContent } from './userContentIntegrity';
 import {
@@ -66,7 +64,6 @@ import {
   environmentBrief,
   historicalToolOutputBrief,
   referencedResourceBrief,
-  roleCatalogBrief,
   skillCatalogBrief,
   skillInvocationBrief,
   suppliedFileBrief,
@@ -427,23 +424,7 @@ export class CanonicalContextProjector {
         continue;
       }
       // The assistant channel is a few-shot demonstration of what this model
-      // writes, so anything Tenon authors into it teaches the model to write it
-      // too: the `[Subagent <kind>: <path> (<id>)]` line this used to emit
-      // taught one Thread to invent `[Subagent finished: ...]` kinds that do not
-      // exist and render them to its user as a hallucinated delegation. A
-      // Subagent's facts already reach the model through channels it cannot
-      // mistake for its own prose — the delegation is the `agent`/`skill` tool
-      // call and its result, and the terminal transition is the task
-      // notification, or for an isolated Skill the `skill` result its caller
-      // awaits — so the Item exists for the parent-visible row and contributes
-      // nothing here. `imageView` has no producer left at all.
-      //
-      // Skipped before the flushes rather than handled below them, because an
-      // Item that contributes no content must not act as a boundary either: a
-      // child's `started` activity is recorded between the two `agent` calls of
-      // one batch, and reached after the tool flush it would split a single
-      // provider assistant message in two for nothing.
-      if (item.type === 'subAgentActivity' || item.type === 'imageView') continue;
+      if (item.type === 'imageView') continue;
       if (pendingUserContent.length > 0 || pendingContextBlocks.length > 0) flushPendingUser(turn.startedAt);
       if (isToolItem(item)) {
         const projectionKey = item.outputRef ? outputReferenceKey(item.outputRef) : null;
@@ -558,26 +539,6 @@ export class CanonicalContextProjector {
       })));
     }
 
-    const roleCatalog = await restoreRoleCatalogCheckpoint(
-      sourceTurns,
-      item.coveredThrough,
-      restored,
-      this.resources.readContext,
-    );
-    for (const degradation of roleCatalog.degradations) {
-      pushDegradation('roleCatalog', degradation);
-    }
-    if (roleCatalog.catalogHash) {
-      content.push(briefContextBlock('roleCatalog', roleCatalogBrief({
-        schemaVersion: 1,
-        kind: 'roleCatalog',
-        mode: 'baseline',
-        previousCatalogHash: null,
-        catalogHash: roleCatalog.catalogHash,
-        entries: [...roleCatalog.catalogEntries.values()],
-      })));
-    }
-
     if (restored.userViewBaselineRef) {
       const baseline = await this.readCompactionPayload(
         item,
@@ -622,7 +583,6 @@ export class CanonicalContextProjector {
       ).catch(() => null);
       if (
         !skill
-        || skill.execution !== 'inline'
         || skill.name !== checkpoint.name
         || skill.identity !== checkpoint.identity
         || skill.contentHash !== checkpoint.contentHash
@@ -736,8 +696,6 @@ export class CanonicalContextProjector {
         return [briefContextBlock(payload.kind, skillCatalogBrief(payload))];
       case 'skillInvocation':
         return skillInvocationBrief(payload).map((block) => briefContextBlock(payload.kind, block));
-      case 'roleCatalog':
-        return [briefContextBlock(payload.kind, roleCatalogBrief(payload))];
       case 'toolOutputProjection':
         return [];
       case 'inheritedContext':
@@ -1081,7 +1039,7 @@ function assistantHistoryMessage(
 }
 
 export type HistoryToolItem = Extract<ThreadItem, {
-  type: 'commandExecution' | 'fileChange' | 'mcpToolCall' | 'dynamicToolCall' | 'collabAgentToolCall' | 'webSearch';
+  type: 'commandExecution' | 'fileChange' | 'mcpToolCall' | 'dynamicToolCall' | 'webSearch';
 }>;
 type DynamicToolImageContent = Extract<
   NonNullable<Extract<ThreadItem, { type: 'dynamicToolCall' }>['contentItems']>[number],
@@ -1093,7 +1051,6 @@ function isToolItem(item: ThreadItem): item is HistoryToolItem {
     || item.type === 'fileChange'
     || item.type === 'mcpToolCall'
     || item.type === 'dynamicToolCall'
-    || item.type === 'collabAgentToolCall'
     || item.type === 'webSearch';
 }
 
@@ -1404,11 +1361,6 @@ export function toolItemVisibleOutputText(item: HistoryToolItem): string {
     case 'fileChange': return JSON.stringify({ status: item.status, changes: item.changes });
     case 'mcpToolCall': return item.error ?? JSON.stringify(item.result ?? { status: item.status });
     case 'dynamicToolCall': return JSON.stringify({ status: item.status, success: item.success });
-    case 'collabAgentToolCall': return JSON.stringify({
-      status: item.status,
-      receiverThreadIds: item.receiverThreadIds,
-      agentsStates: item.agentsStates,
-    });
     case 'webSearch': return item.error ?? JSON.stringify(item.results);
   }
 }

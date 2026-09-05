@@ -34,8 +34,6 @@ describe('renderer Thread store', () => {
         if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'thread/descendants') return { data: [], queuedWorkThreadIds: [] };
-        if (method === 'thread/subagents/list') return { data: [] };
         throw new Error(`Unexpected method: ${method}`);
       },
     } as unknown as ThreadStoreClient;
@@ -64,8 +62,6 @@ describe('renderer Thread store', () => {
         if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(first);
-        if (method === 'thread/descendants') return { data: [], queuedWorkThreadIds: [] };
-        if (method === 'thread/subagents/list') return { data: [] };
         throw new Error(`Unexpected method: ${method}`);
       },
     } as unknown as ThreadStoreClient;
@@ -103,8 +99,6 @@ describe('renderer Thread store', () => {
         if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'thread/descendants') return { data: [], queuedWorkThreadIds: [] };
-        if (method === 'thread/subagents/list') return { data: [] };
         throw new Error(`Unexpected method: ${method}`);
       },
     } as unknown as ThreadStoreClient;
@@ -125,7 +119,6 @@ describe('renderer Thread store', () => {
     const owner = thread('thread-1', 1);
     let entries: readonly AgentIdentityEntry[] = [
       { agentType: 'main', persona: 'Juniper', color: 'pink', source: 'built-in' },
-      { agentType: 'reviewer', persona: 'Wren', color: 'violet', source: 'project' },
     ];
     let identityReads = 0;
     let submittedTurns = 0;
@@ -140,8 +133,6 @@ describe('renderer Thread store', () => {
         if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'thread/descendants') return { data: [], queuedWorkThreadIds: [] };
-        if (method === 'thread/subagents/list') return { data: [] };
         if (method === 'turn/submit') {
           submittedTurns += 1;
           const accepted = turn(`turn-${submittedTurns}`, 'inProgress', '');
@@ -159,105 +150,21 @@ describe('renderer Thread store', () => {
     await store.initialize();
     await Promise.resolve();
     expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('main')?.persona).toBe('Juniper');
-    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.has('reviewer')).toBe(true);
 
     entries = [
       { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
-      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
-      { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
-      { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
     ];
     await store.send([{ type: 'text', text: 'Observe the live break' }]);
     await Promise.resolve();
     expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('main')?.persona).toBe('Aspen');
-    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.has('reviewer')).toBe(false);
 
     entries = [
       { agentType: 'main', persona: 'Scout', color: 'blue', source: 'built-in' },
-      { agentType: 'reviewer', persona: 'Wren', color: 'violet', source: 'project' },
     ];
     await store.send([{ type: 'text', text: 'Observe the live recovery' }]);
     await Promise.resolve();
     expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('main')?.persona).toBe('Scout');
-    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('reviewer')?.persona).toBe('Wren');
     expect(identityReads).toBe(3);
-  });
-
-  test('keeps a worktree child roster isolated through live break and recovery', async () => {
-    const owner = { ...thread('thread-root', 2), cwd: '/workspace/root' };
-    const child = {
-      ...thread('thread-child', 1),
-      agentRole: 'explorer',
-      cwd: '/workspace/root/.tenon/worktrees/thread-child',
-      parentThreadId: owner.id,
-      source: 'collaboration' as const,
-      threadSource: 'subagent' as const,
-    };
-    const rootEntries: readonly AgentIdentityEntry[] = [
-      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
-      { agentType: 'explore', persona: 'Juniper', color: 'pink', source: 'project' },
-    ];
-    let childEntries: readonly AgentIdentityEntry[] = [
-      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
-      { agentType: 'explore', persona: 'Cedar', color: 'violet', source: 'project' },
-    ];
-    const identityReads: string[] = [];
-    let submittedTurns = 0;
-    const client = {
-      onAgentCoreNotification: () => () => undefined,
-      agentCoreRequest: async (method: string, input: { threadId?: string }) => {
-        if (method === 'thread/list') return { data: [owner], nextCursor: null };
-        if (method === 'thread/read') return { thread: child };
-        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
-        if (method === 'goal/get') return { goal: null };
-        if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'thread/descendants') return { data: [child], queuedWorkThreadIds: [] };
-        if (method === 'thread/subagents/list') return { data: [] };
-        if (method === 'identities/get') {
-          const threadId = input.threadId ?? '';
-          identityReads.push(threadId);
-          return { entries: threadId === child.id ? childEntries : rootEntries };
-        }
-        if (method === 'turn/submit') {
-          submittedTurns += 1;
-          const accepted = childTurn(child.id, `turn-child-${submittedTurns}`, 'inProgress');
-          return {
-            acceptedItemId: `item-${submittedTurns}`,
-            deduplicated: false,
-            turn: accepted,
-            turnId: accepted.id,
-          };
-        }
-        throw new Error(`Unexpected method: ${method}`);
-      },
-    } as unknown as ThreadStoreClient;
-    const store = new ThreadStore(client);
-    await store.initialize();
-    await store.ensureThreadHistory(child.id);
-
-    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('explore')?.persona).toBe('Juniper');
-    expect(store.getSnapshot().identityCatalogByThread.get(child.id)?.get('explore')?.persona).toBe('Cedar');
-
-    childEntries = [
-      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
-      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
-      { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
-      { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
-    ];
-    await store.sendToThread(child.id, [{ type: 'text', text: 'Observe the child break.' }]);
-    await Promise.resolve();
-    expect(store.getSnapshot().identityCatalogByThread.get(child.id)?.get('explore')?.persona).toBe('Rena');
-    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('explore')?.persona).toBe('Juniper');
-
-    childEntries = [
-      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
-      { agentType: 'explore', persona: 'Willow', color: 'blue', source: 'project' },
-    ];
-    await store.sendToThread(child.id, [{ type: 'text', text: 'Observe the child recovery.' }]);
-    await Promise.resolve();
-    expect(store.getSnapshot().identityCatalogByThread.get(child.id)?.get('explore')?.persona).toBe('Willow');
-    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('explore')?.persona).toBe('Juniper');
-    expect(identityReads).toEqual([owner.id, child.id, child.id, child.id]);
   });
 
   test('does not let an older page response overwrite a realtime terminal Turn', async () => {
@@ -291,62 +198,6 @@ describe('renderer Thread store', () => {
     });
   });
 
-  test('loads the conversation\'s Agent records and keeps field-equal ones by identity', async () => {
-    const owner = thread('thread-1', 1);
-    const execution = {
-      agentId: 'thread-child',
-      parentThreadId: owner.id,
-      description: 'survey the runtime',
-      agentType: 'general-purpose',
-      runMode: 'background' as const,
-      generation: 1,
-      currentTurnId: 'child-turn',
-      parentItemId: 'spawn-item',
-      stopProvenance: 'none' as const,
-      terminalStatus: null,
-      notificationState: 'none' as const,
-      worktree: null,
-      createdAt: 10,
-      updatedAt: 10,
-    };
-    let notify: (notification: AgentCoreNotification) => void = () => undefined;
-    const client = {
-      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
-        notify = listener;
-        return () => undefined;
-      },
-      agentCoreRequest: async (method: string) => {
-        if (method === 'thread/list') return { data: [owner], nextCursor: null };
-        if (method === 'thread/subagents/list') return { data: [execution] };
-        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
-        if (method === 'goal/get') return { goal: null };
-        if (method === 'thread/configuration/get') return configurationResponse(owner);
-        throw new Error(`Unexpected method: ${method}`);
-      },
-    } as unknown as ThreadStoreClient;
-    const store = new ThreadStore(client);
-    await store.initialize();
-    await Promise.resolve();
-
-    // The cold-start half: a conversation reopened later still knows which
-    // Agents it delegated, without waiting for one of them to move.
-    const loaded = store.getSnapshot().subagentExecutionsByAgentId.get('thread-child');
-    expect(loaded).toMatchObject({ agentId: 'thread-child', description: 'survey the runtime' });
-
-    // A record that says nothing new keeps its identity, so the registry — and
-    // every memoized row projected from it — sees no change at all.
-    notify({ type: 'subagent/execution/changed', threadId: owner.id, execution: { ...execution } });
-    expect(store.getSnapshot().subagentExecutionsByAgentId.get('thread-child')).toBe(loaded);
-
-    notify({
-      type: 'subagent/execution/changed',
-      threadId: owner.id,
-      execution: { ...execution, stopProvenance: 'user', updatedAt: 20 },
-    });
-    expect(store.getSnapshot().subagentExecutionsByAgentId.get('thread-child'))
-      .toMatchObject({ stopProvenance: 'user' });
-  });
-
   test('keeps Tool Tasks durable across cold load, realtime races, reads, stops, and Thread deletion', async () => {
     const owner = thread('thread-1', 1);
     const staleList = deferred<{ data: ToolTaskProjection[] }>();
@@ -367,8 +218,6 @@ describe('renderer Thread store', () => {
         if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'thread/descendants') return { data: [], queuedWorkThreadIds: [] };
-        if (method === 'thread/subagents/list') return { data: [] };
         if (method === 'identities/get') return { entries: [] };
         if (method === 'task/read') return {
           task: finished,
@@ -603,118 +452,6 @@ describe('renderer Thread store', () => {
       turn: startedTurn,
       turnId: startedTurn.id,
     });
-  });
-
-  test('submits user input for an active child without renderer-side Turn routing', async () => {
-    const owner = thread('thread-root', 2);
-    const child = {
-      ...thread('thread-child', 1),
-      parentThreadId: owner.id,
-      source: 'collaboration' as const,
-      threadSource: 'subagent' as const,
-    };
-    const active = childTurn(child.id, 'turn-child-active', 'inProgress');
-    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
-    const client = {
-      onAgentCoreNotification: () => () => undefined,
-      agentCoreRequest: async (method: string, input: Record<string, unknown>) => {
-        calls.push({ method, input });
-        if (method === 'thread/list') return { data: [owner], nextCursor: null };
-        if (method === 'thread/read') return { thread: child };
-        if (method === 'thread/turns/list') {
-          return {
-            data: input.threadId === child.id ? [active] : [],
-            nextCursor: null,
-            backwardsCursor: null,
-          };
-        }
-        if (method === 'goal/get') return { goal: null };
-        if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'turn/submit') {
-          return { turn: null, turnId: active.id, acceptedItemId: 'steer-item', deduplicated: false };
-        }
-        throw new Error(`Unexpected method: ${method}`);
-      },
-    } as unknown as ThreadStoreClient;
-    const store = new ThreadStore(client);
-    await store.initialize();
-    await store.ensureThreadHistory(child.id);
-    const userView = rendererUserView();
-
-    expect(await store.sendToThread(child.id, [{ type: 'text', text: '  Check logs next.  ' }], userView))
-      .toEqual({
-        turn: null,
-        turnId: active.id,
-        acceptedItemId: 'steer-item',
-        deduplicated: false,
-      });
-
-    const submit = calls.find((call) => call.method === 'turn/submit');
-    expect(submit?.input).toMatchObject({
-      threadId: child.id,
-      input: [{ type: 'text', text: 'Check logs next.' }],
-      userView,
-    });
-    expect(submit?.input).not.toHaveProperty('expectedTurnId');
-    expect(typeof submit?.input.clientUserMessageId).toBe('string');
-    expect(store.getSnapshot().selectedThreadId).toBe(owner.id);
-    expect(calls.some((call) => call.method === 'turn/start' || call.method === 'turn/steer')).toBe(false);
-  });
-
-  test('starts a new user Turn for a terminal child without selecting it', async () => {
-    const owner = thread('thread-root', 2);
-    const child = {
-      ...thread('thread-child', 1),
-      parentThreadId: owner.id,
-      source: 'collaboration' as const,
-      threadSource: 'subagent' as const,
-    };
-    const terminal = childTurn(child.id, 'turn-child-done', 'completed');
-    const started = childTurn(child.id, 'turn-child-resumed', 'inProgress');
-    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
-    const client = {
-      onAgentCoreNotification: () => () => undefined,
-      agentCoreRequest: async (method: string, input: Record<string, unknown>) => {
-        calls.push({ method, input });
-        if (method === 'thread/list') return { data: [owner], nextCursor: null };
-        if (method === 'thread/read') return { thread: child };
-        if (method === 'thread/turns/list') {
-          return {
-            data: input.threadId === child.id ? [terminal] : [],
-            nextCursor: null,
-            backwardsCursor: null,
-          };
-        }
-        if (method === 'goal/get') return { goal: null };
-        if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'turn/submit') {
-          return { acceptedItemId: 'start-item', deduplicated: false, turn: started, turnId: started.id };
-        }
-        throw new Error(`Unexpected method: ${method}`);
-      },
-    } as unknown as ThreadStoreClient;
-    const store = new ThreadStore(client);
-    await store.initialize();
-    await store.ensureThreadHistory(child.id);
-    const userView = rendererUserView();
-
-    expect(await store.sendToThread(child.id, [{ type: 'text', text: 'Continue.' }], userView))
-      .toEqual({
-        acceptedItemId: 'start-item',
-        deduplicated: false,
-        turn: started,
-        turnId: started.id,
-      });
-
-    const submit = calls.find((call) => call.method === 'turn/submit');
-    expect(submit?.input).toMatchObject({
-      threadId: child.id,
-      input: [{ type: 'text', text: 'Continue.' }],
-      userView,
-    });
-    expect(typeof submit?.input.clientUserMessageId).toBe('string');
-    expect(store.getSnapshot().selectedThreadId).toBe(owner.id);
-    expect(calls.some((call) => call.method === 'turn/start' || call.method === 'turn/steer')).toBe(false);
   });
 
   test('loads Turns and Goal for the replacement selected after deleting the current Thread', async () => {
@@ -1012,85 +749,6 @@ describe('renderer Thread store', () => {
     expect(store.getSnapshot().turnsByThread.has(unloaded.id)).toBe(false);
     expect(store.getSnapshot().latestTurnByThread.get(unloaded.id)).toEqual(completed);
     expect(store.getSnapshot().threads[0]).toMatchObject({ id: unloaded.id, updatedAt: 110 });
-  });
-
-  test('keeps children across a reload while dropping a root the list no longer returns', async () => {
-    const owner = thread('thread-1', 2);
-    const dropped = thread('thread-2', 3);
-    const child = { ...thread('thread-child', 1), parentThreadId: owner.id, threadSource: 'subagent' as const };
-    let notify: (notification: AgentCoreNotification) => void = () => undefined;
-    let listCalls = 0;
-    const client = {
-      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
-        notify = listener;
-        return () => undefined;
-      },
-      agentCoreRequest: async (method: string) => {
-        if (method === 'thread/list') {
-          listCalls += 1;
-          return { data: listCalls === 1 ? [owner, dropped] : [owner], nextCursor: null };
-        }
-        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
-        if (method === 'goal/get') return { goal: null };
-        if (method === 'thread/configuration/get') return configurationResponse(owner);
-        throw new Error(`Unexpected method: ${method}`);
-      },
-    } as unknown as ThreadStoreClient;
-    const store = new ThreadStore(client);
-    await store.initialize();
-    notify({ type: 'thread/started', threadId: child.id, thread: child });
-    const active = turn('turn-child', 'inProgress', '');
-    notify({ type: 'turn/started', threadId: child.id, turnId: active.id, turn: active });
-    const droppedTurn = turn('turn-dropped', 'inProgress', '');
-    notify({ type: 'turn/started', threadId: dropped.id, turnId: droppedTurn.id, turn: droppedTurn });
-    expect(store.getSnapshot().latestTurnByThread.has(child.id)).toBe(true);
-
-    await store.reloadThreads();
-
-    // `thread/list` is root-only, so a child's absence proves nothing: it stays
-    // in the catalog, and the transcript keeps its identity and live status.
-    // A ROOT the list no longer returns really is gone.
-    expect(store.getSnapshot().threads.map((entry) => entry.id).toSorted())
-      .toEqual([owner.id, child.id].toSorted());
-    expect(store.getSnapshot().latestTurnByThread.has(child.id)).toBe(true);
-    expect(store.getSnapshot().latestTurnByThread.has(dropped.id)).toBe(false);
-  });
-
-  test('clears per-Thread caches for a deleted subtree', async () => {
-    const owner = thread('thread-1', 2);
-    const child = { ...thread('thread-child', 1), parentThreadId: owner.id, threadSource: 'subagent' as const };
-    let notify: (notification: AgentCoreNotification) => void = () => undefined;
-    const client = {
-      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
-        notify = listener;
-        return () => undefined;
-      },
-      agentCoreRequest: async (method: string) => {
-        if (method === 'thread/list') return { data: [owner, child], nextCursor: null };
-        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
-        if (method === 'goal/get') return { goal: null };
-        if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'identities/get') {
-          return { entries: [{ agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' }] };
-        }
-        if (method === 'thread/delete') return {};
-        throw new Error(`Unexpected method: ${method}`);
-      },
-    } as unknown as ThreadStoreClient;
-    const store = new ThreadStore(client);
-    await store.initialize();
-    await store.reloadIdentityCatalog(child.id);
-    const completed = turn('turn-child', 'completed', 'done');
-    notify({ type: 'turn/completed', threadId: child.id, turnId: completed.id, turn: completed });
-
-    expect([...store.getSnapshot().identityCatalogByThread.keys()].toSorted())
-      .toEqual([owner.id, child.id].toSorted());
-
-    await store.deleteThread(owner.id);
-
-    expect(store.getSnapshot().threads).toEqual([]);
-    expect(store.getSnapshot().latestTurnByThread.size).toBe(0);
-    expect(store.getSnapshot().identityCatalogByThread.size).toBe(0);
   });
 
   test('removes a transient fork notification when Continue in new chat fails', async () => {
@@ -1500,45 +1158,6 @@ describe('renderer Thread store', () => {
     expect(JSON.stringify(value, null, 2).length).toBeLessThanOrEqual(32_000);
   });
 
-  test('never resolves raw collaboration output through the renderer store', async () => {
-    let reads = 0;
-    const client = {
-      onAgentCoreNotification: () => () => undefined,
-      agentCoreRequest: async () => {
-        reads += 1;
-        return { output: null };
-      },
-    } as unknown as ThreadStoreClient;
-    const store = new ThreadStore(client);
-    const item: Extract<ThreadItem, { type: 'collabAgentToolCall' }> = {
-      id: 'collaboration-item',
-      provenance: {
-        originThreadId: 'thread-1',
-        originTurnId: 'turn-1',
-        originItemId: 'collaboration-item',
-      },
-      type: 'collabAgentToolCall',
-      tool: 'task_stop',
-      status: 'completed',
-      outputRef: {
-        id: 'c'.repeat(64),
-        mimeType: 'application/json',
-        byteLength: 40,
-        summary: 'tokensUsed: 1234',
-      },
-      senderThreadId: 'thread-1',
-      receiverThreadIds: [],
-      prompt: null,
-      summary: null,
-      model: null,
-      reasoningEffort: null,
-      agentsStates: {},
-    };
-
-    expect(await store.readItemOutput('thread-1', 'turn-1', item)).toBeNull();
-    expect(reads).toBe(0);
-  });
-
   test('retries a full tool output read after a transient request failure', async () => {
     const owner = thread('thread-1', 1);
     let attempts = 0;
@@ -1567,63 +1186,6 @@ describe('renderer Thread store', () => {
     expect(attempts).toBe(2);
   });
 
-  test('recovers a child Thread the list never returns, and reports a deleted one', async () => {
-    const owner = thread('thread-1', 2);
-    const child = { ...thread('thread-child', 1), parentThreadId: owner.id, threadSource: 'subagent' as const };
-    const client = {
-      onAgentCoreNotification: () => () => undefined,
-      agentCoreRequest: async (method: string, input?: unknown) => {
-        if (method === 'thread/list') return { data: [owner], nextCursor: null };
-        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
-        if (method === 'goal/get') return { goal: null };
-        if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'thread/read') {
-          const threadId = (input as { threadId: string }).threadId;
-          if (threadId !== child.id) throw new Error(`Thread not found: ${threadId}`);
-          return { thread: child };
-        }
-        throw new Error(`Unexpected method: ${method}`);
-      },
-    } as unknown as ThreadStoreClient;
-    const store = new ThreadStore(client);
-    await store.initialize();
-
-    // Not a list row, so the catalog has to recover it through `thread/read`.
-    await store.openThreadById(child.id);
-    expect(store.getSnapshot().selectedThreadId).toBe(child.id);
-    expect(store.getSnapshot().threads.map((entry) => entry.id)).toContain(child.id);
-
-    // A genuinely deleted Thread rejects, so the caller can say so instead of
-    // failing silently behind a bare void call.
-    await expect(store.openThreadById('thread-gone')).rejects.toThrow('Thread not found');
-  });
-
-  test('lists descendants for the parent browse surface and folds them into the catalog', async () => {
-    const owner = thread('thread-1', 3);
-    const child = { ...thread('thread-child', 2), parentThreadId: owner.id, threadSource: 'subagent' as const };
-    const grandchild = { ...thread('thread-grandchild', 1), parentThreadId: child.id, threadSource: 'subagent' as const };
-    const client = {
-      onAgentCoreNotification: () => () => undefined,
-      agentCoreRequest: async (method: string) => {
-        if (method === 'thread/list') return { data: [owner], nextCursor: null };
-        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
-        if (method === 'goal/get') return { goal: null };
-        if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'thread/descendants') return { data: [child, grandchild], queuedWorkThreadIds: [child.id] };
-        throw new Error(`Unexpected method: ${method}`);
-      },
-    } as unknown as ThreadStoreClient;
-    const store = new ThreadStore(client);
-    await store.initialize();
-
-    const view = await store.listDescendants(owner.id);
-    expect(view.threads.map((entry) => entry.id)).toEqual([child.id, grandchild.id]);
-    // Queued work is what keeps an idle child out of "finished": the renderer
-    // cannot see the host mailbox, so the subtree read carries it.
-    expect([...view.queuedWorkThreadIds]).toEqual([child.id]);
-    expect(store.getSnapshot().threads.map((entry) => entry.id).toSorted())
-      .toEqual([owner.id, child.id, grandchild.id].toSorted());
-  });
 });
 
 function thread(id: string, updatedAt: number): Thread {
@@ -1632,8 +1194,6 @@ function thread(id: string, updatedAt: number): Thread {
     sessionId: id,
     parentThreadId: null,
     forkedFromId: null,
-    agentNickname: null,
-    agentRole: null,
     name: id,
     preview: '',
     ephemeral: false,
@@ -1736,32 +1296,6 @@ function commandTurn(id: string, itemStatus: 'inProgress' | 'completed'): Turn {
     startedAt: 1,
     completedAt: null,
     durationMs: null,
-  };
-}
-
-function childTurn(threadId: string, id: string, status: Turn['status']): Turn {
-  const itemId = `${id}-item`;
-  return {
-    id,
-    items: [{
-      type: 'agentMessage',
-      id: itemId,
-      provenance: { originThreadId: threadId, originTurnId: id, originItemId: itemId },
-      text: 'Child response',
-      phase: 'final_answer',
-      memoryCitation: null,
-    }],
-    itemsView: 'full',
-    provenance: {
-      originThreadId: threadId,
-      originTurnId: id,
-      trigger: { kind: 'subagent', parentThreadId: 'thread-root', parentItemId: 'agent-call' },
-    },
-    status,
-    error: null,
-    startedAt: 1,
-    completedAt: status === 'inProgress' ? null : 2,
-    durationMs: status === 'inProgress' ? null : 1,
   };
 }
 
