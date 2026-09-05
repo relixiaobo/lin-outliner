@@ -8,6 +8,8 @@ export interface OutlineAgentShellEnvironmentOptions {
   readonly turnId: AgentMutationCausation['turnId'];
   readonly runtimeRoot: string;
   readonly contentRoot: string;
+  readonly configurationDirectory?: string;
+  readonly hostSessionId?: string;
   readonly supervisor: OutlineClientSupervisor;
   readonly baseEnvironment: AgentShellProcessEnvironmentProvider;
   readonly leadingToolPathSegments?: readonly string[];
@@ -36,6 +38,10 @@ export function createOutlineAgentShellEnvironmentProvider(
           ...base.env,
           TENON_OUTLINE_RUNTIME_ROOT: options.runtimeRoot,
           TENON_CONTENT_ROOT: options.contentRoot,
+          ...(options.configurationDirectory
+            ? { TENON_CONFIG_DIR: options.configurationDirectory }
+            : {}),
+          ...(options.hostSessionId ? { TENON_HOST_SESSION: options.hostSessionId } : {}),
           [OUTLINE_AGENT_ATTESTATION_ENV]: issueOutlineAgentAttestation({
             descriptor: client.descriptor,
             runtimeRoot: options.runtimeRoot,

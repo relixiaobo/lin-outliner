@@ -858,11 +858,13 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     theme: () => nativeTheme.themeSource,
     setTheme: (raw) => {
       if (!isThemeMode(raw)) return;
+      if (nativeTheme.themeSource === raw) return;
       nativeTheme.themeSource = raw;
       saveThemePreference(raw);
     },
     setLocale: (raw) => {
       if (!isLocale(raw)) return;
+      if (cachedLocale === raw) return;
       saveLanguagePreference(raw);
       cachedLocale = raw;
       for (const window of BrowserWindow.getAllWindows()) {

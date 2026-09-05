@@ -12,7 +12,10 @@ export interface FilePreferences {
   };
   readonly agent: {
     readonly memory: { readonly enabled: boolean };
-    readonly skills: { readonly disabled: readonly string[] };
+    readonly skills: {
+      readonly disabled: readonly string[];
+      readonly sources: readonly string[];
+    };
     readonly tools: { readonly disabled: readonly string[] };
     readonly provider: {
       readonly timeoutMs: number | null;
@@ -39,7 +42,7 @@ export const DEFAULT_FILE_PREFERENCES: FilePreferences = Object.freeze({
   appearance: Object.freeze({ theme: 'system', language: null }),
   agent: Object.freeze({
     memory: Object.freeze({ enabled: true }),
-    skills: Object.freeze({ disabled: Object.freeze([]) }),
+    skills: Object.freeze({ disabled: Object.freeze([]), sources: Object.freeze([]) }),
     tools: Object.freeze({ disabled: Object.freeze([]) }),
     provider: Object.freeze({
       timeoutMs: null,
@@ -55,7 +58,8 @@ const TOP_LEVEL_KEYS = new Set(['appearance', 'agent', 'updates']);
 const APPEARANCE_KEYS = new Set(['theme', 'language']);
 const AGENT_KEYS = new Set(['memory', 'skills', 'tools', 'provider']);
 const MEMORY_KEYS = new Set(['enabled']);
-const LIST_KEYS = new Set(['disabled']);
+const SKILLS_KEYS = new Set(['disabled', 'sources']);
+const TOOLS_KEYS = new Set(['disabled']);
 const PROVIDER_KEYS = new Set(['timeoutMs', 'maxRetries', 'maxRetryDelayMs', 'cacheRetention']);
 const UPDATES_KEYS = new Set(['checkAutomatically']);
 
@@ -100,9 +104,9 @@ function decodeFilePreferences(value: unknown): FilePreferences {
   const memory = recordOrDefault(agent.memory, DEFAULT_FILE_PREFERENCES.agent.memory, 'settings.agent.memory');
   exactKeys(memory, MEMORY_KEYS, 'settings.agent.memory');
   const skills = recordOrDefault(agent.skills, DEFAULT_FILE_PREFERENCES.agent.skills, 'settings.agent.skills');
-  exactKeys(skills, LIST_KEYS, 'settings.agent.skills');
+  exactKeys(skills, SKILLS_KEYS, 'settings.agent.skills');
   const tools = recordOrDefault(agent.tools, DEFAULT_FILE_PREFERENCES.agent.tools, 'settings.agent.tools');
-  exactKeys(tools, LIST_KEYS, 'settings.agent.tools');
+  exactKeys(tools, TOOLS_KEYS, 'settings.agent.tools');
   const provider = recordOrDefault(agent.provider, DEFAULT_FILE_PREFERENCES.agent.provider, 'settings.agent.provider');
   exactKeys(provider, PROVIDER_KEYS, 'settings.agent.provider');
   const updates = recordOrDefault(root.updates, DEFAULT_FILE_PREFERENCES.updates, 'settings.updates');
@@ -115,7 +119,10 @@ function decodeFilePreferences(value: unknown): FilePreferences {
     }),
     agent: Object.freeze({
       memory: Object.freeze({ enabled: booleanValue(memory.enabled, 'settings.agent.memory.enabled') }),
-      skills: Object.freeze({ disabled: stringList(skills.disabled, 'settings.agent.skills.disabled') }),
+      skills: Object.freeze({
+        disabled: stringList(skills.disabled, 'settings.agent.skills.disabled'),
+        sources: stringList(skills.sources, 'settings.agent.skills.sources'),
+      }),
       tools: Object.freeze({ disabled: stringList(tools.disabled, 'settings.agent.tools.disabled') }),
       provider: Object.freeze({
         timeoutMs: nullableNonNegativeInteger(provider.timeoutMs, 'settings.agent.provider.timeoutMs'),

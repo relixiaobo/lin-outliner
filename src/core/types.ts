@@ -741,6 +741,7 @@ export interface AgentRuntimeSettings {
   providerCacheRetention: AgentCacheRetention;
   delegation: AgentDelegationSettings;
   disabledSkills?: string[];
+  disabledTools?: string[];
 }
 
 export interface AgentRuntimeSettingsInput {
@@ -751,6 +752,7 @@ export interface AgentRuntimeSettingsInput {
   providerCacheRetention?: AgentCacheRetention;
   delegation?: AgentDelegationSettingsInput;
   disabledSkills?: string[];
+  disabledTools?: string[];
 }
 
 export interface AgentImageGenerationSettings {

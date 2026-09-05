@@ -11,8 +11,10 @@ provider login, credential reveal, model connection tests, Skill installation,
 memory reset, data deletion, diagnostics export, or other domain operations;
 route those requests to the owning operation.
 
-1. Read the advertised configuration directory, relevant schema, source file,
-   and current Host status. Use the live schema and catalog identity; never
+1. Read `TENON_CONFIG_DIR` (the directory containing `settings.jsonc`,
+   `settings.schema.json`, and `status.json`), the relevant schema, source file,
+   and current Host status.
+   Use the live schema and catalog identity; never
    guess a Skill or model name.
 2. Edit the smallest possible field in the public source with ordinary file
    tools. Preserve comments, ordering, whitespace, and unrelated values.

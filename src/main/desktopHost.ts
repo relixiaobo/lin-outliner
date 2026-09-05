@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, shell } from 'electron';
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, watch } from 'node:fs';
 import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, join, resolve } from 'node:path';
 import { registerDesktopOutlineIpc } from './outlineClient';
@@ -157,6 +157,9 @@ import {
   loadAppPreferences,
   saveLastAgentThreadConfiguration,
 } from './appPreferences';
+import { loadFilePreferences } from './configuration/filePreferences';
+import { writeFilePreferencesStatus } from './configuration/status';
+import { writeFilePreferencesSchema } from './configuration/schema';
 import type { ThemeMode } from '../core/theme';
 import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
@@ -233,6 +236,7 @@ export interface DesktopHost {
 
 export function createDesktopHost(environment: DesktopHostEnvironment): DesktopHost {
 const resolvedUserDataDir = environment.userDataDir;
+const hostSessionId = randomUUID();
 const diagnosticLog = environment.diagnosticLog;
 const reportError = environment.reportError;
 const resources = new ResourceScope('desktop-host');
@@ -257,6 +261,7 @@ const outlineHost = createOutlineDesktopHost({
   resourcesPath: process.resourcesPath,
   execPath: process.execPath,
   reportError,
+  hostSessionId,
   ready: (service) => lifecycle.ready(service),
 });
 const {
@@ -331,6 +336,43 @@ function scheduleAppUpdateCheck(): void {
   }, APP_UPDATE_STARTUP_DELAY_MS);
   backgroundEffects.defer('app-update-timer', () => clearTimeout(timer));
   timer.unref?.();
+}
+
+function startFilePreferencesWatcher(): void {
+  const configDir = join(resolvedUserDataDir, 'config');
+  ensureAgentDir(configDir);
+  writeFilePreferencesSchema(resolvedUserDataDir);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const apply = () => {
+    timer = null;
+    const loaded = loadFilePreferences(resolvedUserDataDir);
+    writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded);
+    if (loaded.sourceStatus === 'rejected') return;
+    const { appearance } = loaded.preferences;
+    if (windowApplicationHost.theme() !== appearance.theme) {
+      windowApplicationHost.setTheme(appearance.theme);
+    }
+    if (typeof appearance.language === 'string' && windowApplicationHost.effectiveLocale() !== appearance.language) {
+      windowApplicationHost.setLocale(appearance.language);
+    }
+    void getAgentRuntimeSettings().then((settings) => {
+      agentHost.skills.updateRuntimeSettings(settings);
+    }).catch(() => undefined);
+  };
+  const watcher = watch(configDir, { persistent: false }, (_event, filename) => {
+    if (filename && filename.toString() !== 'settings.jsonc') return;
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(apply, 100);
+  });
+  writeFilePreferencesStatus(
+    resolvedUserDataDir,
+    hostSessionId,
+    loadFilePreferences(resolvedUserDataDir),
+  );
+  resources.defer('file-preferences-watcher', () => {
+    watcher.close();
+    if (timer !== null) clearTimeout(timer);
+  });
 }
 
 const agentImageObservationMutex = new Mutex();
@@ -471,6 +513,7 @@ const agentHost = createAgentHost({
     enabledSkills: context.configuration.skills,
   }),
   createToolOptions: () => ({
+    disabledTools: async () => (await getAgentRuntimeSettings()).disabledTools ?? [],
     imageNormalizer: async ({ filePath, signal }) => {
       return prepareBoundedAgentImage(filePath, basename(filePath), signal);
     },
@@ -2489,7 +2532,10 @@ const lifecycle = new DesktopHostLifecycle({
         transportEffects.defer('main-transport', () => mainTransport?.dispose());
       },
     },
-    { name: 'windows', run: () => windowApplicationHost.initialize() },
+    { name: 'windows', run: async () => {
+      await windowApplicationHost.initialize();
+      startFilePreferencesWatcher();
+    } },
     {
       name: 'provider-configuration',
       dependsOn: ['windows'],

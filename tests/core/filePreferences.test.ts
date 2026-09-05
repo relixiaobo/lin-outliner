@@ -8,6 +8,7 @@ import {
   loadFilePreferences,
   writeFilePreferences,
 } from '../../src/main/configuration/filePreferences';
+import { writeFilePreferencesStatus } from '../../src/main/configuration/status';
 
 let userData = '';
 
@@ -61,5 +62,27 @@ describe('file-backed preferences', () => {
     const raw = await readFile(filePreferencesPath(userData), 'utf8');
     expect(raw).toContain('"theme": "light"');
     expect(loadFilePreferences(userData).preferences.appearance).toEqual(next.appearance);
+  });
+
+  test('accepts global Skill sources and tool disablement', async () => {
+    await writeFile(filePreferencesPath(userData), JSON.stringify({
+      agent: {
+        skills: { sources: ['/tmp/skills'], disabled: ['configuration'] },
+        tools: { disabled: ['bash'] },
+      },
+    }));
+    const result = loadFilePreferences(userData);
+    expect(result.preferences.agent.skills.sources).toEqual(['/tmp/skills']);
+    expect(result.preferences.agent.skills.disabled).toEqual(['configuration']);
+    expect(result.preferences.agent.tools.disabled).toEqual(['bash']);
+  });
+
+  test('writes bounded host status with the accepted source digest', async () => {
+    const loaded = loadFilePreferences(userData);
+    const status = writeFilePreferencesStatus(userData, 'host-test', loaded);
+    expect(status.hostSessionId).toBe('host-test');
+    expect(status.source.status).toBe('missing');
+    expect(status.source.observedDigest).toBeNull();
+    expect(await readFile(path.join(userData, 'config', 'status.json'), 'utf8')).toContain('host-test');
   });
 });

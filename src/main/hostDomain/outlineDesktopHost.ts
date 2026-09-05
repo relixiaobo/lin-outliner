@@ -24,11 +24,13 @@ export interface OutlineDesktopHostOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly reportError: (report: ErrorReport) => void;
   readonly ready: (service: 'outline-documents' | 'personal-ranking') => Promise<void>;
+  readonly hostSessionId?: string;
 }
 
 export interface OutlineDesktopHost {
   readonly runtimeRoot: string;
   readonly contentRoot: string;
+  readonly configurationDirectory: string;
   readonly assetExportRoot: string;
   readonly renderer: OutlineRendererCapability;
   readonly document: OutlineDocumentCapability;
@@ -173,6 +175,7 @@ export function createOutlineDesktopHost(options: OutlineDesktopHostOptions): Ou
   return {
     runtimeRoot,
     contentRoot,
+    configurationDirectory: join(options.userDataDir, 'config'),
     assetExportRoot,
     renderer,
     document,
@@ -185,6 +188,8 @@ export function createOutlineDesktopHost(options: OutlineDesktopHostOptions): Ou
         turnId,
         runtimeRoot,
         contentRoot,
+        configurationDirectory: join(options.userDataDir, 'config'),
+        ...(options.hostSessionId ? { hostSessionId: options.hostSessionId } : {}),
         supervisor,
         baseEnvironment,
       })
