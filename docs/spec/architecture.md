@@ -307,6 +307,9 @@ An initial failure closes the partial watch and request client, resets watch
 readiness, and rejects all waiters before a new attempt can begin. Memory
 `prepareForTurnAdmission()` likewise caches its in-flight/successful promise and
 clears a failed preparation for retry. Runtime text indexing remains lazy.
+Runtime selector reads reuse one `OutlineSelectionIndex` for the current document
+and asset-metadata revisions; document mutations, asset ingestion, reconciliation,
+and collection replace the cached index before subsequent reads.
 If startup Memory writes advance Runtime during a paged renderer projection read,
 the reader discards those pages and restarts on an explicit `stale_revision`
 conflict, up to three complete attempts. It never merges different revisions;
