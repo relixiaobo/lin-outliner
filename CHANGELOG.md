@@ -12,6 +12,16 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Settings now has an approved file-first design for people and Agents (PR
+  #626)** — the plan defines public JSONC configuration and keybinding sources,
+  same-source human editing, domain-owned Agent operations, model-selection
+  precedence, credential and connection recovery, contextual Translation,
+  complete shortcut coverage, and seven independently complete implementation
+  units. It preserves source text on invalid edits, reports current-Host
+  settlement through bounded status, and keeps retired delegation surfaces out
+  of the target. Gate verification passed `docs:check` and whitespace checks;
+  runtime behavior remains unchanged until the implementation units ship.
+
 - **Internal Agent delegation now runs through durable Tool Tasks (PR #628)** —
   the packaged `delegate` CLI creates root-owned hidden Agent Sessions backed by
   the internal Runner, ordered continuation messages, Host-attested direct-exec

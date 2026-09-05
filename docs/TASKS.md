@@ -8,7 +8,7 @@ and claim work with a Draft PR but do not edit it. The main agent updates it at
 integration.
 
 The live collision radar is `gh pr list` plus this board. At the 2026-09-05
-audit, Draft PR #626 (Settings design revision) remains open. Internal Agent
+audit, the Settings design revision shipped in PR #626. Internal Agent
 delegation and legacy retirement shipped in PR #628; external Runner adapters
 remain separate future claims. The current package version is `0.8.0`;
 the latest published train is `v0.7.0`.
@@ -25,13 +25,11 @@ PR #629 completed window-first startup. The Agent Host composition shipped in
 #628 preserves the owning readiness boundaries and recoverable startup behavior
 in [Desktop Host lifecycle](spec/architecture.md#desktop-host-lifecycle).
 
-Draft PR #626 owns the file-first Settings design revision. The plan on `main`
-still describes the previous CLI-based design; the draft proposes replacing it
-with public configuration files, a same-source flat UI, and domain-owned tools.
-Its design gate must settle the implementation units and absorbed working-state
-behavior before a Settings implementation claim. Implementation follows the
-internal cutover and the Skill authoring foundation; the draft is not shipped
-specification.
+PR #626 shipped the file-first Settings design revision. It replaces the former
+CLI-based proposal with public configuration files, a same-source flat UI, and
+domain-owned tools. The implementation units remain unclaimed until their
+dependency and collision checks are complete; the plan is design authority, not
+shipped specification.
 
 Trajectory paging shipped in #625 and exact-or-unavailable evidence completed
 in #627; the plan is archived and its shared-file claim is released. Bounded
@@ -109,9 +107,9 @@ does not mix their product decisions into the architectural queue above.
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
 | P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623 and internal delegation plus Subagent/isolated-Skill retirement shipped in #628. #627's Trajectory predecessor is complete; each external Runner adapter remains a separate future claim. |
-| P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Design revision under review in Draft #626; implementation waits for that gate, #628, and `agent-skill-authoring-foundation`. Reconcile the delivery units and `semantic-working-state` absorption when the revised design lands. |
+| P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Design revision shipped in #626; implementation units A-G remain unclaimed and follow their declared dependency/collision checks, including #628 and `agent-skill-authoring-foundation`. |
 | P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, and the Runtime-index unit shipped in #633; translation geometry remains in the live preview-shell lane. |
-| P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Paused for the Settings redesign. Draft #626 changes the absorbing delivery unit; settle that ownership at its design gate before implementing Provider/managed-Skill working states. |
+| P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Settings redesign landed in #626; Provider/managed-Skill working-state behavior is absorbed by Units B and D, so claim it through those units rather than as a separate implementation. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
 | P3 | [icon-semantics](plans/icon-semantics.md) | `draft` | Build-ready renderer mapping cleanup. Update action menu, launcher, picker, and attachment mappings together; status color is out of scope. |
 | P3 | [performance-optimization](plans/performance-optimization.md) | `draft` | Three measured tails only. Core mutation indexes are eligible after #598; filename-fallback reuse and text normalization are independent. |
