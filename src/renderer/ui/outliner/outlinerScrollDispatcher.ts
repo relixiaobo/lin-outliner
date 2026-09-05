@@ -18,11 +18,7 @@ function dispatchScroll(event: Event): void {
   for (const registration of registrations) {
     const scroller = registration.resolveScroller();
     if (!scroller) continue;
-    if (isViewportTarget(target) || target === scroller) {
-      registration.onScroll();
-      continue;
-    }
-    if (target instanceof Node && scroller.contains(target)) registration.onScroll();
+    if (isViewportTarget(target) || target === scroller) registration.onScroll();
   }
 }
 
