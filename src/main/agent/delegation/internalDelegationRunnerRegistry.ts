@@ -10,10 +10,18 @@ import {
   internalDelegationRunnerAdapter,
   type DelegationModelSelection,
 } from './DelegationPolicyResolver';
+import { createCodexCliRunnerAdapter, type CodexCliRunnerOptions } from './CodexCliRunnerAdapter';
 
 export function createInternalDelegationRunnerRegistry(): DelegationRunnerRegistry {
   return new DelegationRunnerRegistry([
     internalDelegationRunnerAdapter(resolveConfiguredInternalModel),
+  ]);
+}
+
+export function createDelegationRunnerRegistry(options: CodexCliRunnerOptions = {}): DelegationRunnerRegistry {
+  return new DelegationRunnerRegistry([
+    internalDelegationRunnerAdapter(resolveConfiguredInternalModel),
+    createCodexCliRunnerAdapter(options),
   ]);
 }
 

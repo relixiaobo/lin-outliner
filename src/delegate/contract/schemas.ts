@@ -80,6 +80,7 @@ export const DelegateExecutionResultSchema = Type.Object({
     id: Type.String({ minLength: 1, maxLength: 64 }),
     version: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
   }, closed),
+  adapterSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
   model: Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]),
   durationMs: Type.Integer({ minimum: 0 }),
   text: Type.Union([Type.String({ maxLength: 1024 * 1024 }), Type.Null()]),

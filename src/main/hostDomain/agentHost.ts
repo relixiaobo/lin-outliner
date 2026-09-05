@@ -39,10 +39,11 @@ import {
   DelegationCoordinator,
   DelegationSessionStore,
   InternalDelegationSessionRuntime,
-  createInternalDelegationRunnerRegistry,
+  createDelegationRunnerRegistry,
   delegationSettingsRevision,
   resolveConfiguredInternalModel,
   schedulingPolicyDigest,
+  type DelegationRunnerReadiness,
 } from '../agent/delegation';
 import { decodeDelegateRunInput, type DelegateStateCommand } from '../../delegate/contract';
 import {
@@ -146,6 +147,7 @@ export interface AgentHost {
   readonly memory: AgentMemoryCapability;
   readonly automations: AgentAutomationCapability;
   readonly skills: AgentSkillsCapability;
+  readonly delegationRunners: () => Promise<readonly DelegationRunnerReadiness[]>;
   projectionChanged(update: ProjectionUpdate, operation?: Operation): void;
   initialize(projection: DocumentProjection, assertActive?: () => void): Promise<void>;
   close(): Promise<void>;
@@ -319,7 +321,14 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   threadReference.set(threadService);
   const delegationDatabase = openSqlite(join(options.userDataDir, 'agent', 'delegation.sqlite'));
   const delegationStore = new DelegationSessionStore(delegationDatabase);
-  const delegationRuntime = new InternalDelegationSessionRuntime(threadService, delegationStore, worktree);
+  const runnerRegistry = createDelegationRunnerRegistry({ cwd: options.defaultCwd });
+  const delegationRuntime = new InternalDelegationSessionRuntime(
+    threadService,
+    delegationStore,
+    worktree,
+    Date.now,
+    runnerRegistry,
+  );
   const delegationCoordinator = new DelegationCoordinator({
     store: delegationStore,
     runtime: delegationRuntime,
@@ -333,7 +342,6 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     },
   });
   delegationReference.set(delegationCoordinator);
-  const runnerRegistry = createInternalDelegationRunnerRegistry();
   const loadDelegationConfiguration = async () => {
     const settings = (await options.loadRuntimeSettings()).delegation;
     return { settings, revision: delegationSettingsRevision(settings) };
@@ -605,6 +613,10 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       list: (userInvocableOnly) => managedSkills.listPrimarySkills(userInvocableOnly),
       undoAgentEdit: (skillName) => managedSkills.undoPrimarySkillEdit(skillName),
       catalog: managedSkills.catalog,
+    },
+    delegationRunners: async () => {
+      const settings = (await options.loadRuntimeSettings()).delegation;
+      return runnerRegistry.readiness(settings);
     },
     projectionChanged: (update, operation) => {
       try {

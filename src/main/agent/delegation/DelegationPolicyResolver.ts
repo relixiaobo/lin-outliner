@@ -8,6 +8,8 @@ import type {
   DelegateTaskProfile,
 } from '../../../delegate/contract';
 import type { ToolTaskSchedulerLimits, ToolTaskSchedulingPolicy } from '../tasks/toolTaskTypes';
+import type { DelegateExecutionResult } from '../../../delegate/contract';
+import type { DelegationSessionBinding, DelegationRootMessage } from './delegationSessionTypes';
 
 export interface DelegationModelSelection {
   readonly providerId: string;
@@ -23,6 +25,17 @@ export interface DelegationRunnerAdapter {
   readonly ready: boolean;
   readonly diagnostic: string | null;
   resolveExplicitModel(model: string, effort: AgentReasoningLevel): Promise<DelegationModelSelection | null>;
+  resolveInheritedModel?: (
+    parent: DelegationModelSelection,
+    effort: AgentReasoningLevel,
+  ) => Promise<DelegationModelSelection | null>;
+  run?: (input: {
+    readonly session: DelegationSessionBinding;
+    readonly turnId: string;
+    readonly prompt: string;
+    readonly messages: readonly DelegationRootMessage[];
+    readonly signal: AbortSignal;
+  }) => Promise<DelegateExecutionResult>;
 }
 
 export interface DelegationRunnerReadiness {
@@ -70,6 +83,10 @@ export class DelegationRunnerRegistry {
     this.adapters = byId;
   }
 
+  adapter(id: string): DelegationRunnerAdapter | null {
+    return this.adapters.get(id) ?? null;
+  }
+
   readiness(settings: AgentDelegationSettings): readonly DelegationRunnerReadiness[] {
     return [...this.adapters.values()]
       .map((adapter) => ({
@@ -105,7 +122,7 @@ export class DelegationRunnerRegistry {
 
     const effort = runnerSettings.effort ?? input.parentModel.effort;
     const model = runnerSettings.model === null
-      ? input.parentModel
+      ? await (adapter.resolveInheritedModel?.(input.parentModel, effort) ?? Promise.resolve(input.parentModel))
       : await adapter.resolveExplicitModel(runnerSettings.model, effort);
     if (!model) {
       throw new DelegationAdmissionRefusal(

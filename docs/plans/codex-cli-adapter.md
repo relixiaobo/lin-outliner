@@ -137,9 +137,18 @@ availability check.
 Provider authentication is a readiness input, not an implementation shortcut.
 The official configuration supports custom providers with `base_url`,
 `wire_api`, `env_key`, or a command-backed auth helper. The adapter may use
-only a declared environment variable or user-approved credential helper; it
-must never copy, parse, or persist credential contents. A provider that can run
-only by reusing an opaque full user config is Detected / Not Ready.
+only a declared environment variable, user-approved credential helper, or
+Codex-owned `requires_openai_auth` login state. In the latter case Codex reads
+its own `CODEX_HOME`; Tenon never reads, copies, or persists credential
+contents. The adapter reconstructs only an allowlisted provider table using the
+direct `smol-toml` runtime parser and refuses embedded bearer tokens,
+unreconstructable auth commands, or opaque full-config reuse.
+
+## Open questions
+
+No unresolved product decisions remain for this implementation. Unsupported
+provider authentication or unenumerated extensions remain explicit Not Ready
+diagnostics rather than admission fallbacks.
 
 ### Files and tests
 
@@ -169,25 +178,6 @@ adapter or its registry/runtime files. PR #636 is Settings file-backed design
 work and is a separate Settings control-plane concern; this adapter must
 rebase on its merged contract before touching shared Settings ownership. PR
 #634 is renderer interaction work and has no overlap.
-
-## Open questions
-
-- Which Codex model catalog, if any, can be enumerated without reading or
-  mutating user credentials? Until answered, use `Harness default`.
-- Which exact Codex configuration mechanism proves hooks, MCP, network, and
-  native multi-agent capabilities are closed for the supported version? Any
-  unresolved capability keeps the corresponding access mode Not Ready.
-- Can the selected third-party provider be represented by a controlled profile
-  using an `env_key` or command-backed auth helper? If not, the adapter must
-  expose the diagnostic and refuse activation rather than reuse the full user
-  config.
-- Should the auth allowlist also admit `requires_openai_auth`, with Codex itself
-  reading its already-stored login state from the original `CODEX_HOME`?
-  This would support the local third-party setup without Tenon reading, copying,
-  or persisting credential contents, but expands the env/helper-only rule above.
-- May the adapter add a direct runtime TOML parser dependency (`smol-toml`) to
-  reconstruct an allowlisted provider config? Do not hand-parse TOML, use
-  Bun-only parsing in Electron, or depend on an undeclared transitive package.
 
 ## Verification
 

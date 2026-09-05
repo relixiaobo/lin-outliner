@@ -49,9 +49,10 @@ polling loop; `task_stop` accepts only a Tool Task ID.
 - An **Agent Session** is a root-owned binding to one hidden canonical Thread.
   It owns ordered input, a frozen Runner policy, continuation state, and
   settlement links. It does not own process status or another transcript.
-- A **Runner** adapts one execution environment. The initial release contains
-  only the internal Runner, which reuses Tenon's normal provider and tool
-  kernel. External harness adapters are independent future capabilities.
+- A **Runner** adapts one execution environment. The internal Runner reuses
+  Tenon's normal provider and tool kernel. The supported Codex CLI Runner is an
+  external adapter with a version-bound JSONL process and resume identity; it
+  never receives Tenon tools or a Tenon Session capability.
 - A **Task Profile** is one of `general`, `explore`, or `plan`. It describes
   intent and constrains access; it is not an Agent type, persona, model, or
   nesting policy.
@@ -152,6 +153,17 @@ model, and effort against live availability, and rejects without fallback when
 they are no longer runnable. Current timeout and scheduling limits come from that
 same Session Runner at each command admission. `close` does not require its
 Runner or model to remain runnable.
+
+The Codex CLI Runner starts `codex exec --json` with a closed reconstructed
+provider configuration, `--ignore-user-config`, `--ignore-rules`, and an
+explicit sandbox. It closes native multi-agent, hooks, apps, web search,
+history persistence, MCP, and custom Skills; an extension source that cannot be
+enumerated and disabled leaves the Runner Detected but Not Ready. Provider
+authentication remains in Codex's own `CODEX_HOME`; Tenon never reads, copies,
+or persists credential contents. A continuation uses `exec resume` with the
+stored thread identity and reasserts the frozen sandbox through `--config
+sandbox_mode=...`, because resume accepts that override even though it rejects
+the ordinary `--sandbox` flag.
 
 A `workspace-write` Session durably records a planned Host-managed worktree
 intent before creation, then records the complete admitted worktree identity.

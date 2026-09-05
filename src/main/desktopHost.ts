@@ -2023,6 +2023,13 @@ function withCanonicalSkillDirectories(settings: AgentProviderSettingsView): Age
   return { ...settings, agent: { ...settings.agent, additionalSkillDirectories: expanded } };
 }
 
+async function withDelegationRunners(settings: AgentProviderSettingsView) {
+  return {
+    ...withCanonicalSkillDirectories(settings),
+    delegationRunners: await agentHost.delegationRunners(),
+  };
+}
+
 /**
  * A reveal target must be a Skill location: a loaded Skill's own root, or a
  * directory the user bound. The renderer supplies the path, so this is the
@@ -2060,9 +2067,9 @@ async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<
 async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
     case 'agent_get_provider_settings':
-      return withCanonicalSkillDirectories(await getProviderSettings());
+      return withDelegationRunners(await getProviderSettings());
     case 'agent_refresh_provider_models':
-      return withCanonicalSkillDirectories(await refreshProviderModels(String(args.providerId)));
+      return withDelegationRunners(await refreshProviderModels(String(args.providerId)));
     case 'agent_pick_skill_directory': {
       // Tenon points at the directory; it never copies it in. The picker returns
       // a path the caller stores in additionalSkillDirectories, so the user's
@@ -2126,10 +2133,10 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         preserveStoredDirectoryForms(args.settings as AgentRuntimeSettingsInput, await getAgentRuntimeSettings()),
       );
       agentHost.skills.updateRuntimeSettings(settings.agent);
-      return withCanonicalSkillDirectories(settings);
+      return withDelegationRunners(settings);
     }
     case 'agent_update_image_generation_settings':
-      return withCanonicalSkillDirectories(await updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput));
+      return withDelegationRunners(await updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput));
     case 'agent_get_capability_settings':
       return readAgentCapabilitySettingsView();
     case 'agent_apply_capability_settings_patch':
@@ -2140,7 +2147,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
     case 'agent_upsert_provider_config': {
       const input = args.provider as AgentProviderConfigInput;
-      const settings = withCanonicalSkillDirectories(await upsertProviderConfig(input));
+      const settings = await withDelegationRunners(await upsertProviderConfig(input));
       if (input.enabled === false) clearLastAgentThreadConfiguration();
       // Prove the connection AFTER committing it when the caller says this was a
       // connection save. The same upsert command also backs the provider-list
@@ -2160,14 +2167,14 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return settings;
     }
     case 'agent_delete_provider_config': {
-      const settings = withCanonicalSkillDirectories(
+      const settings = await withDelegationRunners(
         await deleteProviderConfig(String(args.providerId)),
       );
       clearLastAgentThreadConfiguration();
       return settings;
     }
     case 'agent_set_active_provider': {
-      const settings = withCanonicalSkillDirectories(
+      const settings = await withDelegationRunners(
         await setActiveProvider(String(args.providerId)),
       );
       clearLastAgentThreadConfiguration();
@@ -2185,7 +2192,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       // dropped, leaving the interactive step unanswerable and login() hung).
       const loginWindow = windowApplicationHost.windows.providerConfig();
       const providerId = String(args.providerId);
-      const settings = withCanonicalSkillDirectories(await oauthLoginManager.startLogin(providerId, (envelope) => {
+      const settings = await withDelegationRunners(await oauthLoginManager.startLogin(providerId, (envelope) => {
         if (loginWindow && !loginWindow.isDestroyed()) {
           loginWindow.webContents.send(LIN_AGENT_OAUTH_EVENT_CHANNEL, envelope);
         }
@@ -2197,7 +2204,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return settings;
     }
     case 'agent_oauth_logout':
-      return withCanonicalSkillDirectories(await oauthLoginManager.logout(String(args.providerId)));
+      return withDelegationRunners(await oauthLoginManager.logout(String(args.providerId)));
     case 'agent_oauth_respond':
       oauthLoginManager.respond(String(args.requestId), args.value === undefined ? undefined : String(args.value));
       return undefined;
