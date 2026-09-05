@@ -154,8 +154,15 @@ describe('Turn process projection', () => {
 });
 
 describe('Turn motion ownership', () => {
-  test('assigns the generic live summary when no specific leaf is active', () => {
-    expect(turnMotionOwner(turn([]), [], anchors(turn([])), new Set())).toBe('summary');
+  test('assigns the generic live summary before process content arrives', () => {
+    expect(turnMotionOwner(turn([]), [], anchors(turn([])), new Set(), false)).toBe('summary');
+  });
+
+  test('keeps an expanded summary static between active operations', () => {
+    const finishedTool = { ...collaboration('tool', 'list_agents'), status: 'completed' as const };
+    const live = turn([finishedTool]);
+    expect(turnMotionOwner(live, live.items, anchors(live), new Set(), true)).toBe('none');
+    expect(turnMotionOwner(live, live.items, anchors(live), new Set(), false)).toBe('summary');
   });
 
   test('returns motion to the summary when live process content is folded', () => {

@@ -810,10 +810,10 @@ inspection-only provider boundary cannot create an empty process block, split a
 consecutive tool group, count against lone reasoning, or add an invisible flex
 interval between visible rows.
 
-The live status row uses `WorkingText` only while no more-specific mounted live
-tool, empty `Thinking` placeholder, Subagent status, or readable streaming Item
-owns or statically suppresses that cue. Once a specific process representation
-exists, the Turn summary stays static. One synchronous `turnMotionOwner`
+The live status row uses `WorkingText` only while the process is folded or has
+no content yet. An expanded process always keeps its Working summary static,
+including gaps with no active tool, empty `Thinking` placeholder, or Subagent
+status to carry the sweep. One synchronous `turnMotionOwner`
 classification assigns the live cue to the summary, a mapped leaf, or neither;
 the summary uses the actual process visibility without mount-time registration
 or a post-commit handoff. A folded live process gives motion to Working; an

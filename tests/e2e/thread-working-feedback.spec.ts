@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { openMockedApp } from './outlinerMock';
 import { emulateVisualMedia, resolveTokenColor } from './emulatedMedia';
 
-async function showLiveWork(page: Page, kind: 'empty' | 'thinking' | 'tools') {
+async function showLiveWork(page: Page, kind: 'empty' | 'thinking' | 'tools' | 'betweenTools') {
   await page.evaluate(async (kind) => {
     const target = window as Window & {
       lin?: { agentCoreRequest: <T>(method: string, input: object) => Promise<T> };
@@ -32,7 +32,9 @@ async function showLiveWork(page: Page, kind: 'empty' | 'thinking' | 'tools') {
       type: 'turn/started', threadId, turnId,
       turn: {
         id: turnId,
-        items: kind === 'empty' ? [] : kind === 'thinking' ? [thinking] : [
+        items: kind === 'empty' ? [] : kind === 'thinking' ? [thinking] : kind === 'betweenTools' ? [
+          command('02', 'Inspect the workspace', 'completed'),
+        ] : [
           command('02', 'Inspect the workspace', 'completed'),
           command('03', 'Run earlier checks', 'inProgress'),
           command('04', 'Verify the active operation', 'inProgress'),
@@ -140,6 +142,25 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(summary).toHaveAttribute('aria-expanded', 'true');
   });
 }
+
+test('keeps expanded Working static when no operation owns the sweep', async ({ page }) => {
+  await openMockedApp(page);
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+  await page.getByRole('dialog', { name: 'Threads' }).getByRole('button', { name: 'New Thread' }).click();
+  await showLiveWork(page, 'betweenTools');
+  const turn = page.locator('.thread-turn-inProgress');
+  const summary = turn.locator('.thread-process-toggle');
+  await expect(summary).toHaveAttribute('aria-expanded', 'true');
+  await expect(summary).toContainText('Working');
+  await expect(turn.locator('.thread-tool-toggle')).toBeVisible();
+  await expect(turn.locator('.working-text')).toHaveCount(0);
+  await summary.click();
+  await expect(summary).toHaveAttribute('aria-expanded', 'false');
+  await expect(summary.locator('.working-text')).toHaveCount(1);
+  await summary.click();
+  await expect(summary).toHaveAttribute('aria-expanded', 'true');
+  await expect(turn.locator('.working-text')).toHaveCount(0);
+});
 
 test('hands empty startup and thinking feedback to the visible level', async ({ page }) => {
   await openMockedApp(page);

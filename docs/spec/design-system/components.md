@@ -206,8 +206,8 @@ change colour, weight, or geometry.
 A collapsed running group owns
 the sweep on its summary, while expansion freezes that summary and transfers the
 sweep to its latest running member. Finished members remain static. A folded
-live process transfers motion to its Working summary; an expanded process keeps
-that summary static while a visible operation owns motion. Plan summaries stay
+live process transfers motion to its Working summary; an expanded process always
+keeps that summary static, even when no operation owns motion. Plan summaries stay
 static. The composer Stop uses a row-sized filled Square in the existing
 circular hit target with neutral fill and text, avoiding the send button's
 inverse treatment. Unmodified mouse disclosures retain an already-focused

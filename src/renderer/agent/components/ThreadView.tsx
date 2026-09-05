@@ -4638,8 +4638,7 @@ export function turnMotionOwner(
   if (tail?.type === 'reasoning') {
     return [...tail.summary, ...tail.content].every((part) => !part.trim()) ? 'leaf' : 'none';
   }
-  if (tail?.type === 'agentMessage' && tail.text.trim()) return 'none';
-  return 'summary';
+  return 'none';
 }
 
 
