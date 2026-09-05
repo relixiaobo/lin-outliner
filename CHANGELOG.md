@@ -582,6 +582,13 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Fixed
 
+- **Supervised Bash task statuses now match the public tool contract (PR #635)** -
+  durable `settling`, `succeeded`, `timed_out`, `lost`, and `cancelled` states
+  are normalized to the stable Bash vocabulary before model-visible result
+  validation, preventing valid background results from becoming
+  `invalid_internal_result` failures. Verified with typecheck, 109 focused Bash
+  tests (5 skipped), `docs:check`, and whitespace checks.
+
 - **Runtime selection indexes now reuse stable reads (PR #633, codex-2)** - repeated Runtime selection and projection reads reuse one index for the current document and asset-metadata revisions; asset ingestion, reconciliation, and collection invalidate it without coupling query-local evaluation to shared state. Verified with typecheck, 44 focused Core tests, `docs:check`, and whitespace checks. This completes the Runtime-index unit of the `interaction-jank-cleanups` plan; translation geometry remains separate. The non-gating five-sample GitHub E2E signal was still running at merge.
 
 - **Definition option catalogs now survive unrelated document edits (PR #632,
