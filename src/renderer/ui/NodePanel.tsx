@@ -166,7 +166,6 @@ export function NodePanel(props: NodePanelProps) {
     stickyBreadcrumbRef,
     titleDocked,
     titleRowRef,
-    updateTitleDockedState,
   } = usePanelTitleDock();
   // Always-current ui for row handlers. NodePanel re-renders on every ui change,
   // so this ref stays live even for rows whose per-row memo skips re-render.
@@ -348,7 +347,7 @@ export function NodePanel(props: NodePanelProps) {
   }, []);
 
   const handlePanelScroll = () => {
-    updateTitleDockedState();
+    requestTitleDockMeasure();
     if (restoringScrollRef.current) return;
     if (!props.onScrollPositionChange || scrollReportFrameRef.current !== null) return;
     scrollReportFrameRef.current = window.requestAnimationFrame(() => {

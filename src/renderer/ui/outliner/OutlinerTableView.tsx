@@ -78,6 +78,7 @@ import { SelectControl } from '../primitives/SelectControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
+import { registerOutlinerScrollListener } from './outlinerScrollDispatcher';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { FIELD_TYPE_OPTIONS, outlinerChildren } from '../shared';
 import { useT } from '../../i18n/I18nProvider';
@@ -854,14 +855,13 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     scrollerRef.current = null;
     const scroller = resolveScroller();
     updateScrollMetrics();
-    const onScroll = () => scheduleScrollMetrics();
-    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    const unregisterScroll = registerOutlinerScrollListener(resolveScroller, scheduleScrollMetrics);
     const observer = scroller && typeof ResizeObserver !== 'undefined'
       ? new ResizeObserver(updateScrollMetrics)
       : null;
     if (scroller && observer) observer.observe(scroller);
     return () => {
-      window.removeEventListener('scroll', onScroll, true);
+      unregisterScroll();
       observer?.disconnect();
       if (scrollFrameRef.current !== null) {
         window.cancelAnimationFrame(scrollFrameRef.current);
