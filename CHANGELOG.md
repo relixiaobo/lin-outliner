@@ -582,6 +582,8 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Fixed
 
+- **Preview translation geometry now stays bounded to the viewport (PR #634, codex-2)** - URL pages maintain an IntersectionObserver-backed near-viewport candidate set with immediate work signals and teardown cleanup; EPUB readers use cached layout positions with an overlap-safe interval index and refresh coordinates on layout changes. Retry-only work retains its all-record semantics, while visible and prefetch scheduling avoid reading every translation block on scroll. Gate review found five issues covering observer typing, far-jump wakeups, overlapping EPUB intervals, stale layout caches, and observer teardown; all were fixed before the final no-findings review. Verified with typecheck, 75 focused URL/EPUB tests, 1,431 renderer tests, `docs:check`, and whitespace checks.
+
 - **Supervised Bash task statuses now match the public tool contract (PR #635)** -
   durable `settling`, `succeeded`, `timed_out`, `lost`, and `cancelled` states
   are normalized to the stable Bash vocabulary before model-visible result

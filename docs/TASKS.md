@@ -108,7 +108,7 @@ does not mix their product decisions into the architectural queue above.
 | --- | --- | --- | --- |
 | P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623 and internal delegation plus Subagent/isolated-Skill retirement shipped in #628. #627's Trajectory predecessor is complete; each external Runner adapter remains a separate future claim. |
 | P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Design revision shipped in #626; implementation units A-G remain unclaimed and follow their declared dependency/collision checks, including #628 and `agent-skill-authoring-foundation`. |
-| P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, and the Runtime-index unit shipped in #633; translation geometry remains in the live preview-shell lane. |
+| P2 | [interaction-jank-cleanups](plans/archive/interaction-jank-cleanups.md) | `done` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, the Runtime-index unit shipped in #633, and PR-3 translation geometry shipped in #634. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Settings redesign landed in #626; Provider/managed-Skill working-state behavior is absorbed by Units B and D, so claim it through those units rather than as a separate implementation. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
 | P3 | [icon-semantics](plans/archive/icon-semantics.md) | `done` | Shipped in PR #631: semantic Iconoir presentation and renderer tool-summary cleanup. |
@@ -225,6 +225,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **interaction-jank-cleanups PR-3** (`done`, #634, 2026-09-05) - URL and EPUB translation scheduling now use near-viewport candidates, cached layout positions, observer-driven far-jump updates, and layout refresh signals; [plan archived](plans/archive/interaction-jank-cleanups.md).
 - **interaction-jank-cleanups PR-2** (`done`, #632, 2026-09-05) - definition catalogs survive unrelated projection deltas while table field usage groups remain current; translation geometry remains open.
 - **supervised-Bash-status-normalization** (`done`, #635, 2026-09-05) - durable Tool Task states now map to the stable public Bash status vocabulary before result validation.
 - **interaction-jank-cleanups Runtime-index unit** (`done`, #633, 2026-09-05) - Runtime selection indexes are reused within a document and asset-metadata revision, with explicit invalidation for asset ingestion, reconciliation, and collection.
