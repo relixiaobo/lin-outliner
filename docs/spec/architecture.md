@@ -731,6 +731,15 @@ Per-edit cost scales with what changed, not document size.
   snapshot objects still get fresh identities so existing React dependency keys
   update without requiring a component-level rewrite. A revision gap or a delta
   with no base returns `null`, triggering a complete Runtime Projection resync.
+- **Definition option caches** (`renderer/state/projectionDerived.ts`): the
+  `definitionOptions` semantic revision advances when a delta touches Schema,
+  field/tag definitions, or their descendants, including removals and changed
+  Trash membership; a full reseed also advances it. Unrelated document deltas
+  preserve it. Table field catalogs and definition tag selectors use this
+  revision plus their local inputs instead of whole-index identity. Table's
+  used/custom grouping separately reads the current parent and `byId` snapshot,
+  so record field entries, applied tags, and reference targets can change usage
+  without invalidating the definition catalog.
 - **Re-render closure** (`renderer/state/renderRev.ts`): a per-node revision
   counter drives the memo. From the change set, `propagateDirty` walks a held
   reverse-edge index (`ReverseEdges`: target → referrers, for reference targets /

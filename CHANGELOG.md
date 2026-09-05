@@ -553,6 +553,18 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Fixed
 
+- **Definition option catalogs now survive unrelated document edits (PR #632,
+  codex-2)** - table field catalogs and definition tag selectors use a semantic
+  definition revision instead of whole-index identity. Definition membership,
+  names, configuration descendants, and Trash transitions invalidate the cache;
+  table usage groups still follow the current record fields. Gate review found
+  one Medium stale-grouping defect, fixed by separating the catalog from row
+  usage. Verified with typecheck, `docs:check`, 34 focused renderer tests, real
+  Core tag deltas, browser field-entry add/remove deltas, light/dark visual
+  inspection, and whitespace checks. This completes PR-2 of the interaction-jank
+  plan; translation geometry and Runtime-index reuse remain open. Non-gating
+  GitHub E2E samples were still running at merge.
+
 - **Renderer interaction chrome now batches scroll work (PR #630, codex-2)** -
   anchored overlays coalesce geometry updates per animation frame and ignore
   unrelated scroll targets; virtualized Flat/Table outliners share one capture
