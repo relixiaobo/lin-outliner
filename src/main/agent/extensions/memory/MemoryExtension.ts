@@ -99,7 +99,7 @@ export class MemoryExtension implements AgentCoreExtension {
   readonly id = MEMORY_EXTENSION_ID;
   private host: MemoryThreadHost | null = null;
   private pipeline: MemoryPipeline | null = null;
-  private preparedForTurnAdmission = false;
+  private turnAdmissionPreparation: Promise<void> | null = null;
   private initialized = false;
   private workerStopped = false;
   private workerStopping = false;
@@ -175,8 +175,17 @@ export class MemoryExtension implements AgentCoreExtension {
     return this.graphDigestComputations;
   }
 
-  async prepareForTurnAdmission(): Promise<void> {
-    if (this.preparedForTurnAdmission) return;
+  prepareForTurnAdmission(): Promise<void> {
+    if (!this.turnAdmissionPreparation) {
+      this.turnAdmissionPreparation = this.prepareTurnAdmission().catch((error) => {
+        this.turnAdmissionPreparation = null;
+        throw error;
+      });
+    }
+    return this.turnAdmissionPreparation;
+  }
+
+  private async prepareTurnAdmission(): Promise<void> {
     const host = this.requireHost();
     await this.timeline.ensureTagDefinitions();
     this.reconcileRollbackHooks(host);
@@ -194,7 +203,6 @@ export class MemoryExtension implements AgentCoreExtension {
     }
     this.lastGraphDigest = this.currentCanonicalGraphDigest();
     await this.requirePipeline().recover();
-    this.preparedForTurnAdmission = true;
   }
 
   async startWorker(): Promise<void> {

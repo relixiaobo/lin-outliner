@@ -141,6 +141,8 @@ export class ThreadStore {
     }
     if (this.initializePromise) return this.initializePromise;
     this.initializePromise = this.reloadThreads().catch((error) => {
+      // Startup recovery remounts the dock, which must retry a failed list read.
+      this.initializePromise = null;
       this.patch({ loading: false, error: errorMessage(error) });
     });
     // The catalog resolves against the SELECTED conversation's working

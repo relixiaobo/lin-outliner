@@ -12,6 +12,16 @@
 // docs/plans/i18n-multi-language.md.
 
 export const en = {
+  startup: {
+    failed: 'Unable to start Tenon',
+    documentFailed: 'Unable to open your workspace',
+    agentFailed: 'Unable to start Agent services',
+    providersFailed: 'Unable to load provider settings',
+    rankingFailed: 'Unable to load search history',
+    retry: 'Retry',
+    retrying: 'Retrying...',
+    quit: 'Quit',
+  },
   // Native application + context menus (main process; rebuilt on language change).
   menu: {
     settings: 'Settings…',

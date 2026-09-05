@@ -467,11 +467,25 @@ describe('reduceProjection — field slot semantic revisions', () => {
       trash,
     ]))!;
     const initialRevision = state.index.semanticRevisions.tagDefinitions;
+    const initialDefinitionOptionsRevision = state.index.semanticRevisions.definitionOptions;
     const initialTagCandidateCacheKey = state.index.tagCandidateCacheKey;
 
     state = reduceProjection(state, {
       kind: 'delta',
       revision: 2,
+      todayId: 'root',
+      changedNodes: [{
+        ...root,
+        content: { ...root.content, text: 'Unrelated edit' },
+        updatedAt: 2,
+      }],
+      removedIds: [],
+    })!;
+    expect(state.index.semanticRevisions.definitionOptions).toBe(initialDefinitionOptionsRevision);
+
+    state = reduceProjection(state, {
+      kind: 'delta',
+      revision: 3,
       todayId: 'root',
       changedNodes: [{
         ...tag,
@@ -481,11 +495,12 @@ describe('reduceProjection — field slot semantic revisions', () => {
       removedIds: [],
     })!;
     expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision);
+    expect(state.index.semanticRevisions.definitionOptions).toBe(initialDefinitionOptionsRevision + 1);
     expect(state.index.tagCandidateCacheKey).not.toBe(initialTagCandidateCacheKey);
 
     state = reduceProjection(state, {
       kind: 'delta',
-      revision: 3,
+      revision: 4,
       todayId: 'root',
       changedNodes: [{
         ...defaultValue,
@@ -495,10 +510,11 @@ describe('reduceProjection — field slot semantic revisions', () => {
       removedIds: [],
     })!;
     expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision);
+    expect(state.index.semanticRevisions.definitionOptions).toBe(initialDefinitionOptionsRevision + 2);
 
     state = reduceProjection(state, {
       kind: 'delta',
-      revision: 4,
+      revision: 5,
       todayId: 'root',
       changedNodes: [{
         ...option,
@@ -508,28 +524,31 @@ describe('reduceProjection — field slot semantic revisions', () => {
       removedIds: [],
     })!;
     expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision);
-
-    state = reduceProjection(state, {
-      kind: 'delta',
-      revision: 5,
-      todayId: 'root',
-      changedNodes: [{ ...extendsRef, targetId: 'base-b', updatedAt: 5 }],
-      removedIds: [],
-    })!;
-    expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision + 1);
+    expect(state.index.semanticRevisions.definitionOptions).toBe(initialDefinitionOptionsRevision + 3);
 
     state = reduceProjection(state, {
       kind: 'delta',
       revision: 6,
       todayId: 'root',
-      changedNodes: [{ ...template, fieldDefId: 'field-b', updatedAt: 6 }],
+      changedNodes: [{ ...extendsRef, targetId: 'base-b', updatedAt: 5 }],
       removedIds: [],
     })!;
-    expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision + 2);
+    expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision + 1);
+    expect(state.index.semanticRevisions.definitionOptions).toBe(initialDefinitionOptionsRevision + 4);
 
     state = reduceProjection(state, {
       kind: 'delta',
       revision: 7,
+      todayId: 'root',
+      changedNodes: [{ ...template, fieldDefId: 'field-b', updatedAt: 6 }],
+      removedIds: [],
+    })!;
+    expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision + 2);
+    expect(state.index.semanticRevisions.definitionOptions).toBe(initialDefinitionOptionsRevision + 5);
+
+    state = reduceProjection(state, {
+      kind: 'delta',
+      revision: 8,
       todayId: 'root',
       changedNodes: [
         { ...schema, children: ['tag', 'base-a', 'base-b', 'field-a'], updatedAt: 7 },
@@ -539,6 +558,7 @@ describe('reduceProjection — field slot semantic revisions', () => {
       removedIds: [],
     })!;
     expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision + 3);
+    expect(state.index.semanticRevisions.definitionOptions).toBe(initialDefinitionOptionsRevision + 6);
   });
 });
 

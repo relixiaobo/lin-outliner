@@ -553,6 +553,45 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Fixed
 
+- **Definition option catalogs now survive unrelated document edits (PR #632,
+  codex-2)** - table field catalogs and definition tag selectors use a semantic
+  definition revision instead of whole-index identity. Definition membership,
+  names, configuration descendants, and Trash transitions invalidate the cache;
+  table usage groups still follow the current record fields. Gate review found
+  one Medium stale-grouping defect, fixed by separating the catalog from row
+  usage. Verified with typecheck, `docs:check`, 34 focused renderer tests, real
+  Core tag deltas, browser field-entry add/remove deltas, light/dark visual
+  inspection, and whitespace checks. This completes PR-2 of the interaction-jank
+  plan; translation geometry and Runtime-index reuse remain open. Non-gating
+  GitHub E2E samples were still running at merge.
+
+- **Renderer interaction chrome now batches scroll work (PR #630, codex-2)** -
+  anchored overlays coalesce geometry updates per animation frame and ignore
+  unrelated scroll targets; virtualized Flat/Table outliners share one capture
+  dispatcher, panel title docking uses its existing frame scheduler, and the
+  workspace keyboard listener remains stable across projection updates. This
+  completes PR-1 of the `interaction-jank-cleanups` plan; definition caches,
+  preview translation geometry, and Runtime index reuse remain separate units.
+  Verified with typecheck, `docs:check`, 1,524 renderer tests, and whitespace
+  checks; the non-gating five-sample GitHub E2E signal was queued at merge.
+
+- **The desktop window appears before service startup (PR #629, codex-2)** -
+  large workspaces now show the native window while document, provider, Agent,
+  and search services initialize behind their owning readiness boundaries.
+  Startup failures remain visible with Retry and Quit; recovery preserves
+  completed milestones, restarts failed projection reads, and restores existing
+  Agent conversations. A three-run 10,040-node Electron measurement reduced
+  median first paint from 9.18 to 1.71 seconds; full workspace readiness did not
+  improve in the same measurement. Gate review found one Medium failure-cache
+  defect that left the Agent dock broken after successful Host Retry; it was
+  fixed before the final no-findings review. Verified with typecheck,
+  `docs:check`, whitespace checks, 103 focused Core/renderer tests, 40 focused
+  ThreadStore/startup tests, seven real-Electron startup smoke tests, inspected
+  light/dark and minimum-window failure UI, and five successful GitHub E2E
+  samples plus baseline subtraction. The author's full Core run retained two
+  timing-sensitive failures that passed isolated rechecks; it was not reported
+  as a green full-suite run.
+
 - **Development builds start correctly under the Electron main-process ESM
   bundle** — Desktop Host window composition now uses the module directory
   already resolved by the bootstrap entry, and optional macOS native addons
@@ -587,6 +626,13 @@ Entries reference the pull request that introduced them when one exists.
   whitespace checks, and all five GitHub E2E samples plus baseline subtraction.
 
 ### Internal
+
+- **Workspace and document status audit (2026-09-05)** - refreshed the live
+  board against GitHub: #627 is complete, #628 owns the active internal
+  delegation implementation, and #626's Settings rewrite remains a draft
+  design rather than current specification. Deferred working-state ownership
+  to that design gate, aligned README with standalone Outline Runtime ownership
+  and Full Access, and verified plan lifecycle, links, aliases, and indexes.
 
 - **Desktop composition now converges behind one race-safe `DesktopHost` (PR
   #603, codex)** — `main.ts` retains fixed Electron identity, security,

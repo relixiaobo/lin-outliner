@@ -17,6 +17,8 @@ import { threadStore } from '../agent/store/threadStore';
 import { buildRendererUserViewHints } from './agent/userViewContext';
 import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
+import { StartupFailure } from './StartupFailure';
+import { useStartupState } from './useStartupState';
 import { ActionNotice, nextActionNotice, type ActionNoticeState } from './ActionNotice';
 import {
   clearFocusState,
@@ -74,6 +76,8 @@ const EMPTY_AGENT_USER_VIEW: RendererUserViewHints = {
 
 export function App() {
   const t = useT();
+  const startup = useStartupState();
+  const { projectionAttempt, setProjectionFailure } = startup;
   const [ui, setUi] = useUiState();
   const { index, indexStore, applyProjectionUpdate } = useProjectionStore(readDesktopProjection, setUi, {
     onProjectionApplied: noteDesktopProjectionApplied,
@@ -309,7 +313,7 @@ export function App() {
   useEffect(() => {
     let active = true;
     const subscription = subscribeDesktopProjection(applyProjectionUpdate, (error) => {
-      if (active) setError(error.message);
+      if (active && indexRef.current) setError(error.message);
     });
     void subscription.ready.then((initial) => {
       if (!active) return;
@@ -336,13 +340,13 @@ export function App() {
         };
       });
     }).catch((error: unknown) => {
-      if (active) setError(error instanceof Error ? error.message : String(error));
+      if (active) setProjectionFailure(error instanceof Error ? error.message : String(error));
     });
     return () => {
       active = false;
       subscription.unsubscribe();
     };
-  }, [applyProjectionUpdate, initializeLayout, setError, setUi]);
+  }, [applyProjectionUpdate, initializeLayout, projectionAttempt, setError, setProjectionFailure, setUi]);
 
   useEffect(() => {
     const currentIndex = indexRef.current;
@@ -632,7 +636,7 @@ export function App() {
     '--agent-width': `${agentWidth}px`,
   } as CSSProperties;
 
-  if (!index || !indexStore) {
+  if (!index || !indexStore || startup.failure || startup.retrying) {
     return (
       <div
         className={[
@@ -648,13 +652,16 @@ export function App() {
           onToggleAgent={toggleAgentRail}
           onToggleSidebar={() => setSidebarOpen((open) => !open)}
         />
-        {/* Still loading, and the keyboard and preview bridges are already live
-            above this branch — so a command CAN fail here. It is reported as
-            what it is: this branch used to relabel any action failure as
-            "startup failed", which named the wrong culprit and, having no
-            timer, left that accusation on screen until the projection landed.
-            There is no startup-failure channel to report from. */}
-        <div className="app-shell app-startup-shell" aria-busy="true" />
+        <div className="app-shell app-startup-shell" aria-busy={!startup.failure}>
+          {startup.failure && (
+            <StartupFailure
+              failure={startup.failure}
+              retrying={startup.retrying}
+              onRetry={() => void startup.retry()}
+              onQuit={startup.quit}
+            />
+          )}
+        </div>
         {notice && (
           <ActionNotice message={notice.message} onDismiss={dismissNotice} seq={notice.seq} />
         )}

@@ -21,6 +21,11 @@ it contains only work whose current symbols still exist and that is not owned by
   behavior trade disguised as performance work.
 - No Runtime selector-index work; that belongs to
   `interaction-jank-cleanups`.
+- Window-first startup follows the current
+  [Desktop Host lifecycle](../spec/architecture.md#desktop-host-lifecycle).
+  First paint precedes Runtime readiness; verified snapshot loading and
+  transaction-log replay still gate document requests. A first-paint improvement
+  is not a claim that those services initialize faster.
 
 ## Design
 

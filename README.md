@@ -12,16 +12,19 @@ directing local agents, and keeping work inspectable.
 
 - **TypeScript-only stack.** No Rust, no Tauri, no `src-tauri`. Document state,
   agent runtime, tools, parsing, validation, and persistence are all
-  TypeScript in `src/core` and `src/main`.
+  TypeScript across `src/core`, `src/outline`, `src/content`, and `src/main`.
 - **Loro-backed document model** with patch-based rich text
   (`RichTextPatchOp`) so concurrent edits compose cleanly when sync arrives.
-- **Command-driven core.** Every mutation goes through a named command
-  returning a `CommandOutcome { projection, focus? }`, with a scoped
-  `UndoManager` so user undo and agent undo don't tangle.
+- **Runtime-owned document mutations.** Desktop and CLI clients submit public
+  ChangeSets to the standalone Outline Runtime, which owns Core commands,
+  Operation history, and document persistence. Scoped undo keeps user and Agent
+  edits separate.
 - **Local agent.** An in-app dock with a Tenon-native turn runtime backed by
   [pi-ai] for provider catalogs, authentication, and transport, plus
-  file/bash/web tools, skills, subagents, an event-sourced session log, and
-  Claude Code–style permission policy. See
+  file/bash/web tools, skills, subagents, and event-sourced Threads and Turns.
+  Available tools run under Full Access with explicit capability blocks; see
+  [`docs/spec/agent-tool-permissions.md`](docs/spec/agent-tool-permissions.md).
+  Runtime and presentation contracts live in
   [`docs/spec/agent-core.md`](docs/spec/agent-core.md) and
   [`docs/spec/agent-thread-rendering.md`](docs/spec/agent-thread-rendering.md).
 
@@ -30,7 +33,9 @@ directing local agents, and keeping work inspectable.
 ```txt
 src/
   core/      TypeScript outliner state machine, command list, search engine.
-  main/      Electron main process: IPC, persistence, agent runtime, tools.
+  content/   Shared exact-revision content admission, retention, and storage.
+  outline/   Public contracts, standalone Runtime, CLI, clients, and imports.
+  main/      Electron native hosts, Runtime adapter, agent runtime, and tools.
   preload/   Narrow Electron preload bridge exposed as `window.lin`.
   renderer/  React UI, outliner views, agent dock.
 tests/

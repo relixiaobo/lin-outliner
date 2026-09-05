@@ -10,15 +10,21 @@ import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
 test.describe('first frame', () => {
   let smoke: SmokeApp;
 
-  test.beforeAll(async () => {
+  // Keep the Electron process and its evaluation handles within one test lifetime.
+  test.beforeEach(async () => {
     smoke = await launchSmokeApp();
   });
 
-  test.afterAll(async () => {
+  test.afterEach(async () => {
     await closeSmokeApp(smoke);
   });
 
   test('one main window becomes visible while the launcher stays hidden', async () => {
+    await expect.poll(() => smoke.app.evaluate(({ BrowserWindow }) => (
+      BrowserWindow.getAllWindows().filter((window) => (
+        /\/(?:index|launcher)\.html(?:$|\?)/.test(window.webContents.getURL())
+      )).length
+    ))).toBe(2);
     const visible = await smoke.app.evaluate(async ({ BrowserWindow }) => {
       const windows = BrowserWindow.getAllWindows();
       const main = windows.find((window) => /\/index\.html(?:$|\?)/.test(window.webContents.getURL()));

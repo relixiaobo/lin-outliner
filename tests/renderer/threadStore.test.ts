@@ -15,6 +15,62 @@ type ThreadStoreClient = Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotif
   & Partial<Pick<typeof api, 'onSettingsChanged'>>;
 
 describe('renderer Thread store', () => {
+  test('retries failed initialization on remount and keeps successful initialization single-flight', async () => {
+    const owner = thread('thread-restored', 1);
+    const blocked = deferred<void>();
+    let listReads = 0;
+    let notificationSubscriptions = 0;
+    const client = {
+      onAgentCoreNotification: () => {
+        notificationSubscriptions += 1;
+        return () => { notificationSubscriptions -= 1; };
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') {
+          listReads += 1;
+          if (listReads === 1) {
+            await blocked.promise;
+            throw new Error('Agent resource initialization failed');
+          }
+          return { data: [owner], nextCursor: null };
+        }
+        if (method === 'identities/get') return { entries: [] };
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'thread/descendants') return { data: [], queuedWorkThreadIds: [] };
+        if (method === 'thread/subagents/list' || method === 'thread/tasks/list') return { data: [] };
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    try {
+      const first = store.initialize();
+      expect(store.initialize()).toBe(first);
+      expect(listReads).toBe(1);
+      expect(notificationSubscriptions).toBe(1);
+      store.dispose();
+      blocked.resolve();
+      await first;
+      expect(store.getSnapshot().error).toBe('Agent resource initialization failed');
+
+      const recovered = store.initialize();
+      expect(store.initialize()).toBe(recovered);
+      await recovered;
+      expect(listReads).toBe(2);
+      expect(store.getSnapshot()).toMatchObject({
+        loading: false, error: null, selectedThreadId: owner.id, threads: [owner],
+      });
+      expect(notificationSubscriptions).toBe(1);
+      store.dispose();
+      expect(store.initialize()).toBe(recovered);
+      expect(listReads).toBe(2);
+      expect(notificationSubscriptions).toBe(1);
+    } finally {
+      store.dispose();
+    }
+  });
+
   test('resolves the identity roster against the conversation it restored', async () => {
     // The roster is resolved per working directory, and the selected Thread is
     // what names one. Resolving it alongside startup — before `thread/list`

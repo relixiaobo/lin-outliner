@@ -10,6 +10,38 @@ import {
 } from '../../src/main/hostDomain/compositionLifecycle';
 
 describe('Host domain composition', () => {
+  test('loads node access beside document initialization and publishes ranking only after both are ready', async () => {
+    let releaseDocuments!: () => void;
+    let releaseAccess!: () => void;
+    const documents = new Promise<void>((resolve) => { releaseDocuments = resolve; });
+    const access = new Promise<void>((resolve) => { releaseAccess = resolve; });
+    const events: string[] = [];
+    const lifecycle = createOutlineDesktopHostLifecycle({
+      documents: {
+        init: async () => { await documents; return {} as ProjectionSnapshot; },
+        replacePersonalAccessRanking: async () => { events.push('ranking:published'); },
+        close: () => undefined,
+      },
+      nodeAccess: {
+        load: async () => { events.push('access:loading'); await access; },
+        snapshot: () => new Map(),
+        flushNow: async () => undefined,
+      },
+      client: { close: () => undefined },
+      reportError: () => undefined,
+    });
+    const projection = lifecycle.initializeDocuments();
+    const ranking = lifecycle.initializePersonalAccessRanking();
+    expect(lifecycle.initializePersonalAccessRanking()).toBe(ranking);
+    expect(events).toEqual(['access:loading']);
+    releaseDocuments();
+    await projection;
+    expect(events).toEqual(['access:loading']);
+    releaseAccess();
+    await ranking;
+    expect(events).toEqual(['access:loading', 'ranking:published']);
+  });
+
   test('exports narrow capabilities without leaking domain services or runtime maps', () => {
     const mainSource = readFileSync(path.join(import.meta.dir, '../../src/main/main.ts'), 'utf8');
     const desktopHostSource = readFileSync(
@@ -146,8 +178,8 @@ describe('Host domain composition', () => {
       release();
       await expect(interrupted).rejects.toThrow('startup ownership lost');
 
-      const boundaryIndex = boundaryNames.indexOf(boundaryName);
-      expect(events).toEqual(['memory:index', ...boundaryNames.slice(0, boundaryIndex + 1)]);
+      const startedBoundaries = boundaryName === 'threads:start' ? ['threads:start'] : boundaryNames;
+      expect(events).toEqual(['memory:index', ...startedBoundaries]);
 
       active = true;
       await lifecycle.initialize({} as DocumentProjection, assertActive);
@@ -192,6 +224,7 @@ describe('Host domain composition', () => {
     expect(events).toEqual([
       'documents:start',
       'ranking:load',
+      'documents:start',
       'ranking:sync:1',
       'ranking:flush',
       'client:close',

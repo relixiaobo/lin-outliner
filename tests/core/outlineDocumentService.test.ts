@@ -11,6 +11,42 @@ import { OutlineRuntimeServer } from '../../src/outline/runtime/server';
 import { TimelineMemoryStore } from '../../src/main/agent/extensions/memory/TimelineMemoryStore';
 
 const roots: string[] = [];
+
+function initializationFixture(failure?: 'connect' | 'watch' | 'read') {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const error = new Error(`Injected ${failure} failure`);
+  const counts = { connects: 0, watches: 0, reads: 0, closes: 0 };
+  let failed = false;
+  const failAt = (boundary: typeof failure) => {
+    if (!failed && failure === boundary) { failed = true; throw error; }
+  };
+  const document = new OutlineDocumentService({
+    connect: async () => {
+      counts.connects += 1;
+      await gate;
+      failAt('connect');
+      return {
+        watchSubscription: async function* (_input: unknown, signal: AbortSignal) {
+          counts.watches += 1;
+          failAt('watch');
+          yield { type: 'hello', cursor: 'cursor:initial' };
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+        },
+        request: async () => {
+          counts.reads += 1;
+          failAt('read');
+          return { data: { revision: 0, nodes: [], anchors: { todayId: 'today', libraryId: 'library' } } };
+        },
+        close: () => { counts.closes += 1; },
+      } as unknown as OutlineClient;
+    },
+  });
+  return { document, release, error, counts };
+}
 const MAIN_SOURCE = readFileSync(path.join(import.meta.dir, '../../src/main/main.ts'), 'utf8');
 const DESKTOP_HOST_SOURCE = readFileSync(path.join(import.meta.dir, '../../src/main/desktopHost.ts'), 'utf8');
 const OUTLINE_HOST_SOURCE = readFileSync(
@@ -31,6 +67,43 @@ afterAll(async () => {
 });
 
 describe('OutlineDocumentService', () => {
+  test('shares one connect, watch, and projection read across concurrent initialization callers', async () => {
+    const fixture = initializationFixture();
+    const first = fixture.document.init();
+    const second = fixture.document.init();
+    expect(first).toBe(second);
+    fixture.release();
+    const [left, right] = await Promise.all([first, second]);
+    expect(left).toBe(right);
+    expect(fixture.counts).toMatchObject({ connects: 2, watches: 1, reads: 1 });
+    await fixture.document.init();
+    expect(fixture.counts).toMatchObject({ connects: 2, watches: 1, reads: 1 });
+    fixture.document.close();
+  });
+
+  for (const boundary of ['connect', 'watch', 'read'] as const) {
+    test(`rejects all initial waiters after a ${boundary} failure and retries with a clean watch`, async () => {
+      const fixture = initializationFixture(boundary);
+      const first = fixture.document.init();
+      const second = fixture.document.init();
+      expect(second).toBe(first);
+      const failed = Promise.allSettled([first, second]);
+      fixture.release();
+      expect(await failed).toEqual([
+        { status: 'rejected', reason: fixture.error },
+        { status: 'rejected', reason: fixture.error },
+      ]);
+      expect(() => fixture.document.getProjection()).toThrow('not initialized');
+      const retry = fixture.document.init();
+      expect(fixture.document.init()).toBe(retry);
+      await retry;
+      expect(fixture.document.getProjection().nodes).toEqual([]);
+      expect(fixture.counts.watches).toBe(boundary === 'connect' ? 1 : 2);
+      expect(fixture.counts.reads).toBe(boundary === 'read' ? 2 : 1);
+      fixture.document.close();
+    });
+  }
+
   test('keeps recovered desktop production wiring attached to the Runtime service', () => {
     expect(DESKTOP_HOST_SOURCE).toContain('createOutlineDesktopHost({');
     expect(OUTLINE_HOST_SOURCE).toContain('new OutlineDocumentService(supervisor)');

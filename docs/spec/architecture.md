@@ -235,8 +235,9 @@ Runtime/content/export roots plus narrow document, asset, startup, observation,
 authenticated Agent-shell, quit, flush, and close capabilities. The concrete
 supervisor, client, document service, asset service, and ranking store never
 leave the Host. Runtime document initialization remains separate
-from best-effort personal-ranking load and synchronization, so Agent startup
-continues to observe a ready document projection before derived ranking work.
+from best-effort personal-ranking load and synchronization. Node-access loading
+runs beside document initialization; synchronization waits for both. Personally
+ranked searches and access recording wait for that synchronization boundary.
 
 `createAgentHost` owns managed Skills and Browser Pilot composition,
 configuration readers/writers, managed worktrees, Memory stores and extension,
@@ -245,7 +246,9 @@ configuration readers/writers, managed worktrees, Memory stores and extension,
 assign-once callbacks: reading before composition completes or assigning a
 second implementation fails immediately. Constructors acquire synchronous
 objects only; Thread initialization, the Memory worker, and Automation scheduling
-remain an explicit ordered startup adapter. Shutdown preserves the reverse
+follow an explicit dependency graph: Threads precede both Memory and Automation,
+whose startup can overlap. Concurrent initialization shares one attempt, and
+settled milestones survive retry. Shutdown preserves the reverse
 Automation, Memory, Thread, and store order and aggregates failures. Its public
 surface is grouped into configuration, worktree, Thread, Memory, Automation,
 Skill, and lifecycle capabilities; concrete services and per-Turn Skill Runtime
@@ -282,18 +285,52 @@ from the standalone Runtime.
 ### Desktop Host lifecycle
 
 The Desktop Host lifecycle owns `constructed -> starting -> started -> quitting
--> disposed`. Startup is permanently single-flight and preserves the explicit
-provider reconciliation, Outline document, Agent, personal-ranking, native app,
-transport, window, and deferred-producer sequence. Transport and windows remain
-unpublished until their existing prerequisites settle; this cutover does not
-move the first-window boundary or create a second service readiness authority.
+-> disposed`, plus a recoverable `starting -> failed -> starting` path. Each
+startup attempt is single-flight. Native application setup, security, and
+transport registration precede window creation; `ready-to-show` reveals the
+window before service bring-up begins. The existing empty renderer shell paints
+while its Desktop Outline projection subscription awaits the document.
+
+Provider reconciliation, Outline document initialization, and node-access loading
+start after the window is visible. Provider and document readiness precede Agent
+initialization; Threads precede the parallel Memory worker and Automation starts.
+Ranking synchronization waits for document and node-access readiness. Deferred
+update producers start after Agent and ranking readiness. The lifecycle owns
+these dependency edges and per-step readiness promises; callers do not start a
+second startup coordinator. Document requests, watches, and commits wait for the
+document boundary, Agent/Memory/Automation requests for the Agent boundary, and
+personal searches for the ranking boundary. Cancellation while awaiting document
+readiness cannot dispatch a late request after its renderer is gone.
+
+`OutlineDocumentService.init()` shares one connect/watch/projection-read attempt.
+An initial failure closes the partial watch and request client, resets watch
+readiness, and rejects all waiters before a new attempt can begin. Memory
+`prepareForTurnAdmission()` likewise caches its in-flight/successful promise and
+clears a failed preparation for retry. Runtime text indexing remains lazy.
+If startup Memory writes advance Runtime during a paged renderer projection read,
+the reader discards those pages and restarts on an explicit `stale_revision`
+conflict, up to three complete attempts. It never merges different revisions;
+other errors and exhausted conflicts reach the persistent failure surface.
+
+Service startup failure leaves the window and registered transport alive. The
+Host publishes a persistent failure state naming the failed service. Retry runs
+only unfinished milestones and renews the renderer projection subscription; Quit
+uses the existing lifecycle and durability arbitration. An ordinary request never
+implicitly retries failed startup. A failed parallel branch drains its siblings
+before retry or teardown. Failure of the fixed pre-window essentials still uses
+failed-start rollback and exits.
+
+If the document opens before Agent startup fails, the renderer Thread store clears
+its failed initialization cache. Remounting the dock after Host recovery reloads
+the thread list and restores existing conversations. Pending and successful
+initialization remain shared, so ordinary remounts do not repeat a successful read.
 
 A quit request synchronously closes Outline mutation admission and wins before
 the next awaited startup step may begin. Agent startup applies the same ownership
-check between Thread, Memory-worker, and Automation initialization, and records
+check after Thread initialization and around each parallel producer, and records
 those internal milestones so a reversible interruption never duplicates settled
-work. Concurrent requests share only the current attempt. The request joins an
-in-flight step, then either enters ordinary safe quit after Outline initialization
+work. Concurrent requests share only the current attempt. The request joins all
+in-flight branches, then either enters ordinary safe quit after Outline initialization
 or performs early rollback without an authenticated Runtime shutdown. Cancel is
 possible only in the reversible drain/decision phase; it reports cancellation
 only after both Runtime and local admission are confirmed unfrozen, resumes any
@@ -694,6 +731,15 @@ Per-edit cost scales with what changed, not document size.
   snapshot objects still get fresh identities so existing React dependency keys
   update without requiring a component-level rewrite. A revision gap or a delta
   with no base returns `null`, triggering a complete Runtime Projection resync.
+- **Definition option caches** (`renderer/state/projectionDerived.ts`): the
+  `definitionOptions` semantic revision advances when a delta touches Schema,
+  field/tag definitions, or their descendants, including removals and changed
+  Trash membership; a full reseed also advances it. Unrelated document deltas
+  preserve it. Table field catalogs and definition tag selectors use this
+  revision plus their local inputs instead of whole-index identity. Table's
+  used/custom grouping separately reads the current parent and `byId` snapshot,
+  so record field entries, applied tags, and reference targets can change usage
+  without invalidating the definition catalog.
 - **Re-render closure** (`renderer/state/renderRev.ts`): a per-node revision
   counter drives the memo. From the change set, `propagateDirty` walks a held
   reverse-edge index (`ReverseEdges`: target → referrers, for reference targets /
