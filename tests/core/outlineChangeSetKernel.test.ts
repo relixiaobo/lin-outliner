@@ -579,6 +579,33 @@ describe('outline ChangeSet kernel', () => {
     })).toEqual([scopedChildId]);
   });
 
+  test('reuses the Runtime selection index within a revision and replaces it after changes', async () => {
+    const workspace = await makeWorkspace();
+    const first = workspace.selectionIndex();
+    const repeated = workspace.selectionIndex();
+
+    expect(repeated).toBe(first);
+    expect(repeated.textIndex()).toBe(first.textIndex());
+
+    await createExisting(workspace, 'Selection index revision change');
+    const next = workspace.selectionIndex();
+    expect(next).not.toBe(first);
+    expect(next.textIndex()).toBe(workspace.selectionIndex().textIndex());
+  });
+
+  test('invalidates the Runtime selection index when asset metadata changes', async () => {
+    const workspace = await makeWorkspace();
+    const before = workspace.selectionIndex();
+
+    await workspace.assets.ingestBytes(
+      new TextEncoder().encode('selection index asset metadata'),
+      'selection-index.txt',
+      'text/plain',
+    );
+
+    expect(workspace.selectionIndex()).not.toBe(before);
+  });
+
   test('resolves exact ID lists and executes Saved Searches from live state', async () => {
     const workspace = await makeWorkspace();
     const firstId = await createExisting(workspace, 'Live module first');
