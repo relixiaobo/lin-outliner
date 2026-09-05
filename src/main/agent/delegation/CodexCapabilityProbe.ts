@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -19,7 +19,10 @@ export async function runCodexCapabilityProbe(
   executable: string,
   env: NodeJS.ProcessEnv,
 ): Promise<CodexCapabilityProbeResult> {
-  const root = await mkdtemp(join(tmpdir(), 'tenon-codex-readiness-'));
+  // Codex canonicalizes its project root before enforcing workspace boundaries.
+  // Resolve the temporary directory first so fixture paths use the same spelling
+  // on macOS, where the system temp path commonly has a /var -> /private/var link.
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'tenon-codex-readiness-')));
   const home = join(root, 'home');
   const codexHome = join(home, '.codex');
   const cwd = join(root, 'workspace');
@@ -90,7 +93,7 @@ export async function runCodexCapabilityProbe(
     const address = server.address();
     if (!address || typeof address === 'string') return { ok: false, diagnostic: 'Codex capability probe fixture failed to bind.' };
     const config = [
-      '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '--json', '--cd', cwd,
+      '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '--json',
       '--config', 'model_provider="tenon_fixture"', '--config', 'model="gpt-5.2"',
       '--config', 'model_providers.tenon_fixture.name="Tenon fixture"',
       '--config', `model_providers.tenon_fixture.base_url="http://127.0.0.1:${address.port}/v1"`,
@@ -102,24 +105,29 @@ export async function runCodexCapabilityProbe(
     ];
     // Prime the CLI's skill discovery path once, then prove the explicit
     // canonical SKILL.md disablement on fresh and resumed Turns.
-    await runProcess(executable, ['exec', ...config.slice(0, -2), '--sandbox', 'read-only', '-'], { cwd, env: probeEnv });
+    await runProcess(executable, ['exec', ...config.slice(0, -2), '--sandbox', 'read-only', '--cd', cwd, '--color', 'never', '-'], { cwd, env: probeEnv });
     requests.length = 0;
     forceTools = true;
     step = 0;
-    const first = await runProcess(executable, ['exec', ...config, '--sandbox', 'read-only', '-'], { cwd, env: probeEnv });
+    const first = await runProcess(executable, ['exec', ...config, '--sandbox', 'read-only', '--cd', cwd, '--color', 'never', '-'], { cwd, env: probeEnv });
     const firstId = first.threadId;
-    const resumeConfig = config.filter((value, index) => !(value === '--cd' || (index > 0 && config[index - 1] === '--cd')));
+    const resumeConfig = config;
     const second = firstId ? await runProcess(executable, ['exec', 'resume', ...resumeConfig, '--config', 'sandbox_mode="read-only"', firstId, '-'], { cwd, env: probeEnv }) : null;
+    const readOnlyCanWrite = await access(patchTarget).then(() => true, () => false);
     step = 0;
     const writable = firstId ? await runProcess(executable, ['exec', 'resume', ...resumeConfig, '--config', 'sandbox_mode="workspace-write"', firstId, '-'], { cwd, env: probeEnv }) : null;
     const closedRequests = requests;
     const expectedTools = closedRequests.length > 0 && closedRequests.every((request) => request.tools.join(',') === 'request_user_input,apply_patch');
     const skillClosed = closedRequests.length > 0 && closedRequests.every((request) => !request.skillCanary);
-    const readOnlyClosed = !await access(patchTarget).then(() => true, () => false) && (first.stderr + (second?.stderr ?? '')).includes('writing is blocked by read-only sandbox');
+    const workspaceWriteCanWrite = await access(patchTarget).then(() => true, () => false);
+    const readOnlyClosed = !readOnlyCanWrite && (first.stderr + (second?.stderr ?? '')).includes('writing is blocked by read-only sandbox');
     const questionClosed = [first, second, writable].some((execution) => execution?.stderr.includes('request_user_input is unavailable in Default mode'));
     const resumeStable = Boolean(firstId && second?.threadId === firstId && writable?.threadId === firstId);
-    if (first.code !== 0 || second?.code !== 0 || writable?.code !== 0 || !expectedTools || !skillClosed || !readOnlyClosed || !questionClosed || !resumeStable) {
-      return { ok: false, diagnostic: `Codex capability probe failed (exit=${first.code}/${second?.code}/${writable?.code}, requests=${requests.length}, tools=${requests.map((request) => request.tools.join(',')).join('|')}, skill=${skillClosed}, readOnly=${readOnlyClosed}, question=${questionClosed}, resume=${resumeStable}, stderr=${(second?.stderr ?? first.stderr).slice(0, 240)}).` };
+    const terminalEvents = [first, second, writable].every((execution) => (
+      execution?.eventTypes.includes('response.completed') || execution?.eventTypes.includes('turn.completed')
+    ));
+    if (first.code !== 0 || second?.code !== 0 || writable?.code !== 0 || !expectedTools || !skillClosed || !readOnlyClosed || !workspaceWriteCanWrite || !questionClosed || !resumeStable || !terminalEvents) {
+      return { ok: false, diagnostic: `Codex capability probe failed (exit=${first.code}/${second?.code}/${writable?.code}, requests=${requests.length}, tools=${requests.map((request) => request.tools.join(',')).join('|')}, skill=${skillClosed}, readOnly=${readOnlyClosed}, workspaceWrite=${workspaceWriteCanWrite}, question=${questionClosed}, resume=${resumeStable}, terminal=${terminalEvents}, events=${[first, second, writable].map((execution) => execution?.eventTypes.join(',')).join('|')}, stderr=${[first, second, writable].map((execution) => execution?.stderr.slice(0, 120)).join('|')}).` };
     }
     return { ok: true, diagnostic: '' };
   } catch (error) {
@@ -131,7 +139,7 @@ export async function runCodexCapabilityProbe(
   }
 }
 
-function runProcess(executable: string, args: readonly string[], options: { cwd: string; env: NodeJS.ProcessEnv }): Promise<{ code: number | null; stdout: string; stderr: string; threadId: string | null }> {
+function runProcess(executable: string, args: readonly string[], options: { cwd: string; env: NodeJS.ProcessEnv }): Promise<{ code: number | null; stdout: string; stderr: string; threadId: string | null; eventTypes: string[] }> {
   return new Promise((resolveProcess, reject) => {
     const child = spawn(resolve(executable), args, { ...options, shell: false, stdio: 'pipe' });
     const stdout: Buffer[] = [];
@@ -147,7 +155,7 @@ function runProcess(executable: string, args: readonly string[], options: { cwd:
         try { return [JSON.parse(line) as Record<string, unknown>]; } catch { return []; }
       });
       const started = events.find((event) => event.type === 'thread.started');
-      resolveProcess({ code, stdout: output, stderr: Buffer.concat(stderr).toString('utf8'), threadId: typeof started?.thread_id === 'string' ? started.thread_id : null });
+      resolveProcess({ code, stdout: output, stderr: Buffer.concat(stderr).toString('utf8'), threadId: typeof started?.thread_id === 'string' ? started.thread_id : null, eventTypes: events.flatMap((event) => typeof event.type === 'string' ? [event.type] : []) });
     });
     child.stdin.end('Return PROBE_OK.');
   });
