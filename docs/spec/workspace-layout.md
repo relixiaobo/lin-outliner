@@ -1141,10 +1141,13 @@ and the rule that sorts them:
   that is not configured and a thread list that failed to load render in the
   dock's `.thread-dock-error` strip; a field's validation error renders beside
   the field. Neither is dismissible, because dismissing one would hide a state
-  that is still true. The pre-projection shell is a *loading* state and reports
-  no failure of its own: it has no startup-failure channel, and an action that
-  fails while it is up (the keyboard and preview bridges are already live) is
-  reported as the action failure it is, not relabelled as a failure to start.
+  that is still true. The pre-projection shell stays empty while loading. A Host
+  startup failure or a terminal initial projection failure replaces that empty
+  content with one persistent, unframed failure surface naming what failed and
+  offering Retry and Quit. It has no dismissal timer. Retry resumes the shared
+  Host startup attempt and renews the projection subscription; Quit uses native
+  safe-quit arbitration. An action that fails while loading is still reported as
+  that action's failure and does not become startup state.
 - **A part of a record belongs in the record.** A failed Turn, tool row,
   Agent chip, or automation run renders inside the transcript or run view
   that contains it.

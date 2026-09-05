@@ -1,4 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import {
+  STARTUP_GET_CHANNEL, STARTUP_QUIT_CHANNEL, STARTUP_RETRY_CHANNEL, STARTUP_STATE_CHANNEL,
+  type StartupState,
+} from '../core/startup';
 import { buildLauncherPreloadApi } from './launcher';
 import { LAUNCHER_PRELOAD_ROLE_ARG } from '../core/launcher/commands';
 import {
@@ -301,6 +305,16 @@ function readInitialUrlPageTranslationPreferences(): UrlPageTranslationPreferenc
 }
 
 const api = {
+  startup: {
+    get: () => ipcRenderer.invoke(STARTUP_GET_CHANNEL) as Promise<StartupState>,
+    retry: () => ipcRenderer.invoke(STARTUP_RETRY_CHANNEL) as Promise<StartupState>,
+    quit: () => ipcRenderer.invoke(STARTUP_QUIT_CHANNEL) as Promise<void>,
+    onChanged: (listener: (state: StartupState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: StartupState) => listener(state);
+      ipcRenderer.on(STARTUP_STATE_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(STARTUP_STATE_CHANNEL, handler);
+    },
+  },
   // Which OS window material the main process applied, so the renderer can make
   // its chrome surfaces translucent only when there's a material behind them.
   windowMaterial: windowMaterialKind(process.platform),

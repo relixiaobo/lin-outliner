@@ -29,6 +29,40 @@ afterEach(() => {
 });
 
 describe('renderer Outline client', () => {
+  test('restarts a startup Projection read when Memory advances the revision between pages', async () => {
+    let requests = 0;
+    const cursors: Array<string | undefined> = [];
+    installOutlineRequest(async (request) => {
+      requests += 1;
+      cursors.push((request.input as { projection: { page: { cursor?: string } } }).projection.page.cursor);
+      if (requests === 2) return {
+        protocolVersion: 1, requestId: request.requestId, command: request.command, ok: false,
+        error: { code: 'stale_revision', category: 'conflict', message: 'Projection revision changed.', retryable: false },
+      } as unknown as OutlineResponse;
+      const page = projectionPage(requests === 1 || requests === 3 ? 1 : 2);
+      return success(request.command, requests > 2 ? { ...page, revision: 8 } : page);
+    });
+    const snapshot = await readDesktopProjection();
+    expect(snapshot.revision).toBe(8);
+    expect(snapshot.projection.nodes.map((node) => node.id)).toEqual(['workspace', 'today']);
+    expect(cursors).toEqual([undefined, 'page:2', undefined, 'page:2']);
+  });
+
+  test('bounds repeated stale Projection reads and preserves non-conflict failures', async () => {
+    for (const code of ['stale_revision', 'invalid_request'] as const) {
+      let requests = 0;
+      installOutlineRequest(async (request) => {
+        requests += 1;
+        return {
+          protocolVersion: 1, requestId: request.requestId, command: request.command, ok: false,
+          error: { code, category: 'conflict', message: 'Cannot read Projection.', retryable: false },
+        } as unknown as OutlineResponse;
+      });
+      await expect(readDesktopProjection()).rejects.toMatchObject({ outlineError: { code } });
+      expect(requests).toBe(code === 'stale_revision' ? 3 : 1);
+    }
+  });
+
   test('assembles a full desktop Projection from revision-bound pages', async () => {
     const requests: unknown[] = [];
     let page = 0;

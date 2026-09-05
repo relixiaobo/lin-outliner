@@ -42,6 +42,125 @@ function createHarness(overrides: Partial<DesktopHostLifecycleOptions> = {}) {
 }
 
 describe('DesktopHostLifecycle', () => {
+  test('shows the window before services and gates each request on its owning DAG boundary', async () => {
+    const document = deferred();
+    const providers = deferred();
+    const ranking = deferred();
+    const events: string[] = [];
+    const { lifecycle } = createHarness({
+      startSteps: [
+        { name: 'windows', run: () => { events.push('window'); } },
+        { name: 'provider-configuration', dependsOn: ['windows'], run: () => providers.promise },
+        { name: 'outline-documents', dependsOn: ['windows'], run: () => document.promise },
+        { name: 'personal-ranking', dependsOn: ['windows'], run: () => {
+          events.push('ranking:load');
+          return ranking.promise;
+        } },
+        { name: 'agent', dependsOn: ['provider-configuration', 'outline-documents'], run: () => {
+          events.push('threads');
+        } },
+      ],
+    });
+    const start = lifecycle.start();
+    const projection = lifecycle.ready('outline-documents').then(() => events.push('projection:reply'));
+    const search = lifecycle.ready('personal-ranking').then(() => events.push('search:reply'));
+    const agent = lifecycle.ready('agent').then(() => events.push('agent:reply'));
+    while (!events.includes('ranking:load')) await Promise.resolve();
+    expect(events).toEqual(['window', 'ranking:load']);
+    document.resolve();
+    await projection;
+    expect(events).not.toContain('threads');
+    expect(events).not.toContain('search:reply');
+    providers.resolve();
+    await agent;
+    expect(events).toContain('threads');
+    expect(events).not.toContain('search:reply');
+    ranking.resolve();
+    await Promise.all([start, search]);
+    expect(lifecycle.state()).toEqual({ status: 'ready' });
+  });
+
+  test('keeps a recoverable failure visible and retries only unfinished services once', async () => {
+    let attempts = 0;
+    let windows = 0;
+    const error = new Error('Unreadable workspace');
+    const { lifecycle, events } = createHarness({
+      startSteps: [
+        { name: 'windows', run: () => { windows += 1; } },
+        { name: 'outline-documents', retryable: true, run: () => {
+          attempts += 1;
+          if (attempts === 1) throw error;
+        } },
+        { name: 'agent', run: () => undefined },
+      ],
+    });
+    const first = lifecycle.start();
+    const request = lifecycle.ready('outline-documents');
+    expect(lifecycle.ready('outline-documents')).toBe(request);
+    const results = await Promise.allSettled([first, request]);
+    expect(results).toEqual([
+      { status: 'rejected', reason: error }, { status: 'rejected', reason: error },
+    ]);
+    expect(lifecycle.phase()).toBe('failed');
+    expect(lifecycle.state()).toEqual({ status: 'failed', step: 'outline-documents', message: error.message });
+    expect(events).toEqual([]);
+    await expect(lifecycle.ready('outline-documents')).rejects.toBe(error);
+    expect(attempts).toBe(1);
+    const retry = lifecycle.start();
+    expect(lifecycle.start()).toBe(retry);
+    await retry;
+    expect(windows).toBe(1);
+    expect(attempts).toBe(2);
+    expect(lifecycle.phase()).toBe('started');
+  });
+
+  test('drains parallel startup work before retry and allows Quit from the failure surface', async () => {
+    const sibling = deferred();
+    let siblingStarted = false;
+    const { lifecycle, events } = createHarness({
+      startSteps: [
+        { name: 'windows', run: () => undefined },
+        { name: 'outline-documents', retryable: true, run: () => { throw new Error('Broken'); } },
+        { name: 'ranking-load', dependsOn: ['windows'], run: () => {
+          siblingStarted = true;
+          return sibling.promise;
+        } },
+      ],
+    });
+    const start = lifecycle.start();
+    const outcome = start.catch(() => undefined);
+    while (!siblingStarted) await Promise.resolve();
+    expect(lifecycle.phase()).toBe('starting');
+    expect(lifecycle.start()).toBe(start);
+    sibling.resolve();
+    await outcome;
+    expect(lifecycle.phase()).toBe('failed');
+    await lifecycle.requestQuit();
+    expect(events).toEqual(['freeze', 'rollback:quit-before-start', 'exit:quit']);
+    expect(lifecycle.phase()).toBe('disposed');
+  });
+
+  test('Cancel in safe quit preserves a service failure until an explicit Retry', async () => {
+    let attempts = 0;
+    const { lifecycle, setQuitOutcome } = createHarness({
+      startSteps: [
+        { name: 'outline-documents', run: () => undefined },
+        { name: 'agent', retryable: true, run: () => {
+          attempts += 1;
+          throw new Error('Agent preparation failed');
+        } },
+      ],
+    });
+    await expect(lifecycle.start()).rejects.toThrow('Agent preparation failed');
+    setQuitOutcome('cancelled');
+    await lifecycle.requestQuit();
+    expect(lifecycle.phase()).toBe('failed');
+    expect(lifecycle.state().status).toBe('failed');
+    expect(attempts).toBe(1);
+    await expect(lifecycle.start()).rejects.toThrow('Agent preparation failed');
+    expect(attempts).toBe(2);
+  });
+
   test('starts once and records each completed boundary', async () => {
     const { events, lifecycle } = createHarness();
     const first = lifecycle.start();
@@ -158,11 +277,11 @@ describe('DesktopHostLifecycle', () => {
       boundary.resolve();
       await Promise.all([startup, quitting]);
 
-      const boundaryIndex = boundaryNames.indexOf(boundaryName);
+      const startedBoundaries = boundaryName === 'threads' ? ['threads'] : boundaryNames;
       expect(events).toEqual([
         'documents',
         'agent:index',
-        ...boundaryNames.slice(0, boundaryIndex + 1).map((name) => `agent:${name}`),
+        ...startedBoundaries.map((name) => `agent:${name}`),
         'freeze',
         'ordinary-quit',
       ]);

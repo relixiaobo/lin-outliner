@@ -22,6 +22,7 @@ export interface DesktopOutlineTransportClient {
 
 export interface DesktopOutlineClientOptions {
   readonly connect: () => Promise<DesktopOutlineTransportClient>;
+  readonly ready?: () => Promise<void>;
 }
 
 interface ActiveOperation {
@@ -48,10 +49,12 @@ export class DesktopOutlineClient {
     const controller = new AbortController();
     this.requests.set(key, { ownerId, controller });
     try {
+      await this.options.ready?.();
+      controller.signal.throwIfAborted();
       const client = await this.connect();
       return await client.requestResponse(command, input, controller.signal);
     } catch (error) {
-      this.invalidateClientAfterTransportFailure(error);
+      if (!controller.signal.aborted) this.invalidateClientAfterTransportFailure(error);
       throw error;
     } finally {
       this.requests.delete(key);
@@ -69,10 +72,12 @@ export class DesktopOutlineClient {
     const controller = new AbortController();
     this.requests.set(key, { ownerId, controller });
     try {
+      await this.options.ready?.();
+      controller.signal.throwIfAborted();
       const client = await this.connect();
       return await client.commitDesktopChangeSet(changeSet, undoGroup, controller.signal);
     } catch (error) {
-      this.invalidateClientAfterTransportFailure(error);
+      if (!controller.signal.aborted) this.invalidateClientAfterTransportFailure(error);
       throw error;
     } finally {
       this.requests.delete(key);
@@ -138,6 +143,8 @@ export class DesktopOutlineClient {
     emit: (record: OutlineStreamRecord) => void,
   ): Promise<void> {
     try {
+      await this.options.ready?.();
+      controller.signal.throwIfAborted();
       const client = await this.connect();
       for await (const record of client.watchSubscription(input, controller.signal)) emit(record);
     } catch (error) {

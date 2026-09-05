@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import {
   decodeMemoryConsolidationOutput,
@@ -208,6 +208,45 @@ describe('Codex Memory contracts', () => {
       // Flag set: the row survives. Flag clear: the sweep runs over an empty set
       // and deletes it — which is exactly what the flag exists to prevent.
       expect(store.admission(quarantinedTurn.id) === null).toBe(!hasHiddenRootThreads);
+    }
+  });
+
+  test('coalesces concurrent turn-admission preparation and retries a failed attempt', async () => {
+    const store = memoryStore();
+    const timeline = new TimelineMemoryStore(mutableTimelineHost(memoryProjection()).host);
+    const extension = new MemoryExtension(store, timeline);
+    extension.bindHost(memoryThreadHost(rootThread([])));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const error = new Error('Tag definition read failed');
+    const ensure = spyOn(timeline, 'ensureTagDefinitions').mockImplementationOnce(async () => {
+      await gate;
+      throw error;
+    });
+    try {
+      const first = extension.prepareForTurnAdmission();
+      const second = extension.prepareForTurnAdmission();
+      expect(first).toBe(second);
+      expect(ensure).toHaveBeenCalledTimes(1);
+      const failed = Promise.allSettled([first, second]);
+      release();
+      expect(await failed).toEqual([
+        { status: 'rejected', reason: error }, { status: 'rejected', reason: error },
+      ]);
+      ensure.mockRestore();
+      const retryEnsure = spyOn(timeline, 'ensureTagDefinitions');
+      try {
+        const retry = extension.prepareForTurnAdmission();
+        expect(extension.prepareForTurnAdmission()).toBe(retry);
+        await retry;
+        await extension.prepareForTurnAdmission();
+        expect(retryEnsure).toHaveBeenCalledTimes(1);
+      } finally {
+        retryEnsure.mockRestore();
+      }
+    } finally {
+      ensure.mockRestore();
+      await extension.stopWorker();
     }
   });
 

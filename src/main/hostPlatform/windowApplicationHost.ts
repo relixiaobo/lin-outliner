@@ -113,6 +113,7 @@ export interface WindowApplicationHostOptions {
   readonly disposeTranslation: () => void;
   readonly releaseOutlineRenderer: (ownerId: number) => void;
   readonly projection: () => DocumentProjection;
+  readonly documentReady: () => Promise<void>;
   readonly runActionCommand: (command: string, args: Record<string, unknown>) => Promise<unknown>;
   readonly searchNodes: (query: string, limit: number) => Promise<SearchHit[]>;
   readonly sanitizeInvocationSeed: (raw: unknown) => InvocationSeed | null;
@@ -169,7 +170,7 @@ export interface WindowApplicationHost {
   launcherHotkey(): string | null;
   toggleLauncher(): Promise<void>;
   dismissLauncher(): void;
-  initialize(): void;
+  initialize(): Promise<void>;
   release(): void;
 }
 
@@ -464,6 +465,13 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       return;
     }
     const openSeq = ++launcherOpenSeq;
+    try {
+      await options.documentReady();
+    } catch {
+      focusMainWindow();
+      return;
+    }
+    if (released || openSeq !== launcherOpenSeq) return;
     launcherContext = null;
     const contextId = `ctx:${randomUUID()}`;
     const capturedAt = new Date().toISOString();
@@ -883,11 +891,11 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     launcherHotkey: () => launcherHotkeyAccelerator,
     toggleLauncher,
     dismissLauncher,
-    initialize: () => {
+    initialize: async () => {
       if (initialized || released) return;
       initialized = true;
       nativeTheme.themeSource = loadAppPreferences().theme;
-      createMainWindow();
+      const target = createMainWindow();
       const launcherWindow = createLauncherWindow({
         preloadPath: join(options.moduleDir, '../preload/index.cjs'),
         devUrl: options.rendererDevUrl ? `${new URL(options.rendererDevUrl).origin}/launcher.html` : null,
@@ -907,6 +915,16 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       };
       app.on('activate', handleActivate);
       releases.push(() => app.removeListener('activate', handleActivate));
+      if (!target.isVisible()) await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          target.removeListener('show', shown);
+          target.removeListener('closed', closed);
+        };
+        const shown = () => { cleanup(); resolve(); };
+        const closed = () => { cleanup(); reject(new Error('The startup window closed before its first paint.')); };
+        target.once('show', shown);
+        target.once('closed', closed);
+      });
     },
     release: () => {
       if (released) return;

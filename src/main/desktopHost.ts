@@ -5,6 +5,9 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, join, resolve } from 'node:path';
 import { registerDesktopOutlineIpc } from './outlineClient';
+import {
+  STARTUP_GET_CHANNEL, STARTUP_QUIT_CHANNEL, STARTUP_RETRY_CHANNEL, STARTUP_STATE_CHANNEL,
+} from '../core/startup';
 import { runOutlineActionCommand } from './outlineActionCommands';
 import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
 import {
@@ -264,6 +267,7 @@ const outlineHost = createOutlineDesktopHost({
   resourcesPath: process.resourcesPath,
   execPath: process.execPath,
   reportError,
+  ready: (service) => lifecycle.ready(service),
 });
 const {
   assetExportRoot: outlineAssetExportRoot,
@@ -295,12 +299,16 @@ const resourcePreviewHost = createResourcePreviewHost({
   rendererDevUrl: process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL,
   previewRoots: () => [agentLocalFileRoot, agentScratchRoot, outlineAssetExportRoot],
   localFileRoots: () => [agentLocalFileRoot, agentScratchRoot],
-  resolveAttachmentFile: (threadId, attachmentId) => agentHost.threads.resolveAttachmentFile(threadId, attachmentId),
-  resolveResourceFile: (threadId, ref, intent) => (
-    intent === 'source'
+  resolveAttachmentFile: async (threadId, attachmentId) => {
+    await lifecycle.ready('agent');
+    return agentHost.threads.resolveAttachmentFile(threadId, attachmentId);
+  },
+  resolveResourceFile: async (threadId, ref, intent) => {
+    await lifecycle.ready('agent');
+    return intent === 'source'
       ? agentHost.threads.resolveThreadResourceSource(threadId, ref)
-      : agentHost.threads.resolveThreadResourceFile(threadId, ref)
-  ),
+      : agentHost.threads.resolveThreadResourceFile(threadId, ref);
+  },
   reportError,
 });
 // An available Skill update should be visible without going looking for it, but
@@ -619,7 +627,11 @@ const windowApplicationHost = createWindowApplicationHost({
   disposeTranslation: resourcePreviewHost.translation.dispose,
   releaseOutlineRenderer: outlineHost.renderer.releaseOwner,
   projection: () => outlineHost.document.liveProjection(),
-  runActionCommand: (command, args) => runOutlineActionCommand(outlineHost.document, command, args),
+  documentReady: () => lifecycle.ready('outline-documents'),
+  runActionCommand: async (command, args) => {
+    await lifecycle.ready('outline-documents');
+    return runOutlineActionCommand(outlineHost.document, command, args);
+  },
   searchNodes: (query, limit) => outlineHost.document.searchNodeHits(query, limit),
   sanitizeInvocationSeed,
   reportError,
@@ -651,7 +663,9 @@ async function validateAutomationEffectiveConfiguration(
   if (!provider) throw new Error(`Automation model provider is unavailable: ${modelProvider}`);
   validateAgentModelSelection(configuration.model, configuration.reasoningEffort, provider);
 }
-const wakeAutomationsOnResume = () => agentHost.automations.wake();
+const wakeAutomationsOnResume = () => {
+  void lifecycle.ready('agent').then(() => agentHost.automations.wake()).catch(() => undefined);
+};
 agentHost.threads.subscribe((notification) => {
   if (notification.type === 'subagent/execution/changed') {
     notifyTerminalBackgroundAgent(notification.execution);
@@ -840,6 +854,7 @@ function registerMainTransport(previewSession: Electron.Session): HostTransportC
       });
     });
     transport.registerIpcOwner('outline', registerOutlineTransport);
+    transport.registerIpcOwner('startup', registerStartupTransport);
     transport.registerIpcOwner('updates', registerUpdateTransport);
     transport.registerIpcOwner('actions', registerActionTransport);
     transport.registerIpcOwner('agent-memory-automation', registerAgentTransport);
@@ -847,7 +862,14 @@ function registerMainTransport(previewSession: Electron.Session): HostTransportC
     transport.registerIpcOwner('windows-settings-launcher-providers', registerWindowSettingsTransport);
     transport.registerIpcOwner('diagnostics', registerDiagnosticsTransport);
     transport.registerIpcOwner('native-files', registerNativeFileTransport);
-    transport.registerIpcOwner('agent-resources', registerAgentResourceTransport);
+    transport.registerIpcOwner('agent-resources', (owned) => registerAgentResourceTransport({
+      ...owned,
+      handle: (channel, handler) => owned.handle(channel, async (event, ...args) => {
+        assertMainRenderer(event, 'Agent resources');
+        await lifecycle.ready('agent');
+        return handler(event, ...args);
+      }),
+    }));
     return transport;
   } catch (error) {
     try {
@@ -864,6 +886,22 @@ function registerOutlineTransport(ipcMain: OwnedIpcMain): void {
     ipcMain,
     client: outlineHost.renderer,
     authorize: (event) => windowApplicationHost.assertMainSender(event, 'Outline Runtime'),
+  });
+}
+
+function registerStartupTransport(ipcMain: OwnedIpcMain): void {
+  ipcMain.handle(STARTUP_GET_CHANNEL, (event) => {
+    assertMainRenderer(event, 'Startup status');
+    return lifecycle.state();
+  });
+  ipcMain.handle(STARTUP_RETRY_CHANNEL, async (event) => {
+    assertMainRenderer(event, 'Startup retry');
+    await lifecycle.start().catch(() => undefined);
+    return lifecycle.state();
+  });
+  ipcMain.handle(STARTUP_QUIT_CHANNEL, (event) => {
+    assertMainRenderer(event, 'Startup quit');
+    return lifecycle.requestQuit();
   });
 }
 
@@ -897,11 +935,12 @@ function registerActionTransport(ipcMain: OwnedIpcMain): void {
   // Creating an invocation from a seed is ATTESTATION: only the main renderer
   // can say which row was right-clicked, what is selected, and whether the row
   // is pinned or expanded. The launcher has no such capability.
-  ipcMain.handle(ACTION_OPEN_CHANNEL, (event, raw: unknown) => {
+  ipcMain.handle(ACTION_OPEN_CHANNEL, async (event, raw: unknown) => {
     if (!rendererHasCapability(event.sender.id, 'actionAttestation')) {
       throw new Error('This renderer may not attest invocation context.');
     }
     assertMainRenderer(event, 'Action invocations');
+    await lifecycle.ready('outline-documents');
     const seed = sanitizeInvocationSeed(raw);
     if (!seed) return null;
     return windowApplicationHost.actions.openFromSeed(seed, {
@@ -910,22 +949,25 @@ function registerActionTransport(ipcMain: OwnedIpcMain): void {
     });
   });
 
-  ipcMain.handle(ACTION_OBJECT_QUERY_CHANNEL, (event, raw: unknown) => {
+  ipcMain.handle(ACTION_OBJECT_QUERY_CHANNEL, async (event, raw: unknown) => {
     assertActionRequester(event);
+    await lifecycle.ready('personal-ranking');
     const request = sanitizeObjectQuery(raw);
     if (!request) return null;
     return windowApplicationHost.actions.queryObjects(request, event.sender.id);
   });
 
-  ipcMain.handle(ACTION_PARAMETER_QUERY_CHANNEL, (event, raw: unknown) => {
+  ipcMain.handle(ACTION_PARAMETER_QUERY_CHANNEL, async (event, raw: unknown) => {
     assertActionRequester(event);
+    await lifecycle.ready('personal-ranking');
     const request = sanitizeParameterQuery(raw);
     if (!request) return null;
     return windowApplicationHost.actions.queryParameterObjects(request, event.sender.id);
   });
 
-  ipcMain.handle(ACTION_REQUEST_CHANNEL, (event, raw: unknown) => {
+  ipcMain.handle(ACTION_REQUEST_CHANNEL, async (event, raw: unknown) => {
     assertActionRequester(event);
+    await lifecycle.ready('outline-documents');
     const request = sanitizeActionRequest(raw);
     // A malformed request is not "stale" — it never named anything.
     if (!request) return { status: 'stale', reason: 'invocation' };
@@ -960,12 +1002,14 @@ function registerAgentTransport(ipcMain: OwnedIpcMain): void {
     if (typeof method !== 'string' || !(AUTOMATION_METHODS as readonly string[]).includes(method)) {
       throw new Error(`Unknown Automation method: ${String(method)}`);
     }
+    await lifecycle.ready('agent');
     return agentHost.automations.request(method as AutomationMethod, input);
   });
   ipcMain.handle(AGENT_CORE_REQUEST_CHANNEL, async (event, method: AgentCoreMethod, input: unknown) => {
     if (!windowApplicationHost.isMainSender(event)) {
       throw new Error('Agent Core is available only to the main application window.');
     }
+    await lifecycle.ready('agent');
     const response = await agentHost.threads.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
     return projectAgentCoreResponse(method, response);
   });
@@ -1023,7 +1067,13 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
     if (!rendererHasCapability(event.sender.id, 'appCommands')) {
       throw new Error('This renderer may not invoke application commands.');
     }
-    const dispatch = () => {
+    const dispatch = async () => {
+      if (command.startsWith('memory_') || isAgentCommand(command) || isPreviewCommand(command)
+        || isUrlPageTranslationCommand(command)) {
+        await lifecycle.ready('agent');
+      } else if (isAssetCommand(command)) {
+        await lifecycle.ready('outline-documents');
+      }
       if (command.startsWith('memory_')) return handleMemoryCommand(command, args ?? {});
       if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
       if (isAssetCommand(command)) return handleAssetCommand(event, command, args ?? {});
@@ -1223,10 +1273,11 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
     windowApplicationHost.openProviderConfig(providerId, mode);
   });
   ipcMain.handle('lin:close-provider-config', () => windowApplicationHost.closeProviderConfig());
-  ipcMain.handle('lin:get-provider-api-key', (event, args?: { providerId?: unknown }) => {
+  ipcMain.handle('lin:get-provider-api-key', async (event, args?: { providerId?: unknown }) => {
     if (!windowApplicationHost.isProviderConfigSender(event)) {
       throw new Error('Provider API keys are only available to the provider config window.');
     }
+    await lifecycle.ready('provider-configuration');
     return getStoredProviderApiKey(String(args?.providerId ?? ''));
   });
   ipcMain.handle('lin:settings-changed', (event) => {
@@ -2772,22 +2823,6 @@ quitCoordinator = new AppQuitCoordinator({
 const lifecycle = new DesktopHostLifecycle({
   startSteps: [
     {
-      name: 'provider-configuration',
-      run: async () => {
-        const providerReconcile = await reconcileProviderConfig().catch(() => null);
-        if (providerReconcile?.activeProviderChanged) clearLastAgentThreadConfiguration();
-      },
-    },
-    { name: 'outline-documents', run: () => outlineHost.initializeDocuments().then(() => undefined) },
-    {
-      name: 'agent',
-      run: ({ assertActive }) => agentHost.initialize(
-        outlineHost.document.liveProjection(),
-        assertActive,
-      ),
-    },
-    { name: 'personal-ranking', run: () => outlineHost.initializePersonalAccessRanking() },
-    {
       name: 'native-application',
       run: () => {
         const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
@@ -2810,7 +2845,40 @@ const lifecycle = new DesktopHostLifecycle({
     },
     { name: 'windows', run: () => windowApplicationHost.initialize() },
     {
+      name: 'provider-configuration',
+      dependsOn: ['windows'],
+      retryable: true,
+      run: async () => {
+        const providerReconcile = await reconcileProviderConfig();
+        if (providerReconcile?.activeProviderChanged) clearLastAgentThreadConfiguration();
+      },
+    },
+    {
+      name: 'outline-documents',
+      dependsOn: ['windows'],
+      retryable: true,
+      run: () => outlineHost.initializeDocuments().then(() => undefined),
+    },
+    {
+      name: 'node-access',
+      dependsOn: ['windows'],
+      run: () => outlineHost.loadPersonalAccessRanking(),
+    },
+    {
+      name: 'personal-ranking',
+      dependsOn: ['outline-documents', 'node-access'],
+      retryable: true,
+      run: () => outlineHost.initializePersonalAccessRanking(),
+    },
+    {
+      name: 'agent',
+      dependsOn: ['provider-configuration', 'outline-documents'],
+      retryable: true,
+      run: ({ assertActive }) => agentHost.initialize(outlineHost.document.liveProjection(), assertActive),
+    },
+    {
       name: 'background-producers',
+      dependsOn: ['agent', 'personal-ranking'],
       run: () => {
         scheduleAppUpdateCheck();
         scheduleManagedSkillUpdateCheck();
@@ -2837,6 +2905,17 @@ const lifecycle = new DesktopHostLifecycle({
   rollback: (milestones, cause) => closeDesktopResources(milestones, cause),
   exitAfterStartupFailure: () => app.exit(1),
   exitAfterEarlyQuit: () => app.exit(0),
+  onStartupState: (state) => {
+    const window = windowApplicationHost.windows.main();
+    if (window && !window.isDestroyed()) window.webContents.send(STARTUP_STATE_CHANNEL, state);
+    if (state.status === 'failed') reportError({
+      domain: 'lifecycle',
+      severity: 'error',
+      code: 'startup-failed',
+      message: state.message,
+      context: { operation: state.step },
+    });
+  },
 });
 
 return {

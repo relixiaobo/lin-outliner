@@ -294,6 +294,9 @@ extensions may admit a Goal or feature Turn, startup ensures the protected tags,
 reconciles history rollback hooks, removes orphan admissions, and reconciles
 every prepared journal. The Memory worker starts only after ThreadService has
 finished initialization.
+Turn-admission preparation is single-flight across Thread initialization and
+worker startup. Concurrent callers share one settlement; failure clears the
+preparation promise so an explicit Host startup retry can recover cleanly.
 A matching Runtime Operation found by idempotency key and source fingerprint
 finalizes SQLite without rerunning the model. A non-Reset preparation without a
 settled Operation is discarded and retried from a fresh snapshot. A Reset

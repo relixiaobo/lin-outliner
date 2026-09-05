@@ -100,12 +100,24 @@ export class OutlineDocumentService {
   }
 
   init(): Promise<ProjectionSnapshot> {
+    if (this.initPromise) return this.initPromise;
+    if (this.closed) return Promise.reject(new Error('Outline document service is closed.'));
     if (this.snapshot) return Promise.resolve(this.snapshot);
-    if (!this.initPromise) {
-      this.initPromise = this.initialize().finally(() => {
-        this.initPromise = null;
-      });
-    }
+    this.initPromise = this.initialize().catch(async (error) => {
+      this.watchController?.abort();
+      await this.watchLoopPromise;
+      this.watchController = null;
+      this.watchReadyPromise = null;
+      this.watchReadySettled = false;
+      this.watchCursor = undefined;
+      this.bufferedEvents.length = 0;
+      this.snapshot = null;
+      this.nodesById.clear();
+      this.invalidateRequestClient();
+      throw error;
+    }).finally(() => {
+      this.initPromise = null;
+    });
     return this.initPromise;
   }
 
@@ -341,6 +353,10 @@ export class OutlineDocumentService {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    if (!this.watchReadySettled) {
+      this.watchReadySettled = true;
+      this.rejectWatchReady?.(new Error('Outline document service is closed.'));
+    }
     this.watchController?.abort();
     this.watchController = null;
     if (this.durabilityMonitorTimer) clearTimeout(this.durabilityMonitorTimer);
