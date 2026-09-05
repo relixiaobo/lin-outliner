@@ -19,6 +19,7 @@ const config: CodexConfigSnapshot = {
     requires_openai_auth: true,
   },
   mcpIds: ['docs'],
+  pluginIds: ['visualize@openai-bundled'],
   skillFiles: ['/tmp/skill/SKILL.md'],
   diagnostic: null,
 };
@@ -35,6 +36,7 @@ describe('Codex CLI Runner adapter', () => {
     expect(first).toContain('--config');
     expect(first).toContain('features.multi_agent=false');
     expect(first).toContain('mcp_servers.docs.enabled=false');
+    expect(first).toContain('plugins."visualize@openai-bundled".enabled=false');
     expect(first.join('\n')).toContain('skills.config=[{path="/tmp/skill/SKILL.md",enabled=false}]');
 
     const resume = buildCodexArgs({
@@ -53,6 +55,14 @@ describe('Codex CLI Runner adapter', () => {
     expect(adapter.detected).toBe(false);
     expect(adapter.ready).toBe(false);
     expect(adapter.resolveExplicitModel('custom/gpt-5-codex', 'high')).resolves.toBeNull();
+  });
+
+  test('keeps a supported executable not ready when capability proof fails', () => {
+    const adapter = createCodexCliRunnerAdapter({
+      executable: '/definitely/missing/codex',
+      capabilityProbe: () => ({ ok: false, diagnostic: 'fixture failed' }),
+    });
+    expect(adapter.ready).toBe(false);
   });
 
   test('normalizes a successful JSONL fixture and stores the continuation identity', async () => {
@@ -81,6 +91,7 @@ describe('Codex CLI Runner adapter', () => {
         executable,
         cwd: root,
         env: { HOME: home, CODEX_HOME: root, PATH: root },
+        capabilityProbe: () => ({ ok: true, diagnostic: '' }),
       });
       expect(adapter.version).toBe(CODEX_SUPPORTED_VERSION);
       expect(adapter.ready).toBe(true);
@@ -136,6 +147,7 @@ describe('Codex CLI Runner adapter', () => {
     try {
       const malformed = createCodexCliRunnerAdapter({
         executable, cwd: root, env: { HOME: root, CODEX_HOME: root, PATH: '/usr/bin:/bin', CODEX_FAILURE: 'malformed' },
+        capabilityProbe: () => ({ ok: true, diagnostic: '' }),
       });
       expect(malformed.ready).toBe(true);
       const malformedResult = await malformed.run?.({
@@ -146,6 +158,7 @@ describe('Codex CLI Runner adapter', () => {
 
       const cancelled = createCodexCliRunnerAdapter({
         executable, cwd: root, env: { HOME: root, CODEX_HOME: root, PATH: '/usr/bin:/bin' },
+        capabilityProbe: () => ({ ok: true, diagnostic: '' }),
       });
       const controller = new AbortController();
       const running = cancelled.run?.({
@@ -184,7 +197,7 @@ describe('Codex CLI Runner adapter', () => {
     await chmod(executable, 0o700);
     await writeFile(join(root, 'config.toml'), 'model_provider="custom"\n[model_providers.custom]\nbase_url="https://provider.invalid/v1"\nwire_api="responses"\nrequires_openai_auth=true\n');
     try {
-      const adapter = createCodexCliRunnerAdapter({ executable, cwd: root, env: { HOME: root, CODEX_HOME: root, PATH: root } });
+      const adapter = createCodexCliRunnerAdapter({ executable, cwd: root, env: { HOME: root, CODEX_HOME: root, PATH: root }, capabilityProbe: () => ({ ok: true, diagnostic: '' }) });
       const controller = new AbortController();
       controller.abort();
       const result = await adapter.run?.({ session: {

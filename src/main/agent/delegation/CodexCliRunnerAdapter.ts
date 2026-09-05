@@ -6,6 +6,7 @@ import { parse as parseToml } from 'smol-toml';
 import type { AgentReasoningLevel } from '../../../core/types';
 import type { DelegateExecutionResult, DelegateUsage } from '../../../delegate/contract';
 import type { DelegationModelSelection, DelegationRunnerAdapter } from './DelegationPolicyResolver';
+import { runCodexCapabilityProbe, type CodexCapabilityProbeResult } from './CodexCapabilityProbe';
 
 export const CODEX_SUPPORTED_VERSION = 'codex-cli 0.153.4';
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -38,6 +39,7 @@ export interface CodexConfigSnapshot {
   readonly providerId: string;
   readonly provider: Record<string, unknown>;
   readonly mcpIds: readonly string[];
+  readonly pluginIds: readonly string[];
   readonly skillFiles: readonly string[];
   readonly diagnostic: string | null;
 }
@@ -47,6 +49,7 @@ export interface CodexCliRunnerOptions {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly now?: () => number;
+  readonly capabilityProbe?: () => CodexCapabilityProbeResult | Promise<CodexCapabilityProbeResult>;
 }
 
 export function resolveCodexExecutionCwd(session: Parameters<NonNullable<DelegationRunnerAdapter['run']>>[0]['session']): string {
@@ -67,32 +70,39 @@ export function createCodexCliRunnerAdapter(options: CodexCliRunnerOptions = {})
   const version = executable ? probeVersion(executable, options.env ?? process.env) : null;
   const config = readCodexConfig(options.env ?? process.env, options.cwd ?? process.cwd());
   const usageBaselines = new Map<string, { input: number; output: number }>();
-  const capability = executable ? probeCapabilities(executable, options.env ?? process.env) : null;
-  const ready = Boolean(executable && version === CODEX_SUPPORTED_VERSION && capability?.ok
-    && config && !config.diagnostic);
+  let capability: CodexCapabilityProbeResult = { ok: false, diagnostic: 'Codex capability probe is pending.' };
+  const baseReady = Boolean(executable && version === CODEX_SUPPORTED_VERSION && config && !config.diagnostic);
   const diagnostic = !executable
     ? 'Codex CLI executable was not found.'
     : version === null
       ? 'Codex CLI version probe failed.'
       : version !== CODEX_SUPPORTED_VERSION
         ? `Unsupported Codex CLI version: ${version}`
-        : capability && !capability.ok
-          ? capability.diagnostic
-          : config?.diagnostic ?? null;
-  return {
+      : config?.diagnostic ?? null;
+  const adapter: DelegationRunnerAdapter = {
     id: 'codex',
     version,
     detected: executable !== null,
-    ready,
-    diagnostic,
-    resolveExplicitModel: async (model, effort) => ready ? resolveCodexModel(model, effort, config) : null,
-    resolveInheritedModel: async (parent, effort) => ready && config
+    get ready() { return baseReady && capability.ok; },
+    get diagnostic() { return !baseReady ? diagnostic : capability.diagnostic || null; },
+    resolveExplicitModel: async (model, effort) => adapter.ready ? resolveCodexModel(model, effort, config) : null,
+    resolveInheritedModel: async (parent, effort) => adapter.ready && config
       ? { providerId: config.providerId, modelId: parent.modelId, effort, supportedEfforts: REASONING_LEVELS }
       : null,
-    run: ready && executable && config
-      ? (input) => runCodexTurn(executable, input, options.env ?? process.env, options.now ?? Date.now, usageBaselines)
+    run: executable && config
+      ? (input) => adapter.ready
+        ? runCodexTurn(executable, input, options.env ?? process.env, options.now ?? Date.now, usageBaselines)
+        : Promise.resolve(result(input, options.now?.() ?? Date.now(), options.now?.() ?? Date.now(), 'failed', null, adapter.diagnostic ?? 'Codex capability probe is not ready.', ''))
       : undefined,
   };
+  if (baseReady && options.capabilityProbe) {
+    const value = options.capabilityProbe();
+    if (value instanceof Promise) void value.then((next) => { capability = next; });
+    else capability = value;
+  } else if (baseReady && executable) {
+    void runCodexCapabilityProbe(executable, options.env ?? process.env).then((next) => { capability = next; });
+  }
+  return adapter;
 }
 
 export function buildCodexArgs(input: {
@@ -121,6 +131,9 @@ export function buildCodexArgs(input: {
   }
   for (const id of input.config.mcpIds) {
     args.push('--config', `mcp_servers.${id}.enabled=false`);
+  }
+  for (const id of input.config.pluginIds) {
+    args.push('--config', `plugins.${JSON.stringify(id)}.enabled=false`);
   }
   if (input.config.skillFiles.length > 0) {
     const entries = input.config.skillFiles
@@ -317,25 +330,27 @@ function readCodexConfig(env: NodeJS.ProcessEnv, cwd: string): CodexConfigSnapsh
   const path = join(home, 'config.toml');
   try {
     const bytes = readFileSync(path);
-    if (bytes.byteLength > MAX_CONFIG_BYTES) return { providerId: '', provider: {}, mcpIds: [], skillFiles: [], diagnostic: 'Codex config exceeds the supported size.' };
+    if (bytes.byteLength > MAX_CONFIG_BYTES) return { providerId: '', provider: {}, mcpIds: [], pluginIds: [], skillFiles: [], diagnostic: 'Codex config exceeds the supported size.' };
     const raw = parseToml(bytes.toString('utf8')) as Record<string, unknown>;
     const providerId = typeof raw.model_provider === 'string' ? raw.model_provider : '';
     const providers = isRecord(raw.model_providers) ? raw.model_providers : {};
     const provider = isRecord(providers[providerId]) ? providers[providerId] : {};
-    if (!providerId || Object.keys(provider).length === 0) return { providerId, provider, mcpIds: [], skillFiles: [], diagnostic: 'Codex custom provider configuration is unavailable.' };
+    if (!providerId || Object.keys(provider).length === 0) return { providerId, provider, mcpIds: [], pluginIds: [], skillFiles: [], diagnostic: 'Codex custom provider configuration is unavailable.' };
     if (typeof provider.experimental_bearer_token === 'string') {
-      return { providerId, provider, mcpIds: [], skillFiles: [], diagnostic: 'Embedded provider credentials are not accepted by the Codex Runner.' };
+      return { providerId, provider, mcpIds: [], pluginIds: [], skillFiles: [], diagnostic: 'Embedded provider credentials are not accepted by the Codex Runner.' };
     }
     if (isRecord(provider.auth) && provider.requires_openai_auth !== true && typeof provider.env_key !== 'string') {
-      return { providerId, provider, mcpIds: [], skillFiles: [], diagnostic: 'Command-backed provider authentication cannot be reconstructed safely.' };
+      return { providerId, provider, mcpIds: [], pluginIds: [], skillFiles: [], diagnostic: 'Command-backed provider authentication cannot be reconstructed safely.' };
     }
-    for (const key of ['plugins', 'hooks', 'apps', 'notifications']) {
+    for (const key of ['hooks', 'apps', 'notifications']) {
       if (isRecord(raw[key]) && Object.keys(raw[key]).length > 0) {
-        return { providerId, provider, mcpIds: [], skillFiles: [], diagnostic: `Codex ${key} configuration cannot be closed safely.` };
+        return { providerId, provider, mcpIds: [], pluginIds: [], skillFiles: [], diagnostic: `Codex ${key} configuration cannot be closed safely.` };
       }
     }
     const mcp = isRecord(raw.mcp_servers) ? raw.mcp_servers : isRecord(raw.mcp) ? raw.mcp : {};
     const mcpIds = Object.keys(mcp);
+    const plugins = isRecord(raw.plugins) ? raw.plugins : {};
+    const pluginIds = Object.keys(plugins);
     const configuredSkills = isRecord(raw.skills) && Array.isArray(raw.skills.config)
       ? raw.skills.config
         .filter(isRecord)
@@ -343,9 +358,9 @@ function readCodexConfig(env: NodeJS.ProcessEnv, cwd: string): CodexConfigSnapsh
         .filter((path): path is string => path !== null)
       : [];
     const skillFiles = [...new Set([...discoverSkillFiles(env, cwd), ...configuredSkills])].sort();
-    return { providerId, provider, mcpIds, skillFiles, diagnostic: null };
+    return { providerId, provider, mcpIds, pluginIds, skillFiles, diagnostic: null };
   } catch (error) {
-    return { providerId: '', provider: {}, mcpIds: [], skillFiles: [], diagnostic: `Codex config is unavailable: ${error instanceof Error ? error.message : String(error)}` };
+    return { providerId: '', provider: {}, mcpIds: [], pluginIds: [], skillFiles: [], diagnostic: `Codex config is unavailable: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
@@ -379,21 +394,6 @@ function probeVersion(executable: string, env: NodeJS.ProcessEnv): string | null
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-function probeCapabilities(executable: string, env: NodeJS.ProcessEnv): { ok: true } | { ok: false; diagnostic: string } {
-  const result = spawnSync(executable, ['features', 'list'], {
-    env,
-    stdio: ['ignore', 'pipe', 'ignore'],
-    timeout: 3_000,
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) return { ok: false, diagnostic: 'Codex capability probe failed.' };
-  const features = result.stdout.trim().split('\n').map((line) => line.trim().split(/\s+/)[0]);
-  const required = ['skip_host_skill_discovery', 'multi_agent', 'hooks', 'apps', 'browser_use', 'computer_use'];
-  if (required.some((feature) => !features.includes(feature))) {
-    return { ok: false, diagnostic: 'Codex capability controls are not available for the supported Runner.' };
-  }
-  return { ok: true };
-}
 
 function findExecutable(env: NodeJS.ProcessEnv): string | null {
   for (const directory of (env.PATH ?? '').split(':')) {
