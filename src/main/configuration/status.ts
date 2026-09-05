@@ -25,15 +25,11 @@ export interface FilePreferencesStatus {
   };
 }
 
-const acceptedDigests = new Map<string, string | null>();
-
 export function writeFilePreferencesStatus(
   userDataDir: string,
   hostSessionId: string,
   loaded: FilePreferencesLoadResult,
 ): FilePreferencesStatus {
-  if (loaded.sourceStatus === 'accepted') acceptedDigests.set(userDataDir, loaded.sourceDigest);
-  const acceptedDigest = acceptedDigests.get(userDataDir) ?? null;
   const status: FilePreferencesStatus = Object.freeze({
     schemaVersion: 1,
     hostSessionId,
@@ -42,7 +38,7 @@ export function writeFilePreferencesStatus(
       path: loaded.path,
       status: loaded.sourceStatus,
       observedDigest: loaded.sourceDigest,
-      acceptedDigest,
+      acceptedDigest: loaded.acceptedDigest,
       error: loaded.error,
     },
     effective: {

@@ -46,7 +46,7 @@ import {
   type LocalGatewayProviderDefinition,
 } from '../../../core/localGatewayProviders';
 import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from '../../jsonFileStore';
-import { loadFilePreferences, writeFilePreferences } from '../../configuration/filePreferences';
+import { loadFilePreferences, updateFilePreferences } from '../../configuration/filePreferences';
 import { compareModels } from '../../modelRanking';
 import {
   configurePiCredentialStorage,
@@ -354,24 +354,29 @@ export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInpu
     || input.providerMaxRetryDelayMs !== undefined
     || input.providerCacheRetention !== undefined
   ) {
-    const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
-    writeFilePreferences(electron.app.getPath('userData'), {
-      ...preferences,
-      agent: {
-        ...preferences.agent,
-        skills: {
-          disabled: next.disabledSkills ?? [],
-          sources: next.additionalSkillDirectories,
-        },
-        tools: { disabled: next.disabledTools ?? [] },
-        provider: {
-          timeoutMs: next.providerTimeoutMs,
-          maxRetries: next.providerMaxRetries,
-          maxRetryDelayMs: next.providerMaxRetryDelayMs ?? 60_000,
-          cacheRetention: next.providerCacheRetention,
-        },
-      },
-    });
+    const updates: { path: readonly string[]; value: unknown }[] = [];
+    if (input.disabledSkills !== undefined) {
+      updates.push({ path: ['agent', 'skills', 'disabled'], value: next.disabledSkills });
+    }
+    if (input.additionalSkillDirectories !== undefined) {
+      updates.push({ path: ['agent', 'skills', 'sources'], value: next.additionalSkillDirectories });
+    }
+    if (input.disabledTools !== undefined) {
+      updates.push({ path: ['agent', 'tools', 'disabled'], value: next.disabledTools });
+    }
+    if (input.providerTimeoutMs !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'timeoutMs'], value: next.providerTimeoutMs });
+    }
+    if (input.providerMaxRetries !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'maxRetries'], value: next.providerMaxRetries });
+    }
+    if (input.providerMaxRetryDelayMs !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'maxRetryDelayMs'], value: next.providerMaxRetryDelayMs });
+    }
+    if (input.providerCacheRetention !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'cacheRetention'], value: next.providerCacheRetention });
+    }
+    updateFilePreferences(electron.app.getPath('userData'), updates);
   }
   await mutateProviderFile((file) => {
     const currentDelegation = normalizeAgentRuntimeSettings(file.agent).delegation;

@@ -1,9 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { writeJsonFileSync } from '../jsonFileStore';
+import {
+  applyEdits,
+  modify as jsoncModify,
+  parse,
+  parseTree,
+  type JSONPath,
+  type Node,
+  type ParseError,
+} from 'jsonc-parser';
+import { atomicWriteFileSync, writeJsonFileSync } from '../jsonFileStore';
 
 export const FILE_PREFERENCES_RELATIVE_PATH = join('config', 'settings.jsonc');
 export const MAX_FILE_PREFERENCES_BYTES = 256 * 1024;
+const RECOVERY_FILE = join('config', 'settings.last-known-good.json');
 
 export interface FilePreferences {
   readonly appearance: {
@@ -34,6 +44,7 @@ export interface FilePreferencesLoadResult {
   readonly sourceStatus: FilePreferencesSourceStatus;
   readonly sourceBytes: string | null;
   readonly sourceDigest: string | null;
+  readonly acceptedDigest: string | null;
   readonly preferences: FilePreferences;
   readonly error: string | null;
 }
@@ -74,24 +85,92 @@ export function loadFilePreferences(userDataDir: string): FilePreferencesLoadRes
     sourceBytes = readFileSync(path, 'utf8');
   } catch (error) {
     if (isNotFoundError(error)) {
-      return result(path, 'missing', null, DEFAULT_FILE_PREFERENCES, null);
+      const recovery = readRecovery(userDataDir);
+      return result(path, 'missing', null, DEFAULT_FILE_PREFERENCES, null, recovery.sourceDigest);
     }
-    return result(path, 'rejected', null, DEFAULT_FILE_PREFERENCES, errorMessage(error));
+    const recovery = readRecovery(userDataDir);
+    return result(path, 'rejected', null, recovery.preferences, errorMessage(error), recovery.sourceDigest);
   }
   if (Buffer.byteLength(sourceBytes, 'utf8') > MAX_FILE_PREFERENCES_BYTES) {
-    return result(path, 'rejected', sourceBytes, DEFAULT_FILE_PREFERENCES, `Source exceeds ${MAX_FILE_PREFERENCES_BYTES} bytes`);
+    const recovery = readRecovery(userDataDir);
+    return result(path, 'rejected', sourceBytes, recovery.preferences, `Source exceeds ${MAX_FILE_PREFERENCES_BYTES} bytes`, recovery.sourceDigest);
   }
   try {
-    const parsed = JSON.parse(stripJsonc(sourceBytes)) as unknown;
-    return result(path, 'accepted', sourceBytes, decodeFilePreferences(parsed), null);
+    const parsed = parseJsonc(sourceBytes);
+    const preferences = decodeFilePreferences(parsed);
+    writeRecovery(userDataDir, sourceBytes, preferences);
+    return result(path, 'accepted', sourceBytes, preferences, null, digest(sourceBytes));
   } catch (error) {
-    return result(path, 'rejected', sourceBytes, DEFAULT_FILE_PREFERENCES, errorMessage(error));
+    const recovery = readRecovery(userDataDir);
+    return result(path, 'rejected', sourceBytes, recovery.preferences, errorMessage(error), recovery.sourceDigest);
   }
 }
 
 export function writeFilePreferences(userDataDir: string, preferences: FilePreferences): void {
-  const path = filePreferencesPath(userDataDir);
-  writeJsonFileSync(path, preferences, { directoryMode: 0o700 });
+  updateFilePreferences(userDataDir, [
+    { path: ['appearance', 'theme'], value: preferences.appearance.theme },
+    { path: ['appearance', 'language'], value: preferences.appearance.language },
+    { path: ['agent', 'memory', 'enabled'], value: preferences.agent.memory.enabled },
+    { path: ['agent', 'skills', 'disabled'], value: preferences.agent.skills.disabled },
+    { path: ['agent', 'skills', 'sources'], value: preferences.agent.skills.sources },
+    { path: ['agent', 'tools', 'disabled'], value: preferences.agent.tools.disabled },
+    { path: ['agent', 'provider', 'timeoutMs'], value: preferences.agent.provider.timeoutMs },
+    { path: ['agent', 'provider', 'maxRetries'], value: preferences.agent.provider.maxRetries },
+    { path: ['agent', 'provider', 'maxRetryDelayMs'], value: preferences.agent.provider.maxRetryDelayMs },
+    { path: ['agent', 'provider', 'cacheRetention'], value: preferences.agent.provider.cacheRetention },
+    { path: ['updates', 'checkAutomatically'], value: preferences.updates.checkAutomatically },
+  ]);
+}
+
+export function updateFilePreferences(
+  userDataDir: string,
+  updates: readonly { readonly path: readonly (string | number)[]; readonly value: unknown }[],
+): void {
+  const loaded = loadFilePreferences(userDataDir);
+  if (loaded.sourceStatus === 'rejected') {
+    throw new Error(`Cannot write rejected settings source: ${loaded.error ?? 'invalid source'}`);
+  }
+  let source = loaded.sourceBytes ?? '{}';
+  for (const update of updates) {
+    source = modify(source, update.path, update.value);
+  }
+  const observed = readSourceIfPresent(filePreferencesPath(userDataDir));
+  if (observed !== loaded.sourceBytes) {
+    throw new Error('Settings source changed while preparing an update; retry against the latest file');
+  }
+  atomicWriteFileSync(filePreferencesPath(userDataDir), source, { directoryMode: 0o700 });
+}
+
+function parseJsonc(source: string): unknown {
+  const errors: ParseError[] = [];
+  const parsed = parse(source, errors, { allowTrailingComma: true, disallowComments: false });
+  if (errors.length > 0) throw new Error(`Invalid JSONC: ${errors[0]!.error}`);
+  const tree = parseTree(source, [], { allowTrailingComma: true, disallowComments: false });
+  if (tree) assertUniqueKeys(tree, 'settings');
+  return parsed;
+}
+
+function modify(source: string, path: readonly (string | number)[], value: unknown): string {
+  const edits = jsoncModify(source, [...path] as JSONPath, value, {
+    formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' },
+  });
+  return applyEdits(source, edits);
+}
+
+function assertUniqueKeys(node: Node, path: string): void {
+  if (node.type === 'object') {
+    const keys = new Set<string>();
+    for (const child of node.children ?? []) {
+      const keyNode = child.children?.[0];
+      if (child.type !== 'property' || !keyNode || typeof keyNode.value !== 'string') continue;
+      if (keys.has(keyNode.value)) throw new Error(`${path}.${keyNode.value} is duplicated`);
+      keys.add(keyNode.value);
+      const valueNode = child.children?.[1];
+      if (valueNode) assertUniqueKeys(valueNode, `${path}.${keyNode.value}`);
+    }
+  } else {
+    for (const child of node.children ?? []) assertUniqueKeys(child, path);
+  }
 }
 
 function decodeFilePreferences(value: unknown): FilePreferences {
@@ -114,24 +193,24 @@ function decodeFilePreferences(value: unknown): FilePreferences {
 
   return Object.freeze({
     appearance: Object.freeze({
-      theme: enumValue(appearance.theme, ['system', 'light', 'dark'], 'settings.appearance.theme'),
-      language: nullableString(appearance.language, 'settings.appearance.language'),
+      theme: enumValue(appearance.theme ?? DEFAULT_FILE_PREFERENCES.appearance.theme, ['system', 'light', 'dark'], 'settings.appearance.theme'),
+      language: nullableString(appearance.language ?? DEFAULT_FILE_PREFERENCES.appearance.language, 'settings.appearance.language'),
     }),
     agent: Object.freeze({
-      memory: Object.freeze({ enabled: booleanValue(memory.enabled, 'settings.agent.memory.enabled') }),
+      memory: Object.freeze({ enabled: booleanValue(memory.enabled ?? DEFAULT_FILE_PREFERENCES.agent.memory.enabled, 'settings.agent.memory.enabled') }),
       skills: Object.freeze({
-        disabled: stringList(skills.disabled, 'settings.agent.skills.disabled'),
-        sources: stringList(skills.sources, 'settings.agent.skills.sources'),
+        disabled: stringList(skills.disabled ?? DEFAULT_FILE_PREFERENCES.agent.skills.disabled, 'settings.agent.skills.disabled'),
+        sources: stringList(skills.sources ?? DEFAULT_FILE_PREFERENCES.agent.skills.sources, 'settings.agent.skills.sources'),
       }),
-      tools: Object.freeze({ disabled: stringList(tools.disabled, 'settings.agent.tools.disabled') }),
+      tools: Object.freeze({ disabled: stringList(tools.disabled ?? DEFAULT_FILE_PREFERENCES.agent.tools.disabled, 'settings.agent.tools.disabled') }),
       provider: Object.freeze({
-        timeoutMs: nullableNonNegativeInteger(provider.timeoutMs, 'settings.agent.provider.timeoutMs'),
-        maxRetries: nullableNonNegativeInteger(provider.maxRetries, 'settings.agent.provider.maxRetries'),
-        maxRetryDelayMs: positiveInteger(provider.maxRetryDelayMs, 'settings.agent.provider.maxRetryDelayMs'),
-        cacheRetention: enumValue(provider.cacheRetention, ['none', 'short', 'long'], 'settings.agent.provider.cacheRetention'),
+        timeoutMs: nullableNonNegativeInteger(provider.timeoutMs ?? DEFAULT_FILE_PREFERENCES.agent.provider.timeoutMs, 'settings.agent.provider.timeoutMs'),
+        maxRetries: nullableNonNegativeInteger(provider.maxRetries ?? DEFAULT_FILE_PREFERENCES.agent.provider.maxRetries, 'settings.agent.provider.maxRetries'),
+        maxRetryDelayMs: positiveInteger(provider.maxRetryDelayMs ?? DEFAULT_FILE_PREFERENCES.agent.provider.maxRetryDelayMs, 'settings.agent.provider.maxRetryDelayMs'),
+        cacheRetention: enumValue(provider.cacheRetention ?? DEFAULT_FILE_PREFERENCES.agent.provider.cacheRetention, ['none', 'short', 'long'], 'settings.agent.provider.cacheRetention'),
       }),
     }),
-    updates: Object.freeze({ checkAutomatically: booleanValue(updates.checkAutomatically, 'settings.updates.checkAutomatically') }),
+    updates: Object.freeze({ checkAutomatically: booleanValue(updates.checkAutomatically ?? DEFAULT_FILE_PREFERENCES.updates.checkAutomatically, 'settings.updates.checkAutomatically') }),
   });
 }
 
@@ -141,60 +220,17 @@ function result(
   sourceBytes: string | null,
   preferences: FilePreferences,
   error: string | null,
+  acceptedDigest: string | null = null,
 ): FilePreferencesLoadResult {
   return Object.freeze({
     path,
     sourceStatus,
     sourceBytes,
     sourceDigest: sourceBytes === null ? null : digest(sourceBytes),
+    acceptedDigest,
     preferences,
     error,
   });
-}
-
-function stripJsonc(source: string): string {
-  let output = '';
-  let inString = false;
-  let escaped = false;
-  let blockComment = false;
-  let lineComment = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index]!;
-    const next = source[index + 1];
-    if (lineComment) {
-      if (char === '\n' || char === '\r') {
-        lineComment = false;
-        output += char;
-      }
-      continue;
-    }
-    if (blockComment) {
-      if (char === '*' && next === '/') {
-        blockComment = false;
-        index += 1;
-        output += ' ';
-      } else if (char === '\n' || char === '\r') {
-        output += char;
-      }
-      continue;
-    }
-    if (!inString && char === '/' && next === '/') {
-      lineComment = true;
-      index += 1;
-      continue;
-    }
-    if (!inString && char === '/' && next === '*') {
-      blockComment = true;
-      index += 1;
-      continue;
-    }
-    output += char;
-    if (char === '"' && !escaped) inString = !inString;
-    escaped = char === '\\' && !escaped;
-    if (char !== '\\') escaped = false;
-  }
-  if (lineComment || blockComment) throw new Error('Unterminated JSONC comment');
-  return output.replace(/,\s*([}\]])/g, '$1');
 }
 
 function record(value: unknown, path: string): Record<string, unknown> {
@@ -261,6 +297,38 @@ function isNotFoundError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }
 
+function readSourceIfPresent(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function recoveryPath(userDataDir: string): string {
+  return join(userDataDir, RECOVERY_FILE);
+}
+
+function readRecovery(userDataDir: string): { readonly preferences: FilePreferences; readonly sourceDigest: string | null } {
+  try {
+    const raw = JSON.parse(readFileSync(recoveryPath(userDataDir), 'utf8')) as Record<string, unknown>;
+    if (typeof raw.sourceBytes !== 'string' || Buffer.byteLength(raw.sourceBytes, 'utf8') > MAX_FILE_PREFERENCES_BYTES) {
+      return { preferences: DEFAULT_FILE_PREFERENCES, sourceDigest: null };
+    }
+    return { preferences: decodeFilePreferences(parseJsonc(raw.sourceBytes)), sourceDigest: digest(raw.sourceBytes) };
+  } catch {
+    return { preferences: DEFAULT_FILE_PREFERENCES, sourceDigest: null };
+  }
+}
+
+function writeRecovery(userDataDir: string, sourceBytes: string, preferences: FilePreferences): void {
+  writeJsonFileSync(recoveryPath(userDataDir), { sourceBytes, preferences }, {
+    mode: 0o600,
+    directoryMode: 0o700,
+  });
 }

@@ -246,6 +246,7 @@ const devEffects = resources.child('dev-effects');
 const transportEffects = resources.child('transport');
 const windowEffects = resources.child('window-application');
 const backgroundEffects = resources.child('background-effects');
+let applyFilePreferencesNow: (() => void) | null = null;
 
 // Image file extensions for the native "insert image" picker. The filter's display
 // name is localized at the call site (it shows in the OS dialog).
@@ -343,11 +344,17 @@ function startFilePreferencesWatcher(): void {
   ensureAgentDir(configDir);
   writeFilePreferencesSchema(resolvedUserDataDir);
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let applying = false;
   const apply = () => {
+    if (applying) return;
+    applying = true;
     timer = null;
     const loaded = loadFilePreferences(resolvedUserDataDir);
     writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded);
-    if (loaded.sourceStatus === 'rejected') return;
+    if (loaded.sourceStatus === 'rejected') {
+      applying = false;
+      return;
+    }
     const { appearance } = loaded.preferences;
     if (windowApplicationHost.theme() !== appearance.theme) {
       windowApplicationHost.setTheme(appearance.theme);
@@ -355,10 +362,20 @@ function startFilePreferencesWatcher(): void {
     if (typeof appearance.language === 'string' && windowApplicationHost.effectiveLocale() !== appearance.language) {
       windowApplicationHost.setLocale(appearance.language);
     }
-    void getAgentRuntimeSettings().then((settings) => {
-      agentHost.skills.updateRuntimeSettings(settings);
-    }).catch(() => undefined);
+    void Promise.all([
+      getAgentRuntimeSettings().then((settings) => {
+        agentHost.skills.updateRuntimeSettings(settings);
+      }),
+      Promise.resolve(agentHost.memory.settings()).then((current) => {
+        const mode = loaded.preferences.agent.memory.enabled ? 'enabled' : 'disabled';
+        return current.status.featureMode === mode ? undefined : agentHost.memory.setFeatureMode(mode);
+      }),
+      windowApplicationHost.updates.applyAutomaticChecksEnabled(loaded.preferences.updates.checkAutomatically),
+    ]).catch(() => undefined).finally(() => {
+      applying = false;
+    });
   };
+  applyFilePreferencesNow = apply;
   const watcher = watch(configDir, { persistent: false }, (_event, filename) => {
     if (filename && filename.toString() !== 'settings.jsonc') return;
     if (timer !== null) clearTimeout(timer);
@@ -372,6 +389,7 @@ function startFilePreferencesWatcher(): void {
   resources.defer('file-preferences-watcher', () => {
     watcher.close();
     if (timer !== null) clearTimeout(timer);
+    if (applyFilePreferencesNow === apply) applyFilePreferencesNow = null;
   });
 }
 
@@ -2566,7 +2584,10 @@ const lifecycle = new DesktopHostLifecycle({
       name: 'agent',
       dependsOn: ['provider-configuration', 'outline-documents'],
       retryable: true,
-      run: ({ assertActive }) => agentHost.initialize(outlineHost.document.liveProjection(), assertActive),
+      run: async ({ assertActive }) => {
+        await agentHost.initialize(outlineHost.document.liveProjection(), assertActive);
+        applyFilePreferencesNow?.();
+      },
     },
     {
       name: 'background-producers',

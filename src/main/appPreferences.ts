@@ -10,7 +10,7 @@ import {
   isUrlPageTranslationModel,
   type UrlPageTranslationPreferences,
 } from '../core/urlPageTranslation';
-import { loadFilePreferences, writeFilePreferences } from './configuration/filePreferences';
+import { loadFilePreferences, updateFilePreferences } from './configuration/filePreferences';
 import { writeJsonFileSync } from './jsonFileStore';
 
 // Persist app-level UI preferences across launches (stored in userData, which is
@@ -84,19 +84,11 @@ export function loadAppPreferences(): AppPreferences {
 }
 
 export function saveThemePreference(theme: ThemeMode): void {
-  const current = loadFilePreferences(app.getPath('userData')).preferences;
-  writeFilePreferences(app.getPath('userData'), {
-    ...current,
-    appearance: { ...current.appearance, theme },
-  });
+  updateFilePreferences(app.getPath('userData'), [{ path: ['appearance', 'theme'], value: theme }]);
 }
 
 export function saveLanguagePreference(language: Locale): void {
-  const current = loadFilePreferences(app.getPath('userData')).preferences;
-  writeFilePreferences(app.getPath('userData'), {
-    ...current,
-    appearance: { ...current.appearance, language },
-  });
+  updateFilePreferences(app.getPath('userData'), [{ path: ['appearance', 'language'], value: language }]);
 }
 
 export function saveTranslationLanguagePreference(translationLanguage: TranslationLanguage): void {

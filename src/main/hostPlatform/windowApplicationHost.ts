@@ -133,6 +133,7 @@ export interface WindowApplicationHost {
     checkExplicitly(): Promise<AppUpdateView>;
     checkInBackground(): Promise<AppUpdateView>;
     setAutomaticChecksEnabled(enabled: boolean): Promise<AppUpdateView>;
+    applyAutomaticChecksEnabled(enabled: boolean): Promise<AppUpdateView>;
     openAvailableUpdate(): ReturnType<AppUpdateService['openAvailableUpdate']>;
   };
   readonly actions: {
@@ -798,6 +799,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       checkExplicitly: () => appUpdateService.checkExplicitly(),
       checkInBackground: () => appUpdateService.checkInBackground(),
       setAutomaticChecksEnabled: (enabled) => appUpdateService.setAutomaticChecksEnabled(enabled),
+      applyAutomaticChecksEnabled: (enabled) => appUpdateService.applyAutomaticChecksEnabled(enabled),
       openAvailableUpdate: () => appUpdateService.openAvailableUpdate(),
     },
     actions: {
