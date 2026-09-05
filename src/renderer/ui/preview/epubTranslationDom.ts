@@ -180,6 +180,7 @@ interface EpubSectionRegistration {
   mutationObserver: MutationObserver | null;
   recordIds: Set<string>;
   releaseInputListeners: () => void;
+  resizeObserver: ResizeObserver | null;
   style: HTMLStyleElement;
 }
 
@@ -206,6 +207,8 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
   private labels: UrlPageTranslationGuestLabels;
   private readonly records = new Map<string, EpubTranslationRecord>();
   private layoutOrder: EpubTranslationRecord[] = [];
+  private layoutMaxBottom: number[] = [];
+  private layoutDirty = true;
   private readonly sections = new Map<number, EpubSectionRegistration>();
   private readonly scrollRoot: HTMLElement;
   private readonly onEnabledChange: (enabled: boolean) => void;
@@ -230,6 +233,8 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     this.shortcutHandler = options.onShortcut;
     this.lastScrollTop = options.scrollRoot.scrollTop;
     options.scrollRoot.addEventListener('scroll', this.handleScroll, { passive: true });
+    options.scrollRoot.addEventListener('resize', this.handleLayoutSignal);
+    options.scrollRoot.addEventListener('load', this.handleLayoutSignal, true);
     options.scrollRoot.addEventListener('wheel', this.handleUserInput, { passive: true });
     options.scrollRoot.addEventListener('touchstart', this.handleUserInput, { passive: true });
     options.scrollRoot.addEventListener('pointerdown', this.handleUserInput, { passive: true });
@@ -282,8 +287,15 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
       mutationObserver: null,
       recordIds: new Set(),
       releaseInputListeners: this.installSectionInputListeners(doc),
+      resizeObserver: null,
       style,
     };
+    const ResizeObserverCtor = doc.defaultView?.ResizeObserver;
+    if (ResizeObserverCtor) {
+      registration.resizeObserver = new ResizeObserverCtor(this.handleLayoutSignal);
+      registration.resizeObserver.observe(frame);
+      registration.resizeObserver.observe(doc.documentElement);
+    }
     const Observer = doc.defaultView?.MutationObserver;
     if (Observer) {
       registration.mutationObserver = new Observer((mutations) => {
@@ -307,6 +319,7 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     const registration = this.sections.get(sectionIndex);
     if (!registration) return;
     registration.mutationObserver?.disconnect();
+    registration.resizeObserver?.disconnect();
     registration.releaseInputListeners();
     registration.style.remove();
     registration.doc.documentElement.removeAttribute(HIDDEN_ATTRIBUTE);
@@ -516,6 +529,8 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     if (wasEnabled) this.onEnabledChange(false);
     this.cancelCorrection();
     this.scrollRoot.removeEventListener('scroll', this.handleScroll);
+    this.scrollRoot.removeEventListener('resize', this.handleLayoutSignal);
+    this.scrollRoot.removeEventListener('load', this.handleLayoutSignal, true);
     this.scrollRoot.removeEventListener('wheel', this.handleUserInput);
     this.scrollRoot.removeEventListener('touchstart', this.handleUserInput);
     this.scrollRoot.removeEventListener('pointerdown', this.handleUserInput);
@@ -528,17 +543,20 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     for (const sectionIndex of [...this.sections.keys()]) this.unregisterSection(sectionIndex);
     this.records.clear();
     this.layoutOrder = [];
+    this.layoutMaxBottom = [];
   }
 
   private scanDirtySections(): void {
     const dirtySections = [...this.sections]
       .filter(([, registration]) => registration.dirty);
-    if (dirtySections.length === 0) return;
-    this.withAnchoredWrite(() => {
-      for (const [sectionIndex, registration] of dirtySections) {
-        this.scanSection(sectionIndex, registration);
-      }
-    });
+    if (dirtySections.length > 0) {
+      this.withAnchoredWrite(() => {
+        for (const [sectionIndex, registration] of dirtySections) {
+          this.scanSection(sectionIndex, registration);
+        }
+      });
+    }
+    if (this.layoutDirty) this.refreshLayoutIndex();
   }
 
   private scanSection(sectionIndex: number, registration: EpubSectionRegistration): void {
@@ -578,6 +596,7 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
       record.language = language;
       record.text = text;
       this.updateRecordLayout(record);
+      registration.resizeObserver?.observe(element);
       this.records.set(id, record);
       this.renderRecord(record);
     }
@@ -587,6 +606,7 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
       const record = this.records.get(id);
       if (!record) continue;
       removeOwnedNodes(record);
+      if (record.element) registration.resizeObserver?.unobserve(record.element);
       record.element = null;
       this.records.delete(id);
     }
@@ -610,6 +630,18 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     this.layoutOrder = [...this.records.values()]
       .filter((record) => record.element?.isConnected)
       .sort((left, right) => left.layoutTop - right.layoutTop || left.id.localeCompare(right.id));
+    this.layoutMaxBottom = [];
+    let maxBottom = Number.NEGATIVE_INFINITY;
+    for (const record of this.layoutOrder) {
+      maxBottom = Math.max(maxBottom, record.layoutBottom);
+      this.layoutMaxBottom.push(maxBottom);
+    }
+    this.layoutDirty = false;
+  }
+
+  private refreshLayoutIndex(): void {
+    for (const record of this.records.values()) this.updateRecordLayout(record);
+    this.rebuildLayoutOrder();
   }
 
   private nearViewportRecords(
@@ -618,18 +650,26 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     aheadViewports: number,
   ): EpubTranslationRecord[] {
     const margin = viewportHeight * Math.max(1, aheadViewports);
-    const lowerBound = (value: number): number => {
+    const lowerBoundTop = (value: number): number => {
       let low = 0;
       let high = this.layoutOrder.length;
       while (low < high) {
         const middle = (low + high) >>> 1;
-        if ((this.layoutOrder[middle]?.layoutBottom ?? 0) < value) low = middle + 1;
+        if ((this.layoutOrder[middle]?.layoutTop ?? 0) < value) low = middle + 1;
         else high = middle;
       }
       return low;
     };
-    const start = lowerBound(scrollTop - margin);
-    const end = lowerBound(scrollTop + viewportHeight + margin);
+    let low = 0;
+    let high = this.layoutMaxBottom.length;
+    const startValue = scrollTop - margin;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if ((this.layoutMaxBottom[middle] ?? Number.NEGATIVE_INFINITY) < startValue) low = middle + 1;
+      else high = middle;
+    }
+    const start = low;
+    const end = lowerBoundTop(scrollTop + viewportHeight + margin);
     return this.layoutOrder.slice(start, Math.max(start, end + 1));
   }
 
@@ -890,6 +930,11 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     }
     this.lastScrollTop = nextScrollTop;
     this.invalidateCorrection();
+    this.workAvailableHandler();
+  };
+
+  private readonly handleLayoutSignal = () => {
+    this.layoutDirty = true;
     this.workAvailableHandler();
   };
 

@@ -480,7 +480,7 @@ export function installUrlPageTranslationRuntime(
     workWaiters.delete(waiter);
     waiter.resolve(workRevision);
   };
-  const signalWorkAvailable = (): void => {
+  const signal = (): void => {
     workRevision = workRevision >= 2_147_483_647 ? 1 : workRevision + 1;
     for (const waiter of [...workWaiters]) resolveWorkWaiter(waiter);
   };
@@ -511,7 +511,7 @@ export function installUrlPageTranslationRuntime(
       lastScrollTop = scrollTop;
     }
     invalidateDeferredAnchorCorrection();
-    signalWorkAvailable();
+    signal();
   };
   host.addEventListener('wheel', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
   host.addEventListener('touchstart', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
@@ -615,7 +615,7 @@ export function installUrlPageTranslationRuntime(
           record.retryRequested = true;
           showStatus(record, 'loading');
         });
-        signalWorkAvailable();
+        signal();
       });
       record.element.append(status);
       record.statusNode = status;
@@ -636,11 +636,15 @@ export function installUrlPageTranslationRuntime(
     record.queued = false;
   };
 
-  const go = typeof IntersectionObserver === 'function'
-    && new IntersectionObserver((es) => es.forEach((e) => {
+  const go: IntersectionObserver | null = typeof IntersectionObserver === 'function'
+    ? new IntersectionObserver((es) => es.forEach((e) => {
       const r = records.get(ids.get(e.target as HTMLElement)!);
-      if (r) (e.isIntersecting ? n.add(r) : n.delete(r));
-    }), { rootMargin: '800%' });
+      if (r) {
+        e.isIntersecting ? n.add(r) : n.delete(r);
+        signal();
+      }
+    }), { rootMargin: '800%' })
+    : null;
 
   const discover = (): void => {
     const elements = Array.from(doc.querySelectorAll<HTMLElement>(candidateSelector));
@@ -937,7 +941,7 @@ export function installUrlPageTranslationRuntime(
         record.retryRequested = true;
       }
       renderCurrentCaption();
-      signalWorkAvailable();
+      signal();
     });
     overlay.append(source, translation, status);
     player.append(overlay);
@@ -1014,12 +1018,12 @@ export function installUrlPageTranslationRuntime(
   function handleCaptionTimeUpdate(): void {
     const previousRecordId = captionState?.currentRecordId ?? null;
     renderCurrentCaption();
-    if ((captionState?.currentRecordId ?? null) !== previousRecordId) signalWorkAvailable();
+    if ((captionState?.currentRecordId ?? null) !== previousRecordId) signal();
   }
 
   function handleCaptionSeeked(): void {
     renderCurrentCaption();
-    signalWorkAvailable();
+    signal();
   }
 
   const createNativeCue = (
@@ -1093,7 +1097,7 @@ export function installUrlPageTranslationRuntime(
   ): Map<string, CaptionRecord> => {
     const records = new Map<string, CaptionRecord>();
     const revision = ++captionRevision;
-    signalWorkAvailable();
+    signal();
     for (let index = 0; index < snapshots.length; index += 1) {
       const snapshot = snapshots[index];
       if (!snapshot) continue;
@@ -1939,7 +1943,7 @@ export function installUrlPageTranslationRuntime(
         });
         if (relevant) {
           dirty = true;
-          signalWorkAvailable();
+          signal();
         }
       })
     : null;
@@ -2004,7 +2008,7 @@ export function installUrlPageTranslationRuntime(
         renderCurrentCaption();
       }
       dirty = true;
-      signalWorkAvailable();
+      signal();
     },
     nextBatch(
       maxBlocks: number,
@@ -2314,6 +2318,7 @@ export function installUrlPageTranslationRuntime(
     },
     destroy(): void {
       observer?.disconnect();
+      go?.disconnect();
       host.removeEventListener('wheel', invalidateDeferredAnchorCorrection, { capture: true });
       host.removeEventListener('touchstart', invalidateDeferredAnchorCorrection, { capture: true });
       host.removeEventListener('touchmove', invalidateDeferredAnchorCorrection, { capture: true });
@@ -2328,7 +2333,7 @@ export function installUrlPageTranslationRuntime(
         doc.documentElement.removeAttribute(hiddenAttribute);
       });
       runtimeActive = false;
-      signalWorkAvailable();
+      signal();
       youtubeLoadRevision += 1;
       restoreYoutubeCaptionToggle();
       clearCaptionState();
