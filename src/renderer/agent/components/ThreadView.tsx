@@ -951,7 +951,6 @@ export function ThreadView({
     return [...response.data];
   }, [threadId]);
   const activePlan = activeTurn && plan?.turnId === activeTurn.id ? plan : null;
-  const activeWorkingTextEnabled = !waitingOnUserInput && providerRetry === null;
   const editableTurnId = useMemo(() => latestUserMessageTurnId(turns), [turns]);
   const turnCountRef = useRef(turns.length);
   turnCountRef.current = turns.length;
@@ -3098,7 +3097,21 @@ export function ThreadView({
   const showJumpToLatest = !follow && scrollMetrics.hasContentBelow;
 
   return (
-    <div className="thread-view" onClick={refocusComposerFromClick}>
+    <div
+      className="thread-view"
+      onClick={refocusComposerFromClick}
+      onMouseDown={(event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        // Keep an active composer focused across pointer-only disclosures.
+        // Keyboard activation and selection gestures retain native focus.
+        if (composerEnabled && !waitingForInput
+          && event.button === 0 && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+          && target?.closest('[data-thread-disclosure-id]')
+          && target.closest('.thread-view') === event.currentTarget
+          && composerRegionRef.current?.contains(document.activeElement)
+          && window.getSelection()?.isCollapsed !== false) event.preventDefault();
+      }}
+    >
       <div className="thread-transcript-shell">
         <div
           className="thread-transcript"
@@ -3265,7 +3278,7 @@ export function ThreadView({
           show it. Read-only there: no composer to hand focus back to. */}
       {!composerEnabled && activePlan ? (
         <div className="thread-composer-region thread-plan-progress-region">
-          <ThreadPlanProgress plan={activePlan} working={activeWorkingTextEnabled} />
+          <ThreadPlanProgress plan={activePlan} />
         </div>
       ) : null}
       {composerEnabled ? <div className="thread-composer-region thread-composer" ref={composerRegionRef}>
@@ -3273,7 +3286,6 @@ export function ThreadView({
           <ThreadPlanProgress
             onClosed={() => composerRef.current?.focus()}
             plan={activePlan}
-            working={activeWorkingTextEnabled}
           />
         ) : null}
         <div
@@ -3401,6 +3413,7 @@ export function ThreadView({
                   <IconButton
                     className="is-stop"
                     icon={StopIcon}
+                    iconSize={ICON_SIZE.rowGlyph}
                     label={t.agent.thread.interrupt}
                     onClick={() => void onInterrupt()}
                     variant="composerAction"
@@ -3567,6 +3580,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   if (!sameResponseTailTurn(responseTailTurnRef.current, turn)) responseTailTurnRef.current = turn;
   const responseTailTurn = responseTailTurnRef.current;
   const responseItem = lastAgentResponse(turn);
+  const hasResponse = responseItem !== null;
   // A resultless reasoning Item first observed after settlement opens for the
   // session. An Item observed live stays folded when completion arrives, so the
   // terminal update cannot insert a body under the reader.
@@ -3615,7 +3629,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       {t.agent.thread.workedFor({ duration: formatProcessDuration(reportReceipt.durationMs) })}
     </span>
   );
-  const workingAgentIds = useWorkingAgentIds();
   const contentGrouperRef = useRef<TurnContentGrouper | null>(null);
   if (contentGrouperRef.current === null) contentGrouperRef.current = createTurnContentGrouper();
   const contentBlocks = contentGrouperRef.current.group({ ...turn, items: anchors.items });
@@ -3623,23 +3636,20 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   const processItems = processBlock?.kind === 'process' ? processBlock.items : EMPTY_THREAD_ITEMS;
   const processItemGroups = useMemo(() => groupTurnItems(processItems), [processItems]);
   const workingTextEnabled = !waitingOnUserInput && providerRetry === null;
-  const motionOwner = turnMotionOwner(turn, processItems, anchors, workingAgentIds);
+  const activeTool = processItems.reduce<ThreadItem | null>((latest, item) => (
+    isThreadToolItem(item) && item.status === 'inProgress' ? item : latest
+  ), null);
   const processView = useThreadProcessView({
     anchors,
     expandState,
     hasFinalResponse: responseItem !== null,
     index,
     items: processItems,
-    motionOwner,
     turn,
     waitingOnUserInput,
     workingTextEnabled,
   });
-  const workingTextOwnsMotion = workingTextEnabled && motionOwner !== 'none';
-  // A blocked Turn cannot use a progressive cue. Keep the fallback response
-  // shape static as well, otherwise it becomes the only moving element while
-  // the agent waits for the user.
-  const shapeMotionSuppressed = !workingTextEnabled;
+  const leafWorkingEnabled = workingTextEnabled && processView.motionOwner === 'leaf';
   // `groupTurnContent` omits the process block entirely for a Turn with no
   // process Items, so "no response Item" alone does not mean a divider exists
   // to own the terminal status.
@@ -3715,7 +3725,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     [onRerunTurn, turn.id],
   );
   const responseTail = useMemo(
-    () => standaloneContextBoundary ? null : (
+    () => standaloneContextBoundary || (responseTailTurn.status === 'inProgress' && !providerRetry && !hasResponse) ? null : (
       <ThreadResponseTail
         canContinueInNewChat={!agentTranscript}
         onCopy={copyTurn}
@@ -3725,8 +3735,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         onRerun={recovery?.canRerun ? rerunTurn : null}
         rerunRequiresConfirmation={recovery?.rerunRequiresConfirmation ?? false}
         providerRetry={providerRetry}
-        shapeMotionSuppressed={shapeMotionSuppressed}
-        workingTextOwnsMotion={workingTextOwnsMotion}
         // The process divider states the terminal status when there is no
         // response Item — but only if a process block renders at all. Without
         // one, suppressing it here would erase the status from the Turn.
@@ -3738,15 +3746,14 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       continueInNewChat,
       continueTurn,
       copyTurn,
+      hasResponse,
       openTurnDetails,
       providerRetry,
       responseTailTurn,
       recovery,
       rerunTurn,
-      shapeMotionSuppressed,
       standaloneContextBoundary,
       statusOwnedElsewhere,
-      workingTextOwnsMotion,
     ],
   );
   const visibleItemReplacement = delivery !== null
@@ -3798,7 +3805,9 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         threadReferences={threadReferences}
         threadCwd={threadCwd}
         active={active}
-        workingTextEnabled={workingTextEnabled}
+        workingTextEnabled={anchors.anchorByItemId.has(item.id)
+          ? workingTextEnabled && processView.timelineVisible && !activeTool
+          : leafWorkingEnabled && (!activeTool || activeTool.id === item.id)}
       />
     )
   );
@@ -3881,7 +3890,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
                 onReadToolOutput={readToolOutput}
                 threadId={threadId}
                 threadCwd={threadCwd}
-                workingTextEnabled={workingTextEnabled}
+                workingTextEnabled={leafWorkingEnabled && group.items.some((item) => item.id === activeTool?.id)}
               />
             ) : renderItem(group.item, false))}
           </div>
@@ -3985,10 +3994,8 @@ function ThreadResponseTail({
   onRerun,
   providerRetry,
   rerunRequiresConfirmation,
-  shapeMotionSuppressed,
   statusOwnedElsewhere,
   turn,
-  workingTextOwnsMotion,
 }: {
   /**
    * Forking a Thread starts a conversation, which a read-only embedded view
@@ -4003,10 +4010,8 @@ function ThreadResponseTail({
   readonly onRerun: ((confirmToolReplay: boolean) => Promise<void>) | null;
   readonly providerRetry: ProviderRetryStatus | null;
   readonly rerunRequiresConfirmation: boolean;
-  readonly shapeMotionSuppressed: boolean;
   readonly statusOwnedElsewhere: boolean;
   readonly turn: Turn;
-  readonly workingTextOwnsMotion: boolean;
 }) {
   const t = useT();
   const [trajectoryHoverOpen, setTrajectoryHoverOpen] = useState(false);
@@ -4049,14 +4054,7 @@ function ThreadResponseTail({
       ) : null}
       <div className="thread-response-footer">
         {streaming ? (
-          providerRetry
-            ? <ThreadProviderRetryStatus status={providerRetry} />
-            : (
-              <ThreadStreamingIndicator
-                shapeMotionSuppressed={shapeMotionSuppressed}
-                workingTextOwnsMotion={workingTextOwnsMotion}
-              />
-            )
+          providerRetry ? <ThreadProviderRetryStatus status={providerRetry} /> : null
         ) : (
           <div className="thread-message-actions thread-response-actions">
             {onContinue ? (
@@ -4241,13 +4239,11 @@ function providerRetryLabel(
 function ThreadPlanProgress({
   onClosed,
   plan,
-  working,
 }: {
   /** Where focus goes when the checklist closes. Absent on a Thread with no
    *  composer, where it returns to the pill instead. */
   readonly onClosed?: () => void;
   readonly plan: ActiveTurnPlan;
-  readonly working: boolean;
 }) {
   const t = useT();
   const summaryId = useId();
@@ -4305,9 +4301,7 @@ function ThreadPlanProgress({
         {complete
           ? <CheckIcon aria-hidden size={ICON_SIZE.tiny} />
           : <PlanToolIcon aria-hidden size={ICON_SIZE.tiny} />}
-        {!complete && !open && working
-          ? <WorkingText className="thread-plan-progress-label" text={label} truncate />
-          : <span className="thread-plan-progress-label">{label}</span>}
+        <span className="thread-plan-progress-label">{label}</span>
       </button>
       {/* The announcement carries the step text, not just the counter — a
           counter alone tells a screen-reader user nothing changed but a number. */}
@@ -4483,7 +4477,6 @@ function useThreadProcessView({
   hasFinalResponse,
   index,
   items,
-  motionOwner,
   anchors,
   turn,
   waitingOnUserInput,
@@ -4493,27 +4486,32 @@ function useThreadProcessView({
   readonly hasFinalResponse: boolean;
   readonly index: DocumentIndex;
   readonly items: readonly ThreadItem[];
-  readonly motionOwner: TurnMotionOwner;
   readonly anchors: SubagentTurnAnchors;
   readonly turn: Turn;
   readonly waitingOnUserInput: boolean;
   readonly workingTextEnabled: boolean;
-}): { readonly header: ReactNode; readonly timelineVisible: boolean; readonly isError: boolean } {
-  const expanded = expandState.isExpanded(`process:${turn.id}`, false);
+}): {
+  readonly header: ReactNode;
+  readonly timelineVisible: boolean;
+  readonly isError: boolean;
+  readonly motionOwner: TurnMotionOwner;
+} {
+  const expanded = expandState.isExpanded(`process:${turn.id}`, turn.status === 'inProgress');
   const workingAgentIds = useWorkingAgentIds();
   // A Turn can settle while a child it spawned keeps running — the
   // fire-and-forget shape the protocol supports, where terminal activity lands
   // in a LATER Turn. The fold defaults to closed, so folding here would hide a
   // live delegation's status, its elapsed time, and the only Stop that reaches
   // it. Work that is still happening and still stoppable is not history yet.
-  const collapsible = turn.status === 'completed'
+  const completedCollapsible = turn.status === 'completed'
     && hasFinalResponse
     && turn.durationMs !== null
-    && items.length > 0
     && !anchors.agentIds.some((agentId) => workingAgentIds.has(agentId));
+  const collapsible = items.length > 0 && (turn.status === 'inProgress' || completedCollapsible);
   const terminalResponseOwnsStatus = hasFinalResponse
     && (turn.status === 'failed' || turn.status === 'interrupted');
   const timelineVisible = items.length > 0 && (!collapsible || expanded);
+  const motionOwner = turnMotionOwner(turn, items, anchors, workingAgentIds, timelineVisible);
   // The clock lives in the SUMMARY, not here. Read at this level it ticked the
   // whole Turn once a second — regrouping its content blocks, rebuilding every
   // speaker run, re-rendering every Item and every report card — to repaint one
@@ -4536,6 +4534,7 @@ function useThreadProcessView({
       />
     ),
     timelineVisible,
+    motionOwner,
     isError: turn.status === 'failed' && !hasFinalResponse,
   };
 }
@@ -4589,15 +4588,21 @@ function ThreadProcessSummary({
   const summary = threadProcessSummary(
     turn, items, hasFinalResponse, liveElapsedMs, t, index, blockedOnUser,
   );
+  const processTitleClassName = `thread-process-title${turn.status === 'inProgress'
+    ? ' thread-process-title-live'
+    : ''}`;
+  const title = motionOwner === 'summary' && !blockedOnUser && workingTextEnabled
+    ? <WorkingText className={processTitleClassName} text={summary} truncate />
+    : <span className={processTitleClassName}>{summary}</span>;
   if (collapsible) {
     return (
       <ButtonControl
         aria-expanded={expanded}
-        className="thread-speaker-meta thread-process-toggle"
+        className={`thread-speaker-meta thread-process-toggle${turn.status === 'inProgress' ? ' is-live' : ''}`}
         data-thread-disclosure-id={disclosureId}
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
-        <span className="thread-process-title">{summary}</span>
+        {title}
         <ChevronRightIcon
           aria-hidden
           className={`thread-process-chevron${expanded ? ' is-expanded' : ''}`}
@@ -4606,14 +4611,9 @@ function ThreadProcessSummary({
       </ButtonControl>
     );
   }
-  const processTitleClassName = `thread-process-title${turn.status === 'inProgress'
-    ? ' thread-process-title-live'
-    : ''}`;
   return (
     <div className="thread-speaker-meta">
-      {motionOwner === 'summary' && !blockedOnUser && workingTextEnabled
-        ? <WorkingText className={processTitleClassName} text={summary} truncate />
-        : <span className={processTitleClassName}>{summary}</span>}
+      {title}
     </div>
   );
 }
@@ -4625,49 +4625,23 @@ export function turnMotionOwner(
   items: readonly ThreadItem[],
   anchors: SubagentTurnAnchors,
   workingAgentIds: ReadonlySet<ThreadId>,
+  timelineVisible = true,
 ): TurnMotionOwner {
   if (turn.status !== 'inProgress') return 'none';
+  const tail = turn.items.at(-1);
+  if (tail?.type === 'agentMessage' && tail.phase === 'final_answer' && tail.text.trim()) return 'none';
+  if (!timelineVisible) return 'summary';
   if (items.some((item) => isThreadToolItem(item) && item.status === 'inProgress')) return 'leaf';
   // A live chip in this Turn is the more specific representation, so the Turn
   // summary stays static while the chip carries the cue.
   if (anchors.agentIds.some((agentId) => workingAgentIds.has(agentId))) return 'leaf';
-  const tail = turn.items.at(-1);
   if (tail?.type === 'reasoning') {
     return [...tail.summary, ...tail.content].every((part) => !part.trim()) ? 'leaf' : 'none';
   }
-  if (tail?.type === 'agentMessage' && tail.phase === 'commentary' && tail.text.trim()) return 'none';
+  if (tail?.type === 'agentMessage' && tail.text.trim()) return 'none';
   return 'summary';
 }
 
-
-function ThreadStreamingIndicator({
-  shapeMotionSuppressed,
-  workingTextOwnsMotion,
-}: {
-  readonly shapeMotionSuppressed: boolean;
-  readonly workingTextOwnsMotion: boolean;
-}) {
-  const t = useT();
-  const gradientId = `thread-shape-${useId().replaceAll(':', '')}`;
-  return (
-    <div className="thread-streaming-indicator" aria-label={t.agent.message.assistantResponding}>
-      <svg
-        aria-hidden
-        className={`thread-streaming-shape${workingTextOwnsMotion ? ' is-working-text-owned' : ''}${shapeMotionSuppressed ? ' is-motion-suppressed' : ''}`}
-        viewBox="0 0 48 48"
-      >
-        <defs>
-          <linearGradient className="thread-shape-gradient" id={gradientId} x1="0" x2="0" y1="0" y2="1">
-            <stop className="thread-shape-stop-0" offset="0%" />
-            <stop className="thread-shape-stop-1" offset="55%" />
-            <stop className="thread-shape-stop-2" offset="100%" />
-          </linearGradient>
-        </defs>
-        <path fill={`url(#${gradientId})`} />
-      </svg>
-    </div>
-  );
-}
 
 /**
  * Wall-clock elapsed since the Turn started — the same span the server records

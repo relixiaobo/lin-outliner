@@ -279,6 +279,32 @@ remove old imports/identifiers/overrides, and verify. These are build-order step
 inside one deliverable, not separately shippable scaffolding. Add no legacy
 reader or fallback that accepts the removed IconId format.
 
+### Active Work Feedback
+
+Remove the response-footer rose shape. The visible process hierarchy owns work
+feedback: a live process starts expanded, can be folded explicitly, and folds
+by default after completion. An expanded process gives the sweep to its latest
+running tool, or its empty Thinking placeholder; readable streaming prose is
+already a progress cue. Folded live work gives the sweep back to Working.
+Completed items, ancestor summaries with a visible owner, and Plan summaries
+stay static. Provider recovery remains the sole retry cue. Reduced motion and
+increased contrast retain static text and semantic status.
+
+Use a narrow 110-degree, font-relative light band with eased travel and a rest
+between passes. Preserve the composer's focus on an unmodified mouse disclosure
+activation so its material never loses and regains focus in consecutive frames;
+keyboard focus and selections keep their native behavior. The composer Stop
+retains the filled Square, uses the row-glyph size in the existing circular hit
+target, and uses neutral fill/text tokens instead of an inverse disk.
+Tool and tool-group hover/open chevrons use the 15px row-chevron role, centered
+in the unchanged 14px status slot; the 10px tiny role is too small for this
+replacement. Verify label alignment and row geometry through the handoff.
+
+These user-directed refinements ship in this same complete feature. They touch
+ThreadView, ThreadItemView, working-text/thread styles, focused tests and owning
+specifications. #628 remains the integration dependency for Agent retirement;
+#632's definition-option cache scope does not intersect these controls.
+
 ### Acceptance And Verification
 
 - **AC-1:** Every live functional icon comes from the central Iconoir exports;

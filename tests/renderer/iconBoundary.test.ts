@@ -14,7 +14,7 @@ function sourceFiles(path: string): string[] {
 test('functional icon imports and geometry stay behind the semantic boundary', () => {
   const violations: string[] = [];
   // These are speaker identity artwork, not functional controls.
-  const identitySvgOwners = new Set(['agent/components/AgentMark.tsx', 'agent/components/ThreadView.tsx']);
+  const identitySvgOwners = new Set(['agent/components/AgentMark.tsx']);
   for (const path of sourceFiles(renderer)) {
     const name = relative(renderer, path);
     const source = readFileSync(path, 'utf8');

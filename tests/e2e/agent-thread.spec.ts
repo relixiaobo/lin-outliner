@@ -982,28 +982,19 @@ test.describe('canonical agent Thread surface', () => {
     const liveTitleGeometry = await liveTurn.locator('.thread-process-title').evaluate((element) => {
       const divider = element.closest('.thread-speaker-meta');
       if (!(divider instanceof HTMLElement)) throw new Error('Expected live process summary');
+      const chevronWidth = divider.querySelector('.thread-process-chevron')?.getBoundingClientRect().width ?? 0;
+      const gap = chevronWidth ? Number.parseFloat(getComputedStyle(divider).columnGap) : 0;
       return {
         numericVariant: getComputedStyle(element).fontVariantNumeric,
         widthDelta: Math.abs(
-          element.getBoundingClientRect().width - divider.getBoundingClientRect().width,
+          element.getBoundingClientRect().width + chevronWidth + gap - divider.getBoundingClientRect().width,
         ),
       };
     });
     expect(liveTitleGeometry.numericVariant).toContain('tabular-nums');
     expect(liveTitleGeometry.widthDelta).toBeLessThan(1);
     await expect(liveTurn.getByText('Initiating web search.')).toBeVisible();
-    const liveIndicator = liveTurn.getByLabel('Assistant is responding');
-    await expect(liveIndicator).toBeVisible();
-    const indicatorAlignment = await liveIndicator.evaluate((element) => {
-      const footer = element.closest('.thread-response-footer');
-      if (!(footer instanceof HTMLElement)) throw new Error('Expected response footer');
-      const footerRect = footer.getBoundingClientRect();
-      const indicatorRect = element.getBoundingClientRect();
-      return Math.abs(
-        (footerRect.top + footerRect.height / 2) - (indicatorRect.top + indicatorRect.height / 2),
-      );
-    });
-    expect(indicatorAlignment).toBeLessThan(1);
+    await expect(liveTurn.getByLabel('Assistant is responding')).toHaveCount(0);
     await page.evaluate(() => {
       const target = window as Window & {
         lin?: object;
@@ -1019,7 +1010,7 @@ test.describe('canonical agent Thread surface', () => {
         return null;
       };
     });
-    await liveIndicator.click({ button: 'right' });
+    await liveTurn.locator('.thread-process-title').click({ button: 'right' });
     expect(await page.evaluate(() => (
       (window as Window & { __threadMessageContextMenuCalls?: number }).__threadMessageContextMenuCalls
     ))).toBe(0);
@@ -1088,7 +1079,7 @@ test.describe('canonical agent Thread surface', () => {
         status: null,
       });
     }, ids);
-    await expect(liveTurn.getByLabel('Assistant is responding')).toBeVisible();
+    await expect(liveTurn.getByLabel('Assistant is responding')).toHaveCount(0);
 
     await page.evaluate(({ liveTurnId, threadId }) => {
       const target = window as Window & {
@@ -1228,7 +1219,7 @@ test.describe('canonical agent Thread surface', () => {
     const turn = page.locator(`[data-thread-turn-row="${fixture.turnId}"]`);
     const answer = turn.locator('.thread-agent-message-body');
     const transcript = page.locator('.thread-transcript');
-    await expect(turn.getByLabel('Assistant is responding')).toBeVisible();
+    await expect(turn.getByLabel('Assistant is responding')).toHaveCount(0);
     await expect(answer).toContainText('Hello, I am here.');
     await expect(turn.locator('.thread-process-timeline')).toHaveCount(0);
     await expect(turn.locator('.thread-user-message .thread-message-actions')).toHaveCount(0);
@@ -3788,7 +3779,7 @@ test.describe('canonical agent Thread surface', () => {
     // the same status and stays still, so the pushed view never says the work
     // is advancing twice.
     await expect(detail.locator('.thread-agent-detail-status .working-text')).toHaveCount(0);
-    await expect(detail.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'thread-shape-spin');
+    await expect(detail.locator('.thread-streaming-shape')).toHaveCount(0);
 
     await page.evaluate(({ childId, childTurnId }) => {
       const target = window as Window & {
@@ -5855,8 +5846,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(blockedPlan).toHaveText('1/1 · Answer the clarification');
     await expect(blockedPlan.locator('.working-text')).toHaveCount(0);
     const liveTurn = page.locator(`[data-thread-turn-row="${liveTurnId}"]`);
-    await expect(liveTurn.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'none');
-    await expect(liveTurn.locator('.thread-streaming-shape path')).toHaveCSS('animation-name', 'none');
+    await expect(liveTurn.locator('.thread-streaming-shape')).toHaveCount(0);
   });
 
   test('states an interrupted Turn once, and never leaves an unlabelled timeline', async ({ page }) => {
@@ -6546,12 +6536,11 @@ test.describe('canonical agent Thread surface', () => {
         insideRoot: true,
       }],
     });
-    await expect(turn.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'none');
-    await expect(turn.locator('.thread-streaming-shape path')).toHaveCSS('animation-name', 'none');
+    await expect(turn.locator('.thread-streaming-shape')).toHaveCount(0);
     await expect(groupToggle.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
     const groupSweep = groupToggle.locator('.working-text-base');
     await expect(groupSweep).toHaveCSS('animation-name', 'working-text-sweep');
-    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(1);
+    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(0);
     await page.evaluate(({ threadId, turnId }) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -6580,7 +6569,7 @@ test.describe('canonical agent Thread surface', () => {
     const resumedGroupSweep = groupToggle.locator('.working-text-base');
     await expect(resumedGroupSweep).toHaveCSS('display', 'block');
     await expect(resumedGroupSweep).toHaveCSS('animation-name', 'working-text-sweep');
-    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(1);
+    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(0);
     await expect(group.locator('.thread-tool-activity-members')).toHaveCount(0);
 
     // The semantic group glyph uses the ordinary disclosure handoff on hover.
@@ -6662,7 +6651,7 @@ test.describe('canonical agent Thread surface', () => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await expect(label).toHaveCSS('animation-name', 'none');
     await expect(glyph).toHaveCSS('color', await resolveTokenColor(page, '--text-soft'));
-    await expect(page.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'none');
+    await expect(page.locator('.thread-streaming-shape')).toHaveCount(0);
 
     const session = await page.context().newCDPSession(page);
     await session.send('Emulation.setEmulatedMedia', {
@@ -6678,7 +6667,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect.poll(() => page.evaluate(() => matchMedia('(prefers-contrast: more)').matches)).toBe(true);
     await expect(label).toHaveCSS('animation-name', 'none');
     await expect(glyph).toHaveCSS('color', await resolveTokenColor(page, '--text-soft'));
-    await expect(page.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'thread-shape-spin');
+    await expect(page.locator('.thread-streaming-shape')).toHaveCount(0);
   });
 
   test('shows web tool arguments and results as direct JSON', async ({ page }) => {
@@ -6895,7 +6884,7 @@ test.describe('canonical agent Thread surface', () => {
     const detail = page.locator('.thread-agent-detail');
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
     const pill = detail.locator('.thread-plan-progress-summary');
-    await expect(pill.locator('.working-text-base')).toHaveText('2/2 · Cross-check the citations');
+    await expect(pill.locator('.thread-plan-progress-label')).toHaveText('2/2 · Cross-check the citations');
 
     // With no composer to return to, Escape must still land focus somewhere
     // reachable rather than dropping it to the document body.
@@ -7025,10 +7014,10 @@ test.describe('canonical agent Thread surface', () => {
 
     const progress = page.locator('.thread-plan-progress-summary');
     // The persistent affordance is the current step's text, not a bare counter.
-    const workingLabel = progress.locator('.thread-plan-progress-label.working-text');
-    await expect(workingLabel.locator('.working-text-base'))
+    const workingLabel = progress.locator('.thread-plan-progress-label');
+    await expect(workingLabel)
       .toHaveText('2/24 · Implement the transient projection');
-    await expect(workingLabel.locator('.working-text-base')).toHaveCount(1);
+    await expect(progress.locator('.working-text')).toHaveCount(0);
     await expect(progress).toHaveAccessibleName('2/24 · Implement the transient projection');
     await expect(progress).toHaveAttribute('aria-expanded', 'false');
     await progress.hover();
@@ -7076,8 +7065,8 @@ test.describe('canonical agent Thread surface', () => {
     await checklist.press('Escape');
     await expect(progress).toHaveAttribute('aria-expanded', 'false');
     await expect(checklist).not.toBeVisible();
-    await expect(progress.locator('.thread-plan-progress-label.working-text')).toHaveCount(1);
-    await expect(progress.locator('.working-text-base'))
+    await expect(progress.locator('.working-text')).toHaveCount(0);
+    await expect(progress.locator('.thread-plan-progress-label'))
       .toHaveText('2/24 · Implement the transient projection');
     // Closing hands focus back to the composer, not to the pill: the Plan is a
     // transient status affordance, not a destination to be stranded in.
@@ -9517,7 +9506,7 @@ test.describe('terminal Thread history actions', () => {
       (await commandCalls(page)).filter((call) => call.cmd === 'turn/rerun').length
     )).toBe(1);
     await expect(page.locator(`[data-thread-turn-row="${failedTurnId}"]`)).toHaveCount(0);
-    await expect(page.getByLabel('Assistant is responding')).toBeVisible();
+    await expect(page.locator('.thread-process-title-live')).toContainText('Working');
     const calls = await commandCalls(page);
     expect(calls.filter((call) => call.cmd === 'turn/rerun')).toEqual([{
       cmd: 'turn/rerun',
@@ -9547,7 +9536,7 @@ test.describe('terminal Thread history actions', () => {
       (await commandCalls(page)).filter((call) => call.cmd === 'turn/continue').length
     )).toBe(1);
     await expect(page.locator(`[data-thread-turn-row="${failedTurnId}"]`)).toBeVisible();
-    await expect(page.getByLabel('Assistant is responding')).toBeVisible();
+    await expect(page.locator('.thread-process-title-live')).toContainText('Working');
     expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/continue')).toEqual([{
       cmd: 'turn/continue',
       args: { threadId: expect.any(String), turnId: failedTurnId },

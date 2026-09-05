@@ -158,6 +158,13 @@ describe('Turn motion ownership', () => {
     expect(turnMotionOwner(turn([]), [], anchors(turn([])), new Set())).toBe('summary');
   });
 
+  test('returns motion to the summary when live process content is folded', () => {
+    for (const item of [collaboration('tool', 'list_agents'), reasoning('thinking', [''])]) {
+      const live = turn([item]);
+      expect(turnMotionOwner(live, [item], anchors(live), new Set(), false)).toBe('summary');
+    }
+  });
+
   test('assigns a live tool or Subagent to the leaf', () => {
     const tool = collaboration('tool', 'list_agents');
     const activity = subagentActivity('activity', 'child-a');

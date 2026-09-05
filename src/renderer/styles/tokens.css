@@ -393,7 +393,6 @@
   --motion-working-cycle: 2.4s;
   --motion-working-delay: 300ms;
   --motion-pulse-cycle: 2.5s;
-  --motion-shape-cycle: 3s;
   --chrome-zone-backing-delay: var(--motion-layout-duration);
   --panel-size: 1;
   --panel-content-x: 28px;

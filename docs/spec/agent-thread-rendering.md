@@ -783,7 +783,8 @@ defaults to closed, and a live Agent's chip, elapsed time, and per-Agent Stop
 live inside it, so a Turn that settled while its child kept working (the
 fire-and-forget shape whose result lands in a later Turn) stays unfolded until
 that child settles. Work still happening and still stoppable is
-not history yet. Live and resultless process timelines remain visible; a live
+not history yet. Resultless terminal process timelines remain visible. A live
+process starts expanded and can be explicitly folded; a live
 timeline uses the established `Working` / `Working for ...` status row even
 before its first process Item arrives. A foreground `agent` call remains an
 ordinary in-progress chip while it blocks, saying that the Turn is waiting on
@@ -814,8 +815,11 @@ tool, empty `Thinking` placeholder, Subagent status, or readable streaming Item
 owns or statically suppresses that cue. Once a specific process representation
 exists, the Turn summary stays static. One synchronous `turnMotionOwner`
 classification assigns the live cue to the summary, a mapped leaf, or neither;
-the summary and response shape consume the same result without mount-time
-registration or a post-commit handoff. Completed collapsible summaries and
+the summary uses the actual process visibility without mount-time registration
+or a post-commit handoff. A folded live process gives motion to Working; an
+expanded process gives it to the latest running tool or its collapsed group.
+Only that running member moves when the group is expanded. Empty Thinking
+stays static while a running tool owns motion. Completed collapsible summaries and
 terminal summaries are always static. A live status title occupies its full
 divider width and uses tabular numerals, so its once-per-second elapsed update
 does not resize the visible title slot.
@@ -849,10 +853,10 @@ still opens for readability; that terminal default and the live-observation
 latch are Thread-session state, not persisted overrides. The empty placeholder
 carries the same classes as the populated one so the first token does not
 restyle the element. Provider recovery belongs to the matching Turn's response
-footer and replaces its rose generating indicator; request recovery reads
+footer; request recovery reads
 `Retrying {current}/{max}`, stream recovery reads
 `Reconnecting {current}/{max}`, and neither appends a second row below that
-indicator. While recovery is visible, that Turn renders every
+footer. While recovery is visible, that Turn renders every
 mapped working phrase through its ordinary static text branch, including a
 closed Plan outside the transcript, so the retry spinner is its sole motion
 owner. This arbitration is passed explicitly within one `ThreadView`; it never
@@ -865,22 +869,15 @@ live Turn. Its spinner honors
 `prefers-reduced-motion` and the state is cleared when a new Turn starts or the
 Thread list reloads, so it cannot outlive the attempt it describes.
 
-An active Turn ends with one rose shape indicator after all currently visible
-process and response content. It is the stable generating affordance for both
-empty and streaming responses; Markdown does not add a second caret. The
-indicator occupies the same persistent response-footer slot as the terminal
-Copy, Continue in new chat, and Open Trajectory controls, and swaps to those
-controls without moving the response. User-message actions likewise fill a
-persistent slot that remains empty and non-interactive while the Turn is live. The indicator
-stays present but static while that Turn has a `WorkingText` owner, and reconnect
-recovery replaces it in the same footer slot; one Turn therefore never presents
-two concurrent motion owners. Increased contrast removes the text sweep and
-therefore restores this shape's animation as the live motion cue for an eligible
-live Turn; a blocked or recovering Turn keeps the shape static in every contrast
-mode because it cannot claim progress. Reduced motion still stops both shape
-animations. The shape suppression query is the exact complement of
-`prefers-contrast: more`, so `less` and `custom` contrast modes retain the same
-single text-motion owner as the default mode. A failed or interrupted Turn
+An active Turn has no generating shape or synthetic empty response footer.
+Working, the specific live process item, or readable streaming prose supplies
+its progress cue. Existing response prose reserves its footer action slot
+without a glyph, so settlement cannot shift the answer. Terminal Copy, Continue in new chat, and Open Trajectory
+controls appear after settlement; provider retry retains its footer status.
+User-message actions fill a persistent slot that remains empty and
+non-interactive while the Turn is live. Reduced motion and increased contrast
+leave ordinary readable status text, with no replacement animation.
+A failed or interrupted Turn
 with partial response prose keeps its process presentation neutral because the
 response tail already owns the terminal error or stopped state.
 
@@ -1523,6 +1520,9 @@ copying, or any surface that installs its own focus target within a frame of
 the click (self-focusing popovers, dialogs, the inline message editor).
 Keyboard-activated clicks are never intercepted, and an active
 `request_user_input` suspends the hand-back entirely.
+An unmodified mouse disclosure activation preserves an already-focused composer
+through mousedown and click, avoiding a blur/refocus flash in its material.
+Selections, nested Thread views and keyboard activation keep their own focus.
 
 The same terminal model governs input history. A focused composer offers plain Up at
 its first visual line and plain Down at its last visual line as semantic history
@@ -1965,11 +1965,9 @@ affordance is **the current step's text**, not a bare counter: `2/5 · Draft the
 summary`, ellipsized to one line, on a fixed single-line height so it never
 reflows the composer. A Plan whose every step is complete reads as complete
 rather than as its last step. The current step is the first `in_progress` step,
-then the first `pending` one. An incomplete closed pill keeps `PlanToolIcon`
-static and applies `WorkingText` only to that summary label while the Turn is
-advancing. A Turn blocked on user input keeps the closed Plan summary static.
-Opening the Plan removes all Plan motion, and collapsing resumes only the
-summary sweep once the Turn is advancing again.
+then the first `pending` one. Both the `PlanToolIcon` and summary remain static
+in every disclosure state. The transcript's actual operation owns work motion;
+the Plan names its current step without competing with that cue.
 
 The pill also renders on a Thread that has **no composer** — a watched child or
 automation Thread — because `update_plan` is `anyThread`-scoped and such a

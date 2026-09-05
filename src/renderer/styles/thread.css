@@ -576,34 +576,6 @@
   gap: var(--space-6);
 }
 
-@keyframes thread-shape {
-  0%,
-  9% {
-    d: path("M 23.9 7.81 L 24.1 7.81 Q 28.87 7.81 30.57 12.27 L 37.28 29.8 Q 39.42 35.41 33.42 35.41 L 14.58 35.41 Q 8.58 35.41 10.72 29.8 L 17.43 12.27 Q 19.13 7.81 23.9 7.81 Z");
-  }
-  36%,
-  45% {
-    d: path("M 17.37 12.17 L 30.63 12.17 Q 35.83 12.17 35.83 17.37 L 35.83 30.63 Q 35.83 35.83 30.63 35.83 L 17.37 35.83 Q 12.17 35.83 12.17 30.63 L 12.17 17.37 Q 12.17 12.17 17.37 12.17 Z");
-  }
-  72%,
-  81% {
-    d: path("M 23.73 10.65 L 24.27 10.65 Q 37.35 10.65 37.35 23.73 L 37.35 24.27 Q 37.35 37.35 24.27 37.35 L 23.73 37.35 Q 10.65 37.35 10.65 24.27 L 10.65 23.73 Q 10.65 10.65 23.73 10.65 Z");
-  }
-  100% {
-    d: path("M 23.9 7.81 L 24.1 7.81 Q 28.87 7.81 30.57 12.27 L 37.28 29.8 Q 39.42 35.41 33.42 35.41 L 14.58 35.41 Q 8.58 35.41 10.72 29.8 L 17.43 12.27 Q 19.13 7.81 23.9 7.81 Z");
-  }
-}
-
-@keyframes thread-shape-spin {
-  0%,
-  9% { transform: rotate(0deg); }
-  36%,
-  45% { transform: rotate(120deg); }
-  72%,
-  81% { transform: rotate(240deg); }
-  100% { transform: rotate(360deg); }
-}
-
 .thread-process-block {
   max-width: 100%;
   color: var(--text-soft);
@@ -653,6 +625,10 @@
   transition: color var(--motion-fast);
 }
 
+.thread-process-toggle.is-live {
+  width: min(100%, 24ch);
+}
+
 .thread-process-toggle:hover,
 .thread-process-toggle:focus-visible {
   color: var(--text-strong);
@@ -678,60 +654,6 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--space-3);
-}
-
-.thread-streaming-indicator {
-  display: flex;
-  width: 14px;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-1) 0;
-  filter: drop-shadow(0 1px 1.5px color-mix(in srgb, var(--accent) 32%, transparent));
-}
-
-.thread-streaming-shape {
-  display: inline-block;
-  width: 20px;
-  height: 20px;
-  color: var(--accent);
-  transform-origin: center;
-  animation: thread-shape-spin var(--motion-shape-cycle) ease-in-out infinite;
-}
-
-.thread-streaming-shape path {
-  d: path("M 23.9 7.81 L 24.1 7.81 Q 28.87 7.81 30.57 12.27 L 37.28 29.8 Q 39.42 35.41 33.42 35.41 L 14.58 35.41 Q 8.58 35.41 10.72 29.8 L 17.43 12.27 Q 19.13 7.81 23.9 7.81 Z");
-  animation: thread-shape var(--motion-shape-cycle) ease-in-out infinite;
-}
-
-/* A blocked or recovering Turn cannot use WorkingText. Suppress the fallback
-   shape in every contrast mode so it never claims that progress is advancing
-   while the user or provider is the next required actor. */
-.thread-streaming-shape.is-motion-suppressed,
-.thread-streaming-shape.is-motion-suppressed path {
-  animation: none;
-}
-
-/* The owning Turn marks its own response glyph directly. The contrast query is
-   load-bearing: increased contrast removes WorkingText's sweep, so the response
-   shape resumes its animation for eligible live work unless reduced motion
-   independently stops it. */
-@media not (prefers-contrast: more) {
-  .thread-streaming-shape.is-working-text-owned,
-  .thread-streaming-shape.is-working-text-owned path {
-    animation: none;
-  }
-}
-
-.thread-shape-stop-0 {
-  stop-color: color-mix(in srgb, var(--accent) 76%, var(--text-on-accent));
-}
-
-.thread-shape-stop-1 {
-  stop-color: var(--accent);
-}
-
-.thread-shape-stop-2 {
-  stop-color: var(--accent-strong);
 }
 
 .thread-message-actions {
@@ -3147,6 +3069,16 @@
   background: var(--surface-inverse-strong);
 }
 
+.thread-composer .icon-button-composerAction.is-stop {
+  background: var(--fill-3);
+  color: var(--text-secondary);
+}
+
+.thread-composer .icon-button-composerAction.is-stop:hover:not(:disabled) {
+  background: var(--fill-4);
+  color: var(--text-primary);
+}
+
 .thread-composer .icon-button-composerAction:disabled {
   background: var(--fill-3);
   color: var(--bg-content);
@@ -3488,8 +3420,6 @@
     transition: none;
   }
 
-  .thread-streaming-shape,
-  .thread-streaming-shape path,
   .thread-provider-retry svg,
   .thread-composer-attachment-icon.is-pending svg {
     animation: none;

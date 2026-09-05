@@ -194,7 +194,8 @@ remain in the dock and never become authorization overlays.
 - **Working:** a named action that Tenon is actively advancing keeps its semantic
   glyph and puts motion on its action phrase through `WorkingText`. One normal,
   accessible text layer supplies its own paint-contained, background-clipped
-  smooth sweep: it starts after `300ms`, crosses in approximately `1.4s`, and
+  smooth sweep: a narrow `3em` band at `110deg` travels with eased entry/exit,
+  starts after `300ms`, crosses in approximately `1.4s`, and
   repeats every `2.4s`. Rendering the glyph only once is required; overlaid text
   copies change anti-aliasing density and look like a font-weight shift. The
   effect never animates transforms or masks, so a translucent parent material

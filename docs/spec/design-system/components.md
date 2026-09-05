@@ -191,7 +191,10 @@ chrome, overlays, selection handles, and HUD controls stay tokenized.
 
 Process summaries, tool-call disclosures, run activity rows, and similar compact
 status rows reserve one measured disclosure/status slot. Labels must not jump
-between rest, hover, focus, loading, and expansion. Stop/close actions in dense
+between rest, hover, focus, loading, and expansion. The shared tool slot remains
+14px, while its hover/open chevron uses the 15px row-chevron role to balance
+Iconoir's smaller native ink bounds against the 14px tool glyph. Both layers
+stay centered in the same slot. Stop/close actions in dense
 rows default to unboxed icon controls whose glyph colour deepens on hover/focus.
 Active tool and Subagent rows retain their semantic glyph and apply
 `WorkingText` only to the advancing action/status phrase; an in-progress tool
@@ -202,7 +205,13 @@ tool glyph deepens from `--text-faint` to `--text-soft`; its label does not
 change colour, weight, or geometry.
 A collapsed running group owns
 the sweep on its summary, while expansion freezes that summary and transfers the
-sweep to its running members. Finished members remain static.
+sweep to its latest running member. Finished members remain static. A folded
+live process transfers motion to its Working summary; an expanded process keeps
+that summary static while a visible operation owns motion. Plan summaries stay
+static. The composer Stop uses a row-sized filled Square in the existing
+circular hit target with neutral fill and text, avoiding the send button's
+inverse treatment. Unmodified mouse disclosures retain an already-focused
+composer so its focus material does not blink; keyboard focus remains native.
 Turn-local Plan progress uses the same compact status register above the
 composer; its level-1 checklist popover appears on hover or summary activation
 without moving the composer or transcript. The summary is a disclosure button;
