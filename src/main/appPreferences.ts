@@ -3,13 +3,14 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { decodeThreadConfigurationSummary } from '../core/agent/codec';
 import type { ThreadConfigurationSummary } from '../core/agent/protocol';
-import { isThemeMode, type ThemeMode } from '../core/theme';
+import type { ThemeMode } from '../core/theme';
 import { isLocale, type Locale } from '../core/locale';
 import { isTranslationLanguage, type TranslationLanguage } from '../core/translationLanguage';
 import {
   isUrlPageTranslationModel,
   type UrlPageTranslationPreferences,
 } from '../core/urlPageTranslation';
+import { loadFilePreferences, writeFilePreferences } from './configuration/filePreferences';
 import { writeJsonFileSync } from './jsonFileStore';
 
 // Persist app-level UI preferences across launches (stored in userData, which is
@@ -17,10 +18,6 @@ import { writeJsonFileSync } from './jsonFileStore';
 // the agent settings store (provider/runtime configuration and credentials).
 
 interface PersistedAppPreferences {
-  theme: ThemeMode;
-  // null = no explicit pick yet → the main process falls back to the OS locale
-  // (resolveSystemLocale) on first run; a concrete value pins the language.
-  language: Locale | null;
   // null follows the effective UI language until the user explicitly chooses a
   // webpage translation target.
   translationLanguage: TranslationLanguage | null;
@@ -34,9 +31,12 @@ interface PersistedAppPreferences {
   lastAgentThreadConfiguration: ThreadConfigurationSummary | null;
 }
 
+export interface AppPreferences extends PersistedAppPreferences {
+  readonly theme: ThemeMode;
+  readonly language: Locale | null;
+}
+
 const DEFAULTS: PersistedAppPreferences = {
-  theme: 'system',
-  language: null,
   translationLanguage: null,
   translationModel: null,
   autoTranslateUrls: false,
@@ -51,14 +51,19 @@ function preferencesFilePath(): string {
   return join(app.getPath('userData'), 'app-preferences.json');
 }
 
-export function loadAppPreferences(): PersistedAppPreferences {
-  if (currentPreferences) return { ...currentPreferences };
+export function loadAppPreferences(): AppPreferences {
+  if (currentPreferences) {
+    const file = loadFilePreferences(app.getPath('userData')).preferences;
+    return {
+      ...currentPreferences,
+      theme: file.appearance.theme,
+      language: isLocale(file.appearance.language) ? file.appearance.language : null,
+    };
+  }
   let loaded: PersistedAppPreferences;
   try {
     const parsed = JSON.parse(readFileSync(preferencesFilePath(), 'utf8')) as Partial<PersistedAppPreferences>;
     loaded = {
-      theme: isThemeMode(parsed.theme) ? parsed.theme : DEFAULTS.theme,
-      language: isLocale(parsed.language) ? parsed.language : DEFAULTS.language,
       translationLanguage: isTranslationLanguage(parsed.translationLanguage)
         ? parsed.translationLanguage
         : DEFAULTS.translationLanguage,
@@ -74,15 +79,24 @@ export function loadAppPreferences(): PersistedAppPreferences {
     loaded = { ...DEFAULTS };
   }
   currentPreferences = loaded;
-  return { ...loaded };
+  const file = loadFilePreferences(app.getPath('userData')).preferences;
+  return { ...loaded, theme: file.appearance.theme, language: isLocale(file.appearance.language) ? file.appearance.language : null };
 }
 
 export function saveThemePreference(theme: ThemeMode): void {
-  savePreferences({ theme });
+  const current = loadFilePreferences(app.getPath('userData')).preferences;
+  writeFilePreferences(app.getPath('userData'), {
+    ...current,
+    appearance: { ...current.appearance, theme },
+  });
 }
 
 export function saveLanguagePreference(language: Locale): void {
-  savePreferences({ language });
+  const current = loadFilePreferences(app.getPath('userData')).preferences;
+  writeFilePreferences(app.getPath('userData'), {
+    ...current,
+    appearance: { ...current.appearance, language },
+  });
 }
 
 export function saveTranslationLanguagePreference(translationLanguage: TranslationLanguage): void {
@@ -114,7 +128,15 @@ export function resetAppPreferencesForTests(): void {
 // failing to persist a UI preference is not worth surfacing an error; the in-memory
 // state (nativeTheme.themeSource / the broadcast locale) still applies this session.
 function savePreferences(patch: Partial<PersistedAppPreferences>): void {
-  const next: PersistedAppPreferences = { ...(currentPreferences ?? loadAppPreferences()), ...patch };
+  const current = currentPreferences ?? loadAppPreferences();
+  const persisted: PersistedAppPreferences = {
+    translationLanguage: current.translationLanguage,
+    translationModel: current.translationModel,
+    autoTranslateUrls: current.autoTranslateUrls,
+    autoTranslateEpubs: current.autoTranslateEpubs,
+    lastAgentThreadConfiguration: current.lastAgentThreadConfiguration,
+  };
+  const next: PersistedAppPreferences = { ...persisted, ...patch };
   currentPreferences = next;
   try {
     writeJsonFileSync(preferencesFilePath(), next, { pretty: false, trailingNewline: false });

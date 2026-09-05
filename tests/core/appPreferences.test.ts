@@ -27,6 +27,7 @@ const {
   saveTranslationLanguagePreference,
   saveUrlPageTranslationPreferences,
 } = await import('../../src/main/appPreferences');
+const { filePreferencesPath, loadFilePreferences } = await import('../../src/main/configuration/filePreferences');
 
 beforeEach(async () => {
   userData = await mkdtemp(path.join(tmpdir(), 'tenon-prefs-'));
@@ -49,7 +50,9 @@ describe('app preferences persistence', () => {
     });
 
     const raw = await readFile(path.join(userData, 'app-preferences.json'), 'utf8');
-    expect(raw).toBe('{"theme":"dark","language":"zh-Hans","translationLanguage":"ja","translationModel":"openai/gpt-4.1-mini","autoTranslateUrls":true,"autoTranslateEpubs":true,"lastAgentThreadConfiguration":null}');
+    expect(raw).toBe('{"translationLanguage":"ja","translationModel":"openai/gpt-4.1-mini","autoTranslateUrls":true,"autoTranslateEpubs":true,"lastAgentThreadConfiguration":null}');
+    expect(loadFilePreferences(userData).preferences.appearance).toEqual({ theme: 'dark', language: 'zh-Hans' });
+    expect(filePreferencesPath(userData)).toContain('config/settings.jsonc');
     expect(loadAppPreferences()).toEqual({
       theme: 'dark',
       language: 'zh-Hans',
