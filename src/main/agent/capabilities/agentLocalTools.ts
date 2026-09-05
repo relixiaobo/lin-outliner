@@ -1,5 +1,12 @@
 import type { AgentTool, AgentToolTextReplacement } from '../runtime/kernel/types';
-import type { ThreadResourceReference } from '../../../core/agent/protocol';
+import {
+  type BashTaskStatus,
+  bashTaskStatusForToolTaskState,
+} from '../../../core/agent/tools';
+import type {
+  ThreadResourceReference,
+  ToolTaskExecutionState,
+} from '../../../core/agent/protocol';
 import {
   MAX_TOOL_ARTIFACT_BYTES,
   type ToolArtifactSink,
@@ -67,7 +74,6 @@ import type {
   ToolTaskService,
 } from '../tasks/ToolTaskService';
 import type { ToolTaskSchedulerLimits, ToolTaskSchedulingPolicy } from '../tasks/toolTaskTypes';
-import type { ToolTaskExecutionState } from '../../../core/agent/protocol';
 import {
   parsePrivilegedDelegateCommand,
   type DelegateStateCommand,
@@ -374,7 +380,7 @@ export interface BashData {
   artifactWarnings?: string[];
   outputLimitExceeded?: boolean;
   command?: string;
-  taskStatus?: BackgroundTaskStatus | ToolTaskExecutionState;
+  taskStatus?: BashTaskStatus;
   exitCode?: number | null;
   startedAt?: string;
   completedAt?: string;
@@ -399,7 +405,7 @@ export interface LocalBashRunResult {
   artifactWarnings?: string[];
   outputLimitExceeded?: boolean;
   command?: string;
-  taskStatus?: BackgroundTaskStatus | ToolTaskExecutionState;
+  taskStatus?: BashTaskStatus;
   exitCode?: number | null;
   startedAt?: string;
   completedAt?: string;
@@ -482,7 +488,7 @@ interface BackgroundTask {
   declaredOutputSnapshot: DeclaredOutputSnapshot;
 }
 
-export type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
+export type BackgroundTaskStatus = BashTaskStatus;
 
 interface BashProcessHandle {
   child: ChildProcess;
@@ -2483,7 +2489,7 @@ async function startSupervisedBackgroundCommand(
     backgroundTaskId: task.taskId,
     backgroundedByUser: true,
     command: params.command,
-    taskStatus: task.state,
+    taskStatus: bashTaskStatusForToolTaskState(task.state),
     startedAt: new Date(task.startedAt).toISOString(),
     ...(task.completedAt === null ? {} : { completedAt: new Date(task.completedAt).toISOString() }),
     ...(task.exitCode === null ? {} : { exitCode: task.exitCode }),
@@ -2559,7 +2565,7 @@ async function runSupervisedForegroundCommand(
       interrupted: true,
       backgroundTaskId: settled.taskId,
       command: params.command,
-      taskStatus: settled.state,
+      taskStatus: bashTaskStatusForToolTaskState(settled.state),
       startedAt: new Date(settled.startedAt).toISOString(),
       returnCodeInterpretation: 'Command teardown is still settling in the background.',
       noOutputExpected: isSilentCommand(params.command),
