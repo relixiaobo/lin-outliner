@@ -27,7 +27,9 @@ Each feature includes its own consumers, failure recovery, and verification.
   preference store, or fixed quota of domain tools.
 - No application configuration profiles, project overrides, includes,
   interpolation, executable settings, remote administration, or cloud sync.
-  Existing Agent-definition scopes are owned by the Agent domain.
+  Root Configuration Profile scopes remain owned by the Agent domain.
+- No restoration of retired Agent types, Roles, per-type presentation or
+  execution selections, spawn-definition editors, or isolated-Skill settings.
 - No same-account security isolation through hidden paths, private JSON, or
   file permissions; no configuration-specific authorization state machine.
 - No new credential store or Keychain integration.
@@ -49,8 +51,8 @@ without treating them as the same kind of data.
 
 A value belongs in configuration when it describes a durable desired behavior
 or definition. It need not be scalar: model references, connection definitions,
-Agent templates, and Skill source bindings qualify. Executing an installation,
-signing in, deleting content, or probing a connection is an operation.
+root Configuration Profiles, and Skill source bindings qualify. Executing an
+installation, signing in, deleting content, or probing a connection is an operation.
 
 One source per value does not mean one file for the whole application. Domain
 owners supply definitions and apply their own values; shared file mechanics
@@ -92,14 +94,22 @@ The current userData root owns `config/settings.jsonc`,
 `config/status.json`. Packaged and dev paths use the same relative layout under
 their isolated roots. There is no additional global configuration directory.
 
-Agent definitions remain public domain files resolved by
-`AgentConfigurationLoader`: `agent/config.json` under userData and
-`.tenon/agent.json` for an explicit project. Their existing Profile/Role,
-presentation, execution-selection, and source-precedence semantics remain
-Agent-owned. Expose their paths, format, schema, source origin, and applicable
-status through that owner; never copy their desired fields into application
-settings. Project Agent configuration cannot override application settings.
-A root without an explicit project uses the user definition source.
+Root Agent configuration remains in public domain files: `agent/config.json`
+under userData and `.tenon/agent.json` for an explicit project. The surviving
+contract is named root Configuration Profiles, default Profile selection,
+instructions, capability ceilings, model/effort defaults, and root-only
+presentation. Project Profiles replace same-name user Profiles; a root without
+an explicit project uses the user source. Expose paths, format, schema, source
+origin, and status through the root configuration owner, without copying fields
+into application settings. A Profile's model pin specializes root execution
+under the precedence below; it does not override the application settings file.
+
+The prerequisite [approved delegation retirement](https://github.com/relixiaobo/lin-outliner/pull/620) removes
+Role-backed Agent types, their definitions, per-type presentation, and
+`agentExecution` selections. Do not preserve the old loader/writer contract as
+a whole or recreate its editors. Delegation uses Runner policy and fixed
+`general`/`explore`/`plan` Task Profiles, not configurable Agent identities.
+Task Profiles constrain intent and access; they contain no persona or model.
 
 | Desired information | Source | Applying owner |
 | --- | --- | --- |
@@ -108,7 +118,7 @@ A root without an explicit project uses the user definition source.
 | Local Skill bindings, including exact-Skill/container mode | Settings file | Skill source owner |
 | Non-secret model connections and default text/image model selection | Settings file | Models |
 | Installation-wide delegation defaults and Runner/model references | Settings file | Delegation policy owner |
-| User Agent definitions, presentation, and execution defaults | Agent definition files | Agent configuration owner |
+| Root Configuration Profiles, default Profile, and root-only presentation | Root Agent configuration files | Root configuration owner |
 | Command binding overrides | Keybindings file | Shortcut owner |
 
 Existing ten preference keys keep their names and meanings:
@@ -124,10 +134,11 @@ Structured additions are domain-owned definition groups: `models.connections`,
 qualification, with adapter, endpoint, enabled state, optional explicit model
 declarations, and non-secret credential references. This does not introduce a
 new connection identity space. Defaults reference Provider/model identity;
-automatic or inherited selection is an explicit choice. Skill bindings record
-a path and explicit `skill` or `container` mode, following the identity foundation.
+automatic or inherited selection has the domain-specific meaning below. Skill
+bindings record a path and explicit `skill` or `container` mode, following the
+identity foundation.
 
-Removing a connection or Agent definition removes future availability, not
+Removing a connection or root Profile removes future availability, not
 credentials, user files, or existing Sessions/history. Unbinding a Skill never
 deletes its directory. Installation records, provenance, catalog caches, recent
 selections, effective connection snapshots, and user content stay domain-owned.
@@ -176,7 +187,7 @@ are discoverable from this entry and directly from their relevant application
 surfaces; discovery does not eagerly load every domain. About and Help keep
 their platform homes. Keyboard Shortcuts opens its dedicated searchable editor.
 
-Scalar values use direct controls; connections, Agent definitions, Skill
+Scalar values use direct controls; connections, root Profiles, Skill
 bindings, and shortcuts use purpose-built editors over the same sources.
 Managers may be views or auxiliary windows. They share no cross-domain draft,
 save transaction, polling loop, failure state, or aggregate Settings DTO.
@@ -239,13 +250,17 @@ normal renderer updates. No renderer theme override mechanism is added. Memory,
 request policy, and update scheduling use their owner admission boundaries.
 Global Skill/tool selection affects later root Turns. The authoring Turn retains
 its admitted catalog so it can verify its change; explicit blocks still apply
-at each invocation. Agent definition defaults affect new executions at the
-Agent owner's existing snapshot boundary, never rewrite historical Sessions,
-and do not override an explicit current-Thread model choice.
+at each invocation. Root Profile defaults are snapshotted when a root Thread
+is created; edits do not rewrite existing Threads or their model choices.
+Delegation policy is snapshotted at Session creation; continuation retains its
+Runner/model and revalidates current authorization and capability ceilings.
+Disabling a Runner or losing its pinned model blocks continuation rather than
+rebinding the Session. No configuration edit rewrites Session history.
 
 Tool availability changes, including enable/reset, are ordinary configuration
 edits under the user's task authority. Removing a disabled entry does not waive
-Profile/Role ceilings, inherited restrictions, or explicit action blocks.
+root Profile ceilings, Task Profile restrictions, inherited Session ceilings,
+or explicit action blocks.
 Configuration reset needs no private disabled-tool baseline or approval digest.
 
 Root-only domain tools remain Host-enforced. Application configuration tasks
@@ -262,6 +277,57 @@ The Host validates the target/revision again after interaction; cancellation or
 lost settlement never becomes success. `request_user_input` is not an
 authorization primitive. A stronger security boundary requires a separate
 execution/storage-isolation design.
+
+### Model Selection And Defaults
+
+Resolve a new root Thread's Provider/model as one qualified selection, using
+this order. The selected root Configuration Profile is the explicitly requested
+Profile, otherwise the root owner's user/project default Profile.
+
+1. A model explicitly chosen for this new Thread, including a deliberate
+   composer selection or a caller's explicit model request.
+2. An explicit model pin in the selected root Configuration Profile. An omitted
+   model or `inherit` supplies no pin; selecting a Profile alone is not a model
+   override. Default-selected Profiles obey the same rule.
+3. An explicit `models.default` selection.
+4. In automatic mode only, a currently valid remembered root execution selection.
+5. The Models owner's automatic selection from runnable connections/catalogs.
+   If none is runnable, show model setup/unavailability rather than starting work.
+
+`models.default` defaults to `auto`; removing the override or choosing `auto`
+restores steps 4-5 when no explicit request/Profile pin applies. Setting a pin
+does not erase history. Automatic Thread creation does not record the resolved
+default as a new user choice; remembered selection changes only after a
+deliberate user selection. The composer must distinguish a displayed inherited
+default or remembered suggestion from a choice made for this new Thread, so it
+cannot promote old UI state into an explicit request. Reset may therefore use
+the still-valid last user choice, without mutating any existing Thread.
+
+An explicit Provider-only request constrains every candidate to that Provider;
+it does not permit an unrelated application default or memory to select another
+Provider. Use a compatible Profile pin, then a compatible application pin, then
+that Provider's automatic path. For a Provider-only request, a selected Profile
+pin in another Provider is a conflict, not a hint to discard. A qualified explicit
+model identifies its Provider; mismatched explicit pairs are rejected. A winning
+explicit request, Profile, or application pin that is unavailable starts no
+model request and reports that choice, never
+falling through to memory or automatic selection. Only automatic candidates may
+skip stale/unavailable entries. Profile lookup failures are likewise not hidden.
+
+Effort follows explicit request, explicit Profile effort, remembered effort only
+when memory wins, then the winning model's supported default. Never combine A's
+model with B's remembered Provider or effort. Explicit unsupported effort reports
+a validation failure instead of silently changing the requested selection.
+
+The composer preview and Thread admission share this resolver and report the
+winning source. `models.default` status proves the application default is ready
+for inheriting new Threads, not that it overrides an explicit request/Profile.
+Revalidate selection and readiness at admission. Existing Threads retain their
+snapshots and explicit model changes; changing a default never retargets them.
+Delegation's internal `Inherit parent` copies the parent's effective model/effort
+at Session creation, not `models.default`; explicit Runner policy and pinned
+Session continuation retain the delegation owner's contract. Image defaults use
+the image owner's resolver and never consume root-composer history.
 
 ### Models: Bootstrap, Credentials, And Connection Recovery
 
@@ -301,7 +367,11 @@ older enabled snapshot. Selecting an unavailable model retains the desired
 choice and reports unavailability; it never silently substitutes another model.
 A user request to replace a working connection may retain its previous effective
 selection while verification is pending, visibly distinguished from the desired
-selection. In-flight work keeps its already resolved snapshot.
+selection. This recovery state is not a fallback for a newly pinned different
+model: new root admission follows the precedence and unavailability rules above.
+An existing model may keep using its previous complete active connection during
+connection replacement, with the pending replacement shown. In-flight work
+keeps its already resolved snapshot.
 
 Recovery and garbage collection retain credentials/snapshots referenced by
 accepted recovery input, configured/active connections, probes, or in-flight
@@ -365,7 +435,7 @@ ceilings. Missing authority is reported, never bypassed through private files.
 | Connection create/edit/disable/remove and model declarations | Settings edit | Models source editor |
 | Provider/model catalog, readiness, test, refresh | Models operation | Models |
 | New key, current-request key, reveal/copy/delete, OAuth | Sensitive Models operation / native interaction | Models / credential owner |
-| Agent identity, instructions, presentation, ceilings, execution defaults, duplicate/remove definition | Agent definition edit | Agents / configuration owner |
+| Root Profile selection/editing, instructions, ceilings, model/effort defaults, and root-only presentation | Root configuration file edit | Agents / root configuration owner |
 | Delegation defaults, Runner selection, limits and scheduling policy | Settings edit; readiness inspection | Agents / delegation owner |
 | Skill source bind/unbind | Settings edit with explicit binding mode | Skills / source owner |
 | Skill discovery/status, install/update/review/rollback/uninstall | Skill operation / acquisition interaction | Skills / lifecycle owner |
@@ -382,9 +452,11 @@ ceilings. Missing authority is reported, never bypassed through private files.
 A clean-userData Models bootstrap is the explicit prerequisite for model-driven
 routes. Every other limitation must be a named permission, missing resource,
 context, or operation result, not an unspecified future human-only capability.
-Derive coverage tests from live controls, definition registries, canonical tool
-contracts, delegation policy, and command handlers. Include hidden configurable
-fields, not just visible UI rows.
+Derive coverage tests from post-retirement controls, definition registries,
+canonical tool contracts, delegation policy, and command handlers. Include
+hidden configurable fields, not just visible UI rows. Retired Role/Agent-type
+CRUD, per-type presentation/execution, and isolated-Skill fields are absence
+assertions, not capabilities to restore for coverage.
 
 ### Delivery And Retirement
 
@@ -395,8 +467,8 @@ Protected shared interfaces still follow the repository's coordination rule.
 | Unit | Independently useful result | Dependencies / scope |
 | --- | --- | --- |
 | A. File-backed preferences | Existing preference controls plus root Agent file edits, schema/status/recovery, configuration Skill, global availability, request/update policy | Configuration modules and preference consumers; FR-1 through FR-4, FR-6; removes migrated fields from old stores immediately |
-| B. Model configuration and bootstrap | File-backed connection/default definitions, complete Models UI, auth/test/catalog operations, sensitive input, complete snapshot recovery | A; Provider/credential/catalog/image owners and Tool/Trajectory boundary; FR-2, FR-5, FR-6, FR-12 |
-| C. Agent configuration | Public Agent-source discovery/schema/status, structural UI edits, declaration workflows, file-backed delegation defaults, access inspection/block operations | A and final delegation runtime; Agent loader/writer, policy and Access owners; FR-2 through FR-6 |
+| B. Model configuration and bootstrap | File-backed connection/default definitions, shared composer/admission precedence, complete Models UI, auth/test/catalog operations, sensitive input, complete snapshot recovery | A; Provider/credential/catalog/image owners, root start defaults, and Tool/Trajectory boundary; FR-2, FR-5, FR-6, FR-12 |
+| C. Root configuration and delegation policy | Public root-source discovery/schema/status and structural UI edits, file-backed Runner/Session defaults, access inspection/block operations; no Agent-type editor | A and final delegation runtime; surviving root Profile/presentation, delegation policy, and Access owners; FR-2 through FR-6 |
 | D. Skill configuration and lifecycle | File-backed exact source bindings, one availability predicate, complete Agent install/update/reversal/provenance routes and human editor | A and Skill identity foundation; Skill owners; FR-2 through FR-6 |
 | E. Memory, data, and contextual operations | Complete Memory, Data, update, diagnostics, and preview Translation jobs through their actual owners | A; preserve preview shell and use owner-local contracts; FR-5 through FR-7 |
 | F. Configurable shortcuts | Full file/UI/Agent remapping, registry/hint parity, physical recording, safe system registration | A; shortcut and launcher owners; FR-8, FR-9 |
@@ -422,13 +494,18 @@ G removes Settings-category routing, aggregate sender admission, broad
 `lin:settings-changed` broadcasts, polling/badges/feedback coupling, and domain
 components whose names falsely imply Settings ownership. Domain-owned services
 and auxiliary-window primitives remain reusable.
+Root configuration schemas, editors, and source handlers must continue to reject
+retired Roles and per-Agent-type presentation/execution after C; Skill owners
+likewise keep isolated-Skill fields retired. No compatibility decoder or
+replacement entity restores them.
 
 ## Requirements
 
 - **FR-1:** Public sources, validation, observation, recovery, and per-entry
   status implement the saved/accepted/effective contract.
 - **FR-2:** Declarative preferences and structured definitions have one desired
-  source, decoder, default, and applying owner.
+  source, decoder, default, and applying owner. Root model admission obeys the
+  declared precedence; configuration coverage excludes retired Agent entities.
 - **FR-3:** UI and Agent edits converge on public files without a Settings CLI,
   second preference store, or general Agent setter.
 - **FR-4:** The configuration Skill routes files and operations using current
@@ -462,7 +539,8 @@ and auxiliary-window primitives remain reusable.
   desired bytes survive; one unresolved resource does not block unrelated keys.
 - **AC-4 (FR-1, FR-2):** Theme/language apply live, owner policies apply at their
   declared boundary, later Turns use new availability, and the authoring Turn
-  can verify its change. Agent definitions preserve existing snapshot semantics.
+  can verify its change. Root Profiles affect new Threads; delegation defaults
+  affect new Sessions, with authorization revalidated on continuation.
 - **AC-5 (FR-2, FR-6):** Enable/reset uses the ordinary source path, cannot
   override inherited ceilings or explicit blocks, and creates no confirmation
   baseline. Tests distinguish catalog availability from OS authority.
@@ -516,6 +594,23 @@ and auxiliary-window primitives remain reusable.
   adapter, auth, model inputs, selection, and credential together; stale probes,
   source-write failure, explicit disable/remove, credential rotation, in-flight
   requests, and crash cleanup never produce a mixed or resurrected connection.
+- **AC-23 (FR-2, FR-5, FR-10):** Root Profiles, default Profile selection,
+  instructions, ceilings, model/effort defaults, and root-only presentation
+  remain editable through both UI and file.
+  Post-delegation guards find no Role/Agent-type CRUD, per-type presentation or
+  execution editor/schema, or isolated-Skill settings, even with Delegation off.
+  Task Profiles cannot acquire persona/model fields; new Runner defaults do not
+  rebind existing Sessions, and disabled/unavailable policies block continuation.
+- **AC-24 (FR-1, FR-2, FR-11):** After deliberately choosing model B, setting
+  `models.default` to runnable A makes the composer preview and a new unqualified
+  root Thread use A, while the existing B Thread remains B. Run this through
+  both UI and Agent edits, with the composer already open and across restart.
+  A fresh explicit B request or Profile pin wins over A; an inheriting Profile
+  uses A. Removing the override or choosing `auto` restores still-valid B history;
+  stale automatic history may use another runnable candidate. Unavailable pins,
+  missing Profiles, incompatible explicit Provider/Profile pairs, and unsupported
+  explicit effort fail without silent fallback. Provider-only requests stay in
+  their Provider, and no outcome mixes models with another selection's effort.
 
 ## Risks And Collisions
 
@@ -531,8 +626,11 @@ and auxiliary-window primitives remain reusable.
 The collision check finds #626 claiming this design file and #628 implementing
 Agent delegation across `agentSettings`, Agent Settings UI, capability/runtime,
 protocol, and shared types. #628 lands before overlapping C work; the plan
-preserves its final Runner, Session, execution, and CLI contracts. Its execution
-CLI is outside the prohibited Settings/Configuration CLI surface.
+consumes its surviving root configuration and final Runner, Session, execution,
+and CLI contracts, not the retired Role/Agent-type definitions. Its execution
+CLI is outside the prohibited Settings/Configuration CLI surface. B updates
+`resolveRendererThreadStartDefaults` and its callers/tests so remembered choices
+cannot bypass the new application default or Profile pin.
 
 Merged #627 owns exact-or-unavailable Trajectory evidence. Before B registers
 sensitive input, coordinate the shared persistence contract so raw credential
@@ -544,14 +642,14 @@ and managed-Skill progress behavior for B and D. Contextual Translation follows
 the merged preview-shell baseline.
 
 Expected touched areas are the configuration modules, `appPreferences`,
-`agentSettings`, `AgentConfigurationLoader`/`AgentConfigurationWriter`,
+`agentSettings`, the surviving root configuration loader/writer and start resolver,
 Provider/credential/catalog/image owners, Skill/Memory/Access/Updates/Data owners,
 Agent execution context and tool contributions, shortcut/launcher owners,
 Settings/domain UI and routing, preload, tests, and affected specs. Coordinate
 shared tool/action/protocol/types and infrastructure files before implementation.
 Recheck open claims before each unit; no cross-clone filesystem changes.
 
-At integration, main updates the board's obsolete two-unit ordering and the
+At integration, main reconciles the board's delivery ordering and the
 working-state consumer ownership. This design change does not edit the
 main-owned board or changelog. Specs describe current behavior until each
 implementation unit lands and folds its design into them.
