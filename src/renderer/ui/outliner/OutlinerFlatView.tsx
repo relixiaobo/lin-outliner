@@ -58,6 +58,7 @@ import {
   type FlatGuideGeometry,
   type FlatGuideMeasurement,
 } from './flatGuideGeometry';
+import { registerOutlinerScrollListener } from './outlinerScrollDispatcher';
 
 // Below this many rows, windowing overhead is not worth it: render the whole flat
 // list in normal flow (rows are direct `.outliner` children, like the recursive
@@ -721,18 +722,16 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
       console.log('[flat] scroller=', parent?.className ?? parent?.tagName ?? 'none');
     }
     updateScrollMetrics();
-    // `scroll` events do not bubble, and the element that actually scrolls may be
-    // an ancestor/descendant of the passed container, so listen in the capture
-    // phase on the window — that receives scroll from any element in the tree.
-    const onScroll = () => scheduleScrollMetrics();
-    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    // `scroll` events do not bubble; the shared capture dispatcher routes only
+    // events belonging to this view's scroll container.
+    const unregisterScroll = registerOutlinerScrollListener(resolveScroller, scheduleScrollMetrics);
     let observer: ResizeObserver | undefined;
     if (parent && typeof ResizeObserver !== 'undefined') {
       observer = new ResizeObserver(() => updateScrollMetrics());
       observer.observe(parent);
     }
     return () => {
-      window.removeEventListener('scroll', onScroll, { capture: true });
+      unregisterScroll();
       observer?.disconnect();
       if (scrollFrameRef.current !== null) {
         window.cancelAnimationFrame(scrollFrameRef.current);

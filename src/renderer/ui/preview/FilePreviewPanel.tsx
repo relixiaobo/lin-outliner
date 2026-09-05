@@ -219,7 +219,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     stickyBreadcrumbRef,
     titleDocked,
     titleRowRef,
-    updateTitleDockedState,
   } = usePanelTitleDock();
   const [breadcrumbExpanded, setBreadcrumbExpanded] = useState(false);
   const targetKey = useMemo(() => previewTargetFallbackKey(props.target), [props.target]);
@@ -327,7 +326,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   }, []);
 
   const handlePanelScroll = () => {
-    updateTitleDockedState();
+    requestTitleDockMeasure();
     if (restoringScrollRef.current) return;
     if (!props.onScrollPositionChange || scrollReportFrameRef.current !== null) return;
     scrollReportFrameRef.current = window.requestAnimationFrame(() => {

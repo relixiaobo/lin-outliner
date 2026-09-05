@@ -80,6 +80,34 @@ function readAnchorRect(options: UseAnchoredOverlayOptions): OverlayAnchorRect |
     : null;
 }
 
+function sameOverlayStyle(left: CSSProperties, right: CSSProperties): boolean {
+  return left.position === right.position
+    && left.left === right.left
+    && left.top === right.top
+    && left.width === right.width
+    && left.maxHeight === right.maxHeight;
+}
+
+function isViewportScrollTarget(target: EventTarget | null): boolean {
+  return target === window
+    || target === document
+    || target === document.documentElement
+    || target === document.body;
+}
+
+function scrollTargetAffectsAnchor(target: EventTarget | null, options: UseAnchoredOverlayOptions): boolean {
+  if (isViewportScrollTarget(target)) return true;
+  const anchor = options.anchorRef?.current;
+  if (!anchor || !(anchor instanceof Node)) return true;
+  if (!(target instanceof Node)) return false;
+  let current: Node | null = anchor;
+  while (current) {
+    if (current === target) return true;
+    current = current.parentNode;
+  }
+  return false;
+}
+
 export function overlayAnchorFromPoint(x: number, y: number): OverlayAnchorRect {
   return {
     bottom: y,
@@ -108,7 +136,7 @@ export function useAnchoredOverlay(
     const update = () => {
       const anchor = readAnchorRect(options);
       if (!anchor) {
-        setStyle(HIDDEN_STYLE);
+        setStyle((current) => sameOverlayStyle(current, HIDDEN_STYLE) ? current : HIDDEN_STYLE);
         return;
       }
 
@@ -181,26 +209,38 @@ export function useAnchoredOverlay(
       if (options.width === 'content') {
         measuredContentLayoutKeyRef.current = options.layoutKey;
       }
-      setStyle({
+      const nextStyle: CSSProperties = {
         position: 'fixed',
         left,
         top,
         width,
         maxHeight,
-      });
+      };
+      setStyle((current) => sameOverlayStyle(current, nextStyle) ? current : nextStyle);
     };
 
     const requestFrame = window.requestAnimationFrame ?? ((callback: FrameRequestCallback) => window.setTimeout(() => callback(Date.now()), 0));
     const cancelFrame = window.cancelAnimationFrame ?? ((handle: number) => window.clearTimeout(handle));
+    let frame: number | null = null;
+    const scheduleUpdate = () => {
+      if (frame !== null) return;
+      frame = requestFrame(() => {
+        frame = null;
+        update();
+      });
+    };
+    const onScroll = (event: Event) => {
+      if (!scrollTargetAffectsAnchor(event.target, options)) return;
+      scheduleUpdate();
+    };
 
-    update();
-    const frame = requestFrame(update);
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
+    scheduleUpdate();
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', scheduleUpdate);
     return () => {
-      cancelFrame(frame);
-      window.removeEventListener('scroll', update, true);
-      window.removeEventListener('resize', update);
+      if (frame !== null) cancelFrame(frame);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', scheduleUpdate);
     };
   }, [
     options.anchorRect,
