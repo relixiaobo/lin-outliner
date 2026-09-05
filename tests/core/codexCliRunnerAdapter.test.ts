@@ -65,6 +65,35 @@ describe('Codex CLI Runner adapter', () => {
     expect(adapter.ready).toBe(false);
   });
 
+  test('fails closed when an asynchronous capability probe rejects', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-codex-adapter-probe-rejection-'));
+    const executable = join(root, 'codex');
+    await writeFile(executable, [
+      '#!/bin/sh',
+      'if [ "$1" = "--version" ]; then echo "codex-cli 0.153.4"; exit 0; fi',
+      'if [ "$1" = "features" ]; then printf "skip_host_skill_discovery\\n multi_agent\\n hooks\\n apps\\n browser_use\\n computer_use\\n"; exit 0; fi',
+      'exit 0',
+    ].join('\n'), 'utf8');
+    await chmod(executable, 0o700);
+    await writeFile(join(root, 'config.toml'), [
+      'model_provider="custom"', '[model_providers.custom]',
+      'base_url="https://provider.invalid/v1"', 'wire_api="responses"', 'requires_openai_auth=true',
+    ].join('\n'));
+    try {
+      const adapter = createCodexCliRunnerAdapter({
+        executable,
+        cwd: root,
+        env: { HOME: root, CODEX_HOME: root, PATH: root },
+        capabilityProbe: async () => { throw new Error('fixture probe rejected'); },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(adapter.ready).toBe(false);
+      expect(adapter.diagnostic).toContain('fixture probe rejected');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('normalizes a successful JSONL fixture and stores the continuation identity', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-codex-adapter-test-'));
     const executable = join(root, 'codex');

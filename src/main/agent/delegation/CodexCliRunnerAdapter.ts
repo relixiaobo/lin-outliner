@@ -95,12 +95,23 @@ export function createCodexCliRunnerAdapter(options: CodexCliRunnerOptions = {})
         : Promise.resolve(result(input, options.now?.() ?? Date.now(), options.now?.() ?? Date.now(), 'failed', null, adapter.diagnostic ?? 'Codex capability probe is not ready.', ''))
       : undefined,
   };
+  const rejectCapability = (error: unknown) => {
+    capability = {
+      ok: false,
+      diagnostic: `Codex capability probe failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  };
+  const acceptCapability = (next: CodexCapabilityProbeResult) => { capability = next; };
   if (baseReady && options.capabilityProbe) {
-    const value = options.capabilityProbe();
-    if (value instanceof Promise) void value.then((next) => { capability = next; });
-    else capability = value;
+    try {
+      const value = options.capabilityProbe();
+      if (value instanceof Promise) void value.then(acceptCapability, rejectCapability);
+      else acceptCapability(value);
+    } catch (error) {
+      rejectCapability(error);
+    }
   } else if (baseReady && executable) {
-    void runCodexCapabilityProbe(executable, options.env ?? process.env).then((next) => { capability = next; });
+    void runCodexCapabilityProbe(executable, options.env ?? process.env).then(acceptCapability, rejectCapability);
   }
   return adapter;
 }
