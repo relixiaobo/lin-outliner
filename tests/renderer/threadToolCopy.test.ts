@@ -409,6 +409,10 @@ describe('group summaries name up to two subjects, then elide', () => {
       dynamic('file_edit', { file_path: '/w/node-a.md' }, 'completed', { id: 'n-1' }),
       dynamic('skill', { skill: 'dataviz' }, 'completed', { id: 's-1' }),
     ], 'Edited node-a.md · read a.md · used the dataviz skill'],
+    ['mixed web operations keep separate verbs', [
+      dynamic('web_search', { query: 'a' }, 'completed', { id: 'mixed-web-search' }),
+      dynamic('web_fetch', { url: 'https://example.com/a' }, 'completed', { id: 'mixed-web-fetch' }),
+    ], 'Searched for "a" · fetched https://example.com/a'],
     ['two skills fall back to a count', [
       dynamic('skill', { skill: 'dataviz' }, 'completed', { id: 's-1' }),
       dynamic('skill', { skill: 'run' }, 'completed', { id: 's-2' }),
@@ -421,6 +425,10 @@ describe('group summaries name up to two subjects, then elide', () => {
       dynamic('web_search', { query: 'a' }, 'completed', { id: 'w-3' }),
       dynamic('web_search', { query: 'a' }, 'completed', { id: 'w-4' }),
     ], 'Searched for 2 queries'],
+    ['same web query keeps settled and running calls', [
+      dynamic('web_search', { query: 'a' }, 'completed', { id: 'w-5' }),
+      dynamic('web_search', { query: 'a' }, 'inProgress', { id: 'w-6' }),
+    ], 'Searched for "a" · searching for "a"'],
     ['unnameable reads count instead', [
       dynamic('file_read', {}, 'completed', { id: 'u-1' }),
       dynamic('file_read', {}, 'completed', { id: 'u-2' }),
@@ -450,4 +458,16 @@ describe('group summaries name up to two subjects, then elide', () => {
   for (const [name, items, expected] of cases) {
     test(name, () => expect(summarizeThreadToolActivity(items, labels)).toBe(expected));
   }
+
+  test('keeps the full query list in the group title while the row uses a count', () => {
+    const items = [
+      dynamic('web_search', { query: 'a' }, 'completed', { id: 'title-a' }),
+      dynamic('web_search', { query: 'b' }, 'completed', { id: 'title-b' }),
+    ];
+    expect(summarizeThreadToolActivity(items, labels)).toBe('Searched for 2 queries');
+    expect(summarizeThreadToolActivity(items, labels, undefined, {
+      subjectLimit: Number.POSITIVE_INFINITY,
+      showWebQueryList: true,
+    })).toBe('Searched for "a", "b"');
+  });
 });

@@ -1469,6 +1469,8 @@ export const zhHans: PartialMessages = {
         updatedPlan: ({ count }) => count === 1 ? '更新了计划' : `更新了 ${count} 次计划`,
         searchingWebActivity: '正在搜索网页',
         searchedWebActivity: '已搜索网页',
+        searchingWebQueries: ({ count }) => `正在搜索 ${count} 个查询`,
+        searchedWebQueries: ({ count }) => `已搜索 ${count} 个查询`,
         collaborating: ({ count }) => `正在与 ${count} 个智能体协作`,
         collaborated: ({ count }) => `与 ${count} 个智能体完成了协作`,
         usingSkills: ({ count }) => `正在使用 ${count} 个技能`,

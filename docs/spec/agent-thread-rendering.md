@@ -491,7 +491,10 @@ reach it.
   subjects are nameable, the summary counts instead of naming: a partly-named
   summary would read as if the unnamed work never happened. A grouped web
   search states its call count ("Searched for 2 queries") while its full query
-  list remains in the row title, so multiple calls cannot look like one search
+  list remains in the row title, so multiple calls cannot look like one
+  search. A mixed operation group keeps one short segment per operation (for example,
+  "Edited node-a.md · read a.md · searched for \"a\"") rather than collapsing
+  different tools into a generic count
 - terminal status is **one** idiom for every tool kind — the act, then the
   outcome as an annotation (`Read intro.xhtml · failed`) — rather than a
   per-kind failure sentence. A scanning user learns the pattern once. The act

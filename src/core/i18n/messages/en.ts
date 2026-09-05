@@ -1572,6 +1572,8 @@ export const en = {
           count === 1 ? 'Updated the plan' : `Updated the plan ${count} times`,
         searchingWebActivity: 'Searching the web',
         searchedWebActivity: 'Searched the web',
+        searchingWebQueries: ({ count }: { count: number }) => `Searching for ${count} queries`,
+        searchedWebQueries: ({ count }: { count: number }) => `Searched for ${count} queries`,
         collaborating: ({ count }: { count: number }) => `Working with ${count === 1 ? 'an agent' : `${count} agents`}`,
         collaborated: ({ count }: { count: number }) => `Worked with ${count === 1 ? 'an agent' : `${count} agents`}`,
         usingSkills: ({ count }: { count: number }) => `Using ${count === 1 ? 'a skill' : `${count} skills`}`,
