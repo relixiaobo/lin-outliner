@@ -54,10 +54,10 @@ export async function runCodexCapabilityProbe(
         skillCanary: JSON.stringify(body.input ?? null).includes(CANARY),
       });
       const message = forceTools && step === 0
-        ? { type: 'custom_tool_call', id: `patch_${step}`, call_id: `call_${step}`, name: 'apply_patch', input: `*** Begin Patch\n*** Add File: ${patchTarget}\n+canary\n*** End Patch` }
+        ? { type: 'custom_tool_call', id: `patch_${requests.length}`, call_id: `patch_call_${requests.length}`, name: 'apply_patch', input: `*** Begin Patch\n*** Add File: ${patchTarget}\n+canary\n*** End Patch` }
         : forceTools && step === 1
-          ? { type: 'function_call', id: `question_${step}`, call_id: `call_${step}`, name: 'request_user_input', arguments: JSON.stringify({ questions: [{ id: 'canary', header: 'Canary', question: 'Fixture?', options: [{ label: 'A', description: 'A' }] }] }) }
-          : { type: 'message', id: `message_${step}`, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'PROBE_OK', annotations: [] }] };
+          ? { type: 'function_call', id: `question_${requests.length}`, call_id: `question_call_${requests.length}`, name: 'request_user_input', arguments: JSON.stringify({ questions: [{ id: 'canary', header: 'Canary', question: 'Fixture?', options: [{ label: 'A', description: 'A' }] }] }) }
+          : { type: 'message', id: `message_${requests.length}`, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'PROBE_OK', annotations: [] }] };
       step += 1;
       const events = [
         { type: 'response.created', response: { id: `response_${step}`, status: 'in_progress', output: [] } },
@@ -103,6 +103,7 @@ export async function runCodexCapabilityProbe(
     // Prime the CLI's skill discovery path once, then prove the explicit
     // canonical SKILL.md disablement on fresh and resumed Turns.
     await runProcess(executable, ['exec', ...config.slice(0, -2), '--sandbox', 'read-only', '-'], { cwd, env: probeEnv });
+    requests.length = 0;
     forceTools = true;
     step = 0;
     const first = await runProcess(executable, ['exec', ...config, '--sandbox', 'read-only', '-'], { cwd, env: probeEnv });
@@ -111,13 +112,14 @@ export async function runCodexCapabilityProbe(
     const second = firstId ? await runProcess(executable, ['exec', 'resume', ...resumeConfig, '--config', 'sandbox_mode="read-only"', firstId, '-'], { cwd, env: probeEnv }) : null;
     step = 0;
     const writable = firstId ? await runProcess(executable, ['exec', 'resume', ...resumeConfig, '--config', 'sandbox_mode="workspace-write"', firstId, '-'], { cwd, env: probeEnv }) : null;
-    const closedRequests = requests.slice(1);
+    const closedRequests = requests;
     const expectedTools = closedRequests.length > 0 && closedRequests.every((request) => request.tools.join(',') === 'request_user_input,apply_patch');
     const skillClosed = closedRequests.length > 0 && closedRequests.every((request) => !request.skillCanary);
     const readOnlyClosed = !await access(patchTarget).then(() => true, () => false) && (first.stderr + (second?.stderr ?? '')).includes('writing is blocked by read-only sandbox');
+    const questionClosed = [first, second, writable].some((execution) => execution?.stderr.includes('request_user_input is unavailable in Default mode'));
     const resumeStable = Boolean(firstId && second?.threadId === firstId && writable?.threadId === firstId);
-    if (first.code !== 0 || second?.code !== 0 || writable?.code !== 0 || !expectedTools || !skillClosed || !readOnlyClosed || !resumeStable) {
-      return { ok: false, diagnostic: `Codex capability probe failed (exit=${first.code}/${second?.code}/${writable?.code}, requests=${requests.length}, tools=${requests.map((request) => request.tools.join(',')).join('|')}, skill=${skillClosed}, readOnly=${readOnlyClosed}, resume=${resumeStable}, stderr=${(second?.stderr ?? first.stderr).slice(0, 240)}).` };
+    if (first.code !== 0 || second?.code !== 0 || writable?.code !== 0 || !expectedTools || !skillClosed || !readOnlyClosed || !questionClosed || !resumeStable) {
+      return { ok: false, diagnostic: `Codex capability probe failed (exit=${first.code}/${second?.code}/${writable?.code}, requests=${requests.length}, tools=${requests.map((request) => request.tools.join(',')).join('|')}, skill=${skillClosed}, readOnly=${readOnlyClosed}, question=${questionClosed}, resume=${resumeStable}, stderr=${(second?.stderr ?? first.stderr).slice(0, 240)}).` };
     }
     return { ok: true, diagnostic: '' };
   } catch (error) {
