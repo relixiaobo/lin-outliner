@@ -61,9 +61,20 @@ Publish an `AdapterCapabilityMap` covering only the admitted subset:
 - cwd is passed with `--cd` and the model only with the Settings-resolved
   `--model` value;
 - non-interactive execution uses `exec`, stdin prompt input, and `--json`;
-- user configuration is replaced by a controlled closed configuration, with
-  `--ignore-user-config`, rules/hooks/extensions disabled or explicitly
-  neutralized only where the version-bound probe proves the result;
+- the run uses a controlled user-level config/profile layer rather than
+  `--ignore-user-config`: official Codex behavior says that flag ignores the
+  entire `config.toml`, including `model_provider` and `model_providers`, while
+  authentication still reads from `CODEX_HOME`;
+- the controlled layer explicitly sets the selected custom provider fields,
+  `features.multi_agent = false`, `features.hooks = false`, `features.apps =
+  false`, `web_search = "disabled"`, `history.persistence = "none"`, and a
+  narrow shell environment policy; project rules are still excluded with
+  `--ignore-rules`;
+- every configured MCP server, plugin, skill, notification hook, and other
+  extension must be absent or explicitly disabled. Codex only exposes
+  per-server MCP disablement (`mcp_servers.<id>.enabled`), so if the adapter
+  cannot enumerate and close the complete extension set it remains Not Ready
+  rather than reusing the user's full config;
 - native Agent/multi-agent, background, MCP, network, and unclassified tools
   are denied. If any disable or sandbox guarantee cannot be proved, the
   affected access mode is Not Ready rather than widened implicitly.
@@ -101,6 +112,13 @@ I/O. Existing Sessions retain their frozen Codex version/model/access policy;
 changing Settings affects only new Turns after the normal continuation
 availability check.
 
+Provider authentication is a readiness input, not an implementation shortcut.
+The official configuration supports custom providers with `base_url`,
+`wire_api`, `env_key`, or a command-backed auth helper. The adapter may use
+only a declared environment variable or user-approved credential helper; it
+must never copy, parse, or persist credential contents. A provider that can run
+only by reusing an opaque full user config is Detected / Not Ready.
+
 ### Files and tests
 
 Primary implementation areas are the delegation Runner contract and registry,
@@ -137,6 +155,10 @@ rebase on its merged contract before touching shared Settings ownership. PR
 - Which exact Codex configuration mechanism proves hooks, MCP, network, and
   native multi-agent capabilities are closed for the supported version? Any
   unresolved capability keeps the corresponding access mode Not Ready.
+- Can the selected third-party provider be represented by a controlled profile
+  using an `env_key` or command-backed auth helper? If not, the adapter must
+  expose the diagnostic and refuse activation rather than reuse the full user
+  config.
 
 ## Verification
 
