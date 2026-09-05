@@ -48,7 +48,16 @@ export async function requestOutline<TResult>(command: string, input: unknown): 
 }
 
 export async function readDesktopProjection(): Promise<ProjectionSnapshot> {
-  return readCompleteDocumentProjection<NodeProjection>(requestOutline);
+  // Startup Memory writes may advance Runtime between revision-bound pages.
+  // Discard the partial read and reseed; never combine pages from two revisions.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await readCompleteDocumentProjection<NodeProjection>(requestOutline);
+    } catch (error) {
+      if (attempt >= 2 || !(error instanceof OutlineRequestError)
+        || error.outlineError.code !== 'stale_revision') throw error;
+    }
+  }
 }
 
 export function noteDesktopProjectionApplied(revision: number): void {

@@ -6,6 +6,16 @@ import type { PartialMessages } from '../types';
 // en.ts — the coverage test (test/core/i18n-coverage) reports any drift.
 
 export const zhHans: PartialMessages = {
+  startup: {
+    failed: '无法启动 Tenon',
+    documentFailed: '无法打开工作区',
+    agentFailed: '无法启动 Agent 服务',
+    providersFailed: '无法加载提供商设置',
+    rankingFailed: '无法加载搜索历史',
+    retry: '重试',
+    retrying: '正在重试...',
+    quit: '退出',
+  },
   menu: {
     settings: '设置…',
     about: ({ app }) => `关于 ${app}`,

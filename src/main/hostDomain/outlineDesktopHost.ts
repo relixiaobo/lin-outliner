@@ -23,6 +23,7 @@ export interface OutlineDesktopHostOptions {
   readonly execPath: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly reportError: (report: ErrorReport) => void;
+  readonly ready: (service: 'outline-documents' | 'personal-ranking') => Promise<void>;
 }
 
 export interface OutlineDesktopHost {
@@ -41,6 +42,7 @@ export interface OutlineDesktopHost {
   ): AgentShellProcessEnvironmentProvider;
   recordNodeAccess(nodeIds: readonly string[], source: NodeAccessSource): Promise<void>;
   initializeDocuments(): Promise<ProjectionSnapshot>;
+  loadPersonalAccessRanking(): Promise<void>;
   initializePersonalAccessRanking(): Promise<void>;
   observeProjection(listener: (delivery: OutlineProjectionDelivery) => void): () => void;
   flushDerivedState(): Promise<void>;
@@ -92,7 +94,10 @@ export function createOutlineDesktopHost(options: OutlineDesktopHostOptions): Ou
     ...(developmentSessionId ? { expectedDevelopmentSessionId: developmentSessionId } : {}),
     origin: 'desktop',
   });
-  const client = new DesktopOutlineClient({ connect: () => supervisor.connect() });
+  const client = new DesktopOutlineClient({
+    connect: () => supervisor.connect(),
+    ready: () => options.ready('outline-documents'),
+  });
   const documents = new OutlineDocumentService(supervisor);
   documents.setDurabilityFailureHandler((error, revision) => options.reportError({
     domain: 'document',
@@ -137,7 +142,10 @@ export function createOutlineDesktopHost(options: OutlineDesktopHostOptions): Ou
     getProjection: () => documents.getProjection(),
     liveProjection: () => documents.liveProjection(),
     projectionNodesByIds: (nodeIds) => documents.projectionNodesByIds(nodeIds),
-    searchNodeHits: (query, limit) => documents.searchNodeHits(query, limit),
+    searchNodeHits: async (query, limit) => {
+      await options.ready('personal-ranking');
+      return documents.searchNodeHits(query, limit);
+    },
     runChanges: (changes, mutationOptions) => documents.runChanges(changes, mutationOptions),
   };
   const assetsCapability: OutlineAssetCapability = {
@@ -182,6 +190,7 @@ export function createOutlineDesktopHost(options: OutlineDesktopHostOptions): Ou
       })
     ),
     recordNodeAccess: async (nodeIds, source) => {
+      await options.ready('personal-ranking');
       const uniqueIds = [...new Set(nodeIds.filter((nodeId) => nodeId.length > 0))];
       if (uniqueIds.length === 0) return;
       const existingIds = new Set(documents.projectionNodesByIds(uniqueIds).map((node) => node.id));
@@ -192,6 +201,7 @@ export function createOutlineDesktopHost(options: OutlineDesktopHostOptions): Ou
       if (update.removed.length > 0) await documents.removePersonalAccessRanking(update.removed);
     },
     initializeDocuments: lifecycle.initializeDocuments,
+    loadPersonalAccessRanking: lifecycle.loadPersonalAccessRanking,
     initializePersonalAccessRanking: lifecycle.initializePersonalAccessRanking,
     observeProjection: (listener) => documents.onProjectionChanged((delivery) => {
       pruneNodeAccessForProjectionUpdate(delivery.update, documents, nodeAccess);

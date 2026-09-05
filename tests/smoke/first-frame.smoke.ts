@@ -19,6 +19,11 @@ test.describe('first frame', () => {
   });
 
   test('one main window becomes visible while the launcher stays hidden', async () => {
+    await expect.poll(() => smoke.app.evaluate(({ BrowserWindow }) => (
+      BrowserWindow.getAllWindows().filter((window) => (
+        /\/(?:index|launcher)\.html(?:$|\?)/.test(window.webContents.getURL())
+      )).length
+    ))).toBe(2);
     const visible = await smoke.app.evaluate(async ({ BrowserWindow }) => {
       const windows = BrowserWindow.getAllWindows();
       const main = windows.find((window) => /\/index\.html(?:$|\?)/.test(window.webContents.getURL()));

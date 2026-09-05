@@ -30,29 +30,41 @@ export function createAgentHostLifecycle(
   dependencies: AgentHostLifecycleDependencies,
 ): AgentHostLifecycle {
   const completed = new Set<string>();
-  return {
-    initialize: async (projection, assertActive = () => undefined) => {
+  let initialization: Promise<void> | null = null;
+  const initialize = async (projection: DocumentProjection, assertActive: () => void) => {
+    assertActive();
+    if (!completed.has('memory-index')) {
+      dependencies.memory.initializeMutationIndex(projection);
+      completed.add('memory-index');
       assertActive();
-      if (!completed.has('memory-index')) {
-        dependencies.memory.initializeMutationIndex(projection);
-        completed.add('memory-index');
-        assertActive();
-      }
-      if (!completed.has('threads')) {
-        await dependencies.threads.initialize();
-        completed.add('threads');
-        assertActive();
-      }
-      if (!completed.has('memory-worker')) {
-        await dependencies.memory.startWorker();
-        completed.add('memory-worker');
-        assertActive();
-      }
-      if (!completed.has('automations')) {
-        await dependencies.automations.start();
-        completed.add('automations');
-        assertActive();
-      }
+    }
+    if (!completed.has('threads')) {
+      await dependencies.threads.initialize();
+      completed.add('threads');
+      assertActive();
+    }
+    const producers = [
+      ['memory-worker', () => dependencies.memory.startWorker()],
+      ['automations', () => dependencies.automations.start()],
+    ] as const;
+    const settlements = await Promise.allSettled(producers.map(async ([name, run]) => {
+      if (completed.has(name)) return;
+      assertActive();
+      await run();
+      completed.add(name);
+      assertActive();
+    }));
+    for (const result of settlements) {
+      if (result.status === 'rejected') throw result.reason;
+    }
+  };
+  return {
+    initialize: (projection, assertActive = () => undefined) => {
+      initialization ??= initialize(projection, assertActive).catch((error) => {
+        initialization = null;
+        throw error;
+      });
+      return initialization;
     },
     close: () => closeAgentServices(
       dependencies.memory,
@@ -80,29 +92,44 @@ export interface OutlineDesktopHostLifecycleDependencies {
 export function createOutlineDesktopHostLifecycle(
   dependencies: OutlineDesktopHostLifecycleDependencies,
 ) {
+  let accessLoading: Promise<void> | null = null;
+  let ranking: Promise<void> | null = null;
+  const loadPersonalAccessRanking = () => {
+    accessLoading ??= dependencies.nodeAccess.load().catch((error) => {
+      dependencies.reportError({
+        domain: 'node-access',
+        severity: 'warn',
+        code: 'node-access-startup-load',
+        message: 'Node access store startup load failed',
+        context: { operation: 'startup-load' },
+        error,
+      });
+    });
+    return accessLoading;
+  };
+  const initializeRanking = async () => {
+    await loadPersonalAccessRanking();
+    await dependencies.documents.init();
+    await dependencies.documents.replacePersonalAccessRanking(dependencies.nodeAccess.snapshot()).catch((error) => {
+      dependencies.reportError({
+        domain: 'node-access',
+        severity: 'warn',
+        code: 'node-access-runtime-sync',
+        message: 'Node access ranking Runtime sync failed',
+        context: { operation: 'runtime-sync' },
+        error,
+      });
+    });
+  };
   return {
     initializeDocuments: () => dependencies.documents.init(),
-    initializePersonalAccessRanking: async () => {
-      await dependencies.nodeAccess.load().catch((error) => {
-        dependencies.reportError({
-          domain: 'node-access',
-          severity: 'warn',
-          code: 'node-access-startup-load',
-          message: 'Node access store startup load failed',
-          context: { operation: 'startup-load' },
-          error,
-        });
+    loadPersonalAccessRanking,
+    initializePersonalAccessRanking: () => {
+      ranking ??= initializeRanking().catch((error) => {
+        ranking = null;
+        throw error;
       });
-      await dependencies.documents.replacePersonalAccessRanking(dependencies.nodeAccess.snapshot()).catch((error) => {
-        dependencies.reportError({
-          domain: 'node-access',
-          severity: 'warn',
-          code: 'node-access-runtime-sync',
-          message: 'Node access ranking Runtime sync failed',
-          context: { operation: 'runtime-sync' },
-          error,
-        });
-      });
+      return ranking;
     },
     flushDerivedState: () => dependencies.nodeAccess.flushNow(),
     close: () => {

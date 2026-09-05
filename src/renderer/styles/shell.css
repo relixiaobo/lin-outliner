@@ -37,6 +37,31 @@
   justify-content: center;
 }
 
+.startup-failure {
+  width: min(100%, 32rem);
+  padding: var(--space-xl);
+  overflow-wrap: anywhere;
+}
+
+.startup-failure h1 {
+  margin: 0 0 var(--space-6);
+  font-size: var(--font-heading-lg);
+  font-weight: 600;
+}
+
+.startup-failure p {
+  margin: 0 0 var(--space-lg);
+  max-height: 40vh;
+  overflow: auto;
+  color: var(--text-secondary);
+}
+
+.startup-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
 /* ── Persistent window chrome ──────────────────────────────────────────────── */
 
 /* The title-bar band is shared by ZONES, not one full-width strip (Apple's

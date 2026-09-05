@@ -12,6 +12,32 @@ import type {
 } from '../../src/outline/contract/schemas';
 
 describe('desktop Outline client', () => {
+  test('parks early requests and subscriptions until document readiness and preserves cancellation', async () => {
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { release = resolve; });
+    let connects = 0;
+    const transport = new FakeTransport();
+    const client = new DesktopOutlineClient({
+      ready: () => ready,
+      connect: async () => { connects += 1; return transport; },
+    });
+    const records: OutlineStreamRecord[] = [];
+    client.subscribe(1, 'early:watch', {}, (record) => records.push(record));
+    const request = client.request(1, 'early:request', 'get', {});
+    const cancelled = client.request(2, 'cancelled:request', 'get', {});
+    client.releaseOwner(2);
+    const cancelledOutcome = cancelled.catch((error) => error);
+    await Promise.resolve();
+    expect(connects).toBe(0);
+    expect(records).toEqual([]);
+    release();
+    await expect(request).resolves.toMatchObject({ ok: true });
+    expect((await cancelledOutcome).name).toBe('AbortError');
+    await waitFor(() => records.length === 1);
+    expect(connects).toBe(1);
+    client.close();
+  });
+
   test('decodes the narrow renderer-owned identifiers without accepting transport details', () => {
     expect(decodeOutlineDesktopRequest({
       requestId: 'request:1',

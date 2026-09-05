@@ -9,19 +9,15 @@ transport boundaries. It does not add window-first readiness to the implicit
 
 ## Goal
 
-First paint must not wait for the world. Today `app.whenReady` awaits, in
-series, provider-config reconciliation → `OutlineDocumentService.init()`
-(standalone Runtime discovery/start, verified snapshot plus
-`WorkspaceTransactionLog` replay, and initial projection transfer) →
-`threadService.initialize()` → the memory worker →
-`automationService.start()` → the node-access store — and only then calls
-`createWindow()`. On a large or recovery-heavy document the user stares at
-nothing while the Runtime and Agent services initialize.
+First paint must not wait for the world. The baseline `DesktopHost.start()`
+serializes provider reconciliation, document initialization, Agent initialization,
+and personal ranking before registering transport and creating the window.
+`OutlineDocumentService.init()` includes Runtime discovery, verified snapshot
+and transaction-log replay, watch establishment, and initial projection transfer.
+On a large or recovery-heavy document, no window appears during that work.
 
-This also falsifies the perf program's "Verified-good: startup does not block
-on the large workspace file (window paints first)" claim — corrected in
-`docs/plans/performance-optimization.md` in the same change that lands this
-plan.
+Keep first-paint evidence separate from service speed: snapshot verification and
+replay remain necessary before document requests complete.
 
 ## Non-goals
 
@@ -55,8 +51,9 @@ plan.
 
 - **Create the window first.** After the ready-path essentials (userData
   resolution, single-instance lock, protocol/security wiring),
-  `createWindow()` runs before service initialization. The renderer's existing
-  async `init_workspace` round trip already tolerates a pending document — it
+  the Window Application Host initializes before service initialization and
+  reveals its main window on `ready-to-show`. The renderer's existing
+  `subscribeDesktopProjection` readiness already tolerates a pending document — it
   shows its loading state until the reply arrives; that contract stays.
 - **Keep document init single-flight.** `OutlineDocumentService.init()` already
   stores one shared promise while Runtime connection, projection read, and watch
@@ -91,31 +88,40 @@ plan.
   maintenance/compaction after startup. Window creation may precede Runtime
   readiness, while projection-dependent IPC continues to await the same
   `OutlineDocumentService.init()` promise.
-- **A persistent startup-failure surface.** The renderer shell currently has no
+- **A persistent startup-failure surface.** The baseline renderer shell has no
   startup-failure channel, and `ActionNotice` auto-dismisses after seconds —
   unacceptable for "the document failed to load". Window-first adds a minimal
   persistent failure state: what failed, a Retry action (re-invokes the shared
   readiness promise), and a Quit action. This is a deliberate, PM-visible
-  exception to "no new loading UI".
+  exception to "no new loading UI". Place it unframed in the existing empty
+  startup shell. Use "Unable to open your workspace" for a document failure,
+  service-specific titles for other failures, the error detail, and Retry / Quit.
+  Localize the strings through the existing message catalog.
+
+  `DesktopHostLifecycle` owns per-step readiness and the recoverable `failed`
+  phase. Retry preserves completed milestones and drains every started parallel
+  branch before another attempt. Failures before the window/transport essentials
+  finish retain their fatal rollback behavior. Quit continues through existing
+  lifecycle arbitration. No document or Agent protocol changes are required.
 
 ## Verification
 
 - **Measurement (A9):** cold-start time-to-first-paint on the large test
   document, before/after, numbers in the PR body.
 - e2e: the existing boot smoke stays green; a new assertion that the window is
-  visible before `init_workspace` resolves on a delayed-document fixture.
+  visible before the projection subscription resolves on a delayed-document fixture.
 - Unit: concurrent `OutlineDocumentService.init()` calls connect/read/watch once;
   a failed init rejects all waiters and a retry succeeds cleanly.
 - Unit: concurrent `prepareForTurnAdmission` callers coalesce (counter).
 - Unit: an early projection-dependent request waits for Runtime readiness; an
   early personal-ranked search also waits for node-access readiness.
-- Manual: kill the workspace file → persistent failure surface with working
-  Retry.
+- Real Electron: corrupt an isolated snapshot, verify persistent failure, restore
+  valid bytes, then Retry; separately verify Quit from the failed state.
 
 ## Acceptance Criteria
 
 - **AC-1:** Delayed-document E2E proves the window is visible before
-  `init_workspace` resolves, and cold-start evidence records improved
+  the initial projection subscription resolves, and cold-start evidence records improved
   time-to-first-paint without claiming unrelated service speedups.
 - **AC-2:** Concurrent `OutlineDocumentService.init()` callers perform one
   connect/read/watch sequence; failure rejects all waiters and the next retry
@@ -132,5 +138,5 @@ plan.
 
 ## Open questions
 
-- Failure-surface copy and placement are PM-ratified at the one-pager (it is
-  the plan's only new user-visible UI).
+None. Failure copy and placement are specified above within the minimal
+persistent failure surface.
