@@ -268,7 +268,7 @@ notification, and restart therefore converge on the same durable task state.
 Completion delivery is independent from strip visibility and commits exactly
 once through canonical root Turn admission.
 
-The strip never displays Runner identity, model policy, Agent Session state, or
+The strip never displays launcher identity, model policy, Agent Session state, or
 a child Thread. A delegated result remains command output owned by its Tool Task;
 continuation happens only when the root explicitly invokes `delegate send`
 through a new Bash Item and Tool Task.
@@ -342,7 +342,7 @@ remembered selection; startup reconciliation does the same when it moves the
 persisted active-provider pointer. New Threads then follow the Settings/Profile
 path until another successful composer selection establishes new memory.
 Existing Threads remain unchanged, and forks continue to inherit their source
-Thread. A new delegated Session resolves its separate Settings-owned Runner,
+Thread. A new delegated Session resolves its separate Settings-owned launcher,
 model, and effort policy from the invoking root at admission; existing Sessions
 retain their frozen selection across continuation.
 
@@ -980,5 +980,5 @@ The Agent dock follows the shared design system:
   does not overlap window chrome
 
 All user-facing copy comes from typed i18n messages. UI nouns are Thread, Turn,
-Item, Goal, and Tool Task. Agent Session and Runner appear only in delegation
+Item, Goal, and Tool Task. Agent Session and launcher appear only in delegation
 Settings or CLI results, not as conversation participants.

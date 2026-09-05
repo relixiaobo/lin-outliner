@@ -736,7 +736,12 @@ function policySnapshot(execution: DelegateCapabilityExecution): DelegationPolic
     schedulingPolicyDigest: admission.policy.schedulingPolicyDigest,
     configurationRevision: admission.policy.configurationRevision,
     cwd: admission.cwd,
-    worktreePolicy: admission.policy.access === 'workspace-write' ? 'dedicated' : 'none',
+    // External launchers always run in an isolated worktree. A read-only
+    // request discards that worktree after the task; it cannot rely on a
+    // vendor-specific sandbox contract.
+    worktreePolicy: admission.policy.runnerId === 'internal' && admission.policy.access !== 'workspace-write'
+      ? 'none'
+      : 'dedicated',
   };
 }
 

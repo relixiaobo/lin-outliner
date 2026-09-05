@@ -2,9 +2,10 @@
 
 Tenon presents one root Agent to the user. Delegated work is background tool
 work owned by that root, not another visible participant. The built-in
-`delegate` Skill teaches the root to invoke a packaged CLI through `bash`; the
-CLI binds each request to an isolated Agent Session and the generic Tool Task
-runtime owns process execution, cancellation, recovery, and completion.
+`delegate` Skill teaches the root to invoke a packaged launcher through `bash`;
+the generic Tool Task runtime owns process execution, cancellation, recovery,
+and completion. A launcher may be Tenon's internal Agent executor or a native
+external Agent CLI.
 
 Delegation is experimental and disabled by default. The former Subagent tools,
 Agent tree, Agent IDs, peer messaging, Role-backed Agent types, and generic
@@ -12,9 +13,9 @@ isolated-Skill execution do not coexist with it.
 
 ## Product Surface
 
-When the experiment and configured Runner are enabled, the root may load the
-built-in `delegate` Skill. The Skill exposes no new model tool. It directs the
-root to use exact `delegate` commands through ordinary `bash`:
+When the experiment and at least one configured launcher are enabled, the root
+may load the built-in `delegate` Skill. The Skill exposes no new model tool. It
+directs the root to use exact `delegate` commands through ordinary `bash`:
 
 ```text
 delegate run --input - --output json
@@ -47,11 +48,12 @@ polling loop; `task_stop` accepts only a Tool Task ID.
 - A **root Agent** is the only user-visible collaborator and owns synthesis,
   user communication, verification, integration, and recovery.
 - An **Agent Session** is a root-owned binding to one hidden canonical Thread.
-  It owns ordered input, a frozen Runner policy, continuation state, and
+  It owns ordered input, a frozen launcher policy, continuation state, and
   settlement links. It does not own process status or another transcript.
-- A **Runner** adapts one execution environment. The initial release contains
-  only the internal Runner, which reuses Tenon's normal provider and tool
-  kernel. External harness adapters are independent future capabilities.
+- A **Launcher** starts one configured Agent harness. The internal launcher
+  reuses Tenon's normal provider and tool kernel. External launchers invoke the
+  harness's native CLI and return generic process evidence; they do not parse
+  or reconstruct vendor configuration.
 - A **Task Profile** is one of `general`, `explore`, or `plan`. It describes
   intent and constrains access; it is not an Agent type, persona, model, or
   nesting policy.
@@ -59,50 +61,58 @@ polling loop; `task_stop` accepts only a Tool Task ID.
   scheduling, process identity, output, progress, stop, timeout, terminal
   status, artifacts, and root delivery.
 
-Tenon-managed delegation has exactly one level. A delegated Session cannot
+Tenon-managed internal delegation has exactly one level. A delegated Session
+cannot
 delegate, manage Automations or Goals, request user input, inspect root Thread
 history, manage Tool Tasks, or start background Bash. Arbitrary child processes
-started by a Runner do not become Tenon Agent Sessions.
+started by a launcher do not become Tenon Agent Sessions.
 
 ## Settings And Admission
 
 Settings own all policy that can change account, cost, or authority:
 
 - experiment enabled state;
-- default Runner and per-Runner enabled state;
-- model and reasoning effort, each nullable to inherit the invoking root;
-- maximum access, timeout, pool, and per-Runner/pool concurrency;
+- default launcher and per-launcher enabled state;
+- internal model and reasoning effort, each nullable to inherit the invoking root;
+- maximum access, timeout, pool, and per-launcher/pool concurrency;
 - global and per-root running and queued limits.
 
-The model cannot select a Runner, model, effort, concurrency limit, timeout, or
-fallback through the CLI input. A launch snapshots the effective settings and
+The model may name only a launcher that the user has enabled; it cannot invent
+an executable, command, model, effort, concurrency limit, timeout, or fallback
+through the CLI input. A launch snapshots the effective settings and
 their revision. A changed revision invalidates an unconsumed launch capability.
 The generic Tool Task admission freezes the configured global, per-root,
 running, and queued limits for that invocation; queued execution retains the
 same snapshot when capacity becomes available. Ordinary Bash uses the generic
 defaults and does not enter a separate delegation scheduler.
 
-The internal Runner inherits the root's provider-qualified model and effort
-when its settings are null. An explicit model must resolve through the current
-provider catalog, and the chosen effort must be supported. Missing credentials,
-an unavailable explicit model, or an unsupported effort rejects admission
-before Session creation or provider I/O. There is no silent fallback, retry,
-Runner failover, or replacement Session.
+The internal launcher inherits the root's provider-qualified model and effort
+when its settings are null. An explicit internal model must resolve through the
+current provider catalog, and the chosen effort must be supported. Missing
+credentials, an unavailable explicit model, or an unsupported effort rejects
+admission before Session creation or provider I/O. External launchers retain
+their native model and effort controls; Tenon records inherited root metadata
+for provenance but does not translate it into vendor flags. There is no silent
+fallback, retry, launcher failover, or replacement Session.
 
-`delegate run` accepts exactly:
+`delegate run` accepts:
 
 ```json
 {
   "version": 1,
   "prompt": "Inspect the recovery path and report concrete risks.",
   "profile": "explore",
-  "access": "read-only"
+  "access": "read-only",
+  "runner": "codex"
 }
 ```
 
+`runner` is optional and defaults to the configured launcher. It must name an
+enabled, detected launcher; otherwise admission fails before process creation.
+
 `general` may request `read-only` or `workspace-write`; `explore` and `plan`
 require `read-only`. The resolved access is the narrower of the request and the
-Runner's configured maximum. `delegate send` accepts only
+launcher's configured maximum. `delegate send` accepts only
 `{"version":1,"message":"..."}`. All public input and output schemas are
 closed, versioned, size-bounded, and derived from the same contract registry as
 CLI help and parsing.
@@ -112,7 +122,7 @@ CLI help and parsing.
 The Host recognizes a canonical state-changing command only while preparing a
 root-owned Bash Tool Task. It freezes the source Thread, Turn, and Item; task ID
 and supervisor nonce; exact stdin digest; cwd; process digest; settings
-revision; tool-ceiling digest; scheduling-policy digest; Runner/model/access
+revision; tool-ceiling digest; scheduling-policy digest; launcher/model/access
 policy; and Session admission precondition.
 
 The Host then issues a short-lived, single-use capability over a private file
@@ -142,25 +152,32 @@ notifications. Only privileged Host methods may create, start, interrupt, read,
 or close them. Their Turns use feature provenance for `delegation`; they never
 synthesize reader-authored input or the retired Agent author kind.
 
-The internal Runner executes each delegated Turn through the same
+The internal launcher executes each delegated Turn through the same
 `PiTurnExecutor`, provider gateway, canonical context projector, Item recording,
 tool runtime, compaction, transcript, and diagnostics as an ordinary Thread.
-The Session freezes the resolved model, effort, profile, access, and Runner
-identity across continuation. Changing the default Runner affects only new
-Sessions. Every `send` revalidates the Session's frozen Runner identity, version,
+The Session freezes the resolved model, effort, profile, access, and launcher
+identity across continuation. Changing the default launcher affects only new
+Sessions. Every `send` revalidates the Session's frozen launcher identity, version,
 model, and effort against live availability, and rejects without fallback when
 they are no longer runnable. Current timeout and scheduling limits come from that
-same Session Runner at each command admission. `close` does not require its
-Runner or model to remain runnable.
+same Session launcher at each command admission. `close` does not require its
+launcher or model to remain runnable.
 
-A `workspace-write` Session durably records a planned Host-managed worktree
-intent before creation, then records the complete admitted worktree identity.
-The hidden Thread's cwd and writable sandbox boundary are that worktree; the
-source checkout remains unchanged. Every terminal Turn independently inspects
-the current tree against its frozen base revision. Tracked and untracked files
-become a binary patch resource owned by the root Thread, a changed-file
-manifest, and a generic Tool Task artifact. Ignored content and nested Git
-repositories fail inspection because they cannot be represented by complete
+External launchers invoke their native CLI directly. Tenon does not pin a
+vendor version, read or reconstruct vendor configuration, or promise a common
+CLI sandbox, extension, usage, JSONL, or resume protocol. A detected executable
+is available for managed process execution; vendor-specific capabilities are
+optional enrichments and do not gate the generic task path. Authentication,
+models, tools, and extensions remain owned by the external harness.
+
+A `workspace-write` launcher task durably records a planned Host-managed
+worktree intent before creation, then records the complete admitted worktree
+identity. The source checkout remains unchanged. External `read-only` tasks
+also use a disposable managed worktree because arbitrary CLIs do not share a
+read-only protocol; all changes in that worktree are discarded at settlement.
+Tracked and untracked files from a writable task become a patch resource owned
+by the root Thread and a generic Tool Task artifact. Ignored content and nested
+Git repositories fail inspection because they cannot be represented by complete
 patch evidence.
 
 `delegate close` succeeds only for an idle, open, root-owned Session. It closes
@@ -176,7 +193,7 @@ prefix digest, source Tool Task/Turn/Item, optional root-intent revision, and on
 of `queued`, `committed`, or `blocked`.
 
 Sending to an active Session durably queues the message and returns a receipt.
-The internal Runner does not claim that an in-flight provider request or tool
+The internal launcher does not claim that an in-flight provider request or tool
 call accepted it. A later explicit `delegate send` execution consumes the
 ordered queued prefix at a Turn boundary. Sending by Tool Task resolves the
 Session from the task's settlement; sending by Session ID continues a settled
@@ -196,7 +213,7 @@ states `awaiting_result`, `prepared`, `context_committed`, `committed`, or
 `blocked`. The canonical Thread remains the transcript authority and the Tool
 Task remains process authority.
 
-The Runner result is prepared into the Tool Task before process exit. A result
+The launcher result is prepared into the Tool Task before process exit. A result
 can be committed only after the supervisor's quiescent final receipt matches
 the prepared digest and the canonical Turn is terminal. Reconciliation is
 idempotent: matching evidence advances the same settlement, while mismatched or

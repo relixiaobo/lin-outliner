@@ -5,7 +5,7 @@ Agent Core. It is a contract checklist, not project status.
 
 ## Core Contract
 
-- Use Thread, Turn, Item, Goal, Tool Task, Agent Session, Runner, and Task Profile
+- Use Thread, Turn, Item, Goal, Tool Task, Agent Session, launcher, and Task Profile
   as distinct product vocabulary.
 - Cross the strict request/response codecs; do not add parallel IPC.
 - Persist execution history only through canonical notifications and rollouts.
@@ -52,7 +52,7 @@ Agent Core. It is a contract checklist, not project status.
   at canonical `turn/started`, not at an IPC return or model response.
 - Declare Core scope and action kinds.
 - Apply effective configuration, explicit blocks, and delegated Session ceilings.
-- Keep Runner, model, effort, scheduling, timeout, and maximum-access policy in
+- Keep launcher, model, effort, scheduling, timeout, and maximum-access policy in
   Settings. Resolve and snapshot them before admission; reject unavailable
   explicit selections without fallback.
 - Return native structured unavailable or failure results.
@@ -151,7 +151,7 @@ Agent Core. It is a contract checklist, not project status.
   storage pressure, owner deletion, exactly-once delivery, and source/packaged
   supervisor resolution.
 - Prove a Settings change affects only fresh Agent Sessions: existing Sessions
-  keep their Runner/model/effort/access snapshot across continuation and restart.
+  keep their launcher/model/effort/access snapshot across continuation and restart.
 - Prove failed, timed-out, cancelled, and lost delegation outcomes block queued
   input and never trigger another Turn.
 - Add renderer tests for each visible canonical state.
