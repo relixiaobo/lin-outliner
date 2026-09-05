@@ -2549,3 +2549,20 @@ absolute part index, then use the identifier only as corroborating evidence.
 Regression coverage must include empty and duplicate provider identifiers and
 prove correlation through restart and fork. Tests with unique well-formed IDs
 cannot distinguish source-coordinate fidelity from a convenient value lookup.
+
+## Startup recovery must reach every initialized consumer
+
+PR #629 made Host startup retryable while the renderer Thread store still cached
+its first failed list read. When the document opened before Agent startup failed,
+Retry restored the Host but remounting the dock reused that failed initialization
+and left existing conversations unavailable.
+
+**A recovered service is not a recovered workflow until its consumers can retry
+their failed initialization.** Share pending and successful initialization, but
+clear failed caches at the owning consumer and verify the remount path reloads
+authoritative state.
+
+Regression coverage must let one startup dependency succeed before another
+fails, repair the failure, and exercise the real Retry action. Assert that the
+existing record is restored and the stale error disappears, not only that the
+Host reports ready.

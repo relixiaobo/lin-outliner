@@ -21,6 +21,10 @@ touches Agent protocol, runtime, Settings, Skill, and packaging surfaces, so
 overlapping claims must use its final mechanisms after integration. The legacy
 Subagent and isolated-Skill behavior remains current until that cutover ships.
 
+PR #629 completed window-first startup. Subsequent Agent Host composition in
+#628 must preserve the owning readiness boundaries and recoverable startup
+behavior in [Desktop Host lifecycle](spec/architecture.md#desktop-host-lifecycle).
+
 Draft PR #626 owns the file-first Settings design revision. The plan on `main`
 still describes the previous CLI-based design; the draft proposes replacing it
 with public configuration files, a same-source flat UI, and domain-owned tools.
@@ -55,7 +59,6 @@ protocol, security rule, user flow, or acceptance criterion.
 
 ```text
 Parallel now eligible:
-  startup-window-first
   file-preview-office
   url-static-reader
   agent-skill-authoring-foundation -> agent-skill-curation-report
@@ -64,7 +67,6 @@ Parallel now eligible:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P2 | [startup-window-first](plans/startup-window-first.md) | `draft` | **Now; Desktop Host shipped in #603** |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [agent-skill-authoring-foundation](plans/agent-skill-authoring-foundation.md) | `draft` | **Now; Desktop Host shipped in #603** |
@@ -224,6 +226,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **startup-window-first** (`done`, #629, 2026-09-05) - the desktop window paints before service startup; readiness gates, persistent Retry/Quit, and Agent conversation recovery are verified; [plan archived](plans/archive/startup-window-first.md).
 - **workspace-document-status-audit** (`done`, fast-track, 2026-09-05) - refreshed open claims, the pending Settings design boundary, README runtime ownership, and document lifecycle checks.
 - **agent-trajectory-evidence-fidelity Unit 2 / complete** (`done`, #627,
   2026-09-05) — Trajectory now preserves exact-or-unavailable Context, Request,

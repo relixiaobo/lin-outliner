@@ -553,6 +553,23 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Fixed
 
+- **The desktop window appears before service startup (PR #629, codex-2)** -
+  large workspaces now show the native window while document, provider, Agent,
+  and search services initialize behind their owning readiness boundaries.
+  Startup failures remain visible with Retry and Quit; recovery preserves
+  completed milestones, restarts failed projection reads, and restores existing
+  Agent conversations. A three-run 10,040-node Electron measurement reduced
+  median first paint from 9.18 to 1.71 seconds; full workspace readiness did not
+  improve in the same measurement. Gate review found one Medium failure-cache
+  defect that left the Agent dock broken after successful Host Retry; it was
+  fixed before the final no-findings review. Verified with typecheck,
+  `docs:check`, whitespace checks, 103 focused Core/renderer tests, 40 focused
+  ThreadStore/startup tests, seven real-Electron startup smoke tests, inspected
+  light/dark and minimum-window failure UI, and five successful GitHub E2E
+  samples plus baseline subtraction. The author's full Core run retained two
+  timing-sensitive failures that passed isolated rechecks; it was not reported
+  as a green full-suite run.
+
 - **Development builds start correctly under the Electron main-process ESM
   bundle** — Desktop Host window composition now uses the module directory
   already resolved by the bootstrap entry, and optional macOS native addons
