@@ -90,6 +90,9 @@ Parse Codex JSONL into bounded textual evidence, terminal outcome, usage, and a
 version-bound session identifier. A successful first Turn stores only the
 minimum local resume identity required by Codex `exec resume`; continuation
 must use that identity plus the next message at a fresh safe Turn boundary.
+The official `exec resume` surface does not accept a new `--sandbox` or
+`--color` option, so the adapter freezes the first Turn's access profile and
+must reject continuation when the stored profile or version cannot be verified.
 If the installed version cannot provide safe local resume and closure, the
 adapter remains Not Ready even if first-run execution works.
 
