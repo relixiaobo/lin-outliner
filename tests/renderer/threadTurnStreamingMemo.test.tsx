@@ -2,17 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import type {
-  SubagentGenerationReceipt,
-  ThreadItem,
-  Turn,
-} from '../../src/core/agent/protocol';
+import type { ThreadItem, Turn } from '../../src/core/agent/protocol';
 import type { DocumentProjection } from '../../src/core/types';
-import {
-  emptyTurnAnchors,
-  type SubagentRegistryEntry,
-} from '../../src/renderer/agent/subagentPresentation';
-import { SubagentRegistryProvider } from '../../src/renderer/agent/components/SubagentRegistryContext';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { buildIndex } from '../../src/renderer/state/document';
 import { DocumentIndexStore } from '../../src/renderer/state/documentIndexStore';
@@ -110,7 +101,6 @@ describe('Turn provider recovery', () => {
     const ThreadTurnView = await loadThreadTurnView();
     const authors = [
       { kind: 'reader' } as const,
-      { kind: 'agent', threadId: 'delegate' } as const,
       { kind: 'host' } as const,
       { kind: 'feature', feature: 'automation', ref: 'execution' } as const,
     ];
@@ -188,139 +178,6 @@ describe('Turn provider recovery', () => {
     expect(document.querySelectorAll('.thread-user-message')).toHaveLength(2);
     expect(document.querySelector('.thread-message-file-ref')?.textContent).toContain('evidence.txt');
     expect(document.querySelector('.thread-message-inline-ref')?.textContent).toBe('Alpha');
-    await act(async () => root.unmount());
-  });
-
-  test('resolves canonical root-Thread input to the conversation Agent', async () => {
-    const { document, root } = installDom();
-    const ThreadTurnView = await loadThreadTurnView();
-    const notice = {
-      ...userMessage('Delegated by the conversation Agent'),
-      author: { kind: 'agent', threadId: 'thread' } as const,
-    };
-
-    await render(root, (
-      <ThreadTurnView
-        {...turnProps()}
-        {...turnAnchors(turn([notice]))}
-      />
-    ));
-
-    expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('Main Agent');
-    expect(document.querySelector('.thread-host-event')?.textContent)
-      .toContain('Delegated by the conversation Agent');
-    await act(async () => root.unmount());
-  });
-
-  test('keeps a canonical delivery input neutral when its Agent registry entry is gone', async () => {
-    const { document, root } = installDom();
-    const ThreadTurnView = await loadThreadTurnView();
-    const notice = {
-      ...userMessage('[Agent finished] Retained delivery evidence'),
-      author: { kind: 'agent', threadId: 'missing-agent' } as const,
-    };
-    const value: Turn = {
-      ...turn([notice]),
-      provenance: {
-        originThreadId: 'thread',
-        originTurnId: 'turn',
-        trigger: {
-          kind: 'subagent',
-          parentThreadId: 'thread',
-          parentItemId: 'parent-tool',
-        },
-      },
-      status: 'completed',
-      completedAt: 2,
-      durationMs: 1,
-    };
-
-    await render(root, (
-      <ThreadTurnView
-        {...turnProps()}
-        {...turnAnchors(value)}
-        delivery={{ agentId: 'missing-agent', generation: 1 }}
-      />
-    ));
-
-    expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('From an Agent');
-    expect(document.querySelector('.thread-host-event')?.textContent).toContain('Retained delivery evidence');
-    expect(document.querySelector('[aria-label="Edit message"]')).toBeNull();
-    await act(async () => root.unmount());
-  });
-
-  test('keeps a user-stopped delivery note after the same Agent resumes', async () => {
-    const { document, root } = installDom();
-    const ThreadTurnView = await loadThreadTurnView();
-    const receipt: SubagentGenerationReceipt = {
-      generation: 1,
-      turnId: 'child-turn-1',
-      parentItemId: 'parent-tool',
-      terminalStatus: 'interrupted',
-      stopProvenance: 'user',
-      durationMs: 10,
-      error: null,
-      partialOutputAvailable: false,
-      parentThreadId: 'thread',
-      notificationState: 'delivered',
-      deliveryTurnId: 'turn',
-    };
-    const entry: SubagentRegistryEntry = {
-      agentId: 'thread-child',
-      parentThreadId: 'thread',
-      displayName: 'survey the runtime',
-      agentType: 'general-purpose',
-      form: 'agent',
-      runMode: 'background',
-      generation: 2,
-      generationReceipts: new Map([[1, receipt]]),
-      status: 'running',
-      stoppedByUser: false,
-      startedAt: 20,
-      durationMs: null,
-      settledAt: null,
-      error: null,
-      worktree: null,
-      liveDescendantCount: 0,
-    };
-    const entries = new Map([[entry.agentId, entry]]);
-    const notice = {
-      ...userMessage('[Agent stopped] Canonical host notice'),
-      author: { kind: 'agent', threadId: entry.agentId } as const,
-    };
-    const value: Turn = {
-      ...turn([notice]),
-      provenance: {
-        originThreadId: 'thread',
-        originTurnId: 'turn',
-        trigger: {
-          kind: 'subagent',
-          parentThreadId: 'thread',
-          parentItemId: receipt.parentItemId,
-        },
-      },
-      status: 'completed',
-      completedAt: 2,
-      durationMs: 1,
-    };
-
-    await render(root, (
-      <SubagentRegistryProvider
-        actions={{ openAgent: () => undefined, stopAgent: null }}
-        byAgentId={entries}
-      >
-        <ThreadTurnView
-          {...turnProps()}
-          {...turnAnchors(value)}
-          agentEntries={entries}
-          delivery={{ agentId: entry.agentId, generation: 1 }}
-        />
-      </SubagentRegistryProvider>
-    ));
-
-    expect(document.querySelector('.thread-agent-note')?.textContent)
-      .toBe('You stopped survey the runtime. Send it a message to resume it.');
-    expect(document.querySelector('.thread-agent-report')).toBeNull();
     await act(async () => root.unmount());
   });
 
@@ -516,16 +373,13 @@ describe('Turn provider recovery', () => {
   });
 });
 
-/** A Turn with no delegation in it: its own Items, no anchors. */
 function turnAnchors(value: Turn) {
-  return { turn: value, anchors: emptyTurnAnchors(value), delivery: null };
+  return { turn: value };
 }
 
 function turnProps() {
   return {
     active: true,
-    agentEntries: new Map(),
-    agentTranscript: false,
     canEditUserMessage: false,
     composerEnabled: true,
     expandState: {
@@ -548,14 +402,12 @@ function turnProps() {
     indexStore: new DocumentIndexStore(buildIndex(emptyProjection())),
     isLastTurn: true,
     latchedReasoning: new Set<string>(),
-    latestTurnByThread: new Map(),
     liveReasoningSeen: new Set<string>(),
     onContinueTurn: async () => undefined,
     onContinueInNewChat: async () => undefined,
     onEditUserMessage: async () => undefined,
-    onInterruptThread: async () => undefined,
     onOpenNodeReference: () => undefined,
-    onOpenThread: async () => undefined,
+    onOpenThreadReference: async () => undefined,
     onOpenTurnDetails: () => undefined,
     onReadToolArguments: async () => null,
     onReadToolOutput: async () => null,
@@ -566,12 +418,10 @@ function turnProps() {
     }),
     onRerunTurn: async () => undefined,
     providerRetry: null,
-    rootSpeaker: { participantId: 'main', avatarKey: 'main', name: 'Main Agent' },
-    rootThreadId: 'thread',
     selfSpeaker: { participantId: 'main', avatarKey: 'main', name: 'Main Agent' },
     threadCwd: '/workspace',
     threadId: 'thread',
-    threadsById: new Map(),
+    threadReferences: new Map(),
     waitingOnUserInput: false,
   } as const;
 }
@@ -610,11 +460,7 @@ function failedHostTurn(): Turn {
     provenance: {
       originThreadId: 'thread',
       originTurnId: 'turn',
-      trigger: {
-        kind: 'subagent',
-        parentThreadId: 'thread',
-        parentItemId: 'parent-tool',
-      },
+      trigger: { kind: 'user' },
     },
     status: 'failed',
     error: { code: 'runtime_failure', message: 'Provider unavailable' },

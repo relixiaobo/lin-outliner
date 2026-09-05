@@ -88,7 +88,7 @@ export type ThreadItemId = string;
 export const THREAD_HISTORY_MODE = 'paginated' as const;
 export type ThreadHistoryMode = typeof THREAD_HISTORY_MODE;
 
-export const RESERVED_THREAD_SOURCES = ['user', 'subagent', 'memory_consolidation'] as const;
+export const RESERVED_THREAD_SOURCES = ['user', 'delegation', 'memory_consolidation'] as const;
 export type ReservedThreadSource = typeof RESERVED_THREAD_SOURCES[number];
 
 declare const threadFeatureSourceBrand: unique symbol;
@@ -126,15 +126,9 @@ export type TurnItemsView = 'notLoaded' | 'summary' | 'full';
 
 export const RUNTIME_FAILURE_ERROR_CODE = 'runtime_failure';
 export const HOST_RESTART_ERROR_CODE = 'host_restart';
-export const SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE = 'subagent_budget_exhausted';
-export const SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE = 'subagent_structural_limit';
-export const SUBAGENT_DELIVERY_ADMISSION_ERROR_CODE = 'subagent_delivery_admission_failed';
 export const TURN_ERROR_CODES = [
   RUNTIME_FAILURE_ERROR_CODE,
   HOST_RESTART_ERROR_CODE,
-  SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
-  SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE,
-  SUBAGENT_DELIVERY_ADMISSION_ERROR_CODE,
 ] as const;
 export type TurnErrorCode = typeof TURN_ERROR_CODES[number];
 
@@ -153,11 +147,6 @@ export type TurnTrigger =
       readonly sourceTurnId: TurnId;
     }
   | {
-      readonly kind: 'subagent';
-      readonly parentThreadId: ThreadId;
-      readonly parentItemId: ThreadItemId;
-    }
-  | {
       readonly kind: 'feature';
       readonly feature: string;
       readonly ref?: string;
@@ -167,13 +156,6 @@ export interface TurnProvenance {
   readonly originThreadId: ThreadId;
   readonly originTurnId: TurnId;
   readonly trigger: TurnTrigger;
-}
-
-/** Host-only coordination identity persisted on the admission commit event. */
-export interface SubagentTurnAdmission {
-  readonly kind: 'exhaustedSettlement' | 'explicitAdmission';
-  readonly batchId: string;
-  readonly envelopeDigest: string;
 }
 
 /** Host-only identity for an atomically claimed background-task delivery batch. */
@@ -252,8 +234,6 @@ export interface Thread {
   readonly sessionId: string;
   readonly parentThreadId: ThreadId | null;
   readonly forkedFromId: ThreadId | null;
-  readonly agentNickname: string | null;
-  readonly agentRole: string | null;
   readonly name: string | null;
   readonly preview: string;
   readonly ephemeral: boolean;
@@ -856,7 +836,6 @@ export const CONTEXT_EVIDENCE_KINDS = Object.freeze([
   'referencedResources',
   'skillCatalog',
   'skillInvocation',
-  'roleCatalog',
   'toolOutputProjection',
   'inheritedContext',
 ] as const);
@@ -887,7 +866,7 @@ export interface TurnEnvironmentContextPayload {
   readonly locale: string;
   readonly workingDirectory: string;
   readonly conversationMode: 'interactive' | 'headless';
-  readonly executionMode: 'root' | 'child' | 'automation' | 'memory' | 'feature';
+  readonly executionMode: 'root' | 'delegation' | 'automation' | 'memory' | 'feature';
   readonly replyIdentity: string | null;
   readonly todayNodeId: string | null;
   readonly todayNodeTitle: string | null;
@@ -1040,12 +1019,6 @@ export interface SkillCatalogContextPayload {
   readonly entries: readonly SkillCatalogEntry[];
 }
 
-export interface SkillInvocationConstraints {
-  readonly allowedTools: readonly string[];
-  readonly model: string | null;
-  readonly effort: string | null;
-}
-
 export interface SkillInvocationContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'skillInvocation';
@@ -1057,29 +1030,8 @@ export interface SkillInvocationContextPayload {
   readonly contentHash: string;
   readonly instructions: string;
   readonly arguments: string;
-  readonly execution: 'inline' | 'isolated';
   readonly invocationSource: 'user' | 'model' | 'runtime';
-  readonly constraints: SkillInvocationConstraints;
   readonly invokedAt: number;
-}
-
-export interface RoleCatalogEntry {
-  readonly change: ContextCatalogChange;
-  readonly name: string;
-  readonly displayName: string;
-  readonly source: 'built-in' | 'user' | 'project';
-  readonly identity: string;
-  readonly contentHash: string;
-  readonly description: string;
-}
-
-export interface RoleCatalogContextPayload {
-  readonly schemaVersion: 1;
-  readonly kind: 'roleCatalog';
-  readonly mode: ContextCatalogMode;
-  readonly previousCatalogHash: string | null;
-  readonly catalogHash: string;
-  readonly entries: readonly RoleCatalogEntry[];
 }
 
 export type ToolOutputProjection =
@@ -1147,8 +1099,6 @@ export interface CompactionRestoredStateContextPayload {
   readonly skillCatalogHash: string | null;
   readonly announcedSkills: readonly ContextCatalogCheckpointEntry[];
   readonly activeSkills: readonly ActiveSkillCheckpointEntry[];
-  readonly roleCatalogHash: string | null;
-  readonly announcedRoles: readonly ContextCatalogCheckpointEntry[];
   readonly userViewBaselineRef: ThreadContextPayloadReference | null;
   readonly additionalContextBaselineRef: ThreadContextPayloadReference | null;
   readonly activeObservations: readonly ActiveObservationCheckpointEntry[];
@@ -1176,7 +1126,6 @@ export type ThreadContextPayload =
   | ReferencedResourcesContextPayload
   | SkillCatalogContextPayload
   | SkillInvocationContextPayload
-  | RoleCatalogContextPayload
   | ToolOutputProjectionContextPayload
   | InheritedContextPayload
   | CompactionSummaryContextPayload
@@ -1216,7 +1165,6 @@ export interface UserMessageThreadItem extends ThreadItemBase {
 
 export type ThreadInputAuthor =
   | { readonly kind: 'reader' }
-  | { readonly kind: 'agent'; readonly threadId: ThreadId }
   | { readonly kind: 'host' }
   | {
       readonly kind: 'feature';
@@ -1307,166 +1255,7 @@ export interface DynamicToolCallThreadItem extends ThreadToolItemBase {
   readonly durationMs: number | null;
 }
 
-export type AgentTaskToolName = 'agent' | 'agent_message' | 'task_status' | 'task_stop';
-
-export type SubagentExecutionStatus =
-  | 'pendingInit'
-  | 'running'
-  | 'interrupted'
-  | 'completed'
-  | 'errored'
-  | 'notFound';
-
-export interface SubagentExecutionState {
-  readonly status: SubagentExecutionStatus;
-  readonly taskPath: string | null;
-  readonly nickname: string | null;
-  readonly role: string | null;
-}
-
-export type SubagentRunMode = 'foreground' | 'background';
-
-/** Who ended a generation, when one was ended deliberately. */
-export type SubagentStopProvenance = 'none' | 'model' | 'user' | 'budget' | 'hostRestart';
-
-/**
- * Where this generation's terminal notification stands. `none` covers both a
- * generation still running and one whose form never notifies (foreground), so
- * the renderer reads liveness from the child's own Turn rather than from here.
- */
-export type SubagentNotificationState = 'none' | 'pending' | 'delivering' | 'delivered';
-
-/** How one delegated generation ended, as the host recorded it. */
-export type SubagentTerminalStatus = 'finished' | 'failed' | 'interrupted' | 'killed';
-
-export type SubagentExecutionMode = 'ordinary' | 'exhaustedSettlement';
-export type SubagentNotificationCutoff = 'open' | 'closing' | 'closed';
-export type SubagentDeliveryClass = 'ordinary' | 'carryForward';
-export type SubagentCoverageDisposition = 'full' | 'excerpted' | 'omitted';
-
-export interface SubagentTerminalError {
-  readonly code: string;
-  readonly messagePreview: string;
-  readonly omittedBytes: number;
-}
-
-export interface SubagentSettlementCoverage {
-  readonly origin: 'budgetInterrupted' | 'normalOvershoot' | 'explicitAdmission';
-  readonly full: number;
-  readonly excerpted: number;
-  readonly omitted: number;
-  readonly providerAttempted: boolean;
-}
-
-/** The retained managed worktree a settled generation left behind. */
-export interface SubagentWorktreeSummary {
-  readonly branch: string;
-  readonly path: string;
-}
-
-/** Immutable presentation receipt for one terminal delegated generation. */
-export interface SubagentGenerationReceipt {
-  readonly generation: number;
-  readonly turnId: TurnId;
-  /** Stable delegating call identity, unchanged by continuation Turns. */
-  readonly parentItemId: ThreadItemId;
-  readonly terminalStatus: SubagentTerminalStatus;
-  readonly stopProvenance: SubagentStopProvenance;
-  readonly durationMs: number | null;
-  readonly error: SubagentTerminalError | null;
-  readonly partialOutputAvailable: boolean;
-  readonly parentThreadId: ThreadId;
-  readonly notificationState: SubagentNotificationState;
-  readonly deliveryTurnId: TurnId | null;
-}
-
-/**
- * The canonical Agent execution record, projected across the process seam.
- *
- * Presentation re-derives a delegated child's lifecycle from this record — one
- * entry per stable Agent ID, carrying the generation that a resume increments —
- * rather than from the wait-era Turn Items that could only describe one episode
- * inside one Turn. Only the identity, lifecycle, and placement fields cross:
- * the tool policy, startup snapshot, and recovery intent stay main-side, since
- * nothing the user reads is derived from them.
- */
-export interface SubagentExecutionProjection {
-  readonly agentId: ThreadId;
-  readonly parentThreadId: ThreadId;
-  /** The model's own one-line description of the delegated task. */
-  readonly description: string;
-  readonly agentType: string;
-  readonly runMode: SubagentRunMode;
-  readonly generation: number;
-  readonly currentTurnId: TurnId;
-  /** Stable delegating call identity for the current generation. */
-  readonly parentItemId: ThreadItemId;
-  readonly stopProvenance: SubagentStopProvenance;
-  /**
-   * How this generation ended, recorded at terminal settlement. Durable, so a
-   * conversation reopened later states the outcome without first loading the
-   * child's Turns; `null` only while the generation runs.
-   */
-  readonly terminalStatus: SubagentTerminalStatus | null;
-  readonly notificationState: SubagentNotificationState;
-  readonly terminalError: SubagentTerminalError | null;
-  /** First committed delivery Turn, resolved through canonical Rerun aliases. */
-  readonly deliveryTurnId: TurnId | null;
-  readonly deliveryClass: SubagentDeliveryClass | null;
-  readonly eligibleAfterGeneration: number | null;
-  readonly coverageDisposition: SubagentCoverageDisposition | null;
-  readonly omittedOutputBytes: number;
-  readonly omittedOutputTokens: number;
-  /** Terminal facts for every recorded generation, immutable across resume. */
-  readonly generationReceipts: readonly SubagentGenerationReceipt[];
-  readonly notificationCutoff: SubagentNotificationCutoff;
-  readonly executionMode: SubagentExecutionMode;
-  readonly settlementCoverage: SubagentSettlementCoverage | null;
-  readonly executionSelectionFallback: {
-    readonly requestedModelProvider: string | null;
-    readonly requestedModel: string | null;
-    readonly requestedReasoningEffort: string | null;
-    readonly reason: 'unavailable';
-  } | null;
-  /** Present only while a managed worktree is retained for this Agent. */
-  readonly worktree: SubagentWorktreeSummary | null;
-  readonly createdAt: number;
-  readonly updatedAt: number;
-}
-
-export interface CollabAgentToolCallThreadItem extends ThreadToolItemBase {
-  readonly type: 'collabAgentToolCall';
-  readonly tool: AgentTaskToolName;
-  readonly senderThreadId: ThreadId;
-  readonly receiverThreadIds: readonly ThreadId[];
-  readonly prompt: string | null;
-  /** Normalized one-line preview for `agent_message`; null for other tools and legacy Items. */
-  readonly summary: string | null;
-  readonly model: string | null;
-  readonly reasoningEffort: string | null;
-  readonly agentsStates: Readonly<Record<ThreadId, SubagentExecutionState>>;
-}
-
-export interface SubAgentActivityThreadItem extends ThreadItemBase {
-  readonly type: 'subAgentActivity';
-  readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
-  readonly agentThreadId: ThreadId;
-  /** Exact child Turn represented by this activity; null only for legacy Items. */
-  readonly agentTurnId: TurnId | null;
-  readonly agentPath: string;
-  readonly error: TurnError | null;
-  /**
-   * The tool call that delegated this work — the `skill` call or the
-   * collaboration spawn call — so one delegation renders as one row at its
-   * cause's position instead of a tool row and a child row saying the same
-   * thing in two vocabularies.
-   *
-   * Recorded on the spawn-time `started` Item only. A terminal activity is
-   * `null` because it can be flushed into a LATER parent Turn, where the
-   * delegating call is not among the Items and nothing may be claimed.
-   */
-  readonly spawnItemId: string | null;
-}
+export type AgentTaskToolName = 'task_status' | 'task_stop';
 
 export interface WebSearchResult {
   readonly title: string;
@@ -1525,8 +1314,6 @@ export type ThreadItem =
   | FileChangeThreadItem
   | McpToolCallThreadItem
   | DynamicToolCallThreadItem
-  | CollabAgentToolCallThreadItem
-  | SubAgentActivityThreadItem
   | WebSearchThreadItem
   | ImageViewThreadItem
   | ContextEvidenceThreadItem
@@ -1572,8 +1359,6 @@ export const THREAD_ITEM_TYPES = [
   'fileChange',
   'mcpToolCall',
   'dynamicToolCall',
-  'collabAgentToolCall',
-  'subAgentActivity',
   'webSearch',
   'imageView',
   'contextEvidence',
@@ -1613,34 +1398,6 @@ export interface ThreadListRequest extends ThreadPageRequest {
 export interface ThreadListResponse {
   readonly data: readonly Thread[];
   readonly nextCursor: string | null;
-}
-
-export interface ThreadDescendantsRequest {
-  readonly threadId: ThreadId;
-}
-
-export interface ThreadDescendantsResponse {
-  readonly data: readonly Thread[];
-  /**
-   * Descendants holding queued work that has not started a Turn yet. An idle
-   * status is not evidence a child is finished: a queued message leaves it idle
-   * until admission, and deleting it would discard work already accepted.
-   */
-  readonly queuedWorkThreadIds: readonly ThreadId[];
-}
-
-export interface ThreadSubagentsRequest {
-  readonly threadId: ThreadId;
-}
-
-export interface ThreadSubagentsResponse {
-  /**
-   * Every committed Agent execution in this conversation's subtree, oldest
-   * first. An admission that has not committed is absent: the host publishes no
-   * start for it, and a chip for a child that may still be rolled back would be
-   * a delegation the conversation never made.
-   */
-  readonly data: readonly SubagentExecutionProjection[];
 }
 
 export interface ThreadToolTasksRequest {
@@ -1854,7 +1611,6 @@ export const THREAD_TRAJECTORY_RECORD_KINDS = [
   'tool',
   'retry',
   'compaction',
-  'delegation',
 ] as const;
 export type ThreadTrajectoryRecordKind = typeof THREAD_TRAJECTORY_RECORD_KINDS[number];
 
@@ -1934,13 +1690,6 @@ export type ThreadTrajectoryEvidenceRef =
       readonly callIndex: number;
       readonly messageIndex: number;
       readonly partIndex: number;
-    }
-  | {
-      readonly type: 'subagent';
-      readonly threadId: ThreadId;
-      readonly turnId: TurnId;
-      readonly agentThreadId: ThreadId;
-      readonly itemId: ThreadItemId | null;
     };
 
 export interface ThreadTrajectoryUsageSummary {
@@ -1997,11 +1746,6 @@ export type ThreadTrajectoryRecordLabel =
   | {
       readonly type: 'contextCompaction';
       readonly trigger: string;
-    }
-  | {
-      readonly type: 'delegation';
-      readonly action: 'delegate' | 'message' | 'stop' | 'activity' | 'tool';
-      readonly name: string;
     };
 
 export interface ThreadTrajectoryRecordSummary {
@@ -2027,7 +1771,6 @@ export interface ThreadTrajectoryRecordSummary {
   readonly primaryEvidence: ThreadTrajectoryEvidenceRef;
   readonly relatedEvidence: readonly ThreadTrajectoryEvidenceRef[];
   readonly availability: readonly ThreadTrajectoryAvailability[];
-  readonly childThreadId: ThreadId | null;
 }
 
 export interface ThreadTrajectoryReplacementRange {
@@ -2233,18 +1976,6 @@ export type ThreadTrajectoryRecordDetail =
       readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
       readonly activityIndex: number | null;
       readonly summaryText: string | null;
-    }
-  | {
-      readonly kind: 'delegation';
-      readonly turn: ThreadTrajectoryTurnEvidence;
-      readonly item: ThreadTrajectoryItemEvidence | null;
-      readonly diagnostics: ThreadTrajectoryDiagnosticsEvidence | null;
-      readonly activityIndex: number | null;
-      readonly executionCallId: string | null;
-      readonly input: JsonValue | null;
-      readonly outputText: string | null;
-      readonly schema: JsonValue | null;
-      readonly childThreadId: ThreadId | null;
     };
 
 export interface ThreadTrajectoryDetailReadResponse {
@@ -2420,13 +2151,12 @@ export interface RequestUserInputResponse {
 export type EmptyAgentCoreResponse = Readonly<Record<string, never>>;
 
 /**
- * One identity as the reader meets it: what it is called and what it looks
- * like. Keyed by Agent TYPE — `main` for the conversation's own agent, a
- * canonical built-in type, or a Role name.
+ * The root conversation identity as the reader meets it: what it is called and
+ * what it looks like. The retained `agentType` wire key is always `main`.
  *
  * Presentation travels its own path rather than riding on Thread or Item
  * records: it is configuration, not history. A persona renamed today must
- * rename the speaker of every message that Agent ever sent, which is only true
+ * rename the speaker of every message the conversation Agent sent, which is only true
  * if the transcript resolves identity at render time instead of recording it.
  */
 export interface AgentIdentityEntry {
@@ -2440,7 +2170,7 @@ export interface AgentIdentityEntry {
 export interface AgentIdentityCatalogRequest {
   /**
    * Whose project layer to read. A Thread names a working directory, and a
-   * project may define both Roles and re-skins; null asks for the user layer
+   * project may define a presentation override; null asks for the user layer
    * alone, which is what an empty dock has.
    */
   readonly threadId: ThreadId | null;
@@ -2454,8 +2184,6 @@ export const AGENT_CORE_METHODS = [
   'thread/list',
   'thread/references/search',
   'thread/references/resolve',
-  'thread/descendants',
-  'thread/subagents/list',
   'thread/tasks/list',
   'thread/read',
   'thread/start',
@@ -2501,8 +2229,6 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/list': ThreadListRequest;
   readonly 'thread/references/search': ThreadReferenceSearchRequest;
   readonly 'thread/references/resolve': ThreadReferenceResolveRequest;
-  readonly 'thread/descendants': ThreadDescendantsRequest;
-  readonly 'thread/subagents/list': ThreadSubagentsRequest;
   readonly 'thread/tasks/list': ThreadToolTasksRequest;
   readonly 'thread/read': ThreadReadRequest;
   readonly 'thread/start': RendererThreadStartRequest;
@@ -2546,8 +2272,6 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/list': ThreadListResponse;
   readonly 'thread/references/search': ThreadReferenceSearchResponse;
   readonly 'thread/references/resolve': ThreadReferenceResolveResponse;
-  readonly 'thread/descendants': ThreadDescendantsResponse;
-  readonly 'thread/subagents/list': ThreadSubagentsResponse;
   readonly 'thread/tasks/list': ThreadToolTasksResponse;
   readonly 'thread/read': ThreadReadResponse;
   readonly 'thread/start': ThreadStartResponse;
@@ -2611,7 +2335,6 @@ export type AgentCoreNotification =
       readonly threadId: ThreadId;
       readonly turnId: TurnId;
       readonly turn: Turn;
-      readonly subagentAdmission?: SubagentTurnAdmission;
       readonly toolTaskAdmission?: ToolTaskTurnAdmission;
     }
   | {
@@ -2667,17 +2390,6 @@ export type AgentCoreNotification =
       readonly turnId: TurnId;
     } & TurnPlanSnapshot)
   | {
-      /**
-       * One Agent's execution record changed. `threadId` is the direct parent,
-       * so the event is ordered with the conversation that delegated the work.
-       * Derived state, never history: an Agent's canonical lifecycle already
-       * lives in its own Thread, Turns, and Items.
-       */
-      readonly type: 'subagent/execution/changed';
-      readonly threadId: ThreadId;
-      readonly execution: SubagentExecutionProjection;
-    }
-  | {
       readonly type: 'userInput/requested';
       readonly threadId: ThreadId;
       readonly turnId: TurnId;
@@ -2698,7 +2410,6 @@ export type AgentCoreTransientNotification = Extract<AgentCoreNotification, {
     | 'thread/name/updated'
     | 'turn/providerRetry/changed'
     | 'turn/plan/updated'
-    | 'subagent/execution/changed'
     | 'toolTask/changed';
 }>;
 
@@ -2714,7 +2425,6 @@ export type RendererProjection<T> =
 
 type RendererProjectedResponseMethod =
   | 'thread/list'
-  | 'thread/descendants'
   | 'thread/read'
   | 'thread/start'
   | 'thread/resume'

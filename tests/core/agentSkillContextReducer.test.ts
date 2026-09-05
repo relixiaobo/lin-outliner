@@ -127,8 +127,6 @@ describe('Skill context reducer', () => {
         contentHash: 'a1',
         payloadRef: activeItem.payloadRef,
       }],
-      roleCatalogHash: null,
-      announcedRoles: [],
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
@@ -390,9 +388,7 @@ function invocation(name: string, contentHash: string, instructions: string): Sk
     contentHash,
     instructions,
     arguments: '',
-    execution: 'inline',
     invocationSource: 'model',
-    constraints: { allowedTools: [], model: null, effort: null },
     invokedAt: 1,
   };
 }

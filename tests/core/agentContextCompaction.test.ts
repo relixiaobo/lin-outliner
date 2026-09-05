@@ -339,8 +339,6 @@ describe('context compaction reducer', () => {
       skillCatalogHash: null,
       announcedSkills: [],
       activeSkills: [],
-      roleCatalogHash: null,
-      announcedRoles: [],
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
@@ -416,8 +414,6 @@ describe('context compaction reducer', () => {
         contentHash: oldSkill.contentHash,
         payloadRef: oldItem.payloadRef,
       }],
-      roleCatalogHash: null,
-      announcedRoles: [],
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
@@ -531,22 +527,6 @@ describe('context compaction reducer', () => {
       }],
     };
     const activeSkill = skillInvocation('1', 'Inherited Skill instructions.');
-    const roleCatalog = {
-      schemaVersion: 1 as const,
-      kind: 'roleCatalog' as const,
-      mode: 'baseline' as const,
-      previousCatalogHash: null,
-      catalogHash: 'b'.repeat(64),
-      entries: [{
-        change: 'available' as const,
-        name: 'worker',
-        displayName: 'Worker',
-        source: 'built-in' as const,
-        identity: 'built-in:worker',
-        contentHash: '2'.repeat(64),
-        description: 'Inherited Role description.',
-      }],
-    };
     const userView = {
       schemaVersion: 1 as const,
       kind: 'userView' as const,
@@ -587,7 +567,6 @@ describe('context compaction reducer', () => {
     const nestedTurn = turn(20, [
       contextEvidence(store, skillCatalog, 'inherited-skill-catalog'),
       contextEvidence(store, activeSkill, 'inherited-active-skill'),
-      contextEvidence(store, roleCatalog, 'inherited-role-catalog'),
       contextEvidence(store, userView, 'inherited-user-view'),
       contextEvidence(store, additionalContext, 'inherited-additional-context'),
       ...observed.items,
@@ -602,7 +581,6 @@ describe('context compaction reducer', () => {
     });
     expect(firstPlan?.restoredState).toMatchObject({
       skillCatalogHash: skillCatalog.catalogHash,
-      roleCatalogHash: roleCatalog.catalogHash,
       userViewBaselineRef: contextEvidenceRef(nestedTurn, 'userView'),
       additionalContextBaselineRef: contextEvidenceRef(nestedTurn, 'additionalContext'),
       activeSkills: [{
@@ -620,11 +598,6 @@ describe('context compaction reducer', () => {
       name: 'alpha',
       identity: 'project:alpha',
       contentHash: '1'.repeat(64),
-    }]);
-    expect(firstPlan?.restoredState.announcedRoles).toEqual([{
-      name: 'worker',
-      identity: 'built-in:worker',
-      contentHash: '2'.repeat(64),
     }]);
     if (!firstPlan) throw new Error('Expected inherited compaction plan.');
     expect(firstPlan.coveredFrom).toEqual({ turnId: outer.id, itemId: inherited.id });
@@ -666,7 +639,7 @@ describe('context compaction reducer', () => {
 function contextEvidence(
   store: ReturnType<typeof createPayloadStore>,
   payload: Extract<ThreadContextPayload, {
-    kind: 'skillCatalog' | 'skillInvocation' | 'roleCatalog' | 'userView' | 'additionalContext';
+    kind: 'skillCatalog' | 'skillInvocation' | 'userView' | 'additionalContext';
   }>,
   id: string,
 ): ContextEvidenceThreadItem {
@@ -749,9 +722,7 @@ function skillInvocation(seed: string, instructions: string) {
     contentHash: seed.repeat(64).slice(0, 64),
     instructions,
     arguments: '',
-    execution: 'inline' as const,
     invocationSource: 'model' as const,
-    constraints: { allowedTools: [], model: null, effort: null },
     invokedAt: 1,
   };
 }

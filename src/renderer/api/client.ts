@@ -1,7 +1,6 @@
 import type {
   AgentEditorView,
   AgentProfileDraft,
-  AgentRoleDraft,
   AssetMetadata,
   Backlink,
   AgentProviderConfigInput,
@@ -247,45 +246,18 @@ export const api = {
     command<SkillDefinition[]>('agent_list_all_skills', { userInvocableOnly: true }),
   agentUndoSkillAgentEdit: (skillName: string) =>
     command<SkillDefinition[]>('agent_undo_skill_agent_edit', { skillName }),
-  /**
-   * The Agents editor's view: every identity the transcript can draw, plus the
-   * Roles a user may actually change. `cwd` names the conversation being
-   * edited from, so a project's own layer is included; main resolves it and
-   * ignores anything that is not a real directory.
-   */
+  /** The main Agent editor's view for the selected configuration layer. */
   agentIdentityCatalog: (cwd?: string) =>
     command<AgentEditorView>('agent_identity_catalog', { cwd }),
-  agentWriteRole: (input: {
-    layer: 'user' | 'project';
-    cwd?: string;
-    /** `create` refuses a name that already exists instead of replacing it. */
-    mode: 'create' | 'update';
-    role: AgentRoleDraft;
-    execution?: import('../../core/types').AgentExecutionSelectionDraft;
-  }) =>
-    command<AgentEditorView>('agent_write_role', input),
-  agentDeleteRole: (input: { layer: 'user' | 'project'; cwd?: string; name: string }) =>
-    command<AgentEditorView>('agent_delete_role', input),
-  /**
-   * The conversation agent's own configuration — standing instructions and the
-   * capability ceiling its Subagents are narrowed from.
-   */
+  /** The conversation agent's standing instructions and capability ceiling. */
   agentWriteProfile: (input: {
     layer: 'user' | 'project';
     cwd?: string;
     name: string;
     profile: AgentProfileDraft;
     /** The same agent's re-skin, applied in the same validated edit. */
-    agentType?: string;
     presentation?: { persona?: string; color?: string };
   }) => command<AgentEditorView>('agent_write_profile', input),
-  agentWritePresentation: (input: {
-    layer: 'user' | 'project';
-    cwd?: string;
-    agentType: string;
-    presentation: { persona?: string; color?: string };
-    execution?: import('../../core/types').AgentExecutionSelectionDraft;
-  }) => command<AgentEditorView>('agent_write_presentation', input),
   agentManagedSkillCatalog: () =>
     managedCommand<ManagedSkillCatalogView>('agent_managed_skill_catalog'),
   agentManagedSkillDiscover: (input: { sourceUrl?: string; catalogId?: string }) =>

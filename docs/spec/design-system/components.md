@@ -196,7 +196,7 @@ between rest, hover, focus, loading, and expansion. The shared tool slot remains
 Iconoir's smaller native ink bounds against the 14px tool glyph. Both layers
 stay centered in the same slot. Stop/close actions in dense
 rows default to unboxed icon controls whose glyph colour deepens on hover/focus.
-Active tool and Subagent rows retain their semantic glyph and apply
+Active tool and Tool Task rows retain their semantic glyph and apply
 `WorkingText` only to the advancing action/status phrase; an in-progress tool
 action keeps the same neutral resting colour at the same weight as its
 metric-stable terminal cue, so the sweep remains visible across the lifecycle.

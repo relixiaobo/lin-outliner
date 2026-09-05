@@ -31,15 +31,16 @@ Turn-local events from the same payload.
 
 The stable system prompt is composed in three deterministic layers: universal
 framework firmware (L0), modules selected from the effective canonical tool
-catalog (L1), and root Neva or child Role identity/instructions (L2). Current
+catalog (L1), and root-conversation or delegated-Session identity/instructions
+(L2). Current
 time, view state, resources, additional context, and Skill discovery never enter
 that prefix. The composer exposes byte fingerprints for each layer and the
 complete prompt; logically identical configurations therefore produce identical
 prompt bytes across Turns and restarts.
 
 L1 capability selection matches exact Core canonical tool keys. A namespaced extension
-or provider-encoded tool whose local name resembles a built-in never enables built-in
-filesystem, Outliner, Memory, Skill, or Agent-orchestration guidance.
+or provider-encoded tool whose local name resembles a built-in never enables
+built-in filesystem, Outliner, Memory, Skill, Goal, or Automation guidance.
 
 The stable modules retain the established operational contract: renderer-safe
 deliverables use canonical `[[file:///absolute/path]]` markers with a readable
@@ -50,27 +51,14 @@ explicitly account for shared files, processes, ports, credentials, application 
 and services. Tool-owned syntax such as generated-image placement remains on the owning
 tool description/result rather than being duplicated in the prompt.
 
-Fresh Agent startup is a separate composition mode, not a parent-history
-projection. `general-purpose` and configured Roles receive their own system
-identity, the exact delegated prompt, repository instructions, the session-start
-git-status snapshot and, only when `skill` survives the effective runtime tool
-set, an available-Skill catalog and complete eligible Role-preloaded Skill
-content. `explore` and `plan` receive their specialized prompt and small
-environment envelope without repository/status or catalog blocks; when `skill`
-remains effective, eligible inline Role preloads may still contribute their
-complete content independently of the omitted catalog. Skill runtime construction,
-direct invocation routing, preload, and catalog evidence all require `skill` in
-the effective Thread configuration. The L1 Skill module independently requires
-`skill` to survive final runtime tool assembly. No Agent
-receives parent messages, reasoning, calls/results, read-file residue,
-parent-only Skill content, Memory prompt/data, or address roster. A resume then
-projects the Agent's own canonical history under its recorded configuration and
-the startup snapshot persisted with its execution. That snapshot is supplied on
-the current Turn of every generation, including steering continuation,
-`agent_message` resume, user-authored resume, and restart recovery; it is not a
-generation-one-only overlay.
-The complete matrix is specified in
-[`agent-subagent-threads.md`](agent-subagent-threads.md).
+A delegated Session is a separate composition mode, not a root-history
+projection. Its first Turn receives the exact delegated prompt, repository
+instructions allowed by the selected Task Profile, and the frozen
+Runner/model/access policy. It receives no root messages, reasoning, tool
+calls/results, Memory prompt/data, address roster, or renderer-only state.
+Continuation projects only the hidden Thread's own canonical history plus the
+ordered root messages committed at a Turn boundary. Task Profiles and delegated
+tool ceilings are specified in [`agent-delegation.md`](agent-delegation.md).
 
 Every provider request, including requests after tools and steering, passes
 through `CanonicalContextProjector` at the native kernel's projection port. The
@@ -141,27 +129,20 @@ overlay is never persisted and is unavailable to later Turns, restart, fork, or
 compaction. Once cancellation is observed, sequential and parallel batch loops stop
 before admitting any remaining call; no Item or argument payload is created for those
 unadmitted calls, while already admitted calls settle as interrupted results.
-Fork and child inheritance copy payload-backed tool arguments when available. A missing
+Fork materialization copies payload-backed tool arguments when available. A missing
 argument payload is recoverable inspection data rather than a hard dependency: the
 canonical reference survives, and later provider projection emits
 `argumentPayloadUnavailable` evidence instead of failing the user operation.
 
-Direct slash and natural-language inline Skill routing run during the same admission
-boundary only when the canonical `skill` tool survives effective runtime
-assembly. Inline Skills are side-effect-free by contract; shell expansion and all
-execution overrides require isolated execution through the canonical `skill` tool.
-Validated inline guidance is persisted as `skillInvocation` evidence immediately before
-the unchanged canonical `userMessage`. Model-tool invocation persists the same payload
-after its complete tool Item. Every provider boundary therefore receives Skill guidance
-only through canonical projection; no direct-prompt overlay, generic prompt builder,
-private steering message, or reminder parser is a second history authority.
-
-For isolated Skills with embedded shell expansion, the child receives a live rendered
-copy that may contain current readable handles. The persisted `skillInvocation`
-instructions contain only stable resource identities. The parent `skill` result exposes
-current handles in JSON for that execution, its persisted copy strips `filePath`, and
-successfully admitted files remain in the tool manifest even when a later embedded
-command fails.
+Direct slash and natural-language inline Skill routing run during the same
+admission boundary only when the canonical `skill` tool survives effective
+runtime assembly. Inline Skill guidance is persisted as `skillInvocation`
+evidence immediately before the unchanged canonical `userMessage`.
+Model-tool invocation persists the same payload after its complete tool Item.
+Every provider boundary therefore receives Skill guidance only through
+canonical projection; no direct-prompt overlay, generic prompt builder, private
+steering message, shell expansion, or reminder parser is a second history
+authority.
 
 For every newly admitted Turn-start or steering input, main records
 `turnEnvironment` evidence containing the accepted UTC instant, local date/time, IANA
@@ -255,22 +236,16 @@ results retain their ordered text, JSON, and actual image content at the provide
 boundary. Each image is preceded by a stable identity marker derived from its alt text
 and canonical source filename or path, plus immutable snapshot MIME and byte length;
 images no longer degrade to filename-only text. Plans and context
-reset Items select context state rather than becoming user prose. The assistant channel
-is a few-shot demonstration of the model's own prose, so a marker Tenon authors into it
-teaches the model to write more of the same: the former `[Subagent ...]` line was
-observed teaching a Thread to invent lifecycle kinds that do not exist and render a
-hallucinated delegation to its user. Subagent activity and viewed image Items therefore
-contribute no provider content, and because an Item that contributes no content must not
-act as a boundary either, they are skipped before the pending-user and tool flushes
-rather than closing an assistant message that a Subagent spawn recorded mid-batch. The
-model still learns what it delegated from the `agent`/`skill` tool call and result, and
-learns each terminal transition from the task notification, or for an isolated Skill from
-the awaited `skill` result; the Item itself exists for the parent-visible row. The one
-authored line that remains in this channel is the redacted-replay notice, which names the
-argument paths a completed tool call no longer replays and is required to stay atomic
-with that call rather than degrade to separate evidence.
+reset Items select context state rather than becoming user prose. The assistant channel is a few-shot demonstration of the model's own prose,
+so Host lifecycle markers and background-task activity contribute no provider
+content. An Item that contributes no content also does not create a message
+boundary. The model learns what it ran from the canonical Bash call and result,
+and learns terminal background transitions from Tool Task delivery. The one
+Host-authored line retained in this channel is the redacted-replay notice, which
+names argument paths a completed tool call no longer replays and stays atomic
+with that call.
 A compaction serializes its lossy summary, uses
-its validated reducer checkpoint to restore complete Skill/Role catalogs, inline Skill
+its validated reducer checkpoint to restore complete Skill catalogs, inline Skill
 instructions, user view, Thread state, file/Node observations, and optional durable
 instructions, then continues with its declared preserved tail. Checkpoint hashes and
 payload references remain canonical state and are not sent as model guidance. The covered
@@ -293,7 +268,7 @@ before its bytes, so text/image/user-content order is never changed; later text 
 another bundle only when that ordering requires it. The
 wrapper is only a serialization boundary: typed canonical evidence, source kind, stable
 key, producer, lifecycle, hashes, reducer state, and replay metadata remain Host-private
-authority. Skill and Role catalog payloads
+authority. Skill catalog payloads
 retain their hashes, identities, sources, and change records for reduction and audit, while
 their provider projection is an application observation containing only readable
 availability or delta state, names, distinct display names, and descriptions. Skill
@@ -426,7 +401,7 @@ Provider events are converted as follows:
 - patch activity becomes `fileChange`
 - MCP calls become `mcpToolCall`
 - configured extension tools become `dynamicToolCall`
-- `agent`, `agent_message`, and `task_stop` produce Agent-task Items
+- background `bash`, `task_status`, and `task_stop` remain ordinary dynamic-tool Items
 - web and image activity use their canonical Item kinds
 
 OpenAI Responses requests use the provider's detailed reasoning-summary mode.
@@ -459,13 +434,12 @@ timeout matches the long silent gaps valid at high reasoning effort and is separ
 the configurable whole-request timeout. Official `api.openai.com`, Azure Responses, and
 non-Responses adapters do not use this wrapper.
 
-An execution or streamed Item is recorded with `item/started`, optional typed deltas,
-and one terminal `item/completed`. Initial evidence and user facts are complete inside
-the atomic `turn/started` event. Subagent activity already queued while the Thread was
-idle is admitted before that evidence and the trailing user message, so it settles into
-prior canonical history without breaking the active user boundary; it contributes no
-provider content of its own once there. Later steering evidence and
-input use `items/completed`. Neither path synthesizes a streaming lifecycle.
+An execution or streamed Item is recorded with `item/started`, optional typed
+deltas, and one terminal `item/completed`. Initial evidence and user facts are
+complete inside the atomic `turn/started` event. Later steering evidence and
+input use `items/completed`. Background Tool Task delivery starts a separate
+Host-authored root Turn and commits its delivery claim at that Turn's atomic
+start. Neither path synthesizes a streaming lifecycle.
 The recorder applies every delta to its current decoded Item before the next provider
 event can observe it. Core may coalesce adjacent string deltas for the same Thread,
 Turn, Item, and delta type into one equivalent 40 ms downstream write; a lifecycle
@@ -538,8 +512,8 @@ authority. Before the next provider boundary, the runtime records exactly one
 `toolOutputProjection` for each previously unseen complete output. A result uses its full
 payload when both the per-output and aggregate output shares fit; otherwise it uses a
 bounded inline projection that states the complete byte length and digest. The decision
-is immutable and content-addressed. Later replay, restart, compaction, fork, and child
-inheritance use the same bytes while the complete `outputRef` remains available for UI
+is immutable and content-addressed. Later replay, restart, compaction, and fork
+materialization use the same bytes while the complete `outputRef` remains available for UI
 inspection and checkpoint dependencies.
 
 Ordinary binary/file outputs use a separate host-only resource manifest. The live tool
@@ -569,9 +543,9 @@ provider text identifies the artifact and reports source size, observation size,
 scale factors, and the observation-to-source affine matrix. This gives the model enough
 information to relate the bounded observation to the admitted source-image pixel plane.
 The runtime does not inspect, validate, convert, or rewrite later tool arguments.
-Delegated-work request budgets are host-owned circuit breakers, not model tool
-arguments or per-child allocations; their admission and accounting contract is
-specified in [`agent-subagent-threads.md`](agent-subagent-threads.md).
+Delegation scheduling limits are Host policy, not model arguments. The
+delegation contract and Tool Task ownership boundary are specified in
+[`agent-delegation.md`](agent-delegation.md).
 
 The native Kernel is the sole compiler for Tenon-owned tool results. It validates
 the catalog tool's semantic outcome and closed, field-level output-data schema, writes one
@@ -592,9 +566,8 @@ guidance written for the model to act on. The host therefore requires no
 success-only evidence from one — a refused Skill invocation records no
 invocation, because none ran. Kernel-owned rejection, cancellation, malformed
 internal output, or execution exception instead sets `isError: true` and uses a
-stable bounded common error. Demanding success from expected failures turned
-every refusal (an unknown Skill name, a disabled one, an exhausted child budget)
-into a dead Turn, and the guidance never reached the model that needed it.
+stable bounded common error. Demanding success from expected failures turns a recoverable refusal into a
+dead Turn, and the guidance never reaches the model that needs it.
 
 Domain adapters preserve this split with a typed expected-failure contract.
 Goal creation/update, Thread-history reads, Automation mutations, and task stop
@@ -607,10 +580,9 @@ large file mutations keep their complete patch in private details while a clippe
 visible patch reports partial success instead of failing Kernel validation after
 the write has already committed.
 
-An OPTIONAL string tool argument the model leaves blank means "not specified", and
-is recorded as `null` rather than as an empty string: a Subagent spawn's `model`,
-`reasoningEffort`, and `message`, and a file change's path, which is named
-`(unknown path)` when blank exactly as when absent.
+An OPTIONAL string tool argument the model leaves blank means "not specified"
+and is recorded as `null` rather than as an empty string. A file change's path,
+for example, is named `(unknown path)` when blank exactly as when absent.
 
 The canonical Item codec correspondingly tolerates an empty value in every Item
 string a tool call can put one in. Some are not optional and cannot be `null` —
@@ -655,18 +627,14 @@ diagnostic while valid siblings remain available. Static catalog schemas are gua
 the test suite. Dynamic and extension implementation mismatches degrade like malformed
 runtime schemas. Core/capability mismatches, duplicate identities, and enabled
 valid extension contracts with no implementation remain hard registry defects
-for root Threads; child Agents skip unavailable extension handlers and retain a
-bounded diagnostic under A12.
+for root Threads; delegated Sessions skip unavailable extension handlers and
+retain a bounded diagnostic under A12.
 
-Child tool assembly also applies the persisted execution policy, not just the
-current configuration. Role `tools: ['*']` is stored as a null requested ceiling
-and inherits the resolved parent pool; an explicit empty Role list is a zero-tool
-configuration defect and refuses before provider I/O. The isolated-Skill parser
-normalizes omitted `allowed-tools` to an explicit empty runtime ceiling, which
-remains intentionally tool-free. Agent Role catalog
-evidence is emitted only when the effective runtime contains an executable
-`agent` tool. For a child, that requires persisted nesting permission, a non-leaf
-Agent kind, and a requested ceiling that admits `agent`.
+Delegated tool assembly applies the Session's persisted Task Profile and access
+policy after the root configuration ceiling. Root-scoped controls, background
+processes, Tool Task management, Thread history, and nested delegation are
+always removed. A read-only policy admits only proven read actions; a writable
+`general` Session still cannot restore the hard-blocked controls.
 
 Specialized execution is fail-closed at the argument-dependent boundary.
 `explore` and `plan` may execute Bash only when capability classification proves
@@ -702,100 +670,48 @@ The executor registers one steering handler. Input accepted before registration
 is queued and delivered in order. Steering is added to provider input without
 rewriting persisted prior Items.
 
-Renderer start and steer admission mint `reader` author only after renderer request
-decoding. Every privileged producer supplies its non-reader author explicitly:
-delegated briefs and Agent messages name their source Thread; child terminal delivery
-names the child; host-only envelopes and budget notices use `host`; and Automation,
-Goal continuation, Memory, and other feature prompts use `feature` with their existing
-stable reference when one exists. Rerun and fork preserve the author already recorded
-on each source Item. A direct Skill invocation remains reader-authored because its
-structured input came from the renderer; `request_user_input` remains a control-plane
-record rather than a synthetic `userMessage`.
+Renderer start and steer admission mint `reader` author only after renderer
+request decoding. Every privileged producer supplies its non-reader author
+explicitly: Host-only envelopes use `host`; Automation, Goal continuation,
+Memory, delegation, and other feature prompts use `feature` with a stable
+reference when one exists. Rerun and fork preserve the author recorded on each
+source Item. A direct Skill invocation remains reader-authored because its
+structured input came from the renderer; `request_user_input` remains a
+control-plane record rather than a synthetic `userMessage`.
 
-Every delegated execution generation feeds a live in-flight tally from
-`PiEventNormalizer.completeAssistant`, immediately after the normalizer
-accumulates each assistant message's `totalTokens`. Diagnostics capture is
-inspection-only and cannot drop or duplicate accounting. Non-user delegated
-Turns expose a live budget port (`remaining`, `used`, `total`) to the native
-kernel when their current generation has a frozen `subagentTokenBudget`; an
-unbounded generation returns `null`. Each read re-reads that generation's
-persisted usage and adds only that generation's observed in-flight usage,
-including the current Turn. There is no ancestor-pool walk, sibling debit,
-covered-member predicate, or per-child contribution cap.
+Delegated Turns use the same provider accounting as root Turns. The Agent
+Session freezes Runner, model, effort, profile, and access policy, while the
+generic Tool Task scheduler owns concurrency and queue limits. No
+generation-local token budget or ancestor/sibling accounting path exists.
 
-The executor passes the port through without overlaying its normalizer total.
-The kernel uses `remaining` directly and never subtracts snapshots, so a
-generation-local breaker cannot falsely interrupt a sibling or descendant. The
-first model call is never blocked. At every later model-call boundary, before
-draining steering or emitting the next `turn_start`, `remaining <= 0`
-interrupts only genuinely outstanding model work, such as completed tool calls.
-A terminal assistant answer stays completed even when the final accepted call
-overshot the breaker, and racing steering remains queued and undelivered. Thus
-every emitted `turn_start` still has its matching `turn_end`.
-
-The first 80% crossing of the generation breaker requests one host-generated
-budget notice carrying its actual `used` and `total`. The notice asks for an
-early handoff with concrete progress, verified evidence, unknown or unchecked
-work, and the next action. It uses the same canonical steering admission and
-diagnostics path as external steering, so it is a durable `userMessage` rather
-than a private runtime message. Warning delivery is advisory: failure is logged
-and execution continues. Steering diagnostics become consumed only when the
-native queue is drained into a later provider context; queue acceptance alone
-does not mark delivery.
-
-Background Agent completion is host-pushed, never model-polled. Once the child
-Turn and transcript append settle, a persisted `{agentId, generation}` event
-materializes at the direct parent's next idle admission boundary as canonical
-input with a typed non-user notification prefix. Foreground execution instead
-returns once through its original `agent` tool result and emits no notification.
-The output scanner runs exactly once before either boundary. Pending completion
-events are idempotent across restart and cannot overtake already-admitted genuine
-user input. Nested delivery advances one parent edge at a time so only a parent's
-synthesized result reaches its own parent.
-Renderer-facing execution projection separates stable-Agent current state from
-immutable terminal-generation receipts. Each receipt is joined from the
-execution ledger's terminal notification row and canonical child Turn, and
-carries the exact generation and Turn, stable delegating parent Item, outcome,
-stop provenance, duration, bounded error, partial-output availability, direct
-parent, notification state, and delivery Turn. Foreground settlement, including
-an isolated Skill, projects a receipt with no notification or delivery Turn.
-After resume, current-generation fields cannot replace an older receipt;
-historical anchors and reports continue to identify the exact run and, where
-applicable, the parent Turn that consumed it.
-
-Completion notifications and Agent-to-`main` message envelopes remain durable
-queued work while either endpoint has an undelivered row. Catalog projection uses
-that durable fact to protect terminal descendants from finished-item deletion.
-One missing or corrupt child Turn rolls back only that delivery claim and the
-pass continues with its siblings; it cannot permanently block unrelated results.
-
-Agent steering and stop resolve only reachable `collaboration` Threads and reject
-self-targets. Unified `task_stop` checks both the caller-owned shell registry and
-the reachable Agent registry; an identity collision is an error rather than a
-dispatch guess. Shell success and expected failure are returned as structured
-local-tool results so the canonical Item keeps error code, recovery guidance, and
-metrics rather than collapsing them into a generic thrown-error string.
+Delegated root messages are accepted into the Session's durable ordered queue.
+The internal Runner consumes them only at the next explicit Turn boundary; it
+never claims that an in-flight provider request or tool invocation observed
+them. The delegation settlement binds the hidden canonical Turn result to the
+prepared Tool Task result and quiescent process receipt. Failed, timed-out,
+cancelled, or lost execution blocks all uncommitted messages before waking a
+waiting sender, so failure cannot start another Turn.
 
 Interrupt aborts provider and tool work through the Turn signal, including
-provider and tool initialization before `prompt()`. Any execution
-Item still `inProgress` is completed as `interrupted`; unexpected executor
-failure completes it as `failed`. The terminal Turn records the corresponding
-status and error.
+provider and tool initialization before `prompt()`. Any execution Item still
+`inProgress` completes as `interrupted`; unexpected executor failure
+completes it as `failed`. The terminal Turn records the corresponding status
+and error.
 
-If cancellation arrives after a schema-valid call is prepared, the runtime preserves
-its admitted envelope and records an explicit aborted outcome while skipping the tool
-side effect. Cancellation is never relabeled as `invalidArguments`. Every raw call in
-the returned assistant batch still receives an admission decision, so the live
-no-projection kernel path cannot retain an unsanitized trailing tool call.
+If cancellation arrives after a schema-valid call is prepared, the runtime
+preserves its admitted envelope and records an explicit aborted outcome while
+skipping the tool side effect. Cancellation is never relabeled as
+`invalidArguments`. Every raw call in the returned assistant batch still
+receives an admission decision, so the live no-projection kernel path cannot
+retain an unsanitized trailing tool call.
 
 Orderly service shutdown is a bounded cancellation boundary. Active Turn
-completion, collaboration settlement, and transcript append chains share one
-deadline. Work that settles inside it is flushed; expiry records degraded
-shutdown diagnostics and proceeds with canonical and orchestration rows intact
-for startup recovery, rather than waiting indefinitely for a re-registering Turn
-or wedged inspection-only transcript write.
+completion, transcript append, Tool Task settlement, and delegation settlement
+share one deadline. Work that settles inside it is flushed; expiry records
+degraded shutdown diagnostics and leaves durable evidence for startup recovery
+rather than waiting indefinitely.
 
-## Context Planning And Compaction
+## Context Planning And Compaction## Context Planning And Compaction
 
 Every provider boundary, including post-tool requests and steering, runs one global
 budget plan over the stable prompt, canonical tool schemas, reduced history, current
@@ -808,10 +724,9 @@ its redacted call fails closed. If the
 stable prompt, tools, and active Turn alone cannot fit, the Turn fails with an explicit
 capacity error rather than dropping the current request.
 
-A child Turn's leading `inheritedContext` Item is historical context even though it is
-stored before the task in that same Turn. Its protected boundary begins at the first
-following current-admission Item. Budget recovery may compact the inherited Item with an
-exact item cursor, but it cannot compact the current admission evidence or task.
+A delegated Session's prior Turns are ordinary canonical history of its hidden
+Thread. The newly admitted prompt or ordered message prefix is current input and
+cannot be compacted as historical context in the same Turn.
 
 When older history prevents the protected tail from fitting, preflight aligns its
 retained provider-message suffix to the next canonical Turn boundary. It stages that
@@ -826,7 +741,7 @@ candidate. Provider-overflow recovery may compact all prior Turns and preserve o
 active Turn. Manual `/compact
 [instructions]` may compact the current epoch while the Thread is idle. Both forms store
 exact covered/preserved cursors, a `source=deterministic` bounded lossy summary, and a reducer
-checkpoint for the Skill and Role catalog journals, active inline Skill invocations,
+checkpoint for the Skill catalog journal, active inline Skill invocations,
 latest user-view baseline, and non-invalidated file/Node observations. Observation
 checkpoints reference the existing frozen projection and complete output instead of
 copying tool text. Optional manual instructions remain typed application guidance after
@@ -840,7 +755,7 @@ replacement for the inherited parent Turns.
 
 Reducers recursively evaluate typed inherited context and treat an earlier compaction
 checkpoint as authoritative state at that point in the effective history. Consequently,
-compacting a child or fork after deleting its source Thread preserves inherited
+compacting a fork after deleting its source Thread preserves inherited
 catalogs, active Skill instructions, the latest view baseline, and active observations;
 compacting that result again preserves the same state until later canonical Items change
 or invalidate it. Every nested context/output dependency is validated before the new
@@ -866,7 +781,7 @@ a snapshot that may already be stale.
 `/clear` records a `contextReset` in a completed feature Turn without invoking the
 provider. Projection starts after the latest reset, clears the user-view diff baseline,
 catalog journals, active Skill guidance, output-projection budget state, prior
-compaction, and inherited context, then records fresh Skill/Role baselines on the next
+compaction, and inherited context, then records a fresh Skill baseline on the next
 ordinary admission. Earlier Turns remain visible, pageable, searchable, exportable,
 forkable, and available to explicit history tools. Consecutive clears without new
 model-visible content reuse the prior boundary.

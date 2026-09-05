@@ -15,7 +15,7 @@ time (A11).
 ## Goal
 
 Implement the account layer of the Delegation Contract
-(`docs/spec/agent-subagent-threads.md`, Delegation Contract §2): the process
+(`docs/spec/agent-delegation.md`; the former Delegation Contract was retired): the process
 behind a delegated result, readable by the parent MODEL and by debugging
 agents/humans, pulled on demand, reader-pays, independent of the child's
 liveness or budget. Two ports over ONE faithful renderer, no new model tools:

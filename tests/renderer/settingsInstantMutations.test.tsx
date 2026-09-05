@@ -421,7 +421,6 @@ function providerSettings(enabled: boolean): AgentProviderSettingsView {
     }],
     agent: {
       additionalSkillDirectories: [],
-      subagentTokenBudget: null,
       providerTimeoutMs: null,
       providerMaxRetries: null,
       providerMaxRetryDelayMs: null,

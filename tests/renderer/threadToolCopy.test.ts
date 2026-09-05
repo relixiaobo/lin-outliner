@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { AgentTaskToolName, ItemExecutionStatus, ThreadItem } from '../../src/core/agent/protocol';
+import type { ItemExecutionStatus, ThreadItem } from '../../src/core/agent/protocol';
 import { en } from '../../src/core/i18n';
 import {
   summarizeThreadToolActivity,
@@ -76,28 +76,6 @@ function shell(
   };
 }
 
-function collab(
-  tool: AgentTaskToolName,
-  status: ItemExecutionStatus = 'completed',
-  receiver = 'r1',
-): ThreadToolItem {
-  return {
-    ...base(`collab-${tool}`),
-    type: 'collabAgentToolCall',
-    status,
-    outputRef: null,
-    tool,
-    senderThreadId: 't',
-    receiverThreadIds: [receiver],
-    prompt: null,
-    summary: null,
-    model: null,
-    reasoningEffort: null,
-    agentsStates: {},
-    modelCall: replayableModelCall(tool, {}),
-  };
-}
-
 function changes(...paths: readonly string[]): ThreadToolItem {
   return {
     ...base('file-change'),
@@ -144,21 +122,16 @@ describe('every built-in tool says what it did, not which API was called', () =>
       query: 'epub', results: [], error: null,
       modelCall: replayableModelCall('web_search', { query: 'epub' }),
     }, 'Searched for "epub"'],
-    ['agent', collab('agent'), 'Started an agent'],
-    ['agent_message', collab('agent_message'), 'Messaged an agent'],
-    ['task_stop', collab('task_stop'), 'Stopped a task'],
+    ['task_stop', dynamic('task_stop', { task_id: 'task-1' }), 'Stopped a task'],
   ];
 
   for (const [name, item, expected] of cases) {
     test(name, () => {
       expect(summarizeThreadToolItem(item, labels)).toBe(expected);
       // Nothing in the user-facing wording may be the raw tool identifier.
-      // (`skill` and `agent` are exempt: their identifiers also happen to be
-      // ordinary English nouns in the product copy.)
+      // (`skill` is exempt: its identifier also happens to be an ordinary
+      // English noun in the product copy.)
       if (item.type === 'dynamicToolCall' && item.tool !== 'skill') {
-        expect(expected).not.toContain(item.tool);
-      }
-      if (item.type === 'collabAgentToolCall' && item.tool !== 'agent') {
         expect(expected).not.toContain(item.tool);
       }
     });
@@ -224,7 +197,6 @@ describe('status is one idiom across every tool kind', () => {
     ['file_read', (s) => dynamic('file_read', { file_path: '/w/a.md' }, s), 'Read a.md', 'Reading a.md'],
     ['command', (s) => shell('npm test', s), 'Ran "npm test"', 'Running "npm test"'],
     ['file change', (s) => ({ ...changes('/w/a.ts'), status: s }), 'Changed a.ts', 'Changing a.ts'],
-    ['agent', (s) => collab('agent', s), 'Started an agent', 'Starting an agent'],
     ['skill', (s) => dynamic('skill', { skill: 'dataviz' }, s), 'Used the dataviz skill', 'Using the dataviz skill'],
   ];
 
@@ -409,10 +381,6 @@ describe('group summaries name up to two subjects, then elide', () => {
       dynamic('file_edit', { file_path: '/w/node-a.md' }, 'completed', { id: 'n-1' }),
       dynamic('skill', { skill: 'dataviz' }, 'completed', { id: 's-1' }),
     ], 'Edited node-a.md · read a.md · used the dataviz skill'],
-    ['mixed web operations keep separate verbs', [
-      dynamic('web_search', { query: 'a' }, 'completed', { id: 'mixed-web-search' }),
-      dynamic('web_fetch', { url: 'https://example.com/a' }, 'completed', { id: 'mixed-web-fetch' }),
-    ], 'Searched for "a" · fetched https://example.com/a'],
     ['two skills fall back to a count', [
       dynamic('skill', { skill: 'dataviz' }, 'completed', { id: 's-1' }),
       dynamic('skill', { skill: 'run' }, 'completed', { id: 's-2' }),
@@ -444,15 +412,6 @@ describe('group summaries name up to two subjects, then elide', () => {
       dynamic('update_plan', { plan: [] }, 'completed', { id: 'p-2' }),
       dynamic('update_plan', { plan: [] }, 'completed', { id: 'p-3' }),
     ], 'Updated the plan 3 times'],
-    ['two agents', [collab('agent', 'completed', 'r1'), collab('agent', 'completed', 'r2')],
-      'Worked with 2 agents'],
-    // Two calls aimed at the same agent are one agent worked with, not two.
-    ['same agent twice', [collab('agent', 'completed', 'r1'), collab('agent_message', 'completed', 'r1')],
-      'Worked with an agent'],
-    ['receiverless task stop is not another agent', [
-      collab('agent', 'completed', 'r1'),
-      { ...collab('task_stop', 'completed', 'unused'), receiverThreadIds: [] },
-    ], 'Worked with an agent'],
   ];
 
   for (const [name, items, expected] of cases) {

@@ -18,6 +18,7 @@ import {
   type ToolActionDescriptor,
 } from './agentCapabilityRules';
 import { canonicalPathPreservingSuffix } from './agentAttachmentMaterialization';
+import { parsePrivilegedDelegateCommand } from '../../../delegate/contract';
 
 export type {
   AgentToolActionKind,
@@ -31,7 +32,7 @@ export type BashStdinConsumer = 'absent' | 'registered-data' | 'executable' | 'u
 
 export interface StdinConsumerContract {
   readonly executable: string;
-  readonly command: 'create' | 'transact' | 'preview';
+  readonly command: string;
   readonly classification: 'registered-data';
 }
 
@@ -39,6 +40,8 @@ export const BASH_STDIN_CONSUMER_CONTRACTS: readonly StdinConsumerContract[] = O
   Object.freeze({ executable: 'outline', command: 'create', classification: 'registered-data' }),
   Object.freeze({ executable: 'outline', command: 'transact', classification: 'registered-data' }),
   Object.freeze({ executable: 'outline', command: 'preview', classification: 'registered-data' }),
+  Object.freeze({ executable: 'delegate', command: 'run', classification: 'registered-data' }),
+  Object.freeze({ executable: 'delegate', command: 'send', classification: 'registered-data' }),
 ]);
 
 export interface AgentCapabilityPolicy {
@@ -140,13 +143,6 @@ export function deriveAgentToolActionDescriptors(input: {
   if (toolName === 'bash') return deriveBashCapability(getStringArg(input.args, 'command'), input.args).descriptors;
   if (toolName === 'task_stop') {
     return [
-      simpleDescriptor(toolName, input.args, 'agent.subagent.interrupt', 'Agent stop', 'Stop a running background Agent.'),
-      descriptor(toolName, 'shell.stop', {
-        accessScope: 'none',
-        title: 'process stop',
-        summary: 'Stop an agent-launched background process.',
-        consequence: 'Stop an agent-launched background process.',
-      }),
       descriptor(toolName, 'task.stop', {
         accessScope: 'none',
         title: 'Tool Task stop',
@@ -334,6 +330,11 @@ function classifyParsedBashStdinConsumer(
   if (!stdinPresent) return 'absent';
   if (segments.length !== 1 || containsShellComposition(command)) return 'unknown';
   const words = segments[0]!;
+  const delegate = parsePrivilegedDelegateCommand(command);
+  if (delegate && delegate.name !== 'close'
+    && registry.some((entry) => entry.executable === 'delegate' && entry.command === delegate.name)) {
+    return 'registered-data';
+  }
   const outline = outlineShellInvocation(words);
   if (outline && registeredOutlineStdinConsumer(outline, registry)) return 'registered-data';
   return interpreterConsumesStdin(words) ? 'executable' : 'unknown';

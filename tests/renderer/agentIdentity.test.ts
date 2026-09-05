@@ -30,7 +30,7 @@ describe('agent identity resolution', () => {
       color: deriveIdentityColor('retired-role'),
       tint: expect.any(Number),
     });
-    // Not a type at all: an isolated Skill carries its own name.
+    // A caller-provided fallback remains drawable without a catalog identity.
     expect(resolveAgentIdentity(CATALOG, null, 'code-review').name).toBe('code-review');
     // Nothing to go on at all still resolves to something drawable.
     expect(resolveAgentIdentity(EMPTY_IDENTITY_CATALOG, null).name).toBe('?');

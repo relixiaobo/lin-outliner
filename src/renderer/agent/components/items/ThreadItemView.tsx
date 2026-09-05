@@ -11,7 +11,6 @@ import {
 } from 'react';
 import { Lexer, type Token, type Tokens } from 'marked';
 import type {
-  AgentTaskToolName,
   DynamicToolOutputContent,
   ItemExecutionStatus,
   JsonValue,
@@ -44,7 +43,7 @@ import {
   StopIcon,
   type IconSize,
 } from '../../../ui/icons';
-import { normalizedToolIdentity, toolGroupPresentation, toolPresentation, type ThreadToolItem } from './toolPresentation';
+import { toolGroupPresentation, toolPresentation, type ThreadToolItem } from './toolPresentation';
 export type { ThreadToolItem } from './toolPresentation';
 import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
 import { IconButton } from '../../../ui/primitives/IconButton';
@@ -74,11 +73,6 @@ import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIng
 import { ToolCodeBlock } from '../ToolCodeBlock';
 import type { DisclosureScrollAnchorHold } from '../../../ui/interactions/disclosureScrollAnchor';
 import { userFacingAgentError } from '../../threadErrorMessage';
-import { SubagentChip } from '../SubagentChip';
-import {
-  collaborationResultSnapshot,
-  type SubagentAnchor,
-} from '../../subagentPresentation';
 
 interface ThreadItemViewProps {
   readonly active: boolean;
@@ -92,8 +86,6 @@ interface ThreadItemViewProps {
   readonly item: ThreadItem;
   readonly showMessageActions: boolean;
   readonly streaming: boolean;
-  /** This Item is where a delegation happened, so a chip takes its slot. */
-  readonly anchor?: SubagentAnchor;
   readonly threadId: string;
   readonly threadReferences: ReadonlyMap<string, ThreadReferenceView>;
   readonly threadCwd: string;
@@ -104,10 +96,7 @@ interface ThreadItemViewProps {
   readonly onAgentMessageContextMenu?: MouseEventHandler<HTMLElement>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenTurnDetails?: () => void;
-  readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenThreadReference: (threadId: string) => Promise<void>;
-  /** Absent where no Stop belongs — a read-only or historical rendering. */
-  readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
 }
@@ -130,7 +119,6 @@ export function isThreadToolItem(item: ThreadItem): item is ThreadToolItem {
     || item.type === 'fileChange'
     || item.type === 'mcpToolCall'
     || item.type === 'dynamicToolCall'
-    || item.type === 'collabAgentToolCall'
     || item.type === 'webSearch';
 }
 
@@ -144,10 +132,7 @@ const emptyUserMessageProjectionByItem = new WeakMap<UserMessageThreadItem, bool
  * and three `contextEvidence` rows would otherwise put a named speaker over an
  * empty box before the first thing anyone actually said.
  */
-export function threadItemRendersNothing(item: ThreadItem, anchored: boolean): boolean {
-  // An anchored delegation renders as a chip; an unanchored settled one says
-  // only what that chip already says.
-  if (item.type === 'subAgentActivity') return !anchored;
+export function threadItemRendersNothing(item: ThreadItem): boolean {
   // Inspection-only: what the context carried, for Turn Details to explain.
   if (item.type === 'contextEvidence') return true;
   // User input is structured: attachments and Node references are visible even
@@ -165,19 +150,6 @@ export function threadItemRendersNothing(item: ThreadItem, anchored: boolean): b
 
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps) {
   const t = useT();
-  // An anchored Item IS the delegation, so the chip replaces it outright: the
-  // tool call that spawned the Agent and the activity row announcing it are the
-  // same event, and rendering both said it twice in two vocabularies.
-  if (props.anchor) {
-    return (
-      <SubagentChip
-        agentId={props.anchor.agentId}
-        fallbackName={anchorFallbackName(props.item)}
-        generation={props.anchor.generation}
-        kind={props.anchor.kind}
-      />
-    );
-  }
   switch (props.item.type) {
     case 'userMessage':
       return <UserMessageItem {...props} item={props.item} />;
@@ -222,7 +194,6 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     case 'fileChange':
     case 'mcpToolCall':
     case 'dynamicToolCall':
-    case 'collabAgentToolCall':
     case 'webSearch':
       return (
         <ToolItemDisclosure
@@ -231,17 +202,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           item={props.item}
           onReadArguments={props.onReadToolArguments}
           onReadOutput={props.onReadToolOutput}
-          onOpenThread={props.onOpenThread}
           threadId={props.threadId}
           threadCwd={props.threadCwd}
           workingTextEnabled={props.workingTextEnabled}
         />
       );
-    case 'subAgentActivity':
-      // Terminal activity says what the chip already says, in a place the
-      // reader never asked about; the anchored spawn Item is the only one that
-      // renders, and it renders as a chip above.
-      return null;
     case 'imageView':
       return <ImageViewItem path={props.item.path} />;
     case 'contextEvidence':
@@ -285,7 +250,6 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
   items,
   onReadToolOutput,
   onReadToolArguments,
-  onOpenThread,
   threadId,
   threadCwd,
   workingTextEnabled,
@@ -295,7 +259,6 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
   readonly items: readonly ThreadToolItem[];
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
-  readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly threadId: string;
   readonly threadCwd: string;
   readonly workingTextEnabled: boolean;
@@ -339,7 +302,6 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
               key={item.id}
               onReadArguments={onReadToolArguments}
               onReadOutput={onReadToolOutput}
-              onOpenThread={onOpenThread}
               threadId={threadId}
               threadCwd={threadCwd}
               workingTextEnabled={workingTextEnabled}
@@ -359,7 +321,6 @@ function UserMessageItem({
   item,
   onEditUserMessage,
   onOpenNodeReference,
-  onOpenThread,
   onOpenThreadReference,
   showMessageActions,
   threadId,
@@ -702,7 +663,7 @@ function UserMessageCollapsibleContent({
             aria-hidden
             className={`thread-user-expand-chevron${expanded ? ' is-expanded' : ''}`}
             size={ICON_SIZE.tiny}
- />
+          />
         </ButtonControl>
       ) : null}
     </div>
@@ -833,7 +794,7 @@ function ReasoningDisclosure({
           aria-hidden
           className={`thread-reasoning-chevron${expanded ? ' is-expanded' : ''}`}
           size={ICON_SIZE.menu}
- />
+        />
       </ButtonControl>
       {expanded && presentation.details ? (
         <div className="thread-reasoning-body">
@@ -855,7 +816,6 @@ function ToolItemDisclosure({
   item,
   onReadArguments,
   onReadOutput,
-  onOpenThread,
   threadId,
   threadCwd,
   workingTextEnabled,
@@ -865,7 +825,6 @@ function ToolItemDisclosure({
   readonly item: ThreadToolItem;
   readonly onReadArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadOutput: (item: ThreadToolItem) => Promise<string | null>;
-  readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly threadId: string;
   readonly threadCwd: string;
   readonly workingTextEnabled: boolean;
@@ -874,7 +833,7 @@ function ToolItemDisclosure({
   const disclosureId = `tool:${item.id}`;
   const expanded = expandState.isExpanded(disclosureId, false);
   const argumentRefId = toolArgumentPayloadId(item);
-  const outputRefId = item.type === 'collabAgentToolCall' ? null : item.outputRef?.id ?? null;
+  const outputRefId = item.outputRef?.id ?? null;
   const itemRef = useRef(item);
   itemRef.current = item;
   const [loadedOutput, setLoadedOutput] = useState<{
@@ -953,9 +912,6 @@ function ToolItemDisclosure({
     : summarizeThreadToolItem(item, t.agent.thread.activity, index, {
       subjectLimit: Number.POSITIVE_INFINITY,
     });
-  // A delegating call is no longer a row at all — its chip is — so nothing an
-  // expanded tool row contains can own the Turn's live cue any more.
-  const expandedSubagentOwnsWorking = false;
   return (
     <div className={`thread-item thread-tool thread-tool-${item.status}`}>
       <ButtonControl
@@ -974,7 +930,7 @@ function ToolItemDisclosure({
           className="thread-tool-label"
           segments={segments}
           title={title}
-          working={workingTextEnabled && item.status === 'inProgress' && !expandedSubagentOwnsWorking}
+          working={workingTextEnabled && item.status === 'inProgress'}
         />
       </ButtonControl>
       {expanded ? (
@@ -1077,7 +1033,7 @@ function DisclosureIndicator({ expanded, status }: { readonly expanded: boolean;
   return (
     <span aria-hidden className={`thread-disclosure-indicator${expanded ? ' is-expanded' : ''}`}>
       <span className="thread-disclosure-status">{status}</span>
-      <span className="thread-disclosure-chevron"><ChevronRightIcon size={ICON_SIZE.rowChevron} /></span>
+      <span className="thread-disclosure-chevron"><ChevronRightIcon size={ICON_SIZE.tiny} /></span>
     </span>
   );
 }
@@ -1117,11 +1073,9 @@ export function ThreadMessageCopyButton({
  * The heading of the section that holds what the tool produced, and whether
  * producing it failed. The label names the CONTENT — `Output` for shell
  * streams, `Result` for a returned value, `Error` only where the content
- * genuinely is an error payload — while `failed` carries the status colour. A
- * failed collaboration call therefore reads `Result` in danger red, which is
- * accurate: its content is a state snapshot, not an error, and the colour is
- * what says the call failed. `Error` in neutral ink is the combination that
- * would contradict itself, and no case produces it.
+ * genuinely is an error payload — while `failed` carries the status colour.
+ * `Error` in neutral ink is the combination that would contradict itself, and
+ * no case produces it.
  *
  * A failure is stated exactly once per place it belongs: the folded row says
  * THAT the tool failed, this heading says the produced value is a failure and
@@ -1247,15 +1201,6 @@ function toolDetail(
         ) : null,
       };
     }
-    case 'collabAgentToolCall':
-      return {
-        ...empty,
-        input: jsonText(argumentsValue),
-        inputLanguage: 'json',
-        output: jsonText(collaborationResultSnapshot(item)),
-        outputLanguage: 'json',
-        outcome: { label: t.agent.thread.item.result, failed: item.status === 'failed' },
-      };
     case 'webSearch':
       // Error-first for the same reason as `mcpToolCall`, though not for the
       // same mechanism: `results` is parsed unconditionally here and can in
@@ -1277,24 +1222,6 @@ function toolDetail(
       return assertNever(item);
   }
 }
-
-/**
- * The name a chip falls back to when the Agent's execution record is gone.
- *
- * A deleted Agent still has an anchor in the narrative that produced it, and
- * the canonical Item is the only evidence left of what was delegated — so the
- * chip says that, rather than an opaque address or nothing at all.
- */
-function anchorFallbackName(item: ThreadItem): string {
-  if (item.type === 'subAgentActivity') {
-    return item.agentPath.split('/').filter(Boolean).at(-1)?.trim() || item.agentThreadId;
-  }
-  if (item.type === 'collabAgentToolCall') {
-    return item.summary?.trim() || item.receiverThreadIds[0] || item.id;
-  }
-  return item.id;
-}
-
 
 /**
  * One shape for every row: **what it did**, then — only when something went
@@ -1365,17 +1292,18 @@ function toolItemAct(
       // Built-in tools say what they did, in the same words a group of them
       // uses. The identifier survives only for a tool we cannot map, where it
       // genuinely is the best available description.
+      if (normalizedToolIdentity(item.namespace, item.tool) === 'task_stop') {
+        return running ? labels.stoppingTask : labels.stoppedTask;
+      }
       const kind = dynamicToolActivityKind(item);
       const name = [item.namespace, item.tool].filter(Boolean).join('.');
       if (kind === 'tool') return namedToolAct(name, running, labels);
       const subjects = dynamicToolSubjects(item, kind, index);
       return toolActivityPhrase(kind, subjects.keys.length, subjects.names, running, labels, limit);
     }
-    case 'collabAgentToolCall':
-      return collaborationAct(item, running, labels);
     case 'webSearch': {
       // The Item's own fallback for a call the model made without a query is
-      // the empty string, and `Searching for ""` names nothing. The
+      // the empty string, and `Searching the web for ""` names nothing. The
       // subject-less copy already exists for exactly this.
       if (!item.query.trim()) return running ? labels.searchingWebActivity : labels.searchedWebActivity;
       const query = quoteSubject(item.query);
@@ -1394,30 +1322,16 @@ function namedToolAct(
   return running ? labels.usingTool({ name }) : labels.usedTool({ name });
 }
 
-/** The collaboration tools are a closed set, so each one gets real copy rather
- *  than leaking model-facing identifiers into the transcript. */
-function collaborationAct(
-  item: Extract<ThreadToolItem, { readonly type: 'collabAgentToolCall' }>,
-  running: boolean,
-  labels: Messages['agent']['thread']['activity'],
-): string {
-  if (item.tool === 'agent_message' && item.summary) return item.summary;
-  switch (item.tool) {
-    case 'agent': return running ? labels.startingAgent : labels.startedAgent;
-    case 'agent_message': return running ? labels.messagingAgent : labels.messagedAgent;
-    case 'task_status': return running
-      ? labels.usingTool({ name: 'task status' })
-      : labels.usedTool({ name: 'task status' });
-    case 'task_stop': return running ? labels.stoppingTask : labels.stoppedTask;
-    default: return assertNever(item.tool);
-  }
-}
-
 function toolIcon(item: ThreadToolItem): ReactNode {
   const { Icon } = toolPresentation(item);
   return <Icon size={ICON_SIZE.menu} />;
 }
 
+/**
+ * A group of six file reads showed a generic wrench while every row inside it
+ * showed the file-read glyph. When the members agree on one tool, the group
+ * wears that tool's icon; the wrench is for genuinely mixed groups.
+ */
 function groupGlyph(items: readonly ThreadToolItem[]): ReactNode {
   const { Icon } = toolGroupPresentation(items);
   return <Icon size={ICON_SIZE.menu} />;
@@ -1441,7 +1355,6 @@ type ToolActivityKind =
   | 'plan'
   | 'web'
   | 'webFetch'
-  | 'collaboration'
   | 'skill'
   | 'question'
   | 'tool';
@@ -1457,7 +1370,6 @@ const TOOL_ACTIVITY_ORDER: readonly ToolActivityKind[] = [
   'plan',
   'web',
   'webFetch',
-  'collaboration',
   'skill',
   'question',
   'tool',
@@ -1547,11 +1459,6 @@ export function threadToolActivitySegments(
         break;
       case 'webSearch':
         add('web', item.id, running, item.query ? quoteSubject(item.query) : undefined, true);
-        break;
-      case 'collabAgentToolCall':
-        for (const threadId of item.receiverThreadIds) {
-          add('collaboration', threadId, running);
-        }
         break;
       case 'mcpToolCall':
         add('tool', item.id, running);
@@ -1690,7 +1597,6 @@ function toolActivityPhrase(
       ? (running ? labels.searchingWebQueries : labels.searchedWebQueries)({ count: callCount })
       : (running ? labels.searchingWebActivity : labels.searchedWebActivity);
     case 'webFetch': return running ? labels.fetchingPages({ count }) : labels.fetchedPages({ count });
-    case 'collaboration': return running ? labels.collaborating({ count }) : labels.collaborated({ count });
     case 'skill': return running ? labels.usingSkills({ count }) : labels.usedSkills({ count });
     case 'question': return running ? labels.askingQuestions({ count }) : labels.askedQuestions({ count });
     case 'tool': return running ? labels.usingTools({ count }) : labels.usedTools({ count });
@@ -1815,6 +1721,15 @@ function subjectDisplayName(
   if (kind === 'fileSearch' || kind === 'web') return quoteSubject(value);
   if (kind === 'webFetch') return quoteSubject(value);
   return basenameForPath(value) || value;
+}
+
+function normalizedToolIdentity(namespace: string | null, tool: string): string {
+  return [namespace, tool]
+    .filter((part): part is string => Boolean(part))
+    .join('_')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
 }
 
 function dynamicToolArgument(

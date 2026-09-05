@@ -8,37 +8,38 @@ and claim work with a Draft PR but do not edit it. The main agent updates it at
 integration.
 
 The live collision radar is `gh pr list` plus this board. At the 2026-09-05
-audit, Draft PRs #626 (Settings design revision) and #628 (internal Agent
-delegation implementation) remain open. The current package version is `0.8.0`;
+audit, Draft PR #626 (Settings design revision) remains open. Internal Agent
+delegation and legacy retirement shipped in PR #628; external Runner adapters
+remain separate future claims. The current package version is `0.8.0`;
 the latest published train is `v0.7.0`.
 
 ## In Flight
 
-Draft PR #628 owns internal Agent delegation and complete Subagent/isolated-Skill
+PR #628 shipped internal Agent delegation and complete Subagent/isolated-Skill
 retirement under the design merged in #620. Generic Background Tool Tasks
-shipped in #623; external Runner adapters remain separate future claims. #628
-touches Agent protocol, runtime, Settings, Skill, and packaging surfaces, so
-overlapping claims must use its final mechanisms after integration. The legacy
-Subagent and isolated-Skill behavior remains current until that cutover ships.
+shipped in #623; external Runner adapters remain separate future claims. The
+legacy delegation behavior is retired and overlapping claims must use the final
+delegation mechanisms.
 
-PR #629 completed window-first startup. Subsequent Agent Host composition in
-#628 must preserve the owning readiness boundaries and recoverable startup
-behavior in [Desktop Host lifecycle](spec/architecture.md#desktop-host-lifecycle).
+PR #629 completed window-first startup. The Agent Host composition shipped in
+#628 preserves the owning readiness boundaries and recoverable startup behavior
+in [Desktop Host lifecycle](spec/architecture.md#desktop-host-lifecycle).
 
 Draft PR #626 owns the file-first Settings design revision. The plan on `main`
 still describes the previous CLI-based design; the draft proposes replacing it
 with public configuration files, a same-source flat UI, and domain-owned tools.
 Its design gate must settle the implementation units and absorbed working-state
-behavior before a Settings implementation claim. Implementation follows #628
-and the Skill authoring foundation; the draft is not shipped specification.
+behavior before a Settings implementation claim. Implementation follows the
+internal cutover and the Skill authoring foundation; the draft is not shipped
+specification.
 
 Trajectory paging shipped in #625 and exact-or-unavailable evidence completed
 in #627; the plan is archived and its shared-file claim is released. Bounded
 summaries remain navigation aids, not forensic evidence authority. Link/preview
 interaction polish shipped in #621 and released the shared preview-shell lane.
 The remaining primary queue is eligible under its live collision checks,
-including #628's Agent and Skill ownership. The remaining plans stay active
-until their implementation, spec fold, and archive move complete.
+including the released Agent and Skill ownership from #628. The remaining plans
+stay active until their implementation, spec fold, and archive move complete.
 
 ## Primary Delivery Queue
 
@@ -107,9 +108,9 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Background Tool Tasks Unit 1 shipped in #623. Draft #628 owns internal delegation plus Subagent/isolated-Skill retirement and the coordinated Agent shared-interface claim; #627's Trajectory predecessor is complete. Each external Runner adapter remains a separate future claim. |
+| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623 and internal delegation plus Subagent/isolated-Skill retirement shipped in #628. #627's Trajectory predecessor is complete; each external Runner adapter remains a separate future claim. |
 | P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Design revision under review in Draft #626; implementation waits for that gate, #628, and `agent-skill-authoring-foundation`. Reconcile the delivery units and `semantic-working-state` absorption when the revised design lands. |
-| P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | Definition-cache and Runtime-index units are eligible after #598; preview units use the live preview-shell lane. |
+| P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, and the Runtime-index unit shipped in #633; translation geometry remains in the live preview-shell lane. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Paused for the Settings redesign. Draft #626 changes the absorbing delivery unit; settle that ownership at its design gate before implementing Provider/managed-Skill working states. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
 | P3 | [icon-semantics](plans/icon-semantics.md) | `draft` | Build-ready renderer mapping cleanup. Update action menu, launcher, picker, and attachment mappings together; status color is out of scope. |
@@ -226,6 +227,9 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **interaction-jank-cleanups PR-2** (`done`, #632, 2026-09-05) - definition catalogs survive unrelated projection deltas while table field usage groups remain current; translation geometry remains open.
+- **interaction-jank-cleanups Runtime-index unit** (`done`, #633, 2026-09-05) - Runtime selection indexes are reused within a document and asset-metadata revision, with explicit invalidation for asset ingestion, reconciliation, and collection.
+- **agent-delegation-runtime internal cutover** (`done`, #628, 2026-09-05) - the packaged `delegate` CLI, root-owned hidden Agent Sessions, internal Runner, durable settlement and cancellation recovery, and complete Subagent/isolated-Skill retirement are shipped; external Runner adapters remain separate future claims.
 - **startup-window-first** (`done`, #629, 2026-09-05) - the desktop window paints before service startup; readiness gates, persistent Retry/Quit, and Agent conversation recovery are verified; [plan archived](plans/archive/startup-window-first.md).
 - **workspace-document-status-audit** (`done`, fast-track, 2026-09-05) - refreshed open claims, the pending Settings design boundary, README runtime ownership, and document lifecycle checks.
 - **agent-trajectory-evidence-fidelity Unit 2 / complete** (`done`, #627,

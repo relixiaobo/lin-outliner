@@ -499,7 +499,10 @@ unknown target is refused before the message or Provider is reached.
 Messages are persisted before `delegate send` acknowledges them. Each has a
 monotonic Session sequence, immutable digest, source provenance, and
 `queued | committed | blocked` delivery state. A per-Session gate linearizes a
-message racing execution settlement:
+message racing execution settlement. The send CLI process remains active until
+its message is durably committed, explicitly blocked, or its own Tool Task takes
+ownership of the next Turn; an in-memory steering acceptance alone is not a
+successful terminal result:
 
 - when committed before the active Turn's close boundary, it is added once at
   the next Runner-safe boundary before another model request;
@@ -1115,7 +1118,11 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
     as an attested executable plus argv with `shell: false`; the one-use
     capability travels only over a dedicated child pipe and is closed before any
     Runner starts. Shell composition and shell startup behavior never receive
-    capability-bearing argv, environment, stdin, files, or descriptors.
+    capability-bearing argv, environment, stdin, files, or descriptors. The
+    direct-exec specification carries one complete sanitized CLI environment;
+    its admission digest and actual child spawn use those exact bytes without a
+    supervisor ambient-environment overlay, and Provider or managed-Skill
+    credentials are absent.
 - **FR-3:** User policy fails closed.
   - **AC-6:** Detection never enables an external Runner.
   - **AC-7:** An invalid configured Runner/model starts no delegated session,

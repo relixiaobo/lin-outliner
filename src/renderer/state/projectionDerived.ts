@@ -1,11 +1,12 @@
 import type { NodeId, NodeProjection } from '../api/types';
-import { TRASH_ID, isContentBearingNode } from '../../core/types';
+import { SCHEMA_ID, TRASH_ID, isContentBearingNode } from '../../core/types';
 import { SparseProjectionMap } from './sparseProjectionMap';
 
 export interface ProjectionSemanticRevisions {
   readonly structure: number;
   readonly referenceGraph: number;
   readonly tagDefinitions: number;
+  readonly definitionOptions: number;
   readonly trashMembership: number;
 }
 
@@ -169,6 +170,44 @@ export function projectionTagDefinitionsChanged(params: {
       tagSlotShape(params.previousById, tagId),
       tagSlotShape(params.nextById, tagId),
     )) return true;
+  }
+  return false;
+}
+
+/**
+ * Returns whether the lists shown by table field and definition tag pickers
+ * can have changed. Definition option consumers need names, membership, and
+ * tag config descendants, which are broader than tag slot-shape changes.
+ */
+export function projectionDefinitionOptionsChanged(params: {
+  readonly previousById: ReadonlyMap<NodeId, NodeProjection>;
+  readonly nextById: ReadonlyMap<NodeId, NodeProjection>;
+  readonly changedNodes: readonly NodeProjection[];
+  readonly removedIds: readonly NodeId[];
+  readonly trashMembershipChangedIds: ReadonlySet<NodeId>;
+}): boolean {
+  const touchedIds = new Set<NodeId>([
+    ...params.changedNodes.map((node) => node.id),
+    ...params.removedIds,
+    ...params.trashMembershipChangedIds,
+  ]);
+  for (const nodeId of touchedIds) {
+    if (isDefinitionOptionNode(params.previousById, nodeId)
+      || isDefinitionOptionNode(params.nextById, nodeId)) return true;
+  }
+  return false;
+}
+
+function isDefinitionOptionNode(
+  byId: ReadonlyMap<NodeId, NodeProjection>,
+  nodeId: NodeId,
+): boolean {
+  const visited = new Set<NodeId>();
+  let node = byId.get(nodeId);
+  while (node && !visited.has(node.id)) {
+    visited.add(node.id);
+    if (node.id === SCHEMA_ID || node.type === 'fieldDef' || node.type === 'tagDef') return true;
+    node = node.parentId ? byId.get(node.parentId) : undefined;
   }
   return false;
 }

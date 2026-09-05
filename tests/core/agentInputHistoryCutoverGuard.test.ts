@@ -26,7 +26,7 @@ describe('Agent input-history cutover guards', () => {
     );
 
     expect(authorUnion).toContain("{ readonly kind: 'reader' }");
-    expect(authorUnion).toContain("{ readonly kind: 'agent'; readonly threadId: ThreadId }");
+    expect(authorUnion).not.toContain("kind: 'agent'");
     expect(authorUnion).toContain("{ readonly kind: 'host' }");
     expect(authorUnion).toContain("readonly kind: 'feature'");
     expect(authorUnion).not.toContain("kind: 'unknown'");

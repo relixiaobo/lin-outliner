@@ -2550,6 +2550,17 @@ Regression coverage must include empty and duplicate provider identifiers and
 prove correlation through restart and fork. Tests with unique well-formed IDs
 cannot distinguish source-coordinate fidelity from a convenient value lookup.
 
+## Terminal failure must preserve truthful recovery
+
+PR #628 initially blocked every non-success process receipt before verifying
+complete prepared and canonical evidence. That prevented a fresh user request
+from continuing a Session after a normal stop. **Use permanent blocking for
+missing or contradictory evidence; once terminal evidence is complete, preserve
+the factual outcome, block only stale queued messages, and allow a newly
+authorized request to resume.** Regression coverage must exercise the complete
+fresh request through the next Turn, not only assert that automatic continuation
+stops.
+
 ## Startup recovery must reach every initialized consumer
 
 PR #629 made Host startup retryable while the renderer Thread store still cached
@@ -2566,3 +2577,14 @@ Regression coverage must let one startup dependency succeed before another
 fails, repair the failure, and exercise the real Retry action. Assert that the
 existing record is restored and the stale error disappears, not only that the
 Host reports ready.
+
+## Semantic cache keys must cover every consumer input
+
+PR #632 first keyed the entire table field menu on definition changes, but the
+menu also grouped fields by current record usage. Applying a tag changed that
+usage without changing either the definitions or the table parent object.
+
+**Before narrowing a cache key, trace every input read by its consumer.** Cache
+stable catalogs separately from live usage, and preserve invalidation for each
+part. Verify real deltas while the consumer stays mounted; a full reseed or a
+pure-function test cannot prove that React's memo dependencies are complete.

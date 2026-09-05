@@ -19,7 +19,6 @@ import {
   type ReadInternalTextArgumentProjection,
 } from '../runtime/largeTextArguments';
 import { reduceSkillContext } from './SkillContextReducer';
-import { reduceRoleContext } from './RoleContextReducer';
 import { cursorFor, selectEffectiveContext } from './ContextEpoch';
 import { toolItemVisibleOutputText, type HistoryToolItem } from './ContextProjector';
 import { readInheritedContextPayload } from './InheritedContext';
@@ -137,10 +136,8 @@ async function buildCompactionRestoredState(
   readInternalTextProjection: ReadInternalTextArgumentProjection | undefined,
 ): Promise<CompactionRestoredStateContextPayload> {
   const skillState = await reduceSkillContext(turns, readContext);
-  const roleState = await reduceRoleContext(turns, readContext);
   const degradations: ContextDegradationCheckpointEntry[] = [];
   appendContextDegradations(degradations, skillState.degradations);
-  appendContextDegradations(degradations, roleState.degradations);
   const invocationRefs = await activeSkillPayloadRefs(turns, readContext, degradations);
   const selected = selectEffectiveContext(turns).turns;
   const userViewBaselineRef = await latestUserViewBaselineRef(selected, readContext, degradations);
@@ -175,10 +172,6 @@ async function buildCompactionRestoredState(
       .map(catalogCheckpoint)
       .sort((left, right) => compareStableText(left.name, right.name)),
     activeSkills,
-    roleCatalogHash: roleState.catalogHash,
-    announcedRoles: [...roleState.catalogEntries.values()]
-      .map(catalogCheckpoint)
-      .sort((left, right) => compareStableText(left.name, right.name)),
     userViewBaselineRef,
     additionalContextBaselineRef,
     activeObservations: await reduceActiveObservations(
@@ -233,7 +226,7 @@ async function activeSkillPayloadRefs(
         );
         continue;
       }
-      if (payload.execution === 'inline') refs.set(payload.name, item.payloadRef);
+      refs.set(payload.name, item.payloadRef);
     }
   }
   return refs;
@@ -715,7 +708,6 @@ async function summaryLine(
     case 'fileChange':
     case 'mcpToolCall':
     case 'dynamicToolCall':
-    case 'collabAgentToolCall':
     case 'webSearch':
       return `Tool ${toolLabel(item)}: ${item.outputRef?.summary ?? toolItemVisibleOutputText(item)}`;
     case 'contextEvidence': {
@@ -734,7 +726,6 @@ async function summaryLine(
       const prior = await readContext(item.summaryRef);
       return prior?.kind === 'compactionSummary' ? `Earlier compacted context: ${prior.text}` : 'Earlier compacted context.';
     }
-    case 'subAgentActivity': return `Subagent ${item.kind}: ${item.agentPath}`;
     case 'imageView': return `Viewed image: ${item.path}`;
     case 'contextReset': return null;
   }
@@ -743,7 +734,6 @@ async function summaryLine(
 function toolLabel(item: HistoryToolItem): string {
   if (item.type === 'mcpToolCall') return `${item.server}.${item.tool}`;
   if (item.type === 'dynamicToolCall') return item.namespace ? `${item.namespace}.${item.tool}` : item.tool;
-  if (item.type === 'collabAgentToolCall') return item.tool;
   return item.type;
 }
 
@@ -758,7 +748,6 @@ function isHistoryTool(item: ThreadItem): item is HistoryToolItem {
     || item.type === 'fileChange'
     || item.type === 'mcpToolCall'
     || item.type === 'dynamicToolCall'
-    || item.type === 'collabAgentToolCall'
     || item.type === 'webSearch';
 }
 

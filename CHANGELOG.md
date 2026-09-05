@@ -12,6 +12,17 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Internal Agent delegation now runs through durable Tool Tasks (PR #628)** —
+  the packaged `delegate` CLI creates root-owned hidden Agent Sessions backed by
+  the internal Runner, ordered continuation messages, Host-attested direct-exec
+  admission, and exact prepared-result/final-process settlement. User stop,
+  cancellation, process failure, crash recovery, and explicit fresh continuation
+  preserve factual terminal state without replaying stale queued input. The
+  legacy Subagent and isolated-Skill execution surfaces are retired in the same
+  pre-release cutover. Verified with typecheck, `docs:check`, 44 startup and
+  lifecycle tests, 76 delegation and Tool Task tests, whitespace checks, and a
+  clean merge tree against `main`.
+
 - **Agent Trajectory now preserves exact execution evidence end to end (PR
   #627, codex-2)** — Context, provider Request and Assistant response, Tool
   Input/Output, Raw, and copy now expose the complete retained value from their
@@ -552,6 +563,30 @@ Entries reference the pull request that introduced them when one exists.
   renderer-free diff under the repository's non-gating E2E policy.
 
 ### Fixed
+
+- **Runtime selection indexes now reuse stable reads (PR #633, codex-2)** - repeated Runtime selection and projection reads reuse one index for the current document and asset-metadata revisions; asset ingestion, reconciliation, and collection invalidate it without coupling query-local evaluation to shared state. Verified with typecheck, 44 focused Core tests, `docs:check`, and whitespace checks. This completes the Runtime-index unit of the `interaction-jank-cleanups` plan; translation geometry remains separate. The non-gating five-sample GitHub E2E signal was still running at merge.
+
+- **Definition option catalogs now survive unrelated document edits (PR #632,
+  codex-2)** - table field catalogs and definition tag selectors use a semantic
+  definition revision instead of whole-index identity. Definition membership,
+  names, configuration descendants, and Trash transitions invalidate the cache;
+  table usage groups still follow the current record fields. Gate review found
+  one Medium stale-grouping defect, fixed by separating the catalog from row
+  usage. Verified with typecheck, `docs:check`, 34 focused renderer tests, real
+  Core tag deltas, browser field-entry add/remove deltas, light/dark visual
+  inspection, and whitespace checks. This completes PR-2 of the interaction-jank
+  plan; translation geometry and Runtime-index reuse remain open. Non-gating
+  GitHub E2E samples were still running at merge.
+
+- **Renderer interaction chrome now batches scroll work (PR #630, codex-2)** -
+  anchored overlays coalesce geometry updates per animation frame and ignore
+  unrelated scroll targets; virtualized Flat/Table outliners share one capture
+  dispatcher, panel title docking uses its existing frame scheduler, and the
+  workspace keyboard listener remains stable across projection updates. This
+  completes PR-1 of the `interaction-jank-cleanups` plan; definition caches,
+  preview translation geometry, and Runtime index reuse remain separate units.
+  Verified with typecheck, `docs:check`, 1,524 renderer tests, and whitespace
+  checks; the non-gating five-sample GitHub E2E signal was queued at merge.
 
 - **The desktop window appears before service startup (PR #629, codex-2)** -
   large workspaces now show the native window while document, provider, Agent,

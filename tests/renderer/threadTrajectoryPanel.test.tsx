@@ -32,13 +32,11 @@ import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
 const THREAD_ID = '01910000-0000-7000-8000-000000000001';
 const TURN_ID = '01910000-0000-7000-8000-000000000002';
-const CHILD_THREAD_ID = '01910000-0000-7000-8000-000000000003';
 const INPUT_ID = `turn:${TURN_ID}:input:0`;
 const CONTEXT_ID = `turn:${TURN_ID}:context:prepared:0:0:1`;
 const TOOL_CATALOG_ID = `turn:${TURN_ID}:context:tools:0`;
 const ASSISTANT_ID = `turn:${TURN_ID}:assistant:0`;
 const TOOL_ID = `turn:${TURN_ID}:tool:2:call%3Aread`;
-const DELEGATION_ID = `turn:${TURN_ID}:delegation:2:call%3Aagent`;
 const LABELS = en.agent.trajectory;
 const GLOBAL_KEYS = [
   'document',
@@ -1343,40 +1341,6 @@ describe('ThreadTrajectoryPanel', () => {
     expect(inspector?.textContent).toContain('Read 42 lines');
   });
 
-  test('opens a delegation target as the child Thread own Trajectory', async () => {
-    const opened: string[] = [];
-    const delegation = record({
-      id: DELEGATION_ID,
-      kind: 'delegation',
-      lane: 'tools',
-      stepIndex: 0,
-      label: { type: 'delegation', action: 'delegate', name: 'reviewer' },
-      preview: 'Inspect the renderer',
-      childThreadId: CHILD_THREAD_ID,
-      primaryEvidence: {
-        type: 'toolExecution',
-        threadId: THREAD_ID,
-        turnId: TURN_ID,
-        activityIndex: 2,
-        callId: 'call:agent',
-      },
-    });
-    const rendered = renderPanel(async (method) => {
-      if (method === 'thread/trajectory/read') return trajectoryReadResponse([delegation]);
-      if (method === 'thread/trajectory/detail/read') return delegationDetailResponse(delegation);
-      throw new Error(`Unexpected Agent Core method: ${method}`);
-    }, {
-      onOpenThreadTrajectory: (threadId) => opened.push(threadId),
-    });
-
-    rendered.render();
-    await flush();
-    clickRecord(rendered.document, DELEGATION_ID);
-    await flush();
-    clickButton(rendered.document, 'Open child Trajectory');
-    expect(opened).toEqual([CHILD_THREAD_ID]);
-  });
-
   test('mounts a bounded virtual window for a long loaded Thread', async () => {
     const records = Array.from({ length: 140 }, (_, index) => record({
       id: `turn:${TURN_ID}:input:${index}`,
@@ -1780,7 +1744,6 @@ function renderPanel(
   options: {
     readonly invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
     readonly language?: 'en' | 'zh-Hans';
-    readonly onOpenThreadTrajectory?: (threadId: string) => void;
     readonly selectedRecordId?: string;
     readonly threadId?: string;
     readonly turnId?: string;
@@ -1820,7 +1783,6 @@ function renderPanel(
             canGoBack
             onBack={() => undefined}
             onClose={() => undefined}
-            onOpenThreadTrajectory={options.onOpenThreadTrajectory ?? (() => undefined)}
             selectedRecordId={options.selectedRecordId}
             showClose
             threadId={threadId}
@@ -1978,7 +1940,6 @@ function record(
     usage: null,
     relatedEvidence: [],
     availability: [],
-    childThreadId: null,
     ...overrides,
   };
   return { ...record, orderKey: testOrderKey(record.turnIndex, record.stepIndex) };
@@ -2178,27 +2139,6 @@ function toolDetailResponse(): ThreadTrajectoryDetailReadResponse {
       input: { path: 'package.json' },
       outputText: 'Read 42 lines',
       schema: { name: 'read_file', description: 'Read a UTF-8 file' },
-    },
-  };
-}
-
-function delegationDetailResponse(
-  delegation: ThreadTrajectoryRecordSummary,
-): ThreadTrajectoryDetailReadResponse {
-  return {
-    threadId: THREAD_ID,
-    record: delegation,
-    detail: {
-      kind: 'delegation',
-      turn: turnEvidence(),
-      item: null,
-      diagnostics: null,
-      activityIndex: 2,
-      executionCallId: 'call:agent',
-      input: { prompt: 'Inspect the renderer' },
-      outputText: 'Inspection complete',
-      schema: null,
-      childThreadId: CHILD_THREAD_ID,
     },
   };
 }

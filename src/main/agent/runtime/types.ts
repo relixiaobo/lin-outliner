@@ -26,7 +26,6 @@ import type {
 } from '../../../core/agent/protocol';
 import type { SelectedLargeTextArgument } from './largeTextArguments';
 import type { ItemRecorder } from './ItemRecorder';
-import type { TokenBudgetUsage } from './kernel/types';
 
 export interface ImagePixelDimensions {
   readonly width: number;
@@ -127,9 +126,6 @@ export interface TurnExecutionContext {
     canRetryAfterDetach(providerAttemptSerial: number): boolean;
   };
   onSteer(handler: (input: SteeredTurnInput) => void | Promise<void>): void;
-  readonly onModelCallUsage?: (tokens: number) => void;
-  readonly remainingTokenBudget?: () => TokenBudgetUsage | null;
-  readonly onBudgetWarning?: (actuals: TokenBudgetUsage) => Promise<void>;
 }
 
 export interface TurnExecutionResult {

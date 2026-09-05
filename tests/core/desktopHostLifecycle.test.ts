@@ -226,7 +226,7 @@ describe('DesktopHostLifecycle', () => {
     }
   });
 
-  test('quit reaches every nested Agent boundary before any later producer starts', async () => {
+  test('quit reaches every nested service boundary before any later producer starts', async () => {
     const boundaryNames = ['threads', 'memory', 'automations'] as const;
     for (const boundaryName of boundaryNames) {
       const boundary = deferred();

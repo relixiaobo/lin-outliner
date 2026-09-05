@@ -44,7 +44,6 @@ import {
 } from '../../core/launcher/commands';
 import type { ExternalContext } from '../../core/launcher/context';
 import {
-  isSettingsAgentTypeTarget,
   isSettingsAnchorTarget,
   isSettingsCategoryTarget,
   isSettingsPageTarget,
@@ -52,7 +51,6 @@ import {
   PROVIDER_CONFIG_MODE_PARAM,
   PROVIDER_CONFIG_PROVIDER_PARAM,
   SETTINGS_ANCHOR_PARAM,
-  SETTINGS_AGENT_TYPE_PARAM,
   SETTINGS_CATEGORY_PARAM,
   settingsTargetPath,
   WINDOW_SURFACE_QUERY_PARAM,
@@ -953,18 +951,14 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
 
 function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
   if (!raw || typeof raw !== 'object') return {};
-  const input = raw as { category?: unknown; page?: unknown; anchor?: unknown; agentType?: unknown };
+  const input = raw as { category?: unknown; page?: unknown; anchor?: unknown };
   const category = isSettingsCategoryTarget(input.category) ? input.category : undefined;
   const page = isSettingsPageTarget(input.page) ? input.page : undefined;
   const anchor = (category || page) && isSettingsAnchorTarget(input.anchor) ? input.anchor : undefined;
-  const agentType = page === 'agents' && isSettingsAgentTypeTarget(input.agentType)
-    ? input.agentType
-    : undefined;
   return {
     ...(category ? { category } : {}),
     ...(page ? { page } : {}),
     ...(anchor ? { anchor } : {}),
-    ...(agentType ? { agentType } : {}),
   };
 }
 
@@ -974,9 +968,6 @@ function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, st
     [WINDOW_SURFACE_QUERY_PARAM]: 'settings',
     ...(path ? { [SETTINGS_CATEGORY_PARAM]: path } : {}),
     ...(path && target.anchor ? { [SETTINGS_ANCHOR_PARAM]: target.anchor } : {}),
-    ...(target.page === 'agents' && target.agentType
-      ? { [SETTINGS_AGENT_TYPE_PARAM]: target.agentType }
-      : {}),
   };
 }
 

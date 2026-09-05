@@ -19,12 +19,13 @@
     "agent:dump": "bun scripts/agent-dump.ts",
     "skills:sync": "bun scripts/sync-built-in-skills.ts",
     "outline:build": "bun build src/outline/cli/entry.ts --outfile build/generated/outline/outline.mjs --target node --format esm && bun build src/outline/runtime/server/entry.ts --outfile build/generated/outline/outline-runtime.mjs --target node --format esm && bun build src/outline/import/adapters/source-adapters.ts --outfile build/generated/outline/import-adapters.mjs --target node --format esm",
+    "delegate:build": "bun build src/delegate/cli/entry.ts --outfile build/generated/delegate/delegate.mjs --target node --format esm",
     "tool-task:build": "bun build src/main/agent/tasks/toolTaskSupervisor.ts --outfile build/generated/tool-task/tool-task-supervisor.mjs --target node --format esm",
     "preview": "vite preview",
     "app:dev": "electron-vite dev",
     "renderer:dev": "vite --host 127.0.0.1",
     "build:native": "node-gyp rebuild --directory=native/window-corner --runtime=electron --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://electronjs.org/headers && node-gyp rebuild --directory=native/browser-tab --runtime=electron --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://electronjs.org/headers",
-    "app:build": "bun run build:native && electron-vite build && bun scripts/check-preload-bundle.ts && bun run skills:sync && bun run outline:build && bun run tool-task:build && electron-builder",
+    "app:build": "bun run build:native && electron-vite build && bun scripts/check-preload-bundle.ts && bun run skills:sync && bun run outline:build && bun run delegate:build && bun run tool-task:build && electron-builder",
     "typecheck": "tsc --noEmit",
     "docs:check": "bun scripts/docs-check.ts",
     "test:core": "bun test --path-ignore-patterns 'tmp/**' tests/core",
@@ -133,6 +134,20 @@
         "to": "outline/bin",
         "filter": [
           "outline"
+        ]
+      },
+      {
+        "from": "build/generated/delegate",
+        "to": "delegate",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "src/delegate/bin",
+        "to": "delegate/bin",
+        "filter": [
+          "delegate"
         ]
       },
       {
