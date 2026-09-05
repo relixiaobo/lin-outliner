@@ -283,10 +283,13 @@ reader or fallback that accepts the removed IconId format.
 
 Remove the response-footer rose shape. The visible process hierarchy owns work
 feedback: a live process starts expanded, can be folded explicitly, and folds
-by default after completion. An expanded process gives the sweep to its latest
-running tool, or its empty Thinking placeholder; readable streaming prose is
-already a progress cue. Expanded Working stays static even when no operation
-owns the sweep. Folded live work and empty startup give the sweep to Working.
+by default after completion. An expanded process shows the sweep on every
+running tool, including concurrent tools in separate groups, and on its empty
+live Thinking placeholder. Each collapsed running group summarizes its members
+with one sweep; expansion keeps the group summary static and sweeps all running
+members. Readable streaming prose is already a progress cue. Expanded Working
+stays static even when no operation owns the sweep. Folded live work and empty
+startup give the sweep to Working.
 Completed items, ancestor summaries with a visible owner, and Plan summaries
 stay static. Provider recovery remains the sole retry cue. Reduced motion and
 increased contrast retain static text and semantic status.

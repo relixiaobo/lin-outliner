@@ -2,8 +2,12 @@ import { expect, test, type Page } from '@playwright/test';
 import { openMockedApp } from './outlinerMock';
 import { emulateVisualMedia, resolveTokenColor } from './emulatedMedia';
 
-async function showLiveWork(page: Page, kind: 'empty' | 'thinking' | 'tools' | 'betweenTools') {
-  await page.evaluate(async (kind) => {
+async function showLiveWork(
+  page: Page,
+  kind: 'empty' | 'thinking' | 'tools' | 'betweenTools' | 'parallelGroups',
+  completedCommands: readonly string[] = [],
+) {
+  await page.evaluate(async ({ kind, completedCommands }) => {
     const target = window as Window & {
       lin?: { agentCoreRequest: <T>(method: string, input: object) => Promise<T> };
       __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -17,7 +21,8 @@ async function showLiveWork(page: Page, kind: 'empty' | 'thinking' | 'tools' | '
       return {
         id, type: 'commandExecution', provenance: provenance(id),
         command: 'sleep 30', description, cwd: '/mock/workspace', processId: null,
-        status, commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null,
+        status: completedCommands.includes(suffix) ? 'completed' : status,
+        commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null,
         modelCall: {
           disposition: 'replayable', identity: { namespace: null, name: 'bash' }, providerName: 'bash',
           arguments: { storage: 'inline', value: { command: 'sleep 30' } }, schemaDigest: '0'.repeat(64),
@@ -34,6 +39,13 @@ async function showLiveWork(page: Page, kind: 'empty' | 'thinking' | 'tools' | '
         id: turnId,
         items: kind === 'empty' ? [] : kind === 'thinking' ? [thinking] : kind === 'betweenTools' ? [
           command('02', 'Inspect the workspace', 'completed'),
+        ] : kind === 'parallelGroups' ? [
+          command('02', 'Inspect the workspace', 'completed'),
+          command('03', 'Run earlier checks', 'inProgress'),
+          command('04', 'Verify the active operation', 'inProgress'),
+          { ...thinking, summary: ['Checking a separate operation.'] },
+          command('06', 'Check another operation', 'inProgress'),
+          command('07', 'Read its configuration', 'completed'),
         ] : [
           command('02', 'Inspect the workspace', 'completed'),
           command('03', 'Run earlier checks', 'inProgress'),
@@ -44,11 +56,11 @@ async function showLiveWork(page: Page, kind: 'empty' | 'thinking' | 'tools' | '
         status: 'inProgress', error: null, startedAt: Date.now(), completedAt: null, durationMs: null,
       },
     });
-  }, kind);
+  }, { kind, completedCommands });
 }
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`focuses live feedback without blinking the composer in ${theme}`, async ({ page }, testInfo) => {
+  test(`shows concurrent live feedback without blinking the composer in ${theme}`, async ({ page }, testInfo) => {
     await emulateVisualMedia(page, { colorScheme: theme, reducedTransparency: 'no-preference' });
     await openMockedApp(page);
     await page.getByRole('button', { name: 'Show Threads' }).click();
@@ -59,8 +71,10 @@ for (const theme of ['light', 'dark'] as const) {
     const group = turn.locator('.thread-tool-activity-toggle');
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await expect(summary).toHaveAttribute('aria-expanded', 'true');
-    await expect(turn.locator('.working-text')).toHaveCount(1);
+    await expect(turn.locator('.working-text')).toHaveCount(2);
     await expect(group.locator('.working-text')).toHaveCount(1);
+    await expect(turn.locator('.thread-reasoning .working-text')).toHaveText('Thinking');
+    await expect(summary.locator('.working-text')).toHaveCount(0);
     await expect(turn.locator('.thread-streaming-indicator')).toHaveCount(0);
     await expect(turn.locator('.thread-response-footer')).toHaveCount(0);
     const disclosure = group.locator('.thread-disclosure-indicator');
@@ -88,14 +102,18 @@ for (const theme of ['light', 'dark'] as const) {
     for (let cycle = 0; cycle < 3; cycle += 1) {
       await group.click();
       await expect(group).toHaveAttribute('aria-expanded', 'true');
-      await expect(turn.locator('.working-text')).toHaveCount(1);
-      await expect(turn.locator('.working-text')).toHaveText('Verify the active operation');
+      await expect(turn.locator('.working-text')).toHaveText([
+        'Run earlier checks', 'Verify the active operation', 'Thinking',
+      ]);
+      await expect(group.locator('.working-text')).toHaveCount(0);
+      await expect(turn.locator('.thread-tool-completed .working-text')).toHaveCount(0);
       if (cycle === 0) {
         const tool = turn.locator('.thread-tool-toggle').last();
         await tool.hover();
         await expect(tool.locator('.thread-disclosure-chevron svg')).toHaveCSS('width', '15px');
         await expect(tool.locator('.thread-disclosure-chevron')).toHaveCSS('opacity', '1');
         await tool.screenshot({ path: testInfo.outputPath(`disclosure-${theme}.png`) });
+        await page.screenshot({ path: testInfo.outputPath(`parallel-work-${theme}.png`) });
       }
       await group.click();
       await summary.click();
@@ -142,6 +160,42 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(summary).toHaveAttribute('aria-expanded', 'true');
   });
 }
+
+test('tracks running tools across groups and stops each sweep as its tool finishes', async ({ page }) => {
+  await openMockedApp(page);
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+  await page.getByRole('dialog', { name: 'Threads' }).getByRole('button', { name: 'New Thread' }).click();
+  await showLiveWork(page, 'parallelGroups');
+  const turn = page.locator('.thread-turn-inProgress');
+  const summary = turn.locator('.thread-process-toggle');
+  const groups = turn.locator('.thread-tool-activity-toggle');
+  await expect(groups).toHaveCount(2);
+  await expect(groups.nth(0).locator('.working-text')).toHaveCount(1);
+  await expect(groups.nth(1).locator('.working-text')).toHaveCount(1);
+  await expect(summary.locator('.working-text')).toHaveCount(0);
+  await expect(turn.locator('.thread-reasoning .working-text')).toHaveCount(0);
+
+  await groups.nth(0).click();
+  await expect(turn.locator('.working-text')).toHaveCount(3);
+  await expect(groups.nth(0).locator('.working-text')).toHaveCount(0);
+  await expect(groups.nth(1).locator('.working-text')).toHaveCount(1);
+  await groups.nth(1).click();
+  await expect(turn.locator('.working-text')).toHaveText([
+    'Run earlier checks', 'Verify the active operation', 'Check another operation',
+  ]);
+
+  await showLiveWork(page, 'parallelGroups', ['03']);
+  await expect(turn.locator('.working-text')).toHaveText([
+    'Verify the active operation', 'Check another operation',
+  ]);
+  await expect(turn.locator('.thread-tool-completed .working-text')).toHaveCount(0);
+
+  await showLiveWork(page, 'parallelGroups', ['03', '04', '06']);
+  await expect(turn.locator('.working-text')).toHaveCount(0);
+  await expect(summary).toHaveAttribute('aria-expanded', 'true');
+  await summary.click();
+  await expect(summary.locator('.working-text')).toHaveCount(1);
+});
 
 test('keeps expanded Working static when no operation owns the sweep', async ({ page }) => {
   await openMockedApp(page);

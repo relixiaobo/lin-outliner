@@ -3636,9 +3636,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   const processItems = processBlock?.kind === 'process' ? processBlock.items : EMPTY_THREAD_ITEMS;
   const processItemGroups = useMemo(() => groupTurnItems(processItems), [processItems]);
   const workingTextEnabled = !waitingOnUserInput && providerRetry === null;
-  const activeTool = processItems.reduce<ThreadItem | null>((latest, item) => (
-    isThreadToolItem(item) && item.status === 'inProgress' ? item : latest
-  ), null);
   const processView = useThreadProcessView({
     anchors,
     expandState,
@@ -3806,8 +3803,8 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         threadCwd={threadCwd}
         active={active}
         workingTextEnabled={anchors.anchorByItemId.has(item.id)
-          ? workingTextEnabled && processView.timelineVisible && !activeTool
-          : leafWorkingEnabled && (!activeTool || activeTool.id === item.id)}
+          ? workingTextEnabled && processView.timelineVisible
+          : leafWorkingEnabled}
       />
     )
   );
@@ -3890,7 +3887,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
                 onReadToolOutput={readToolOutput}
                 threadId={threadId}
                 threadCwd={threadCwd}
-                workingTextEnabled={leafWorkingEnabled && group.items.some((item) => item.id === activeTool?.id)}
+                workingTextEnabled={leafWorkingEnabled}
               />
             ) : renderItem(group.item, false))}
           </div>

@@ -873,10 +873,13 @@ describe('ThreadItemView tool row status presentation', () => {
     expect(summary?.querySelectorAll('span')).toHaveLength(3);
   });
 
-  test('hands running group motion between its summary and expanded members', async () => {
+  test('hands running group motion between its summary and every running member', async () => {
     const rendered = renderGroup([
       command({ id: 'command-done', status: 'completed' }),
-      command({ id: 'command-running', status: 'inProgress' }),
+      command({ id: 'command-running-1', status: 'inProgress' }),
+      command({ id: 'command-running-2', status: 'inProgress' }),
+      command({ id: 'command-failed', status: 'failed' }),
+      command({ id: 'command-interrupted', status: 'interrupted' }),
     ]);
     await flush();
 
@@ -888,8 +891,12 @@ describe('ThreadItemView tool row status presentation', () => {
     await flush();
     expect(group?.querySelectorAll(':scope > .thread-tool-activity-toggle .working-text')).toHaveLength(0);
     expect(group?.querySelectorAll('.thread-tool-activity-members .thread-tool-inProgress .working-text'))
-      .toHaveLength(1);
+      .toHaveLength(2);
     expect(group?.querySelectorAll('.thread-tool-activity-members .thread-tool-completed .working-text'))
+      .toHaveLength(0);
+    expect(group?.querySelectorAll('.thread-tool-activity-members .thread-tool-failed .working-text'))
+      .toHaveLength(0);
+    expect(group?.querySelectorAll('.thread-tool-activity-members .thread-tool-interrupted .working-text'))
       .toHaveLength(0);
 
     act(() => group?.querySelector<HTMLButtonElement>('.thread-tool-activity-toggle')?.click());

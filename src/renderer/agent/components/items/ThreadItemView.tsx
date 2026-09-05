@@ -304,9 +304,6 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
   const disclosureId = `tools:${items[0]?.id ?? 'empty'}`;
   const expanded = expandState.isExpanded(disclosureId, false);
   const status = groupStatus(items);
-  const activeItem = items.reduce<ThreadToolItem | null>((latest, item) => (
-    item.status === 'inProgress' ? item : latest
-  ), null);
   const segments = threadToolActivitySegments(items, t.agent.thread.activity, index);
   // The tooltip re-derives the summary with no elision, so the names the row
   // could not fit are still reachable.
@@ -342,7 +339,7 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
               onOpenThread={onOpenThread}
               threadId={threadId}
               threadCwd={threadCwd}
-              workingTextEnabled={workingTextEnabled && item.id === activeItem?.id}
+              workingTextEnabled={workingTextEnabled}
             />
           ))}
         </div>

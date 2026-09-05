@@ -516,7 +516,7 @@ reach it.
   count muted. Colouring the whole line would say every call in the group failed
   when one of them did. A collapsed running group applies `WorkingText` only to
   its neutral summary. Expanding it freezes that summary and mounts each member's
-  own treatment, so only in-progress members move; collapsing transfers motion
+  own treatment, so every in-progress member moves; collapsing transfers motion
   back to the group summary in the same render. Finished members remain static
 - bounded tool-result projections render immediately; expanding a row resolves
   its content-addressed `outputRef` once and replaces the projection with the
@@ -814,12 +814,15 @@ The live status row uses `WorkingText` only while the process is folded or has
 no content yet. An expanded process always keeps its Working summary static,
 including gaps with no active tool, empty `Thinking` placeholder, or Subagent
 status to carry the sweep. One synchronous `turnMotionOwner`
-classification assigns the live cue to the summary, a mapped leaf, or neither;
+classification enables live cues on the summary, mapped leaves, or neither;
 the summary uses the actual process visibility without mount-time registration
 or a post-commit handoff. A folded live process gives motion to Working; an
-expanded process gives it to the latest running tool or its collapsed group.
-Only that running member moves when the group is expanded. Empty Thinking
-stays static while a running tool owns motion. Completed collapsible summaries and
+expanded process shows every running tool's sweep, or each collapsed running
+group's summary sweep. Expanding a group keeps its summary static and lets all
+of its running members sweep concurrently, including tools in separate groups.
+An empty live Thinking placeholder and live Subagent statuses also keep their
+own sweep alongside running tools. Each tool stops sweeping when it settles;
+readable streaming prose stays static. Completed collapsible summaries and
 terminal summaries are always static. A live status title occupies its full
 divider width and uses tabular numerals, so its once-per-second elapsed update
 does not resize the visible title slot.
