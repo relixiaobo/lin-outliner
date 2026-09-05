@@ -41,6 +41,7 @@
     "@secretlint/secretlint-rule-preset-recommend": "13.0.4",
     "defuddle": "0.18.1",
     "foliate-js": "^1.0.1",
+    "jsonc-parser": "^3.3.1",
     "linkedom": "0.18.12",
     "loro-crdt": "^1.10.6",
     "iconoir-react": "7.12.1",

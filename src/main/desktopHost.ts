@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, shell } from 'electron';
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, watch } from 'node:fs';
 import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, join, resolve } from 'node:path';
 import { registerDesktopOutlineIpc } from './outlineClient';
@@ -157,6 +157,9 @@ import {
   loadAppPreferences,
   saveLastAgentThreadConfiguration,
 } from './appPreferences';
+import { DEFAULT_FILE_PREFERENCES, loadFilePreferences } from './configuration/filePreferences';
+import { writeFilePreferencesStatus } from './configuration/status';
+import { writeFilePreferencesSchema } from './configuration/schema';
 import type { ThemeMode } from '../core/theme';
 import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
@@ -233,6 +236,7 @@ export interface DesktopHost {
 
 export function createDesktopHost(environment: DesktopHostEnvironment): DesktopHost {
 const resolvedUserDataDir = environment.userDataDir;
+const hostSessionId = randomUUID();
 const diagnosticLog = environment.diagnosticLog;
 const reportError = environment.reportError;
 const resources = new ResourceScope('desktop-host');
@@ -242,6 +246,7 @@ const devEffects = resources.child('dev-effects');
 const transportEffects = resources.child('transport');
 const windowEffects = resources.child('window-application');
 const backgroundEffects = resources.child('background-effects');
+let applyFilePreferencesNow: (() => void) | null = null;
 
 // Image file extensions for the native "insert image" picker. The filter's display
 // name is localized at the call site (it shows in the OS dialog).
@@ -257,6 +262,7 @@ const outlineHost = createOutlineDesktopHost({
   resourcesPath: process.resourcesPath,
   execPath: process.execPath,
   reportError,
+  hostSessionId,
   ready: (service) => lifecycle.ready(service),
 });
 const {
@@ -331,6 +337,80 @@ function scheduleAppUpdateCheck(): void {
   }, APP_UPDATE_STARTUP_DELAY_MS);
   backgroundEffects.defer('app-update-timer', () => clearTimeout(timer));
   timer.unref?.();
+}
+
+function startFilePreferencesWatcher(): void {
+  const configDir = join(resolvedUserDataDir, 'config');
+  ensureAgentDir(configDir);
+  writeFilePreferencesSchema(resolvedUserDataDir);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let applying = false;
+  let pendingApply = false;
+  let effectivePreferences = DEFAULT_FILE_PREFERENCES;
+  const apply = () => {
+    if (applying) {
+      pendingApply = true;
+      return;
+    }
+    applying = true;
+    timer = null;
+    const loaded = loadFilePreferences(resolvedUserDataDir);
+    writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
+      effective: effectivePreferences,
+      applicationStatus: 'pending',
+    });
+    const { appearance } = loaded.preferences;
+    if (windowApplicationHost.theme() !== appearance.theme) {
+      windowApplicationHost.setTheme(appearance.theme);
+    }
+    if (typeof appearance.language === 'string' && windowApplicationHost.effectiveLocale() !== appearance.language) {
+      windowApplicationHost.setLocale(appearance.language);
+    }
+    void Promise.all([
+      getAgentRuntimeSettings().then((settings) => {
+        agentHost.skills.updateRuntimeSettings(settings);
+      }),
+      Promise.resolve(agentHost.memory.settings()).then((current) => {
+        const mode = loaded.preferences.agent.memory.enabled ? 'enabled' : 'disabled';
+        return current.status.featureMode === mode ? undefined : agentHost.memory.setFeatureMode(mode);
+      }),
+      windowApplicationHost.updates.applyAutomaticChecksEnabled(loaded.preferences.updates.checkAutomatically),
+    ]).then(() => {
+      effectivePreferences = loaded.preferences;
+      writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
+        effective: effectivePreferences,
+        applicationStatus: 'applied',
+      });
+    }).catch((error) => {
+      writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
+        effective: effectivePreferences,
+        applicationStatus: 'failed',
+        applicationError: error instanceof Error ? error.message : String(error),
+      });
+    }).finally(() => {
+      applying = false;
+      if (pendingApply) {
+        pendingApply = false;
+        queueMicrotask(apply);
+      }
+    });
+  };
+  applyFilePreferencesNow = apply;
+  const watcher = watch(configDir, { persistent: false }, (_event, filename) => {
+    if (filename && filename.toString() !== 'settings.jsonc') return;
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(apply, 100);
+  });
+  const initial = loadFilePreferences(resolvedUserDataDir);
+  writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, initial, {
+    effective: effectivePreferences,
+    applicationStatus: 'pending',
+  });
+  resources.defer('file-preferences-watcher', () => {
+    watcher.close();
+    if (timer !== null) clearTimeout(timer);
+    if (applyFilePreferencesNow === apply) applyFilePreferencesNow = null;
+  });
 }
 
 const agentImageObservationMutex = new Mutex();
@@ -471,6 +551,7 @@ const agentHost = createAgentHost({
     enabledSkills: context.configuration.skills,
   }),
   createToolOptions: () => ({
+    disabledTools: async () => (await getAgentRuntimeSettings()).disabledTools ?? [],
     imageNormalizer: async ({ filePath, signal }) => {
       return prepareBoundedAgentImage(filePath, basename(filePath), signal);
     },
@@ -2489,7 +2570,10 @@ const lifecycle = new DesktopHostLifecycle({
         transportEffects.defer('main-transport', () => mainTransport?.dispose());
       },
     },
-    { name: 'windows', run: () => windowApplicationHost.initialize() },
+    { name: 'windows', run: async () => {
+      await windowApplicationHost.initialize();
+      startFilePreferencesWatcher();
+    } },
     {
       name: 'provider-configuration',
       dependsOn: ['windows'],
@@ -2520,7 +2604,10 @@ const lifecycle = new DesktopHostLifecycle({
       name: 'agent',
       dependsOn: ['provider-configuration', 'outline-documents'],
       retryable: true,
-      run: ({ assertActive }) => agentHost.initialize(outlineHost.document.liveProjection(), assertActive),
+      run: async ({ assertActive }) => {
+        await agentHost.initialize(outlineHost.document.liveProjection(), assertActive);
+        applyFilePreferencesNow?.();
+      },
     },
     {
       name: 'background-producers',

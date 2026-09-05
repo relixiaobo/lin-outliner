@@ -997,6 +997,7 @@ describe('agent skills', () => {
     expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'outline', source: 'built-in' } });
     const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
+      'configuration',
       'delegate',
       'outline',
       'skillify',
@@ -1411,7 +1412,7 @@ describe('built-in skill resource packaging', () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
     await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
-    expect((await readdir(generatedRoot)).sort()).toEqual(['delegate', 'outline']);
+    expect((await readdir(generatedRoot)).sort()).toEqual(['configuration', 'delegate', 'outline']);
     const delegateRoot = path.join(generatedRoot, 'delegate');
     const delegateRaw = await readFile(path.join(delegateRoot, 'SKILL.md'), 'utf8');
     expect(delegateRaw).toContain('delegate run --input - --output json');

@@ -57,6 +57,8 @@ export interface ToolRuntimeOptions {
     context: TurnExecutionContext,
   ) => DelegateCommandRuntime | undefined | Promise<DelegateCommandRuntime | undefined>;
   readonly delegationPolicy?: (threadId: string) => DelegatedToolPolicy | null;
+  /** Global configuration blocks applied after the Thread's capability ceiling. */
+  readonly disabledTools?: () => readonly string[] | Promise<readonly string[]>;
 }
 
 export class ToolRuntime {
@@ -134,7 +136,8 @@ export class ToolRuntime {
       canonicalModelToolKey(contract.identity),
       contract,
     ]));
-    const allowed = new Set(context.configuration.tools);
+    const disabledTools = new Set((await this.options.disabledTools?.() ?? []).map((key) => key.trim()).filter(Boolean));
+    const allowed = new Set(context.configuration.tools.filter((key) => !disabledTools.has(key)));
     const enabledExtensions = new Set([...context.configuration.plugins, ...context.configuration.mcpServers]);
     const unique = new Map<string, AgentTool>();
     const enabledCanonical = new Set<string>();

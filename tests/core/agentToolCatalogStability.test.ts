@@ -267,6 +267,16 @@ describe('canonical provider tool catalog', () => {
     expect((await runtime.createTools(RUNTIME_CONTEXT)).some((tool) => tool.name === 'data_import')).toBe(false);
   });
 
+  test('applies global disabled tools after the Thread capability ceiling', async () => {
+    const runtime = new ToolRuntime(runtimeService(), {
+      capabilityTools: runtimeSchemaTools,
+      assembleRegistry: true,
+      disabledTools: () => ['bash'],
+    });
+
+    expect((await runtime.createTools(RUNTIME_CONTEXT)).some((tool) => tool.name === 'bash')).toBe(false);
+  });
+
 });
 
 const CONFIGURATION: EffectiveThreadConfiguration = {

@@ -74,6 +74,7 @@ import { ActionInvocationService, type RendererStepAck } from '../actionInvocati
 import {
   loadAppPreferences,
   saveLanguagePreference,
+  saveAutomaticChecksPreference,
   saveThemePreference,
   saveTranslationLanguagePreference,
   saveUrlPageTranslationPreferences,
@@ -133,6 +134,7 @@ export interface WindowApplicationHost {
     checkExplicitly(): Promise<AppUpdateView>;
     checkInBackground(): Promise<AppUpdateView>;
     setAutomaticChecksEnabled(enabled: boolean): Promise<AppUpdateView>;
+    applyAutomaticChecksEnabled(enabled: boolean): Promise<AppUpdateView>;
     openAvailableUpdate(): ReturnType<AppUpdateService['openAvailableUpdate']>;
   };
   readonly actions: {
@@ -797,7 +799,11 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       view: () => appUpdateService.view(),
       checkExplicitly: () => appUpdateService.checkExplicitly(),
       checkInBackground: () => appUpdateService.checkInBackground(),
-      setAutomaticChecksEnabled: (enabled) => appUpdateService.setAutomaticChecksEnabled(enabled),
+      setAutomaticChecksEnabled: async (enabled) => {
+        saveAutomaticChecksPreference(enabled);
+        return appUpdateService.applyAutomaticChecksEnabled(enabled);
+      },
+      applyAutomaticChecksEnabled: (enabled) => appUpdateService.applyAutomaticChecksEnabled(enabled),
       openAvailableUpdate: () => appUpdateService.openAvailableUpdate(),
     },
     actions: {
@@ -858,11 +864,13 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     theme: () => nativeTheme.themeSource,
     setTheme: (raw) => {
       if (!isThemeMode(raw)) return;
+      if (nativeTheme.themeSource === raw) return;
       nativeTheme.themeSource = raw;
       saveThemePreference(raw);
     },
     setLocale: (raw) => {
       if (!isLocale(raw)) return;
+      if (cachedLocale === raw) return;
       saveLanguagePreference(raw);
       cachedLocale = raw;
       for (const window of BrowserWindow.getAllWindows()) {

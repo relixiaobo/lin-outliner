@@ -453,6 +453,13 @@ content. Built-in and managed immutable fences remain authoritative when roots
 overlap.
 
 The runtime still does not infer that a bound directory is itself a Skill.
+
+Global Skill availability is declared in `config/settings.jsonc` under
+`agent.skills.disabled`, and additional source directories are listed under
+`agent.skills.sources`. The Host applies accepted changes to new and existing
+Skill runtimes after a bounded file-watch debounce. The generated
+`config/status.json` reports the observed source digest and current Host session;
+it is diagnostic output only and is never an editing surface.
 Resolving that meant deciding between container and self ownership at write time
 from ordered guesses; "a bound directory that is itself a Skill" remains a
 separate tracked seam.

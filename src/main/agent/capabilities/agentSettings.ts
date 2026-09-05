@@ -46,6 +46,7 @@ import {
   type LocalGatewayProviderDefinition,
 } from '../../../core/localGatewayProviders';
 import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from '../../jsonFileStore';
+import { loadFilePreferences, updateFilePreferences } from '../../configuration/filePreferences';
 import { compareModels } from '../../modelRanking';
 import {
   configurePiCredentialStorage,
@@ -204,6 +205,7 @@ const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   providerCacheRetention: 'short',
   delegation: DEFAULT_DELEGATION_SETTINGS,
   disabledSkills: [],
+  disabledTools: [],
 };
 
 type OpenAICompatibleApiId = CcSwitchOpenAICompatibleApiId;
@@ -264,7 +266,19 @@ export async function refreshProviderModels(providerIdInput: string): Promise<Ag
 }
 
 export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
-  return normalizeAgentRuntimeSettings((await readProviderFile()).agent);
+  const file = await readProviderFile();
+  const stored = normalizeAgentRuntimeSettings(file.agent);
+  const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  return normalizeAgentRuntimeSettings({
+    ...stored,
+    additionalSkillDirectories: [...preferences.agent.skills.sources],
+    providerTimeoutMs: preferences.agent.provider.timeoutMs,
+    providerMaxRetries: preferences.agent.provider.maxRetries,
+    providerMaxRetryDelayMs: preferences.agent.provider.maxRetryDelayMs,
+    providerCacheRetention: preferences.agent.provider.cacheRetention,
+    disabledSkills: [...preferences.agent.skills.disabled],
+    disabledTools: [...preferences.agent.tools.disabled],
+  });
 }
 
 export async function getAgentDelegationConfiguration(): Promise<{
@@ -329,13 +343,47 @@ export async function getProviderRuntimeConfig(
 }
 
 export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInput) {
+  const current = await getAgentRuntimeSettings();
+  const next = normalizeAgentRuntimeSettings({ ...current, ...input });
+  if (
+    input.additionalSkillDirectories !== undefined
+    || input.disabledSkills !== undefined
+    || input.disabledTools !== undefined
+    || input.providerTimeoutMs !== undefined
+    || input.providerMaxRetries !== undefined
+    || input.providerMaxRetryDelayMs !== undefined
+    || input.providerCacheRetention !== undefined
+  ) {
+    const updates: { path: readonly string[]; value: unknown }[] = [];
+    if (input.disabledSkills !== undefined) {
+      updates.push({ path: ['agent', 'skills', 'disabled'], value: next.disabledSkills });
+    }
+    if (input.additionalSkillDirectories !== undefined) {
+      updates.push({ path: ['agent', 'skills', 'sources'], value: next.additionalSkillDirectories });
+    }
+    if (input.disabledTools !== undefined) {
+      updates.push({ path: ['agent', 'tools', 'disabled'], value: next.disabledTools });
+    }
+    if (input.providerTimeoutMs !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'timeoutMs'], value: next.providerTimeoutMs });
+    }
+    if (input.providerMaxRetries !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'maxRetries'], value: next.providerMaxRetries });
+    }
+    if (input.providerMaxRetryDelayMs !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'maxRetryDelayMs'], value: next.providerMaxRetryDelayMs });
+    }
+    if (input.providerCacheRetention !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'cacheRetention'], value: next.providerCacheRetention });
+    }
+    updateFilePreferences(electron.app.getPath('userData'), updates);
+  }
   await mutateProviderFile((file) => {
-    const current = normalizeAgentRuntimeSettings(file.agent);
-    file.agent = normalizeAgentRuntimeSettings({
-      ...current,
-      ...input,
-      delegation: input.delegation ? mergeDelegationSettings(current.delegation, input.delegation) : current.delegation,
-    });
+    const currentDelegation = normalizeAgentRuntimeSettings(file.agent).delegation;
+    const delegation = input.delegation
+      ? mergeDelegationSettings(currentDelegation, input.delegation)
+      : currentDelegation;
+    file.agent = { delegation };
   });
   return getProviderSettings();
 }
@@ -684,7 +732,7 @@ async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Pr
   const availableProviderById = new Map(availableProviders.map((provider) => [provider.providerId, provider]));
   return {
     activeProviderId: file.activeProviderId,
-    agent: normalizeAgentRuntimeSettings(file.agent),
+    agent: await getAgentRuntimeSettings(),
     imageGeneration: normalizeImageGenerationSettings(file.imageGeneration),
     providers: await Promise.all(file.providers.map(async (provider): Promise<AgentProviderConfigView> => {
       const catalogProvider = availableProviderById.get(provider.providerId);
@@ -747,6 +795,7 @@ function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null
       : DEFAULT_AGENT_RUNTIME_SETTINGS.providerCacheRetention,
     delegation: normalizeDelegationSettings(input?.delegation),
     disabledSkills: normalizeStringList(input?.disabledSkills, MAX_DISABLED_SKILLS),
+    disabledTools: normalizeStringList(input?.disabledTools, MAX_DISABLED_SKILLS),
   };
 }
 

@@ -87,7 +87,7 @@ async function atomicWriteFileUnlocked(
   }
 }
 
-function atomicWriteFileSync(
+export function atomicWriteFileSync(
   filePath: string,
   data: string | Buffer | Uint8Array,
   options: AtomicWriteFileOptions = {},
