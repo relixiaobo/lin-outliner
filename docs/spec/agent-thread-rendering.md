@@ -202,7 +202,7 @@ reach it.
   connected MCP tool never wears the unknown-tool fallback glyph, and a fetched
   page is not drawn as a document; a group's glyph is the same size whether its
   members agree on a tool or not. Glyph choices app-wide remain
-  `docs/plans/icon-semantics.md`'s; these tool-row rows are recorded there
+  `docs/plans/archive/icon-semantics.md`'s; these tool-row rows are recorded there
 - a counted activity group summarizes mixed outcomes, so it is **not** painted by
   its worst member: its glyph and its activity phrase stay neutral, and only the
   appended tally of what went wrong ("Ran 3 commands · 1 failed · 1 interrupted")

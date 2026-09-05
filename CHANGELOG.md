@@ -12,6 +12,14 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Renderer icons now follow semantic object, action, and tool meaning (PR
+  #631)** — the app uses a shared Iconoir presentation layer for actions,
+  launcher and picker surfaces, attachments, previews, and agent tools. Tool
+  activity keeps completed and running calls distinct, grouped web-search
+  counts are localized, and mixed operation groups retain separate truthful
+  segments. Verified with typecheck, `docs:check`, focused renderer tests, and
+  icon-boundary checks.
+
 - **Settings now has an approved file-first design for people and Agents (PR
   #626)** — the plan defines public JSONC configuration and keybinding sources,
   same-source human editing, domain-owned Agent operations, model-selection

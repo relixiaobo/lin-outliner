@@ -189,7 +189,7 @@ works in both editors and the transcript, including failed preview fallbacks.
 
 ### Semantic Decisions
 
-The frozen [selection review](reference/iconoir-selection.html) carries per-use
+The frozen [selection review](../reference/iconoir-selection.html) carries per-use
 rationale and alternatives for the implementation claim. Final selected glyphs
 live in semantic component definitions; contextual
 rules live in their domains and the owning specification. The HTML is not a
