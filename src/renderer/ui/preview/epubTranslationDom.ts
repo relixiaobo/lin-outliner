@@ -169,6 +169,8 @@ interface EpubTranslationRecord {
   text: string;
   translation: string | null;
   translationNode: HTMLElement | null;
+  layoutTop: number;
+  layoutBottom: number;
 }
 
 interface EpubSectionRegistration {
@@ -178,6 +180,7 @@ interface EpubSectionRegistration {
   mutationObserver: MutationObserver | null;
   recordIds: Set<string>;
   releaseInputListeners: () => void;
+  resizeObserver: ResizeObserver | null;
   style: HTMLStyleElement;
 }
 
@@ -203,6 +206,9 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
   private readonly bookLanguages: string[];
   private labels: UrlPageTranslationGuestLabels;
   private readonly records = new Map<string, EpubTranslationRecord>();
+  private layoutOrder: EpubTranslationRecord[] = [];
+  private layoutMaxBottom: number[] = [];
+  private layoutDirty = true;
   private readonly sections = new Map<number, EpubSectionRegistration>();
   private readonly scrollRoot: HTMLElement;
   private readonly onEnabledChange: (enabled: boolean) => void;
@@ -227,6 +233,8 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     this.shortcutHandler = options.onShortcut;
     this.lastScrollTop = options.scrollRoot.scrollTop;
     options.scrollRoot.addEventListener('scroll', this.handleScroll, { passive: true });
+    options.scrollRoot.addEventListener('resize', this.handleLayoutSignal);
+    options.scrollRoot.addEventListener('load', this.handleLayoutSignal, true);
     options.scrollRoot.addEventListener('wheel', this.handleUserInput, { passive: true });
     options.scrollRoot.addEventListener('touchstart', this.handleUserInput, { passive: true });
     options.scrollRoot.addEventListener('pointerdown', this.handleUserInput, { passive: true });
@@ -279,8 +287,15 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
       mutationObserver: null,
       recordIds: new Set(),
       releaseInputListeners: this.installSectionInputListeners(doc),
+      resizeObserver: null,
       style,
     };
+    const ResizeObserverCtor = doc.defaultView?.ResizeObserver;
+    if (ResizeObserverCtor) {
+      registration.resizeObserver = new ResizeObserverCtor(this.handleLayoutSignal);
+      registration.resizeObserver.observe(frame);
+      registration.resizeObserver.observe(doc.documentElement);
+    }
     const Observer = doc.defaultView?.MutationObserver;
     if (Observer) {
       registration.mutationObserver = new Observer((mutations) => {
@@ -304,6 +319,7 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     const registration = this.sections.get(sectionIndex);
     if (!registration) return;
     registration.mutationObserver?.disconnect();
+    registration.resizeObserver?.disconnect();
     registration.releaseInputListeners();
     registration.style.remove();
     registration.doc.documentElement.removeAttribute(HIDDEN_ATTRIBUTE);
@@ -513,6 +529,8 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     if (wasEnabled) this.onEnabledChange(false);
     this.cancelCorrection();
     this.scrollRoot.removeEventListener('scroll', this.handleScroll);
+    this.scrollRoot.removeEventListener('resize', this.handleLayoutSignal);
+    this.scrollRoot.removeEventListener('load', this.handleLayoutSignal, true);
     this.scrollRoot.removeEventListener('wheel', this.handleUserInput);
     this.scrollRoot.removeEventListener('touchstart', this.handleUserInput);
     this.scrollRoot.removeEventListener('pointerdown', this.handleUserInput);
@@ -524,17 +542,21 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     }
     for (const sectionIndex of [...this.sections.keys()]) this.unregisterSection(sectionIndex);
     this.records.clear();
+    this.layoutOrder = [];
+    this.layoutMaxBottom = [];
   }
 
   private scanDirtySections(): void {
     const dirtySections = [...this.sections]
       .filter(([, registration]) => registration.dirty);
-    if (dirtySections.length === 0) return;
-    this.withAnchoredWrite(() => {
-      for (const [sectionIndex, registration] of dirtySections) {
-        this.scanSection(sectionIndex, registration);
-      }
-    });
+    if (dirtySections.length > 0) {
+      this.withAnchoredWrite(() => {
+        for (const [sectionIndex, registration] of dirtySections) {
+          this.scanSection(sectionIndex, registration);
+        }
+      });
+    }
+    if (this.layoutDirty) this.refreshLayoutIndex();
   }
 
   private scanSection(sectionIndex: number, registration: EpubSectionRegistration): void {
@@ -567,10 +589,14 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
         text,
         translation: null,
         translationNode: null,
+        layoutTop: 0,
+        layoutBottom: 0,
       };
       record.element = element;
       record.language = language;
       record.text = text;
+      this.updateRecordLayout(record);
+      registration.resizeObserver?.observe(element);
       this.records.set(id, record);
       this.renderRecord(record);
     }
@@ -580,10 +606,71 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
       const record = this.records.get(id);
       if (!record) continue;
       removeOwnedNodes(record);
+      if (record.element) registration.resizeObserver?.unobserve(record.element);
       record.element = null;
       this.records.delete(id);
     }
     registration.recordIds = nextIds;
+    this.rebuildLayoutOrder();
+  }
+
+  private updateRecordLayout(record: EpubTranslationRecord): void {
+    const element = record.element;
+    const registration = this.sections.get(record.sectionIndex);
+    if (!element?.isConnected || !registration?.frame.isConnected) return;
+    const rootRect = this.scrollRoot.getBoundingClientRect();
+    const frameRect = registration.frame.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const top = this.scrollRoot.scrollTop + frameRect.top - rootRect.top + elementRect.top;
+    record.layoutTop = top;
+    record.layoutBottom = top + elementRect.height;
+  }
+
+  private rebuildLayoutOrder(): void {
+    this.layoutOrder = [...this.records.values()]
+      .filter((record) => record.element?.isConnected)
+      .sort((left, right) => left.layoutTop - right.layoutTop || left.id.localeCompare(right.id));
+    this.layoutMaxBottom = [];
+    let maxBottom = Number.NEGATIVE_INFINITY;
+    for (const record of this.layoutOrder) {
+      maxBottom = Math.max(maxBottom, record.layoutBottom);
+      this.layoutMaxBottom.push(maxBottom);
+    }
+    this.layoutDirty = false;
+  }
+
+  private refreshLayoutIndex(): void {
+    for (const record of this.records.values()) this.updateRecordLayout(record);
+    this.rebuildLayoutOrder();
+  }
+
+  private nearViewportRecords(
+    scrollTop: number,
+    viewportHeight: number,
+    aheadViewports: number,
+  ): EpubTranslationRecord[] {
+    const margin = viewportHeight * Math.max(1, aheadViewports);
+    const lowerBoundTop = (value: number): number => {
+      let low = 0;
+      let high = this.layoutOrder.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if ((this.layoutOrder[middle]?.layoutTop ?? 0) < value) low = middle + 1;
+        else high = middle;
+      }
+      return low;
+    };
+    let low = 0;
+    let high = this.layoutMaxBottom.length;
+    const startValue = scrollTop - margin;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if ((this.layoutMaxBottom[middle] ?? Number.NEGATIVE_INFINITY) < startValue) low = middle + 1;
+      else high = middle;
+    }
+    const start = low;
+    const end = lowerBoundTop(scrollTop + viewportHeight + margin);
+    return this.layoutOrder.slice(start, Math.max(start, end + 1));
   }
 
   private batchCandidates(options: EpubTranslationBatchOptions): Array<{
@@ -599,15 +686,19 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
       record: EpubTranslationRecord;
     }> = [];
     const root = this.scrollRoot.getBoundingClientRect();
+    const scrollTop = this.scrollRoot.scrollTop;
     const lookaheadViewports = previewTranslationLookaheadViewports(
       this.currentScrollVelocity(),
       options.estimatedLatencyMs,
     );
-    for (const record of this.records.values()) {
+    const records = options.retryOnly
+      ? [...this.records.values()]
+      : this.nearViewportRecords(scrollTop, root.height, lookaheadViewports);
+    for (const record of records) {
       if (!record.element || record.completed || record.pending) continue;
       if (record.language && languageTagMatchesTranslationLanguage(record.language, this.targetLanguage)) continue;
       if (options.retryOnly ? !record.retryRequested : record.failed && !record.retryRequested) continue;
-      const geometry = this.recordGeometry(record);
+      const geometry = this.cachedRecordGeometry(record, root, scrollTop);
       if (!geometry) continue;
       const priority = record.retryRequested || options.retryOnly
         ? 0
@@ -630,14 +721,15 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
 
   private queueVisibleRecords(estimatedLatencyMs: number): void {
     const root = this.scrollRoot.getBoundingClientRect();
+    const scrollTop = this.scrollRoot.scrollTop;
     const lookaheadViewports = previewTranslationLookaheadViewports(
       this.currentScrollVelocity(),
       estimatedLatencyMs,
     );
     this.withAnchoredWrite(() => {
-      for (const record of this.records.values()) {
+      for (const record of this.nearViewportRecords(scrollTop, root.height, lookaheadViewports)) {
         if (!record.element || record.completed || record.pending || record.failed) continue;
-        const geometry = this.recordGeometry(record);
+        const geometry = this.cachedRecordGeometry(record, root, scrollTop);
         const shouldQueue = Boolean(
           geometry
           && priorityForGeometry(geometry, root, this.direction, lookaheadViewports) === 0
@@ -652,6 +744,7 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
 
   private preemptibleRequest(activeBatches: readonly EpubTranslationActiveBatch[]): string | null {
     const root = this.scrollRoot.getBoundingClientRect();
+    const scrollTop = this.scrollRoot.scrollTop;
     let selectedDistance = -1;
     let selectedRequestId: string | null = null;
     for (const batch of activeBatches) {
@@ -660,7 +753,7 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
       let visible = false;
       for (const id of batch.ids) {
         const record = this.records.get(id);
-        const geometry = record ? this.recordGeometry(record) : null;
+        const geometry = record ? this.cachedRecordGeometry(record, root, scrollTop) : null;
         if (!geometry) continue;
         if (geometry.bottom > root.top && geometry.top < root.bottom) {
           visible = true;
@@ -688,6 +781,16 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     const elementRect = element.getBoundingClientRect();
     const top = frameRect.top + elementRect.top;
     return { top, bottom: top + elementRect.height };
+  }
+
+  private cachedRecordGeometry(
+    record: EpubTranslationRecord,
+    rootRect: DOMRect,
+    scrollTop: number,
+  ): RecordGeometry | null {
+    if (!record.element?.isConnected) return null;
+    const top = rootRect.top + record.layoutTop - scrollTop;
+    return { top, bottom: top + (record.layoutBottom - record.layoutTop) };
   }
 
   private refreshCurrentRecord(record: EpubTranslationRecord): boolean {
@@ -830,6 +933,11 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
     this.workAvailableHandler();
   };
 
+  private readonly handleLayoutSignal = () => {
+    this.layoutDirty = true;
+    this.workAvailableHandler();
+  };
+
   private readonly handleUserInput = () => this.invalidateCorrection();
 
   private readonly handleHostKeyDown = (event: KeyboardEvent) => {
@@ -850,9 +958,10 @@ export class EpubTranslationDomAdapter implements EpubTranslationSurface {
 
   private captureAnchor(): TranslationAnchor | null {
     const rootRect = this.scrollRoot.getBoundingClientRect();
+    const scrollTop = this.scrollRoot.scrollTop;
     const visible: Array<{ id: string; top: number }> = [];
-    for (const record of this.records.values()) {
-      const geometry = this.recordGeometry(record);
+    for (const record of this.nearViewportRecords(scrollTop, rootRect.height, 1)) {
+      const geometry = this.cachedRecordGeometry(record, rootRect, scrollTop);
       if (!geometry || geometry.bottom <= rootRect.top || geometry.top >= rootRect.bottom) continue;
       visible.push({ id: record.id, top: geometry.top });
     }

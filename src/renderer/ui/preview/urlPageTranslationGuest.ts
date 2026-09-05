@@ -434,7 +434,8 @@ export function installUrlPageTranslationRuntime(
   if (typeof previous?.destroy === 'function') previous.destroy();
 
   const records = new Map<string, RecordEntry>();
-  const elementIds = new WeakMap<HTMLElement, string>();
+  const ids = new WeakMap<HTMLElement, string>();
+  const n = new Set<RecordEntry>();
   const readScrollTop = () => doc.scrollingElement?.scrollTop ?? host.scrollY;
   let nextId = 1;
   let enabled = false;
@@ -442,7 +443,7 @@ export function installUrlPageTranslationRuntime(
   let scanCount = 0;
   let lastScrollTop = readScrollTop();
   let lastScrollAt = Date.now();
-  let scrollVelocityViewportsPerMs = 0;
+  let v = 0;
   let direction: 'down' | 'neutral' | 'up' = 'neutral';
   let targetLanguage = initialTargetLanguage;
   let anchorRevision = 0;
@@ -462,9 +463,9 @@ export function installUrlPageTranslationRuntime(
   let youtubeRetryAt = 0;
   let youtubeRetryKey: string | null = null;
   let youtubeCaptionRefreshKey: string | null = null;
-  let youtubeCaptionRestoreButton: HTMLButtonElement | null = null;
-  let youtubeCaptionRestorePressed: boolean | null = null;
-  let youtubeCaptionRestoreTimer: number | null = null;
+  let restoreButton: HTMLButtonElement | null = null;
+  let restorePressed: boolean | null = null;
+  let rt: number | null = null;
   let workRevision = 0;
   const workWaiters = new Set<{
     resolve: (revision: number) => void;
@@ -479,7 +480,7 @@ export function installUrlPageTranslationRuntime(
     workWaiters.delete(waiter);
     waiter.resolve(workRevision);
   };
-  const signalWorkAvailable = (): void => {
+  const signal = (): void => {
     workRevision = workRevision >= 2_147_483_647 ? 1 : workRevision + 1;
     for (const waiter of [...workWaiters]) resolveWorkWaiter(waiter);
   };
@@ -502,15 +503,15 @@ export function installUrlPageTranslationRuntime(
       const viewportHeight = Math.max(1, host.innerHeight);
       const nextDirection = delta > 0 ? 'down' : 'up';
       const sample = Math.min(0.02, Math.abs(delta) / viewportHeight / elapsed);
-      scrollVelocityViewportsPerMs = direction === nextDirection
-        ? scrollVelocityViewportsPerMs * 0.65 + sample * 0.35
+      v = direction === nextDirection
+        ? v * 0.65 + sample * 0.35
         : sample;
       direction = nextDirection;
       lastScrollAt = now;
       lastScrollTop = scrollTop;
     }
     invalidateDeferredAnchorCorrection();
-    signalWorkAvailable();
+    signal();
   };
   host.addEventListener('wheel', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
   host.addEventListener('touchstart', invalidateDeferredAnchorCorrection, { capture: true, passive: true });
@@ -614,7 +615,7 @@ export function installUrlPageTranslationRuntime(
           record.retryRequested = true;
           showStatus(record, 'loading');
         });
-        signalWorkAvailable();
+        signal();
       });
       record.element.append(status);
       record.statusNode = status;
@@ -635,6 +636,16 @@ export function installUrlPageTranslationRuntime(
     record.queued = false;
   };
 
+  const go: IntersectionObserver | null = typeof IntersectionObserver === 'function'
+    ? new IntersectionObserver((es) => es.forEach((e) => {
+      const r = records.get(ids.get(e.target as HTMLElement)!);
+      if (r) {
+        e.isIntersecting ? n.add(r) : n.delete(r);
+        signal();
+      }
+    }), { rootMargin: '800%' })
+    : null;
+
   const discover = (): void => {
     const elements = Array.from(doc.querySelectorAll<HTMLElement>(candidateSelector));
     const candidates = new Set(elements);
@@ -643,22 +654,23 @@ export function installUrlPageTranslationRuntime(
       if (!isRendered(element) || isDeclaredTargetLanguage(element)) continue;
       const text = candidateText(element, candidates);
       if (text.length < 2 || !hasReadableText(text)) continue;
-      let id = elementIds.get(element);
+      let id = ids.get(element);
       if (!id) {
         id = `b${nextId++}`;
-        elementIds.set(element, id);
+        ids.set(element, id);
       }
       let existing = records.get(id);
       if (existing && existing.text !== text) {
         removeTranslation(existing);
+        n.delete(existing);
         records.delete(id);
         id = `b${nextId++}`;
-        elementIds.set(element, id);
+        ids.set(element, id);
         existing = undefined;
       }
       seen.add(id);
       if (!existing) {
-        records.set(id, {
+        const record: RecordEntry = {
           id,
           element,
           text,
@@ -669,7 +681,10 @@ export function installUrlPageTranslationRuntime(
           retryRequested: false,
           statusNode: null,
           translationNode: null,
-        });
+        };
+        records.set(id, record);
+        n.add(record);
+        go?.observe?.(element);
         continue;
       }
       existing.element = element;
@@ -682,6 +697,8 @@ export function installUrlPageTranslationRuntime(
       if (seen.has(id) && record.element.isConnected) continue;
       record.translationNode?.remove();
       removeStatus(record);
+      go?.unobserve?.(record.element);
+      n.delete(record);
       records.delete(id);
     }
     dirty = false;
@@ -756,7 +773,7 @@ export function installUrlPageTranslationRuntime(
   };
 
   const lookaheadViewports = (estimatedLatencyMs: number): number => {
-    const velocity = Date.now() - lastScrollAt > 2_000 ? 0 : scrollVelocityViewportsPerMs;
+    const velocity = Date.now() - lastScrollAt > 2_000 ? 0 : v;
     const latency = Number.isFinite(estimatedLatencyMs)
       ? Math.max(0, Math.min(30_000, estimatedLatencyMs))
       : 1_500;
@@ -835,7 +852,6 @@ export function installUrlPageTranslationRuntime(
       try {
         track.removeCue(cue);
       } catch {
-        // A detached media element may already have released its native cues.
       }
     }
     setTrackMode(track, 'disabled');
@@ -925,7 +941,7 @@ export function installUrlPageTranslationRuntime(
         record.retryRequested = true;
       }
       renderCurrentCaption();
-      signalWorkAvailable();
+      signal();
     });
     overlay.append(source, translation, status);
     player.append(overlay);
@@ -1002,12 +1018,12 @@ export function installUrlPageTranslationRuntime(
   function handleCaptionTimeUpdate(): void {
     const previousRecordId = captionState?.currentRecordId ?? null;
     renderCurrentCaption();
-    if ((captionState?.currentRecordId ?? null) !== previousRecordId) signalWorkAvailable();
+    if ((captionState?.currentRecordId ?? null) !== previousRecordId) signal();
   }
 
   function handleCaptionSeeked(): void {
     renderCurrentCaption();
-    signalWorkAvailable();
+    signal();
   }
 
   const createNativeCue = (
@@ -1040,7 +1056,6 @@ export function installUrlPageTranslationRuntime(
               (to as unknown as Record<string, unknown>)[property] = from[property];
             }
           } catch {
-            // Cue layout fields vary between native implementations.
           }
         }
       }
@@ -1058,7 +1073,6 @@ export function installUrlPageTranslationRuntime(
       try {
         track.removeCue(layoutSource);
       } catch {
-        // The player may have replaced its native track list while navigating.
       }
     }
     const text = record.translation
@@ -1083,7 +1097,7 @@ export function installUrlPageTranslationRuntime(
   ): Map<string, CaptionRecord> => {
     const records = new Map<string, CaptionRecord>();
     const revision = ++captionRevision;
-    signalWorkAvailable();
+    signal();
     for (let index = 0; index < snapshots.length; index += 1) {
       const snapshot = snapshots[index];
       if (!snapshot) continue;
@@ -1113,7 +1127,6 @@ export function installUrlPageTranslationRuntime(
             generatedTrack.addCue(cue);
             record.generatedCue = cue;
           } catch {
-            // Leave the source track active if this player rejects synthetic cues.
           }
         }
       }
@@ -1517,18 +1530,17 @@ export function installUrlPageTranslationRuntime(
   };
 
   const restoreYoutubeCaptionToggle = (): void => {
-    if (youtubeCaptionRestoreTimer !== null) host.clearTimeout(youtubeCaptionRestoreTimer);
-    youtubeCaptionRestoreTimer = null;
-    const button = youtubeCaptionRestoreButton;
-    const pressed = youtubeCaptionRestorePressed;
-    youtubeCaptionRestoreButton = null;
-    youtubeCaptionRestorePressed = null;
+    if (rt !== null) host.clearTimeout(rt);
+    rt = null;
+    const button = restoreButton;
+    const pressed = restorePressed;
+    restoreButton = null;
+    restorePressed = null;
     if (!button?.isConnected || pressed === null) return;
     if ((button.getAttribute('aria-pressed') === 'true') === pressed) return;
     try {
       button.click();
     } catch {
-      // The player may replace its controls while handling the first click.
     }
   };
 
@@ -1556,9 +1568,9 @@ export function installUrlPageTranslationRuntime(
       return;
     }
     youtubeCaptionRefreshKey = refreshKey;
-    youtubeCaptionRestoreButton = button;
-    youtubeCaptionRestorePressed = pressed;
-    youtubeCaptionRestoreTimer = host.setTimeout(restoreYoutubeCaptionToggle, 50);
+    restoreButton = button;
+    restorePressed = pressed;
+    rt = host.setTimeout(restoreYoutubeCaptionToggle, 50);
   };
 
   const youtubeMetadataFromUrl = (
@@ -1601,7 +1613,6 @@ export function installUrlPageTranslationRuntime(
         if (metadata) return metadata;
       }
     } catch {
-      // Resource Timing can be unavailable in hardened or older webviews.
     }
     return null;
   };
@@ -1932,7 +1943,7 @@ export function installUrlPageTranslationRuntime(
         });
         if (relevant) {
           dirty = true;
-          signalWorkAvailable();
+          signal();
         }
       })
     : null;
@@ -1997,7 +2008,7 @@ export function installUrlPageTranslationRuntime(
         renderCurrentCaption();
       }
       dirty = true;
-      signalWorkAvailable();
+      signal();
     },
     nextBatch(
       maxBlocks: number,
@@ -2032,10 +2043,9 @@ export function installUrlPageTranslationRuntime(
       lastScrollTop = scrollTop;
       const viewportHeight = Math.max(1, host.innerHeight);
       const aheadViewports = lookaheadViewports(estimatedLatencyMs);
-
       if (queueVisible && !retryOnly) {
         withStableAnchor(() => {
-          for (const record of records.values()) {
+          for (const record of n) {
             if (record.completed || record.pending || record.failed || record.retryRequested) continue;
             const shouldQueue = isRendered(record.element)
               && record.text.length <= maxBlockChars
@@ -2079,7 +2089,7 @@ export function installUrlPageTranslationRuntime(
         }
       }
 
-      let pagePending = [...records.values()]
+      let pagePending = (retryOnly ? [...records.values()] : [...n])
         .filter((record) => !record.completed && !record.pending)
         .filter((record) => retryOnly ? record.retryRequested : !record.failed || record.retryRequested)
         .filter((record) => record.text.length <= maxBlockChars && isRendered(record.element))
@@ -2308,6 +2318,7 @@ export function installUrlPageTranslationRuntime(
     },
     destroy(): void {
       observer?.disconnect();
+      go?.disconnect();
       host.removeEventListener('wheel', invalidateDeferredAnchorCorrection, { capture: true });
       host.removeEventListener('touchstart', invalidateDeferredAnchorCorrection, { capture: true });
       host.removeEventListener('touchmove', invalidateDeferredAnchorCorrection, { capture: true });
@@ -2322,7 +2333,7 @@ export function installUrlPageTranslationRuntime(
         doc.documentElement.removeAttribute(hiddenAttribute);
       });
       runtimeActive = false;
-      signalWorkAvailable();
+      signal();
       youtubeLoadRevision += 1;
       restoreYoutubeCaptionToggle();
       clearCaptionState();

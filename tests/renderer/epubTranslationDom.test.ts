@@ -181,6 +181,26 @@ describe('EPUB translation DOM adapter', () => {
     fixture.cleanup();
   });
 
+  test('uses cached layout positions without reading every record on scroll', () => {
+    const fixture = createFixture();
+    const sourceElements = [...fixture.chapter.querySelectorAll<HTMLElement>('p')];
+    let recordRectReads = 0;
+    for (const element of sourceElements) {
+      const readRect = element.getBoundingClientRect.bind(element);
+      element.getBoundingClientRect = () => {
+        recordRectReads += 1;
+        return readRect();
+      };
+    }
+    fixture.adapter.setEnabled(true);
+    recordRectReads = 0;
+    fixture.scrollRoot.scrollTop = 1_500;
+    fixture.scrollRoot.dispatchEvent(new fixture.window.Event('scroll'));
+    fixture.adapter.nextBatch({ maxBlocks: 2, maxChars: 2_000, visibleOnly: true });
+    expect(recordRectReads).toBe(0);
+    fixture.cleanup();
+  });
+
   test('sends upward batches in document order', () => {
     const chapter = chapterDocumentFromMarkup(`
       <p id="first">First paragraph</p>
