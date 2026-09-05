@@ -587,7 +587,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   ])), [columns, props.index, tt]);
   const fieldChoices = useMemo(
     () => parent ? tableFieldChoices(parent, props.index, tt) : [],
-    [parent, props.index, tt],
+    [parent, props.index.semanticRevisions.definitionOptions, tt],
   );
   const gridRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
