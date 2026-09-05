@@ -26,6 +26,7 @@ import {
   type FileGlobData,
   type FileGrepData,
 } from '../../src/main/agent/capabilities/agentLocalTools';
+import { bashTaskStatusForToolTaskState } from '../../src/core/agent/tools';
 import { AgentSkillRuntime } from '../../src/main/agent/capabilities/agentSkills';
 import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { agentDerivedFileCache } from '../../src/main/agent/capabilities/agentFileIngestionCache';
@@ -3586,6 +3587,55 @@ describe('agent local tools', () => {
 });
 
 describe('local tool model-visible projections', () => {
+  test('normalizes durable Tool Task states to the stable Bash status vocabulary', () => {
+    expect(bashTaskStatusForToolTaskState('running')).toBe('running');
+    expect(bashTaskStatusForToolTaskState('settling')).toBe('running');
+    expect(bashTaskStatusForToolTaskState('succeeded')).toBe('completed');
+    expect(bashTaskStatusForToolTaskState('failed')).toBe('failed');
+    expect(bashTaskStatusForToolTaskState('timed_out')).toBe('failed');
+    expect(bashTaskStatusForToolTaskState('lost')).toBe('failed');
+    expect(bashTaskStatusForToolTaskState('cancelled')).toBe('stopped');
+  });
+
+  test('keeps a settling supervised task valid at the Bash boundary', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const ownerThreadId = '00000000-0000-7000-8000-000000000041';
+      const turnId = '00000000-0000-7000-8000-000000000042';
+      const service = {
+        start: async () => ({
+          taskId: 'task_550e8400-e29b-41d4-a716-446655440010',
+          state: 'settling',
+          startedAt: Date.now(),
+          completedAt: null,
+          exitCode: null,
+        }),
+      } as unknown as ToolTaskService;
+      const workspace = createAgentLocalWorkspaceContext(
+        workspaceRoot,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        ownerThreadId,
+      );
+      const bash = createLocalTools({ workspace, toolTaskService: service, turnId })
+        .find((tool) => tool.name === 'bash')!;
+
+      const result = await bash.execute('settling-supervised-task', {
+        command: 'printf queued',
+        run_in_background: true,
+      });
+
+      expect(result.details).toMatchObject({
+        ok: true,
+        data: {
+          backgroundTaskId: 'task_550e8400-e29b-41d4-a716-446655440010',
+          taskStatus: 'running',
+        },
+      });
+    });
+  });
+
   test('bash keeps output and signals, drops echoed command and telemetry', () => {
     const data: BashData = {
       stdout: 'hi',

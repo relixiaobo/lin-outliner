@@ -1,6 +1,7 @@
 import {
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
   REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS,
+  type ToolTaskExecutionState,
   type AgentTaskToolName,
   type RequestUserInputOption,
   type RequestUserInputQuestion,
@@ -27,6 +28,27 @@ export {
 } from './protocol';
 
 export type { ModelToolIdentity } from './protocol';
+
+/** Stable status vocabulary exposed by the Bash tool. */
+export const BASH_TASK_STATUSES = ['running', 'completed', 'failed', 'stopped'] as const;
+export type BashTaskStatus = typeof BASH_TASK_STATUSES[number];
+
+/** Keep durable Tool Task states behind the Bash tool contract. */
+export function bashTaskStatusForToolTaskState(state: ToolTaskExecutionState): BashTaskStatus {
+  switch (state) {
+    case 'running':
+    case 'settling':
+      return 'running';
+    case 'succeeded':
+      return 'completed';
+    case 'failed':
+    case 'timed_out':
+    case 'lost':
+      return 'failed';
+    case 'cancelled':
+      return 'stopped';
+  }
+}
 
 export type JsonSchema = Readonly<Record<string, unknown>>;
 /**
@@ -432,7 +454,7 @@ const retainedCapabilityOutputSchemas: Readonly<Record<typeof RETAINED_CAPABILIT
     exitCode: integerSchema(),
     isImage: booleanSchema(),
     backgroundTaskId: outputStringSchema(),
-    taskStatus: enumSchema(['running', 'completed', 'failed', 'stopped']),
+    taskStatus: enumSchema(BASH_TASK_STATUSES),
     persistedOutput: persistedOutputSchema,
     artifacts: outputArraySchema(artifactOutputSchema, 16),
     temporaryOutputPath: outputStringSchema(),
