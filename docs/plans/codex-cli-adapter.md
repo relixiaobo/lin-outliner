@@ -61,10 +61,10 @@ Publish an `AdapterCapabilityMap` covering only the admitted subset:
 - cwd is passed with `--cd` and the model only with the Settings-resolved
   `--model` value;
 - non-interactive execution uses `exec`, stdin prompt input, and `--json`;
-- the run uses a controlled user-level config/profile layer rather than
-  `--ignore-user-config`: official Codex behavior says that flag ignores the
-  entire `config.toml`, including `model_provider` and `model_providers`, while
-  authentication still reads from `CODEX_HOME`;
+- the run uses a closed provider configuration, never the opaque user config.
+  `--ignore-user-config` is usable only together with explicitly reconstructed
+  provider overrides: alone it also removes `model_provider` and
+  `model_providers`, while authentication still reads from `CODEX_HOME`;
 - the controlled layer explicitly sets the selected custom provider fields,
   `features.multi_agent = false`, `features.hooks = false`, `features.apps =
   false`, `web_search = "disabled"`, `history.persistence = "none"`, and a
@@ -75,6 +75,10 @@ Publish an `AdapterCapabilityMap` covering only the admitted subset:
   per-server MCP disablement (`mcp_servers.<id>.enabled`), so if the adapter
   cannot enumerate and close the complete extension set it remains Not Ready
   rather than reusing the user's full config;
+- feature flags alone do not exclude custom Skills. For the supported version,
+  `skills.config` disablement must name each canonical `SKILL.md` file, not its
+  containing directory. `skip_host_skill_discovery` is not a global Skill
+  disable control; unenumerated discovery sources keep the adapter Not Ready;
 - native Agent/multi-agent, background, MCP, network, and unclassified tools
   are denied. If any disable or sandbox guarantee cannot be proved, the
   affected access mode is Not Ready rather than widened implicitly.
@@ -91,10 +95,25 @@ version-bound session identifier. A successful first Turn stores only the
 minimum local resume identity required by Codex `exec resume`; continuation
 must use that identity plus the next message at a fresh safe Turn boundary.
 The official `exec resume` surface does not accept a new `--sandbox` or
-`--color` option, so the adapter freezes the first Turn's access profile and
-must reject continuation when the stored profile or version cannot be verified.
+`--color` option, but `--config sandbox_mode=...` is accepted and can change
+the resumed permissions. Every invocation must therefore reassert the frozen
+access profile through controlled config overrides; never rely on inherited
+permissions. Reject continuation when the stored profile or version cannot be
+verified. Canonicalize cwd and configuration paths before sandbox admission.
 If the installed version cannot provide safe local resume and closure, the
 adapter remains Not Ready even if first-run execution works.
+
+An `item.completed` error may be a startup warning, not a failed Turn. Terminal
+events plus exit/quiescence evidence determine the outcome. Classify native tool
+availability by enforced execution behavior as well as catalog presence:
+the supported CLI advertises `apply_patch` in read-only mode but rejects writes,
+and advertises `request_user_input` while Default mode rejects its execution.
+Neither a tool description nor the absence of a call proves a capability closed.
+
+The supported CLI reports cumulative Session usage on resume. Per-Turn usage
+must subtract a verified prior baseline bound to that resume identity, never
+sum cumulative totals as individual Turns. A missing or inconsistent baseline
+produces unknown usage, not an invented zero or a negative delta.
 
 Run Codex in the supervisor-owned process group. Propagate the Tool Task abort
 signal, timeout, and user stop to the process group and wait for quiescence
@@ -162,6 +181,13 @@ rebase on its merged contract before touching shared Settings ownership. PR
   using an `env_key` or command-backed auth helper? If not, the adapter must
   expose the diagnostic and refuse activation rather than reuse the full user
   config.
+- Should the auth allowlist also admit `requires_openai_auth`, with Codex itself
+  reading its already-stored login state from the original `CODEX_HOME`?
+  This would support the local third-party setup without Tenon reading, copying,
+  or persisting credential contents, but expands the env/helper-only rule above.
+- May the adapter add a direct runtime TOML parser dependency (`smol-toml`) to
+  reconstruct an allowlisted provider config? Do not hand-parse TOML, use
+  Bun-only parsing in Electron, or depend on an undeclared transitive package.
 
 ## Verification
 
@@ -169,3 +195,11 @@ Run the delegation Core tests, adapter fixture suite, renderer Settings tests,
 `bun run typecheck`, `bun run docs:check`, and the packaged/source CLI smoke.
 Record the real `codex-cli 0.153.4` probe and a successful/failed controlled
 run as PR evidence without committing credentials or user configuration.
+
+`scripts/probe-codex-capabilities.ts` exercises the pinned real CLI against a
+loopback Responses fixture with temporary HOME, CODEX_HOME, workspace, and a
+synthetic Skill. It checks the actual model-visible tool catalog, explicit
+Skill exclusion, forced write and user-input refusals, identical resume
+identity, config-driven sandbox changes, and cumulative usage without a paid
+provider request. These checks establish only their tested subset; they do not
+prove complete real-user extension enumeration or authorize a Ready adapter.
