@@ -588,6 +588,13 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Workspace and document status audit (2026-09-05)** - refreshed the live
+  board against GitHub: #627 is complete, #628 owns the active internal
+  delegation implementation, and #626's Settings rewrite remains a draft
+  design rather than current specification. Deferred working-state ownership
+  to that design gate, aligned README with standalone Outline Runtime ownership
+  and Full Access, and verified plan lifecycle, links, aliases, and indexes.
+
 - **Desktop composition now converges behind one race-safe `DesktopHost` (PR
   #603, codex)** — `main.ts` retains fixed Electron identity, security,
   single-instance, readiness, and lifecycle forwarding while the final Host

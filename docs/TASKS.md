@@ -7,30 +7,34 @@ retrospectives live in `CHANGELOG.md` and merged PRs. Dev agents read this board
 and claim work with a Draft PR but do not edit it. The main agent updates it at
 integration.
 
-The live collision radar is `gh pr list` plus this board. No implementation PR
-was open at the 2026-08-29 audit. The current package version is `0.8.0`; the
-latest published train is `v0.7.0`.
+The live collision radar is `gh pr list` plus this board. At the 2026-09-05
+audit, Draft PRs #626 (Settings design revision) and #628 (internal Agent
+delegation implementation) remain open. The current package version is `0.8.0`;
+the latest published train is `v0.7.0`.
 
 ## In Flight
 
-One claim remains open: Draft PR #626 owns the file-first Settings control-plane
-design. Generic Background Tool Tasks shipped in #623 and released the durable
-task, packaged-supervisor, and shared Agent protocol foundation. Link/preview
+Draft PR #628 owns internal Agent delegation and complete Subagent/isolated-Skill
+retirement under the design merged in #620. Generic Background Tool Tasks
+shipped in #623; external Runner adapters remain separate future claims. #628
+touches Agent protocol, runtime, Settings, Skill, and packaging surfaces, so
+overlapping claims must use its final mechanisms after integration. The legacy
+Subagent and isolated-Skill behavior remains current until that cutover ships.
+
+Draft PR #626 owns the file-first Settings design revision. The plan on `main`
+still describes the previous CLI-based design; the draft proposes replacing it
+with public configuration files, a same-source flat UI, and domain-owned tools.
+Its design gate must settle the implementation units and absorbed working-state
+behavior before a Settings implementation claim. Implementation follows #628
+and the Skill authoring foundation; the draft is not shipped specification.
+
+Trajectory paging shipped in #625 and exact-or-unavailable evidence completed
+in #627; the plan is archived and its shared-file claim is released. Bounded
+summaries remain navigation aids, not forensic evidence authority. Link/preview
 interaction polish shipped in #621 and released the shared preview-shell lane.
-Agent delegation runtime design authority shipped in #620; internal delegation,
-Subagent/isolated-Skill retirement, and external Runner adapters stay active
-under that plan. Trajectory
-paging and bounded live inspection shipped in #625, while the same plan's
-exact-or-unavailable evidence unit remains in progress with codex-2; no current
-claim may treat its bounded summaries as forensic evidence authority. The pi-ai
-0.84 provider-runtime upgrade shipped in #622, the public Outline Agent
-interface shipped in #619, Agent execution-selection settings shipped in #618,
-and the earlier Thread, context, recovery, and delegated-failure foundations
-remain complete, so the managed Computer Pilot Skill remains eligible under its
-live collision check. The public Outline CLI and built-in Skill lanes are clear.
-Startup Window, preview readers, and Skill authoring remain independently
-eligible. The remaining plans from #588/#589 and #591 stay active below until
-their implementation, spec fold, and archive move complete.
+The remaining primary queue is eligible under its live collision checks,
+including #628's Agent and Skill ownership. The remaining plans stay active
+until their implementation, spec fold, and archive move complete.
 
 ## Primary Delivery Queue
 
@@ -101,10 +105,10 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Background Tool Tasks Unit 1 shipped in #623. Internal delegation plus Subagent/isolated-Skill retirement is next and takes the coordinated Agent shared-interface claim; each external Runner adapter remains a separate future claim. |
-| P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Generic Tool Tasks shipped in #623; Unit 1 still follows `agent-skill-authoring-foundation`. Unit 2 follows Unit 1, absorbs `semantic-working-state`, and must serialize with `agent-delegation-runtime`'s future Settings consumer. |
+| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Background Tool Tasks Unit 1 shipped in #623. Draft #628 owns internal delegation plus Subagent/isolated-Skill retirement and the coordinated Agent shared-interface claim; #627's Trajectory predecessor is complete. Each external Runner adapter remains a separate future claim. |
+| P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Design revision under review in Draft #626; implementation waits for that gate, #628, and `agent-skill-authoring-foundation`. Reconcile the delivery units and `semantic-working-state` absorption when the revised design lands. |
 | P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | Definition-cache and Runtime-index units are eligible after #598; preview units use the live preview-shell lane. |
-| P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Paused: `settings-control-plane` Unit 2 absorbs its Provider/managed-Skill behavior into the final resource pages; do not implement against the outgoing Settings surface. |
+| P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Paused for the Settings redesign. Draft #626 changes the absorbing delivery unit; settle that ownership at its design gate before implementing Provider/managed-Skill working states. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
 | P3 | [icon-semantics](plans/icon-semantics.md) | `draft` | Build-ready renderer mapping cleanup. Update action menu, launcher, picker, and attachment mappings together; status color is out of scope. |
 | P3 | [performance-optimization](plans/performance-optimization.md) | `draft` | Three measured tails only. Core mutation indexes are eligible after #598; filename-fallback reuse and text normalization are independent. |
@@ -220,6 +224,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **workspace-document-status-audit** (`done`, fast-track, 2026-09-05) - refreshed open claims, the pending Settings design boundary, README runtime ownership, and document lifecycle checks.
 - **agent-trajectory-evidence-fidelity Unit 2 / complete** (`done`, #627,
   2026-09-05) — Trajectory now preserves exact-or-unavailable Context, Request,
   Assistant, Tool Input/Output, Raw, copy, restart, and fork evidence; the unused
