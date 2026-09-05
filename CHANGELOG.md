@@ -12,6 +12,17 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Internal Agent delegation now runs through durable Tool Tasks (PR #628)** —
+  the packaged `delegate` CLI creates root-owned hidden Agent Sessions backed by
+  the internal Runner, ordered continuation messages, Host-attested direct-exec
+  admission, and exact prepared-result/final-process settlement. User stop,
+  cancellation, process failure, crash recovery, and explicit fresh continuation
+  preserve factual terminal state without replaying stale queued input. The
+  legacy Subagent and isolated-Skill execution surfaces are retired in the same
+  pre-release cutover. Verified with typecheck, `docs:check`, 44 startup and
+  lifecycle tests, 76 delegation and Tool Task tests, whitespace checks, and a
+  clean merge tree against `main`.
+
 - **Agent Trajectory now preserves exact execution evidence end to end (PR
   #627, codex-2)** — Context, provider Request and Assistant response, Tool
   Input/Output, Raw, and copy now expose the complete retained value from their

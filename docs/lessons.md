@@ -2550,6 +2550,17 @@ Regression coverage must include empty and duplicate provider identifiers and
 prove correlation through restart and fork. Tests with unique well-formed IDs
 cannot distinguish source-coordinate fidelity from a convenient value lookup.
 
+## Terminal failure must preserve truthful recovery
+
+PR #628 initially blocked every non-success process receipt before verifying
+complete prepared and canonical evidence. That prevented a fresh user request
+from continuing a Session after a normal stop. **Use permanent blocking for
+missing or contradictory evidence; once terminal evidence is complete, preserve
+the factual outcome, block only stale queued messages, and allow a newly
+authorized request to resume.** Regression coverage must exercise the complete
+fresh request through the next Turn, not only assert that automatic continuation
+stops.
+
 ## Startup recovery must reach every initialized consumer
 
 PR #629 made Host startup retryable while the renderer Thread store still cached
