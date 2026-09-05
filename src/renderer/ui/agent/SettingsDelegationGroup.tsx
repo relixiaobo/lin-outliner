@@ -26,11 +26,22 @@ export function SettingsDelegationGroup({
   const delegation = settings?.agent.delegation;
   const internal = delegation?.runners.internal;
   const selectedRunnerId = delegation?.defaultRunnerId ?? 'internal';
-  const selectedRunner = (settings as (AgentProviderSettingsView & {
+  const discoveredRunners = (settings as (AgentProviderSettingsView & {
     delegationRunners?: readonly DelegationRunnerReadiness[];
-  }) | null)?.delegationRunners?.find((runner) => runner.id === selectedRunnerId);
+  }) | null)?.delegationRunners ?? [];
+  const delegationRunners = discoveredRunners.length > 0
+    ? discoveredRunners
+    : [{
+      id: 'internal',
+      version: '1',
+      detected: true,
+      ready: true,
+      enabled: internal?.enabled !== false,
+      diagnostic: null,
+    } satisfies DelegationRunnerReadiness];
+  const selectedRunner = delegationRunners.find((runner) => runner.id === selectedRunnerId);
   const selectedRunnerSettings = delegation?.runners[selectedRunnerId];
-  const selectedRunnerEnabled = selectedRunnerSettings?.enabled !== false;
+  const selectedRunnerEnabled = selectedRunnerSettings?.enabled ?? selectedRunner?.enabled ?? false;
   const modelChoices = useMemo(() => buildModelChoices(settings, {
     modelProvider: settings?.activeProviderId ?? '',
     model: internal?.model ?? '',
@@ -71,8 +82,6 @@ export function SettingsDelegationGroup({
   }
 
   const enabled = delegation?.enabled === true;
-  const runnerEnabled = internal?.enabled !== false;
-
   return (
     <>
       <InsetGroup ariaLabel={t.settings.agent.delegation.ariaLabel} label={t.settings.agent.delegation.label}>
@@ -92,53 +101,64 @@ export function SettingsDelegationGroup({
         {enabled ? (
           <>
             <InsetRow
-              label={t.settings.agent.delegation.runner}
-              sublabel={selectedRunnerId === 'codex'
-                ? selectedRunner?.ready
-                  ? t.settings.agent.delegation.codexReady
-                  : selectedRunner?.detected
-                    ? t.settings.agent.delegation.codexDetected
-                    : t.settings.agent.delegation.codexUnavailable
-                : runnerEnabled
-                  ? t.settings.agent.delegation.runnerReady
-                  : t.settings.agent.delegation.runnerDisabled}
+              label={t.settings.agent.delegation.defaultRunner}
               trailing={(
                 <SelectControl
                   disabled={saving}
-                  label={t.settings.agent.delegation.runner}
+                  label={t.settings.agent.delegation.defaultRunner}
                   onChange={(event) => {
-                    const runnerId = event.target.value;
-                    void update({
-                      defaultRunnerId: runnerId,
-                      runners: runnerId === 'codex' ? { codex: { enabled: true, model: null } } : undefined,
-                    });
+                    void update({ defaultRunnerId: event.target.value });
                   }}
                   value={selectedRunnerId}
                   variant="popup"
                 >
-                  <option value="internal">{t.settings.agent.delegation.internalRunner}</option>
-                  <option value="codex">{t.settings.agent.delegation.codexRunner}</option>
+                  {delegationRunners.map((runner) => (
+                    <option
+                      key={runner.id}
+                      disabled={runner.id !== selectedRunnerId && (!runner.ready || !runner.enabled)}
+                      value={runner.id}
+                    >
+                      {runnerLabel(runner.id, t)}
+                    </option>
+                  ))}
                 </SelectControl>
               )}
             />
-            <InsetRow
-              label={t.settings.agent.delegation.runnerEnabled}
-              trailing={(
-                <SwitchControl
-                  checked={selectedRunnerEnabled}
-                  disabled={saving}
-                  label={t.settings.agent.delegation.runnerEnabled}
-                  onCheckedChange={(checked) => {
-                    void update({ runners: { [selectedRunnerId]: { enabled: checked } } });
-                  }}
-                >
-                  <SwitchMark checked={selectedRunnerEnabled} />
-                </SwitchControl>
-              )}
-            />
+            {delegationRunners.map((runner) => {
+              const runnerSettings = delegation?.runners[runner.id];
+              const isEnabled = runnerSettings?.enabled ?? runner.enabled;
+              const status = runner.id === 'internal'
+                ? isEnabled ? t.settings.agent.delegation.runnerReady : t.settings.agent.delegation.runnerDisabled
+                : runner.ready
+                  ? t.settings.agent.delegation.launcherReady
+                  : runner.detected
+                    ? t.settings.agent.delegation.launcherDetected
+                    : t.settings.agent.delegation.launcherUnavailable;
+              return (
+                <InsetRow
+                  key={runner.id}
+                  label={runnerLabel(runner.id, t)}
+                  sublabel={status}
+                  trailing={(
+                    <SwitchControl
+                      checked={isEnabled}
+                      disabled={saving || (!runner.ready && runner.id !== 'internal')}
+                      label={`${runnerLabel(runner.id, t)} ${t.settings.agent.delegation.runnerEnabled}`}
+                      onCheckedChange={(checked) => {
+                        void update({ runners: { [runner.id]: { enabled: checked } } });
+                      }}
+                    >
+                      <SwitchMark checked={isEnabled} />
+                    </SwitchControl>
+                  )}
+                />
+              );
+            })}
             <InsetRow
               label={t.settings.agent.delegation.model}
-              sublabel={selectedModelUnavailable ? t.settings.agent.delegation.modelUnavailable : undefined}
+              sublabel={selectedRunnerId === 'internal'
+                ? selectedModelUnavailable ? t.settings.agent.delegation.modelUnavailable : undefined
+                : t.settings.agent.delegation.nativeLauncherModel}
               trailing={(
                 <SelectControl
                   disabled={saving || !selectedRunnerEnabled || selectedRunnerId !== 'internal'}
@@ -278,6 +298,14 @@ interface DelegationRunnerReadiness {
   readonly ready: boolean;
   readonly enabled: boolean;
   readonly diagnostic: string | null;
+}
+
+function runnerLabel(id: string, t: ReturnType<typeof useT>): string {
+  if (id === 'internal') return t.settings.agent.delegation.internalRunner;
+  if (id === 'codex') return t.settings.agent.delegation.codexRunner;
+  if (id === 'claude') return t.settings.agent.delegation.claudeRunner;
+  if (id === 'openclaw') return t.settings.agent.delegation.openclawRunner;
+  return id;
 }
 
 function LimitRow({

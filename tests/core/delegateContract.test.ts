@@ -88,13 +88,19 @@ describe('delegate command contract', () => {
       access: 'read-only',
       model: 'override',
     })).toThrow('Invalid delegation run input');
-    expect(() => decodeDelegateRunInput({
+    expect(decodeDelegateRunInput({
       version: 1,
       prompt: 'Use a different Runner.',
       profile: 'general',
       access: 'read-only',
       runner: 'external',
-    })).toThrow('Invalid delegation run input');
+    })).toEqual({
+      version: 1,
+      prompt: 'Use a different Runner.',
+      profile: 'general',
+      access: 'read-only',
+      runner: 'external',
+    });
   });
 
   test('bounds root messages by UTF-8 bytes rather than JavaScript length', () => {

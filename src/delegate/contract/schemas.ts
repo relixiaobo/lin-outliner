@@ -25,6 +25,7 @@ export const DelegateRunInputSchema = Type.Object({
   prompt: Type.String({ minLength: 1, maxLength: DELEGATE_MAX_PROMPT_BYTES }),
   profile: DelegateTaskProfileSchema,
   access: DelegateAccessSchema,
+  runner: Type.Optional(Type.String({ pattern: '^[a-z0-9][a-z0-9-]{0,63}$' })),
 }, closed);
 
 export const DelegateMessageInputSchema = Type.Object({

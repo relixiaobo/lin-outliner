@@ -135,6 +135,74 @@ describe('DelegationRunnerRegistry', () => {
     })).rejects.toMatchObject<Partial<DelegationAdmissionRefusal>>({ code: 'runner_unavailable' });
   });
 
+  test('uses the configured default launcher when no runner is requested', async () => {
+    const registry = externalRegistry();
+    const configured = settings({ enabled: true, defaultRunnerId: 'codex' });
+    configured.runners.codex = { ...configured.runners.internal!, enabled: true };
+
+    const resolved = await registry.resolve({
+      settings: configured,
+      configurationRevision: 'revision-one',
+      parentModel: PARENT,
+      profile: 'explore',
+      requestedAccess: 'read-only',
+    });
+
+    expect(resolved.runnerId).toBe('codex');
+    expect(resolved.modelProvider).toBe(PARENT.providerId);
+    expect(resolved.modelId).toBe(PARENT.modelId);
+  });
+
+  test('admits an explicitly enabled launcher without falling back to the default', async () => {
+    const registry = externalRegistry();
+    const configured = settings({ enabled: true, defaultRunnerId: 'internal' });
+    configured.runners.codex = { ...configured.runners.internal!, enabled: true };
+
+    const resolved = await registry.resolve({
+      settings: configured,
+      configurationRevision: 'revision-one',
+      parentModel: PARENT,
+      profile: 'explore',
+      requestedAccess: 'read-only',
+      runnerId: 'codex',
+    });
+
+    expect(resolved.runnerId).toBe('codex');
+  });
+
+  test('refuses an explicitly disabled launcher instead of silently falling back', async () => {
+    const registry = externalRegistry();
+    const configured = settings({ enabled: true, defaultRunnerId: 'internal' });
+    configured.runners.codex = { ...configured.runners.internal!, enabled: false };
+
+    await expect(registry.resolve({
+      settings: configured,
+      configurationRevision: 'revision-one',
+      parentModel: PARENT,
+      profile: 'explore',
+      requestedAccess: 'read-only',
+      runnerId: 'codex',
+    })).rejects.toMatchObject<Partial<DelegationAdmissionRefusal>>({ code: 'runner_unavailable' });
+  });
+
+  test('does not treat Tenon model or effort fields as controls for an external launcher', async () => {
+    const registry = externalRegistry();
+    const configured = settings({ enabled: true, defaultRunnerId: 'codex' });
+    configured.runners.codex = {
+      ...configured.runners.internal!,
+      enabled: true,
+      model: 'openai/ignored',
+    };
+
+    await expect(registry.resolve({
+      settings: configured,
+      configurationRevision: 'revision-one',
+      parentModel: PARENT,
+      profile: 'explore',
+      requestedAccess: 'read-only',
+    })).rejects.toMatchObject<Partial<DelegationAdmissionRefusal>>({ code: 'model_unavailable' });
+  });
+
   test('continues with the Session Runner after the default Runner changes', async () => {
     const registry = fixtureRegistry();
     const configured = settings({ enabled: true, defaultRunnerId: 'claude' });
@@ -230,6 +298,33 @@ function fixtureRegistry(
   }),
 ): DelegationRunnerRegistry {
   return new DelegationRunnerRegistry([internalDelegationRunnerAdapter(resolver)]);
+}
+
+function externalRegistry(): DelegationRunnerRegistry {
+  return new DelegationRunnerRegistry([internalDelegationRunnerAdapter(async (model, effort) => ({
+    providerId: model.split('/')[0] ?? 'unknown',
+    modelId: model.split('/').slice(1).join('/'),
+    effort,
+    supportedEfforts: [effort],
+  })), {
+    id: 'codex',
+    version: 'native',
+    detected: true,
+    ready: true,
+    diagnostic: null,
+    resolveExplicitModel: async (_model, effort) => ({
+      providerId: 'external',
+      modelId: 'native',
+      effort,
+      supportedEfforts: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    }),
+    resolveInheritedModel: async (parent, effort) => ({
+      providerId: parent.providerId,
+      modelId: parent.modelId,
+      effort,
+      supportedEfforts: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    }),
+  }]);
 }
 
 function settings(overrides: Partial<AgentDelegationSettings> = {}): AgentDelegationSettings {

@@ -333,6 +333,16 @@ export class InternalDelegationSessionRuntime implements DelegationSessionRuntim
     try {
       const inspection = await this.worktrees.inspect(metadata);
       const current = this.store.readSession(sessionId)!;
+      if (session.policy.access === 'read-only' && session.policy.runnerId !== 'internal') {
+        const settled = await this.worktrees.discard(metadata);
+        this.store.setWorktree(
+          sessionId,
+          current.revision,
+          { kind: 'cleaned', baseRevision: settled.worktree.baseCommit },
+          this.now(),
+        );
+        return { artifacts: [], result: { disposition: 'none' } };
+      }
       if (inspection.changedFiles.length === 0) {
         this.store.setWorktree(sessionId, current.revision, { kind: 'unchanged', metadata }, this.now());
         return {

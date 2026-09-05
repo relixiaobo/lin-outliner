@@ -14,7 +14,7 @@ or malformed identities within one source are unavailable with diagnostics.
 
 Built-in Skills are registered product capabilities. The `delegate` Skill is
 built in but enters the catalog only when experimental delegation and its
-configured Runner are enabled for a root Thread. Disabling the experiment
+configured launcher are enabled for a root Thread. Disabling the experiment
 removes the guidance; it does not restore any legacy Agent tool.
 
 The effective Thread configuration supplies a Skill ceiling. `*` admits all

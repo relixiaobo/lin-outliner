@@ -3,8 +3,12 @@
 **Shape:** A SET of complete features. Generic background Tool Tasks ship first
 as an independently useful Bash capability. Internal delegation then ships as a
 complete experimental capability while retiring Subagents and isolated Skills
-in the same cutover. Each external Runner is a separate complete adapter, not
-part of the foundation PR.
+in the same cutover. External native CLI launchers share the generic lifecycle
+and can be added together without vendor-specific adapters.
+
+The persisted and CLI-compatible field remains named `runner` for now; in the
+user-facing design it means a configured launcher. The term does not imply a
+vendor adapter, model catalog, or nested Agent identity.
 
 ## Goal
 
@@ -25,14 +29,14 @@ process result.
   work that the root eventually integrates or takes over.
 - **Clean-slate answer:** Bash owns generic process execution, Tool Tasks own
   execution lifecycle, Agent Sessions own isolated context and ordered messages,
-  the delegation CLI owns admission and session commands, and Runners own only
-  harness adaptation.
+  the delegation CLI owns admission and session commands, and launchers own only
+  harness invocation.
 - **Selected brownfield answer:** Reuse the current Agent execution kernel,
   tools, provider adapters, artifacts, worktrees, and Host-started Turns while
   deleting Subagent-specific identity, ledgers, routing, and UI.
 - **Minimum acceptable outcome:** The existing Subagent product and generic
   isolated-Skill mode are completely retired. With the experiment enabled, the
-  internal Runner restores parallel execution, fresh-context isolation, and
+  internal launcher restores parallel execution, fresh-context isolation, and
   root-owned continuation through the new path; with it disabled, the root works
   locally and no legacy delegation surface remains.
 
@@ -61,10 +65,10 @@ commands, without restoring Agent trees, peer messaging, nesting, or Subagent UI
   tree, peer-to-peer messaging, delegated-to-root message route, or more than one
   Tenon-managed delegation level. A root-owned Agent Session handle identifies a
   restricted hidden Thread, not an Agent entity or tree node.
-- No model-selected Runner, model, effort, concurrency, local scheduling limit,
-  retry, fallback, or worktree policy. Runner selection belongs only to
-  Settings.
-- No silent retry, model fallback, Runner failover, or replacement task.
+- No model-selected launcher, model, effort, concurrency, local scheduling limit,
+  retry, fallback, or worktree policy. Launcher enablement and the default belong
+  to Settings; a request may explicitly name another enabled launcher.
+- No silent retry, model fallback, launcher failover, or replacement task.
 - No promise that added context mutates a model request or tool invocation already
   in flight. Steering is durably queued and consumed only at a Runner-safe Turn
   boundary.
@@ -81,7 +85,7 @@ commands, without restoring Agent trees, peer messaging, nesting, or Subagent UI
 - No remote A2A service, general workflow engine, or arbitrary shell-template
   adapter.
 - No external harness plugins, hooks, user MCP servers, custom Agent packs, or
-  background Agents in the first external adapters.
+  background Agents are part of Tenon's launcher contract.
 - No public inbound API that lets Claude Code, Codex, OpenClaw, or another
   external harness invoke Tenon's internal Runner. That requires a separate
   user-authorized ownership, billing, permission, and result-routing design.
@@ -95,7 +99,7 @@ commands, without restoring Agent trees, peer messaging, nesting, or Subagent UI
 The binding constraints are:
 
 - the model invokes the CLI only through existing Bash;
-- the user owns enabled Runners, the default Runner, and model policy through
+- the user owns enabled launchers, the default launcher, and model policy through
   Settings; a model-controlled CLI argument cannot change them;
 - an unavailable explicit model rejects before execution;
 - Tenon itself creates and manages only one delegation level; arbitrary shell
@@ -107,7 +111,7 @@ The binding constraints are:
 Rejected alternatives:
 
 - A model-visible `delegate` tool duplicates Bash background semantics and puts
-  changing Runner policy back into a model schema.
+  changing launcher policy back into a model schema.
 - A model-controlled `--runner` argument cannot prove user authority and may
   select a different account or cost boundary, so `delegate run` uses only the
   Host-bound Settings selection.
@@ -135,10 +139,11 @@ Rejected alternatives:
 - The injected `KernelAgentOptions` boundary in `NativeAgentRuntime` supports a
   headless model gateway and tool set. The internal Runner reuses this kernel;
   it does not copy `PiTurnExecutor` or its Electron-backed Settings/tool wiring.
-- Local executable evidence confirms non-interactive entry points for Claude and
-  Codex CLIs and an ACP entry point for OpenClaw. Continuation, permission
-  closure, and exact flags remain version-bound Adapter fixtures, not permanent
-  assumptions in this plan.
+- External CLI launchers are intentionally thin. They discover a user-installed
+  executable, invoke its documented native command, pass the prompt through
+  stdin, and normalize bounded process evidence. Tenon does not make vendor
+  configuration, authentication, sandbox, MCP, Skill, or resume semantics a
+  prerequisite for generic execution.
 - PR #619's real Agent replay is the design precedent for a one-call common
   path, one contract registry, closed-loop receipts, and task-corpus-first CLI
   design.
@@ -161,8 +166,8 @@ root Agent
        -> generic process supervisor, direct-exec mode
        -> delegate CLI runtime (no parent shell)
             -> root-owned Agent Session
-                 -> internal Tenon Runner
-                 -> external harness Runner
+                 -> internal Tenon launcher
+                 -> external native CLI launcher
   -> generic background completion
   -> root synthesis, `delegate send`, or ownership recovery
 ```
@@ -575,9 +580,8 @@ Its complete routing policy is:
 
 - delegate only a substantial, independently specifiable task;
 - use background Bash for every delegated run and return control immediately;
-- use only the Settings-selected default Runner; when the user asks for another
-  Runner, explain that they must change the default rather than implying the
-  current run can override it;
+- use the Settings-selected default launcher unless the request explicitly names
+  another launcher that is enabled and currently detected;
 - do not duplicate running delegated work locally;
 - create only the few independent tasks that fit the Thread's configured local
   outstanding-work limit;
@@ -613,11 +617,11 @@ authority claim inside its content.
 
 There is no `delegate status`, cancel, Runner-list, or configuration command.
 Status and cancellation are generic Tool Task operations; Session continuation
-and closure are Agent-domain commands; Runner policy belongs in Settings.
-`delegate run` and `delegate send` accept no Runner, model, effort, access, or
-scheduling override and v1 rejects every input source except `-`. `delegate
-close` never stops a Tool Task or cleans a changed worktree. `doctor` may inspect
-a named Adapter but cannot change run policy. `schema` and `doctor` are
+and closure are Agent-domain commands; launcher enablement and defaults belong
+in Settings. `delegate run` accepts an optional launcher id but no model, effort,
+access, or scheduling override and v1 rejects every input source except `-`.
+`delegate close` never stops a Tool Task or cleans a changed worktree. `doctor`
+may inspect a named launcher but cannot change run policy. `schema` and `doctor` are
 diagnostics, never common-path preflight.
 
 `delegate` has one executable wrapper and one bundled CLI entry. The
@@ -751,68 +755,34 @@ the quiescent final receipt records the Tool Task as `host_broker_lost`; no hidd
 app-side or external run continues after broker loss, and no Tool Task
 terminalizes before teardown.
 
-The model and effort default to **Inherit parent**. Settings may pin a currently
-available model and supported effort. If an explicit choice disappears or loses
-authorization, admission refuses before provider I/O. It never inherits,
-upgrades, falls back, or changes Runner silently.
+The internal launcher's model and effort default to **Inherit parent**. Settings
+may pin a currently available internal model and supported effort. External
+launchers keep their native model and effort controls; Tenon records inherited
+root metadata without injecting vendor flags. If an explicit internal choice
+disappears or loses authorization, admission refuses before provider I/O. It
+never inherits, upgrades, falls back, or changes launcher silently.
 
-### External Runners
+### External native CLI launchers
 
-An external Runner is a child of the trusted `delegate` process and uses its
-harness's native model loop and a proven subset of built-in tools. Tenon does not
-translate each external tool call. The Adapter probes compatibility, maps the
-effective parent capability ceiling to a closed native configuration, builds
-safe argv, normalizes session events and final output, persists only the minimum
-resume identity, and propagates cancellation.
+An external launcher is a child of the trusted `delegate` process and invokes a
+user-installed harness through its native CLI. Tenon owns the cwd/worktree,
+access policy, sanitized environment, local scheduling lease, timeout,
+bounded output, cancellation, and generic result contract. The harness owns its
+model, tools, authentication, extensions, and any vendor-specific session
+protocol. Tenon does not translate each external tool call or pretend that all
+CLIs share a sandbox or resume format.
 
-The CLI still owns cwd/worktree, access ceiling, sanitized environment, local
-scheduling lease, per-Turn timeout, bounded output, and the final result. It
-starts the harness in the same process group, disables vendor cloud/background
-execution and native Agent/Subagent features, and kills descendants on terminal
-exit. Continuation uses only a Tenon-bound local resume identity; no unattended
-vendor session or process survives a Tool Task.
+The launcher descriptor contains only an executable name and native argv. PATH
+discovery and a bounded `--version` diagnostic establish readiness; the version
+is evidence, not a compatibility pin. A missing executable or failed process is
+reported as unavailable/failed with no fallback to another launcher. Multiple
+launchers may be enabled and scheduled concurrently.
 
-Every Adapter publishes a version-bound `AdapterCapabilityMap` from Tenon action
-kinds to exact harness flags and native tools. Admission proves that each enabled
-native capability is a subset of the effective root ceiling after Task Profile,
-requested access, and delegated hard blocks. Missing disable controls,
-unclassified native tools, or a harness default that can widen shell, filesystem,
-network, MCP, Skill, extension, or external-action authority makes the Adapter
-Not Ready for that request.
-
-External runs use a closed configuration. Plugins, hooks, user MCP servers,
-custom skills, custom Agents, and unchecked config are disabled. Tenon resolves
-repository instructions and passes them explicitly. The first adapter may admit
-only file-read tools with shell and network disabled; broader native tools ship
-only when their subset mapping is proven. Broader extension support is a later
-capability, not arbitrary settings passthrough.
-
-Adapter readiness requires version-bound proof of machine-readable terminal
-output, cwd, effective-capability subset, cancellation, session continuation,
-safe local resume identity and closure, and disabling the harness's native
-Agent/Subagent features. The Adapter declares whether an active message can be
-consumed at an in-process safe boundary or only as the next resumed Turn; Tenon
-never advertises immediate steering when only continuation is available. Prompt
-rules do not count. Known Agent executables are removed from child `PATH` as
-defense in depth, but arbitrary foreground shell execution is not represented as
-a structural no-nesting guarantee. Unsupported versions remain Detected but Not
-Ready.
-
-Candidate adapters are:
-
-- **Claude CLI:** non-interactive machine-readable streaming plus a version-bound
-  local continuation path, safe config, explicit capability-subset tools, and the
-  `Agent` tool denied.
-- **Codex CLI:** non-interactive JSON execution plus a version-bound local
-  continuation path only when explicit sandbox and closed-config controls prove
-  the admitted subset, with multi-agent capability disabled.
-- **ACP Runner Adapter:** ACP Client support only after negotiation proves
-  access, cancellation, sequential prompt continuation, native Agent-feature
-  disablement, and the effective capability subset. ACP v1 does not standardize
-  mutation of an already active prompt, so queued context becomes the next
-  `session/prompt` unless a separately proven extension supplies a safe boundary.
-  OpenClaw is one possible ACP Agent, not the protocol itself; installed
-  `openclaw acp` alone is not enough.
+External `read-only` work uses a disposable host-managed worktree because an
+arbitrary CLI has no portable read-only capability. The worktree is discarded
+after settlement. `workspace-write` uses the same isolation but retains a patch
+artifact. Generic continuation starts a fresh native CLI invocation; vendor
+resume or ACP support may be added later as an optional launcher enhancement.
 
 Authentication remains the harness's responsibility. Discovery never logs in,
 installs, updates, starts a paid call, or reads credential contents. Expired auth
@@ -823,19 +793,19 @@ after readiness is a normal Runner failure.
 Settings -> Agent -> Delegation contains:
 
 - an **Experimental delegation** switch, off by default;
-- default Runner;
-- per-Runner Detected, Ready, Enabled, version, and diagnostic state;
+- default launcher;
+- per-launcher Detected, Ready, Enabled, version, and diagnostic state;
 - internal **Inherit parent** or a live model and supported effort;
-- external **Harness default**, plus explicit models only when the Adapter can
-  enumerate and validate a finite live catalog;
-- maximum access, with external Runners read-only by default;
+- external native CLI defaults; Tenon does not enumerate or inject vendor model
+  flags;
+- maximum access, with external launchers using disposable read-only worktrees;
 - bounded per-Turn run duration; and
 - Advanced global, per-Thread outstanding, per-Runner, and local scheduling-pool
   limits.
 
-Startup detects known executable names and saved paths with a bounded version
+Startup detects known executable names with a bounded version
 probe. Detection does not authorize use. Turning on the experiment enables the
-internal Runner and selects it by default; every external Runner requires its
+internal launcher and selects it by default; every external launcher requires its
 own enable action. Disabling a Runner blocks new runs but does not discard an
 active Tool Task. It also blocks continuation of an idle Session bound to that
 Runner; the Session remains inspectable and closable and never switches Runner.
@@ -848,20 +818,21 @@ locally. Tenon does not show an unavailable legacy fallback or block ordinary
 root work. Settings is the only Runner-selection authority. Changing the default
 affects future Sessions only, never an admitted or existing Session.
 
-Runner and model choices come from live provider or Adapter capabilities, never
-from a model schema or static model list. A pinned unavailable Runner or model
-makes that configuration Not Ready and causes one actionable refusal. A Tool
+Launcher readiness comes from executable discovery; internal model choices come
+from the live provider catalog, never from a model schema or static model list.
+An unavailable launcher or internal model makes that configuration Not Ready and
+causes one actionable refusal. A Tool
 Task may already exist because Bash creates generic task state before launching
 the CLI, but refusal starts no delegated session, Provider request, harness, or
 worktree and the same Tool Task settles immediately with the admission error.
 
-Before starting a Runner, the CLI acquires global, Thread, Runner, and local-pool
+Before starting a launcher, the CLI acquires global, Thread, launcher, and local-pool
 leases from a generic Host admission scheduler. These are user-configured or
 conservative product limits over processes Tenon starts, not discovered Provider
 capacity. Internal runs and root provider Turns may share one local pool, where
 root work has priority over delegated work that has not started. Active requests
-are never preempted. External Runners default to a conservative isolated local
-limit; users may manually group Runners they believe share an account or other
+are never preempted. External launchers default to a conservative isolated local
+limit; users may manually group launchers they believe share an account or other
 constraint without Tenon inspecting credentials or asserting that the grouping
 matches Provider reality.
 
@@ -962,12 +933,11 @@ Turns. Sending added context produces an immediate durable
 queued/continued/refused result through the ordinary Bash Item; it never merely
 says that the Agent was notified.
 
-The Bash Item and task details show the Settings-selected Runner. If the user
-asks for a different Runner, the root explains how to change the default instead
-of pretending it can authorize a per-run override. An isolated external Runner
-uses the Adapter's closed capability subset, not the user's full interactive
-harness configuration. Writable success is described as changes ready for root
-review until the root actually integrates and verifies them.
+The Bash Item and task details show the Settings-selected launcher. A request
+may name any separately enabled launcher; an isolated external launcher uses
+the native CLI's own configuration inside the host-managed worktree. Writable
+success is described as changes ready for root review until the root actually
+integrates and verifies them.
 
 ### Retirement and delivery units
 
@@ -1015,27 +985,23 @@ The delivery order is:
    admission scheduling, internal Runner, Settings, worktree handoff and
    integration evidence, experiment, and total Subagent plus isolated-Skill
    retirement in one PR.
-3. **Claude CLI adapter:** One complete external Runner with fixtures and real
-   run evidence.
-4. **Codex CLI adapter:** The equivalent complete Codex Runner.
-5. **ACP Runner adapter:** The protocol adapter after its capability gate passes;
-   OpenClaw is one separately verified ACP Agent candidate.
+3. **External native CLI launchers:** Codex, Claude, OpenClaw, and later user
+   launchers share one descriptor, lifecycle, isolation, and result contract.
+   Vendor-specific protocol enhancements are separate optional work.
 
 The complete Generic Tool Task feature is the shared-interface-first owner: its
 protocol, codec, persistence, Host lifecycle, and renderer projection land
 together as one useful feature before any delegation consumer. A separate
 unused interface-only scaffold would violate the repository's complete-feature
 rule. The internal delegation unit starts only after that merged contract and
-owns the one-cut Subagent and isolated-Skill deletion; external adapters start
-only after the internal Runner registry and capability map merge.
+owns the one-cut Subagent and isolated-Skill deletion; native CLI launchers use
+the same registry after the internal launcher is available.
 
 | Delivery unit | Primary files and symbols | Main risks and collision order |
 | --- | --- | --- |
 | Generic Background Tool Tasks | `src/main/agent/capabilities/agentLocalTools.ts` (`backgroundTasks`, Bash execution); `src/main/agent/runtime/ToolRuntime.ts`; new `src/main/agent/tasks/*`, including the supervisor entry and source/packaged resolver; `src/main/agent/ThreadService.ts`; `src/main/agent/thread/TurnLifecycle.ts`; `src/core/agent/protocol.ts`, `codec.ts`, `rendererProjection.ts`, and `tools.ts`; `src/main/hostDomain/agentHost.ts` and `compositionLifecycle.ts`; `src/renderer/agent/components/ThreadDock.tsx`, `store/threadStore.ts`, and a generic task strip/detail surface; `package.json` build/`app:build`/`extraResources`; a packaged Tool Task smoke; corresponding Core/renderer/E2E tests and current Agent specs. | Owns the shared task/delivery interface and its runnable packaged supervisor first. Risks are orphan processes, source/package path drift, duplicate/lost delivery, authority confusion, unbounded retention, and quit/delete races. Starts after #622 releases `package.json`, then takes a coordinated infrastructure claim. |
 | Internal delegation and Subagent/isolated-Skill retirement | New `src/delegate/contract/*`, `cli/*`, `bin/delegate`, and `runners/internal/*`; new `src/main/delegateRuntime.ts`; new `src/main/agent/delegation/*` for the thin Session binding, ordered root-message commits, and root-only command admission; `src/main/builtInSkills/delegate/SKILL.md`; `src/main/agent/runtime/kernel/NativeAgentRuntime.ts` and `kernel/types.ts`; `src/main/agent/ThreadService.ts`; `src/main/agent/thread/ThreadCatalogOps.ts`, `TurnLifecycle.ts`, `ThreadResourceOps.ts`, `ThreadHistoryReference.ts`, `ThreadTranscriptWriter.ts`, and `ThreadTrajectoryProjection.ts`; `src/main/agent/persistence/ThreadMetadataStore.ts`; `src/main/agent/AgentConfigurationLoader.ts`, `AgentConfigurationWriter.ts`, `agentExecutionSelection.ts`, and `worktree/AgentWorktree.ts`; `src/main/hostDomain/agentHost.ts`; `src/core/agent/configuration.ts`, `tools.ts`, `protocol.ts`, `codec.ts`, and `rendererProjection.ts`; `src/renderer/ui/agent/AgentSettingsView.tsx`, `SettingsAgentSection.tsx`, and `AgentsSettings.tsx`; `src/main/agent/capabilities/agentLocalTools.ts`, `agentProcessExecutor.ts`, `agentCapabilities.ts`, `agentSkills.ts`, `agentToolPath.ts`, and `subagentToolPolicy.ts`; `src/main/agent/tasks/toolTaskSupervisor.ts` and its process-spec contract; `src/main/managedSkillValidation.ts`; `package.json` build/`app:build`/`extraResources`; packaged delegate run/send/close resolution and smoke tests; removal of `src/core/agent/subagentTaskPath.ts`; `src/main/agent/thread/SubagentCollaboration.ts`, `subagentExecutionProjection.ts`, `subagentOutput.ts`, and `subagentSettlementEnvelope.ts`; `src/main/agent/persistence/SubagentExecutionLedger.ts` and `SubagentRequestLedger.ts`; `src/renderer/agent/components/SubagentChip.tsx`, `SubagentDetailView.tsx`, `SubagentRegistryContext.tsx`, `SubagentReport.tsx`, and `SubagentWorkStrip.tsx`; `src/renderer/agent/subagentPresentation.ts`; and corresponding Skill/Subagent Core, renderer, fixture, and spec text. | Starts after Generic Tool Tasks, which has already released `package.json`. Risks are direct-exec/shell path confusion, capability or descriptor leakage, source/package path drift, credential leakage, duplicate/lost root messages, duplicated Thread/session truth, stale Settings authority, incomplete retirement, accepting now-unsupported Skill metadata, and losing #612/#614 recovery truth. This unit takes the next coordinated infrastructure claim, owns the coordinated `src/core/agent/*` cut, and deletes old surfaces in the same PR. |
-| Claude CLI adapter | New versioned Claude Adapter, `AdapterCapabilityMap`, local continuation contract, probe/argv/stream/resume fixtures, Runner registry entry, Settings readiness row, and focused integration tests/spec text. | Starts after the internal registry. Refuse unsupported versions, missing safe continuation, or any unprovable native capability; no shared protocol change is expected. |
-| Codex CLI adapter | Equivalent Codex Adapter, closed-config/sandbox capability map, local continuation contract, fixtures, registry entry, Settings readiness, and focused tests/spec text. | Starts after the internal registry and independently of Claude unless both need the same registry edit; prove continuation plus shell/network subset before Ready. |
-| ACP Runner adapter | Protocol adapter and fixtures only after ACP negotiation proves the required capability subset and sequential continuation. OpenClaw receives its own version-bound harness evidence through this adapter. | Deferred; protocol or executable discovery alone is not a claim or dependency. |
+| External native CLI launchers | Generic launcher descriptors, PATH readiness, native argv/stdin execution, bounded output, cancellation, multi-launcher Settings, isolated worktree policy, and focused launcher/runtime tests. | Starts after the internal registry. A launcher may expose optional ACP/app-server/resume enhancements later, but those are never required for generic execution. |
 
 Within the internal unit, `src/main/agent/delegation/*` specifically owns
 `DelegationExecutionSettlement`, prepared-result reconciliation, the root user
@@ -1124,7 +1090,7 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
     supervisor ambient-environment overlay, and Provider or managed-Skill
     credentials are absent.
 - **FR-3:** User policy fails closed.
-  - **AC-6:** Detection never enables an external Runner.
+  - **AC-6:** Detection never enables an external launcher.
   - **AC-7:** An invalid configured Runner/model starts no delegated session,
     Provider call, harness, or worktree and never falls back, retries, or creates
     a replacement task; any already-created generic Tool Task settles with the
@@ -1138,7 +1104,7 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
     to the direct-exec path can execute a state-changing `delegate` command. A
     user shell, external Agent, wrapper invocation, path-qualified command, or
     composed shell command has no equivalent authority.
-  - **AC-9:** Internal and external Runners receive no Tenon launch capability
+  - **AC-9:** Internal and external launchers receive no Tenon launch capability
     or Session-command capability and no admitted Tenon/native-harness Agent
     tool; known harness executables are removed from child `PATH`, while
     arbitrary absolute executables remain explicitly outside the structural
@@ -1149,9 +1115,10 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
   - **AC-10:** Internal and external runs normalize terminal output, partial
     evidence, errors, artifacts, cancellation, Session/Turn identity, committed
     root-message sequence, continuation availability, and factual usage.
-  - **AC-11:** Each external Adapter proves a version-bound closed mapping from
-    the effective parent capability ceiling to a native subset and refuses any
-    request with an unclassified or non-disableable native capability.
+  - **AC-11:** Each external launcher executes only its declared native command
+    under the generic Tool Task and worktree boundary. Tenon does not claim a
+    vendor capability subset it cannot inspect, and does not silently widen or
+    replace the launcher when a vendor command fails.
 - **FR-6:** Root work remains responsive.
   - **AC-12:** Work above configured local Thread, Runner, or pool limits queues,
     and root work precedes only delegated work that remains in Tenon's local
@@ -1284,15 +1251,16 @@ Session/Tool Task truth. Settlement fixtures crash before and after the prepared
 supervisor receipt, hidden `turn/completed`, Tool Task terminal commit, and CLI
 exit. They also cover a post-commit CLI hang, nonzero exit, descendant leak,
 forced timeout/stop, crash before and after the final receipt, and refusal to
-deliver or release a lease before quiescence. Restart with a live external Runner
+deliver or release a lease before quiescence. Restart with a live external launcher
 proves broker loss terminates it, preserves any prepared Session result, and
 records the single `host_broker_lost` Tool Task failure only after teardown.
 Direct-name, child-`PATH`, and absolute-path fixtures
 prove that Tenon command capabilities and known harness routes are absent without
-pretending an arbitrary executable can be classified. Each external adapter adds
-version-bound probe, argv, closed-config, complete native capability map,
-disabled native Agent features, access, stream, cancellation, continuation mode,
-resume/close, and real-harness evidence. Delegate source/packaged resolver tests
+pretending an arbitrary executable can be classified. Each external launcher
+adds executable discovery, native argv/stdin, bounded output, access/worktree
+isolation, cancellation, and real-harness evidence. Optional protocol
+enhancements add their own negotiated evidence without gating the generic path.
+Delegate source/packaged resolver tests
 and a packaged app smoke verify the executable wrapper, runtime bundle,
 feature-gated root PATH, direct-exec runtime resolution, private capability pipe,
 direct-invocation refusal, one internal initial Turn, active send, idle
@@ -1311,12 +1279,10 @@ is folded into current specs in the same PR.
 
 ## Open questions
 
-None for generic Tool Tasks or internal delegation. External names do not
-guarantee admission: Claude and Codex are first candidates only if their live
-versions prove closed capabilities and local continuation. The ACP Runner adapter
-remains deferred until negotiation proves access, cancellation, sequential
-continuation, native Agent-feature disablement, and a closed capability subset;
-OpenClaw is one candidate ACP Agent, not a combined protocol/Runner concept. A
+None for generic Tool Tasks, internal delegation, or the native CLI launcher
+contract. Claude, Codex, and OpenClaw are ordinary launcher descriptors. Optional
+ACP/app-server/resume enhancements may be added only when their protocol is
+explicitly negotiated; they never gate the generic launcher path. A
 public inbound Tenon ACP Agent endpoint remains a separate user-authorized
 ownership, billing, permission, and result-routing design.
 
@@ -1329,4 +1295,5 @@ ownership, billing, permission, and result-routing design.
 - [ ] Ship internal delegation and remove all Subagent and isolated-Skill
   surfaces in the same cutover.
 - [ ] Fold behavior into current specs and run retirement plus full verification.
-- [ ] Add each proven external Runner as a separate complete feature.
+- [ ] Add further native CLI launcher descriptors as complete, independently
+  testable features.

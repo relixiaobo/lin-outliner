@@ -106,17 +106,32 @@ export class DelegationRunnerRegistry {
     readonly parentModel: DelegationModelSelection;
     readonly profile: DelegateTaskProfile;
     readonly requestedAccess: DelegateAccess;
+    readonly runnerId?: string;
   }): Promise<DelegationAdmissionPolicy> {
     const { settings } = input;
     if (!settings.enabled) {
       throw new DelegationAdmissionRefusal('disabled', 'Experimental delegation is disabled in Settings.');
     }
-    const adapter = this.adapters.get(settings.defaultRunnerId);
-    const runnerSettings = settings.runners[settings.defaultRunnerId];
+    const runnerId = input.runnerId ?? settings.defaultRunnerId;
+    const adapter = this.adapters.get(runnerId);
+    const runnerSettings = settings.runners[runnerId];
     if (!adapter || !adapter.detected || !adapter.ready || !runnerSettings?.enabled) {
       throw new DelegationAdmissionRefusal(
         'runner_unavailable',
-        `Configured Delegate Runner is not ready: ${settings.defaultRunnerId}`,
+        `Configured Delegate Runner is not ready: ${runnerId}`,
+      );
+    }
+
+    if (runnerId !== 'internal' && runnerSettings.model !== null) {
+      throw new DelegationAdmissionRefusal(
+        'model_unavailable',
+        `External launcher ${runnerId} controls its own model; remove the Tenon model override.`,
+      );
+    }
+    if (runnerId !== 'internal' && runnerSettings.effort !== null) {
+      throw new DelegationAdmissionRefusal(
+        'effort_unavailable',
+        `External launcher ${runnerId} controls its own reasoning; remove the Tenon effort override.`,
       );
     }
 
@@ -182,25 +197,39 @@ export class DelegationRunnerRegistry {
     const adapter = this.adapters.get(input.runnerId);
     const runnerSettings = settings.runners[input.runnerId];
     if (!adapter || !adapter.detected || !adapter.ready || !runnerSettings?.enabled
-      || adapter.version !== input.runnerVersion) {
+      || (input.runnerId === 'internal' && adapter.version !== input.runnerVersion)) {
       throw new DelegationAdmissionRefusal(
         'runner_unavailable',
         `Delegation Session Runner is not ready: ${input.runnerId}`,
       );
     }
-    const qualifiedModel = `${input.modelProvider}/${input.modelId}`;
-    const model = await adapter.resolveExplicitModel(qualifiedModel, input.effort);
-    if (!model || model.providerId !== input.modelProvider || model.modelId !== input.modelId) {
+    if (input.runnerId !== 'internal' && runnerSettings.model !== null) {
       throw new DelegationAdmissionRefusal(
         'model_unavailable',
-        `Delegation Session model is unavailable: ${qualifiedModel}`,
+        `External launcher ${input.runnerId} controls its own model; remove the Tenon model override.`,
       );
     }
-    if (!model.supportedEfforts.includes(input.effort)) {
+    if (input.runnerId !== 'internal' && runnerSettings.effort !== null) {
       throw new DelegationAdmissionRefusal(
         'effort_unavailable',
-        `Delegation Session effort ${input.effort} is unavailable for ${qualifiedModel}`,
+        `External launcher ${input.runnerId} controls its own reasoning; remove the Tenon effort override.`,
       );
+    }
+    if (input.runnerId === 'internal') {
+      const qualifiedModel = `${input.modelProvider}/${input.modelId}`;
+      const model = await adapter.resolveExplicitModel(qualifiedModel, input.effort);
+      if (!model || model.providerId !== input.modelProvider || model.modelId !== input.modelId) {
+        throw new DelegationAdmissionRefusal(
+          'model_unavailable',
+          `Delegation Session model is unavailable: ${qualifiedModel}`,
+        );
+      }
+      if (!model.supportedEfforts.includes(input.effort)) {
+        throw new DelegationAdmissionRefusal(
+          'effort_unavailable',
+          `Delegation Session effort ${input.effort} is unavailable for ${qualifiedModel}`,
+        );
+      }
     }
     return {
       runnerId: input.runnerId,

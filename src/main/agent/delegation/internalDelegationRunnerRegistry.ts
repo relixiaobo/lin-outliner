@@ -10,7 +10,7 @@ import {
   internalDelegationRunnerAdapter,
   type DelegationModelSelection,
 } from './DelegationPolicyResolver';
-import { createCodexCliRunnerAdapter, type CodexCliRunnerOptions } from './CodexCliRunnerAdapter';
+import { createExternalAgentCliLaunchers } from './ExternalAgentCliLauncher';
 
 export function createInternalDelegationRunnerRegistry(): DelegationRunnerRegistry {
   return new DelegationRunnerRegistry([
@@ -18,10 +18,10 @@ export function createInternalDelegationRunnerRegistry(): DelegationRunnerRegist
   ]);
 }
 
-export function createDelegationRunnerRegistry(options: CodexCliRunnerOptions = {}): DelegationRunnerRegistry {
+export function createDelegationRunnerRegistry(): DelegationRunnerRegistry {
   return new DelegationRunnerRegistry([
     internalDelegationRunnerAdapter(resolveConfiguredInternalModel),
-    createCodexCliRunnerAdapter(options),
+    ...createExternalAgentCliLaunchers(),
   ]);
 }
 
