@@ -489,7 +489,9 @@ reach it.
   label could not fit stay one hover away. A subject phrase drops the redundant
   noun, because the subject already supplies it. When only some of a bucket's
   subjects are nameable, the summary counts instead of naming: a partly-named
-  summary would read as if the unnamed work never happened
+  summary would read as if the unnamed work never happened. A grouped web
+  search states its call count ("Searched for 2 queries") while its full query
+  list remains in the row title, so multiple calls cannot look like one search
 - terminal status is **one** idiom for every tool kind — the act, then the
   outcome as an annotation (`Read intro.xhtml · failed`) — rather than a
   per-kind failure sentence. A scanning user learns the pattern once. The act

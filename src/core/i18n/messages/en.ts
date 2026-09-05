@@ -1588,8 +1588,8 @@ export const en = {
         changedFiles: ({ count }: { count: number }) => `Changed ${count} ${count === 1 ? 'file' : 'files'}`,
         usingTool: ({ name }: { name: string }) => `Using ${name}`,
         usedTool: ({ name }: { name: string }) => `Used ${name}`,
-        searchingWeb: ({ query }: { query: string }) => `Searching the web for ${query}`,
-        searchedWeb: ({ query }: { query: string }) => `Searched the web for ${query}`,
+        searchingWeb: ({ query }: { query: string }) => `Searching for ${query}`,
+        searchedWeb: ({ query }: { query: string }) => `Searched for ${query}`,
         failedCount: ({ count }: { count: number }) => `${count} failed`,
         interruptedCount: ({ count }: { count: number }) => `${count} interrupted`,
         // Subject-bearing phrasing. The subject names the thing, so the phrase

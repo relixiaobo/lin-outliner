@@ -122,7 +122,7 @@ describe('every built-in tool says what it did, not which API was called', () =>
     ['file_read via path', dynamic('file_read', { path: '/w/notes.md' }), 'Read notes.md'],
     ['file_glob', dynamic('file_glob', { pattern: '**/*.epub' }), 'Searched for "**/*.epub"'],
     ['file_grep', dynamic('file_grep', { pattern: 'TODO' }), 'Searched for "TODO"'],
-    ['web_search', dynamic('web_search', { query: 'epub parser' }), 'Searched the web for "epub parser"'],
+    ['web_search', dynamic('web_search', { query: 'epub parser' }), 'Searched for "epub parser"'],
     // The Item's own fallback for a query the model omitted is the empty
     // string; quoting it would name nothing.
     ['web_search blank', {
@@ -143,7 +143,7 @@ describe('every built-in tool says what it did, not which API was called', () =>
       ...base('web-1'), type: 'webSearch', status: 'completed', outputRef: null,
       query: 'epub', results: [], error: null,
       modelCall: replayableModelCall('web_search', { query: 'epub' }),
-    }, 'Searched the web for "epub"'],
+    }, 'Searched for "epub"'],
     ['agent', collab('agent'), 'Started an agent'],
     ['agent_message', collab('agent_message'), 'Messaged an agent'],
     ['task_stop', collab('task_stop'), 'Stopped a task'],
@@ -416,7 +416,11 @@ describe('group summaries name up to two subjects, then elide', () => {
     ['two web searches keep both queries', [
       dynamic('web_search', { query: 'a' }, 'completed', { id: 'w-1' }),
       dynamic('web_search', { query: 'b' }, 'completed', { id: 'w-2' }),
-    ], 'Searched the web for "a", "b"'],
+    ], 'Searched for 2 queries'],
+    ['duplicate web searches still count calls', [
+      dynamic('web_search', { query: 'a' }, 'completed', { id: 'w-3' }),
+      dynamic('web_search', { query: 'a' }, 'completed', { id: 'w-4' }),
+    ], 'Searched for 2 queries'],
     ['unnameable reads count instead', [
       dynamic('file_read', {}, 'completed', { id: 'u-1' }),
       dynamic('file_read', {}, 'completed', { id: 'u-2' }),

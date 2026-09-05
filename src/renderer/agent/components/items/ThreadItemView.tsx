@@ -1372,7 +1372,7 @@ function toolItemAct(
       return collaborationAct(item, running, labels);
     case 'webSearch': {
       // The Item's own fallback for a call the model made without a query is
-      // the empty string, and `Searching the web for ""` names nothing. The
+      // the empty string, and `Searching for ""` names nothing. The
       // subject-less copy already exists for exactly this.
       if (!item.query.trim()) return running ? labels.searchingWebActivity : labels.searchedWebActivity;
       const query = quoteSubject(item.query);
@@ -1466,6 +1466,8 @@ interface ToolActivityBucket {
   /** Display name per subject key, when the call carried one. */
   readonly names: Map<string, string>;
   readonly runningSubjects: Set<string>;
+  settledCalls: number;
+  runningCalls: number;
 }
 
 export interface ToolActivitySegment {
@@ -1499,12 +1501,28 @@ export function threadToolActivitySegments(
 ): readonly ToolActivitySegment[] {
   const limit = options.subjectLimit ?? NAMED_SUBJECT_LIMIT;
   const buckets = new Map<ToolActivityKind, ToolActivityBucket>();
-  const add = (kind: ToolActivityKind, subject: string, running: boolean, name?: string) => {
+  const add = (
+    kind: ToolActivityKind,
+    subject: string,
+    running: boolean,
+    name?: string,
+    call = false,
+  ) => {
     const bucket = buckets.get(kind)
-      ?? { subjects: new Set<string>(), names: new Map<string, string>(), runningSubjects: new Set<string>() };
+      ?? {
+        subjects: new Set<string>(),
+        names: new Map<string, string>(),
+        runningSubjects: new Set<string>(),
+        settledCalls: 0,
+        runningCalls: 0,
+      };
     if (name !== undefined) bucket.names.set(subject, name);
     bucket.subjects.add(subject);
     if (running) bucket.runningSubjects.add(subject);
+    if (call) {
+      if (running) bucket.runningCalls += 1;
+      else bucket.settledCalls += 1;
+    }
     buckets.set(kind, bucket);
   };
 
@@ -1525,7 +1543,7 @@ export function threadToolActivitySegments(
         }
         break;
       case 'webSearch':
-        add('web', item.query || item.id, running, item.query ? quoteSubject(item.query) : undefined);
+        add('web', item.query || item.id, running, item.query ? quoteSubject(item.query) : undefined, true);
         break;
       case 'collabAgentToolCall':
         for (const threadId of item.receiverThreadIds) {
@@ -1538,7 +1556,13 @@ export function threadToolActivitySegments(
       case 'dynamicToolCall': {
         const kind = dynamicToolActivityKind(item);
         const subjects = dynamicToolSubjects(item, kind, index);
-        subjects.keys.forEach((key, position) => add(kind, key, running, subjects.names[position]));
+        subjects.keys.forEach((key, position) => add(
+          kind,
+          key,
+          running,
+          subjects.names[position],
+          kind === 'web' && position === 0,
+        ));
         break;
       }
       default:
@@ -1554,6 +1578,8 @@ export function threadToolActivitySegments(
     const keys = [...bucket.subjects];
     const settledKeys = keys.filter((key) => !bucket.runningSubjects.has(key));
     const runningKeys = keys.filter((key) => bucket.runningSubjects.has(key));
+    const settledCalls = bucket.settledCalls;
+    const runningCalls = bucket.runningCalls;
     const namesFor = (subset: readonly string[]): readonly string[] => {
       const named = subset.flatMap((key) => {
         const name = bucket.names.get(key);
@@ -1563,7 +1589,15 @@ export function threadToolActivitySegments(
     };
     return [settledKeys, runningKeys].flatMap((subset, position) => (
       subset.length === 0 ? [] : [{
-        text: toolActivityPhrase(kind, subset.length, namesFor(subset), position === 1, labels, limit),
+        text: toolActivityPhrase(
+          kind,
+          subset.length,
+          namesFor(subset),
+          position === 1,
+          labels,
+          limit,
+          position === 1 ? runningCalls : settledCalls,
+        ),
         tone: 'neutral' as const,
       }]
     ));
@@ -1627,11 +1661,12 @@ function toolActivityPhrase(
   running: boolean,
   labels: Messages['agent']['thread']['activity'],
   limit: number = NAMED_SUBJECT_LIMIT,
+  callCount = count,
 ): string {
   // Only name subjects when every one of them is nameable; a partly-named bucket
   // would silently drop the work it could not name.
   if (names.length === count && names.length > 0) {
-    const named = namedSubjectPhrase(kind, names, running, labels, limit);
+    const named = namedSubjectPhrase(kind, names, running, labels, limit, callCount);
     if (named !== null) return named;
   }
   switch (kind) {
@@ -1643,7 +1678,9 @@ function toolActivityPhrase(
     case 'fileRead': return running ? labels.readingFiles({ count }) : labels.readFiles({ count });
     case 'fileSearch': return running ? labels.searchingFiles : labels.searchedFiles;
     case 'plan': return running ? labels.updatingPlan : labels.updatedPlan({ count });
-    case 'web': return running ? labels.searchingWebActivity : labels.searchedWebActivity;
+    case 'web': return callCount > 1
+      ? (running ? labels.searchingWeb : labels.searchedWeb)({ query: `${callCount} queries` })
+      : (running ? labels.searchingWebActivity : labels.searchedWebActivity);
     case 'webFetch': return running ? labels.fetchingPages({ count }) : labels.fetchedPages({ count });
     case 'collaboration': return running ? labels.collaborating({ count }) : labels.collaborated({ count });
     case 'skill': return running ? labels.usingSkills({ count }) : labels.usedSkills({ count });
@@ -1659,10 +1696,11 @@ function namedSubjectPhrase(
   running: boolean,
   labels: Messages['agent']['thread']['activity'],
   limit: number,
+  callCount: number,
 ): string | null {
   // The web-search family already ships subject-bearing phrasing of its own.
   if (kind === 'web') {
-    const query = joinSubjects(names, labels, limit);
+    const query = callCount > 1 ? `${callCount} queries` : joinSubjects(names, labels, limit);
     return running ? labels.searchingWeb({ query }) : labels.searchedWeb({ query });
   }
   // "Used the dataviz, run skill" is not a sentence; past one, count instead.

@@ -6728,7 +6728,7 @@ test.describe('canonical agent Thread surface', () => {
 
     await page.getByRole('button', { name: 'Worked for <1s' }).click();
     const tool = page.locator('.thread-tool').filter({ hasText: 'Chengdu weather' });
-    await tool.getByRole('button', { name: /Searched the web/ }).click();
+    await tool.getByRole('button', { name: /Searched for/ }).click();
     const sections = tool.locator('.thread-tool-section');
     await expect(tool.getByRole('button', { name: 'Copy arguments' })).toHaveCount(1);
     await expect(tool.getByRole('button', { name: 'Copy output' })).toHaveCount(1);
