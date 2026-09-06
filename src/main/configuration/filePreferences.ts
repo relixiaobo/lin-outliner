@@ -35,6 +35,16 @@ export interface FilePreferences {
     };
   };
   readonly updates: { readonly checkAutomatically: boolean };
+  readonly models: {
+    readonly connections: readonly {
+      readonly providerId: string;
+      readonly baseUrl: string | null;
+      readonly enabled: boolean;
+      readonly models: readonly string[];
+    }[];
+    readonly default: string;
+    readonly imageDefault: string | null;
+  };
 }
 
 export type FilePreferencesSourceStatus = 'missing' | 'accepted' | 'rejected';
@@ -64,9 +74,10 @@ export const DEFAULT_FILE_PREFERENCES: FilePreferences = Object.freeze({
     }),
   }),
   updates: Object.freeze({ checkAutomatically: true }),
+  models: Object.freeze({ connections: Object.freeze([]), default: 'auto', imageDefault: null }),
 });
 
-const TOP_LEVEL_KEYS = new Set(['appearance', 'agent', 'updates']);
+const TOP_LEVEL_KEYS = new Set(['appearance', 'agent', 'updates', 'models']);
 const APPEARANCE_KEYS = new Set(['theme', 'language']);
 const AGENT_KEYS = new Set(['memory', 'skills', 'tools', 'provider']);
 const MEMORY_KEYS = new Set(['enabled']);
@@ -74,6 +85,8 @@ const SKILLS_KEYS = new Set(['disabled', 'sources']);
 const TOOLS_KEYS = new Set(['disabled']);
 const PROVIDER_KEYS = new Set(['timeoutMs', 'maxRetries', 'maxRetryDelayMs', 'cacheRetention']);
 const UPDATES_KEYS = new Set(['checkAutomatically']);
+const MODELS_KEYS = new Set(['connections', 'default', 'imageDefault']);
+const CONNECTION_KEYS = new Set(['providerId', 'baseUrl', 'enabled', 'models']);
 
 export function filePreferencesPath(userDataDir: string): string {
   return join(userDataDir, FILE_PREFERENCES_RELATIVE_PATH);
@@ -125,6 +138,9 @@ export function writeFilePreferences(userDataDir: string, preferences: FilePrefe
     { path: ['agent', 'provider', 'maxRetryDelayMs'], value: preferences.agent.provider.maxRetryDelayMs },
     { path: ['agent', 'provider', 'cacheRetention'], value: preferences.agent.provider.cacheRetention },
     { path: ['updates', 'checkAutomatically'], value: preferences.updates.checkAutomatically },
+    { path: ['models', 'connections'], value: preferences.models.connections },
+    { path: ['models', 'default'], value: preferences.models.default },
+    { path: ['models', 'imageDefault'], value: preferences.models.imageDefault },
   ]);
 }
 
@@ -196,6 +212,12 @@ function decodeFilePreferences(value: unknown): FilePreferences {
   exactKeys(provider, PROVIDER_KEYS, 'settings.agent.provider');
   const updates = recordOrDefault(root.updates, DEFAULT_FILE_PREFERENCES.updates, 'settings.updates');
   exactKeys(updates, UPDATES_KEYS, 'settings.updates');
+  const models = recordOrDefault(root.models, DEFAULT_FILE_PREFERENCES.models, 'settings.models');
+  exactKeys(models, MODELS_KEYS, 'settings.models');
+  const connections = connectionList(
+    models.connections ?? DEFAULT_FILE_PREFERENCES.models.connections,
+    'settings.models.connections',
+  );
 
   return Object.freeze({
     appearance: Object.freeze({
@@ -217,7 +239,44 @@ function decodeFilePreferences(value: unknown): FilePreferences {
       }),
     }),
     updates: Object.freeze({ checkAutomatically: booleanValue(updates.checkAutomatically ?? DEFAULT_FILE_PREFERENCES.updates.checkAutomatically, 'settings.updates.checkAutomatically') }),
+    models: Object.freeze({
+      connections,
+      default: modelSelection(models.default ?? DEFAULT_FILE_PREFERENCES.models.default, 'settings.models.default'),
+      imageDefault: nullableString(models.imageDefault ?? DEFAULT_FILE_PREFERENCES.models.imageDefault, 'settings.models.imageDefault'),
+    }),
   });
+}
+
+function connectionList(
+  value: unknown,
+  path: string,
+): readonly FilePreferences['models']['connections'][number][] {
+  if (!Array.isArray(value)) throw new Error(`${path} must be a list`);
+  const seen = new Set<string>();
+  return Object.freeze(value.map((entry, index) => {
+    const connection = record(entry, `${path}[${index}]`);
+    exactKeys(connection, CONNECTION_KEYS, `${path}[${index}]`);
+    const providerId = nonEmptyString(connection.providerId, `${path}[${index}].providerId`);
+    if (seen.has(providerId)) throw new Error(`${path}.${providerId} is duplicated`);
+    seen.add(providerId);
+    return Object.freeze({
+      providerId,
+      baseUrl: connection.baseUrl === undefined
+        ? null
+        : nullableString(connection.baseUrl, `${path}[${index}].baseUrl`),
+      enabled: booleanValue(connection.enabled ?? true, `${path}[${index}].enabled`),
+      models: connection.models === undefined
+        ? Object.freeze([])
+        : stringList(connection.models, `${path}[${index}].models`),
+    });
+  }));
+}
+
+function modelSelection(value: unknown, path: string): string {
+  if (typeof value !== 'string' || (!value.trim() && value !== 'auto')) {
+    throw new Error(`${path} must be \"auto\" or a qualified model`);
+  }
+  return value.trim() || 'auto';
 }
 
 function result(
@@ -268,6 +327,11 @@ function nullableString(value: unknown, path: string): string | null {
   if (value === null) return null;
   if (typeof value !== 'string') throw new Error(`${path} must be a string or null`);
   return value;
+}
+
+function nonEmptyString(value: unknown, path: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${path} must be a non-empty string`);
+  return value.trim();
 }
 
 function stringList(value: unknown, path: string): readonly string[] {

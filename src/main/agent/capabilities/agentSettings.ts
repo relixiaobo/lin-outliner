@@ -36,6 +36,7 @@ import type {
   ProviderConnectionCheckView,
   ProviderAuthView,
 } from '../../../core/types';
+import { parseProviderQualifiedModel } from '../../../core/agentModelId';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
 import { createKeyedSerialMutationQueue } from '../../../core/serialMutationQueue';
 import {
@@ -98,7 +99,7 @@ import {
   type CcSwitchRegistrySnapshot,
 } from '../../ccSwitchRegistry';
 
-const PROVIDERS_FILE = 'agent-providers.json';
+const PROVIDER_STATE_FILE = 'agent-model-state.json';
 const SECRETS_FILE = 'agent-secrets.json';
 const MODEL_CATALOGS_FILE = 'agent-model-catalogs.json';
 
@@ -108,6 +109,7 @@ interface AgentProviderConfig {
   providerId: string;
   baseUrl?: string;
   enabled: boolean;
+  models?: readonly string[];
   /** Main-only identity version for rejecting probe results from an old connection. */
   connectionGeneration?: number;
   /**
@@ -122,6 +124,12 @@ interface ProviderConfigFile {
   agent?: StoredAgentRuntimeSettings;
   imageGeneration?: StoredImageGenerationSettings;
   providers: AgentProviderConfig[];
+}
+
+interface ProviderStateFile {
+  activeProviderId?: string;
+  agent?: StoredAgentRuntimeSettings;
+  providers: Array<Pick<AgentProviderConfig, 'providerId' | 'connectionGeneration' | 'connectionCheck'>>;
 }
 
 export interface ProviderConnectionProbeContext {
@@ -305,9 +313,16 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
   await piRestoreDynamicModels();
   const file = await readProviderFile();
   const secrets = await readSecretFileSafe();
-  const active = await findUsableProvider(file.providers.filter((provider) => provider.providerId === file.activeProviderId), secrets)
-    ?? await findUsableProvider(file.providers, secrets)
-    ?? null;
+  const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  const configuredDefault = preferences.models.default === 'auto'
+    ? null
+    : parseProviderQualifiedModel(preferences.models.default, () => true);
+  const preferredCandidates = configuredDefault
+    ? file.providers.filter((provider) => provider.providerId === configuredDefault.providerId)
+    : file.providers.filter((provider) => provider.providerId === file.activeProviderId);
+  const active = configuredDefault
+    ? await findUsableProvider(preferredCandidates, secrets)
+    : await findUsableProvider(preferredCandidates, secrets) ?? await findUsableProvider(file.providers, secrets);
   if (!active) return null;
   const localGatewayProvider = localGatewayProviderDefinition(active.providerId);
   if (localGatewayProvider?.adapter === 'cc-switch-codex') {
@@ -316,7 +331,12 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
   // Connection only. Do not bake auth here. pi `Models.applyAuth()` resolves
   // stored/env/oauth/provider-specific auth at request time; `apiKey` is only an
   // explicit override used by tests or the connection form's unsaved key.
-  return { ...active };
+  return {
+    ...active,
+    ...(configuredDefault && configuredDefault.providerId === active.providerId
+      ? { modelId: configuredDefault.modelId }
+      : {}),
+  };
 }
 
 /** Resolve one specific provider without falling back to another configured row. */
@@ -394,12 +414,14 @@ export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInpu
 }
 
 export async function updateImageGenerationSettings(input: AgentImageGenerationSettingsInput) {
-  await mutateProviderFile((file) => {
-    file.imageGeneration = normalizeImageGenerationSettings({
-      ...normalizeImageGenerationSettings(file.imageGeneration),
-      ...input,
-    });
+  const current = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  const next = normalizeImageGenerationSettings({
+    defaultModel: current.models.imageDefault,
+    ...input,
   });
+  updateFilePreferences(electron.app.getPath('userData'), [
+    { path: ['models', 'imageDefault'], value: next.defaultModel },
+  ]);
   return getProviderSettings();
 }
 
@@ -449,6 +471,7 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
       const endpointUnchanged = normalizeBaseUrl(previous.baseUrl) === normalizeBaseUrl(config.baseUrl);
       file.providers[index] = {
         ...config,
+        models: previous.models,
         connectionGeneration: endpointUnchanged
           ? providerConnectionGeneration(previous)
           : allocateProviderConnectionGeneration(providerConnectionGeneration(previous)),
@@ -527,9 +550,6 @@ export async function deleteProviderConfig(providerIdInput: string) {
     file.providers = file.providers.filter((provider) => provider.providerId !== providerId);
     if (file.providers.length === previousLength) throw new Error(`provider not found: ${providerId}`);
     if (file.activeProviderId === providerId) file.activeProviderId = file.providers.find((provider) => provider.enabled)?.providerId;
-  });
-  await mutateSecretFile((secrets) => {
-    delete secrets.credentials[providerId];
   });
   return getProviderSettings();
 }
@@ -735,8 +755,10 @@ export async function prepareProviderConnectionProbe(input: {
 async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Promise<AgentProviderSettingsView> {
   const availableProviders = await getAvailableProviders(file.providers);
   const availableProviderById = new Map(availableProviders.map((provider) => [provider.providerId, provider]));
+  const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
   return {
     activeProviderId: file.activeProviderId,
+    defaultModel: preferences.models.default,
     agent: await getAgentRuntimeSettings(),
     imageGeneration: normalizeImageGenerationSettings(file.imageGeneration),
     providers: await Promise.all(file.providers.map(async (provider): Promise<AgentProviderConfigView> => {
@@ -1214,7 +1236,7 @@ async function findUsableProvider(
 }
 
 /**
- * One-time, startup cleanup of `agent-providers.json` (provider-config-cleanup A3).
+ * One-time, startup cleanup of the private model runtime state (provider-config-cleanup A3).
  * Removes the literal bug shape — a keyless catalog row the old main-pane save side
  * effect produced — and repoints a now-dangling active pointer. Intentionally NOT
  * run on the read path: a write there raced concurrent writers and, fed the
@@ -1356,16 +1378,97 @@ function isAgentCacheRetention(value: unknown): value is AgentRuntimeSettings['p
 }
 
 async function readProviderFile(): Promise<ProviderConfigFile> {
-  return readJsonOrDefault(providerPath(), { providers: [] });
+  const state = await readJsonOrDefault<ProviderStateFile>(
+    providerPath(),
+    { providers: [] },
+    normalizeProviderStateFile,
+  );
+  const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  const stateByProvider = new Map(state.providers.map((provider) => [provider.providerId, provider]));
+  return {
+    activeProviderId: state.activeProviderId,
+    agent: state.agent,
+    imageGeneration: { defaultModel: preferences.models.imageDefault },
+    providers: preferences.models.connections.map((connection) => ({
+      providerId: connection.providerId,
+      enabled: connection.enabled,
+      models: connection.models,
+      ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
+      ...(stateByProvider.get(connection.providerId) ?? {}),
+    })),
+  };
 }
 
 async function mutateProviderFile(mutator: (file: ProviderConfigFile) => void | Promise<void>): Promise<ProviderConfigFile> {
-  return updateJsonFile(
+  let result: ProviderConfigFile | null = null;
+  await updateJsonFile(
     providerPath(),
     { providers: [] },
-    (value) => value as ProviderConfigFile,
-    mutator,
+    normalizeProviderStateFile,
+    async (state) => {
+      const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+      const stateByProvider = new Map(state.providers.map((provider) => [provider.providerId, provider]));
+      const file: ProviderConfigFile = {
+        activeProviderId: state.activeProviderId,
+        agent: state.agent,
+        imageGeneration: { defaultModel: preferences.models.imageDefault },
+        providers: preferences.models.connections.map((connection) => ({
+          providerId: connection.providerId,
+          enabled: connection.enabled,
+          models: connection.models,
+          ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
+          ...(stateByProvider.get(connection.providerId) ?? {}),
+        })),
+      };
+      await mutator(file);
+      updateFilePreferences(electron.app.getPath('userData'), [
+        {
+          path: ['models', 'connections'],
+          value: file.providers.map((provider) => ({
+            providerId: provider.providerId,
+            baseUrl: provider.baseUrl ?? null,
+            enabled: provider.enabled,
+            models: provider.models ?? [],
+          })),
+        },
+        { path: ['models', 'imageDefault'], value: file.imageGeneration?.defaultModel ?? null },
+      ]);
+      result = file;
+      return {
+        activeProviderId: file.activeProviderId,
+        agent: file.agent,
+        providers: file.providers.map(({ providerId, connectionGeneration, connectionCheck }) => ({
+          providerId,
+          connectionGeneration,
+          ...(connectionCheck ? { connectionCheck } : {}),
+        })),
+      } satisfies ProviderStateFile;
+    },
   );
+  if (!result) throw new Error('Provider state mutation did not settle');
+  return result;
+}
+
+function normalizeProviderStateFile(value: unknown): ProviderStateFile {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { providers: [] };
+  const raw = value as Partial<ProviderStateFile>;
+  const providers = Array.isArray(raw.providers)
+    ? raw.providers.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+      const provider = entry as Partial<AgentProviderConfig>;
+      if (typeof provider.providerId !== 'string' || !provider.providerId.trim()) return [];
+      return [{
+        providerId: provider.providerId,
+        ...(Number.isSafeInteger(provider.connectionGeneration) ? { connectionGeneration: provider.connectionGeneration } : {}),
+        ...(provider.connectionCheck ? { connectionCheck: provider.connectionCheck } : {}),
+      }];
+    })
+    : [];
+  return {
+    ...(typeof raw.activeProviderId === 'string' ? { activeProviderId: raw.activeProviderId } : {}),
+    ...(raw.agent && typeof raw.agent === 'object' ? { agent: raw.agent } : {}),
+    providers,
+  };
 }
 
 async function readSecretFile(): Promise<SecretFile> {
@@ -1624,7 +1727,7 @@ function isStoredModel(value: unknown): value is Model<Api> {
 }
 
 function providerPath() {
-  return join(electron.app.getPath('userData'), PROVIDERS_FILE);
+  return join(electron.app.getPath('userData'), PROVIDER_STATE_FILE);
 }
 
 function secretPath() {

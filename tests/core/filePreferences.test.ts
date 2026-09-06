@@ -133,6 +133,30 @@ describe('file-backed preferences', () => {
     expect(result.preferences.agent.tools.disabled).toEqual(['bash']);
   });
 
+  test('accepts public model connections and defaults', async () => {
+    await writeFile(filePreferencesPath(userData), JSON.stringify({
+      models: {
+        connections: [{
+          providerId: 'openai',
+          baseUrl: null,
+          enabled: true,
+          models: ['gpt-5'],
+        }],
+        default: 'openai/gpt-5',
+        imageDefault: 'google/gemini-image',
+      },
+    }));
+    const result = loadFilePreferences(userData);
+    expect(result.preferences.models.connections).toEqual([{
+      providerId: 'openai',
+      baseUrl: null,
+      enabled: true,
+      models: ['gpt-5'],
+    }]);
+    expect(result.preferences.models.default).toBe('openai/gpt-5');
+    expect(result.preferences.models.imageDefault).toBe('google/gemini-image');
+  });
+
   test('writes bounded host status with the accepted source digest', async () => {
     const loaded = loadFilePreferences(userData);
     const status = writeFilePreferencesStatus(userData, 'host-test', loaded);

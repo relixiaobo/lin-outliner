@@ -1211,6 +1211,8 @@ export interface AgentEditorView {
 
 export interface AgentProviderSettingsView {
   activeProviderId?: string;
+  /** Qualified application default for new unqualified root Threads. */
+  defaultModel?: string;
   providers: AgentProviderConfigView[];
   availableProviders: AgentProviderOption[];
   agent: AgentRuntimeSettings;
