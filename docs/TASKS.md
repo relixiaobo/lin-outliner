@@ -28,9 +28,11 @@ in [Desktop Host lifecycle](spec/architecture.md#desktop-host-lifecycle).
 PR #626 shipped the file-first Settings design revision. PR #636 now ships Unit
 A: file-backed preferences, schema/status/recovery, global Skill/tool controls,
 and the configuration Skill. PR #638 now ships Unit B: file-backed model
-connections, model declarations, and default model selection. Units C-G remain
-open under their dependency and collision checks; the plan is still the design
-authority for those units.
+connections, model declarations, and default model selection. PR #640 now ships
+Unit C: layered root Agent configuration, source inspection/schema discovery,
+JSONC-preserving edits, and public delegation policy. Units D-G remain open
+under their dependency and collision checks; the aggregate plan is still the
+design authority for those units.
 
 Trajectory paging shipped in #625 and exact-or-unavailable evidence completed
 in #627; the plan is archived and its shared-file claim is released. Bounded
@@ -108,7 +110,7 @@ does not mix their product decisions into the architectural queue above.
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
 | P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623, internal delegation plus Subagent/isolated-Skill retirement shipped in #628, and the external Runner adapter feature shipped in #637. Remaining work follows the aggregate plan's declared boundaries. |
-| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Unit A shipped in #636; Units B-G follow their declared dependency/collision checks, including #628 and `agent-skill-authoring-foundation`. |
+| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-C shipped in #636, #638, and #640; Units D-G follow their declared dependency/collision checks, including #628 and `agent-skill-authoring-foundation`. |
 | P2 | [interaction-jank-cleanups](plans/archive/interaction-jank-cleanups.md) | `done` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, the Runtime-index unit shipped in #633, and PR-3 translation geometry shipped in #634. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Settings redesign landed in #626; Provider/managed-Skill working-state behavior is absorbed by Units B and D, so claim it through those units rather than as a separate implementation. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
@@ -228,6 +230,7 @@ One line per recent shipped integration. Older history and review detail live in
 
 - **settings-control-plane Unit A** (`done`, #636, 2026-09-05) - file-backed JSONC preferences, schema/status/recovery, global Skill/tool controls, and the configuration Skill now converge through the Host; Units B-G remain in the active plan.
 - **settings-control-plane Unit B** (`done`, #638, 2026-09-06) - model connections, exact model declarations, image defaults, and application model selection now use the public JSONC settings source while credentials, catalogs, and runtime state remain domain-owned; [plan archived](plans/archive/settings-model-configuration.md).
+- **settings-control-plane Unit C** (`done`, #640, 2026-09-06) - layered root Agent configuration now has source inspection, generated schemas, comment-preserving JSONC edits, and public delegation policy in `config/settings.jsonc`; [plan archived](plans/archive/settings-root-configuration.md).
 - **codex-cli-adapter** (`done`, #637, 2026-09-06) - user-enabled Codex, Claude Code, and OpenClaw launchers now run through the generic Tool Task path with stdin delivery, PATH readiness checks, sanitized provider environments, cancellation, bounded output, and managed worktrees; [plan archived](plans/archive/codex-cli-adapter.md).
 - **interaction-jank-cleanups PR-3** (`done`, #634, 2026-09-05) - URL and EPUB translation scheduling now use near-viewport candidates, cached layout positions, observer-driven far-jump updates, and layout refresh signals; [plan archived](plans/archive/interaction-jank-cleanups.md).
 - **interaction-jank-cleanups PR-2** (`done`, #632, 2026-09-05) - definition catalogs survive unrelated projection deltas while table field usage groups remain current; translation geometry remains open.
