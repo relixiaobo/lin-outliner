@@ -123,6 +123,7 @@ import {
   setActiveProvider,
   setProviderApiKey,
   updateImageGenerationSettings,
+  updateModelDefault,
   updateAgentRuntimeSettings,
   upsertProviderConfig,
   prepareProviderConnectionProbe,
@@ -2218,6 +2219,10 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     }
     case 'agent_update_image_generation_settings':
       return withDelegationRunners(await updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput));
+    case 'agent_update_model_default':
+      return withDelegationRunners(await updateModelDefault(
+        typeof args.defaultModel === 'string' ? args.defaultModel : null,
+      ));
     case 'agent_get_capability_settings':
       return readAgentCapabilitySettingsView();
     case 'agent_apply_capability_settings_patch':

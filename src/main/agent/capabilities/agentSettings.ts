@@ -425,6 +425,17 @@ export async function updateImageGenerationSettings(input: AgentImageGenerationS
   return getProviderSettings();
 }
 
+export async function updateModelDefault(defaultModel: string | null): Promise<AgentProviderSettingsView> {
+  const value = defaultModel?.trim() || 'auto';
+  if (value !== 'auto' && !parseProviderQualifiedModel(value, () => true)) {
+    throw new Error('defaultModel must be auto or a qualified provider/model');
+  }
+  updateFilePreferences(electron.app.getPath('userData'), [
+    { path: ['models', 'default'], value },
+  ]);
+  return getProviderSettings();
+}
+
 export function providerStreamOptionsFromRuntimeSettings(
   settings?: Pick<
     AgentRuntimeSettings,
@@ -497,7 +508,7 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
 }
 
 /**
- * Ensure a provider has a config row in agent-providers.json. The OAuth sign-in
+ * Ensure a provider has a public model connection row. The OAuth sign-in
  * path persists a credential but, unlike the API-key form's `upsertProviderConfig`,
  * has no step that creates a provider row — so a first-time login would be
  * orphaned (credential on disk, no selectable provider). Creates a connection row

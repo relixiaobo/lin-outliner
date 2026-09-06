@@ -183,6 +183,8 @@ export const api = {
     command<AgentProviderSettingsView>('agent_update_runtime_settings', { settings }),
   agentUpdateImageGenerationSettings: (settings: AgentImageGenerationSettingsInput) =>
     command<AgentProviderSettingsView>('agent_update_image_generation_settings', { settings }),
+  agentUpdateModelDefault: (defaultModel: string | null) =>
+    command<AgentProviderSettingsView>('agent_update_model_default', { defaultModel }),
   agentGetCapabilitySettings: () =>
     command<AgentCapabilitySettingsView>('agent_get_capability_settings'),
   agentApplyCapabilitySettingsPatch: (patch: AgentCapabilitySettingsPatchInput) =>

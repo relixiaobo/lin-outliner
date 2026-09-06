@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { CC_SWITCH_LOCAL_PROVIDER_ID } from '../../src/core/localGatewayProviders';
+import { filePreferencesPath } from '../../src/main/configuration/filePreferences';
 
 // Exercises the provider-config-cleanup Part A startup reconcile: a keyless "junk"
 // row (the shape the old main-pane save side effect produced) is pruned and an
@@ -40,13 +41,13 @@ const {
   persistOAuthCredential,
 } = await import('../../src/main/agent/capabilities/agentSettings');
 
-const providerPath = () => path.join(currentUserData, 'agent-providers.json');
+const providerPath = () => path.join(currentUserData, 'agent-model-state.json');
 const secretPath = () => path.join(currentUserData, 'agent-secrets.json');
 
 interface OnDiskProvider {
   providerId: string;
   baseUrl?: string;
-  enabled: boolean;
+  enabled?: boolean;
 }
 
 async function writeProviderFileRaw(file: {
@@ -54,7 +55,20 @@ async function writeProviderFileRaw(file: {
   agent?: Record<string, unknown>;
   providers: OnDiskProvider[];
 }) {
-  await writeFile(providerPath(), `${JSON.stringify(file, null, 2)}\n`);
+  await writeFile(providerPath(), `${JSON.stringify({
+    activeProviderId: file.activeProviderId,
+    agent: file.agent,
+    providers: file.providers.map(({ providerId }) => ({ providerId })),
+  }, null, 2)}\n`);
+  await writeFile(filePreferencesPath(currentUserData), `${JSON.stringify({
+    models: {
+      connections: file.providers.map(({ providerId, baseUrl, enabled }) => ({
+        providerId,
+        baseUrl: baseUrl ?? null,
+        enabled,
+      })),
+    },
+  }, null, 2)}\n`);
 }
 
 async function readProviderFileRaw(): Promise<{ activeProviderId?: string; providers: OnDiskProvider[] }> {
@@ -68,6 +82,7 @@ let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
   currentUserData = await mkdtemp(path.join(tmpdir(), 'lin-provider-reconcile-'));
+  await mkdir(path.dirname(filePreferencesPath(currentUserData)), { recursive: true });
   savedEnv = {};
   for (const name of ENV_KEYS) {
     savedEnv[name] = process.env[name];
@@ -109,6 +124,27 @@ describe('provider config startup reconcile (Part A)', () => {
 
     await updateImageGenerationSettings({ defaultModel: null });
     expect((await getProviderSettings()).imageGeneration.defaultModel).toBeUndefined();
+  });
+
+  test('stores provider connections in the public settings source', async () => {
+    await upsertProviderConfig({
+      providerId: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      enabled: true,
+    });
+
+    const source = JSON.parse(await readFile(filePreferencesPath(currentUserData), 'utf8')) as {
+      models?: { connections?: Array<{ providerId: string; baseUrl?: string | null; enabled?: boolean }> };
+    };
+    expect(source.models?.connections).toEqual([{
+      providerId: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      enabled: true,
+      models: [],
+    }]);
+    expect(JSON.parse(await readFile(providerPath(), 'utf8')).providers).toEqual([
+      { providerId: 'openai', connectionGeneration: expect.any(Number) },
+    ]);
   });
 
   test('prunes a keyless junk row and clears the active pointer', async () => {
@@ -247,7 +283,7 @@ describe('provider config startup reconcile (Part A)', () => {
     expect(await reconcileProviderConfig()).toEqual({ activeProviderChanged: false });
 
     expect((await readProviderFileRaw()).providers).toEqual([
-      { providerId: CC_SWITCH_LOCAL_PROVIDER_ID, enabled: true },
+      { providerId: CC_SWITCH_LOCAL_PROVIDER_ID },
     ]);
     expect((await readProviderFileRaw()).activeProviderId).toBe(CC_SWITCH_LOCAL_PROVIDER_ID);
   });
@@ -267,7 +303,7 @@ describe('provider config startup reconcile (Part A)', () => {
     expect(view.activeProviderId).toBe('my-proxy');
     expect(await getActiveProviderRuntimeConfig()).toBeNull();
     expect((await readProviderFileRaw()).providers).toEqual([
-      { providerId: 'my-proxy', baseUrl: 'https://proxy.example.com/v1', enabled: true },
+      { providerId: 'my-proxy' },
     ]);
   });
 

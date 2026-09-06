@@ -99,7 +99,7 @@ describe('agent runtime settings limits', () => {
   test('normalizes unsafe delegation settings without enabling unknown Runners', async () => {
     const { getAgentRuntimeSettings } = await settingsModule();
     const { writeFile } = await import('node:fs/promises');
-    await writeFile(path.join(currentUserData, 'agent-providers.json'), `${JSON.stringify({
+    await writeFile(path.join(currentUserData, 'agent-model-state.json'), `${JSON.stringify({
       agent: {
         delegation: {
           enabled: 'yes',
