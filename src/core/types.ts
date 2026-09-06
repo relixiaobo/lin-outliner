@@ -1216,7 +1216,7 @@ export interface AgentEditorView {
   readonly presentationOverrides: readonly AgentPresentationOverrideRow[];
   readonly profile: AgentProfileView;
   readonly capabilities: AgentCapabilityCatalog;
-  readonly sources?: readonly AgentConfigurationSourceView[];
+  readonly sources: readonly AgentConfigurationSourceView[];
 }
 
 export interface AgentProviderSettingsView {

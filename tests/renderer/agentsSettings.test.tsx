@@ -6,6 +6,10 @@ import type { AgentEditorView } from '../../src/renderer/api/types';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
 const VIEW: AgentEditorView = {
+  sources: [
+    { layer: 'user', path: '/user/agent/config.json', schemaPath: '/user/agent/config.schema.json', state: 'missing', digest: null, error: null },
+    { layer: 'project', path: '/workspace/.tenon/agent.json', schemaPath: '/workspace/.tenon/agent.schema.json', state: 'missing', digest: null, error: null },
+  ],
   presentationOverrides: [],
   profile: {
     name: 'default',
