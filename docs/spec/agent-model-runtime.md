@@ -3,6 +3,27 @@
 The model runtime adapts provider streaming into canonical Turn and Item facts.
 Provider state is never a second product history.
 
+## File-backed model configuration
+
+The public `config/settings.jsonc` source owns non-secret model connections and
+selection intent. `models.connections` contains provider identity, endpoint,
+enabled state, and optional explicit model declarations; credentials remain in
+`agent-secrets.json`, while catalogs and probe/runtime state remain in their
+domain-owned stores. An empty `models` array follows the provider catalog. A
+non-empty array is an allow-list: catalog presentation, provider lookup, model
+ranking, and Thread model validation accept only declared IDs. A declared model
+that is absent from the catalog remains unavailable (custom endpoints may still
+construct a model for an explicitly declared ID), and an unavailable
+`models.default` is reported rather than silently falling back.
+
+`models.default` is the application default for new unqualified root Threads;
+explicit Thread/Profile selections and valid remembered selections take
+precedence. Existing Threads and in-flight Turns retain their admitted model
+snapshot. Private provider mutations such as probe verdicts, connection
+generations, and delegation state never rewrite the public JSONC source, so
+user comments and formatting remain stable. Source edits are observed on the
+next read/reconcile without a Settings or Configuration CLI.
+
 ## Execution Boundary
 
 `PiTurnExecutor` receives an immutable `TurnExecutionContext` containing the

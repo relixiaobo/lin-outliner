@@ -12,6 +12,7 @@ import { ProviderAvatar, formatProviderName } from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import {
   buildImageModelMenu,
+  buildLanguageModelMenu,
   buildProviderChoices,
   type ProviderChoice,
   type ProviderRowHandlers,
@@ -183,6 +184,10 @@ export function SettingsProvidersSection({
     () => settings ? buildImageModelMenu(settings, providerCatalog) : { groups: [], defaultUnavailable: false },
     [providerCatalog, settings],
   );
+  const languageModelMenu = useMemo(
+    () => settings ? buildLanguageModelMenu(settings, providerCatalog) : { groups: [], defaultUnavailable: false },
+    [providerCatalog, settings],
+  );
 
   // Custom (OpenAI-compatible) providers are configured in the same native window,
   // in 'custom' mode (the window enters the provider id + model itself).
@@ -268,6 +273,38 @@ export function SettingsProvidersSection({
           the pane. Custom providers are added from the last row of the
           add-provider list (no separate floating add control). */}
       <div className="settings-provider-groups">
+        <InsetGroup ariaLabel={t.settings.providers.defaultModelLabel} label={t.settings.providers.defaultModelLabel}>
+          <InsetRow
+            label={t.settings.providers.defaultModelLabel}
+            sublabel={languageModelMenu.defaultUnavailable
+              ? t.settings.providers.defaultModelUnavailable
+              : t.settings.providers.defaultModelSublabel}
+            trailing={(
+              <SelectControl
+                label={t.settings.providers.defaultModelLabel}
+                onChange={(event) => runProviderMutation(
+                  () => api.agentUpdateModelDefault(event.target.value || null),
+                  t.settings.providers.defaultModelSavedNotice,
+                )}
+                value={settings?.defaultModel === 'auto' ? '' : settings?.defaultModel ?? ''}
+                variant="popup"
+              >
+                <option value="">{t.settings.providers.modelAuto}</option>
+                {languageModelMenu.defaultUnavailable && settings?.defaultModel ? (
+                  <option value={settings.defaultModel}>{settings.defaultModel} (unavailable)</option>
+                ) : null}
+                {languageModelMenu.groups.map((group) => (
+                  <optgroup key={group.providerId} label={group.label}>
+                    {group.models.map((model) => (
+                      <option key={model.value} value={model.value}>{model.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </SelectControl>
+            )}
+            wrap
+          />
+        </InsetGroup>
         <InsetGroup
           ariaLabel={t.settings.providers.imageGenerationAriaLabel}
           label={t.settings.providers.imageGenerationGroup}

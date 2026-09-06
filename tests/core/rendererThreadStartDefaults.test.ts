@@ -59,6 +59,20 @@ describe('renderer Thread start defaults', () => {
     expect(activeProviderCalls).toBe(0);
   });
 
+  test('uses the configured model default before remembered selection', async () => {
+    const configured: ThreadConfigurationSummary = Object.freeze({
+      modelProvider: 'openai',
+      model: 'openai/gpt-5',
+      reasoningEffort: 'medium',
+    });
+    await expect(resolveRendererThreadStartDefaults(defaultsInput({
+      getConfiguredDefaultSelection: async () => configured,
+    }))).resolves.toEqual({
+      cwd: '/tmp/agent-workdir',
+      executionSelection: configured,
+    });
+  });
+
   test('falls back to active provider when the remembered provider is unavailable', async () => {
     await expect(resolveRendererThreadStartDefaults(defaultsInput({
       getProviderRuntimeConfig: async () => null,

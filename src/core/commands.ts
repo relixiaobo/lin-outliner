@@ -103,6 +103,7 @@ export const AGENT_COMMANDS = [
   'agent_refresh_provider_models',
   'agent_update_runtime_settings',
   'agent_update_image_generation_settings',
+  'agent_update_model_default',
   'agent_get_capability_settings',
   'agent_apply_capability_settings_patch',
   'agent_append_capability_block',

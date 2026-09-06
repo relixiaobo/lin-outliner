@@ -46,6 +46,26 @@ const SETTINGS_SCHEMA = Object.freeze({
       type: 'object', additionalProperties: false,
       properties: { checkAutomatically: { type: 'boolean' } },
     },
+    models: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        connections: {
+          type: 'array',
+          items: {
+            type: 'object', additionalProperties: false,
+            required: ['providerId'],
+            properties: {
+              providerId: { type: 'string', minLength: 1 },
+              baseUrl: { type: ['string', 'null'] },
+              enabled: { type: 'boolean' },
+              models: { type: 'array', items: { type: 'string', minLength: 1 } },
+            },
+          },
+        },
+        default: { type: 'string', minLength: 1 },
+        imageDefault: { type: ['string', 'null'] },
+      },
+    },
   },
 });
 
