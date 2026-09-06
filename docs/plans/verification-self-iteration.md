@@ -30,9 +30,12 @@ command + required/optional + state + exit code + bounded output
 startedAt + finishedAt + degradation reason
 ```
 
-States are `running`, `passed`, `failed`, `stopped`, and `unavailable`.
-Overall success requires every required check to be `passed`; optional failures
-and unresolved checks remain visible.
+States are `running`, `passed`, `failed`, `stopped`, `lost`, and `unavailable`.
+`lost` is terminal evidence that the Tool Task had no verified terminal receipt
+after reconciliation; it is never converted to `passed`. Overall success
+requires every required check to be `passed`; `running`, `failed`, `stopped`,
+`lost`, and `unavailable` required checks are non-success. Optional failures,
+loss, and unresolved checks remain visible.
 
 ### Correction attempt
 
@@ -102,7 +105,8 @@ provider response was lost.
 Cover every check state, required/optional aggregation, multiple cwd values,
 worktree collision, repeated failure, budget exhaustion, child inheritance, and
 restart recovery. Add an end-to-end fixture that edits one file, fails a check,
-corrects it, and stops on success.
+corrects it, and stops on success, plus a restart fixture that maps a lost Tool
+Task to a lost Check Result and blocks aggregation.
 
 ## Open questions
 

@@ -53,6 +53,15 @@ continue the same isolated context after a Turn settles. The replacement keeps
 that capability through a root-owned hidden Thread plus Skill-guided CLI
 commands, without restoring Agent trees, peer messaging, nesting, or Subagent UI.
 
+**Workbench integration:** This plan consumes the ExecutionContext-first
+contract in `project-development-workbench.md`. A Session may retain a
+continuity policy for an isolated worktree, but it never owns a sticky cwd or a
+second execution ledger. Every initial and continued Turn admits a fresh
+`ExecutionAddress`, `ExecutionPolicy`, and `ContextSnapshot` through the Host;
+the Session stores only references and delivery/settlement facts. Unit A of the
+workbench is the protocol predecessor for this plan, and this plan cannot be
+implemented against the retired Thread cwd/default-workspace contract.
+
 ## Non-goals
 
 - No model-visible delegation, Agent, spawn, send, wait, inbox, or roster tool.
@@ -540,18 +549,21 @@ paid Turn. Replay returns the original refusal or admission outcome rather than
 re-evaluating it against a later revision.
 
 Every Session resolves Runner, effective model/effort, Task Profile, maximum
-access, cwd, and worktree policy once at creation. Settings changes affect new
-Sessions only. Every continued Turn revalidates live model authorization and
-intersects the original Session ceiling with the root's current ceiling, so it
-may narrow but never widen authority. An unavailable pinned model or disabled
-Runner blocks that Turn before Provider I/O without changing the Session binding
-or silently selecting another Runner.
+access, and optional isolation/worktree policy once at creation. Settings
+changes affect new Sessions only. Every continued Turn admits its own
+ExecutionAddress and ContextSnapshot, then revalidates live model
+authorization and intersects the original Session ceiling with the root's
+current ceiling, so it may narrow but never widen authority. An unavailable
+pinned model or disabled Runner blocks that Turn before Provider I/O without
+changing the Session binding or silently selecting another Runner.
 
-Writable Sessions own one dedicated worktree across all Turns. Each Tool Task
-reports independently computed current patch evidence, but the worktree remains
-attached until the root closes and integrates or explicitly rejects the Session.
-This lets the root request corrections against the same isolated state. Idle
-Sessions hold no scheduler lease or process. An open Session auto-closes after
+When isolation requests a dedicated worktree, the Host-managed resource remains
+available across Session Turns through an explicit continuity reference. Each
+Tool Task records its own immutable ExecutionAddress and current patch evidence;
+the Session binding is not the resource or process ledger. This lets the root
+request corrections against the same isolated state without creating a sticky
+Thread cwd. Idle Sessions hold no scheduler lease or process. An open Session
+auto-closes after
 30 days without an active Tool Task or committed root message; owner Thread
 archive closes its idle Sessions, and owner deletion follows the Tool Task and
 changed-worktree refusal rules before deleting their hidden Threads.
@@ -886,11 +898,12 @@ lower a local limit, but never claims a diagnosed account capacity.
 
 ### Workspace, failure, and result
 
-Read-only work uses the root cwd under a Host-enforced read-only ceiling. Every
-workspace-write Session gets one dedicated git worktree before its first Runner
-Turn. All continued Turns use that same worktree. Non-git or unisolatable
-writable work is refused. The worktree remains Session-owned while continuation
-is possible; unchanged worktrees are removed when the Session closes. Changed or
+Read-only work uses a Host-admitted ExecutionAddress under a Host-enforced
+read-only ceiling. Every workspace-write Session may request one dedicated git
+worktree before its first Runner Turn; each continued Turn re-admits and
+records that address through the Host. Non-git or unisolatable writable work is
+refused. The Host-managed worktree remains available while continuation is
+possible; unchanged worktrees are removed when the Session closes. Changed or
 crash-ambiguous worktrees remain artifacts and are never merged or copied
 automatically.
 

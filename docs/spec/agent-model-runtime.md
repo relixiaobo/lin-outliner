@@ -277,7 +277,14 @@ payload references remain canonical state and are not sent as model guidance. Th
 raw range is not sent as a second copy.
 
 At each canonical tail position, the pure Turn-brief compiler converts complete typed
-evidence into decision-relevant semantic statements. All contiguous text statements are
+evidence into decision-relevant semantic statements. Execution-context contributions
+carry a stable Host-private `contextSlotKey = { turnId, toolTaskId,
+contextSnapshotRef }`. Projection uses keyed `upsert` and `clear` operations, so a
+later task can replace or clear only its own context slot. A provider boundary may
+mark the latest admitted `toolTaskId` as current, but it retains the bounded ordered
+slots for other directories used by the same Turn. Replay reconstructs those slots
+from canonical Turn and Tool Task evidence in admission order; it never treats one
+global active cwd as the history authority. All contiguous text statements are
 serialized into ordered `<context authority="..." purpose="...">` children inside one
 provider-facing `<system-reminder>`. Exactly three wrapper pairs are valid:
 `application/observation`, `untrusted/observation`, and

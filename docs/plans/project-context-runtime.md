@@ -79,9 +79,15 @@ The existing provider wire format remains `system-reminder`:
 context evidence -> ContextProjector -> add/replace/clear reminder -> provider
 ```
 
-The reminder is a projection, not authority or history. It identifies source,
-generation, active cwd, and degradation. Repository instructions and Skills are
-source-labelled evidence and cannot change Host capability or execution address.
+The reminder is a projection, not authority or history. Each contribution is
+keyed by `contextSlotKey = { turnId, toolTaskId, contextSnapshotRef }` and
+contains source, generation, resolved cwd, and degradation. `upsert` replaces
+only that slot; `clear` removes only that slot; a later task cannot clear an
+earlier task's evidence. The provider projection includes an ordered bounded
+list of retained slots and a separate `currentToolTaskId` marker. The marker
+does not collapse or authorize any slot. Repository instructions and Skills are
+source-labelled evidence and cannot change Host capability or execution
+address.
 
 The first task against a new cwd may execute before collection completes. The
 receipt exposes the collected facts; the next provider boundary receives the

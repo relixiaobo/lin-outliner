@@ -123,7 +123,12 @@ The stable prompt contains only cross-project rules:
 
 Per-Turn context facts and source-labelled repository instructions are injected
 as evidence, never into the stable prompt fingerprint. They cannot override
-Host authority or user intent.
+Host authority or user intent. Each context contribution carries a stable
+`contextSlotKey = { turnId, toolTaskId, contextSnapshotRef }`; projection
+operations are keyed `upsert` or `clear` by that slot. A later task adds or
+replaces its own slot and cannot clear an earlier task's evidence. Replay
+reconstructs the ordered slot map from canonical Turn/Tool Task references and
+marks the latest admitted slot as current without collapsing the other slots.
 
 Context admission is required for every executable Turn: root, fork, child,
 delegated, scheduled, and resumed. A Turn records the exact context reference
@@ -287,6 +292,10 @@ Define codecs, admission, Tool Task receipt fields, capability interaction,
 context references, and recovery for task-scoped `cwd`. Remove planned
 Thread/workspace execution authority and update all fork, child, Automation,
 delegation, diagnostics, preload, and renderer consumers in the same clean cut.
+The existing current-behavior specs remain authoritative until this complete
+Unit A cut lands; no consumer may implement the new `cwd` or context-slot
+contract against a partial protocol. Unit A must update the permission,
+model-runtime, Agent Core, Automation, and delegation specs in the same change.
 
 ### Unit B: Context projection and optional Project catalog
 
@@ -329,6 +338,12 @@ identity, or a parallel ledger.
 Collision self-check (2026-09-06): `gh pr list --state open` found only this
 claim, PR #639; no other open PR or `docs/TASKS.md` scope overlaps these plan
 files. The batch reports **no overlap**.
+
+The active `agent-delegation-runtime` plan is a semantic predecessor, not an
+independent implementation lane. Main must rebase it on Unit A before marking
+that board item eligible: Session policy may request an isolated worktree, but
+Session or Runner must never become the owner of a sticky cwd or a second
+execution ledger.
 
 ## Verification strategy
 

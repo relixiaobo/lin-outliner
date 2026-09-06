@@ -6,8 +6,9 @@ authorizes execution of the tools visible in that Thread.
 ## Full Access
 
 Available file and process tools execute with the host account's authority.
-Relative paths start from the Thread working directory; absolute paths remain
-valid. Shell commands run through the host shell. Network, provider, operating
+Relative paths resolve from the admitted Tool Task execution address or the
+documented Host default when no task cwd is supplied; absolute paths remain
+valid under Full Access. Shell commands run through the host shell. Network, provider, operating
 system, and filesystem errors are returned natively.
 
 Tenon does not expose a user-selectable agent filesystem sandbox, permission
@@ -115,11 +116,15 @@ runtime selection revalidates page ownership and the requested `reveal`, `replay
 Full Access authorizes a valid operation exposed in the Thread; it does not make an
 unknown tool or malformed argument object valid. Each provider call resolves the
 canonical tool, normalizes model syntax, and passes that tool's strict schema before
-capability evaluation. Unknown fields such as a model-supplied `bash.cwd` are rejected
-once as `invalidArguments`, persisted only as bounded redacted correction evidence, and
-never replayed as another tool call. The host still runs an admitted `bash` command in
-the Thread working directory, but that directory is execution context rather than a
-model argument.
+capability evaluation. `bash.cwd` is a known optional task-scoped field: the Host
+validates and canonicalizes it before capability evaluation and records the resolved
+execution address on the Tool Task. Unknown fields remain rejected as
+`invalidArguments`, persisted only as bounded redacted correction evidence, and
+never replayed as another tool call. The Host executes an admitted Bash command in
+the resolved task address; no Thread-owned cwd is consulted. Under Full Access,
+absolute host paths remain valid. Read-only, worktree, and isolation policies
+revalidate the canonical address against their own Host-enforced ceilings before
+spawn.
 
 The phases remain observable and separate:
 

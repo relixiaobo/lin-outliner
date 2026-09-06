@@ -13,8 +13,8 @@ An `Automation` is one revisioned definition containing:
 - UUIDv7 identity, name, and durable prompt
 - one RFC 5545 `DTSTART` plus `RRULE` and one IANA timezone
 - a `standalone` or `existingThread` destination
-- zero or more stable project bindings whose saved `cwd` is a canonical real
-  path, using `local` or `worktree` execution
+- zero or more stable project context hints whose saved root is a lookup value,
+  using Full Access or an explicitly requested isolated execution policy
 - optional provider, model, and reasoning selections
 - `active`, `paused`, or `completed` status and timestamps
 
@@ -28,11 +28,12 @@ boundary. The renderer's Once, Hourly, Daily, Weekdays, Weekly, and Custom
 controls all produce this same representation.
 
 An `AutomationRun` is a narrow scheduling and routing record. It captures the
-Automation revision, scheduled instant, one project binding, complete saved
-definition and configuration-selection snapshot, optional worktree, reciprocal
-Thread/Turn IDs, read state, and pin state. Main resolves the effective provider,
-model, and inherited Thread/Profile configuration at dispatch and fails closed
-when the selected provider or model is unavailable. The run does not copy model
+Automation revision, scheduled instant, one context hint, complete saved
+definition and configuration-selection snapshot, optional isolation policy,
+reciprocal Thread/Turn IDs, read state, and pin state. Main resolves a fresh
+ExecutionAddress and ContextSnapshot at dispatch, resolves the effective
+provider/model, and fails closed when the selected provider, model, or address
+is unavailable. The run does not copy model
 output, Turn status, Goal status, tool history, or errors that occur after Turn
 admission.
 
@@ -88,22 +89,22 @@ Changing a completed definition's schedule reactivates it from the edit time;
 other edits preserve its completed state.
 
 Start now uses the saved definition and same durable claim/dispatch path. It does
-not bypass no-overlap, model validation, worktree preparation, inherited Thread
-configuration, or explicit capability blocks.
+not bypass no-overlap, model validation, execution-context admission, inherited
+Thread configuration, or explicit capability blocks.
 
 ## Canonical Dispatch
 
-A standalone occurrence creates one persistent root Thread per project binding
+A standalone occurrence creates one persistent root Thread per context hint
 with `threadSource` classified as feature `automation`. It uses the Automation
-name, captured model selection, default Configuration Profile, and prepared
-working directory. Its composer is read-only because only the host feature path
-may add Turns.
+name, captured model selection, default Configuration Profile, and a freshly
+admitted ExecutionAddress/ContextSnapshot. Its composer is read-only because
+only the host feature path may add Turns.
 
 An existing-Thread occurrence adds a Turn to one active persistent root user
-Thread and preserves that Thread's history, provider, Goal, and working context.
-It accepts at most one local project binding, whose real path must match the
-Thread workspace; worktree mode is invalid because an existing Thread has one
-sticky cwd. A busy Thread leaves the claim pending until the same single-Turn
+Thread and preserves that Thread's history, provider, and Goal. Dispatch
+resolves a fresh ExecutionAddress from the Automation hint or explicit task
+input; it does not read a sticky Thread cwd or require a Project workspace
+match. A busy Thread leaves the claim pending until the same single-Turn
 coordinator becomes idle.
 
 Both destinations call the privileged `ThreadService` feature admission with
