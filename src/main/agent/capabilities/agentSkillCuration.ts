@@ -33,7 +33,7 @@ export async function analyzeAgentSkills(
   candidates: readonly AgentSkillCurationCandidate[],
   generatedAt = Date.now(),
 ): Promise<AgentSkillCurationReport> {
-  const ordered = [...candidates].sort((left, right) => left.skill.name.localeCompare(right.skill.name));
+  const ordered = [...candidates].sort(compareCandidates);
   const eligible = ordered.filter((candidate) => eligibleCandidate(candidate));
   const duplicateNames = new Map<string, string[]>();
   for (const candidate of eligible) {
@@ -70,7 +70,7 @@ export async function analyzeAgentSkills(
 }
 
 export function agentSkillRegistryFingerprint(candidates: readonly AgentSkillCurationCandidate[]): string {
-  return fingerprint([...candidates].sort((left, right) => left.skill.name.localeCompare(right.skill.name)));
+  return fingerprint([...candidates].sort(compareCandidates));
 }
 
 export function assertAgentSkillCurationReportCurrent(
@@ -192,4 +192,16 @@ function fingerprint(candidates: readonly AgentSkillCurationCandidate[]): string
     agentHash: candidate.agentHash ?? null,
   }));
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function compareCandidates(left: AgentSkillCurationCandidate, right: AgentSkillCurationCandidate): number {
+  return compareText(left.skill.name, right.skill.name)
+    || compareText(left.skill.identity ?? left.skill.skillFile, right.skill.identity ?? right.skill.skillFile)
+    || compareText(left.skill.source, right.skill.source)
+    || compareText(left.skill.contentHash ?? '', right.skill.contentHash ?? '')
+    || compareText(left.agentHash ?? '', right.agentHash ?? '');
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
