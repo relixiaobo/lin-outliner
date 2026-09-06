@@ -66,6 +66,20 @@ describe('AgentConfigurationLoader', () => {
     expect(loader.resolveIdentityCatalogForUserPath(cwd, report)[0]?.persona).toBe('Aspen');
     expect(reports).toHaveLength(1);
   });
+
+  test('reports layered source state and content digest without resolving a second snapshot', async () => {
+    const { loader, userData, cwd } = await fixture();
+    const initial = loader.inspectSources(cwd);
+    expect(initial.map((source) => source.state)).toEqual(['missing', 'missing']);
+    await writeJson(userConfigurationPath(userData), { profiles: { default: { model: 'inherit' } } });
+    const [user, project] = loader.inspectSources(cwd);
+    expect(user).toMatchObject({ layer: 'user', state: 'accepted', error: null });
+    expect(user.digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(project.state).toBe('missing');
+    await writeJson(userConfigurationPath(userData), { retired: true });
+    expect(loader.inspectSources(cwd)[0]).toMatchObject({ layer: 'user', state: 'rejected' });
+    expect(loader.inspectSources(cwd)[0]?.error).toContain('unknown field');
+  });
 });
 
 async function fixture() {

@@ -690,6 +690,29 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
       <section aria-label="Model services" class="agent-settings-section settings-providers-section">
         <div class="settings-provider-groups">
           <div class="inset-group">
+            <div class="inset-group-header">Default text model</div>
+            <div role="list" class="inset-card" aria-label="Default text model">
+              <div role="listitem" class="inset-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">Default text model</span>
+                    <span class="inset-row-sublabel">Used for new Threads without an explicit model.</span>
+                  </span>
+                </div>
+                <div class="inset-row-trailing">
+                  <span class="select-popup">
+                    <select class="select-popup-input" aria-label="Default text model">
+                      <option selected value="">Auto</option>
+                    </select>
+                    <svg data-icon="ChevronDown" class="app-icon select-popup-chevron" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-xs)" width="var(--icon-size-xs)">
+                      <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 9L12 15L18 9" />
+                    </svg>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="inset-group">
             <div class="inset-group-header">Image generation</div>
             <div role="list" class="inset-card" aria-label="Image generation settings">
               <div role="listitem" class="inset-row">

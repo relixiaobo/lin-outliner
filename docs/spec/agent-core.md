@@ -255,10 +255,16 @@ or compatibility readers.
 A named `ConfigurationProfile` supplies root Thread defaults. User definitions
 load from `<userData>/agent/config.json`; project definitions load from
 `<cwd>/.tenon/agent.json` and replace same-name user definitions. Both exact-key
-JSON files may define `defaultProfile`, `profiles`, and
-`presentationOverrides`. Invalid JSON, unknown fields,
+JSONC files may define `defaultProfile`, `profiles`, and
+`presentationOverrides`. Invalid JSONC, unknown fields,
 invalid names, duplicate capability identities, mismatched provider-qualified
 models, and unsupported reasoning effort values fail closed.
+
+The configuration owner exposes both source paths with a bounded status record:
+`missing`, `accepted`, or `rejected`, plus a SHA-256 content digest and a
+bounded error summary. User and project schema files are generated beside
+their sources (`config.schema.json` and `.tenon/agent.schema.json`) so file
+editors and the configuration Skill validate against the same live contract.
 
 Root Thread creation resolves its selected Profile into one persisted
 `EffectiveThreadConfiguration` snapshot. Later file edits do not rewrite that

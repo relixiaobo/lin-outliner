@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { filePreferencesPath } from '../../src/main/configuration/filePreferences';
 
 /**
  * `disabledSkills` is keyed by name over EVERY source, so its length scales with
@@ -94,15 +95,16 @@ describe('agent runtime settings limits', () => {
     });
     expect(updated.revision).not.toBe(initial.revision);
     expect(delegationConfigurationRevision(structuredClone(updated.settings))).toBe(updated.revision);
+    await expect(readFile(path.join(currentUserData, 'agent-model-state.json'), 'utf8')).rejects.toThrow();
   });
 
   test('normalizes unsafe delegation settings without enabling unknown Runners', async () => {
     const { getAgentRuntimeSettings } = await settingsModule();
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(path.join(currentUserData, 'agent-model-state.json'), `${JSON.stringify({
+    await mkdir(path.dirname(filePreferencesPath(currentUserData)), { recursive: true });
+    await writeFile(filePreferencesPath(currentUserData), `${JSON.stringify({
       agent: {
         delegation: {
-          enabled: 'yes',
+          enabled: false,
           defaultRunnerId: '../claude',
           maxConcurrentGlobal: 65,
           maxConcurrentThread: 64,
@@ -113,17 +115,16 @@ describe('agent runtime settings limits', () => {
             claude: {
               enabled: true,
               model: '  claude/model  ',
-              effort: 'impossible',
-              maximumAccess: 'full-disk',
-              timeoutMs: 1,
-              maxConcurrent: 0,
+              effort: null,
+              maximumAccess: 'read-only',
+              timeoutMs: 86_400_001,
+              maxConcurrent: 65,
               pool: '../shared',
-              maxConcurrentPool: 0,
+              maxConcurrentPool: 65,
             },
           },
         },
       },
-      providers: [],
     }, null, 2)}\n`);
 
     const delegation = (await getAgentRuntimeSettings()).delegation;

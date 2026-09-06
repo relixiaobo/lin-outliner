@@ -69,7 +69,10 @@ started by a launcher do not become Tenon Agent Sessions.
 
 ## Settings And Admission
 
-Settings own all policy that can change account, cost, or authority:
+Settings own all policy that can change account, cost, or authority. Durable
+delegation policy is declared in `config/settings.jsonc` under
+`agent.delegation`; `agent-model-state.json` contains only private operational
+state and no delegation policy:
 
 - experiment enabled state;
 - default launcher and per-launcher enabled state;

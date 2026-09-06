@@ -1,10 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { IDENTITY_COLORS, MAIN_PRESENTATION_KEY, type IdentityColor } from '../../core/agent/configuration';
 import type { AgentProfileDraft } from '../../core/types';
+import { applyEdits, modify as jsoncModify } from 'jsonc-parser';
 import { atomicWriteFile } from '../jsonFileStore';
 import {
   decodeConfigurationLayer,
+  parseAgentConfigurationSource,
   projectConfigurationPath,
+  writeProjectAgentConfigurationSchema,
   userConfigurationPath,
 } from './AgentConfigurationLoader';
 
@@ -59,7 +62,7 @@ export class AgentConfigurationWriter {
       if (original.trim().length > 0) {
         let parsed: unknown;
         try {
-          parsed = JSON.parse(original);
+          parsed = parseAgentConfigurationSource(original, path);
         } catch (error) {
           throw new Error(`Cannot edit ${path}: ${errorText(error)}`);
         }
@@ -77,8 +80,33 @@ export class AgentConfigurationWriter {
     } catch (error) {
       throw new Error(`Refused: ${errorText(error)}`);
     }
-    await atomicWriteFile(path, `${JSON.stringify(next, null, 2)}\n`);
+    let source = existsSync(path) ? readFileSync(path, 'utf8') : '{}';
+    source = applyJsonObjectDiff(source, current, next);
+    await atomicWriteFile(path, source.endsWith('\n') ? source : `${source}\n`);
+    if (target === 'project') writeProjectAgentConfigurationSchema(cwd);
   }
+}
+
+function applyJsonObjectDiff(source: string, current: JsonObject, next: JsonObject, basePath: string[] = []): string {
+  const keys = new Set([...Object.keys(current), ...Object.keys(next)]);
+  for (const key of keys) {
+    const before = current[key];
+    const after = next[key];
+    if (JSON.stringify(before) === JSON.stringify(after)) continue;
+    const path = [...basePath, key];
+    if (isObject(before) && isObject(after)) {
+      source = applyJsonObjectDiff(source, before, after, path);
+      continue;
+    }
+    source = applyEdits(source, jsoncModify(source, path, after, {
+      formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' },
+    }));
+  }
+  return source;
+}
+
+function isObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function applyMainPresentation(config: JsonObject, draft: PresentationDraft): JsonObject {

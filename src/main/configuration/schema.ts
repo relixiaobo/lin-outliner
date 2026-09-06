@@ -40,6 +40,32 @@ const SETTINGS_SCHEMA = Object.freeze({
             cacheRetention: { enum: ['none', 'short', 'long'] },
           },
         },
+        delegation: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            enabled: { type: 'boolean' },
+            defaultRunnerId: { type: 'string', minLength: 1 },
+            maxConcurrentGlobal: { type: 'integer', minimum: 1 },
+            maxConcurrentThread: { type: 'integer', minimum: 1 },
+            maxQueuedGlobal: { type: 'integer', minimum: 1 },
+            maxQueuedThread: { type: 'integer', minimum: 1 },
+            runners: {
+              type: 'object', additionalProperties: {
+                type: 'object', additionalProperties: false,
+                properties: {
+                  enabled: { type: 'boolean' },
+                  model: { type: ['string', 'null'] },
+                  effort: { enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', null] },
+                  maximumAccess: { enum: ['read-only', 'workspace-write'] },
+                  timeoutMs: { type: 'integer', minimum: 1 },
+                  maxConcurrent: { type: 'integer', minimum: 1 },
+                  pool: { type: 'string', minLength: 1 },
+                  maxConcurrentPool: { type: 'integer', minimum: 1 },
+                },
+              },
+            },
+          },
+        },
       },
     },
     updates: {
