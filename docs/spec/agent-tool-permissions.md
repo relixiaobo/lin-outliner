@@ -10,9 +10,12 @@ Relative paths start from the Thread working directory; absolute paths remain
 valid. Shell commands run through the host shell. Network, provider, operating
 system, and filesystem errors are returned natively.
 
-Tenon does not add an agent filesystem sandbox, permission mode, approval policy,
-or pause/resume authorization flow. `request_user_input` gathers missing product
-input only and must never be used as a risk confirmation prompt.
+Tenon does not expose a user-selectable agent filesystem sandbox, permission
+mode, approval policy, or pause/resume authorization flow. A few Host-owned
+isolated shell paths may apply an internal platform write boundary; that
+implementation detail does not change Full Access authority and is recorded on
+the Tool Task receipt. `request_user_input` gathers missing product input only
+and must never be used as a risk confirmation prompt.
 
 This boundary is unchanged for child Agents. An `agent_message` to an Agent or
 the reserved `main` route is task direction authored by a model, not user
