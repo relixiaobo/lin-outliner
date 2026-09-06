@@ -119,7 +119,8 @@ function resolveProviderCatalogModel(config: AgentProviderRuntimeConfig): Model<
   }
   const first = rankedModels(config.providerId, config.models)[0];
   if (config.baseUrl) {
-    const modelId = config.modelId ?? first?.id ?? '__tenon_openai_compatible_probe__';
+    const declared = config.models?.map((model) => model.trim()).filter(Boolean) ?? [];
+    const modelId = config.modelId ?? first?.id ?? declared[0] ?? '__tenon_openai_compatible_probe__';
     return createCustomEndpointModel(config, modelId, first);
   }
   return first ?? null;

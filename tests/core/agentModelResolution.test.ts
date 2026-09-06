@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   resolveAgentModelOverride,
+  resolveProviderModel,
   validateAgentModelSelection,
 } from '../../src/main/agent/capabilities/agentModelResolution';
 
@@ -41,5 +42,10 @@ describe('Agent model selection ownership', () => {
     expect(resolveAgentModelOverride('openai:local-model', restricted)).toBeTruthy();
     expect(resolveAgentModelOverride('openai:other-model', restricted)).toBeNull();
     expect(() => validateAgentModelSelection('openai:other-model', 'off', restricted)).toThrow('Model not found');
+  });
+
+  test('uses the first explicitly declared custom model when the catalog is empty', () => {
+    const restricted = { ...customOpenAiProvider, models: ['private-model'] };
+    expect(resolveProviderModel(restricted).id).toBe('private-model');
   });
 });
