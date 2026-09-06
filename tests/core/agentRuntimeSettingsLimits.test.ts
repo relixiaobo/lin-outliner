@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { filePreferencesPath } from '../../src/main/configuration/filePreferences';
@@ -95,6 +95,7 @@ describe('agent runtime settings limits', () => {
     });
     expect(updated.revision).not.toBe(initial.revision);
     expect(delegationConfigurationRevision(structuredClone(updated.settings))).toBe(updated.revision);
+    await expect(readFile(path.join(currentUserData, 'agent-model-state.json'), 'utf8')).rejects.toThrow();
   });
 
   test('normalizes unsafe delegation settings without enabling unknown Runners', async () => {
