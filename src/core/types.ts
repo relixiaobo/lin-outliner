@@ -704,6 +704,13 @@ export type AgentCacheRetention = 'none' | 'short' | 'long';
 
 export type AgentDelegationAccess = 'read-only' | 'workspace-write';
 
+export type AgentSkillSourceMode = 'skill' | 'container';
+
+export interface AgentSkillSourceBinding {
+  readonly path: string;
+  readonly mode: AgentSkillSourceMode;
+}
+
 export interface AgentDelegationRunnerSettings {
   enabled: boolean;
   /** Provider-qualified model id. Null inherits the invoking root model. */
@@ -735,6 +742,7 @@ export interface AgentDelegationSettingsInput extends Partial<Omit<AgentDelegati
 
 export interface AgentRuntimeSettings {
   additionalSkillDirectories: string[];
+  additionalSkillSourceModes: Record<string, AgentSkillSourceMode>;
   providerTimeoutMs: number | null;
   providerMaxRetries: number | null;
   providerMaxRetryDelayMs: number | null;
@@ -746,6 +754,8 @@ export interface AgentRuntimeSettings {
 
 export interface AgentRuntimeSettingsInput {
   additionalSkillDirectories?: string[];
+  additionalSkillSourceBindings?: AgentSkillSourceBinding[];
+  additionalSkillSourceModes?: Record<string, AgentSkillSourceMode>;
   providerTimeoutMs?: number | null;
   providerMaxRetries?: number | null;
   providerMaxRetryDelayMs?: number | null;

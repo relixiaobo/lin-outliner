@@ -399,18 +399,13 @@ to the runtime; a row is identified as local by whether its `rootDir` sits under
 a bound directory, and the picked path is resolved in main so that comparison is
 against a canonical path.
 
-A bound directory is a **container** of Skills, exactly like the convention
-directories: Tenon reads the folders inside it, and a `SKILL.md` sitting
-directly in it does not make it a Skill. Picking the folder that *is* a Skill is
-just as natural, so the picker detects that and **asks** whether to add its
-parent instead — rather than the runtime inferring, per write, whether a path
-belongs to the bound root or to something nested under it.
-
-It asks rather than doing it, because the parent is a wider scope than the user
-chose: every sibling folder under it becomes a candidate Skill directory. Saying
-so afterwards is notification, not consent. If the chosen folder's name cannot
-be a Skill identity, the picker refuses and says why instead of adding something
-that would list nothing.
+A bound source has the mode selected at bind time. `container` reads only the
+folders inside it; a direct `SKILL.md` is not treated as that container's own
+Skill. `skill` reads the selected folder itself, so the source scope is exactly
+what the user picked and no sibling folder is implicitly included. This explicit
+choice avoids deciding ownership from ordered guesses at write time. A picker
+selection with an invalid Skill basename is stored as `container`, never as an
+invalid exact Skill.
 
 Container shape does not make an explicitly bound directory a dedicated Skill
 namespace. The loader publishes the physical child roots it successfully
@@ -457,7 +452,27 @@ physical root but does not make a child symlink that escapes the root into Skill
 content. Built-in and managed immutable fences remain authoritative when roots
 overlap.
 
-The runtime still does not infer that a bound directory is itself a Skill.
+Each additional source persists an explicit mode in `agent.skills.sources`:
+
+```jsonc
+{
+  "agent": {
+    "skills": {
+      "sources": [
+        { "path": "~/skills", "mode": "container" },
+        { "path": "~/projects/my-skill", "mode": "skill" }
+      ]
+    }
+  }
+}
+```
+
+`container` loads valid direct-child Skill directories. `skill` loads the
+selected directory itself and uses its basename as the Skill identity. The
+mode is persisted and reused by discovery, reload, write attribution, and
+unbind; no runtime ordering or content-based guess changes it. A `skill` source
+with an invalid basename or an unreadable `SKILL.md` is unavailable, while its
+configured root remains an explicit governed admission target for repair.
 
 Global Skill availability is declared in `config/settings.jsonc` under
 `agent.skills.disabled`, and additional source directories are listed under
@@ -465,9 +480,11 @@ Global Skill availability is declared in `config/settings.jsonc` under
 Skill runtimes after a bounded file-watch debounce. The generated
 `config/status.json` reports the observed source digest and current Host session;
 it is diagnostic output only and is never an editing surface.
-Resolving that meant deciding between container and self ownership at write time
-from ordered guesses; "a bound directory that is itself a Skill" remains a
-separate tracked seam.
+The native picker returns the same explicit mode: a directory containing a
+direct `SKILL.md` is offered as `skill` when its basename is valid; all other
+directories are `container`. Selecting a Skill never widens the binding to its
+parent. Unbinding removes only the persisted pointer and never deletes user
+files.
 
 **A Skill's directory name must be a valid Skill identity**
 (`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`), and that is enforced at **admission**, not

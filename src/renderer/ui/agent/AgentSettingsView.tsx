@@ -5,6 +5,7 @@ import type {
   AgentProviderSettingsView,
   AgentCapabilitySettingsView,
   AgentDelegationSettingsInput,
+  AgentSkillSourceMode,
 } from '../../api/types';
 import { api } from '../../api/client';
 import {
@@ -450,10 +451,21 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
    * for the footer Save. It deliberately does NOT reset the drafts: a directory
    * change is orthogonal to the toggles the user may have pending.
    */
-  async function changeSkillDirectories(next: string[]): Promise<readonly string[]> {
+  async function changeSkillDirectories(next: string[], mode?: AgentSkillSourceMode): Promise<readonly string[]> {
     const mutationKey = 'skill-directories';
     const generation = beginMutation(mutationKey);
-    const updated = await api.agentUpdateRuntimeSettings({ additionalSkillDirectories: next });
+    const currentModes = settings?.agent.additionalSkillSourceModes ?? {};
+    const additionalSkillSourceBindings = mode === undefined
+      ? undefined
+      : next.map((path) => ({
+        path,
+        mode: currentModes[path] ?? mode,
+      }));
+    const updated = await api.agentUpdateRuntimeSettings(
+      additionalSkillSourceBindings === undefined
+        ? { additionalSkillDirectories: next }
+        : { additionalSkillSourceBindings },
+    );
     if (isCurrentMutation(mutationKey, generation)) {
       setSettings((current) => current ? { ...current, agent: updated.agent } : updated);
     }

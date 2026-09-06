@@ -10,7 +10,7 @@ import {
   type ParseError,
 } from 'jsonc-parser';
 import { atomicWriteFileSync, writeJsonFileSync } from '../jsonFileStore';
-import type { AgentDelegationSettings, AgentReasoningLevel } from '../../core/types';
+import type { AgentDelegationSettings, AgentReasoningLevel, AgentSkillSourceBinding } from '../../core/types';
 
 export const FILE_PREFERENCES_RELATIVE_PATH = join('config', 'settings.jsonc');
 export const MAX_FILE_PREFERENCES_BYTES = 256 * 1024;
@@ -25,7 +25,7 @@ export interface FilePreferences {
     readonly memory: { readonly enabled: boolean };
     readonly skills: {
       readonly disabled: readonly string[];
-      readonly sources: readonly string[];
+      readonly sources: readonly AgentSkillSourceBinding[];
     };
     readonly tools: { readonly disabled: readonly string[] };
     readonly provider: {
@@ -244,7 +244,7 @@ function decodeFilePreferences(value: unknown): FilePreferences {
       memory: Object.freeze({ enabled: booleanValue(memory.enabled ?? DEFAULT_FILE_PREFERENCES.agent.memory.enabled, 'settings.agent.memory.enabled') }),
       skills: Object.freeze({
         disabled: stringList(skills.disabled ?? DEFAULT_FILE_PREFERENCES.agent.skills.disabled, 'settings.agent.skills.disabled'),
-        sources: stringList(skills.sources ?? DEFAULT_FILE_PREFERENCES.agent.skills.sources, 'settings.agent.skills.sources'),
+        sources: skillSourceBindings(skills.sources ?? DEFAULT_FILE_PREFERENCES.agent.skills.sources, 'settings.agent.skills.sources'),
       }),
       tools: Object.freeze({ disabled: stringList(tools.disabled ?? DEFAULT_FILE_PREFERENCES.agent.tools.disabled, 'settings.agent.tools.disabled') }),
       provider: Object.freeze({
@@ -386,6 +386,28 @@ function stringList(value: unknown, path: string): readonly string[] {
     throw new Error(`${path} must be a list of non-empty strings`);
   }
   return Object.freeze([...new Set(value)]);
+}
+
+function skillSourceBindings(value: unknown, path: string): readonly AgentSkillSourceBinding[] {
+  if (!Array.isArray(value)) throw new Error(`${path} must be a list of source objects`);
+  const seen = new Set<string>();
+  const bindings: AgentSkillSourceBinding[] = [];
+  for (const [index, item] of value.entries()) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`${path}[${index}] must be an object`);
+    }
+    const record = item as Record<string, unknown>;
+    const keys = Object.keys(record);
+    if (keys.some((key) => key !== 'path' && key !== 'mode')) {
+      throw new Error(`${path}[${index}] contains an unsupported field`);
+    }
+    const sourcePath = nonEmptyString(record.path, `${path}[${index}].path`);
+    const mode = enumValue(record.mode, ['skill', 'container'] as const, `${path}[${index}].mode`);
+    if (seen.has(sourcePath)) throw new Error(`${path} cannot contain duplicate paths`);
+    seen.add(sourcePath);
+    bindings.push(Object.freeze({ path: sourcePath, mode }));
+  }
+  return Object.freeze(bindings);
 }
 
 function nullableNonNegativeInteger(value: unknown, path: string): number | null {

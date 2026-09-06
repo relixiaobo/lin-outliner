@@ -112,6 +112,7 @@ export interface SkillLoadOptions {
   includeUserSkills?: boolean;
   enabledSkills?: readonly string[];
   additionalSkillDirectories?: string[];
+  additionalSkillSourceModes?: Record<string, 'skill' | 'container'>;
   builtInSkillDirectories?: string[];
   builtInSkillRoots?: string[];
   builtInSkills?: BuiltInSkillInput[];
@@ -241,6 +242,12 @@ export class AgentSkillRuntime {
 
   updateAdditionalSkillDirectories(directories: readonly string[]): void {
     if (this.registry.updateAdditionalSkillDirectories(directories)) {
+      this.requestCatalogRefresh();
+    }
+  }
+
+  updateAdditionalSkillSourceModes(modes: Record<string, 'skill' | 'container'>): void {
+    if (this.registry.updateAdditionalSkillSourceModes(modes)) {
       this.requestCatalogRefresh();
     }
   }
@@ -677,6 +684,7 @@ class SkillRegistry {
   private readonly builtInSkillRoots: string[];
   private readonly builtInSkills: BuiltInSkillInput[];
   private additionalSkillDirectories: string[];
+  private additionalSkillSourceModes: Record<string, 'skill' | 'container'>;
   private loadedBoundSkillRoots: LoadedBoundSkillRoot[] = [];
   private loadedSkillSearchDirectories: SkillSearchDirectory[] = [];
   private loaded = false;
@@ -712,6 +720,10 @@ class SkillRegistry {
     );
     this.builtInSkills = options.builtInSkills ?? [...DEFAULT_BUILT_IN_SKILLS];
     this.additionalSkillDirectories = normalizeAdditionalSkillDirectories(options.additionalSkillDirectories, this.root);
+    this.additionalSkillSourceModes = normalizeAdditionalSkillSourceModes(
+      options.additionalSkillSourceModes,
+      this.root,
+    );
     this.provenanceStore = options.provenanceStore;
     this.managedSkillRoots = options.managedSkillRoots;
     this.managedSkillContentRoot = options.managedSkillContentRoot
@@ -865,6 +877,14 @@ class SkillRegistry {
     return true;
   }
 
+  updateAdditionalSkillSourceModes(modes: Record<string, 'skill' | 'container'>): boolean {
+    const normalized = normalizeAdditionalSkillSourceModes(modes, this.root);
+    if (JSON.stringify(this.additionalSkillSourceModes) === JSON.stringify(normalized)) return false;
+    this.additionalSkillSourceModes = normalized;
+    this.reloadAll();
+    return true;
+  }
+
   async resolveSkillTarget(filePath: string): Promise<AgentSkillContentTarget | null> {
     while (true) {
       await this.ensureLoaded();
@@ -873,6 +893,7 @@ class SkillRegistry {
         root: this.root,
         includeUserSkills: this.includeUserSkills,
         additionalSkillDirectories: [...this.additionalSkillDirectories],
+        additionalSkillSourceModes: { ...this.additionalSkillSourceModes },
         loadedBoundSkillRoots: [...this.loadedBoundSkillRoots],
         skillSearchDirectories: [...this.loadedSkillSearchDirectories],
         builtInSkillDirectories: this.builtInSkillDirectories,
@@ -1021,10 +1042,19 @@ class SkillRegistry {
         }
         await this.addLoadedSkill(skill);
       }
-      const roots = await skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);
+      const roots = await skillSearchDirs(
+        this.root,
+        this.includeUserSkills,
+        this.additionalSkillDirectories,
+        this.additionalSkillSourceModes,
+      );
       for (const root of roots) {
-        const { dir, source, policy } = root;
-        const loaded = await loadSkillsFromDir(dir, source);
+        const { dir, source, policy, mode } = root;
+        const loaded = mode === 'skill'
+          ? (isValidSkillName(path.basename(dir))
+            ? [await loadSkillFromRoot(dir, source)].filter((skill): skill is SkillDefinition => skill !== null)
+            : [])
+          : await loadSkillsFromDir(dir, source);
         for (const skill of loaded) {
           const admission = await this.addLoadedSkill(skill);
           if (policy !== 'bound' || !admission.ownsMutableRoot) continue;
@@ -1032,7 +1062,7 @@ class SkillRegistry {
           for (const alias of root.aliases) {
             nextLoadedBoundSkillRoots.push({
               skillName: skill.name,
-              skillRoot: path.join(alias.dir, path.basename(skill.rootDir)),
+              skillRoot: mode === 'skill' ? alias.dir : path.join(alias.dir, path.basename(skill.rootDir)),
               skillRootIdentity,
               skillsDir: alias.dir,
               skillsDirIdentity: root.identity,
@@ -1184,6 +1214,7 @@ export interface SkillSearchDirectory {
   identity: string;
   source: 'user' | 'project';
   policy: SkillSearchDirectoryPolicy;
+  mode: 'skill' | 'container';
   aliases: SkillSearchDirectoryAlias[];
 }
 
@@ -1191,16 +1222,18 @@ async function skillSearchDirs(
   root: string,
   includeUserSkills: boolean,
   additionalSkillDirectories: readonly string[] = [],
+  additionalSkillSourceModes: Readonly<Record<string, 'skill' | 'container'>> = {},
 ): Promise<SkillSearchDirectory[]> {
   const dirs: Array<Omit<SkillSearchDirectory, 'identity' | 'aliases'>> = [
     ...(includeUserSkills ? [
-      { dir: path.join(homedir(), '.agents', 'skills'), source: 'user', policy: 'convention' },
+      { dir: path.join(homedir(), '.agents', 'skills'), source: 'user', policy: 'convention', mode: 'container' },
     ] as Array<Omit<SkillSearchDirectory, 'identity' | 'aliases'>> : []),
-    { dir: path.join(root, '.agents', 'skills'), source: 'project', policy: 'convention' },
+    { dir: path.join(root, '.agents', 'skills'), source: 'project', policy: 'convention', mode: 'container' },
     ...additionalSkillDirectories.map((dir): Omit<SkillSearchDirectory, 'identity' | 'aliases'> => ({
       dir,
       source: isPathInside(dir, root) ? 'project' : 'user',
       policy: 'bound',
+      mode: additionalSkillSourceModes[dir] ?? 'container',
     })),
   ];
   const identities = await Promise.all(dirs.map((entry) => canonicalPathPreservingSuffixAsync(entry.dir)));
@@ -1250,6 +1283,7 @@ export interface SkillDirConfig {
   root: string;
   includeUserSkills: boolean;
   additionalSkillDirectories: readonly string[];
+  additionalSkillSourceModes?: Readonly<Record<string, 'skill' | 'container'>>;
   loadedBoundSkillRoots?: readonly LoadedBoundSkillRoot[];
   skillSearchDirectories?: readonly SkillSearchDirectory[];
   builtInSkillDirectories?: readonly string[];
@@ -1324,7 +1358,12 @@ export async function resolveSkillContentTarget(
     if (filePathIdentity === managedRoot || isPathInside(filePathIdentity, managedRoot)) return null;
   }
   const searchDirs = config.skillSearchDirectories
-    ?? await skillSearchDirs(config.root, config.includeUserSkills, config.additionalSkillDirectories);
+    ?? await skillSearchDirs(
+      config.root,
+      config.includeUserSkills,
+      config.additionalSkillDirectories,
+      config.additionalSkillSourceModes,
+    );
   const candidates: AgentSkillContentTarget[] = [];
 
   // 1. Convention directories are dedicated Skill namespaces. Path shape owns
@@ -1358,9 +1397,25 @@ export async function resolveSkillContentTarget(
   // 3. The definition itself is an admission attempt. Keep exact SKILL.md
   //    creation and repair behind the existing identity/content validators,
   //    without claiming sibling support paths for a Skill that did not load.
-  for (const { policy, aliases } of searchDirs) {
+  for (const { policy, mode, aliases } of searchDirs) {
     if (policy !== 'bound') continue;
     for (const alias of aliases) {
+      if (mode === 'skill') {
+        const skillRoot = path.resolve(alias.dir);
+        if (isPathInside(filePath, skillRoot)) {
+          const relativePath = path.relative(skillRoot, filePath).split(path.sep).filter(Boolean).join('/');
+          if (relativePath) candidates.push({
+            skillName: path.basename(skillRoot),
+            skillRoot,
+            skillsDir: path.dirname(skillRoot),
+            source: alias.source,
+            relativePath,
+            isSkillFile: relativePath === SKILL_FILE_NAME,
+            ownership: 'bound-admission',
+          });
+        }
+        continue;
+      }
       const target = targetInsideSkillsDir(filePath, alias.dir, alias.source, 'bound-admission');
       if (target?.isSkillFile) candidates.push(target);
     }
@@ -1797,6 +1852,19 @@ function normalizeAdditionalSkillDirectories(value: readonly string[] | undefine
     dirs.push(expanded);
   }
   return dirs;
+}
+
+function normalizeAdditionalSkillSourceModes(
+  value: Readonly<Record<string, 'skill' | 'container'>> | undefined,
+  root: string,
+): Record<string, 'skill' | 'container'> {
+  if (!value) return {};
+  const normalized: Record<string, 'skill' | 'container'> = {};
+  for (const [directory, mode] of Object.entries(value)) {
+    const expanded = expandConfiguredPath(directory, root);
+    if (expanded) normalized[expanded] = mode;
+  }
+  return normalized;
 }
 
 function normalizeBuiltInSkillDirectories(value: readonly string[] | undefined, root: string): string[] {
