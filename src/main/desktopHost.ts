@@ -27,6 +27,7 @@ import { resolveToolTaskSupervisorRuntime } from './agent/tasks/toolTaskRuntime'
 import { resolveDelegateCliRuntime } from './delegateRuntime';
 import { expandSkillDirectory } from './agent/capabilities/agentSkills';
 import { isValidSkillName } from './agent/capabilities/agentSkillAuthoring';
+import { analyzeAgentSkills } from './agent/capabilities/agentSkillCuration';
 import {
   decodeMemoryFeatureMode,
   decodeThreadMemoryMode,
@@ -2346,6 +2347,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     }
     case 'agent_list_all_skills':
       return agentHost.skills.list(args.userInvocableOnly === true);
+    case 'agent_skill_curation_report':
+      return analyzeAgentSkills(await agentHost.skills.listCurationCandidates());
     case 'agent_undo_skill_agent_edit': {
       return agentHost.skills.undoAgentEdit(String(args.skillName));
     }

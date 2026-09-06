@@ -227,6 +227,7 @@ export interface AgentSkillsCapability {
     readonly delegation?: { readonly enabled: boolean };
   }): void;
   list(userInvocableOnly: boolean): ReturnType<ReturnType<typeof createManagedSkillsHost>['listPrimarySkills']>;
+  listCurationCandidates(): ReturnType<ReturnType<typeof createManagedSkillsHost>['listPrimaryCurationCandidates']>;
   undoAgentEdit(skillName: string): ReturnType<ReturnType<typeof createManagedSkillsHost>['undoPrimarySkillEdit']>;
   readonly catalog: {
     load: ManagedSkillService['loadCatalog'];
@@ -616,6 +617,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       processEnvironment: (...args) => managedSkills.processEnvironment(...args),
       updateRuntimeSettings: (settings) => managedSkills.updateRuntimeSettings(settings),
       list: (userInvocableOnly) => managedSkills.listPrimarySkills(userInvocableOnly),
+      listCurationCandidates: () => managedSkills.listPrimaryCurationCandidates(),
       undoAgentEdit: (skillName) => managedSkills.undoPrimarySkillEdit(skillName),
       catalog: managedSkills.catalog,
     },

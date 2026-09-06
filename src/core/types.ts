@@ -806,6 +806,36 @@ export interface SkillDefinition {
   body: string;
 }
 
+export type AgentSkillCurationFindingKind = 'broken_resource' | 'exact_duplicate' | 'stale_tool';
+
+export interface AgentSkillCurationFinding {
+  readonly kind: AgentSkillCurationFindingKind;
+  readonly severity: 'error' | 'warning';
+  readonly message: string;
+  readonly evidence: string;
+}
+
+export interface AgentSkillCurationRow {
+  readonly name: string;
+  readonly identity: string | null;
+  readonly source: SkillSourceKind;
+  readonly rootDir: string;
+  readonly currentHash: string | null;
+  readonly included: boolean;
+  readonly exclusionReason: string | null;
+  readonly findings: readonly AgentSkillCurationFinding[];
+}
+
+export interface AgentSkillCurationReport {
+  readonly schemaVersion: 1;
+  readonly generatedAt: number;
+  readonly registryFingerprint: string;
+  readonly rows: readonly AgentSkillCurationRow[];
+  readonly includedCount: number;
+  readonly excludedCount: number;
+  readonly findingCount: number;
+}
+
 export type ManagedSkillCompatibilityStatus = 'compatible' | 'unknown' | 'incompatible';
 
 export const MANAGED_SKILL_ERROR_CODES = [

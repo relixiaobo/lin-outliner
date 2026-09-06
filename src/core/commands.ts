@@ -119,6 +119,7 @@ export const AGENT_COMMANDS = [
   'agent_oauth_cancel',
   'agent_test_provider_connection',
   'agent_list_all_skills',
+  'agent_skill_curation_report',
   // Local Skill directories are pointed at, never copied in: the picker returns
   // a path to store, and unbinding drops the pointer without touching files.
   'agent_pick_skill_directory',

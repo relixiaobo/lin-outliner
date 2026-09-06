@@ -56,6 +56,7 @@ interface ManagedSkillsHost {
   runtimeForTurn(turnId: string): AgentSkillRuntime;
   clearTurn(turnId: string): void;
   listPrimarySkills(userInvocableOnly: boolean): ReturnType<AgentSkillRuntime['listAllSkills']>;
+  listPrimaryCurationCandidates(): ReturnType<AgentSkillRuntime['listCurationCandidates']>;
   undoPrimarySkillEdit(skillName: string): ReturnType<AgentSkillRuntime['listAllSkills']>;
   readonly catalog: {
     load: ManagedSkillService['loadCatalog'];
@@ -219,6 +220,7 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
     listPrimarySkills: (userInvocableOnly) => userInvocableOnly
       ? primaryRuntime.listUserInvocableSkills()
       : primaryRuntime.listAllSkills(),
+    listPrimaryCurationCandidates: () => primaryRuntime.listCurationCandidates(),
     undoPrimarySkillEdit: async (skillName) => {
       await primaryRuntime.undoLastAgentSkillEdit(skillName);
       await Promise.all(

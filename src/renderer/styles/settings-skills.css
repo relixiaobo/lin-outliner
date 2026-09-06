@@ -65,6 +65,48 @@
   padding: var(--space-6);
 }
 
+.settings-skill-curation-dialog {
+  width: min(680px, calc(100vw - 32px));
+}
+
+.settings-skill-curation-list {
+  display: grid;
+  gap: var(--space-3);
+  max-height: min(520px, calc(100vh - 240px));
+  overflow: auto;
+  margin-top: var(--space-5);
+}
+
+.settings-skill-curation-row {
+  display: grid;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--separator);
+  padding: var(--space-3) 0;
+}
+
+.settings-skill-curation-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-skill-curation-row code {
+  color: var(--text-tertiary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-ui-2xs);
+  overflow-wrap: anywhere;
+}
+
+.settings-skill-curation-row p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.settings-skill-curation-finding.is-error { color: var(--status-danger); }
+.settings-skill-curation-finding.is-warning { color: var(--status-warning); }
+
 .managed-skill-update-dialog {
   width: min(680px, calc(100vw - 32px));
 }

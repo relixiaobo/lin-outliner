@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AgentSkillSourceMode, ManagedSkillView, SkillDefinition, SkillSourceKind } from '../../api/types';
+import type {
+  AgentSkillCurationReport,
+  AgentSkillSourceMode,
+  ManagedSkillView,
+  SkillDefinition,
+  SkillSourceKind,
+} from '../../api/types';
 import { api } from '../../api/client';
-import { AddIcon, ICON_SIZE, LoaderIcon, RefreshIcon } from '../icons';
+import { AddIcon, ICON_SIZE, LoaderIcon, RefreshIcon, SearchIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { AnchoredActionMenu, type AnchoredMenuAction } from '../primitives/AnchoredActionMenu';
 import { Button } from '../primitives/Button';
 import { EmptyState } from '../primitives/FeedbackState';
 import { ConfirmDialog } from '../primitives/ConfirmDialog';
+import { Dialog } from '../primitives/Dialog';
 import { IconButton } from '../primitives/IconButton';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
@@ -136,6 +143,8 @@ export function SettingsSkillLibrarySection({
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [acquireOpen, setAcquireOpen] = useState(false);
+  const [curationReport, setCurationReport] = useState<AgentSkillCurationReport | null>(null);
+  const [curationBusy, setCurationBusy] = useState(false);
   // Unbinding is not destructive to files, but it is invisible in scale: the
   // action is offered on EVERY row that came from the directory, and one click
   // removes all of them at once. The confirmation exists to say how many.
@@ -166,6 +175,18 @@ export function SettingsSkillLibrarySection({
       await bindDirectory(picked.path, picked.mode ?? 'container');
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function runCurationReport() {
+    setCurationBusy(true);
+    onError(null);
+    try {
+      setCurationReport(await api.agentSkillCurationReport());
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setCurationBusy(false);
     }
   }
 
@@ -550,6 +571,15 @@ export function SettingsSkillLibrarySection({
         />
       ) : null}
       <IconButton
+        className="rail-toggle"
+        disabled={curationBusy}
+        icon={SearchIcon}
+        iconSize={ICON_SIZE.menu}
+        label={curationBusy ? t.settings.skills.curationRunning : t.settings.skills.curationReport}
+        onClick={() => void runCurationReport()}
+        variant="chrome"
+      />
+      <IconButton
         aria-expanded={addMenuOpen}
         aria-haspopup="menu"
         className="rail-toggle"
@@ -577,6 +607,54 @@ export function SettingsSkillLibrarySection({
 
   return (
     <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
+      {curationReport ? (
+        <Dialog
+          label={t.settings.skills.curationTitle}
+          backdropClassName="confirm-dialog-backdrop"
+          surfaceClassName="managed-skill-dialog settings-skill-curation-dialog"
+          onBackdropMouseDown={() => setCurationReport(null)}
+          onEscapeKeyDown={() => setCurationReport(null)}
+        >
+          <h2 className="confirm-dialog-title">{t.settings.skills.curationTitle}</h2>
+          <p className="confirm-dialog-message">
+            {t.settings.skills.curationSummary({
+              included: curationReport.includedCount,
+              excluded: curationReport.excludedCount,
+              findings: curationReport.findingCount,
+            })}
+          </p>
+          <div className="settings-skill-curation-list">
+            {curationReport.rows.map((row) => (
+              <article className="settings-skill-curation-row" key={row.identity ?? `${row.source}:${row.name}`}>
+                <div className="settings-skill-curation-heading">
+                  <strong>{row.name}</strong>
+                  <span className="settings-chip">
+                    {row.included ? t.settings.skills.curationIncluded : t.settings.skills.curationExcluded}
+                  </span>
+                </div>
+                <code>{row.currentHash ?? t.settings.skills.curationUnhashed}</code>
+                {row.exclusionReason ? <p>{row.exclusionReason}</p> : null}
+                {row.findings.length > 0 ? row.findings.map((finding) => (
+                  <p
+                    className={cx(
+                      'settings-skill-curation-finding',
+                      finding.severity === 'error' ? 'is-error' : 'is-warning',
+                    )}
+                    key={`${finding.kind}:${finding.evidence}`}
+                  >
+                    {finding.message}
+                  </p>
+                )) : row.included ? <p>{t.settings.skills.curationNoFindings}</p> : null}
+              </article>
+            ))}
+          </div>
+          <div className="confirm-dialog-actions">
+            <Button onClick={() => setCurationReport(null)} variant="primary">
+              {t.settings.skills.curationClose}
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
       {pendingUnbind ? (
         <ConfirmDialog
           cancelLabel={t.dialog.cancel}
