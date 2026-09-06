@@ -1,6 +1,6 @@
-import { spawnSync, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { delimiter, join, resolve } from 'node:path';
+import { spawn } from 'node:child_process';
+import { accessSync, constants, statSync } from 'node:fs';
+import { delimiter, resolve } from 'node:path';
 import type { AgentReasoningLevel } from '../../../core/types';
 import type { DelegateExecutionResult, DelegateUsage } from '../../../delegate/contract';
 import type { DelegationRunnerAdapter } from './DelegationPolicyResolver';
@@ -8,21 +8,13 @@ import type { DelegationRunnerAdapter } from './DelegationPolicyResolver';
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const MAX_RESULT_TEXT_BYTES = 1024 * 1024;
 const REASONING_LEVELS: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
-const EXTERNAL_CLI_ENV_KEYS = new Set([
+const COMMON_EXTERNAL_CLI_ENV_KEYS = new Set([
   'COLORTERM',
-  'CODEX_HOME',
-  'CLAUDE_CONFIG_DIR',
   'HOME',
   'LANG',
   'LC_ALL',
   'LC_CTYPE',
   'NO_COLOR',
-  'OPENAI_API_KEY',
-  'OPENAI_BASE_URL',
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_BASE_URL',
-  'OPENCLAW_HOME',
-  'OPENCLAW_API_KEY',
   'PATH',
   'SHELL',
   'TEMP',
@@ -40,12 +32,32 @@ export interface ExternalAgentCliDefinition {
   readonly id: string;
   readonly executable: string;
   readonly args: readonly string[];
+  readonly input?: 'stdin' | 'argument';
+  readonly environmentKeys?: readonly string[];
 }
 
 export const EXTERNAL_AGENT_CLI_DEFINITIONS: readonly ExternalAgentCliDefinition[] = Object.freeze([
-  { id: 'codex', executable: 'codex', args: ['exec', '--json', '-'] },
-  { id: 'claude', executable: 'claude', args: ['-p', '-'] },
-  { id: 'openclaw', executable: 'openclaw', args: ['run', '-'] },
+  {
+    id: 'codex',
+    executable: 'codex',
+    args: ['exec', '--json', '-'],
+    input: 'stdin',
+    environmentKeys: ['CODEX_HOME', 'OPENAI_API_KEY', 'OPENAI_BASE_URL'],
+  },
+  {
+    id: 'claude',
+    executable: 'claude',
+    args: ['-p', '-'],
+    input: 'stdin',
+    environmentKeys: ['CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
+  },
+  {
+    id: 'openclaw',
+    executable: 'openclaw',
+    args: ['agent', '--local', '--json', '--message'],
+    input: 'argument',
+    environmentKeys: ['OPENCLAW_HOME', 'OPENCLAW_API_KEY'],
+  },
 ]);
 
 export function createExternalAgentCliLaunchers(
@@ -58,13 +70,12 @@ export function createExternalAgentCliLauncher(
   definition: ExternalAgentCliDefinition,
   env: NodeJS.ProcessEnv = process.env,
 ): DelegationRunnerAdapter {
-  const childEnvironment = sanitizeExternalCliEnvironment(env);
+  const childEnvironment = sanitizeExternalCliEnvironment(env, definition.environmentKeys);
   const executable = findExecutable(definition.executable, childEnvironment);
-  const version = executable ? probeVersion(executable, childEnvironment) : null;
   const detected = executable !== null;
   return {
     id: definition.id,
-    version,
+    version: null,
     detected,
     ready: detected,
     diagnostic: detected ? null : `${definition.executable} CLI was not found on PATH.`,
@@ -76,24 +87,24 @@ export function createExternalAgentCliLauncher(
       supportedEfforts: REASONING_LEVELS,
     }),
     run: executable
-      ? (input) => runExternalAgentCli(executable, definition.args, childEnvironment, definition.id, version, input)
+      ? (input) => runExternalAgentCli(executable, definition, childEnvironment, input)
       : undefined,
   };
 }
 
 async function runExternalAgentCli(
   executable: string,
-  args: readonly string[],
+  definition: ExternalAgentCliDefinition,
   env: NodeJS.ProcessEnv,
-  launcherId: string,
-  version: string | null,
   input: Parameters<NonNullable<DelegationRunnerAdapter['run']>>[0],
 ): Promise<DelegateExecutionResult> {
   const startedAt = Date.now();
-  if (input.signal.aborted) return executionResult(input, startedAt, Date.now(), 'cancelled', null, 'Agent CLI execution was cancelled before start.', launcherId, version);
+  if (input.signal.aborted) return executionResult(input, startedAt, Date.now(), 'cancelled', null, 'Agent CLI execution was cancelled before start.', definition.id, null);
   const prompt = input.messages.length === 0
     ? input.prompt
     : input.messages.map((message) => message.text).filter((text): text is string => text !== null).join('\n\n');
+  const inputMode = definition.input ?? 'stdin';
+  const args = inputMode === 'argument' ? [...definition.args, prompt] : definition.args;
   const child = spawn(executable, args, {
     cwd: resolveLauncherCwd(input.session),
     env,
@@ -120,18 +131,23 @@ async function runExternalAgentCli(
   child.stderr.on('data', (chunk: Buffer) => append(diagnostics, chunk));
   const terminate = () => terminateProcess(child);
   input.signal.addEventListener('abort', terminate, { once: true });
+  if (input.signal.aborted) terminate();
   child.stdin.on('error', () => undefined);
-  child.stdin.end(prompt);
+  if (inputMode === 'stdin') child.stdin.end(prompt);
+  else child.stdin.end();
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
     child.once('close', (code, signal) => resolveExit({ code, signal }));
     child.once('error', () => resolveExit({ code: null, signal: null }));
   });
   input.signal.removeEventListener('abort', terminate);
-  const text = truncateUtf8(Buffer.concat(output).toString('utf8'), MAX_RESULT_TEXT_BYTES);
+  const boundedText = truncateUtf8WithMarker(Buffer.concat(output).toString('utf8'), MAX_RESULT_TEXT_BYTES);
+  const text = boundedText.value;
   const errorText = truncateUtf8(Buffer.concat(diagnostics).toString('utf8').trim(), 64 * 1024);
   const outcome = input.signal.aborted
     ? 'cancelled'
-    : exit.code === 0
+    : truncated
+      ? 'failed'
+      : exit.code === 0
       ? 'succeeded'
       : exit.signal === 'SIGTERM' || exit.signal === 'SIGKILL'
         ? 'cancelled'
@@ -143,9 +159,9 @@ async function runExternalAgentCli(
     outcome,
     text || null,
     errorText || (truncated ? 'Agent CLI output exceeded the supported limit.' : `Agent CLI exited with code ${String(exit.code)}.`),
-    launcherId,
-    version,
-    truncated,
+    definition.id,
+    null,
+    truncated || boundedText.truncated,
   );
 }
 
@@ -192,23 +208,26 @@ function resolveLauncherCwd(session: Parameters<NonNullable<DelegationRunnerAdap
 
 function findExecutable(name: string, env: NodeJS.ProcessEnv): string | null {
   for (const directory of (env.PATH ?? '').split(delimiter)) {
-    const candidate = join(directory, name);
-    if (existsSync(candidate)) return candidate;
+    const candidate = resolve(directory || process.cwd(), name);
+    try {
+      if (statSync(candidate).isFile()) {
+        accessSync(candidate, constants.X_OK);
+        return candidate;
+      }
+    } catch {
+      // Continue searching the remaining PATH entries.
+    }
   }
   return null;
 }
 
-function sanitizeExternalCliEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function sanitizeExternalCliEnvironment(source: NodeJS.ProcessEnv, providerKeys: readonly string[] = []): NodeJS.ProcessEnv {
+  const allowed = new Set([...COMMON_EXTERNAL_CLI_ENV_KEYS, ...providerKeys.map((key) => key.toUpperCase())]);
   return Object.fromEntries(
     Object.entries(source).filter(([key, value]) => (
-      value !== undefined && EXTERNAL_CLI_ENV_KEYS.has(key.toUpperCase())
+      value !== undefined && allowed.has(key.toUpperCase())
     )),
   );
-}
-
-function probeVersion(executable: string, env: NodeJS.ProcessEnv): string | null {
-  const result = spawnSync(executable, ['--version'], { env, stdio: ['ignore', 'pipe', 'ignore'], timeout: 3_000, encoding: 'utf8' });
-  return result.status === 0 ? result.stdout.trim().slice(0, 128) || null : null;
 }
 
 function terminateProcess(child: ReturnType<typeof spawn>): void {
@@ -218,6 +237,15 @@ function terminateProcess(child: ReturnType<typeof spawn>): void {
     return;
   }
   try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
+}
+
+function truncateUtf8WithMarker(value: string, maxBytes: number): { value: string; truncated: boolean } {
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return { value, truncated: false };
+  const marker = '\n[output truncated]';
+  const markerBytes = Buffer.byteLength(marker, 'utf8');
+  let end = Math.min(value.length, Math.max(0, maxBytes - markerBytes));
+  while (end > 0 && Buffer.byteLength(value.slice(0, end), 'utf8') + markerBytes > maxBytes) end -= 1;
+  return { value: `${value.slice(0, end)}${marker}`, truncated: true };
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

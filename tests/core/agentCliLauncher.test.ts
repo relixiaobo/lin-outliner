@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
@@ -55,7 +55,7 @@ describe('external Agent CLI launchers', () => {
       );
       expect(launcher.detected).toBe(true);
       expect(launcher.ready).toBe(true);
-      expect(launcher.version).toBe('future-agent 99.0');
+      expect(launcher.version).toBeNull();
       const result = await launcher.run?.({
         session: { ...session, policy: { ...session.policy, runnerId: 'future' } },
         turnId: '01dddddd-dddd-7ddd-8ddd-dddddddddddd',
@@ -82,8 +82,79 @@ describe('external Agent CLI launchers', () => {
     expect(launcher.run).toBeUndefined();
   });
 
+  test('passes only the selected provider credentials to a launcher', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-agent-cli-env-'));
+    const executable = join(root, 'agent');
+    await writeFile(executable, '#!/bin/sh\nprintf "%s|%s|%s" "$OPENAI_API_KEY" "$ANTHROPIC_API_KEY" "$CODEX_HOME"\n', 'utf8');
+    await chmod(executable, 0o700);
+    try {
+      const codex = EXTERNAL_AGENT_CLI_DEFINITIONS.find((definition) => definition.id === 'codex');
+      if (!codex) throw new Error('Missing codex definition');
+      const launcher = createExternalAgentCliLauncher(
+        { ...codex, executable: 'agent', args: [] },
+        {
+          PATH: root,
+          OPENAI_API_KEY: 'openai-secret',
+          ANTHROPIC_API_KEY: 'anthropic-secret',
+          CODEX_HOME: '/tmp/codex-home',
+        },
+      );
+      const result = await launcher.run?.({
+        session: { ...session, policy: { ...session.policy, runnerId: 'codex' } },
+        turnId: '01dddddd-dddd-7ddd-8ddd-dddddddddddd',
+        prompt: 'hello',
+        messages: [],
+        signal: new AbortController().signal,
+      });
+      expect(result?.outcome).toBe('succeeded');
+      expect(result?.text).toBe('openai-secret||/tmp/codex-home');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects directories and non-executable PATH entries before spawning', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-agent-cli-path-'));
+    await mkdir(join(root, 'agent'));
+    const file = join(root, 'not-executable');
+    await writeFile(file, '#!/bin/sh\n', 'utf8');
+    await chmod(file, 0o600);
+    try {
+      expect(createExternalAgentCliLauncher({ id: 'directory', executable: 'agent', args: [] }, { PATH: root }).ready).toBe(false);
+      expect(createExternalAgentCliLauncher({ id: 'file', executable: 'not-executable', args: [] }, { PATH: root }).ready).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('marks output beyond the process capture limit as failed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-agent-cli-output-'));
+    const executable = join(root, 'agent');
+    await writeFile(executable, '#!/bin/sh\nhead -c 9000000 /dev/zero\n', 'utf8');
+    await chmod(executable, 0o700);
+    try {
+      const launcher = createExternalAgentCliLauncher({ id: 'large', executable: 'agent', args: [] }, { PATH: `${root}:/bin:/usr/bin` });
+      const result = await launcher.run?.({
+        session: { ...session, policy: { ...session.policy, runnerId: 'large' } },
+        turnId: '01dddddd-dddd-7ddd-8ddd-dddddddddddd',
+        prompt: 'hello',
+        messages: [],
+        signal: new AbortController().signal,
+      });
+      expect(result?.outcome).toBe('failed');
+      expect(result?.partialEvidence).toBe(true);
+      expect(result?.error).toContain('output exceeded');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('ships the known launcher set without making any one vendor a protocol dependency', () => {
     expect(EXTERNAL_AGENT_CLI_DEFINITIONS.map((definition) => definition.id)).toEqual(['codex', 'claude', 'openclaw']);
     expect(EXTERNAL_AGENT_CLI_DEFINITIONS.every((definition) => definition.args.length > 0)).toBe(true);
+    expect(EXTERNAL_AGENT_CLI_DEFINITIONS.find((definition) => definition.id === 'openclaw')).toMatchObject({
+      args: ['agent', '--local', '--json', '--message'],
+      input: 'argument',
+    });
   });
 });

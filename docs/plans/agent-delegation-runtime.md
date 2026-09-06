@@ -772,11 +772,13 @@ model, tools, authentication, extensions, and any vendor-specific session
 protocol. Tenon does not translate each external tool call or pretend that all
 CLIs share a sandbox or resume format.
 
-The launcher descriptor contains only an executable name and native argv. PATH
-discovery and a bounded `--version` diagnostic establish readiness; the version
-is evidence, not a compatibility pin. A missing executable or failed process is
-reported as unavailable/failed with no fallback to another launcher. Multiple
-launchers may be enabled and scheduled concurrently.
+The launcher descriptor contains only an executable name, native argv, and its
+input contract (stdin or a native message argument). PATH discovery checks for
+a regular executable file; it does not synchronously invoke a vendor command on
+the Electron startup path or claim compatibility from a version string. A
+missing executable or failed process is reported as unavailable/failed with no
+fallback to another launcher. Multiple launchers may be enabled and scheduled
+concurrently.
 
 External `read-only` work uses a disposable host-managed worktree because an
 arbitrary CLI has no portable read-only capability. The worktree is discarded
@@ -803,8 +805,8 @@ Settings -> Agent -> Delegation contains:
 - Advanced global, per-Thread outstanding, per-Runner, and local scheduling-pool
   limits.
 
-Startup detects known executable names with a bounded version
-probe. Detection does not authorize use. Turning on the experiment enables the
+Startup detects known executable names without running them. Detection does not
+authorize use. Turning on the experiment enables the
 internal launcher and selects it by default; every external launcher requires its
 own enable action. Disabling a Runner blocks new runs but does not discard an
 active Tool Task. It also blocks continuation of an idle Session bound to that
