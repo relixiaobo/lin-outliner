@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import type { AgentSkillSourceMode, ManagedSkillView, SkillDefinition } from '../../src/core/types';
+import type {
+  AgentSkillCurationReport,
+  AgentSkillSourceMode,
+  ManagedSkillView,
+  SkillDefinition,
+} from '../../src/core/types';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { SettingsSkillLibrarySection } from '../../src/renderer/ui/agent/SettingsSkillLibrarySection';
 
@@ -113,6 +118,61 @@ describe('skill library list', () => {
     ]);
     // A single list group holds them all.
     expect(rendered.document.querySelectorAll('.inset-group').length).toBeGreaterThan(0);
+  });
+
+  test('runs a read-only curation report and exposes no apply action', async () => {
+    const report: AgentSkillCurationReport = {
+      schemaVersion: 1,
+      generatedAt: 1,
+      registryFingerprint: 'a'.repeat(64),
+      rows: [
+        {
+          name: 'agent-authored',
+          identity: 'agent-authored-id',
+          source: 'user',
+          rootDir: '/fixtures/agent-authored',
+          currentHash: 'b'.repeat(64),
+          included: true,
+          exclusionReason: null,
+          findings: [{
+            kind: 'stale_tool',
+            severity: 'warning',
+            message: 'Use `bash` instead.',
+            evidence: 'run_shell',
+          }],
+        },
+        {
+          name: 'hand-authored',
+          identity: 'hand-authored-id',
+          source: 'project',
+          rootDir: '/fixtures/hand-authored',
+          currentHash: 'c'.repeat(64),
+          included: false,
+          exclusionReason: 'No reliable Agent-write provenance is recorded.',
+          findings: [],
+        },
+      ],
+      includedCount: 1,
+      excludedCount: 1,
+      findingCount: 1,
+    };
+    const rendered = await render({
+      skills: [localSkill('agent-authored', 'user')],
+      managed: [],
+      curationReport: report,
+    });
+    const review = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.getAttribute('aria-label') === 'Review Skills');
+    if (!review) throw new Error('Missing Review Skills control');
+    await act(async () => {
+      review.click();
+      await Promise.resolve();
+    });
+    expect(rendered.calls.map((call) => call.command)).toContain('agent_skill_curation_report');
+    expect(rendered.document.body.textContent).toContain('Skill curation report');
+    expect(rendered.document.body.textContent).toContain('Use `bash` instead.');
+    expect(rendered.document.body.textContent).toContain('No reliable Agent-write provenance is recorded.');
+    expect([...rendered.document.querySelectorAll('button')].some((button) => /apply|fix|write/i.test(button.textContent ?? ''))).toBe(false);
   });
 
   test('shows an installed-but-deactivated managed skill as a row that is off', async () => {
@@ -889,6 +949,7 @@ async function render(input: {
   onSkillCountChange?: (count: number) => void;
   onUpdateCountChange?: (count: number) => void;
   catalogEntries?: unknown[];
+  curationReport?: AgentSkillCurationReport;
   pickedDirectory?: string;
   pickedMode?: AgentSkillSourceMode;
   managedSetEnabledFails?: boolean;
@@ -908,6 +969,15 @@ async function render(input: {
       invoke: async (command: string, args?: Record<string, unknown>) => {
         calls.push({ command, ...(args ? { args } : {}) });
         if (command === 'agent_list_all_skills') return input.skills;
+        if (command === 'agent_skill_curation_report') return input.curationReport ?? {
+          schemaVersion: 1,
+          generatedAt: 1,
+          registryFingerprint: '0'.repeat(64),
+          rows: [],
+          includedCount: 0,
+          excludedCount: 0,
+          findingCount: 0,
+        } satisfies AgentSkillCurationReport;
         if (command === 'agent_managed_skill_list') return { ok: true, value: managed };
         if (command === 'agent_managed_skill_check_updates') return { ok: true, value: managed };
         if (command === 'agent_reveal_skill_directory') return { revealed: true };

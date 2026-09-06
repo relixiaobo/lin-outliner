@@ -11,6 +11,7 @@ import type {
   SkillInvocationContextPayload,
 } from '../../../core/agent/protocol';
 import type { SkillDefinition } from '../../../core/types';
+import type { AgentSkillCurationCandidate } from './agentSkillCuration';
 // Runtime-only cycle: agentSkillAuthoring imports the shared resolver/hash from this
 // module; we import its validator for the undo restore path. Neither side touches the
 // other's bindings at module-evaluation time, so the cycle is safe under ESM.
@@ -360,6 +361,10 @@ export class AgentSkillRuntime {
 
   async listAllSkills(): Promise<SkillDefinition[]> {
     return this.registry.listAllSkills();
+  }
+
+  async listCurationCandidates(): Promise<AgentSkillCurationCandidate[]> {
+    return this.registry.listCurationCandidates();
   }
 
   async invokeSkill(input: InvokeSkillInput): Promise<SkillInvocationResult> {
@@ -927,6 +932,16 @@ class SkillRegistry {
     await this.ensureLoaded();
     return [...this.skills.values(), ...this.conditionalSkills.values()]
       .sort((left, right) => compareStableText(left.name, right.name));
+  }
+
+  async listCurationCandidates(): Promise<AgentSkillCurationCandidate[]> {
+    await this.ensureLoaded();
+    return [...this.skills.values(), ...this.conditionalSkills.values()]
+      .sort((left, right) => compareStableText(left.name, right.name))
+      .map((skill) => ({
+        skill,
+        agentHash: this.provenance.get(path.resolve(skill.skillFile))?.agentHash,
+      }));
   }
 
   async resolveSkill(name: string): Promise<SkillDefinition | null> {

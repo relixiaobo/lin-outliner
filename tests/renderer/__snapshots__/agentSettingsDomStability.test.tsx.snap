@@ -906,6 +906,12 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
                   <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M17 8H21.4C21.7314 8 22 7.73137 22 7.4V3" />
                 </svg>
               </button>
+              <button type="button" title="Review Skills" class="icon-button icon-button-chrome rail-toggle" aria-label="Review Skills">
+                <svg data-icon="Search" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M17 17L21 21" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M3 11C3 15.4183 6.58172 19 11 19C13.213 19 15.2161 18.1015 16.6644 16.6493C18.1077 15.2022 19 13.2053 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11Z" />
+                </svg>
+              </button>
               <button type="button" title="Add a skill" class="icon-button icon-button-chrome rail-toggle" aria-label="Add a skill" aria-haspopup="menu" aria-expanded="false">
                 <svg data-icon="Add" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
                   <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 12H12M18 12H12M12 12V6M12 12V18" />

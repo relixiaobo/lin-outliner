@@ -9,6 +9,7 @@ import type {
   AgentProviderSettingsView,
   AgentImageGenerationSettingsInput,
   AgentRuntimeSettingsInput,
+  AgentSkillCurationReport,
   AgentCapabilitySettingsPatchInput,
   AgentCapabilitySettingsView,
   SkillDefinition,
@@ -222,6 +223,8 @@ export const api = {
     command<{ success: boolean; message: string; statusCode?: number }>('agent_test_provider_connection', options),
   agentListAllSkills: () =>
     command<SkillDefinition[]>('agent_list_all_skills'),
+  agentSkillCurationReport: () =>
+    command<AgentSkillCurationReport>('agent_skill_curation_report'),
   /**
    * Opens the native directory picker. Returns null when the user cancels.
    * `mode` is explicit: the selected directory itself or its direct children.

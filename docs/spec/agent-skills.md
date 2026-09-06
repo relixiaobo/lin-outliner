@@ -281,6 +281,23 @@ Undo also reloads the restored bytes and appends a catalog delta before the next
 provider request when the content hash changed. Settings never rewrite Thread
 history.
 
+The Skills page has an explicit **Review Skills** action that generates a
+read-only curation report from the current loaded registry. The report is bound
+to a registry fingerprint containing each Skill identity, source, current
+content hash, and recorded Agent-write hash; it is not a second settings store
+and it never writes, enables, disables, deletes, or rewrites a Skill. Only
+`user` and `project` Skills whose current bytes still match a recorded
+Agent-write hash are included. Built-in and managed Skills, Skills without
+reliable provenance, and Skills changed after the Agent write remain visible as
+excluded rows with an explanation. Deterministic findings currently cover
+missing or root-escaping Markdown resources, exact SKILL.md content duplicates, and
+retired tool names. A report must be regenerated after the registry fingerprint
+changes before any future action could use a suggestion; there is currently no
+automatic apply path. The report does not infer unused Skills because the
+runtime has no complete invocation telemetry, and load/parse failures are
+reported by the existing Skill diagnostics rather than fabricated as curation
+findings.
+
 ### The Skill library
 
 The Skills category is **one list over every source** — `built-in`, `user`,
