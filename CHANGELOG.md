@@ -16,6 +16,8 @@ Entries reference the pull request that introduced them when one exists.
 
 - **Native Agent CLI launchers now run through managed delegation (PR #637)** - user-enabled Codex, Claude Code, and OpenClaw CLIs are discovered on `PATH` and invoked through the generic Tool Task lifecycle with stdin-only prompts, provider-scoped environments, managed worktrees, cancellation, and bounded output. The root Agent learns one vendor-neutral `delegate` Skill; launcher-specific command syntax remains in the Host registry. Verified with typecheck, `docs:check`, 139 focused tests (134 passed, 5 skipped), and whitespace checks.
 
+- **Model connections and defaults now use file-backed Settings (PR #638)** - public `config/settings.jsonc` now owns provider connections, exact model declarations, image defaults, and the qualified application default while credentials, catalogs, probes, and runtime state remain in their domain stores. New Threads honor the configured default and use the shared medium-nearest reasoning rule; CC Switch runtime selection enforces declared model allow-lists. Verified with typecheck, `docs:check`, focused model/provider regression tests, and whitespace checks.
+
 - **Renderer icons now follow semantic object, action, and tool meaning (PR
   #631)** — the app uses a shared Iconoir presentation layer for actions,
   launcher and picker surfaces, attachments, previews, and agent tools. Tool

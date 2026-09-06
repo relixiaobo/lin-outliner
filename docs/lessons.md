@@ -2532,6 +2532,16 @@ task is queued, prove that no child spawned and only one terminal receipt won,
 then run the packaged supervisor and assert that Host-only variables are absent
 while ordinary workspace variables survive.
 
+## Configuration declarations must reach every runtime boundary
+
+PR #638 initially applied model declarations to provider catalogs but left the
+CC Switch runtime resolver on an unfiltered ranked model and used the first
+supported reasoning level for application defaults. **When a public declaration
+becomes an allow-list or default, enforce it at catalog, runtime, and admission
+boundaries, and reuse the shared default-selection helper.** Regression coverage
+must exercise both ranked fallback and an explicitly selected model so a display
+filter cannot mask a runtime bypass.
+
 ## Evidence correlation needs pre-normalization coordinates
 
 PR #627 first correlated Tool Input evidence to a provider response through the
