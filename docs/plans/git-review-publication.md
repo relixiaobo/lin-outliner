@@ -1,41 +1,26 @@
 # Git Review And Publication
 
-**Shape:** One complete feature. It provides an auditable review and explicit
-publication workflow over Git and hosting CLIs without creating a Git ledger.
+**Shape:** One complete feature. It provides auditable review and explicit
+publication over Git and hosting CLIs without creating a Git ledger under the
+[Agent Capability-First Development Workbench](project-development-workbench.md).
 
 ## Goal
 
-Let a developer inspect the exact changes produced by a Thread, select an
-explicit file set, and commit, push, or create a PR with durable evidence and
-safe retry behavior.
-
-## Purpose
-
-Define review and publication independently from context collection and check
-orchestration.
+Let a developer inspect the exact changes produced in one or more Tool Task
+execution addresses, select an explicit file set, and commit, push, or create
+a PR with durable evidence and safe retry behavior.
 
 ## Non-goals
 
-- A native Git implementation or parallel Git ledger.
-- Automatic merge, force-push, or publication without explicit action.
-- Treating a hosting CLI response as authoritative without recording its output.
-
-## Reference implementation
-
-| Reference | Source | Logic to study | Adaptation |
-|---|---|---|---|
-| Codex CLI | `codex-rs/core/src/tools/handlers/apply_patch.rs` and exec hooks | Structured mutation, pre/post lifecycle, and approval boundary | Keep Tenon file commands and capability admission as authority |
-| Codex CLI | `codex-rs/core/src/commands/` and `codex exec` output paths | Scriptable execution and machine-readable handoff | Defer a standalone CLI; use existing Tool Task evidence first |
-| Claude Code | `src/commands/review/`, `src/commands/commit/`, and bundled commit/review Skills | Git workflows expressed through shell, commands, and plugins | Implement as a Skill over Git/hosting CLIs; do not create parallel state |
-| Claude Code | `src/utils/git.ts` and `src/utils/hooks.ts` | Git safety checks and hook lifecycle | Reuse facts but keep publication explicit and Host-audited |
-| Pi | `packages/coding-agent/examples/extensions/git-merge-and-resolve.ts` and `docs/packages.md` | Git workflow as an extension/package with source metadata | Borrow packaging and source visibility; reject unrestricted extension authority |
-| Tenon | `src/main/agent/capabilities/agentLocalTools.ts`, `ToolTaskService.ts` | Existing Bash, file mutation, task output, and capability checks | All Git commands pass through these paths |
+- A native Git implementation or parallel Git state store.
+- Automatic merge, force-push, or publication.
+- Treating a hosting CLI response as authoritative without evidence.
 
 ## Design
 
 ### Review snapshot
 
-The review Skill invokes, through Bash/Tool Tasks:
+The review Skill uses existing Bash/Tool Tasks:
 
 ```text
 git status --short
@@ -44,75 +29,71 @@ git diff [selected paths]
 git diff --cached [selected paths]
 ```
 
-It records staged, unstaged, and untracked paths separately and associates the
-review with the immutable `executionContextRef` (default workspace or explicit
-external directory), context generation, and worktree identity. Untracked files are never
-silently included in a commit selection.
+The snapshot records the execution address, context snapshot, worktree
+identity, and each staged, unstaged, untracked, renamed, deleted, and binary
+path. Every path record contains canonical path, file kind, byte size, and a
+content/diff digest. Untracked files are not silently included in a commit.
 
-### Explicit mutation
+### Explicit commit
 
-Commit input contains an explicit path set and message. Before execution, Host
-acquires the worktree mutation lease and checks that the selected paths still
-match the reviewed state or reports the state changed. The commit receipt
-records SHA, parent SHA, branch, worktree, execution context, and selected paths.
-Unrelated dirty files remain untouched.
+Commit input contains an explicit path set and message. Host acquires the
+canonical worktree mutation claim and recomputes the reviewed snapshot before
+execution. A path, size, file-kind, or digest mismatch rejects the commit and
+requires a refreshed review. This applies to untracked, renamed, deleted, and
+binary files as well as normal tracked diffs. Unrelated dirty files remain
+untouched.
+
+The receipt records commit SHA, parent SHA, branch, worktree identity,
+execution address, context reference, selected paths, and result.
 
 ### Remote publication
 
-Before push or PR creation, show and record:
+Before push or PR creation, show and record remote URL/name, branch, local HEAD,
+upstream state, commit range, PR base/head, and hosting provider. After an
+uncertain push, query the remote branch before retrying. After an uncertain PR
+creation, query by head/base before creating another PR. A discovered remote
+ref or PR becomes result evidence, not a duplicate operation.
 
-```text
-remote URL + remote name + branch
-local HEAD + upstream state + commit range
-PR base/head and hosting provider
-```
-
-After an uncertain push, query the remote branch before retrying. After an
-uncertain PR creation, query by head/base before creating another PR. A found
-remote ref or PR becomes the result evidence; it is not treated as a duplicate
-operation.
-
-The Skill may support `gh` or another hosting CLI selected by the profile. Its
-output is evidence and must be bounded/redacted before persistence. A hosting
-CLI failure never authorizes a fallback provider or force-push.
+The Skill may use `gh` or a profile-selected hosting CLI. Output is bounded and
+redacted before persistence. A hosting failure never authorizes fallback or
+force-push.
 
 ### Non-Git roots
 
-The first generic workflow supports non-Git review as a bounded file diff and
-check report. Commit/push/PR actions are unavailable unless the profile declares
-an explicit publication adapter. No fake SHA or VCS abstraction is introduced.
+Non-Git review supports bounded file diffs and checks. Commit, push, and PR are
+unavailable unless a profile supplies a deterministic publication adapter.
 
 ## Requirements
 
-- **FR-1:** Review records staged, unstaged, and untracked paths with context
-  and worktree identity.
-- **FR-2:** Commit and publication require explicit targets and durable result
-  evidence.
-- **FR-3:** Uncertain remote operations reconcile before retry.
+- **FR-1:** Review records path state, execution address, context, and worktree.
+- **FR-2:** Commit requires explicit paths and a matching reviewed snapshot.
+- **FR-3:** Untracked and binary content is digest-verified before commit.
+- **FR-4:** Publication records durable result evidence and reconciles uncertainty.
+- **FR-5:** No Git or hosting ledger is added beside Git and Tool Task evidence.
 
-## Acceptance Criteria
+## Acceptance criteria
 
-- **AC-1:** Review distinguishes staged, unstaged, and untracked content.
-- **AC-2:** Review, checks, and publication share execution-context/worktree identity.
-- **AC-3:** Commit requires an explicit file set and records its SHA.
-- **AC-4:** Unrelated dirty files remain unchanged.
-- **AC-5:** Push/PR preview shows target remote, branch, and commit range.
-- **AC-6:** Uncertain remote operations reconcile before retry and do not duplicate effects.
-- **AC-7:** No Git or hosting state store is added beside Git and command evidence.
+- **AC-1:** Review distinguishes staged, unstaged, untracked, renamed, deleted,
+  and binary content.
+- **AC-2:** A multi-directory Turn keeps each review snapshot tied to its own
+  execution address and context reference.
+- **AC-3:** Modifying any reviewed untracked or binary file causes commit
+  admission to fail until review is refreshed.
+- **AC-4:** Explicit commit records SHA and leaves unrelated dirty files intact.
+- **AC-5:** Push/PR preview shows remote, branch, and commit range.
+- **AC-6:** Uncertain remote operations reconcile before retry and never
+  duplicate effects.
 
 ## Tests and evidence
 
-Use a temporary Git repository with unrelated dirty files, staged and untracked
-paths, a local remote, and an interrupted publication simulation. Add renderer
-tests for path selection and preview. Add a non-Git fixture proving that review
-works while publication is correctly unavailable.
+Use a temporary Git repository with unrelated dirty files, staged/untracked,
+renamed/deleted, binary paths, a local remote, and interrupted publication.
+Add renderer tests for path selection and preview, plus a non-Git fixture where
+review works and publication is unavailable.
 
 ## Open questions
 
-- The first GitHub profile standardizes on `gh` JSON output; a profile may select
-  another CLI only when it provides equivalent stable fields.
-- Commit requires the reviewed diff hash and selected path set to remain
-  unchanged. A mismatch produces a new review requirement rather than an
-  implicit refresh.
-- Non-Git publication is deferred until one real project supplies a deterministic
-  adapter and a durable external-result reconciliation test.
+- The first GitHub profile standardizes on bounded `gh` JSON output.
+- A reviewed-state mismatch always requires a new review; it is never implicitly
+  refreshed.
+- Non-Git publication remains deferred until a deterministic adapter exists.
