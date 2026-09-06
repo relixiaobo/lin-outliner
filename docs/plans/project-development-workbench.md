@@ -517,9 +517,10 @@ persistence and capability contracts.
 
 ### Unit A: Project context, workspace references, and development Skill
 
-Ship the Project catalog metadata, projectless external-work path,
-profile/context record, refresh, typed protocol/codec shape, the
-`project_bind_request` confirmation path, and one project Skill. Include the
+Ship the Project catalog metadata and worktree records, `defaultWorkspaceRef`,
+projectless external-work path, profile/context record, refresh, typed
+protocol/codec shape, Automation workspace snapshots, root-lineage inheritance,
+the `project_bind_request` confirmation path, and one project Skill. Include the
 Tenon profile and a second project fixture. The unit is complete when a source
 change can be oriented and edited both from a Project Chat and from a
 projectless Chat operating on an explicitly named folder, with generationed
