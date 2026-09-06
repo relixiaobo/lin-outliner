@@ -25,15 +25,16 @@ Default scope includes unchanged `user` or `project` Skills with reliable model-
 write provenance. It visibly excludes built-in, managed, hand-authored, pinned,
 changed-after-provenance, and untrusted external-project content.
 
-Deterministic findings include load/format failures, broken resource references,
-exact duplicates, stale canonical tool names, and unused evidence only when
-canonical invocation data exists. Semantic duplicate suggestions are labeled
-separately and never treated as facts. Each row carries canonical Skill identity,
-current bundle hash, evidence, suggestion, confidence, and exclusion reason.
+Deterministic findings cover broken or root-escaping Markdown resource
+references, exact `SKILL.md` content duplicates, and stale canonical tool names.
+Load and parse failures remain the responsibility of the existing Skill
+diagnostics. The runtime has no complete invocation telemetry, so the report
+does not infer unused Skills or produce semantic duplicate suggestions. Each
+row carries canonical Skill identity, current bundle hash, findings, and an
+exclusion reason when it is outside the report scope.
 
-The report itself cannot mutate. Applying a suggestion is a separate foreground
-file action that rechecks current identity and hash; stale reports fail. Archive
-is preferred to delete and merge output is shown before write.
+The report itself cannot mutate and currently has no apply path. Any future
+foreground action must recheck current identity and hash; stale reports fail.
 
 ### Dependencies and collisions
 
@@ -44,16 +45,16 @@ Library claim.
 ### Verification
 
 Tests cover inclusion/exclusion for every source/provenance state, deterministic
-findings, semantic-label separation, hash staleness, missing telemetry, restart
-of transient report state, and inability to mutate through the analyzer.
-Settings receives narrow/light/dark/keyboard evidence.
+findings, hash staleness, and inability to mutate through the analyzer. The
+Settings surface has focused DOM coverage; the report state remains transient.
 
 ### Acceptance criteria
 
 - The analyzer runs only after explicit user/root action and performs no write.
 - Every included/excluded row explains its evidence and current hash.
-- Deterministic findings and semantic suggestions are visibly distinct.
-- Missing invocation evidence yields `unknown`, never `unused`.
+- Deterministic findings are visibly tied to the included row, while excluded
+  rows explain their provenance or source boundary.
+- Missing invocation evidence does not produce an `unused` finding.
 - Any later foreground action refuses a stale report hash.
 
 ## Open questions
