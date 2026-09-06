@@ -1,6 +1,6 @@
 ---
 name: configuration
-description: Inspect and edit Tenon's declarative configuration files when the user asks to change preferences such as theme, language, or Skill and tool availability; verify the addressed values reached the current Host session.
+description: Inspect and edit Tenon's declarative configuration files when the user asks to change preferences such as theme, language, Skill/tool availability, delegation policy, or root Agent configuration; verify the addressed values reached the current Host session.
 user-invocable: false
 ---
 
@@ -12,12 +12,16 @@ memory reset, data deletion, diagnostics export, or other domain operations;
 route those requests to the owning operation.
 
 1. Read `TENON_CONFIG_DIR` (the directory containing `settings.jsonc`,
-   `settings.schema.json`, and `status.json`), the relevant schema, source file,
-   and current Host status.
+   `settings.schema.json`, and `status.json`) for application/delegation policy.
+   For root Profiles, read the user `agent/config.json` or project
+   `.tenon/agent.json` source and its owner-provided schema/status. Always read
+   the relevant schema, source file, and current Host status before editing.
    Use the live schema and catalog identity; never
    guess a Skill or model name.
 2. Edit the smallest possible field in the public source with ordinary file
-   tools. Preserve comments, ordering, whitespace, and unrelated values.
+   tools. This includes `agent.delegation` and root Profile/presentation fields,
+   but never credentials or private runtime/Session state. Preserve comments,
+   ordering, whitespace, and unrelated values.
    Keep malformed input unchanged unless repair is explicitly requested.
 3. Re-read the source and compute its observed digest. Wait only for the
    bounded accepted/effective status for the addressed values in the current

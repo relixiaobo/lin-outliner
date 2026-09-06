@@ -10,6 +10,7 @@ import {
   type ParseError,
 } from 'jsonc-parser';
 import { atomicWriteFileSync, writeJsonFileSync } from '../jsonFileStore';
+import type { AgentDelegationSettings, AgentReasoningLevel } from '../../core/types';
 
 export const FILE_PREFERENCES_RELATIVE_PATH = join('config', 'settings.jsonc');
 export const MAX_FILE_PREFERENCES_BYTES = 256 * 1024;
@@ -33,6 +34,7 @@ export interface FilePreferences {
       readonly maxRetryDelayMs: number;
       readonly cacheRetention: 'none' | 'short' | 'long';
     };
+    readonly delegation: AgentDelegationSettings;
   };
   readonly updates: { readonly checkAutomatically: boolean };
   readonly models: {
@@ -72,6 +74,15 @@ export const DEFAULT_FILE_PREFERENCES: FilePreferences = Object.freeze({
       maxRetryDelayMs: 60_000,
       cacheRetention: 'short',
     }),
+    delegation: Object.freeze({
+      enabled: false,
+      defaultRunnerId: 'internal',
+      maxConcurrentGlobal: 8,
+      maxConcurrentThread: 4,
+      maxQueuedGlobal: 32,
+      maxQueuedThread: 8,
+      runners: Object.freeze({}),
+    }),
   }),
   updates: Object.freeze({ checkAutomatically: true }),
   models: Object.freeze({ connections: Object.freeze([]), default: 'auto', imageDefault: null }),
@@ -79,11 +90,13 @@ export const DEFAULT_FILE_PREFERENCES: FilePreferences = Object.freeze({
 
 const TOP_LEVEL_KEYS = new Set(['appearance', 'agent', 'updates', 'models']);
 const APPEARANCE_KEYS = new Set(['theme', 'language']);
-const AGENT_KEYS = new Set(['memory', 'skills', 'tools', 'provider']);
+const AGENT_KEYS = new Set(['memory', 'skills', 'tools', 'provider', 'delegation']);
 const MEMORY_KEYS = new Set(['enabled']);
 const SKILLS_KEYS = new Set(['disabled', 'sources']);
 const TOOLS_KEYS = new Set(['disabled']);
 const PROVIDER_KEYS = new Set(['timeoutMs', 'maxRetries', 'maxRetryDelayMs', 'cacheRetention']);
+const DELEGATION_KEYS = new Set(['enabled', 'defaultRunnerId', 'maxConcurrentGlobal', 'maxConcurrentThread', 'maxQueuedGlobal', 'maxQueuedThread', 'runners']);
+const DELEGATION_RUNNER_KEYS = new Set(['enabled', 'model', 'effort', 'maximumAccess', 'timeoutMs', 'maxConcurrent', 'pool', 'maxConcurrentPool']);
 const UPDATES_KEYS = new Set(['checkAutomatically']);
 const MODELS_KEYS = new Set(['connections', 'default', 'imageDefault']);
 const CONNECTION_KEYS = new Set(['providerId', 'baseUrl', 'enabled', 'models']);
@@ -137,6 +150,7 @@ export function writeFilePreferences(userDataDir: string, preferences: FilePrefe
     { path: ['agent', 'provider', 'maxRetries'], value: preferences.agent.provider.maxRetries },
     { path: ['agent', 'provider', 'maxRetryDelayMs'], value: preferences.agent.provider.maxRetryDelayMs },
     { path: ['agent', 'provider', 'cacheRetention'], value: preferences.agent.provider.cacheRetention },
+    { path: ['agent', 'delegation'], value: preferences.agent.delegation },
     { path: ['updates', 'checkAutomatically'], value: preferences.updates.checkAutomatically },
     { path: ['models', 'connections'], value: preferences.models.connections },
     { path: ['models', 'default'], value: preferences.models.default },
@@ -210,6 +224,8 @@ function decodeFilePreferences(value: unknown): FilePreferences {
   exactKeys(tools, TOOLS_KEYS, 'settings.agent.tools');
   const provider = recordOrDefault(agent.provider, DEFAULT_FILE_PREFERENCES.agent.provider, 'settings.agent.provider');
   exactKeys(provider, PROVIDER_KEYS, 'settings.agent.provider');
+  const delegation = recordOrDefault(agent.delegation, DEFAULT_FILE_PREFERENCES.agent.delegation, 'settings.agent.delegation');
+  exactKeys(delegation, DELEGATION_KEYS, 'settings.agent.delegation');
   const updates = recordOrDefault(root.updates, DEFAULT_FILE_PREFERENCES.updates, 'settings.updates');
   exactKeys(updates, UPDATES_KEYS, 'settings.updates');
   const models = recordOrDefault(root.models, DEFAULT_FILE_PREFERENCES.models, 'settings.models');
@@ -237,6 +253,7 @@ function decodeFilePreferences(value: unknown): FilePreferences {
         maxRetryDelayMs: positiveInteger(provider.maxRetryDelayMs ?? DEFAULT_FILE_PREFERENCES.agent.provider.maxRetryDelayMs, 'settings.agent.provider.maxRetryDelayMs'),
         cacheRetention: enumValue(provider.cacheRetention ?? DEFAULT_FILE_PREFERENCES.agent.provider.cacheRetention, ['none', 'short', 'long'], 'settings.agent.provider.cacheRetention'),
       }),
+      delegation: decodeDelegation(delegation),
     }),
     updates: Object.freeze({ checkAutomatically: booleanValue(updates.checkAutomatically ?? DEFAULT_FILE_PREFERENCES.updates.checkAutomatically, 'settings.updates.checkAutomatically') }),
     models: Object.freeze({
@@ -270,6 +287,36 @@ function connectionList(
         : stringList(connection.models, `${path}[${index}].models`),
     });
   }));
+}
+
+function decodeDelegation(value: Record<string, unknown>): AgentDelegationSettings {
+  const runnersValue = value.runners === undefined ? {} : record(value.runners, 'settings.agent.delegation.runners');
+  const runners: Record<string, AgentDelegationSettings['runners'][string]> = {};
+  for (const [runnerId, entry] of Object.entries(runnersValue)) {
+    const runner = record(entry, `settings.agent.delegation.runners.${runnerId}`);
+    exactKeys(runner, DELEGATION_RUNNER_KEYS, `settings.agent.delegation.runners.${runnerId}`);
+    runners[runnerId] = {
+      enabled: booleanValue(runner.enabled ?? false, `settings.agent.delegation.runners.${runnerId}.enabled`),
+      model: runner.model === null || runner.model === undefined ? null : nullableString(runner.model, `settings.agent.delegation.runners.${runnerId}.model`),
+      effort: runner.effort === null || runner.effort === undefined
+        ? null
+        : enumValue(runner.effort, ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] satisfies readonly AgentReasoningLevel[], `settings.agent.delegation.runners.${runnerId}.effort`),
+      maximumAccess: enumValue(runner.maximumAccess ?? 'read-only', ['read-only', 'workspace-write'], `settings.agent.delegation.runners.${runnerId}.maximumAccess`),
+      timeoutMs: positiveInteger(runner.timeoutMs ?? 60 * 60_000, `settings.agent.delegation.runners.${runnerId}.timeoutMs`),
+      maxConcurrent: positiveInteger(runner.maxConcurrent ?? 4, `settings.agent.delegation.runners.${runnerId}.maxConcurrent`),
+      pool: nonEmptyString(runner.pool ?? runnerId, `settings.agent.delegation.runners.${runnerId}.pool`),
+      maxConcurrentPool: positiveInteger(runner.maxConcurrentPool ?? 4, `settings.agent.delegation.runners.${runnerId}.maxConcurrentPool`),
+    };
+  }
+  return {
+    enabled: booleanValue(value.enabled ?? false, 'settings.agent.delegation.enabled'),
+    defaultRunnerId: nonEmptyString(value.defaultRunnerId ?? 'internal', 'settings.agent.delegation.defaultRunnerId'),
+    maxConcurrentGlobal: positiveInteger(value.maxConcurrentGlobal ?? 8, 'settings.agent.delegation.maxConcurrentGlobal'),
+    maxConcurrentThread: positiveInteger(value.maxConcurrentThread ?? 4, 'settings.agent.delegation.maxConcurrentThread'),
+    maxQueuedGlobal: positiveInteger(value.maxQueuedGlobal ?? 32, 'settings.agent.delegation.maxQueuedGlobal'),
+    maxQueuedThread: positiveInteger(value.maxQueuedThread ?? 8, 'settings.agent.delegation.maxQueuedThread'),
+    runners: Object.freeze(runners),
+  };
 }
 
 function modelSelection(value: unknown, path: string): string {

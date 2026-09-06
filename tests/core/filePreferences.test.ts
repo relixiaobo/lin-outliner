@@ -157,6 +157,39 @@ describe('file-backed preferences', () => {
     expect(result.preferences.models.imageDefault).toBe('google/gemini-image');
   });
 
+  test('accepts file-backed delegation policy', async () => {
+    await writeFile(filePreferencesPath(userData), JSON.stringify({
+      agent: {
+        delegation: {
+          enabled: true,
+          defaultRunnerId: 'codex',
+          maxConcurrentGlobal: 3,
+          maxConcurrentThread: 2,
+          maxQueuedGlobal: 10,
+          maxQueuedThread: 4,
+          runners: {
+            codex: {
+              enabled: true,
+              model: null,
+              effort: 'medium',
+              maximumAccess: 'read-only',
+              timeoutMs: 30_000,
+              maxConcurrent: 2,
+              pool: 'codex',
+              maxConcurrentPool: 2,
+            },
+          },
+        },
+      },
+    }));
+    const result = loadFilePreferences(userData);
+    expect(result.preferences.agent.delegation).toMatchObject({
+      enabled: true,
+      defaultRunnerId: 'codex',
+      runners: { codex: { effort: 'medium', maximumAccess: 'read-only' } },
+    });
+  });
+
   test('writes bounded host status with the accepted source digest', async () => {
     const loaded = loadFilePreferences(userData);
     const status = writeFilePreferencesStatus(userData, 'host-test', loaded);

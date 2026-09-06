@@ -124,14 +124,12 @@ interface AgentProviderConfig {
 
 interface ProviderConfigFile {
   activeProviderId?: string;
-  agent?: StoredAgentRuntimeSettings;
   imageGeneration?: StoredImageGenerationSettings;
   providers: AgentProviderConfig[];
 }
 
 interface ProviderStateFile {
   activeProviderId?: string;
-  agent?: StoredAgentRuntimeSettings;
   providers: Array<Pick<AgentProviderConfig, 'providerId' | 'connectionGeneration' | 'connectionCheck'>>;
 }
 
@@ -282,9 +280,8 @@ export async function refreshProviderModels(providerIdInput: string): Promise<Ag
 }
 
 export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
-  const file = await readProviderFile();
-  const stored = normalizeAgentRuntimeSettings(file.agent);
   const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  const stored = normalizeAgentRuntimeSettings({ delegation: preferences.agent.delegation });
   return normalizeAgentRuntimeSettings({
     ...stored,
     additionalSkillDirectories: [...preferences.agent.skills.sources],
@@ -433,13 +430,12 @@ export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInpu
     }
     updateFilePreferences(electron.app.getPath('userData'), updates);
   }
-  await mutateProviderFile((file) => {
-    const currentDelegation = normalizeAgentRuntimeSettings(file.agent).delegation;
-    const delegation = input.delegation
-      ? mergeDelegationSettings(currentDelegation, input.delegation)
-      : currentDelegation;
-    file.agent = { delegation };
-  });
+  if (input.delegation) {
+    const delegation = mergeDelegationSettings(current.delegation, input.delegation);
+    updateFilePreferences(electron.app.getPath('userData'), [
+      { path: ['agent', 'delegation'], value: delegation },
+    ]);
+  }
   return getProviderSettings();
 }
 
@@ -1452,7 +1448,6 @@ async function readProviderFile(): Promise<ProviderConfigFile> {
   const stateByProvider = new Map(state.providers.map((provider) => [provider.providerId, provider]));
   return {
     activeProviderId: state.activeProviderId,
-    agent: state.agent,
     imageGeneration: { defaultModel: preferences.models.imageDefault },
     providers: preferences.models.connections.map((connection) => ({
       providerId: connection.providerId,
@@ -1475,7 +1470,6 @@ async function mutateProviderFile(mutator: (file: ProviderConfigFile) => void | 
       const stateByProvider = new Map(state.providers.map((provider) => [provider.providerId, provider]));
       const file: ProviderConfigFile = {
         activeProviderId: state.activeProviderId,
-        agent: state.agent,
         imageGeneration: { defaultModel: preferences.models.imageDefault },
         providers: preferences.models.connections.map((connection) => ({
           providerId: connection.providerId,
@@ -1509,7 +1503,6 @@ async function mutateProviderFile(mutator: (file: ProviderConfigFile) => void | 
       result = file;
       return {
         activeProviderId: file.activeProviderId,
-        agent: file.agent,
         providers: file.providers.map(({ providerId, connectionGeneration, connectionCheck }) => ({
           providerId,
           connectionGeneration,
@@ -1539,7 +1532,6 @@ function normalizeProviderStateFile(value: unknown): ProviderStateFile {
     : [];
   return {
     ...(typeof raw.activeProviderId === 'string' ? { activeProviderId: raw.activeProviderId } : {}),
-    ...(raw.agent && typeof raw.agent === 'object' ? { agent: raw.agent } : {}),
     providers,
   };
 }

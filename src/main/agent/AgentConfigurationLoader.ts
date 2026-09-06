@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
 import {
   DEFAULT_AGENT_PRESENTATIONS,
   IDENTITY_COLORS,
@@ -216,10 +217,35 @@ export function defaultEffectiveThreadConfiguration(
 function readLayer(path: string, source: 'user' | 'project'): ConfigurationLayer {
   if (!existsSync(path)) return EMPTY_LAYER;
   try {
-    return decodeConfigurationLayer(JSON.parse(readFileSync(path, 'utf8')), source, path);
+    return decodeConfigurationLayer(parseConfigurationSource(readFileSync(path, 'utf8'), path), source, path);
   } catch (error) {
     if (error instanceof AgentConfigurationReadError) throw error;
     throw new AgentConfigurationReadError(path, source, error);
+  }
+}
+
+function parseConfigurationSource(source: string, path: string): unknown {
+  const errors: ParseError[] = [];
+  const parsed = parse(source, errors, { allowTrailingComma: true, disallowComments: false });
+  if (errors.length > 0) throw new Error(`Invalid JSONC: ${errors[0]!.error}`);
+  const tree = parseTree(source, [], { allowTrailingComma: true, disallowComments: false });
+  if (tree) assertUniqueKeys(tree, path);
+  return parsed;
+}
+
+function assertUniqueKeys(node: Node, path: string): void {
+  if (node.type === 'object') {
+    const keys = new Set<string>();
+    for (const child of node.children ?? []) {
+      const key = child.children?.[0];
+      if (child.type !== 'property' || !key || typeof key.value !== 'string') continue;
+      if (keys.has(key.value)) throw new Error(`${path}.${key.value} is duplicated`);
+      keys.add(key.value);
+      const value = child.children?.[1];
+      if (value) assertUniqueKeys(value, `${path}.${key.value}`);
+    }
+  } else {
+    for (const child of node.children ?? []) assertUniqueKeys(child, path);
   }
 }
 

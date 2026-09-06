@@ -65,6 +65,24 @@ describe('AgentConfigurationWriter', () => {
     expect(await readFile(path, 'utf8')).toBe(original);
   });
 
+  test('preserves JSONC comments and unrelated fields during structural edits', async () => {
+    const { writer, loader, userData, cwd } = await fixture();
+    const path = userConfigurationPath(userData);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `{
+      // Keep this user-maintained note.
+      "profiles": { "default": { "developerInstructions": "Before" } },
+      "defaultProfile": "default"
+    }\n`, 'utf8');
+
+    await writer.writeProfile('user', cwd, 'default', { developerInstructions: 'After' });
+
+    const source = await readFile(path, 'utf8');
+    expect(source).toContain('// Keep this user-maintained note.');
+    expect(source).toContain('"defaultProfile": "default"');
+    expect(loader.resolveProfile(undefined, cwd).developerInstructions).toEqual(['After']);
+  });
+
   test('rejects invalid presentation before changing the file', async () => {
     const { writer, userData, cwd } = await fixture();
     await expect(writer.writeProfile('user', cwd, 'default', {}, { color: 'chartreuse' }))

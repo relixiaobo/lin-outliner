@@ -255,8 +255,8 @@ or compatibility readers.
 A named `ConfigurationProfile` supplies root Thread defaults. User definitions
 load from `<userData>/agent/config.json`; project definitions load from
 `<cwd>/.tenon/agent.json` and replace same-name user definitions. Both exact-key
-JSON files may define `defaultProfile`, `profiles`, and
-`presentationOverrides`. Invalid JSON, unknown fields,
+JSONC files may define `defaultProfile`, `profiles`, and
+`presentationOverrides`. Invalid JSONC, unknown fields,
 invalid names, duplicate capability identities, mismatched provider-qualified
 models, and unsupported reasoning effort values fail closed.
 

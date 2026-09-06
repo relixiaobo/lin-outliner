@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { IDENTITY_COLORS, MAIN_PRESENTATION_KEY, type IdentityColor } from '../../core/agent/configuration';
 import type { AgentProfileDraft } from '../../core/types';
+import { applyEdits, modify as jsoncModify, parse, type ParseError } from 'jsonc-parser';
 import { atomicWriteFile } from '../jsonFileStore';
 import {
   decodeConfigurationLayer,
@@ -59,7 +60,9 @@ export class AgentConfigurationWriter {
       if (original.trim().length > 0) {
         let parsed: unknown;
         try {
-          parsed = JSON.parse(original);
+          const errors: ParseError[] = [];
+          parsed = parse(original, errors, { allowTrailingComma: true, disallowComments: false });
+          if (errors.length > 0) throw new Error(`Invalid JSONC: ${errors[0]!.error}`);
         } catch (error) {
           throw new Error(`Cannot edit ${path}: ${errorText(error)}`);
         }
@@ -77,7 +80,17 @@ export class AgentConfigurationWriter {
     } catch (error) {
       throw new Error(`Refused: ${errorText(error)}`);
     }
-    await atomicWriteFile(path, `${JSON.stringify(next, null, 2)}\n`);
+    let source = existsSync(path) ? readFileSync(path, 'utf8') : '{}';
+    const currentKeys = new Set(Object.keys(current));
+    const nextKeys = new Set(Object.keys(next));
+    for (const key of new Set([...currentKeys, ...nextKeys])) {
+      if (JSON.stringify(current[key]) === JSON.stringify(next[key])) continue;
+      const edits = jsoncModify(source, [key], next[key], {
+        formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' },
+      });
+      source = applyEdits(source, edits);
+    }
+    await atomicWriteFile(path, source.endsWith('\n') ? source : `${source}\n`);
   }
 }
 
