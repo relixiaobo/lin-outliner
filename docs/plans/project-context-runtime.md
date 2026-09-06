@@ -1,7 +1,7 @@
 # Project Context Runtime
 
-**Shape:** One complete feature. It introduces Project identity, task-target
-context, profile refresh, and the provider-context contract used by later
+**Shape:** One complete feature. It introduces Project identity, default
+workspace references, context refresh, and the provider-context contract used by later
 workflow plans.
 
 ## Goal
@@ -43,21 +43,21 @@ primaryRootRealpath
 primaryWorktreeRealpath (or primaryRootRealpath for non-Git)
 vcsKind
 gitCommonDir and gitDir when Git is present
-branch and HEAD observation
-explicit auxiliary roots (zero or more), each with its own canonical identity
+branch, HEAD, and dirty-state observations (context snapshot only)
+explicit external execution roots are captured per Tool Task when needed
 ```
 
-The primary root/worktree identity is the project's identity. Its change is
+The primary root/worktree identity is the Project's identity. Its change is
 mutation-blocking. Branch, HEAD, dirty state, and instruction content changes
 create a new context generation but do not silently rebind the Thread. An
-auxiliary root is an explicitly admitted execution target for a task; it does
+external root is an explicitly admitted execution context for a Tool Task; it does
 not become the project's identity or inject its instructions into every Turn.
 The identity comparison must use canonical paths and persisted Git worktree
 metadata; it must not infer identity from display text or the current process
 CWD alone. Before the first Turn is admitted, the pending primary binding may
 be replaced. After a Turn exists, changing the primary project is a new Thread
-operation; adding or removing an auxiliary root is a separate Host mutation
-with its own receipt.
+operation; capturing an external execution context is a Tool Task fact, not a
+Thread-owned collection.
 
 ### Project catalog ownership
 
@@ -79,11 +79,12 @@ unavailable; it never fabricates current branch, dirty state, or execution
 results. Deleting a Project removes relationship and presentation metadata,
 while Thread deletion follows the existing evidence-retention policy.
 
-`Thread.cwd` remains the protocol's default working directory: the managed
-workspace for a projectless Chat and the primary root/worktree for a Project
-Chat. It is not a model argument and is not the complete task scope. The Host
-resolves an `executionContextRef` for each Tool Task when an auxiliary or
-projectless target is active.
+`Thread` does not store a second directory fact. It stores one
+`defaultWorkspaceRef`, resolved by the Host as either a managed workspace or a
+Project workspace. The effective process CWD is derived from that workspace at
+execution time. A Tool Task stores its own immutable execution context when it
+uses an explicitly named external directory; it never mutates the Thread's
+default workspace.
 
 ### Profile
 
@@ -110,59 +111,70 @@ Every Chat receives an execution workspace, but that workspace is not
 necessarily a Project. A no-project Chat uses a Tenon-managed workspace for
 scratch work; only a user-selected external root (or a created/cloned root)
 becomes a durable Project. The user-facing concept for development is a
-**primary working folder** plus optional, explicit task targets. The process
-CWD, accessible roots, and project context are related but distinct:
+**current workspace**. The process CWD is derived from that workspace, while
+Project context and per-task execution context remain separate:
 
 ```text
-project context   -> primary identity, instructions, profile, checks
-accessible roots  -> primary root + explicitly admitted auxiliary roots
-execution target  -> the root and cwd recorded for one Tool Task
+Project           -> durable identity, instructions, profile, checks
+Thread workspace  -> `defaultWorkspaceRef` to managed or Project workspace
+Tool Task         -> actual cwd, optional external root, and captured context
 ```
+
+`defaultWorkspaceRef` is the only workspace selection stored on a Thread:
+
+```text
+{ kind: "managed", threadId }
+| { kind: "project", projectId, worktreeId? }
+```
+
+The Host resolves the ref to an effective CWD for each Tool Task. An external
+directory named during a request is recorded only in that Tool Task's
+`executionContext`; it is never added to the Thread as another workspace.
 
 There are two Host execution modes behind that simple concept:
 
-| User action | User-facing working folder | Host binding |
+| User action | User-facing workspace | Host binding |
 |---|---|---|
 | Create an ordinary Thread without opening a project | A Tenon-managed workspace | A disposable or retained `<userData>/agent/workspaces/<thread-id>` directory |
-| Open a project | The selected project directory (or its selected Git worktree) | An explicit-cwd root bound to the external directory |
+| Open a project | The selected project directory (or its selected Git worktree) | `defaultWorkspaceRef = { kind: "project", projectId }` |
 | Run an isolated child Agent | The parent project's working folder from the user's perspective | A Host-managed worktree overlay with its own identity and cleanup record |
-| Work on another explicitly named folder | The primary project remains visible | Add an auxiliary root and record the target on each affected Tool Task |
+| Work on another explicitly named folder | The primary project remains visible | Capture an external execution context on each affected Tool Task |
 
-If no project folder is selected, the default managed workspace is sufficient for
-scratch work and generic conversations. When a project is opened, that selected
-folder becomes the Thread's primary working folder, project root, and default
-command directory. A task may target an auxiliary folder when the user names it
-or accepts the Agent's structured request. The UI should not ask the user to
-configure both a project directory and a separate workspace directory unless an
-isolation action explicitly creates a child worktree.
+If no project folder is selected, the Thread references a managed workspace
+derived from its identity. When a project is opened, the Thread references the
+Project workspace; the Project remains the only owner of the external root. A
+Tool Task may use an explicitly named external directory without changing that
+workspace. The UI should not ask the user to configure both a Project directory
+and a separate workspace directory unless an isolation action explicitly creates
+a child worktree.
 
-### No-project task targets
+### No-project external work
 
 A projectless Chat can still complete source work in an explicitly named
-directory. The Host resolves that directory as a task target, validates its
-canonical identity, and records the target on each affected Tool Task. This
+directory. The Host resolves that directory as an execution context for the
+affected Tool Task, validates its canonical identity, and records it on the
+Tool Task. This
 reuses project inspection, profile detection, instruction discovery, checks,
 verification, Git, sandbox, and recovery logic without creating a Project or
 changing the Chat's default managed workspace.
 
-Target context is scoped to the active task or Goal. The Host may collect the
-target repository's bounded instructions and profile for that task's context
+The external context is scoped to the active Tool Task or Goal attempt. The Host
+may collect the target repository's bounded instructions and profile for that context
 payload, but it does not make those instructions global to the Chat or silently
-turn the target into a primary Project. A later unrelated task must name or
-select its target again. Repeated work can be promoted to a Project only after
+turn the external directory into a primary Project. A later unrelated task must name or
+select its directory again. Repeated work can be promoted to a Project only after
 the user expresses durable intent and accepts the binding card.
 
 The managed workspace is retained for the lifetime of the Thread, subject to
 ordinary scratch quotas and cleanup after Thread deletion. It is not silently
-reused as a Project root and is not deleted merely because an external target
+reused as a Project root and is not deleted merely because an external directory
 was used.
 
-The minimum model is intentionally split into two stable values:
+The minimum execution record is intentionally split into two stable values:
 
 ```text
-ExecutionTargetIdentity = {
-  kind: "primary-project" | "task-target",
-  targetKind: "project" | "managed-workspace" | "external-root",
+ExecutionWorkspaceIdentity = {
+  kind: "project" | "managed-workspace" | "external-root",
   projectId?,
   targetId?,
   rootRealpath,
@@ -179,33 +191,49 @@ ContextSnapshotRef = {
 }
 
 executionContextRef = {
-  target: ExecutionTargetIdentity,
+  workspace: ExecutionWorkspaceIdentity,
   snapshot: ContextSnapshotRef
 }
 ```
 
-`ExecutionTargetIdentity` changes only when the actual root/worktree changes;
+`ExecutionWorkspaceIdentity` is an internal Tool Task value and changes only when
+the actual root/worktree changes;
 `ContextSnapshotRef` changes when mutable instructions, profile, VCS facts, or
-checks change. This prevents target identity and context refresh from being
+checks change. This prevents execution identity and context refresh from being
 coupled. Both values are Host-owned and immutable once the Tool Task is
-admitted. A managed workspace uses `targetKind: "managed-workspace"`; an
-explicitly named external directory uses `"external-root"`. A Turn has one
-default context; multiple targets are allowed only through separate Tool
-Tasks, each carrying its own ref. A task target expires with its owning Turn or
-Goal and is retained in the task receipt for replay. It never changes
-`Thread.cwd`, Project membership, or the default context of later Turns.
+admitted. A managed workspace uses `kind: "managed-workspace"`; an explicitly
+named external directory uses `kind: "external-root"`. A Turn has one
+default context; multiple external directories are allowed only through separate
+Tool Tasks, each carrying its own ref. An external execution context expires with its
+owning Tool Task or Goal attempt and is retained in the task receipt for replay.
+It never changes Thread membership or the default workspace of later Turns.
 
-For an auxiliary target, instructions and profile are marked `task-scoped` and
-apply only to Tool Tasks using that ref. Primary Project instructions are not
-silently merged into an auxiliary task, and auxiliary instructions are never
+For an external execution context, instructions and profile are marked
+`task-scoped` and apply only to the affected Tool Task. Primary Project
+instructions are not silently merged into an external task, and external
+instructions are never
 promoted to Chat-wide guidance. If both are relevant, the provider payload names
 the active source and records the other as inactive evidence.
+
+### Execution context admission
+
+An admitted external execution context is an audit and context record, not a
+permission boundary. The Host records its canonical root and fixed command CWD;
+Full Access still permits explicit absolute host paths. A future isolation policy
+may add canonical containment, but it must be a separate capability decision and
+cannot be inferred from this context record.
+
+The Host still supplies the recorded CWD to the process; a model cannot change
+the Thread's default workspace by passing a `cwd` field. File and Bash tools
+retain the existing Full Access semantics for absolute paths. Every Tool Task
+receipt records the explicit execution context so review, verification, and
+recovery cannot mistake one directory for another.
 
 The user-visible task record makes the scope explicit even though the default
 Composer remains projectless:
 
 ```text
-Target: ~/Coding/project-b
+Working directory: ~/Coding/project-b
 Operation: edit files and run tests
 Project binding: none
 ```
@@ -214,7 +242,7 @@ Project binding: none
 
 Project setup is progressive disclosure, not a configuration wizard. The user
 chooses a directory from the "Open project" action; Tenon immediately creates
-an explicit-cwd development Thread and focuses the composer. Root/worktree
+an explicit Project workspace Thread and focuses the composer. Root/worktree
 resolution, instruction discovery, and profile detection happen in the
 background while the user can start an inspection request.
 
@@ -236,14 +264,14 @@ project and execution scope; the row below carries only controls that are
 selectable or currently relevant.
 The scope menu contains
 the current primary project and explicit actions such as `Use another folder
-for this task`, `New project`, and `New chat in project`. A different primary
+once`, `New project`, and `New chat in project`. A different primary
 project never silently replaces the current Chat. When a task uses an
-auxiliary root, the Composer shows a second line such as `Target: project-b ·
-Running`; the primary project label remains unchanged.
+external execution context, the task card shows its working directory;
+the primary project label remains unchanged.
 
 When no Project is bound, the default Composer has no project status row. The
 managed workspace remains an internal execution detail. A `+` button opens the
-add menu for files, an existing project folder, a one-off task folder, project
+add menu for files, an existing project folder, a folder to use once, project
 creation, and Git clone. If a project becomes unavailable or needs rebinding,
 the status row reappears because the user has an action to take.
 
@@ -261,7 +289,7 @@ it:
 
 An ordinary request to fix, inspect, or update a named project is a task request,
 not a binding request. The Agent should use the named directory as an explicit
-execution target and keep the Chat projectless. Binding is considered only when
+execution context and keep the Chat projectless. Binding is considered only when
 the user clearly asks for a durable project relationship (for example, "add
 this project", "start a project here", or "use this project for future chats")
 and the Agent has a canonical root. When intent is uncertain, the Agent handles
@@ -323,7 +351,7 @@ Tenon's Agent pane is narrower than the reference clients, so the context row
 must be container-responsive and single-line. It uses this priority order:
 
 ```text
-blocking state -> primary project -> current task target -> branch -> host
+blocking state -> primary project -> current workspace -> branch -> host
 ```
 
 At the widest pane, the row may show:
@@ -340,14 +368,14 @@ As the pane narrows, it collapses without wrapping:
 
 At the minimum supported width, the project control keeps only the folder icon,
 an ellipsized project name, and a blocking-state indicator. Path, branch, host,
-dirty details, sandbox enforcement, and auxiliary-target identity move into the
+dirty details, sandbox enforcement, and external-directory identity move into the
 anchored context popover. The control uses a container query based on the Agent
 pane width rather than the window viewport, and its height remains fixed so the
 composer never jumps when labels collapse.
 
-An auxiliary target is shown as a short, temporary target badge only while its
-Tool Task is active; the transcript task card remains the authoritative detailed
-record. The model is an independently collapsible control in the lower row.
+An external execution context is shown only in the active Tool Task card; it is
+not a persistent Composer control. The model is an independently collapsible
+control in the lower row.
 When text labels no longer fit, it uses familiar icons with
 accessible labels and tooltips; no control may wrap into the send button or
 change neighboring layout.
@@ -399,7 +427,7 @@ workspace is an internal runtime context for a particular task.
 New chat
   -> no project: ordinary conversation in a managed workspace
   -> attach project: development chat bound to the selected primary folder
-  -> target another folder: same chat, explicit auxiliary root for that task
+  -> another folder: same chat, one-off external execution context
 ```
 
 The existing global `New chat` flow therefore remains valid. A user who only
@@ -429,8 +457,8 @@ workspace, attaching an external primary project starts a linked `New project
 chat` instead of replacing the primary root. If a chat is already bound to a
 project, selecting a different primary project never rewrites that chat; the UI
 offers `New project chat`, and the original chat remains readable and bound to
-its original context. An explicitly named auxiliary root is different: it can
-be admitted for a bounded task while the primary project remains unchanged.
+its original context. An explicitly named external directory is different: it
+can be recorded for one Tool Task while the primary project remains unchanged.
 This keeps Claude Code-style cross-directory work possible without mixing
 project identity or silently importing another project's instructions.
 
@@ -451,13 +479,13 @@ The complete user-facing decision table is:
 | User situation | Default action | Durable effect |
 |---|---|---|
 | New chat, no source work | Chat in managed workspace | No Project |
-| Names a folder for a one-off fix | Resolve task target and run the task | Tool Task target only |
+| Names a folder for a one-off fix | Capture external execution context and run the task | Tool Task context only |
 | Chooses `+ -> Open project` | Attach selected folder | Project + Chat membership |
 | Says "use this project for future chats" | Agent calls `project_bind_request`; user accepts card | Project + Chat membership |
 | Chooses `New chat in project` | Create a new Chat under that Project | New Thread, same Project identity |
 | Chooses global `New chat` | Create an unrelated projectless Chat | No inherited Project |
 | Chooses `+ -> Clone` or `Create` | Run user-started Tool Task, then open result | New Project Chat |
-| Names a second folder inside a Project Chat | Use an auxiliary task target | Primary Project unchanged |
+| Names a second folder inside a Project Chat | Capture an external execution context | Primary Project unchanged |
 | Requests another primary Project mid-chat | Offer `Open in new chat` | Original Chat unchanged |
 | Same worktree is already mutating | Return `worktree_busy` | User chooses isolated worktree or waits |
 
@@ -465,8 +493,8 @@ The complete user-facing decision table is:
 
 The Agent may initiate project setup only when the user expresses durable
 project intent in chat, but it does not directly mutate the Thread's binding.
-For a one-off request to fix or inspect a named folder, it creates an explicit
-task target and keeps the Chat projectless. For durable intent, it invokes the
+For a one-off request to fix or inspect a named folder, it captures an explicit
+execution context and keeps the Chat projectless. For durable intent, it invokes the
 single model-facing `project_bind_request` capability with a canonical candidate
 path and a reason. The capability creates only a pending Host action; it cannot
 bind, create, clone, grant access, or run a command. The Host canonicalizes the
@@ -478,10 +506,10 @@ or create: those remain explicit UI actions or existing Bash/Tool Task
 operations with their existing receipts.
 
 The same rule applies to an existing folder named during a task. The Agent may
-request an auxiliary root with a target path and intended operation (for
+request an external execution context with a path and intended operation (for
 example, "update the sibling repository"). The Host validates and admits that
-root, records its identity, and scopes it to the requested Tool Task. It does
-not change the primary project or load the auxiliary root's instructions as
+context, records its identity, and scopes it to the requested Tool Task. It does
+not change the primary project or load the external directory's instructions as
 global context. Repeated work can be promoted to a new project chat.
 
 For example:
@@ -552,6 +580,13 @@ Add the smallest schema to `src/core/agent/protocol.ts` and its matching codec i
 source counts, and distinguish `unknown`, `degraded`, and `ready` collection
 states. Add a context dependency path in `src/main/agent/context/contextDependencies.ts`.
 
+Because Tenon is pre-release, this feature removes the persisted `Thread.cwd`
+field rather than adding a compatibility alias. Thread creation persists
+`defaultWorkspaceRef`; runtime adapters derive an effective CWD before invoking
+file or process tools. The codec, metadata schema, fork/delegation paths, and
+diagnostics must reject the retired field and userData is reset when this format
+lands. No reader may reconstruct a workspace from a stale cwd value.
+
 The protocol addition is limited to the `executionContextRef`, context payload,
 and `project_bind_request` request/result envelope. The request is never accepted
 as evidence of a completed bind: the Host publishes a pending card, waits for
@@ -566,29 +601,28 @@ Host generation.
 
 ### Shared worktree concurrency
 
-Read-only Tool Tasks may run concurrently. The Tool Task runtime acquires a
-short-lived durable lease keyed by canonical worktree identity before any
-mutating file or shell task starts. The lease is represented by the existing
-Tool Task record, so it adds no execution ledger. A second mutation on the same
-worktree fails fast with `worktree_busy` and exposes the owning task plus an
-explicit action to create an isolated child worktree. On completion, stop, or
-restart reconciliation, the lease is released only after the task receipt is
-terminal. The runtime rechecks HEAD, index, and relevant path state at mutation
-admission; the lease prevents concurrent writers but does not hide out-of-band
-edits.
+Read-only Tool Tasks may run concurrently. The Tool Task runtime extends the
+existing `tool_task_leases` table with a canonical `worktree_key` and creates a
+partial unique index for active mutation claims. In the same SQLite transaction
+that admits or promotes a lease, it inserts the worktree claim; a uniqueness
+conflict returns `worktree_busy` with the owning task. Worktree claims are never
+queued. Global or pool scheduling may still queue tasks that do not contend for
+that worktree. On completion, stop, or restart reconciliation, the claim is
+released only after the task receipt is terminal. The runtime rechecks HEAD,
+index, and relevant path state at mutation admission; the claim prevents
+concurrent writers but does not hide out-of-band edits.
 
 ## Requirements
 
-- **FR-1:** A Thread stores one canonical root/worktree identity and context
-  generation.
+- **FR-1:** A Thread stores one `defaultWorkspaceRef`; Project or managed
+  workspace identity is resolved from that reference.
 - **FR-2:** A Turn records the exact context payload reference it used.
 - **FR-3:** Refresh preserves prior evidence and projects replacement/clear
   semantics.
-- **FR-4:** Every Tool Task targeting an auxiliary root records the admitted
-  root identity and cannot widen the chat's primary project binding.
-- **FR-5:** A projectless Chat can execute a bounded task against an explicitly
-  admitted target root without creating a Project or changing its managed
-  workspace binding.
+- **FR-4:** Every Tool Task using an external directory records its immutable
+  execution context and cannot change the Chat's default workspace.
+- **FR-5:** A projectless Chat can execute a task against an explicitly named
+  directory without creating a Project or changing its managed workspace.
 - **FR-6:** Project catalog metadata and Chat membership have one owner in the
   existing Agent state database and never duplicate execution or Git facts.
 - **FR-7:** Agent-initiated durable binding uses a typed pending request and
@@ -596,7 +630,8 @@ edits.
 
 ## Acceptance Criteria
 
-- **AC-1:** A Thread stores one canonical root/worktree identity and cannot silently move.
+- **AC-1:** A Thread stores one `defaultWorkspaceRef`; its effective CWD is
+  derived by the Host and cannot silently move.
 - **AC-2:** A Turn records the exact context generation and payload reference it used.
 - **AC-3:** Refresh creates a new immutable generation and preserves earlier evidence.
 - **AC-4:** Instruction additions, replacements, and removals project correctly.
@@ -606,20 +641,20 @@ edits.
 - **AC-7:** Stable-prompt fingerprints do not change when project facts or Skills change.
 - **AC-8:** A Tenon fixture and a second project with a different toolchain replay the same
   context lifecycle.
-- **AC-9:** A task can operate on an explicitly admitted second root while the
-  primary project, instructions, and subsequent default cwd remain unchanged.
+- **AC-9:** A Tool Task can operate on an explicitly named external root while
+  the Project, instructions, and subsequent default workspace remain unchanged.
 - **AC-10:** A projectless Chat can inspect, edit, and verify a second project
   using task-scoped context and receipts while its Project binding remains
   absent.
-- **AC-11:** `Thread.cwd` remains the default root, while every auxiliary or
-  projectless target Tool Task carries an immutable `executionContextRef` with
-  target identity and generation.
+- **AC-11:** The Host derives each Tool Task's effective CWD from the Thread's
+  `defaultWorkspaceRef` or the task's explicit external execution context.
 - **AC-12:** A rejected or expired `project_bind_request` cannot alter Project
-  catalog, Thread membership, or `Thread.cwd`; an accepted request changes all
-  three only through one Host transaction.
+  catalog, Thread membership, or `defaultWorkspaceRef`; an accepted request
+  changes all three only through one Host transaction.
 - **AC-13:** Concurrent Chats cannot mutate the same worktree simultaneously:
-  the Host either queues one mutation behind a durable lease or offers an
-  isolated worktree, and a dirty/changed identity produces a conflict result.
+  the second mutation receives `worktree_busy` and an isolated-worktree action;
+  it is never queued behind the worktree claim, and a dirty/changed identity
+  produces a conflict result.
 
 ## Tests and evidence
 

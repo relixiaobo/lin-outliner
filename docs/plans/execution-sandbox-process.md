@@ -73,7 +73,7 @@ denied hosts, allowed hosts, proxy failure, and cleanup are tested.
 
 The development Skill creates a session name derived from Thread, execution
 target, and worktree, with a collision-resistant suffix. It records command,
-target identity, cwd, environment policy, session name, capture path, owner, and
+workspace identity, cwd, environment policy, session name, capture path, owner, and
 lifecycle state. Bash/Tool Tasks perform:
 
 ```text

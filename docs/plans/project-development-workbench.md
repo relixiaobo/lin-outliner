@@ -6,18 +6,18 @@ Each unit completes a useful workflow; none is a scaffold for a later unit.
 ## Goal
 
 Make Tenon a reliable daily development environment for any software project.
-Given a project root or an explicitly named task target, a developer can orient
+Given a Project workspace or an explicitly named external directory, a developer can orient
 the Agent, make a scoped change, run the project's checks, inspect factual
 results, recover after restart, and hand off a reviewable commit or pull
 request. A durable Project relationship is optional.
 
 ```text
-request -> resolve target -> inspect -> plan -> edit -> check
+request -> resolve workspace/context -> inspect -> plan -> edit -> check
         -> correct within budget -> review -> explicit commit/PR
         -> recover from durable facts when interrupted
 ```
 
-`bind project` is an explicit, infrequent branch of target resolution for a
+`bind project` is an explicit, infrequent branch of workspace resolution for a
 user-requested durable relationship; it is not a prerequisite for source work.
 
 Tenon is the first dogfood project. It is not the product boundary.
@@ -97,9 +97,9 @@ ledger is a core design change and must first demonstrate that all four seams
 are insufficient.
 
 Chat remains the primary interaction entry point. Project is a durable optional
-container for chats and a primary working root; an execution workspace is the
-runtime target for each task. A projectless Chat may use an explicitly admitted
-task target, and a project-bound Chat may use an auxiliary target, without
+container for chats and a primary working root; each Tool Task captures its
+execution context. A projectless Chat may use an explicitly named
+external execution context, and a project-bound Chat may use another directory, without
 changing its primary project.
 
 ## First-principles method
@@ -268,24 +268,25 @@ seams, not copy an internal architecture:
 
 ## Design
 
-### Project and task context
+### Project, workspace, and execution context
 
-Every development Thread has either no primary Project or one primary Project
-context. Any Thread may also have explicit task targets; a project-bound Thread
-calls a target outside its primary root an auxiliary target:
+Every development Thread has one default workspace reference. It may reference
+a Project workspace or a managed workspace. A Tool Task may capture an external
+execution context outside that default workspace:
 
 ```text
 optional primary canonical root + worktree identity + VCS/branch facts
 scoped instruction sources + active project profile + active Skills
 declared checks + refresh generation + degradation reasons
-explicit task targets and per-task execution targets
+default workspace reference and per-task execution contexts
 ```
 
-Detection may propose a task target or profile, but never silently creates or
-changes a primary Project. A missing primary root, changed worktree, or
-ambiguous repository blocks the affected mutation until the developer selects
-or confirms the context. A task target is admitted only for the requested task
-and is recorded separately from the primary Project.
+Detection may propose an external execution context or profile, but never
+silently creates or changes a primary Project. A missing primary root, changed
+worktree, or ambiguous repository blocks the affected mutation until the
+developer selects or confirms the context. An external execution context is
+admitted only for the requested task and is recorded separately from the
+primary Project.
 
 The Host records each instruction and profile source with path, scope, content
 hash, provenance, and capture generation. Profiles declare commands and
@@ -431,11 +432,12 @@ reuses Tool Task receipts, sandbox policy, approval, and process cleanup.
 
 ## Requirements
 
-- **FR-1:** A development Thread persists an optional primary Project identity,
-  its worktree facts, instruction sources, profile, and refresh generation.
+- **FR-1:** A development Thread persists one default workspace reference;
+  Project identity, instructions, profile, and refresh generations belong to the
+  referenced Project context.
 - **FR-2:** Each admitted development Turn carries a content-addressed,
-  provenance-bearing execution-context payload for its primary Project or task
-  target.
+  provenance-bearing execution-context payload for its default workspace or an
+  explicitly named external directory.
 - **FR-3:** Refresh creates a new generation and preserves prior evidence;
   identity changes block mutation until explicit rebinding.
 - **FR-4:** A profile and Skill define orientation, checks, worktree rules,
@@ -491,7 +493,7 @@ reuses Tool Task receipts, sandbox policy, approval, and process cleanup.
 - **AC-16:** Project-specific commands and paths are absent from the global
   prompt and available through profile, Skill, or context evidence.
 - **AC-17:** A projectless Chat can complete a one-off source task against an
-  explicitly admitted target without creating a Project or prompting for a
+  explicitly named external directory without creating a Project or prompting for a
   durable binding.
 - **AC-18:** The same workflow completes a source change in Tenon and a second
   project with a different toolchain or hosting convention.
@@ -513,14 +515,14 @@ persistence and capability contracts.
 
 ## Delivery units
 
-### Unit A: Project context, task targets, and development Skill
+### Unit A: Project context, workspace references, and development Skill
 
-Ship the Project catalog metadata, projectless task-target path,
+Ship the Project catalog metadata, projectless external-work path,
 profile/context record, refresh, typed protocol/codec shape, the
 `project_bind_request` confirmation path, and one project Skill. Include the
 Tenon profile and a second project fixture. The unit is complete when a source
 change can be oriented and edited both from a Project Chat and from a
-projectless Chat targeting an explicitly named folder, with generationed
+projectless Chat operating on an explicitly named folder, with generationed
 context evidence and no parallel execution ledger.
 
 ### Unit B: Verification and bounded correction
@@ -590,7 +592,11 @@ The detailed implementation contracts are split into four plans:
 - [Git review and publication](git-review-publication.md)
 - [Execution sandbox and interactive processes](execution-sandbox-process.md)
 
-- [ ] Re-run the collision self-check before claiming Unit A files.
+- Collision self-check (2026-09-06): `gh pr list` found only #638
+  (`codex/settings-model-configuration`, Settings scope) besides this claim;
+  no target-file overlap was found in `docs/TASKS.md` or the open PR scopes.
+  References to #635, #636, and #637 are dependency coordination points, not
+  overlapping claims. The current plan batch therefore reports **no overlap**.
 - [ ] Land the shared `executionContext` protocol/codec shape before consumers;
       coordinate with the owners of #635, #636, and #637.
 - [ ] Implement Units A-C and update the relevant specifications.

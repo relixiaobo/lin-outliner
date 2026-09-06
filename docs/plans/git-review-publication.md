@@ -45,8 +45,8 @@ git diff --cached [selected paths]
 ```
 
 It records staged, unstaged, and untracked paths separately and associates the
-review with the immutable `executionContextRef` (primary Project or task
-target), context generation, and worktree identity. Untracked files are never
+review with the immutable `executionContextRef` (default workspace or explicit
+external directory), context generation, and worktree identity. Untracked files are never
 silently included in a commit selection.
 
 ### Explicit mutation

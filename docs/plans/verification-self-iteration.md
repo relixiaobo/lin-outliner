@@ -41,8 +41,8 @@ Each declared check produces one immutable result linked to:
 
 ```text
 verificationRunId + checkId + ToolTaskId
-executionContextRef (primary Project or task target) + worktreeIdentity
-targetScope (`primary-project` | `task-target`) + contextGeneration
+executionContextRef (default workspace or external directory) + worktreeIdentity
+contextGeneration
 command + required/optional
 state + exitCode + bounded output reference
 startedAt + finishedAt + degradation reason
@@ -77,7 +77,7 @@ when the project profile declares them safe and the Tool Task scheduler can
 preserve resource bounds. A check that depends on generated files or a prior
 check remains ordered. Every attempt re-reads the current execution context
 before editing and records changed paths after editing. For a projectless Chat,
-the target context remains scoped to the active Goal; verification never creates
+the external execution context remains scoped to the active Goal; verification never creates
 a durable Project as a side effect.
 
 Verification acquires the same worktree mutation lease as ordinary edits. A
