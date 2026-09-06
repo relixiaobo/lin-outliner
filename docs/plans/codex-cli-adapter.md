@@ -37,11 +37,11 @@ canonical launcher command is admitted by the Host into the existing generic
 Tool Task scheduler. The scheduler owns process identity, stdout/stderr,
 progress, stop, timeout, terminal status, artifacts, and root delivery.
 
-The Host never puts task text in the environment or a temporary file. Each
-launcher declares its native input contract: Codex and Claude Code receive task
-bytes through stdin, while OpenClaw receives its task through its native
-`--message` argument. Every launcher runs with the sanitized environment and
-cwd/worktree selected by the Tool Task admission.
+The Host never puts task text in argv, the environment, or a temporary file.
+Every launcher receives task bytes through stdin; OpenClaw uses its native
+`--message-file /dev/stdin` option to consume that stream. Every launcher runs
+with the sanitized environment and cwd/worktree selected by the Tool Task
+admission.
 
 ### Launcher contract
 
@@ -125,7 +125,7 @@ enrichments, not prerequisites for this feature.
 
 Add tests for launcher discovery, multiple enabled launchers, explicit/default
 selection, disabled and unavailable admission, concurrent Internal and external
-tasks, native input delivery, provider-scoped environments, cancellation,
+tasks, stdin delivery, provider-scoped environments, cancellation,
 timeouts, bounded output, and generic result delivery. Verify each configured
 launcher with its own local `--help`/smoke command where available, without
 requiring credentials or a paid provider.

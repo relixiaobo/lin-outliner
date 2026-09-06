@@ -773,7 +773,7 @@ protocol. Tenon does not translate each external tool call or pretend that all
 CLIs share a sandbox or resume format.
 
 The launcher descriptor contains only an executable name, native argv, and its
-input contract (stdin or a native message argument). PATH discovery checks for
+stdin contract. PATH discovery checks for
 a regular executable file; it does not synchronously invoke a vendor command on
 the Electron startup path or claim compatibility from a version string. A
 missing executable or failed process is reported as unavailable/failed with no

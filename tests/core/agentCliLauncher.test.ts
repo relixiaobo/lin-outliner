@@ -149,12 +149,38 @@ describe('external Agent CLI launchers', () => {
     }
   });
 
+  test('keeps a large OpenClaw prompt on stdin instead of argv', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-openclaw-stdin-'));
+    const executable = join(root, 'agent');
+    await writeFile(executable, '#!/bin/sh\nwc -c < /dev/stdin\n', 'utf8');
+    await chmod(executable, 0o700);
+    try {
+      const openclaw = EXTERNAL_AGENT_CLI_DEFINITIONS.find((definition) => definition.id === 'openclaw');
+      if (!openclaw) throw new Error('Missing OpenClaw definition');
+      const launcher = createExternalAgentCliLauncher(
+        { ...openclaw, executable: 'agent' },
+        { PATH: `${root}:/bin:/usr/bin` },
+      );
+      const prompt = 'x'.repeat(300_000);
+      const result = await launcher.run?.({
+        session: { ...session, policy: { ...session.policy, runnerId: 'openclaw' } },
+        turnId: '01dddddd-dddd-7ddd-8ddd-dddddddddddd',
+        prompt,
+        messages: [],
+        signal: new AbortController().signal,
+      });
+      expect(result?.outcome).toBe('succeeded');
+      expect(result?.text?.trim()).toBe(String(prompt.length));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('ships the known launcher set without making any one vendor a protocol dependency', () => {
     expect(EXTERNAL_AGENT_CLI_DEFINITIONS.map((definition) => definition.id)).toEqual(['codex', 'claude', 'openclaw']);
     expect(EXTERNAL_AGENT_CLI_DEFINITIONS.every((definition) => definition.args.length > 0)).toBe(true);
     expect(EXTERNAL_AGENT_CLI_DEFINITIONS.find((definition) => definition.id === 'openclaw')).toMatchObject({
-      args: ['agent', '--local', '--json', '--message'],
-      input: 'argument',
+      args: ['agent', '--local', '--json', '--message-file', '/dev/stdin'],
     });
   });
 });

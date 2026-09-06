@@ -32,7 +32,6 @@ export interface ExternalAgentCliDefinition {
   readonly id: string;
   readonly executable: string;
   readonly args: readonly string[];
-  readonly input?: 'stdin' | 'argument';
   readonly environmentKeys?: readonly string[];
 }
 
@@ -41,21 +40,18 @@ export const EXTERNAL_AGENT_CLI_DEFINITIONS: readonly ExternalAgentCliDefinition
     id: 'codex',
     executable: 'codex',
     args: ['exec', '--json', '-'],
-    input: 'stdin',
     environmentKeys: ['CODEX_HOME', 'OPENAI_API_KEY', 'OPENAI_BASE_URL'],
   },
   {
     id: 'claude',
     executable: 'claude',
     args: ['-p', '-'],
-    input: 'stdin',
     environmentKeys: ['CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
   },
   {
     id: 'openclaw',
     executable: 'openclaw',
-    args: ['agent', '--local', '--json', '--message'],
-    input: 'argument',
+    args: ['agent', '--local', '--json', '--message-file', '/dev/stdin'],
     environmentKeys: ['OPENCLAW_HOME', 'OPENCLAW_API_KEY'],
   },
 ]);
@@ -103,9 +99,7 @@ async function runExternalAgentCli(
   const prompt = input.messages.length === 0
     ? input.prompt
     : input.messages.map((message) => message.text).filter((text): text is string => text !== null).join('\n\n');
-  const inputMode = definition.input ?? 'stdin';
-  const args = inputMode === 'argument' ? [...definition.args, prompt] : definition.args;
-  const child = spawn(executable, args, {
+  const child = spawn(executable, definition.args, {
     cwd: resolveLauncherCwd(input.session),
     env,
     shell: false,
@@ -133,8 +127,7 @@ async function runExternalAgentCli(
   input.signal.addEventListener('abort', terminate, { once: true });
   if (input.signal.aborted) terminate();
   child.stdin.on('error', () => undefined);
-  if (inputMode === 'stdin') child.stdin.end(prompt);
-  else child.stdin.end();
+  child.stdin.end(prompt);
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
     child.once('close', (code, signal) => resolveExit({ code, signal }));
     child.once('error', () => resolveExit({ code: null, signal: null }));

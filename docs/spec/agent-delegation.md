@@ -167,15 +167,15 @@ External launchers invoke their native CLI directly. Tenon does not pin a
 vendor version, read or reconstruct vendor configuration, or promise a common
 CLI sandbox, extension, usage, JSONL, or resume protocol. Readiness checks only
 that the declared PATH entry is a regular executable file; it never runs a
-synchronous vendor probe during host startup. Each launcher declares whether
-the task is delivered through stdin or the vendor's native message argument
-(for example, OpenClaw uses `agent --local --json --message`). A detected
-executable is available for managed process execution; vendor-specific
-capabilities are optional enrichments and do not gate the generic task path.
-Only baseline process variables and the selected launcher's provider-specific
-variables are passed to the child, so one launcher never receives another
-provider's credentials. Authentication, models, tools, and extensions remain
-owned by the external harness.
+synchronous vendor probe during host startup. Task text always travels through
+stdin; OpenClaw consumes that stream through its native
+`agent --local --json --message-file /dev/stdin` option. A detected executable
+is available for managed process execution; vendor-specific capabilities are
+optional enrichments and do not gate the generic task path. Only baseline
+process variables and the selected launcher's provider-specific variables are
+passed to the child, so one launcher never receives another provider's
+credentials. Authentication, models, tools, and extensions remain owned by the
+external harness.
 
 A `workspace-write` launcher task durably records a planned Host-managed
 worktree intent before creation, then records the complete admitted worktree
