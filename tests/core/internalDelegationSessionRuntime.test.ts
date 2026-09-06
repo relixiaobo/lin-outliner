@@ -10,6 +10,7 @@ import type { ThreadService } from '../../src/main/agent/ThreadService';
 import {
   DelegationSessionStore,
   InternalDelegationSessionRuntime,
+  DelegationRunnerRegistry,
   type DelegationPolicySnapshot,
   type DelegationSessionBinding,
 } from '../../src/main/agent/delegation';
@@ -97,6 +98,73 @@ describe('InternalDelegationSessionRuntime', () => {
     expect(fixture.store.readSession(session.sessionId)?.worktree).toEqual({ kind: 'none' });
     expect(fixture.threads.ensuredCwds.at(-1)).toBe(fixture.source);
     expect(await gitOutput(fixture.source, ['worktree', 'list', '--porcelain'])).not.toContain(fixture.userData);
+  });
+
+  test('discards an external read-only worktree after the native launcher returns', async () => {
+    const fixture = await runtimeFixture();
+    const externalRunner = new DelegationRunnerRegistry([{
+      id: 'codex',
+      version: 'native',
+      detected: true,
+      ready: true,
+      enabled: true,
+      diagnostic: null,
+      resolveExplicitModel: async () => ({
+        providerId: 'external',
+        modelId: 'native',
+        effort: 'medium',
+        supportedEfforts: ['medium'],
+      }),
+      run: async (input) => {
+        if (input.session.worktree.kind !== 'active') throw new Error('Expected an isolated worktree');
+        await writeFile(join(input.session.worktree.metadata.path, 'discarded.txt'), 'must not escape\n');
+        return {
+          version: 1,
+          kind: 'delegate.execution-result' as const,
+          sessionId: input.session.sessionId,
+          turnId: input.turnId,
+          outcome: 'succeeded' as const,
+          runner: { id: 'codex', version: 'native' },
+          model: 'external/native',
+          durationMs: 1,
+          text: 'done',
+          error: null,
+          partialEvidence: false,
+          committedMessageSequence: 0,
+          continuation: 'available' as const,
+          usage: { state: 'unknown' as const },
+          artifacts: [],
+          worktree: { disposition: 'none' as const },
+        };
+      },
+    }]);
+    const runtime = new InternalDelegationSessionRuntime(
+      fixture.threads as unknown as ThreadService,
+      fixture.store,
+      new AgentWorktree(fixture.userData),
+      () => 1_000,
+      externalRunner,
+    );
+    const session = fixture.store.createSession({
+      sessionId: '00000000-0000-7000-8000-000000000015' as ThreadId,
+      ownerThreadId: OWNER_ID,
+      policy: {
+        ...policy(fixture.source, false),
+        runnerId: 'codex',
+        runnerVersion: 'native',
+        worktreePolicy: 'dedicated',
+      },
+      now: 1,
+    });
+    await runtime.ensureSession(session);
+    const active = fixture.store.readSession(session.sessionId)!;
+    const result = await runtime.run(runInput(active, '00000000-0000-7000-8000-000000000021'));
+
+    expect(result.outcome).toBe('succeeded');
+    expect(result.worktree).toEqual({ disposition: 'none' });
+    expect(fixture.store.readSession(session.sessionId)?.worktree.kind).toBe('cleaned');
+    expect(await readFile(join(fixture.source, 'tracked.txt'), 'utf8')).toBe('before\n');
+    expect(await gitOutput(fixture.source, ['status', '--porcelain'])).toBe('');
   });
 
   test('refuses owner deletion without closing a writable Session that retains changes', async () => {

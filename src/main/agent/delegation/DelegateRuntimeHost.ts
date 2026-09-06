@@ -76,11 +76,11 @@ export class DelegateRuntimeHost {
 
   commandRuntime(
     resolveScheduling: (
-      command: DelegateStateCommand
+      input: { readonly command: DelegateStateCommand; readonly stdin?: string }
     ) => DelegateRuntimeScheduling | Promise<DelegateRuntimeScheduling>,
   ): DelegateCommandRuntime {
     return {
-      resolveScheduling: async (command) => resolveScheduling(command),
+      resolveScheduling: async (input) => resolveScheduling(input),
       prepare: async (input) => {
         const directEnv = delegateCliProcessEnvironment(input.env, this.options.cli.runAsNode);
         const args = [this.options.cli.cliEntry, ...canonicalDelegateArgv(input.command)];

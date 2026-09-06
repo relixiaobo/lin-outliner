@@ -144,7 +144,7 @@ export interface AgentLocalWorkspaceContext {
 }
 
 export interface DelegateCommandRuntime {
-  resolveScheduling(command: DelegateStateCommand): Promise<{
+  resolveScheduling(input: { readonly command: DelegateStateCommand; readonly stdin?: string }): Promise<{
     readonly scheduling: ToolTaskSchedulingPolicy;
     readonly schedulerLimits: ToolTaskSchedulerLimits;
     readonly timeoutMs: number;
@@ -2450,7 +2450,7 @@ async function startSupervisedBackgroundCommand(
   const env = buildWorkspaceShellProcessEnv(shellEnvironment);
   const delegateRuntime = delegateCommand ? workspace.delegateCommandRuntime : undefined;
   const delegateScheduling = delegateRuntime && delegateCommand
-    ? await delegateRuntime.resolveScheduling(delegateCommand)
+    ? await delegateRuntime.resolveScheduling({ command: delegateCommand, stdin: params.stdin })
     : undefined;
   const task = await service.start({
     ownerThreadId: workspace.threadId!,

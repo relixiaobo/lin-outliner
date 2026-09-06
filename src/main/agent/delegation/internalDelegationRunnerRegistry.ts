@@ -10,10 +10,18 @@ import {
   internalDelegationRunnerAdapter,
   type DelegationModelSelection,
 } from './DelegationPolicyResolver';
+import { createExternalAgentCliLaunchers } from './ExternalAgentCliLauncher';
 
 export function createInternalDelegationRunnerRegistry(): DelegationRunnerRegistry {
   return new DelegationRunnerRegistry([
     internalDelegationRunnerAdapter(resolveConfiguredInternalModel),
+  ]);
+}
+
+export function createDelegationRunnerRegistry(): DelegationRunnerRegistry {
+  return new DelegationRunnerRegistry([
+    internalDelegationRunnerAdapter(resolveConfiguredInternalModel),
+    ...createExternalAgentCliLaunchers(),
   ]);
 }
 

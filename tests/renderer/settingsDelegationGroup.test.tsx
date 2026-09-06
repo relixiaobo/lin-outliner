@@ -59,6 +59,24 @@ describe('SettingsDelegationGroup', () => {
     expect(document.querySelector<HTMLSelectElement>('[aria-label="Reasoning"]')?.textContent).toContain('xhigh - Unavailable');
   });
 
+  test('keeps launcher enablement independent and leaves native CLI model controls disabled', async () => {
+    const calls: AgentDelegationSettingsInput[] = [];
+    const rendered = await render(settings(true), async (input) => { calls.push(input); });
+    const codexSwitch = rendered.document.querySelector<HTMLButtonElement>('[aria-label="Codex CLI Runner enabled"]');
+    const claudeSwitch = rendered.document.querySelector<HTMLButtonElement>('[aria-label="Claude CLI Runner enabled"]');
+    expect(codexSwitch).not.toBeNull();
+    expect(claudeSwitch).not.toBeNull();
+    expect(rendered.document.querySelector<HTMLSelectElement>('[aria-label="Model"]')?.disabled).toBe(false);
+
+    await rendered.click(codexSwitch);
+    await rendered.click(claudeSwitch);
+
+    expect(calls).toEqual([
+      { runners: { codex: { enabled: true } } },
+      { runners: { claude: { enabled: true } } },
+    ]);
+  });
+
   test('serializes two changes issued before React can disable the controls', async () => {
     const calls: AgentDelegationSettingsInput[] = [];
     let releaseFirst: (() => void) | undefined;
@@ -126,8 +144,8 @@ function settings(enabled: boolean): AgentProviderSettingsView {
         maxConcurrentThread: 4,
         maxQueuedGlobal: 32,
         maxQueuedThread: 8,
-        runners: {
-          internal: {
+      runners: {
+        internal: {
             enabled: true,
             model: null,
             effort: null,
@@ -135,12 +153,57 @@ function settings(enabled: boolean): AgentProviderSettingsView {
             timeoutMs: 3_600_000,
             maxConcurrent: 4,
             pool: 'agent-provider',
-            maxConcurrentPool: 4,
-          },
+          maxConcurrentPool: 4,
         },
+        codex: {
+          enabled: false,
+          model: null,
+          effort: null,
+          maximumAccess: 'read-only',
+          timeoutMs: 3_600_000,
+          maxConcurrent: 4,
+          pool: 'codex',
+          maxConcurrentPool: 4,
+        },
+        claude: {
+          enabled: false,
+          model: null,
+          effort: null,
+          maximumAccess: 'read-only',
+          timeoutMs: 3_600_000,
+          maxConcurrent: 4,
+          pool: 'claude',
+          maxConcurrentPool: 4,
+        },
+        openclaw: {
+          enabled: false,
+          model: null,
+          effort: null,
+          maximumAccess: 'read-only',
+          timeoutMs: 3_600_000,
+          maxConcurrent: 4,
+          pool: 'openclaw',
+          maxConcurrentPool: 4,
+        },
+      },
       },
     },
     imageGeneration: {},
+    delegationRunners: [
+      { id: 'internal', version: '1', detected: true, ready: true, enabled: true, diagnostic: null },
+      { id: 'codex', version: 'future', detected: true, ready: true, enabled: false, diagnostic: null },
+      { id: 'claude', version: 'future', detected: true, ready: true, enabled: false, diagnostic: null },
+      { id: 'openclaw', version: null, detected: false, ready: false, enabled: false, diagnostic: 'not found' },
+    ],
+  } as AgentProviderSettingsView & {
+    delegationRunners: readonly {
+      id: string;
+      version: string | null;
+      detected: boolean;
+      ready: boolean;
+      enabled: boolean;
+      diagnostic: string | null;
+    }[];
   };
 }
 

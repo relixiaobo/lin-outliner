@@ -33,9 +33,10 @@ changes are necessary.
 
 - Set `run_in_background: true` for every delegated execution and return control
   immediately. Completion is pushed; do not poll with `task_status`.
-- Use only the Runner and model policy selected in Settings. Never add an
-  override to the command or input. If the user requests another Runner, explain
-  that the default must be changed first.
+- Use only an enabled, detected launcher selected in Settings. Never add a
+  model, effort, executable, or fallback override to the command or input. If
+  the user requests another launcher, set it explicitly in the `runner` field;
+  admission rejects disabled or unavailable launchers.
 - Do not repeat delegated work locally while it is running. Create only the few
   independent tasks allowed by the current Thread's configured outstanding-work
   limit.
@@ -58,6 +59,14 @@ delegate send --task TASK_ID --input - --output json
 - Close an idle Session with `delegate close --session SESSION_ID --output json`
   after its result and any retained worktree have been resolved. Closing does not
   stop active work or integrate files.
+
+External launchers run their native CLI from the user's PATH. Tenon does not
+parse vendor configuration, authentication, model flags, sandbox protocols, or
+resume formats. Multiple launchers may be enabled and run in parallel. For an
+external `read-only` task, Tenon uses a disposable isolated worktree and
+discards its changes at settlement; `workspace-write` retains a patch artifact.
+An external CLI is not a nested Tenon Agent and cannot create more delegation
+Sessions.
 
 Do not run `delegate doctor` or `delegate schema` as speculative preflight. Use
 them only to diagnose an actual admission or validation failure.

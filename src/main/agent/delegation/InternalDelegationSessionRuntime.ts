@@ -14,6 +14,7 @@ import type {
 } from './DelegationCoordinator';
 import type { DelegationSessionBinding } from './delegationSessionTypes';
 import { DelegationSessionStore } from './DelegationSessionStore';
+import type { DelegationRunnerRegistry } from './DelegationPolicyResolver';
 
 /** Runs delegated work through the canonical Thread/Turn executor. */
 export class InternalDelegationSessionRuntime implements DelegationSessionRuntime {
@@ -22,6 +23,7 @@ export class InternalDelegationSessionRuntime implements DelegationSessionRuntim
     private readonly store: DelegationSessionStore,
     private readonly worktrees: AgentWorktree,
     private readonly now: () => number = Date.now,
+    private readonly runners: DelegationRunnerRegistry | null = null,
   ) {}
 
   async ensureSession(session: DelegationSessionBinding): Promise<void> {
@@ -32,6 +34,28 @@ export class InternalDelegationSessionRuntime implements DelegationSessionRuntim
   }
 
   async run(input: DelegationSessionRunInput): Promise<DelegateExecutionResult> {
+    const adapter = this.runners?.adapter(input.session.policy.runnerId);
+    if (input.session.policy.runnerId !== 'internal' && !adapter?.run) {
+      throw new Error(`Delegation Runner is not executable: ${input.session.policy.runnerId}`);
+    }
+    if (input.session.policy.runnerId !== 'internal' && adapter?.run) {
+      const result = await adapter.run(input);
+      if (result.adapterSessionId) {
+        const current = this.store.readSession(input.session.sessionId) ?? input.session;
+        this.store.setAdapterSessionId(
+          current.sessionId,
+          current.revision,
+          result.adapterSessionId,
+          this.now(),
+        );
+      }
+      const workspace = await this.workspaceResult(input.session.sessionId);
+      return {
+        ...result,
+        artifacts: result.artifacts.length > 0 ? result.artifacts : workspace.artifacts,
+        worktree: workspace.result,
+      };
+    }
     const content = input.messages.length === 0
       ? input.prompt
       : input.messages.map((message) => message.text).filter((text): text is string => text !== null).join('\n\n');
@@ -309,6 +333,16 @@ export class InternalDelegationSessionRuntime implements DelegationSessionRuntim
     try {
       const inspection = await this.worktrees.inspect(metadata);
       const current = this.store.readSession(sessionId)!;
+      if (session.policy.access === 'read-only' && session.policy.runnerId !== 'internal') {
+        const settled = await this.worktrees.discard(metadata);
+        this.store.setWorktree(
+          sessionId,
+          current.revision,
+          { kind: 'cleaned', baseRevision: settled.worktree.baseCommit },
+          this.now(),
+        );
+        return { artifacts: [], result: { disposition: 'none' } };
+      }
       if (inspection.changedFiles.length === 0) {
         this.store.setWorktree(sessionId, current.revision, { kind: 'unchanged', metadata }, this.now());
         return {

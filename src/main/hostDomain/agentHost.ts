@@ -39,10 +39,11 @@ import {
   DelegationCoordinator,
   DelegationSessionStore,
   InternalDelegationSessionRuntime,
-  createInternalDelegationRunnerRegistry,
+  createDelegationRunnerRegistry,
   delegationSettingsRevision,
   resolveConfiguredInternalModel,
   schedulingPolicyDigest,
+  type DelegationRunnerReadiness,
 } from '../agent/delegation';
 import { decodeDelegateRunInput, type DelegateStateCommand } from '../../delegate/contract';
 import {
@@ -146,6 +147,7 @@ export interface AgentHost {
   readonly memory: AgentMemoryCapability;
   readonly automations: AgentAutomationCapability;
   readonly skills: AgentSkillsCapability;
+  readonly delegationRunners: () => Promise<readonly DelegationRunnerReadiness[]>;
   projectionChanged(update: ProjectionUpdate, operation?: Operation): void;
   initialize(projection: DocumentProjection, assertActive?: () => void): Promise<void>;
   close(): Promise<void>;
@@ -319,7 +321,14 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   threadReference.set(threadService);
   const delegationDatabase = openSqlite(join(options.userDataDir, 'agent', 'delegation.sqlite'));
   const delegationStore = new DelegationSessionStore(delegationDatabase);
-  const delegationRuntime = new InternalDelegationSessionRuntime(threadService, delegationStore, worktree);
+  const runnerRegistry = createDelegationRunnerRegistry();
+  const delegationRuntime = new InternalDelegationSessionRuntime(
+    threadService,
+    delegationStore,
+    worktree,
+    Date.now,
+    runnerRegistry,
+  );
   const delegationCoordinator = new DelegationCoordinator({
     store: delegationStore,
     runtime: delegationRuntime,
@@ -333,7 +342,6 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     },
   });
   delegationReference.set(delegationCoordinator);
-  const runnerRegistry = createInternalDelegationRunnerRegistry();
   const loadDelegationConfiguration = async () => {
     const settings = (await options.loadRuntimeSettings()).delegation;
     return { settings, revision: delegationSettingsRevision(settings) };
@@ -365,6 +373,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
           parentModel,
           profile: request.profile,
           requestedAccess: request.access,
+          runnerId: request.runner,
         });
         const { scheduling, schedulerLimits: _schedulerLimits, ...capabilityPolicy } = policy;
         return {
@@ -545,7 +554,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       if (context.thread.threadSource !== 'user' || context.thread.parentThreadId !== null) return undefined;
       const { settings } = await loadDelegationConfiguration();
       if (!settings.enabled) return undefined;
-      return delegationHost.commandRuntime(async (command) => {
+      return delegationHost.commandRuntime(async ({ command, stdin }) => {
         const current = await loadDelegationConfiguration();
         const resolved = delegationScheduling(
           command,
@@ -553,6 +562,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
           current.revision,
           delegationStore,
           context.thread.id,
+          stdin,
         );
         return resolved;
       });
@@ -606,6 +616,10 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       undoAgentEdit: (skillName) => managedSkills.undoPrimarySkillEdit(skillName),
       catalog: managedSkills.catalog,
     },
+    delegationRunners: async () => {
+      const settings = (await options.loadRuntimeSettings()).delegation;
+      return runnerRegistry.readiness(settings);
+    },
     projectionChanged: (update, operation) => {
       try {
         memory.projectionChanged({ update, ...(operation ? { operation } : {}) });
@@ -645,6 +659,7 @@ function delegationScheduling(
   configurationRevision: string,
   store: DelegationSessionStore,
   ownerThreadId: string,
+  stdin?: string,
 ): {
   readonly scheduling: {
     readonly pool: string;
@@ -668,9 +683,12 @@ function delegationScheduling(
         ? command.target.id
         : store.settlementForTask(command.target.id)?.sessionId ?? null;
   const targetSession = targetSessionId ? store.readSession(targetSessionId) : null;
+  const requestedRunnerId = command.name === 'run' && stdin
+    ? readRequestedRunnerId(stdin)
+    : undefined;
   const runnerId = targetSession?.ownerThreadId === ownerThreadId
     ? targetSession.policy.runnerId
-    : settings.defaultRunnerId;
+    : requestedRunnerId ?? settings.defaultRunnerId;
   const runner = settings.runners[runnerId];
   return {
     scheduling: {
@@ -687,4 +705,13 @@ function delegationScheduling(
     },
     timeoutMs: runner?.timeoutMs ?? 60_000,
   };
+}
+
+function readRequestedRunnerId(stdin: string): string | undefined {
+  try {
+    const value = JSON.parse(stdin) as { runner?: unknown };
+    return typeof value.runner === 'string' ? value.runner : undefined;
+  } catch {
+    return undefined;
+  }
 }

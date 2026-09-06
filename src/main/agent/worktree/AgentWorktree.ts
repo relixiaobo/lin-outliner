@@ -269,6 +269,14 @@ export class AgentWorktree {
     };
   }
 
+  /** Discards all changes inside a managed worktree before removing it. */
+  async discard(metadata: AgentWorktreeMetadata): Promise<SettledAgentWorktree> {
+    if (!metadata.managed) throw new Error('Agent may discard only host-managed worktrees');
+    await git(['-C', metadata.path, 'reset', '--hard', metadata.baseCommit]);
+    await git(['-C', metadata.path, 'clean', '-fdx']);
+    return this.settle(metadata);
+  }
+
   sandboxPaths(metadata: AgentWorktreeMetadata): AgentWorktreeSandboxPaths {
     if (metadata.removedAt !== null) return { writablePaths: [], protectedGitObjectStores: [] };
     const branchRef = join(metadata.gitCommonDir, 'refs', 'heads', metadata.branch);

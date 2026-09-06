@@ -25,6 +25,7 @@ export const DelegateRunInputSchema = Type.Object({
   prompt: Type.String({ minLength: 1, maxLength: DELEGATE_MAX_PROMPT_BYTES }),
   profile: DelegateTaskProfileSchema,
   access: DelegateAccessSchema,
+  runner: Type.Optional(Type.String({ pattern: '^[a-z0-9][a-z0-9-]{0,63}$' })),
 }, closed);
 
 export const DelegateMessageInputSchema = Type.Object({
@@ -80,6 +81,7 @@ export const DelegateExecutionResultSchema = Type.Object({
     id: Type.String({ minLength: 1, maxLength: 64 }),
     version: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
   }, closed),
+  adapterSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
   model: Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]),
   durationMs: Type.Integer({ minimum: 0 }),
   text: Type.Union([Type.String({ maxLength: 1024 * 1024 }), Type.Null()]),

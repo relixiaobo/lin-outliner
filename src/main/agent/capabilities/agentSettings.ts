@@ -195,7 +195,12 @@ const DEFAULT_DELEGATION_SETTINGS: AgentDelegationSettings = {
   maxConcurrentThread: 4,
   maxQueuedGlobal: 32,
   maxQueuedThread: 8,
-  runners: { internal: DEFAULT_INTERNAL_DELEGATION_RUNNER },
+  runners: {
+    internal: DEFAULT_INTERNAL_DELEGATION_RUNNER,
+    codex: defaultDelegationRunnerSettings('codex'),
+    claude: defaultDelegationRunnerSettings('claude'),
+    openclaw: defaultDelegationRunnerSettings('openclaw'),
+  },
 };
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   additionalSkillDirectories: [],
