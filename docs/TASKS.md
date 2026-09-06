@@ -10,7 +10,8 @@ integration.
 The live collision radar is `gh pr list` plus this board. At the 2026-09-05
 audit, the Settings design revision shipped in PR #626. Internal Agent
 delegation and legacy retirement shipped in PR #628; the external Runner
-adapter feature shipped in PR #637. The current package version is `0.8.0`;
+adapter feature shipped in PR #637; the Skill identity and authoring foundation
+shipped in PR #641. The current package version is `0.8.0`;
 the latest published train is `v0.7.0`.
 
 ## In Flight
@@ -63,7 +64,7 @@ protocol, security rule, user flow, or acceptance criterion.
 Parallel now eligible:
   file-preview-office
   url-static-reader
-  agent-skill-authoring-foundation -> agent-skill-curation-report
+  agent-skill-curation-report
   computer-pilot-managed-skill
 ```
 
@@ -71,8 +72,7 @@ Parallel now eligible:
 | --- | --- | --- | --- |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
-| P2 | [agent-skill-authoring-foundation](plans/agent-skill-authoring-foundation.md) | `draft` | **Now; Desktop Host shipped in #603** |
-| P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
+| P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | **Now; Skill identity and authoring foundation shipped in #641** |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | **Now; Agent resource lifecycle shipped in #607** |
 
 The Host composition, Bash stdin, Outline CLI Skill, Agent resource,
@@ -86,8 +86,8 @@ The split also absorbs three former planless tasks without losing their intent:
 - `inline-media-alt-text` shipped across #598 and #599 as editable Node content
   plus direct intrinsic image presentation; the retired `mediaAlt` field receives
   no replacement command.
-- `skill-directory-is-itself-a-skill` becomes the explicit binding identity in
-  `agent-skill-authoring-foundation`, before script authoring consumes it.
+- `skill-directory-is-itself-a-skill` shipped as the explicit binding identity in
+  PR #641, completing the Skill authoring foundation before curation consumes it.
 - `computer-pilot-managed-skill` now has its own complete plan and consumes the
   final Host plus Agent resource lifecycle; both foundations are complete.
 
@@ -110,7 +110,7 @@ does not mix their product decisions into the architectural queue above.
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
 | P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623, internal delegation plus Subagent/isolated-Skill retirement shipped in #628, and the external Runner adapter feature shipped in #637. Remaining work follows the aggregate plan's declared boundaries. |
-| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-C shipped in #636, #638, and #640; Units D-G follow their declared dependency/collision checks, including #628 and `agent-skill-authoring-foundation`. |
+| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-C shipped in #636, #638, and #640; Units D-G follow their declared dependency/collision checks, including #628 and #641. |
 | P2 | [interaction-jank-cleanups](plans/archive/interaction-jank-cleanups.md) | `done` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, the Runtime-index unit shipped in #633, and PR-3 translation geometry shipped in #634. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Settings redesign landed in #626; Provider/managed-Skill working-state behavior is absorbed by Units B and D, so claim it through those units rather than as a separate implementation. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
@@ -228,6 +228,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-skill-authoring-foundation** (`done`, #641, 2026-09-06) - local Skill sources now persist explicit `skill` or `container` modes, exact Skill bindings stay scoped to the selected directory, and discovery, reload, authoring, and unbind share that identity; [plan archived](plans/archive/agent-skill-authoring-foundation.md).
 - **settings-control-plane Unit A** (`done`, #636, 2026-09-05) - file-backed JSONC preferences, schema/status/recovery, global Skill/tool controls, and the configuration Skill now converge through the Host; Units B-G remain in the active plan.
 - **settings-control-plane Unit B** (`done`, #638, 2026-09-06) - model connections, exact model declarations, image defaults, and application model selection now use the public JSONC settings source while credentials, catalogs, and runtime state remain domain-owned; [plan archived](plans/archive/settings-model-configuration.md).
 - **settings-control-plane Unit C** (`done`, #640, 2026-09-06) - layered root Agent configuration now has source inspection, generated schemas, comment-preserving JSONC edits, and public delegation policy in `config/settings.jsonc`; [plan archived](plans/archive/settings-root-configuration.md).

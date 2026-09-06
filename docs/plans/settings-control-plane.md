@@ -635,7 +635,7 @@ cannot bypass the new application default or Profile pin.
 Merged #627 owns exact-or-unavailable Trajectory evidence. Before B registers
 sensitive input, coordinate the shared persistence contract so raw credential
 Tool Input is explicitly unavailable rather than retained as exact diagnostics.
-[Skill identity foundation](agent-skill-authoring-foundation.md) owns exact
+[Skill identity foundation](archive/agent-skill-authoring-foundation.md) owns exact
 bindings and provenance; D consumes it.
 [Settings working states](semantic-working-state.md) supplies the final Provider
 and managed-Skill progress behavior for B and D. Contextual Translation follows

@@ -2598,3 +2598,15 @@ usage without changing either the definitions or the table parent object.
 stable catalogs separately from live usage, and preserve invalidation for each
 part. Verify real deltas while the consumer stays mounted; a full reseed or a
 pure-function test cannot prove that React's memo dependencies are complete.
+
+## Persist source identity instead of inferring it at write time
+
+PR #641 replaced the ambiguous local Skill-directory rule with explicit
+`skill` and `container` source modes. Inferring whether a selected directory
+was a Skill from enumeration order or from a later write could widen scope,
+misattribute support files, or leave an admitted root ungoverned.
+
+**When one path can represent multiple resource shapes, persist the user's
+chosen shape and reuse it at discovery, reload, authoring, and unbind boundaries.**
+The picker, runtime, persistence decoder, and ownership resolver must share the
+same mode contract; tests should cover both shapes and a malformed exact root.
