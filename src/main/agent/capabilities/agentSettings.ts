@@ -39,6 +39,7 @@ import type {
 import type { ThreadConfigurationSummary } from '../../../core/agent/protocol';
 import { composeProviderQualifiedModel } from '../../../core/agentModelId';
 import { parseProviderQualifiedModel } from '../../../core/agentModelId';
+import { defaultThinkingLevelFor } from '../../../core/agentReasoning';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
 import { createKeyedSerialMutationQueue } from '../../../core/serialMutationQueue';
 import {
@@ -328,7 +329,7 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
   if (!active) return null;
   const localGatewayProvider = localGatewayProviderDefinition(active.providerId);
   if (localGatewayProvider?.adapter === 'cc-switch-codex') {
-    return resolveCcSwitchRuntimeConfig(localGatewayProvider, active);
+    return resolveCcSwitchRuntimeConfig(localGatewayProvider, active, configuredDefault?.modelId);
   }
   // Connection only. Do not bake auth here. pi `Models.applyAuth()` resolves
   // stored/env/oauth/provider-specific auth at request time; `apiKey` is only an
@@ -360,7 +361,7 @@ export async function getConfiguredDefaultSelection(): Promise<ThreadConfigurati
   return {
     modelProvider: qualified.providerId,
     model: composeProviderQualifiedModel(qualified.providerId, qualified.modelId),
-    reasoningEffort: getSupportedReasoningLevelsForModel(model)[0] ?? 'off',
+    reasoningEffort: defaultThinkingLevelFor(getSupportedReasoningLevelsForModel(model)),
   };
 }
 
@@ -1149,14 +1150,19 @@ function ccSwitchCatalogModel(localGatewayProvider: LocalGatewayProviderDefiniti
 async function resolveCcSwitchRuntimeConfig(
   localGatewayProvider: LocalGatewayProviderDefinition,
   config: AgentProviderConfig,
+  requestedModelId?: string,
 ): Promise<AgentProviderRuntimeConfig | null> {
   const snapshot = await readCcSwitchRegistry();
   registerCcSwitchRuntimeModels(localGatewayProvider, snapshot);
-  const model = rankedModels(localGatewayProvider.providerId)[0];
+  const models = rankedModels(localGatewayProvider.providerId, config.models);
+  const model = requestedModelId
+    ? models.find((candidate) => candidate.id === requestedModelId)
+    : models[0];
   if (!model) return null;
   return {
     providerId: config.providerId,
     enabled: config.enabled,
+    models: config.models,
     modelId: model.id,
     api: isOpenAICompatibleApiId(model.api) ? model.api : undefined,
   };

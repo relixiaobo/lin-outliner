@@ -187,6 +187,27 @@ describe('provider config startup reconcile (Part A)', () => {
     await expect(getConfiguredDefaultSelection()).rejects.toThrow('unavailable');
   });
 
+  test('uses the medium-nearest reasoning level for an application default', async () => {
+    const catalog = (await getProviderSettings()).availableProviders.find((provider) => provider.providerId === 'openai');
+    const model = catalog?.models.find((candidate) => (
+      candidate.supportedThinkingLevels.includes('medium')
+      && candidate.supportedThinkingLevels[0] !== 'medium'
+    ));
+    if (!model) throw new Error('Missing OpenAI model with a non-medium first reasoning level');
+    await setProviderApiKey('openai', 'sk-test');
+    await writeFile(filePreferencesPath(currentUserData), JSON.stringify({
+      models: {
+        connections: [{ providerId: 'openai', baseUrl: null, enabled: true, models: [model.id] }],
+        default: `openai/${model.id}`,
+      },
+    }));
+
+    await expect(getConfiguredDefaultSelection()).resolves.toMatchObject({
+      model: `openai/${model.id}`,
+      reasoningEffort: 'medium',
+    });
+  });
+
   test('prunes a keyless junk row and clears the active pointer', async () => {
     // Exactly the bug shape found on disk: an uncredentialed catalog row that was
     // also set active, while it has no usable key.

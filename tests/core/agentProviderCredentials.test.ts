@@ -710,6 +710,31 @@ describe('provider credential resolver', () => {
     expect(model ? await piResolveAuthApiKey(model) : undefined).toBe('registry-key');
   });
 
+  test('applies declared model allow-lists to the CC Switch runtime provider', async () => {
+    installCcSwitchRegistry({ apiKey: 'registry-key' });
+    const initial = await getProviderSettings();
+    const option = initial.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    const declared = option?.models.at(-1)?.id;
+    if (!declared) throw new Error('Missing CC Switch catalog model');
+    await writeFile(filePreferencesPath(currentUserData), JSON.stringify({
+      models: {
+        connections: [{
+          providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+          baseUrl: null,
+          enabled: true,
+          models: [declared],
+        }],
+      },
+    }));
+
+    const runtime = await getActiveProviderRuntimeConfig();
+    expect(runtime).toMatchObject({
+      providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+      modelId: declared,
+      models: [declared],
+    });
+  });
+
   test('reports an unconfigured local gateway as missing auth until a request override exists', async () => {
     const model = {
       id: 'unconfigured-gateway-model',
