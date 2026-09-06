@@ -66,28 +66,28 @@ adds a `ProjectCatalogStore` beside `ThreadMetadataStore` in the existing Agent
 state SQLite database and transaction boundary. It owns only:
 
 ```text
-projectId + displayName + repository identity
+projectId + displayName + stable repository/folder identity
 createdAt + updatedAt + archived/pinned presentation state
-defaultWorktreeId
 projectId <-> threadId membership
-ProjectWorktree records: worktreeId, rootRealpath, gitDir/commonDir,
-  state (active/missing), and selection timestamps
+Workspace records: workspaceId, projectId or rootThreadId, rootRealpath,
+  gitDir/commonDir, kind (project/managed/isolated), state, and timestamps
+Project.defaultWorkspaceId (initial choice for new Chats)
 ```
 
 The catalog does not own Turns, Tool Tasks, Goal attempts, Git facts, check
 results, or context payloads. Those remain authoritative in the existing
 Thread/Turn/Tool Task and context stores. A missing root makes a catalog row
 unavailable; it never fabricates current branch, dirty state, or execution
-results. Git repository identity is the canonical `gitCommonDir`; each checkout
-is a separate `ProjectWorktree` identity. A non-Git Project has one worktree
-record whose root is its identity. Deleting a Project is rejected while an
-Automation in `active` or `paused` state references it, because either state
-can schedule or resume future work. Completed Automation runs retain their
-resolved workspace snapshot as historical evidence and do not block deletion;
-the UI marks the historical Project as unavailable after catalog removal. When
-deletion is allowed, it atomically detaches member Threads to managed
-workspaces, preserves their evidence, and removes catalog metadata. It never
-silently redirects an Automation to another directory.
+results. For Git Projects, the stable identity is the canonical `gitCommonDir`
+and each checkout is a separate Workspace. A non-Git Project has one or more
+user-confirmed folder Workspaces. Deleting a Project is rejected while an
+Automation in `active` or `paused` state references any of its Workspaces,
+because either state can schedule or resume future work. Completed Automation
+runs retain their resolved workspace snapshot as historical evidence and do not
+block deletion; the UI marks the historical Project as unavailable after
+catalog removal. When deletion is allowed, it atomically detaches member
+Threads to managed Workspaces, preserves their evidence, and removes catalog
+metadata. It never silently redirects an Automation to another directory.
 
 `Thread` does not store a second directory fact. It stores one
 `defaultWorkspaceRef`, resolved by the Host as either a managed workspace or a
@@ -133,30 +133,32 @@ Tool Task         -> actual cwd, optional external root, and captured context
 `defaultWorkspaceRef` is the only workspace selection stored on a Thread:
 
 ```text
-{ kind: "managed", rootThreadId }
-| { kind: "project", projectId, worktreeId }
+{ workspaceId, kind: "managed", rootThreadId }
+| { workspaceId, kind: "project", projectId }
+| { workspaceId, kind: "isolated", parentWorkspaceId }
 ```
 
 The Host resolves the ref to an effective CWD for each Tool Task. An external
 directory named during a request is recorded only in that Tool Task's
-`executionContext`; it is never added to the Thread as another workspace.
+`executionContext`; it is never added to the Thread as another default
+workspace.
 The `rootThreadId` is the creating root Thread's ID, not the current child or
 fork ID; descendants copy it and share the managed workspace until the root
 lineage is deleted and cleanup is complete.
 
-### Project identity and rebind
+### Project identity and workspace rebind
 
-Project identity is Project-wide. A confirmed rebind updates one
-`ProjectWorktree` record only when Git metadata proves continuity (or the user
-explicitly confirms a non-Git move); every member Thread continues to reference
-the same `projectId` and `worktreeId`. The Host publishes a new context
-generation for all affected Chats, preserves prior evidence under the old
-identity, and blocks mutation until each active Chat observes the new
-generation. A path that cannot be proven continuous creates a new Project
-instead; no Thread is silently migrated to an unrelated root.
+Project identity is stable; a concrete Workspace owns the checkout path. A
+confirmed rebind updates one Workspace record only when Git metadata proves
+continuity (or the user explicitly confirms a non-Git move). Threads referencing
+other Workspaces are unaffected. The Host publishes a new context generation
+for Threads using the rebound Workspace, preserves prior evidence under the old
+identity, and blocks mutation until those Threads observe the new generation.
+A path that cannot be proven continuous creates a new Project and Workspace;
+no Thread is silently migrated to an unrelated root.
 
-Selecting a different worktree is a per-Thread workspace choice recorded in its
-`defaultWorkspaceRef`. A Project's `defaultWorktreeId` is only the initial
+Selecting a different checkout is a per-Thread workspace choice recorded in its
+`defaultWorkspaceRef`. A Project's `defaultWorkspaceId` is only the initial
 selection for newly opened Chats. It never rewrites existing Chat references.
 
 There are two Host execution modes behind that simple concept:
@@ -164,7 +166,7 @@ There are two Host execution modes behind that simple concept:
 | User action | User-facing workspace | Host binding |
 |---|---|---|
 | Create an ordinary Thread without opening a project | A Tenon-managed workspace | A disposable or retained `<userData>/agent/workspaces/<thread-id>` directory |
-| Open a project | The selected project directory (or its selected Git worktree) | `defaultWorkspaceRef = { kind: "project", projectId, worktreeId }` |
+| Open a project | The selected project directory (or its selected Git worktree) | `defaultWorkspaceRef = { workspaceId, kind: "project", projectId }` |
 | Run an isolated child Agent | The parent project's working folder from the user's perspective | A Host-managed worktree overlay with its own identity and cleanup record |
 | Work on another explicitly named folder | The primary project remains visible | Capture an external execution context on each affected Tool Task |
 
@@ -608,9 +610,9 @@ immutable resolved workspace identity at dispatch, including a self-contained
 copy on completed run history. They do not store a sticky
 `cwd`. A standalone occurrence creates a root Thread with a managed or Project
 workspace reference; an existing-Thread occurrence is admitted only when its
-resolved Project/worktree matches that Thread's reference. A child or fork
-inherits the root Thread's managed `rootThreadId` or the parent's Project
-worktree reference, unless an explicit isolated worktree is created.
+resolved Workspace matches that Thread's reference. A child or fork inherits
+the root Thread's managed `rootThreadId` or the parent's Project Workspace
+reference, unless an explicit isolated Workspace is created.
 
 When a Project is deleted, `active` and `paused` Automation bindings block the
 deletion until the user removes them or the Project is restored. Completed run
@@ -673,8 +675,8 @@ concurrent writers but does not hide out-of-band edits.
   existing Agent state database and never duplicate execution or Git facts.
 - **FR-7:** Agent-initiated durable binding uses a typed pending request and
   explicit user confirmation; ordinary model text cannot bind a Project.
-- **FR-8:** Project worktrees have durable identities and per-Thread selection;
-  Project rebind is Project-wide and continuity-checked.
+- **FR-8:** Project Workspaces have durable identities and per-Thread selection;
+  Workspace rebind is continuity-checked and does not redirect other Workspaces.
 - **FR-9:** Automation snapshots, forks, and child Threads use workspace
   references and preserve root-lineage inheritance.
 - **FR-10:** Project deletion is atomic: active or paused Automation bindings
@@ -708,14 +710,14 @@ concurrent writers but does not hide out-of-band edits.
   the second mutation receives `worktree_busy` and an isolated-worktree action;
   it is never queued behind the worktree claim, and a dirty/changed identity
   produces a conflict result.
-- **AC-14:** A Project with multiple worktrees resolves every Chat's
-  `defaultWorkspaceRef` to a specific validated `worktreeId`; missing or
-  mismatched worktrees produce a visible non-success state.
-- **AC-15:** A continuity-proven Project rebind updates all member Chats through
-  one catalog transaction and emits new context generations; an unrelated path
-  creates a new Project instead.
+- **AC-14:** A Project with multiple Workspaces resolves every Chat's
+  `defaultWorkspaceRef` to one validated `workspaceId`; missing or mismatched
+  Workspaces produce a visible non-success state.
+- **AC-15:** A continuity-proven Workspace rebind updates only Threads using
+  that Workspace and emits new context generations; an unrelated path creates a
+  new Project and Workspace instead.
 - **AC-16:** Automation dispatch, fork, and child creation preserve the root
-  managed workspace identity or the selected Project worktree without reading a
+  managed workspace identity or the selected Project Workspace without reading a
   retired `cwd` field.
 - **AC-17:** Project deletion is rejected while active or paused Automation
   bindings exist; completed run snapshots remain replayable without dispatch;
@@ -724,7 +726,7 @@ concurrent writers but does not hide out-of-band edits.
 
 ## Tests and evidence
 
-Add core tests for canonical identity, Project worktree selection and rebind,
+Add core tests for canonical identity, Project Workspace selection and rebind,
 nested scope, hash reuse, generation increment, replacement/removal, malformed
 payload rejection, Automation snapshot migration, root-lineage inheritance,
 Project deletion, completed-run replay, and restart replay.

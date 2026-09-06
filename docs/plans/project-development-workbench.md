@@ -517,7 +517,7 @@ persistence and capability contracts.
 
 ### Unit A: Project context, workspace references, and development Skill
 
-Ship the Project catalog metadata and worktree records, `defaultWorkspaceRef`,
+Ship the Project catalog metadata and Workspace records, `defaultWorkspaceRef`,
 projectless external-work path, profile/context record, refresh, typed
 protocol/codec shape, Automation workspace snapshots, root-lineage inheritance,
 the `project_bind_request` confirmation path, and one project Skill. Include the
