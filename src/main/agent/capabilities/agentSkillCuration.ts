@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
+import { Lexer, walkTokens, type Token } from 'marked';
 import type {
   AgentSkillCurationFinding,
   AgentSkillCurationReport,
@@ -134,11 +135,16 @@ function duplicateFindings(
 
 async function brokenResourceFindings(skill: SkillDefinition): Promise<AgentSkillCurationFinding[]> {
   const findings: AgentSkillCurationFinding[] = [];
-  const pattern = /\[[^\]]*\]\(([^)\s]+)\)/g;
-  for (const match of skill.body.matchAll(pattern)) {
-    const reference = match[1]?.trim();
+  const references: string[] = [];
+  for (const token of Lexer.lex(skill.body)) {
+    walkTokens([token], (nested: Token) => {
+      if (nested.type === 'link' && nested.href) references.push(nested.href);
+    });
+  }
+  for (const reference of references) {
     if (!reference || reference.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(reference)) continue;
-    const target = reference.split('#', 1)[0]?.trim().replace(/^<|>$/g, '');
+    if (reference.startsWith('//')) continue;
+    const target = decodeResourceReference(reference.split('#', 1)[0]?.trim() ?? '');
     if (!target) continue;
     const resolvedTarget = resolve(skill.rootDir, target);
     const relativeTarget = relative(skill.rootDir, resolvedTarget);
@@ -163,6 +169,14 @@ async function brokenResourceFindings(skill: SkillDefinition): Promise<AgentSkil
     }
   }
   return findings;
+}
+
+function decodeResourceReference(reference: string): string {
+  try {
+    return decodeURIComponent(reference);
+  } catch {
+    return reference;
+  }
 }
 
 function staleToolFindings(skill: SkillDefinition): AgentSkillCurationFinding[] {

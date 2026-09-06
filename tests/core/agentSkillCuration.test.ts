@@ -100,4 +100,17 @@ describe('Agent Skill curation analyzer', () => {
     expect(() => assertAgentSkillCurationReportCurrent(report, [changed])).toThrow('stale');
     expect(agentSkillRegistryFingerprint([skill])).toBe(report.registryFingerprint);
   });
+
+  test('parses balanced and spaced destinations while ignoring code examples', async () => {
+    const skill = await candidate(
+      'markdown-links',
+      '[balanced](references/file_(v1).md) [spaced](<references/file with spaces.md>)\n\n```md\n[fake](references/missing.md)\n```',
+    );
+    await mkdir(path.join(skill.skill.rootDir, 'references'), { recursive: true });
+    await writeFile(path.join(skill.skill.rootDir, 'references', 'file_(v1).md'), 'ok', 'utf8');
+    await writeFile(path.join(skill.skill.rootDir, 'references', 'file with spaces.md'), 'ok', 'utf8');
+
+    const report = await analyzeAgentSkills([skill]);
+    expect(report.rows[0]?.findings).toEqual([]);
+  });
 });
