@@ -1,10 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { IDENTITY_COLORS, MAIN_PRESENTATION_KEY, type IdentityColor } from '../../core/agent/configuration';
 import type { AgentProfileDraft } from '../../core/types';
-import { applyEdits, modify as jsoncModify, parse, type ParseError } from 'jsonc-parser';
+import { applyEdits, modify as jsoncModify } from 'jsonc-parser';
 import { atomicWriteFile } from '../jsonFileStore';
 import {
   decodeConfigurationLayer,
+  parseAgentConfigurationSource,
   projectConfigurationPath,
   writeProjectAgentConfigurationSchema,
   userConfigurationPath,
@@ -61,9 +62,7 @@ export class AgentConfigurationWriter {
       if (original.trim().length > 0) {
         let parsed: unknown;
         try {
-          const errors: ParseError[] = [];
-          parsed = parse(original, errors, { allowTrailingComma: true, disallowComments: false });
-          if (errors.length > 0) throw new Error(`Invalid JSONC: ${errors[0]!.error}`);
+          parsed = parseAgentConfigurationSource(original, path);
         } catch (error) {
           throw new Error(`Cannot edit ${path}: ${errorText(error)}`);
         }

@@ -302,7 +302,7 @@ export function defaultEffectiveThreadConfiguration(
 function readLayer(path: string, source: 'user' | 'project'): ConfigurationLayer {
   if (!existsSync(path)) return EMPTY_LAYER;
   try {
-    return decodeConfigurationLayer(parseConfigurationSource(readFileSync(path, 'utf8'), path), source, path);
+    return decodeConfigurationLayer(parseAgentConfigurationSource(readFileSync(path, 'utf8'), path), source, path);
   } catch (error) {
     if (error instanceof AgentConfigurationReadError) throw error;
     throw new AgentConfigurationReadError(path, source, error);
@@ -323,14 +323,14 @@ function inspectSource(
   }
   const digest = createHash('sha256').update(source).digest('hex');
   try {
-    decodeConfigurationLayer(parseConfigurationSource(source, path), layer, path);
+    decodeConfigurationLayer(parseAgentConfigurationSource(source, path), layer, path);
     return { layer, path, schemaPath, state: 'accepted', digest, error: null };
   } catch (error) {
     return { layer, path, schemaPath, state: 'rejected', digest, error: boundedError(error) };
   }
 }
 
-function parseConfigurationSource(source: string, path: string): unknown {
+export function parseAgentConfigurationSource(source: string, path: string): unknown {
   const errors: ParseError[] = [];
   const parsed = parse(source, errors, { allowTrailingComma: true, disallowComments: false });
   if (errors.length > 0) throw new Error(`Invalid JSONC: ${errors[0]!.error}`);

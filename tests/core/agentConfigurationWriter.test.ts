@@ -69,6 +69,17 @@ describe('AgentConfigurationWriter', () => {
     expect(await readFile(path, 'utf8')).toBe(original);
   });
 
+  test('refuses to rewrite a source with duplicate JSONC keys', async () => {
+    const { writer, userData, cwd } = await fixture();
+    const path = userConfigurationPath(userData);
+    await mkdir(dirname(path), { recursive: true });
+    const original = '{ "profiles": {}, "profiles": {} }\n';
+    await writeFile(path, original, 'utf8');
+    await expect(writer.writeProfile('user', cwd, 'default', { model: 'inherit' }))
+      .rejects.toThrow(/duplicated/);
+    expect(await readFile(path, 'utf8')).toBe(original);
+  });
+
   test('preserves JSONC comments and unrelated fields during structural edits', async () => {
     const { writer, loader, userData, cwd } = await fixture();
     const path = userConfigurationPath(userData);
