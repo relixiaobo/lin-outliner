@@ -6,6 +6,7 @@ import { atomicWriteFile } from '../jsonFileStore';
 import {
   decodeConfigurationLayer,
   projectConfigurationPath,
+  writeProjectAgentConfigurationSchema,
   userConfigurationPath,
 } from './AgentConfigurationLoader';
 
@@ -81,17 +82,32 @@ export class AgentConfigurationWriter {
       throw new Error(`Refused: ${errorText(error)}`);
     }
     let source = existsSync(path) ? readFileSync(path, 'utf8') : '{}';
-    const currentKeys = new Set(Object.keys(current));
-    const nextKeys = new Set(Object.keys(next));
-    for (const key of new Set([...currentKeys, ...nextKeys])) {
-      if (JSON.stringify(current[key]) === JSON.stringify(next[key])) continue;
-      const edits = jsoncModify(source, [key], next[key], {
-        formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' },
-      });
-      source = applyEdits(source, edits);
-    }
+    source = applyJsonObjectDiff(source, current, next);
     await atomicWriteFile(path, source.endsWith('\n') ? source : `${source}\n`);
+    if (target === 'project') writeProjectAgentConfigurationSchema(cwd);
   }
+}
+
+function applyJsonObjectDiff(source: string, current: JsonObject, next: JsonObject, basePath: string[] = []): string {
+  const keys = new Set([...Object.keys(current), ...Object.keys(next)]);
+  for (const key of keys) {
+    const before = current[key];
+    const after = next[key];
+    if (JSON.stringify(before) === JSON.stringify(after)) continue;
+    const path = [...basePath, key];
+    if (isObject(before) && isObject(after)) {
+      source = applyJsonObjectDiff(source, before, after, path);
+      continue;
+    }
+    source = applyEdits(source, jsoncModify(source, path, after, {
+      formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' },
+    }));
+  }
+  return source;
+}
+
+function isObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function applyMainPresentation(config: JsonObject, draft: PresentationDraft): JsonObject {

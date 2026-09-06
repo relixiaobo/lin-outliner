@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
+import { writeJsonFileSync } from '../jsonFileStore';
 import {
   DEFAULT_AGENT_PRESENTATIONS,
   IDENTITY_COLORS,
@@ -26,10 +28,58 @@ interface ConfigurationLayer {
 
 export type AgentConfigurationReadFailureReporter = (report: ErrorReport) => void;
 
+export type AgentConfigurationSourceState = 'missing' | 'accepted' | 'rejected';
+
+export interface AgentConfigurationSourceView {
+  readonly layer: 'user' | 'project';
+  readonly path: string;
+  readonly schemaPath: string;
+  readonly state: AgentConfigurationSourceState;
+  readonly digest: string | null;
+  readonly error: string | null;
+}
+
 const EMPTY_LAYER: ConfigurationLayer = Object.freeze({
   defaultProfile: null,
   profiles: new Map(),
   mainPresentation: null,
+});
+
+const AGENT_CONFIGURATION_SCHEMA = Object.freeze({
+  $schema: 'http://json-schema.org/draft-07/schema#',
+  title: 'Tenon Root Agent Configuration',
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    defaultProfile: { type: 'string', minLength: 1 },
+    profiles: {
+      type: 'object', additionalProperties: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          description: { type: 'string' },
+          developerInstructions: { type: 'string' },
+          model: { type: 'string' },
+          reasoningEffort: { enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+          tools: { type: 'array', items: { type: 'string', minLength: 1 } },
+          skills: { type: 'array', items: { type: 'string', minLength: 1 } },
+          plugins: { type: 'array', items: { type: 'string', minLength: 1 } },
+          mcpServers: { type: 'array', items: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    presentationOverrides: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        main: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            persona: { type: 'string', minLength: 1 },
+            color: { enum: ['pink', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple'] },
+          },
+        },
+      },
+    },
+  },
 });
 
 const DEFAULT_PROFILE: ConfigurationProfile = Object.freeze({
@@ -134,6 +184,21 @@ export class AgentConfigurationLoader {
     return Object.freeze(rows);
   }
 
+  inspectSources(cwd: string): readonly AgentConfigurationSourceView[] {
+    return Object.freeze([
+      inspectSource(
+        userConfigurationPath(this.userDataPath),
+        userConfigurationSchemaPath(this.userDataPath),
+        'user',
+      ),
+      inspectSource(
+        projectConfigurationPath(cwd),
+        projectConfigurationSchemaPath(cwd),
+        'project',
+      ),
+    ]);
+  }
+
   private loadMerged(cwd: string): ConfigurationLayer {
     const user = this.readLayerAndClearFailure(userConfigurationPath(this.userDataPath), 'user');
     const project = this.readLayerAndClearFailure(projectConfigurationPath(cwd), 'project');
@@ -203,6 +268,26 @@ export function userConfigurationPath(userDataPath: string): string {
   return join(userDataPath, 'agent', 'config.json');
 }
 
+export function userConfigurationSchemaPath(userDataPath: string): string {
+  return join(userDataPath, 'agent', 'config.schema.json');
+}
+
+export function projectConfigurationSchemaPath(cwd: string): string {
+  return join(cwd, '.tenon', 'agent.schema.json');
+}
+
+export function writeAgentConfigurationSchema(userDataPath: string): void {
+  writeJsonFileSync(userConfigurationSchemaPath(userDataPath), AGENT_CONFIGURATION_SCHEMA, {
+    directoryMode: 0o700,
+  });
+}
+
+export function writeProjectAgentConfigurationSchema(cwd: string): void {
+  writeJsonFileSync(projectConfigurationSchemaPath(cwd), AGENT_CONFIGURATION_SCHEMA, {
+    directoryMode: 0o700,
+  });
+}
+
 export function projectConfigurationPath(cwd: string): string {
   return join(cwd, '.tenon', 'agent.json');
 }
@@ -221,6 +306,27 @@ function readLayer(path: string, source: 'user' | 'project'): ConfigurationLayer
   } catch (error) {
     if (error instanceof AgentConfigurationReadError) throw error;
     throw new AgentConfigurationReadError(path, source, error);
+  }
+}
+
+function inspectSource(
+  path: string,
+  schemaPath: string,
+  layer: 'user' | 'project',
+): AgentConfigurationSourceView {
+  if (!existsSync(path)) return { layer, path, schemaPath, state: 'missing', digest: null, error: null };
+  let source: string;
+  try {
+    source = readFileSync(path, 'utf8');
+  } catch (error) {
+    return { layer, path, schemaPath, state: 'rejected', digest: null, error: boundedError(error) };
+  }
+  const digest = createHash('sha256').update(source).digest('hex');
+  try {
+    decodeConfigurationLayer(parseConfigurationSource(source, path), layer, path);
+    return { layer, path, schemaPath, state: 'accepted', digest, error: null };
+  } catch (error) {
+    return { layer, path, schemaPath, state: 'rejected', digest, error: boundedError(error) };
   }
 }
 
@@ -437,4 +543,9 @@ function validatePersona(value: string, path: string): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function boundedError(error: unknown): string {
+  const message = errorMessage(error);
+  return message.length > 240 ? `${message.slice(0, 237)}...` : message;
 }

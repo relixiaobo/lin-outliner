@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { AgentConfigurationLoader, userConfigurationPath } from '../../src/main/agent/AgentConfigurationLoader';
+import {
+  AgentConfigurationLoader,
+  projectConfigurationSchemaPath,
+  userConfigurationPath,
+} from '../../src/main/agent/AgentConfigurationLoader';
 import { AgentConfigurationWriter } from '../../src/main/agent/AgentConfigurationWriter';
 
 const roots: string[] = [];
@@ -81,6 +85,27 @@ describe('AgentConfigurationWriter', () => {
     expect(source).toContain('// Keep this user-maintained note.');
     expect(source).toContain('"defaultProfile": "default"');
     expect(loader.resolveProfile(undefined, cwd).developerInstructions).toEqual(['After']);
+  });
+
+  test('preserves comments inside unchanged profile fields and writes a project schema', async () => {
+    const { writer, userData, cwd } = await fixture();
+    const path = userConfigurationPath(userData);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `{
+      "profiles": { "default": {
+        // Keep this profile note.
+        "developerInstructions": "Before",
+        "model": "inherit"
+      } }
+    }\n`, 'utf8');
+    await writer.writeProfile('user', cwd, 'default', { developerInstructions: 'After' });
+    const userSource = await readFile(path, 'utf8');
+    expect(userSource).toContain('// Keep this profile note.');
+    await writer.writeProfile('project', cwd, 'default', { developerInstructions: 'Project.' });
+    const projectPath = join(cwd, '.tenon', 'agent.json');
+    const projectSource = await readFile(projectPath, 'utf8');
+    expect(projectSource).toContain('Project.');
+    expect(await readFile(projectConfigurationSchemaPath(cwd), 'utf8')).toContain('Tenon Root Agent Configuration');
   });
 
   test('rejects invalid presentation before changing the file', async () => {

@@ -1199,6 +1199,15 @@ export interface AgentPresentationOverrideRow {
   readonly color: string | null;
 }
 
+export interface AgentConfigurationSourceView {
+  readonly layer: 'user' | 'project';
+  readonly path: string;
+  readonly schemaPath: string;
+  readonly state: 'missing' | 'accepted' | 'rejected';
+  readonly digest: string | null;
+  readonly error: string | null;
+}
+
 /**
  * The main Agent editor's whole view in one answer.
  */
@@ -1207,6 +1216,7 @@ export interface AgentEditorView {
   readonly presentationOverrides: readonly AgentPresentationOverrideRow[];
   readonly profile: AgentProfileView;
   readonly capabilities: AgentCapabilityCatalog;
+  readonly sources?: readonly AgentConfigurationSourceView[];
 }
 
 export interface AgentProviderSettingsView {

@@ -16,6 +16,8 @@ route those requests to the owning operation.
    For root Profiles, read the user `agent/config.json` or project
    `.tenon/agent.json` source and its owner-provided schema/status. Always read
    the relevant schema, source file, and current Host status before editing.
+   The owner status includes `missing`, `accepted`, or `rejected`, a content
+   digest, and a bounded error; treat it as observation, not a cached config.
    Use the live schema and catalog identity; never
    guess a Skill or model name.
 2. Edit the smallest possible field in the public source with ordinary file

@@ -165,6 +165,7 @@ export interface AgentConfigurationCapability {
   resolveIdentityCatalog: AgentConfigurationLoader['resolveIdentityCatalog'];
   listPresentationOverrides: AgentConfigurationLoader['listPresentationOverrides'];
   resolveEditableProfile: AgentConfigurationLoader['resolveEditableProfile'];
+  inspectSources: AgentConfigurationLoader['inspectSources'];
   writeProfile: AgentConfigurationWriter['writeProfile'];
 }
 
@@ -592,6 +593,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       resolveIdentityCatalog: (...args) => configurationLoader.resolveIdentityCatalog(...args),
       listPresentationOverrides: (...args) => configurationLoader.listPresentationOverrides(...args),
       resolveEditableProfile: (...args) => configurationLoader.resolveEditableProfile(...args),
+      inspectSources: (...args) => configurationLoader.inspectSources(...args),
       writeProfile: (...args) => configurationWriter.writeProfile(...args),
     },
     worktrees: {

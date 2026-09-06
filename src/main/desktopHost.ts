@@ -20,6 +20,7 @@ import {
 import { resolveRendererThreadStartDefaults } from './agent/rendererThreadStartDefaults';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../core/agent/tools';
 import type { ConfigurationLayerTarget } from './agent/AgentConfigurationWriter';
+import { writeAgentConfigurationSchema } from './agent/AgentConfigurationLoader';
 import { createImageArtifactReference, ImageObservationNormalizationError } from './agent/imageArtifacts';
 import { Mutex } from './agent/Mutex';
 import { resolveToolTaskSupervisorRuntime } from './agent/tasks/toolTaskRuntime';
@@ -344,6 +345,7 @@ function scheduleAppUpdateCheck(): void {
 function startFilePreferencesWatcher(): void {
   const configDir = join(resolvedUserDataDir, 'config');
   ensureAgentDir(configDir);
+  writeAgentConfigurationSchema(resolvedUserDataDir);
   writeFilePreferencesSchema(resolvedUserDataDir);
   let timer: ReturnType<typeof setTimeout> | null = null;
   let applying = false;
@@ -1750,6 +1752,7 @@ async function agentEditorView(cwd: string): Promise<AgentEditorView> {
     presentationOverrides: agentHost.configuration.listPresentationOverrides(cwd),
     profile: agentHost.configuration.resolveEditableProfile(cwd),
     capabilities: await agentCapabilityCatalog(),
+    sources: agentHost.configuration.inspectSources(cwd),
   };
 }
 

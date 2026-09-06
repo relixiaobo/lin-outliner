@@ -20,6 +20,7 @@ export type {
   AgentCapabilityCatalog,
   AgentIdentityEntry,
   AgentPresentationOverrideRow,
+  AgentConfigurationSourceView,
   AgentProfileDraft,
   AgentProfileView,
   AgentProviderSettingsView,

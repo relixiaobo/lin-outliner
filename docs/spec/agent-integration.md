@@ -17,6 +17,10 @@ Agent Core. It is a contract checklist, not project status.
   `agent.delegation`; active pointers, probe/runtime state, and Session bindings
   remain private to their owners. Root and delegation source edits preserve
   existing snapshots and never restore retired Agent-type fields.
+- The root configuration owner reports both source paths, schema locations,
+  `missing`/`accepted`/`rejected` status, content digest, and bounded parse or
+  validation errors through the existing Agent editor view. This is inspection
+  data, not a second configuration snapshot.
 
 - Use Thread, Turn, Item, Goal, Tool Task, Agent Session, launcher, and Task Profile
   as distinct product vocabulary.
