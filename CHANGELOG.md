@@ -14,6 +14,8 @@ Entries reference the pull request that introduced them when one exists.
 
 - **File-backed preferences and the configuration Skill now ship (PR #636)** - `config/settings.jsonc` is the public JSONC source for the delivered preference fields, with a generated schema, bounded status, last-known-good recovery, atomic comment-preserving writes, and live Host application. Skill/tool availability, Memory enablement, appearance, provider runtime limits, and automatic update checks use their owning consumers; the built-in configuration Skill reports accepted/effective/pending/rejected outcomes. Verified with typecheck, `docs:check`, focused configuration/runtime tests, whitespace checks, and five E2E signal samples.
 
+- **Native Agent CLI launchers now run through managed delegation (PR #637)** - user-enabled Codex, Claude Code, and OpenClaw CLIs are discovered on `PATH` and invoked through the generic Tool Task lifecycle with stdin-only prompts, provider-scoped environments, managed worktrees, cancellation, and bounded output. The root Agent learns one vendor-neutral `delegate` Skill; launcher-specific command syntax remains in the Host registry. Verified with typecheck, `docs:check`, 139 focused tests (134 passed, 5 skipped), and whitespace checks.
+
 - **Renderer icons now follow semantic object, action, and tool meaning (PR
   #631)** — the app uses a shared Iconoir presentation layer for actions,
   launcher and picker surfaces, attachments, previews, and agent tools. Tool

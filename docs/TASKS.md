@@ -9,15 +9,15 @@ integration.
 
 The live collision radar is `gh pr list` plus this board. At the 2026-09-05
 audit, the Settings design revision shipped in PR #626. Internal Agent
-delegation and legacy retirement shipped in PR #628; external Runner adapters
-remain separate future claims. The current package version is `0.8.0`;
+delegation and legacy retirement shipped in PR #628; the external Runner
+adapter feature shipped in PR #637. The current package version is `0.8.0`;
 the latest published train is `v0.7.0`.
 
 ## In Flight
 
 PR #628 shipped internal Agent delegation and complete Subagent/isolated-Skill
 retirement under the design merged in #620. Generic Background Tool Tasks
-shipped in #623; external Runner adapters remain separate future claims. The
+shipped in #623, and the external Runner adapter feature shipped in #637. The
 legacy delegation behavior is retired and overlapping claims must use the final
 delegation mechanisms.
 
@@ -105,7 +105,7 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623 and internal delegation plus Subagent/isolated-Skill retirement shipped in #628. #627's Trajectory predecessor is complete; each external Runner adapter remains a separate future claim. |
+| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623, internal delegation plus Subagent/isolated-Skill retirement shipped in #628, and the external Runner adapter feature shipped in #637. Remaining work follows the aggregate plan's declared boundaries. |
 | P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Unit A shipped in #636; Units B-G follow their declared dependency/collision checks, including #628 and `agent-skill-authoring-foundation`. |
 | P2 | [interaction-jank-cleanups](plans/archive/interaction-jank-cleanups.md) | `done` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, the Runtime-index unit shipped in #633, and PR-3 translation geometry shipped in #634. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Settings redesign landed in #626; Provider/managed-Skill working-state behavior is absorbed by Units B and D, so claim it through those units rather than as a separate implementation. |
@@ -225,11 +225,12 @@ One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
 - **settings-control-plane Unit A** (`done`, #636, 2026-09-05) - file-backed JSONC preferences, schema/status/recovery, global Skill/tool controls, and the configuration Skill now converge through the Host; Units B-G remain in the active plan.
+- **codex-cli-adapter** (`done`, #637, 2026-09-06) - user-enabled Codex, Claude Code, and OpenClaw launchers now run through the generic Tool Task path with stdin delivery, PATH readiness checks, sanitized provider environments, cancellation, bounded output, and managed worktrees; [plan archived](plans/archive/codex-cli-adapter.md).
 - **interaction-jank-cleanups PR-3** (`done`, #634, 2026-09-05) - URL and EPUB translation scheduling now use near-viewport candidates, cached layout positions, observer-driven far-jump updates, and layout refresh signals; [plan archived](plans/archive/interaction-jank-cleanups.md).
 - **interaction-jank-cleanups PR-2** (`done`, #632, 2026-09-05) - definition catalogs survive unrelated projection deltas while table field usage groups remain current; translation geometry remains open.
 - **supervised-Bash-status-normalization** (`done`, #635, 2026-09-05) - durable Tool Task states now map to the stable public Bash status vocabulary before result validation.
 - **interaction-jank-cleanups Runtime-index unit** (`done`, #633, 2026-09-05) - Runtime selection indexes are reused within a document and asset-metadata revision, with explicit invalidation for asset ingestion, reconciliation, and collection.
-- **agent-delegation-runtime internal cutover** (`done`, #628, 2026-09-05) - the packaged `delegate` CLI, root-owned hidden Agent Sessions, internal Runner, durable settlement and cancellation recovery, and complete Subagent/isolated-Skill retirement are shipped; external Runner adapters remain separate future claims.
+- **agent-delegation-runtime internal cutover** (`done`, #628, 2026-09-05) - the packaged `delegate` CLI, root-owned hidden Agent Sessions, internal Runner, durable settlement and cancellation recovery, and complete Subagent/isolated-Skill retirement are shipped; external Runner adapters followed in #637.
 - **startup-window-first** (`done`, #629, 2026-09-05) - the desktop window paints before service startup; readiness gates, persistent Retry/Quit, and Agent conversation recovery are verified; [plan archived](plans/archive/startup-window-first.md).
 - **workspace-document-status-audit** (`done`, fast-track, 2026-09-05) - refreshed open claims, the pending Settings design boundary, README runtime ownership, and document lifecycle checks.
 - **agent-trajectory-evidence-fidelity Unit 2 / complete** (`done`, #627,
@@ -240,8 +241,8 @@ One line per recent shipped integration. Older history and review detail live in
 - **agent-delegation-runtime Unit 1** (`done`, #623, 2026-09-04) — durable
   generic Tool Tasks now supervise foreground and explicit-background Bash with
   packaged recovery, bounded scheduling/detail, exactly-once completion, and
-  shared controls/UI; the active plan remains open for internal delegation,
-  Subagent/isolated-Skill retirement, and separate external Runner adapters.
+  shared controls/UI; later units delivered internal delegation, legacy
+  retirement, and external Runner adapters.
 - **link-preview-interaction-polish** (`done`, #621, 2026-09-04) — pasted links
   retain canonical identity, Source previews use content-aware defaults,
   attachment selection is composite, and Outline/Table share one view toolbar
