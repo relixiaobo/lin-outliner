@@ -35,4 +35,11 @@ describe('Agent model selection ownership', () => {
       customOpenAiProvider,
     )).not.toThrow();
   });
+
+  test('enforces connection model declarations while allowing declared custom endpoint ids', () => {
+    const restricted = { ...customOpenAiProvider, models: ['local-model'] };
+    expect(resolveAgentModelOverride('openai:local-model', restricted)).toBeTruthy();
+    expect(resolveAgentModelOverride('openai:other-model', restricted)).toBeNull();
+    expect(() => validateAgentModelSelection('openai:other-model', 'off', restricted)).toThrow('Model not found');
+  });
 });

@@ -31,6 +31,7 @@ const {
   getAgentRuntimeSettings,
   getProviderSettings,
   getProviderRuntimeConfig,
+  getConfiguredDefaultSelection,
   reconcileProviderConfig,
   setActiveProvider,
   updateAgentRuntimeSettings,
@@ -145,6 +146,45 @@ describe('provider config startup reconcile (Part A)', () => {
     expect(JSON.parse(await readFile(providerPath(), 'utf8')).providers).toEqual([
       { providerId: 'openai', connectionGeneration: expect.any(Number) },
     ]);
+  });
+
+  test('keeps public JSONC source byte-stable for private runtime mutations', async () => {
+    await setProviderApiKey('openai', 'sk-test');
+    await writeFile(filePreferencesPath(currentUserData), `{
+      // This comment belongs to the user's source.
+      "models": { "connections": [{ "providerId": "openai", "baseUrl": null, "enabled": true, "models": [] }] }
+    }`);
+    const before = await readFile(filePreferencesPath(currentUserData), 'utf8');
+
+    await setActiveProvider('openai');
+
+    expect(await readFile(filePreferencesPath(currentUserData), 'utf8')).toBe(before);
+  });
+
+  test('uses declared models as the provider catalog allow-list', async () => {
+    const catalog = (await getProviderSettings()).availableProviders.find((provider) => provider.providerId === 'openai');
+    const declared = catalog?.models[0]?.id;
+    if (!declared) throw new Error('Missing OpenAI catalog model');
+    await setProviderApiKey('openai', 'sk-test');
+    await writeFile(filePreferencesPath(currentUserData), JSON.stringify({
+      models: { connections: [{ providerId: 'openai', baseUrl: null, enabled: true, models: [declared] }] },
+    }));
+
+    const view = await getProviderSettings();
+    expect(view.availableProviders.find((provider) => provider.providerId === 'openai')?.models.map((model) => model.id))
+      .toEqual([declared]);
+  });
+
+  test('reports a declared-but-unavailable application default instead of falling back', async () => {
+    await setProviderApiKey('openai', 'sk-test');
+    await writeFile(filePreferencesPath(currentUserData), JSON.stringify({
+      models: {
+        connections: [{ providerId: 'openai', baseUrl: null, enabled: true, models: ['retired-model'] }],
+        default: 'openai/retired-model',
+      },
+    }));
+
+    await expect(getConfiguredDefaultSelection()).rejects.toThrow('unavailable');
   });
 
   test('prunes a keyless junk row and clears the active pointer', async () => {

@@ -5,6 +5,14 @@ Agent Core. It is a contract checklist, not project status.
 
 ## Core Contract
 
+- Treat `config/settings.jsonc` as the sole public model/settings source. Agents
+  may edit declarative model connections, model allow-lists, and defaults in
+  that JSONC file; credentials, catalog caches, probes, and runtime snapshots
+  stay behind their existing owner APIs. No Settings or Configuration CLI is
+  part of the contract. Empty connection model lists follow the live catalog;
+  non-empty lists are exact allow-lists, and unavailable explicit/default
+  models return typed unavailable errors without provider fallback.
+
 - Use Thread, Turn, Item, Goal, Tool Task, Agent Session, launcher, and Task Profile
   as distinct product vocabulary.
 - Cross the strict request/response codecs; do not add parallel IPC.

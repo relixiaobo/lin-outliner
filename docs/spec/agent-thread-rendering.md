@@ -1,5 +1,16 @@
 # Agent Thread Rendering
 
+## Model selection
+
+New root Threads resolve model selection through the main-owned precedence
+chain: explicit request, selected Profile, public `settings.jsonc`
+`models.default`, valid remembered selection, then the automatic runnable
+provider candidate. The public default is read at admission time, so editing
+the file affects later Threads without rewriting existing Thread snapshots.
+Provider connection `models` declarations are allow-lists when non-empty;
+unavailable declared/default models remain visibly unavailable and never cause a
+silent switch to another provider.
+
 Main owns canonical Thread DTOs. Before Agent Core responses and notifications
 cross main-window IPC, an exhaustive projection replaces only payload-backed
 model-call arguments with the renderer-private `{ storage: 'itemBound' }` marker;

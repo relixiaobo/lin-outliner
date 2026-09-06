@@ -8,6 +8,7 @@ import type { RendererThreadStartDefaults } from './ThreadService';
 export interface RendererThreadStartDefaultsInput {
   readonly request: AgentCoreRequestByMethod['thread/start'];
   readonly remembered: ThreadConfigurationSummary | null;
+  readonly getConfiguredDefaultSelection?: () => Promise<ThreadConfigurationSummary | null>;
   readonly cwd: string;
   readonly getProviderRuntimeConfig: (
     providerId: string,
@@ -24,6 +25,11 @@ export async function resolveRendererThreadStartDefaults(
 ): Promise<RendererThreadStartDefaults> {
   if (input.request.modelProvider !== undefined) {
     return { modelProvider: input.request.modelProvider, cwd: input.cwd };
+  }
+
+  if (input.request.configurationProfile === undefined && input.getConfiguredDefaultSelection) {
+    const configured = await input.getConfiguredDefaultSelection();
+    if (configured) return { cwd: input.cwd, executionSelection: configured };
   }
 
   if (input.request.configurationProfile === undefined && input.remembered) {

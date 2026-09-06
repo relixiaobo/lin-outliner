@@ -36,6 +36,8 @@ import type {
   ProviderConnectionCheckView,
   ProviderAuthView,
 } from '../../../core/types';
+import type { ThreadConfigurationSummary } from '../../../core/agent/protocol';
+import { composeProviderQualifiedModel } from '../../../core/agentModelId';
 import { parseProviderQualifiedModel } from '../../../core/agentModelId';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
 import { createKeyedSerialMutationQueue } from '../../../core/serialMutationQueue';
@@ -339,6 +341,29 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
   };
 }
 
+export async function getConfiguredDefaultSelection(): Promise<ThreadConfigurationSummary | null> {
+  const value = loadFilePreferences(electron.app.getPath('userData')).preferences.models.default;
+  if (value === 'auto') return null;
+  const qualified = parseProviderQualifiedModel(value, () => true);
+  if (!qualified) throw new Error(`Configured default model is invalid: ${value}`);
+  const provider = await getProviderRuntimeConfig(qualified.providerId);
+  if (!provider) throw new Error(`Configured default provider is unavailable: ${qualified.providerId}`);
+  const declared = normalizeDeclaredModels(provider.models);
+  if (declared.length > 0 && !declared.includes(qualified.modelId)) {
+    throw new Error(`Configured default model is not declared for provider: ${value}`);
+  }
+  const model = piFindModel(qualified.providerId, qualified.modelId)
+    ?? (provider.baseUrl
+      ? createOpenAICompatibleModel({ ...provider, modelId: qualified.modelId })
+      : null);
+  if (!model) throw new Error(`Configured default model is unavailable: ${value}`);
+  return {
+    modelProvider: qualified.providerId,
+    model: composeProviderQualifiedModel(qualified.providerId, qualified.modelId),
+    reasoningEffort: getSupportedReasoningLevelsForModel(model)[0] ?? 'off',
+  };
+}
+
 /** Resolve one specific provider without falling back to another configured row. */
 export async function getProviderRuntimeConfig(
   providerIdInput: string,
@@ -356,9 +381,13 @@ export async function getProviderRuntimeConfig(
   ) ?? null;
   if (!provider) return null;
   if (modelId) {
-    const catalog = (await getAvailableProviders(file.providers))
-      .find((candidate) => candidate.providerId === providerId);
-    if (!catalog?.models.some((model) => model.id === modelId)) return null;
+    const declared = normalizeDeclaredModels(provider.models);
+    if (declared.length > 0 && !declared.includes(modelId)) return null;
+    if (declared.length === 0) {
+      const catalog = (await getAvailableProviders(file.providers))
+        .find((candidate) => candidate.providerId === providerId);
+      if (!catalog?.models.some((model) => model.id === modelId) && !provider.baseUrl) return null;
+    }
   }
   const localGatewayProvider = localGatewayProviderDefinition(provider.providerId);
   if (localGatewayProvider?.adapter === 'cc-switch-codex') {
@@ -538,20 +567,29 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
  * null for a custom endpoint with no catalog.
  */
 /** A provider's catalog models, sorted by the shared ranking (newest, thinking-first). */
-export function rankedModels(providerId: string): Model<Api>[] {
+export function rankedModels(providerId: string, declaredModels?: readonly string[]): Model<Api>[] {
   try {
-    return rankProviderModels(providerId, piModelsForProvider(providerId));
+    const models = piModelsForProvider(providerId);
+    const declared = normalizeDeclaredModels(declaredModels);
+    return rankProviderModels(
+      providerId,
+      declared.length > 0 ? models.filter((model) => declared.includes(model.id)) : models,
+    );
   } catch {
     return [];
   }
+}
+
+function normalizeDeclaredModels(value: readonly string[] | undefined): string[] {
+  return [...new Set((value ?? []).map((model) => model.trim()).filter(Boolean))];
 }
 
 function rankProviderModels(providerId: string, models: readonly Model<Api>[]): Model<Api>[] {
   return [...models].sort((left, right) => compareProviderRankables(providerId, left, right));
 }
 
-function firstRankedModel(providerId: string): Model<Api> | null {
-  return rankedModels(providerId)[0] ?? null;
+function firstRankedModel(providerId: string, declaredModels?: readonly string[]): Model<Api> | null {
+  return rankedModels(providerId, declaredModels)[0] ?? null;
 }
 
 export async function deleteProviderConfig(providerIdInput: string) {
@@ -690,7 +728,7 @@ export async function getProviderApiKey(providerIdInput: string): Promise<string
     const file = await readProviderFile();
     const providerConfig = file.providers.find((provider) => provider.providerId === providerId);
     if (providerConfig?.baseUrl) ensurePiCustomProvider(providerConfig);
-    const model = firstRankedModel(providerId);
+    const model = firstRankedModel(providerId, providerConfig?.models);
     const authModel = model
       ?? (providerConfig?.baseUrl
         ? createOpenAICompatibleModel({ providerId, modelId: '__tenon_openai_compatible_probe__', baseUrl: providerConfig.baseUrl })
@@ -989,8 +1027,13 @@ function normalizeInteger(value: unknown, fallback: number | null, min: number):
 }
 
 async function getAvailableProviders(configuredProviders: readonly AgentProviderConfig[]): Promise<AgentProviderOption[]> {
+  const configuredById = new Map(configuredProviders.map((provider) => [provider.providerId, provider]));
   const builtinProviders = await Promise.all(piProviders().map(async (providerId) => {
-    const models = providerModelOptions(providerId, piModelsForProvider(providerId));
+    const models = providerModelOptions(
+      providerId,
+      piModelsForProvider(providerId),
+      configuredById.get(providerId)?.models,
+    );
     return {
       providerId,
       authKind: getProviderAuthKind(providerId),
@@ -1027,7 +1070,7 @@ async function getCcSwitchProviderOption(
   const runtimeModels = registerCcSwitchRuntimeModels(localGatewayProvider, snapshot);
   const detected = snapshot.detected;
   if (!configured && !detected) return null;
-  const models = providerModelOptions(localGatewayProvider.providerId, runtimeModels);
+  const models = providerModelOptions(localGatewayProvider.providerId, runtimeModels, configured?.models);
   const baseUrl = ccSwitchRunnableSources(snapshot)[0]
     ? ccSwitchSourceBaseUrl(ccSwitchRunnableSources(snapshot)[0]!)
     : configured?.baseUrl ?? localGatewayProvider.defaultBaseUrl;
@@ -1163,8 +1206,13 @@ function providerCapabilities(providerId: string, languageModels: readonly Agent
   return capabilities;
 }
 
-function providerModelOptions(providerId: string, models: readonly Model<Api>[]): AgentModelOption[] {
-  return models
+function providerModelOptions(
+  providerId: string,
+  models: readonly Model<Api>[],
+  declaredModels?: readonly string[],
+): AgentModelOption[] {
+  const declared = normalizeDeclaredModels(declaredModels);
+  return (declared.length > 0 ? models.filter((model) => declared.includes(model.id)) : models)
     .map((model): AgentModelOption => ({
       id: model.id,
       name: model.name,
@@ -1432,18 +1480,26 @@ async function mutateProviderFile(mutator: (file: ProviderConfigFile) => void | 
         })),
       };
       await mutator(file);
-      updateFilePreferences(electron.app.getPath('userData'), [
-        {
-          path: ['models', 'connections'],
-          value: file.providers.map((provider) => ({
-            providerId: provider.providerId,
-            baseUrl: provider.baseUrl ?? null,
-            enabled: provider.enabled,
-            models: provider.models ?? [],
-          })),
-        },
-        { path: ['models', 'imageDefault'], value: file.imageGeneration?.defaultModel ?? null },
-      ]);
+      const publicConnections = file.providers.map((provider) => ({
+        providerId: provider.providerId,
+        baseUrl: provider.baseUrl ?? null,
+        enabled: provider.enabled,
+        models: provider.models ?? [],
+      }));
+      const previousConnections = preferences.models.connections.map((connection) => ({
+        providerId: connection.providerId,
+        baseUrl: connection.baseUrl ?? null,
+        enabled: connection.enabled,
+        models: connection.models,
+      }));
+      const updates: { path: readonly string[]; value: unknown }[] = [];
+      if (JSON.stringify(publicConnections) !== JSON.stringify(previousConnections)) {
+        updates.push({ path: ['models', 'connections'], value: publicConnections });
+      }
+      if (file.imageGeneration?.defaultModel !== preferences.models.imageDefault) {
+        updates.push({ path: ['models', 'imageDefault'], value: file.imageGeneration?.defaultModel ?? null });
+      }
+      if (updates.length > 0) updateFilePreferences(electron.app.getPath('userData'), updates);
       result = file;
       return {
         activeProviderId: file.activeProviderId,

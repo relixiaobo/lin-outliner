@@ -22,6 +22,8 @@ export function resolveAgentModelOverride(
   providerConfig: AgentProviderRuntimeConfig,
 ): Model<Api> | null {
   const { providerId, modelId } = modelIdentityForProvider(requested, providerConfig.providerId);
+  const declared = providerConfig.models?.map((model) => model.trim()).filter(Boolean) ?? [];
+  if (declared.length > 0 && !declared.includes(modelId)) return null;
   const knownModel = findKnownModel(providerId, modelId);
   if (providerId === providerConfig.providerId && providerConfig.baseUrl) {
     return createCustomEndpointModel(providerConfig, modelId, knownModel);
@@ -115,7 +117,7 @@ function resolveProviderCatalogModel(config: AgentProviderRuntimeConfig): Model<
     const configured = findKnownModel(config.providerId, config.modelId);
     if (configured) return configured;
   }
-  const first = rankedModels(config.providerId)[0];
+  const first = rankedModels(config.providerId, config.models)[0];
   if (config.baseUrl) {
     const modelId = config.modelId ?? first?.id ?? '__tenon_openai_compatible_probe__';
     return createCustomEndpointModel(config, modelId, first);

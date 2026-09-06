@@ -28,8 +28,12 @@ Skill reach the same source and owner boundaries.
 
 Extend the existing JSONC settings decoder/schema with `models.connections`,
 `models.default`, and `models.imageDefault`. A connection contains only the
-qualified Provider identity, adapter/endpoint, enabled state, optional explicit
-model declarations, and an opaque credential reference. `models.default`
+qualified Provider identity, adapter/endpoint, enabled state, and optional
+explicit model declarations. An empty declaration list follows the live
+provider catalog; a non-empty list is an exact model allow-list, with unknown
+IDs reported as unavailable rather than silently replaced. Credentials are
+resolved by provider identity from the private credential store; no credential
+value or reference is written to the public source. `models.default`
 defaults to `auto`; image defaults use the image owner's resolver and never use
 root execution history. Preserve comments, ordering, unrelated values, source
 digests, last-known-good recovery, and rejected-source behavior from Unit A.

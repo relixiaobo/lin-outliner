@@ -112,6 +112,7 @@ import {
   deleteProviderApiKey,
   deleteProviderConfig,
   getActiveProviderRuntimeConfig,
+  getConfiguredDefaultSelection,
   getProviderRuntimeConfig,
   getAgentRuntimeSettings,
   getProviderSecretStatus,
@@ -498,6 +499,7 @@ const agentHost = createAgentHost({
     resolveRendererStartDefaults: (request) => resolveRendererThreadStartDefaults({
       request,
       remembered: loadAppPreferences().lastAgentThreadConfiguration,
+      getConfiguredDefaultSelection,
       cwd: agentLocalFileRoot,
       getProviderRuntimeConfig,
       getActiveProviderRuntimeConfig,
