@@ -81,9 +81,13 @@ unavailable; it never fabricates current branch, dirty state, or execution
 results. Git repository identity is the canonical `gitCommonDir`; each checkout
 is a separate `ProjectWorktree` identity. A non-Git Project has one worktree
 record whose root is its identity. Deleting a Project is rejected while an
-Automation still references it; otherwise it atomically detaches member Threads
-to their managed workspaces, preserves their evidence, and removes catalog
-metadata. It never silently redirects an Automation to another directory.
+Automation in `active` or `paused` state references it, because either state
+can schedule or resume future work. Completed Automation runs retain their
+resolved workspace snapshot as historical evidence and do not block deletion;
+the UI marks the historical Project as unavailable after catalog removal. When
+deletion is allowed, it atomically detaches member Threads to managed
+workspaces, preserves their evidence, and removes catalog metadata. It never
+silently redirects an Automation to another directory.
 
 `Thread` does not store a second directory fact. It stores one
 `defaultWorkspaceRef`, resolved by the Host as either a managed workspace or a
@@ -600,17 +604,19 @@ generation are included in Turn diagnostics and trajectory evidence.
 ### Automation and lineage
 
 Automation snapshots store the same `defaultWorkspaceRef` shape and an
-immutable resolved workspace identity at dispatch. They do not store a sticky
+immutable resolved workspace identity at dispatch, including a self-contained
+copy on completed run history. They do not store a sticky
 `cwd`. A standalone occurrence creates a root Thread with a managed or Project
 workspace reference; an existing-Thread occurrence is admitted only when its
 resolved Project/worktree matches that Thread's reference. A child or fork
 inherits the root Thread's managed `rootThreadId` or the parent's Project
 worktree reference, unless an explicit isolated worktree is created.
 
-When a Project is deleted, active Automation bindings block the deletion until
-the user removes or pauses them. This avoids silently redirecting scheduled
-work. Member Chats are detached to their managed workspace in the same catalog
-transaction, and their prior Project evidence remains readable.
+When a Project is deleted, `active` and `paused` Automation bindings block the
+deletion until the user removes them or the Project is restored. Completed run
+snapshots retain their resolved workspace identity for replay but cannot be
+resumed. Member Chats are detached to their managed workspace in the same
+catalog transaction, and their prior Project evidence remains readable.
 
 ### Protocol work
 
@@ -671,8 +677,9 @@ concurrent writers but does not hide out-of-band edits.
   Project rebind is Project-wide and continuity-checked.
 - **FR-9:** Automation snapshots, forks, and child Threads use workspace
   references and preserve root-lineage inheritance.
-- **FR-10:** Project deletion is atomic: active Automation bindings block it;
-  otherwise member Threads move to managed workspaces without losing evidence.
+- **FR-10:** Project deletion is atomic: active or paused Automation bindings
+  block it; completed run history remains self-contained, and otherwise member
+  Threads move to managed workspaces without losing evidence.
 
 ## Acceptance Criteria
 
@@ -710,7 +717,8 @@ concurrent writers but does not hide out-of-band edits.
 - **AC-16:** Automation dispatch, fork, and child creation preserve the root
   managed workspace identity or the selected Project worktree without reading a
   retired `cwd` field.
-- **AC-17:** Project deletion is rejected while active Automation bindings exist;
+- **AC-17:** Project deletion is rejected while active or paused Automation
+  bindings exist; completed run snapshots remain replayable without dispatch;
   otherwise all member Threads atomically reference managed workspaces and
   remain readable after restart.
 
@@ -719,7 +727,7 @@ concurrent writers but does not hide out-of-band edits.
 Add core tests for canonical identity, Project worktree selection and rebind,
 nested scope, hash reuse, generation increment, replacement/removal, malformed
 payload rejection, Automation snapshot migration, root-lineage inheritance,
-Project deletion, and restart replay.
+Project deletion, completed-run replay, and restart replay.
 Add renderer tests for refresh, provenance, degraded state, and stable-prompt
 fingerprints. Capture one trajectory fixture showing the payload reference used
 by a Turn.
