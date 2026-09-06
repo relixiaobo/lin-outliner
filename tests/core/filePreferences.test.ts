@@ -71,11 +71,11 @@ describe('file-backed preferences', () => {
     await writeFile(filePreferencesPath(userData), duplicate);
     expect(loadFilePreferences(userData).sourceStatus).toBe('rejected');
 
-    const valid = '{ "agent": { "skills": { "sources": [", }"] } } }';
+    const valid = '{ "agent": { "skills": { "sources": [{ "path": ", }", "mode": "container" }] } } }';
     await writeFile(filePreferencesPath(userData), valid);
     const result = loadFilePreferences(userData);
     expect(result.sourceStatus).toBe('accepted');
-    expect(result.preferences.agent.skills.sources).toEqual([', }']);
+    expect(result.preferences.agent.skills.sources).toEqual([{ path: ', }', mode: 'container' }]);
   });
 
   test('writes an atomic public source and reloads it', async () => {
@@ -123,14 +123,21 @@ describe('file-backed preferences', () => {
   test('accepts global Skill sources and tool disablement', async () => {
     await writeFile(filePreferencesPath(userData), JSON.stringify({
       agent: {
-        skills: { sources: ['/tmp/skills'], disabled: ['configuration'] },
+        skills: { sources: [{ path: '/tmp/skills', mode: 'container' }], disabled: ['configuration'] },
         tools: { disabled: ['bash'] },
       },
     }));
     const result = loadFilePreferences(userData);
-    expect(result.preferences.agent.skills.sources).toEqual(['/tmp/skills']);
+    expect(result.preferences.agent.skills.sources).toEqual([{ path: '/tmp/skills', mode: 'container' }]);
     expect(result.preferences.agent.skills.disabled).toEqual(['configuration']);
     expect(result.preferences.agent.tools.disabled).toEqual(['bash']);
+  });
+
+  test('rejects malformed Skill source bindings', async () => {
+    await writeFile(filePreferencesPath(userData), JSON.stringify({
+      agent: { skills: { sources: [{ path: '/tmp/skills', mode: 'unknown' }] } },
+    }));
+    expect(loadFilePreferences(userData).sourceStatus).toBe('rejected');
   });
 
   test('accepts public model connections and defaults', async () => {

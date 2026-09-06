@@ -26,6 +26,7 @@ export interface ManagedSkillsHostOptions {
   readonly appVersion: string;
   readonly loadRuntimeSettings: () => Promise<{
     readonly additionalSkillDirectories: readonly string[];
+    readonly additionalSkillSourceModes?: Readonly<Record<string, 'skill' | 'container'>>;
     readonly disabledSkills?: readonly string[];
     readonly delegation?: { readonly enabled: boolean };
   }>;
@@ -261,11 +262,13 @@ function applyRuntimeSettings(
   runtime: AgentSkillRuntime,
   settings: {
     readonly additionalSkillDirectories: readonly string[];
+    readonly additionalSkillSourceModes?: Readonly<Record<string, 'skill' | 'container'>>;
     readonly disabledSkills?: readonly string[];
     readonly delegation?: { readonly enabled: boolean };
   },
 ): void {
   runtime.updateAdditionalSkillDirectories([...settings.additionalSkillDirectories]);
+  runtime.updateAdditionalSkillSourceModes({ ...(settings.additionalSkillSourceModes ?? {}) });
   runtime.updateDisabledSkills([
     ...(settings.disabledSkills ?? []),
     ...(settings.delegation?.enabled === true ? [] : ['delegate']),
@@ -291,6 +294,7 @@ async function findUnmanagedSkillNameConflict(name: string, options: ManagedSkil
   const runtime = new AgentSkillRuntime({
     localRoot: options.localRoot,
     additionalSkillDirectories: [...settings.additionalSkillDirectories],
+    additionalSkillSourceModes: { ...(settings.additionalSkillSourceModes ?? {}) },
   });
   const conflict = (await runtime.listAllSkills()).find((skill) => skill.name === normalized);
   return conflict ? { source: conflict.source, location: conflict.skillFile } : null;

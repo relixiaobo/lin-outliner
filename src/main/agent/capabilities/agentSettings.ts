@@ -30,6 +30,8 @@ import type {
   AgentProviderOption,
   AgentReasoningLevelLabels,
   AgentReasoningLevel,
+  AgentSkillSourceBinding,
+  AgentSkillSourceMode,
   AgentProviderSecretStatus,
   AgentProviderStoredApiKey,
   AgentProviderSettingsView,
@@ -145,6 +147,7 @@ export interface ProviderConnectionProbeContext {
 
 type StoredAgentRuntimeSettings = Partial<Omit<AgentRuntimeSettings, 'delegation'>> & {
   delegation?: AgentRuntimeSettingsInput['delegation'];
+  additionalSkillSourceBindings?: AgentSkillSourceBinding[];
 };
 
 type StoredImageGenerationSettings = {
@@ -213,6 +216,7 @@ const DEFAULT_DELEGATION_SETTINGS: AgentDelegationSettings = {
 };
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   additionalSkillDirectories: [],
+  additionalSkillSourceModes: {},
   providerTimeoutMs: null,
   providerMaxRetries: null,
   providerMaxRetryDelayMs: 60_000,
@@ -282,9 +286,11 @@ export async function refreshProviderModels(providerIdInput: string): Promise<Ag
 export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
   const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
   const stored = normalizeAgentRuntimeSettings({ delegation: preferences.agent.delegation });
+  const sourceBindings = [...preferences.agent.skills.sources];
   return normalizeAgentRuntimeSettings({
     ...stored,
-    additionalSkillDirectories: [...preferences.agent.skills.sources],
+    additionalSkillDirectories: sourceBindings.map((source) => source.path),
+    additionalSkillSourceModes: Object.fromEntries(sourceBindings.map((source) => [source.path, source.mode])),
     providerTimeoutMs: preferences.agent.provider.timeoutMs,
     providerMaxRetries: preferences.agent.provider.maxRetries,
     providerMaxRetryDelayMs: preferences.agent.provider.maxRetryDelayMs,
@@ -396,9 +402,26 @@ export async function getProviderRuntimeConfig(
 
 export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInput) {
   const current = await getAgentRuntimeSettings();
-  const next = normalizeAgentRuntimeSettings({ ...current, ...input });
+  const sourceBindings = input.additionalSkillSourceBindings ?? (
+    input.additionalSkillDirectories === undefined
+      ? undefined
+      : input.additionalSkillDirectories.map((sourcePath) => ({
+        path: sourcePath,
+        mode: current.additionalSkillSourceModes[sourcePath] ?? 'container',
+      }))
+  );
+  const next = normalizeAgentRuntimeSettings({
+    ...current,
+    ...input,
+    ...(sourceBindings === undefined ? {} : {
+      additionalSkillDirectories: sourceBindings.map((source) => source.path),
+      additionalSkillSourceBindings: sourceBindings,
+      additionalSkillSourceModes: Object.fromEntries(sourceBindings.map((source) => [source.path, source.mode])),
+    }),
+  });
   if (
     input.additionalSkillDirectories !== undefined
+    || input.additionalSkillSourceBindings !== undefined
     || input.disabledSkills !== undefined
     || input.disabledTools !== undefined
     || input.providerTimeoutMs !== undefined
@@ -410,8 +433,14 @@ export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInpu
     if (input.disabledSkills !== undefined) {
       updates.push({ path: ['agent', 'skills', 'disabled'], value: next.disabledSkills });
     }
-    if (input.additionalSkillDirectories !== undefined) {
-      updates.push({ path: ['agent', 'skills', 'sources'], value: next.additionalSkillDirectories });
+    if (input.additionalSkillDirectories !== undefined || input.additionalSkillSourceBindings !== undefined) {
+      updates.push({
+        path: ['agent', 'skills', 'sources'],
+        value: next.additionalSkillDirectories.map((sourcePath) => ({
+          path: sourcePath,
+          mode: next.additionalSkillSourceModes[sourcePath] ?? 'container',
+        } satisfies AgentSkillSourceBinding)),
+      });
     }
     if (input.disabledTools !== undefined) {
       updates.push({ path: ['agent', 'tools', 'disabled'], value: next.disabledTools });
@@ -855,8 +884,13 @@ function normalizeImageGenerationSettings(input?: StoredImageGenerationSettings 
 }
 
 function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null): AgentRuntimeSettings {
+  const sourceBindings = normalizeSkillSourceBindings(input?.additionalSkillSourceBindings, MAX_ADDITIONAL_SKILL_DIRECTORIES);
+  const sourceDirectories = input?.additionalSkillDirectories ?? sourceBindings.map((source) => source.path);
+  const sourceModes = input?.additionalSkillSourceModes
+    ?? Object.fromEntries(sourceBindings.map((source) => [source.path, source.mode]));
   return {
-    additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories, MAX_ADDITIONAL_SKILL_DIRECTORIES),
+    additionalSkillDirectories: normalizeStringList(sourceDirectories, MAX_ADDITIONAL_SKILL_DIRECTORIES),
+    additionalSkillSourceModes: normalizeSkillSourceModes(sourceModes),
     providerTimeoutMs: normalizeNullablePositiveInteger(input?.providerTimeoutMs, DEFAULT_AGENT_RUNTIME_SETTINGS.providerTimeoutMs),
     providerMaxRetries: normalizeNullableNonNegativeInteger(input?.providerMaxRetries, DEFAULT_AGENT_RUNTIME_SETTINGS.providerMaxRetries),
     providerMaxRetryDelayMs: normalizeNullableNonNegativeInteger(
@@ -870,6 +904,30 @@ function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null
     disabledSkills: normalizeStringList(input?.disabledSkills, MAX_DISABLED_SKILLS),
     disabledTools: normalizeStringList(input?.disabledTools, MAX_DISABLED_SKILLS),
   };
+}
+
+function normalizeSkillSourceBindings(value: unknown, limit: number): AgentSkillSourceBinding[] {
+  if (!Array.isArray(value)) return [];
+  const result: AgentSkillSourceBinding[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const sourcePath = typeof record.path === 'string' ? record.path.trim() : '';
+    const mode = record.mode === 'skill' || record.mode === 'container' ? record.mode : null;
+    if (!sourcePath || !mode || seen.has(sourcePath)) continue;
+    seen.add(sourcePath);
+    result.push({ path: sourcePath, mode });
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
+function normalizeSkillSourceModes(value: unknown): Record<string, AgentSkillSourceMode> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(([, mode]) => mode === 'skill' || mode === 'container'),
+  ) as Record<string, AgentSkillSourceMode>;
 }
 
 function mergeDelegationSettings(

@@ -222,6 +222,7 @@ export interface AgentSkillsCapability {
   ): ReturnType<ReturnType<typeof createManagedSkillsHost>['processEnvironment']>;
   updateRuntimeSettings(settings: {
     readonly additionalSkillDirectories: readonly string[];
+    readonly additionalSkillSourceModes?: Readonly<Record<string, 'skill' | 'container'>>;
     readonly disabledSkills?: readonly string[];
     readonly delegation?: { readonly enabled: boolean };
   }): void;

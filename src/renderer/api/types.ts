@@ -11,6 +11,8 @@ export type {
   AgentDelegationRunnerSettings,
   AgentRuntimeSettings,
   AgentRuntimeSettingsInput,
+  AgentSkillSourceMode,
+  AgentSkillSourceBinding,
   AgentImageGenerationSettings,
   AgentImageGenerationSettingsInput,
   AgentSlashCommandView,

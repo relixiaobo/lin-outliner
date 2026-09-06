@@ -2086,15 +2086,23 @@ function preserveStoredDirectoryForms(
   input: AgentRuntimeSettingsInput,
   stored: AgentRuntimeSettings,
 ): AgentRuntimeSettingsInput {
-  if (!input.additionalSkillDirectories) return input;
   const byExpanded = new Map(stored.additionalSkillDirectories.map((dir) => (
     [expandSkillDirectory(dir, agentLocalFileRoot), dir]
   )));
+  const preserve = (dir: string) => byExpanded.get(expandSkillDirectory(dir, agentLocalFileRoot)) ?? dir;
+  if (input.additionalSkillSourceBindings) {
+    return {
+      ...input,
+      additionalSkillSourceBindings: input.additionalSkillSourceBindings.map((binding) => ({
+        ...binding,
+        path: preserve(binding.path),
+      })),
+    };
+  }
+  if (!input.additionalSkillDirectories) return input;
   return {
     ...input,
-    additionalSkillDirectories: input.additionalSkillDirectories.map((dir) => (
-      byExpanded.get(expandSkillDirectory(dir, agentLocalFileRoot)) ?? dir
-    )),
+    additionalSkillDirectories: input.additionalSkillDirectories.map(preserve),
   };
 }
 
@@ -2107,7 +2115,20 @@ function withCanonicalSkillDirectories(settings: AgentProviderSettingsView): Age
   const expanded = settings.agent.additionalSkillDirectories
     .map((dir) => expandSkillDirectory(dir, agentLocalFileRoot))
     .filter(Boolean);
-  return { ...settings, agent: { ...settings.agent, additionalSkillDirectories: expanded } };
+  const additionalSkillSourceModes = Object.fromEntries(
+    Object.entries(settings.agent.additionalSkillSourceModes ?? {}).map(([dir, mode]) => [
+      expandSkillDirectory(dir, agentLocalFileRoot),
+      mode,
+    ]),
+  );
+  return {
+    ...settings,
+    agent: {
+      ...settings.agent,
+      additionalSkillDirectories: expanded,
+      additionalSkillSourceModes,
+    },
+  };
 }
 
 async function withDelegationRunners(settings: AgentProviderSettingsView) {
@@ -2171,11 +2192,9 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         : await dialog.showOpenDialog(options);
       const picked = result.canceled ? undefined : result.filePaths[0];
       if (!picked) return { path: null };
-      // A bound directory is a CONTAINER of Skills. Picking the folder that is
-      // itself a Skill is at least as natural, and binding it verbatim loaded
-      // nothing and said nothing — the dead end that made the old picker
-      // useless. Report the shape and let the caller bind the parent, rather
-      // than inferring ownership per write, which is a different seam.
+      // Persist the selected directory's identity explicitly. A direct
+      // SKILL.md means the directory itself is the Skill; otherwise its direct
+      // children form a container. Reload and authoring use this same mode.
       const resolvedPick = resolve(picked);
       const isSkillFolder = await stat(join(resolvedPick, 'SKILL.md')).then(
         (entry) => entry.isFile(),
@@ -2188,10 +2207,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       // their actions, and the directory would list as if it were empty.
       return {
         path: resolvedPick,
-        isSkillFolder,
-        // Identity is the directory name, so this decides whether binding the
-        // parent would actually surface it.
-        nameValid: isValidSkillName(basename(resolvedPick)),
+        mode: isSkillFolder && isValidSkillName(basename(resolvedPick)) ? 'skill' : 'container',
       };
     }
     case 'agent_reveal_skill_directory': {

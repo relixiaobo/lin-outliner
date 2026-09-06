@@ -24,7 +24,18 @@ const SETTINGS_SCHEMA = Object.freeze({
           type: 'object', additionalProperties: false,
           properties: {
             disabled: { type: 'array', items: { type: 'string', minLength: 1 } },
-            sources: { type: 'array', items: { type: 'string', minLength: 1 } },
+            sources: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['path', 'mode'],
+                properties: {
+                  path: { type: 'string', minLength: 1 },
+                  mode: { enum: ['skill', 'container'] },
+                },
+              },
+            },
           },
         },
         tools: {

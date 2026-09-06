@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ManagedSkillView, SkillDefinition, SkillSourceKind } from '../../api/types';
+import type { AgentSkillSourceMode, ManagedSkillView, SkillDefinition, SkillSourceKind } from '../../api/types';
 import { api } from '../../api/client';
 import { AddIcon, ICON_SIZE, LoaderIcon, RefreshIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
@@ -34,7 +34,7 @@ interface SettingsSkillLibrarySectionProps {
   disabledSkills: readonly string[];
   /** Directories Tenon reads Skills from. Pointed at, never copied in. */
   additionalSkillDirectories: readonly string[];
-  onDirectoriesChange: (next: string[]) => Promise<readonly string[]>;
+  onDirectoriesChange: (next: string[], mode?: AgentSkillSourceMode) => Promise<readonly string[]>;
   onToggleSkill: (skillName: string) => void;
   toggleErrors?: ReadonlyMap<string, string>;
   /**
@@ -61,13 +61,6 @@ interface SettingsSkillLibrarySectionProps {
  * marks them is the directory they came from, so the row is identified by path
  * rather than by source.
  */
-/** POSIX-style parent, since main hands back an absolute resolved path. */
-function parentDirectoryOf(directory: string): string {
-  const trimmed = directory.replace(/\/+$/, '');
-  const cut = trimmed.lastIndexOf('/');
-  return cut > 0 ? trimmed.slice(0, cut) : '/';
-}
-
 function directoryContaining(
   rootDir: string,
   directories: readonly string[],
@@ -143,9 +136,6 @@ export function SettingsSkillLibrarySection({
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [acquireOpen, setAcquireOpen] = useState(false);
-  // A pick that turned out to be a Skill folder, awaiting the user's decision
-  // about binding its parent instead.
-  const [pendingParentBind, setPendingParentBind] = useState<{ picked: string; parent: string } | null>(null);
   // Unbinding is not destructive to files, but it is invisible in scale: the
   // action is offered on EVERY row that came from the directory, and one click
   // removes all of them at once. The confirmation exists to say how many.
@@ -173,26 +163,13 @@ export function SettingsSkillLibrarySection({
     try {
       const picked = await api.agentPickSkillDirectory();
       if (!picked.path) return;
-      // Tenon reads Skills from the folders INSIDE a bound directory. When the
-      // chosen folder is itself a Skill, the useful thing to bind is its
-      // parent — but that is a wider scope than the user picked, and every
-      // sibling folder under it becomes a putative Skill root. Ask; do not
-      // decide for them and report it afterwards.
-      if (picked.isSkillFolder) {
-        if (!picked.nameValid) {
-          onError(t.settings.skills.localDirectoryUnnameable({ directory: picked.path }));
-          return;
-        }
-        setPendingParentBind({ picked: picked.path, parent: parentDirectoryOf(picked.path) });
-        return;
-      }
-      await bindDirectory(picked.path);
+      await bindDirectory(picked.path, picked.mode ?? 'container');
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
-  async function bindDirectory(path: string) {
+  async function bindDirectory(path: string, mode: AgentSkillSourceMode = 'container') {
     try {
       if (additionalSkillDirectories.includes(path)) {
         onNotice(t.settings.skills.localDirectoryAlreadyBound({ directory: path }));
@@ -200,7 +177,7 @@ export function SettingsSkillLibrarySection({
       }
       onError(null);
       onNotice(null);
-      const kept = await onDirectoriesChange([...additionalSkillDirectories, path]);
+      const kept = await onDirectoriesChange([...additionalSkillDirectories, path], mode);
       // The stored list is bounded. Past the limit the new path is dropped on
       // write, and without this the dialog would just close and nothing would
       // appear — no row, no error, no notice.
@@ -615,23 +592,6 @@ export function SettingsSkillLibrarySection({
             void unbindDirectory(directory);
           }}
           title={t.settings.skills.localUnbindConfirmTitle}
-        />
-      ) : null}
-      {pendingParentBind ? (
-        <ConfirmDialog
-          cancelLabel={t.dialog.cancel}
-          confirmLabel={t.settings.skills.localDirectoryBindParentConfirm}
-          message={t.settings.skills.localDirectoryBindParentMessage({
-            picked: pendingParentBind.picked,
-            parent: pendingParentBind.parent,
-          })}
-          onCancel={() => setPendingParentBind(null)}
-          onConfirm={() => {
-            const parent = pendingParentBind.parent;
-            setPendingParentBind(null);
-            void bindDirectory(parent);
-          }}
-          title={t.settings.skills.localDirectoryBindParentTitle}
         />
       ) : null}
       <ManagedSkillsSettings

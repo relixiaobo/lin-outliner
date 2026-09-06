@@ -206,13 +206,6 @@ export const en = {
       localUnboundNotice: ({ directory }: { directory: string }) =>
         `Unbound ${directory}. Its files were not changed.`,
       localDirectoryEmpty: 'No skills found in this directory.',
-      localDirectoryBindParentTitle: 'Add the containing folder?',
-      localDirectoryBindParentMessage: ({ picked, parent }: { picked: string; parent: string }) =>
-        `${picked} is a skill, and Tenon reads the skills inside a directory rather than the directory itself. `
-        + `Adding ${parent} makes that skill available — and also every other skill folder in ${parent}.`,
-      localDirectoryBindParentConfirm: 'Add Containing Folder',
-      localDirectoryUnnameable: ({ directory }: { directory: string }) =>
-        `${directory} cannot be used as a skill: a skill's name is its folder name, so it may only contain letters, numbers, dots, underscores, and hyphens.`,
       localDirectoryAlreadyBound: ({ directory }: { directory: string }) =>
         `${directory} is already added.`,
       localDirectoryLimit: ({ count }: { count: number }) =>
