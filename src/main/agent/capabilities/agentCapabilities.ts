@@ -144,6 +144,13 @@ export function deriveAgentToolActionDescriptors(input: {
   access: AgentCapabilityAccess;
 }): ToolActionDescriptor[] {
   const toolName = normalizeToolName(input.toolName);
+  if (['preview_inspect', 'preview_manage', 'data_inspect', 'data_manage'].includes(toolName)) {
+    const operation = getStringArg(getUnknownArg(input.args, 'request'), 'operation');
+    const kind = toolName === 'preview_inspect' ? 'preview.inspect'
+      : toolName === 'data_inspect' ? 'preview.data.inspect'
+        : toolName === 'preview_manage' && operation !== 'clear_cache' ? 'preview.control' : 'preview.data.clear';
+    return [simpleDescriptor(toolName, input.args, kind, 'Preview operations', 'Inspect or operate on the selected preview/data scope.')];
+  }
   if (toolName === 'memory_inspect' || toolName === 'memory_manage') {
     const operation = getStringArg(getUnknownArg(input.args, 'request'), 'operation') ?? '';
     const result = [simpleDescriptor(toolName, input.args,

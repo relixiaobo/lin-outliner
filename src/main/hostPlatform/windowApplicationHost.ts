@@ -59,16 +59,6 @@ import {
   type SettingsOpenTarget,
 } from '../../core/settingsWindow';
 import { isThemeMode, type ThemeMode } from '../../core/theme';
-import {
-  isTranslationLanguage,
-  LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL,
-  type TranslationLanguage,
-} from '../../core/translationLanguage';
-import {
-  isUrlPageTranslationPreferences,
-  LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL,
-  type UrlPageTranslationPreferences,
-} from '../../core/urlPageTranslation';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../../core/windowActivity';
 import type { DocumentProjection, SearchHit } from '../../core/types';
 import { ActionInvocationService, type RendererStepAck } from '../actionInvocationService';
@@ -77,8 +67,6 @@ import {
   saveLanguagePreference,
   saveAutomaticChecksPreference,
   saveThemePreference,
-  saveTranslationLanguagePreference,
-  saveUrlPageTranslationPreferences,
 } from '../appPreferences';
 import { AppUpdateService } from '../appUpdateService';
 import { AppUpdateStore } from '../appUpdateStore';
@@ -168,13 +156,9 @@ export interface WindowApplicationHost {
   assertSettingsSender(event: IpcMainInvokeEvent, capability: string): void;
   notifySettingsChanged(origin?: BrowserWindow | null): void;
   effectiveLocale(): Locale;
-  effectiveTranslationLanguage(): TranslationLanguage;
-  urlPageTranslationPreferences(): UrlPageTranslationPreferences;
   theme(): ThemeMode;
   setTheme(raw: unknown): void;
   setLocale(raw: unknown): void;
-  setTranslationLanguage(raw: unknown): void;
-  setUrlPageTranslationPreferences(raw: unknown): UrlPageTranslationPreferences;
   launcherHotkey(): string | null;
   toggleLauncher(): Promise<void>;
   dismissLauncher(): void;
@@ -202,13 +186,6 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
   const effectiveLocale = (): Locale => {
     cachedLocale ??= loadAppPreferences().language ?? resolveSystemLocale(app.getLocale());
     return cachedLocale;
-  };
-  const effectiveTranslationLanguage = (): TranslationLanguage => (
-    loadAppPreferences().translationLanguage ?? effectiveLocale()
-  );
-  const urlPageTranslationPreferences = (): UrlPageTranslationPreferences => {
-    const { translationModel, autoTranslateEpubs, autoTranslateUrls } = loadAppPreferences();
-    return { translationModel, autoTranslateEpubs, autoTranslateUrls };
   };
 
   const attachNativeContextMenu = (contents: WebContents): void => {
@@ -914,8 +891,6 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       }
     },
     effectiveLocale,
-    effectiveTranslationLanguage,
-    urlPageTranslationPreferences,
     theme: () => nativeTheme.themeSource,
     setTheme: (raw) => {
       if (!isThemeMode(raw)) return;
@@ -930,29 +905,11 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       cachedLocale = raw;
       for (const window of BrowserWindow.getAllWindows()) {
         window.webContents.send(LIN_LANGUAGE_CHANGED_CHANNEL, raw);
-        if (loadAppPreferences().translationLanguage === null) {
-          window.webContents.send(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, raw);
-        }
       }
       Menu.setApplicationMenu(buildApplicationMenu());
       const messages = getMessages(raw);
       liveWindow(settingsWindow)?.setTitle(messages.window.settingsTitle({ app: APP_NAME }));
       liveWindow(providerConfigWindow)?.setTitle(messages.window.providerConfigTitle);
-    },
-    setTranslationLanguage: (raw) => {
-      if (!isTranslationLanguage(raw)) return;
-      saveTranslationLanguagePreference(raw);
-      for (const window of BrowserWindow.getAllWindows()) {
-        window.webContents.send(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, raw);
-      }
-    },
-    setUrlPageTranslationPreferences: (raw) => {
-      if (!isUrlPageTranslationPreferences(raw)) return urlPageTranslationPreferences();
-      saveUrlPageTranslationPreferences(raw);
-      for (const window of BrowserWindow.getAllWindows()) {
-        window.webContents.send(LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL, raw);
-      }
-      return raw;
     },
     launcherHotkey: () => launcherHotkeyAccelerator,
     toggleLauncher,

@@ -80,9 +80,8 @@ Reference patterns, rather than requirements to copy:
   one definition supplies validation, completion, descriptions, and UI metadata.
 - [Zed](https://zed.dev/docs/configuring-zed): searchable UI saves to configuration;
   advanced structured values remain editable in the file.
-- [Zed providers](https://zed.dev/docs/ai/use-api-access) and
-  [Agent profiles](https://zed.dev/docs/ai/agent-profiles): non-secret resource
-  definitions and model/tool choices can be configuration; auth has its own owner.
+- [Zed providers](https://zed.dev/docs/ai/use-api-access): non-secret connection
+  definitions can be configuration; auth has its own owner.
 
 These sources establish feasible patterns, not measured Tenon usability.
 Acceptance exercises both human discovery and real Agent task completion.
@@ -530,7 +529,7 @@ preference. Cache data stays private and disposable. Scope tests must include tw
 previews of the same source, not only two different URLs: a context clear must
 not invalidate the other preview's live state or pending results. Global clear
 must include cold webpage, caption, and EPUB entries, invalidate pre-clear writes,
-and state whether live displays were also cleared. Website/session clearing is
+and report that live displays and pending results were retained. Website/session clearing is
 limited to Tenon's preview partition, never the external browser's session or
 Agent credentials. Both Data inspections expose bounded aggregate facts, not
 cookies, URLs, source text, or cache-directory edits.
@@ -640,7 +639,8 @@ replacement entity restores them.
   state, diagnostics, or status. Sensitive invocation persistence is redacted;
   Full Access's same-account reach remains accurately documented and tested.
 - **AC-12 (FR-7):** Two previews retain independent choices; new/reopened contexts
-  use declared defaults; scoped clearing leaves other previews intact, while
+  use declared defaults; scoped clearing leaves other previews' live displays and
+  pending results intact, but later same-source lookups may miss shared entries;
   Data clearing includes closed webpage/caption/EPUB caches.
 - **AC-13 (FR-8, FR-9):** Every shortcut handler/hint is classified; bindings
   cover portable parsing, scope conflicts, fixed editing/IME, and localization.

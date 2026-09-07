@@ -24,8 +24,6 @@ const {
   saveLastAgentThreadConfiguration,
   saveLanguagePreference,
   saveThemePreference,
-  saveTranslationLanguagePreference,
-  saveUrlPageTranslationPreferences,
 } = await import('../../src/main/appPreferences');
 const { filePreferencesPath, loadFilePreferences } = await import('../../src/main/configuration/filePreferences');
 
@@ -42,24 +40,15 @@ describe('app preferences persistence', () => {
   test('keeps sync reads and sync atomic writes byte-compatible', async () => {
     saveThemePreference('dark');
     saveLanguagePreference('zh-Hans');
-    saveTranslationLanguagePreference('ja');
-    saveUrlPageTranslationPreferences({
-      translationModel: 'openai/gpt-4.1-mini',
-      autoTranslateEpubs: true,
-      autoTranslateUrls: true,
-    });
+    clearLastAgentThreadConfiguration();
 
     const raw = await readFile(path.join(userData, 'app-preferences.json'), 'utf8');
-    expect(raw).toBe('{"translationLanguage":"ja","translationModel":"openai/gpt-4.1-mini","autoTranslateUrls":true,"autoTranslateEpubs":true,"lastAgentThreadConfiguration":null}');
+    expect(raw).toBe('{"lastAgentThreadConfiguration":null}');
     expect(loadFilePreferences(userData).preferences.appearance).toEqual({ theme: 'dark', language: 'zh-Hans' });
     expect(filePreferencesPath(userData)).toContain('config/settings.jsonc');
     expect(loadAppPreferences()).toEqual({
       theme: 'dark',
       language: 'zh-Hans',
-      translationLanguage: 'ja',
-      translationModel: 'openai/gpt-4.1-mini',
-      autoTranslateUrls: true,
-      autoTranslateEpubs: true,
       lastAgentThreadConfiguration: null,
     });
   });
@@ -115,7 +104,6 @@ describe('app preferences persistence', () => {
         JSON.stringify({
           theme: 'system',
           language: null,
-          translationLanguage: null,
           lastAgentThreadConfiguration,
         }),
       );
@@ -137,17 +125,8 @@ describe('app preferences persistence', () => {
     expect(loadAppPreferences().lastAgentThreadConfiguration).toBeNull();
   });
 
-  test('defaults older files to Follow Agent with automatic translation off', async () => {
-    await writeFile(
-      path.join(userData, 'app-preferences.json'),
-      '{"theme":"system","language":null,"translationLanguage":null}',
-    );
-    resetAppPreferencesForTests();
-
-    expect(loadAppPreferences()).toMatchObject({
-      translationModel: null,
-      autoTranslateUrls: false,
-      autoTranslateEpubs: false,
-    });
+  test('persists only remembered root selection outside the public configuration source', async () => {
+    clearLastAgentThreadConfiguration();
+    expect(Object.keys(JSON.parse(await readFile(path.join(userData, 'app-preferences.json'), 'utf8')))).toEqual(['lastAgentThreadConfiguration']);
   });
 });

@@ -39,6 +39,18 @@ Memory content remains ordinary Outline data, not management-tool arguments.
 Global disable can interrupt the calling Turn; do not claim application from
 the file-write result alone. No Settings or Configuration CLI exists.
 
+Translation is preview-local, not a configuration-file preference. Use
+`preview_inspect` for live IDs and revisions, then `preview_manage` for controls
+or clearing saved translations for the selected content. Select an explicit
+preview when more than one is available; do not guess from a URL or recent focus.
+Only `applied` proves a control change, not provider completion. Re-inspect an
+unknown result instead of replaying it. Use `data_inspect` and `data_manage` for
+global translation-cache or preview-website maintenance. Both translation-cache
+clears retain live displays and pending results; later requests can cache fresh
+output. Website clearing affects only Tenon's preview partition. Clearing requires
+native confirmation, never private-file deletion. If a tool is absent, report
+unavailability rather than inventing a settings key or command.
+
 1. Read `TENON_CONFIG_DIR` (the directory containing `settings.jsonc`,
    `settings.schema.json`, and `status.json`) for application/delegation policy.
    For root Profiles, read the user `agent/config.json` or project

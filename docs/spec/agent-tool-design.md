@@ -582,6 +582,36 @@ Outline work. Global Memory enablement is a configuration file edit. Reset
 accepts neither model approval nor a supplied deletion target. See
 [`agent-memory.md`](agent-memory.md#user-surface) for ownership and settlement.
 
+### Preview And Data Operations
+
+`preview_inspect`, `preview_manage`, `data_inspect`, and `data_manage` are
+independent root-only domain tools. Their closed object-rooted schemas use a
+nested `request` and bounded `result`; they share the same Host facade as human
+controls, not a settings-command dispatcher or private-file interface.
+
+Preview inspection returns up to four opaque lifetime IDs, pane IDs, revisions,
+controls, effective language, readiness and cache availability, never source text,
+URLs or paths. Management requires an inspected revision; an omitted ID is valid
+only for exactly one eligible preview. Configure patches language/model (null
+restores Follow UI/Agent), automatic enablement and display intent
+(`automatic`, `translated`, `original`). Only a matching renderer controller
+acknowledgement returns `applied`; missing acknowledgement is `unknown`, and
+unavailable/stale lifetimes require reinspection. Provider completion is separate.
+
+`clear_cache` selects the registered current source, never an Agent-supplied path.
+`data_manage` accepts only `translations` or `websites`. Every deletion requires
+cancel-default native review. Translation clearing removes shared saved entries
+but retains every live display and pending result. Website clearing affects only
+Tenon's preview partition and reports each stage and reload outcome separately.
+Data inspection exposes counts, logical/Chromium bytes, session availability,
+guest count and up to 32 Host-lifetime receipts. Re-delivery of a recorded
+maintenance invocation cannot clear fresh data again. After caller loss, inspect
+settlement; after restart, inspect current data rather than inventing a receipt.
+
+See [Preview translation](workspace-layout.md) for lifetime, cache-ticket, and UI
+ownership. None of these tools writes durable translation preferences or adds a
+Settings/Configuration CLI.
+
 ### Skills
 
 `skill` loads one configuration-selected inline Skill by canonical identity.

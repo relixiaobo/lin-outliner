@@ -464,129 +464,8 @@ exports[`settings page DOM renders the preview category byte-stably 1`] = `
     <div class="settings-content">
       <section aria-label="Preview" class="agent-settings-section">
         <div data-settings-anchor="translation" class="inset-group">
-          <div class="inset-group-header">Translation</div>
-          <div role="list" class="inset-card" aria-label="Translation preferences">
-            <div role="listitem" class="inset-row">
-              <div class="inset-row-main is-static">
-                <span class="inset-row-text is-wrap">
-                  <span class="inset-row-label">Translate to</span>
-                  <span class="inset-row-sublabel">The language webpages, captions, and books are translated into.</span>
-                </span>
-              </div>
-              <div class="inset-row-trailing">
-                <span class="select-popup">
-                  <select class="select-popup-input" aria-label="Translate to">
-                    <option selected value="en">English</option>
-                    <option value="zh-Hans">简体中文</option>
-                    <option value="zh-Hant">繁體中文</option>
-                    <option value="es">Español</option>
-                    <option value="ja">日本語</option>
-                    <option value="ko">한국어</option>
-                    <option value="fr">Français</option>
-                    <option value="de">Deutsch</option>
-                    <option value="pt">Português</option>
-                    <option value="it">Italiano</option>
-                    <option value="ru">Русский</option>
-                    <option value="ar">العربية</option>
-                    <option value="hi">हिन्दी</option>
-                    <option value="bn">বাংলা</option>
-                    <option value="ur">اردو</option>
-                    <option value="id">Bahasa Indonesia</option>
-                    <option value="ms">Bahasa Melayu</option>
-                    <option value="vi">Tiếng Việt</option>
-                    <option value="th">ไทย</option>
-                    <option value="tr">Türkçe</option>
-                    <option value="pl">Polski</option>
-                    <option value="nl">Nederlands</option>
-                    <option value="uk">Українська</option>
-                    <option value="fa">فارسی</option>
-                    <option value="he">עברית</option>
-                    <option value="sv">Svenska</option>
-                    <option value="nb">Norsk bokmål</option>
-                    <option value="da">Dansk</option>
-                    <option value="fi">Suomi</option>
-                    <option value="el">Ελληνικά</option>
-                    <option value="cs">Čeština</option>
-                    <option value="ro">Română</option>
-                    <option value="hu">Magyar</option>
-                    <option value="sk">Slovenčina</option>
-                    <option value="bg">Български</option>
-                    <option value="hr">Hrvatski</option>
-                    <option value="sr">Српски</option>
-                    <option value="sl">Slovenščina</option>
-                    <option value="lt">Lietuvių</option>
-                    <option value="lv">Latviešu</option>
-                    <option value="et">Eesti</option>
-                    <option value="ca">Català</option>
-                    <option value="fil">Filipino</option>
-                    <option value="sw">Kiswahili</option>
-                    <option value="ta">தமிழ்</option>
-                    <option value="te">తెలుగు</option>
-                    <option value="mr">मराठी</option>
-                    <option value="gu">ગુજરાતી</option>
-                    <option value="kn">ಕನ್ನಡ</option>
-                    <option value="ml">മലയാളം</option>
-                    <option value="pa">ਪੰਜਾਬੀ</option>
-                    <option value="ne">नेपाली</option>
-                    <option value="si">සිංහල</option>
-                    <option value="my">မြန်မာ</option>
-                  </select>
-                  <svg data-icon="ChevronDown" class="app-icon select-popup-chevron" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-xs)" width="var(--icon-size-xs)">
-                    <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 9L12 15L18 9" />
-                  </svg>
-                </span>
-              </div>
-            </div>
-            <div role="listitem" class="inset-row">
-              <div class="inset-row-main is-static">
-                <span class="inset-row-text is-wrap">
-                  <span class="inset-row-label">Translate webpages automatically</span>
-                  <span class="inset-row-sublabel">Translate every webpage preview as it opens, without asking.</span>
-                </span>
-              </div>
-              <div class="inset-row-trailing">
-                <button type="button" role="switch" aria-label="Translate webpages automatically" aria-checked="false">
-                  <span aria-hidden="true" class="switch-mark">
-                    <span class="switch-mark-thumb">
-                    </span>
-                  </span>
-                </button>
-              </div>
-            </div>
-            <div role="listitem" class="inset-row">
-              <div class="inset-row-main is-static">
-                <span class="inset-row-text is-wrap">
-                  <span class="inset-row-label">Translate books automatically</span>
-                  <span class="inset-row-sublabel">Translate EPUB books as you read them. Separate from webpages, because a book is sent to a provider a chapter at a time.</span>
-                </span>
-              </div>
-              <div class="inset-row-trailing">
-                <button type="button" role="switch" aria-label="Translate books automatically" aria-checked="false">
-                  <span aria-hidden="true" class="switch-mark">
-                    <span class="switch-mark-thumb">
-                    </span>
-                  </span>
-                </button>
-              </div>
-            </div>
-            <div role="listitem" class="inset-row">
-              <div class="inset-row-main is-static">
-                <span class="inset-row-text is-wrap">
-                  <span class="inset-row-label">Translation model</span>
-                  <span class="inset-row-sublabel">Which model translates. Follows the Agent’s model unless you pick one.</span>
-                </span>
-              </div>
-              <div class="inset-row-trailing">
-                <span class="select-popup">
-                  <select class="select-popup-input" aria-label="Translation model">
-                    <option selected value="">Agent model</option>
-                  </select>
-                  <svg data-icon="ChevronDown" class="app-icon select-popup-chevron" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-xs)" width="var(--icon-size-xs)">
-                    <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 9L12 15L18 9" />
-                  </svg>
-                </span>
-              </div>
-            </div>
+          <div class="inset-group-header">Translation data</div>
+          <div role="list" class="inset-card" aria-label="Translation data">
             <div role="listitem" class="inset-row">
               <div class="inset-row-main is-static">
                 <span class="inset-row-text is-wrap">
@@ -595,14 +474,14 @@ exports[`settings page DOM renders the preview category byte-stably 1`] = `
                 </span>
               </div>
               <div class="inset-row-trailing">
-                <button type="button" class="button button-secondary button-md">Clear…</button>
+                <button type="button" class="button button-secondary button-md" disabled>Clear…</button>
               </div>
             </div>
           </div>
         </div>
         <div data-settings-anchor="websites" class="inset-group">
           <div class="inset-group-header">Websites</div>
-          <div role="list" class="inset-card" aria-label="Website data">
+          <div role="list" class="inset-card" aria-label="Websites">
             <div role="listitem" class="inset-row">
               <div class="inset-row-main is-static">
                 <span class="inset-row-text is-wrap">
@@ -611,14 +490,21 @@ exports[`settings page DOM renders the preview category byte-stably 1`] = `
                 </span>
               </div>
               <div class="inset-row-trailing">
-                <button type="button" class="button button-secondary button-md">Clear…</button>
+                <button type="button" class="button button-secondary button-md" disabled>Clear…</button>
               </div>
             </div>
           </div>
         </div>
-      </section>
-    </div>
+        <div role="alert">Saved translations are unavailable in this window.<button type="button" title="Retry" class="icon-button icon-button-chrome" aria-label="Retry">
+          <svg data-icon="Refresh" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M21.8883 13.5C21.1645 18.3113 17.013 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C16.1006 2 19.6248 4.46819 21.1679 8" />
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M17 8H21.4C21.7314 8 22 7.73137 22 7.4V3" />
+          </svg>
+        </button>
+      </div>
+    </section>
   </div>
+</div>
 </main>"
 `;
 

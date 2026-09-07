@@ -35,6 +35,9 @@ import {
 } from '../core/agent/memory';
 import { MEMORY_CHANGED_CHANNEL } from '../core/agent/memoryOperations';
 import type { MemoryOperationCaller } from './hostDomain/memoryOperations';
+import { DATA_CHANGED_CHANNEL, PREVIEW_CONTEXT_CHANNEL, PREVIEW_ACTION_ACK_CHANNEL, PREVIEW_OPERATIONS_CHANNEL,
+  type PreviewActionAck, type PreviewOperationName } from '../core/previewOperations';
+import type { PreviewOperationCaller } from './hostDomain/previewOperations';
 import { decodeThreadResourceReference } from '../core/agent/codec';
 import { threadTranscriptRoot } from './agent/thread/ThreadTranscriptArtifact';
 import { threadTranscriptIndexPath } from './agent/thread/ThreadTranscriptIndex';
@@ -85,12 +88,8 @@ import {
 } from '../core/assets';
 import {
   isUrlPageTranslationCommand,
-  LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL,
 } from '../core/urlPageTranslation';
 import { LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL } from '../core/urlPageTranslationGuest';
-import {
-  LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL,
-} from '../core/urlPreviewSession';
 import { handlePreviewCommand } from './previewSource';
 import { ingestThreadResourceAsset } from './threadResourceAssetIngest';
 import { executeUrlPageTranslationGuestCommand } from './urlPageTranslationGuest';
@@ -302,6 +301,14 @@ if (!hasExplicitAgentRoot) {
 }
 ensureAgentDir(agentScratchRoot);
 const resourcePreviewHost = createResourcePreviewHost({
+  operationWindow: (caller) => caller.origin.kind === 'window'
+    ? BrowserWindow.fromId(caller.origin.windowId) : windowApplicationHost.windows.main(),
+  locale: () => windowApplicationHost.effectiveLocale(),
+  dataChanged: () => {
+    for (const target of [windowApplicationHost.windows.main(), windowApplicationHost.windows.settings()]) {
+      if (target && !target.isDestroyed() && !target.webContents.isDestroyed()) target.webContents.send(DATA_CHANGED_CHANNEL);
+    }
+  },
   userDataDir: resolvedUserDataDir,
   rendererDevUrl: process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL,
   previewRoots: () => [agentLocalFileRoot, agentScratchRoot, outlineAssetExportRoot],
@@ -427,6 +434,7 @@ function startFilePreferencesWatcher(): void {
 
 const agentImageObservationMutex = new Mutex();
 const agentHost = createAgentHost({
+  previewOperations: resourcePreviewHost.operations,
   reviewSkillOperation: (input) => windowApplicationHost.reviewSkillOperation(input),
   reviewMemoryReset: (review, caller) => windowApplicationHost.reviewMemoryReset(review, caller),
   onMemoryChanged: () => {
@@ -1004,6 +1012,44 @@ function registerAgentTransport(ipcMain: OwnedIpcMain): void {
 }
 
 function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
+  ipcMain.handle(PREVIEW_CONTEXT_CHANNEL, (event, operation: string, previewId: string | null, observation: unknown) => {
+    windowApplicationHost.assertMainSender(event, 'Preview lifetime');
+    if (event.senderFrame !== event.sender.mainFrame || closeSettlement) throw new Error('Preview window is unavailable.');
+    if (operation === 'register') return resourcePreviewHost.operations.register(event.sender.id, observation);
+    if (typeof previewId !== 'string') throw new Error('A preview identity is required.');
+    if (operation === 'observe') return resourcePreviewHost.operations.observe(event.sender.id, previewId, observation);
+    if (operation === 'unregister') return resourcePreviewHost.operations.unregister(event.sender.id, previewId);
+    throw new Error('Unknown preview lifetime operation.');
+  });
+  ipcMain.handle(PREVIEW_ACTION_ACK_CHANNEL, (event, ack: PreviewActionAck) => {
+    windowApplicationHost.assertMainSender(event, 'Preview acknowledgement');
+    if (event.senderFrame !== event.sender.mainFrame) throw new Error('Preview acknowledgement requires the main frame.');
+    resourcePreviewHost.operations.acknowledge(event.sender.id, ack);
+  });
+  ipcMain.handle(PREVIEW_OPERATIONS_CHANNEL, async (event, name: PreviewOperationName, input: unknown) => {
+    if (!['preview_inspect', 'preview_manage', 'data_inspect', 'data_manage'].includes(name)) throw new Error('Unknown preview operation.');
+    const sender = event.sender;
+    const parent = BrowserWindow.fromWebContents(sender);
+    const frame = event.senderFrame;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const authorize = async () => {
+      controller.signal.throwIfAborted();
+      if (closeSettlement || sender.isDestroyed() || !parent || parent.isDestroyed() || frame !== sender.mainFrame
+        || (!windowApplicationHost.isMainSender(event) && !windowApplicationHost.isSettingsSender(event))) {
+        throw new Error('Preview operations require a live application window.');
+      }
+      if (name.startsWith('preview_') && !windowApplicationHost.isMainSender(event)) throw new Error('Preview controls require the main window.');
+    };
+    await authorize();
+    sender.once('destroyed', abort);
+    sender.on('did-start-loading', abort);
+    const caller: PreviewOperationCaller = {
+      key: `window:${parent!.id}:${randomUUID()}`, origin: { kind: 'window', windowId: parent!.id }, signal: controller.signal, authorize,
+    };
+    try { return await resourcePreviewHost.operations.handle(name, input, caller); }
+    finally { sender.removeListener('destroyed', abort); sender.removeListener('did-start-loading', abort); }
+  });
   ipcMain.handle('lin:invoke', async (event, command: string, args?: Record<string, unknown>) => {
     // BEFORE dispatch, not inside it: the launcher must not reach
     // `get_projection` or `delete_node` by any command name, and a renderer
@@ -1165,16 +1211,6 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle('lin:window', (_event, command: string) => windowApplicationHost.windowCommand(command));
   ipcMain.handle('lin:open-settings', (_event, target?: unknown) => windowApplicationHost.openSettings(target));
   ipcMain.handle('lin:close-settings', (event) => windowApplicationHost.closeSettingsFrom(event));
-  ipcMain.handle(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL, (event) => resourcePreviewHost.clearWebsiteData(
-    event,
-    windowApplicationHost.windows.settings(),
-    windowApplicationHost.effectiveLocale(),
-  ));
-  ipcMain.handle(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL, (event) => resourcePreviewHost.clearTranslationCache(
-    event,
-    windowApplicationHost.windows.settings(),
-    windowApplicationHost.effectiveLocale(),
-  ));
 
   const assertLauncherRenderer = (event: IpcMainInvokeEvent): void => {
     if (!rendererHasCapability(event.sender.id, 'launcher')) {
@@ -1199,18 +1235,6 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.on('lin:get-language-sync', (event) => {
     event.returnValue = windowApplicationHost.effectiveLocale();
   });
-  ipcMain.on('lin:get-translation-language-sync', (event) => {
-    event.returnValue = windowApplicationHost.effectiveTranslationLanguage();
-  });
-  ipcMain.on('lin:get-url-page-translation-preferences-sync', (event) => {
-    event.returnValue = windowApplicationHost.urlPageTranslationPreferences();
-  });
-  ipcMain.handle('lin:set-translation-language', (_event, raw: unknown) => (
-    windowApplicationHost.setTranslationLanguage(raw)
-  ));
-  ipcMain.handle('lin:set-url-page-translation-preferences', (_event, raw: unknown) => (
-    windowApplicationHost.setUrlPageTranslationPreferences(raw)
-  ));
   ipcMain.handle('lin:set-language', (_event, raw: unknown) => windowApplicationHost.setLocale(raw));
   ipcMain.handle(SKILL_REVIEW_GET_CHANNEL, (event) => windowApplicationHost.readSkillReview(event));
   ipcMain.handle(SKILL_REVIEW_DECIDE_CHANNEL, (event, approved: unknown) => windowApplicationHost.decideSkillReview(event, approved));

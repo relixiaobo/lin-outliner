@@ -47,8 +47,8 @@ register previews or invoke these operations.
 
 Proposed root domain tools are `preview_inspect` and `preview_manage`.
 Inspection exposes bounded live descriptors and exact IDs/revisions, control
-state, readiness, and model choices from the existing Models catalog, not page
-text or credential inputs. Management supports a typed control patch, explicit
+state and readiness, not page text or credential inputs. Model choices use the
+existing Models catalog and public declarations. Management supports a typed control patch, explicit
 Translate / Show original, and content-cache clear. Omission of the preview ID
 works only when exactly one eligible live preview exists; otherwise return
 unavailable and require selection from inspection. Never infer identity from a
@@ -93,20 +93,20 @@ source text. Clear source identity comes from the registered current preview,
 not an Agent-supplied path, URL, or arbitrary digest. An unavailable resource
 identity produces unavailable, never an accidental global clear.
 
-Use a global write generation plus a source write generation. Capture the write
+Use opaque write tickets tracked only while requests are outstanding. Capture the
 ticket when `PageTranslationService` admits a request, before any model lookup,
 cache lookup, retry, or provider await; validate it inside the cache write queue.
-Content clear fences that source's older writes; global clear fences all older
+Content clear invalidates that source's outstanding tickets; global clear invalidates all outstanding
 writes. A rejected cache write must not discard a still-current preview result.
-New-generation requests can cache fresh output. Bound generation metadata by
-stored sources and outstanding tickets, releasing it without an ABA reuse race.
+New requests can cache fresh output. Release tickets in the request's finalizer;
+object identity prevents forgery or ABA reuse without retaining per-source counters.
 
 Serialize inspection, dirty flushes, clears, and records in the existing cache
 owner. Remove matching hot, dirty, and cold entries together; prevent delayed
 flushes, startup reconciliation, or pre-clear results from restoring them. Reuse
 private atomic persistence and interrupted-clear cleanup, with content-scoped
-failure handling. Report partial or failed physical deletion honestly; a new
-generation alone does not prove deletion. Format changes have no legacy reader.
+failure handling. Report partial or failed physical deletion honestly;
+ticket invalidation alone does not prove deletion. Format changes have no legacy reader.
 
 ### Data Operations And Authority
 

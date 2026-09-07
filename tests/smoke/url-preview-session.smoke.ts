@@ -46,8 +46,8 @@ test('URL Preview keeps and clears one persistent website session', async () => 
     await expect.poll(() => browserWindowCount(smoke)).toBe(browserWindowCountBeforePopup);
 
     await autoConfirmNextMessageBox(smoke);
-    const settings = await openGeneralSettings(smoke);
-    await settings.getByRole('button', { name: 'Clear…' }).click();
+    const settings = await openPreviewDataSettings(smoke);
+    await settings.getByRole('list', { name: 'Websites' }).getByRole('button', { name: 'Clear…' }).click();
     await expect(settings.getByText('Website data cleared.')).toBeVisible();
 
     webview = await openPreview(smoke.window, `${origin}/verify?cleared=1`);
@@ -120,11 +120,9 @@ async function openPreview(page: Page, url: string) {
   return webview;
 }
 
-async function openGeneralSettings(smoke: SmokeApp): Promise<Page> {
+async function openPreviewDataSettings(smoke: SmokeApp): Promise<Page> {
   await smoke.window.evaluate(async () => {
-    await (window as unknown as {
-      lin: { openSettings: (target: { category: 'general' }) => Promise<void> };
-    }).lin.openSettings({ category: 'general' });
+    await window.lin!.openSettings({ category: 'preview' });
   });
   await expect.poll(() => smoke.app.windows().filter((page) => surfaceFor(page) === 'settings').length).toBe(1);
   const settings = smoke.app.windows().find((page) => surfaceFor(page) === 'settings');
