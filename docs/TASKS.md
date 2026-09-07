@@ -22,8 +22,8 @@ Unit A is eligible under the live collision check as one complete
 execution-context refactor over the shipped delegation/native-launcher and
 Settings mechanisms, including frozen publication boundaries, scoped reduction,
 and compaction restore. Its development owner opens a new scoped Draft PR from
-current main and coordinates overlapping Agent/Skill files with #644 before
-implementation; the design PRs are not implementation claims.
+current main and coordinates overlapping Agent/Skill files with the merged
+Skill lifecycle owners from #644; the design PRs are not implementation claims.
 Units B, D, and E follow Unit A; verification Unit C follows Unit B's
 context/profile mechanism. All five plans remain active until their respective
 implementation, spec reconciliation, and archive gate complete.
@@ -126,7 +126,7 @@ does not mix their product decisions into the architectural queue above.
 | P2 | [git-review-publication](plans/git-review-publication.md) | `draft` | Unit D follows Unit A; mandatory Git baselines are independent of optional context discovery. Recheck Tool Task/renderer collisions before claiming. |
 | P2 | [execution-sandbox-process](plans/execution-sandbox-process.md) | `draft` | Unit E follows Unit A: truthful isolation receipts and the bounded interactive-process experiment. Recheck process/receipt collisions before claiming. |
 | P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623, internal delegation plus Subagent/isolated-Skill retirement shipped in #628, and the external Runner adapter feature shipped in #637. Remaining work follows the aggregate plan's declared boundaries. |
-| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-C shipped in #636, #638, and #640; #643 ships Skill declarative settings ownership. Unit D's Agent-facing lifecycle/provenance routes and coverage, plus Units E-G, remain open under their dependency/collision checks. |
+| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-C shipped in #636, #638, and #640; #643 ships Skill declarative settings ownership; Unit D's Agent-facing lifecycle/provenance routes shipped in #644. Units E-G remain open under their dependency/collision checks. |
 | P2 | [interaction-jank-cleanups](plans/archive/interaction-jank-cleanups.md) | `done` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, the Runtime-index unit shipped in #633, and PR-3 translation geometry shipped in #634. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Settings redesign landed in #626; Provider/managed-Skill working-state behavior is absorbed by Units B and D, so claim it through those units rather than as a separate implementation. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
@@ -246,7 +246,8 @@ One line per recent shipped integration. Older history and review detail live in
 
 - **workbench context-publication design gate** (`done`, #645, 2026-09-07) - approved immutable model-facing publications, scoped baselines, and compaction recovery across the plan series; runtime implementation remains pending.
 - **project-development-workbench design gate** (`done`, #639, 2026-09-07) - approved task-scoped execution, context, verification, publication, and process designs; Unit A is eligible for implementation and the five workbench plans remain active.
-- **skill-declarative-settings** (`done`, #643, 2026-09-07) - Skill-owned file-backed read/update routes preserve source spelling and queued toggle state; Unit D's Agent-facing lifecycle/provenance work remains in the active Settings plan.
+- **skill-declarative-settings** (`done`, #643, 2026-09-07) - Skill-owned file-backed read/update routes preserve source spelling and queued toggle state; the dependent Unit D lifecycle/provenance work shipped next in #644.
+- **skill-lifecycle-operations** (`done`, #644, 2026-09-07) - root-only Skill inspection and management tools now share the Host-owned lifecycle with the Settings Library, use revision/hash-bound targets and native human review, and preserve governed one-step Agent edit undo; [plan archived](plans/archive/skill-lifecycle-operations.md).
 - **agent-skill-curation-report** (`done`, #642, 2026-09-06) - Settings now offers an opt-in, read-only report over the loaded Skill registry; unchanged user/project Skills with reliable Agent-write provenance are analyzed for broken or root-escaping Markdown resources, exact content duplicates, and retired tool names, while excluded sources and hashes remain visible; [plan archived](plans/archive/agent-skill-curation-report.md).
 - **agent-skill-authoring-foundation** (`done`, #641, 2026-09-06) - local Skill sources now persist explicit `skill` or `container` modes, exact Skill bindings stay scoped to the selected directory, and discovery, reload, authoring, and unbind share that identity; [plan archived](plans/archive/agent-skill-authoring-foundation.md).
 - **settings-control-plane Unit A** (`done`, #636, 2026-09-05) - file-backed JSONC preferences, schema/status/recovery, global Skill/tool controls, and the configuration Skill now converge through the Host; Units B-G remain in the active plan.

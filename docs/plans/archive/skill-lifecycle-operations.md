@@ -3,7 +3,7 @@
 ## Goal
 
 Complete the Skill lifecycle portion of
-[file-first Settings](settings-control-plane.md): a root Agent can inspect,
+[file-first Settings](../settings-control-plane.md): a root Agent can inspect,
 install, update, roll back, uninstall, and undo an Agent-authored Skill edit
 through the same owners as the human Skill Library. The implementation is **one
 complete feature PR**, including configuration-authority retirement, human
