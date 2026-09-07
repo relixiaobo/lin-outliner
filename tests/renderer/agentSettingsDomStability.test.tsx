@@ -223,6 +223,7 @@ const CATALOG: ManagedSkillCatalogView = {
 /** Every channel the settings tree can reach, answered from fixed data. */
 const INVOKE_RESULTS: Record<string, unknown> = {
   agent_get_provider_settings: PROVIDER_SETTINGS,
+  agent_get_skill_settings: { disabledSkills: ['project-lint'], sourceBindings: [] },
   agent_get_capability_settings: CAPABILITY_SETTINGS,
   agent_list_all_skills: ALL_SKILLS,
   // The identity catalog the Agents row counts. Stubbed rather than left to

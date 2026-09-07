@@ -9,6 +9,8 @@ import type {
   AgentProviderSettingsView,
   AgentImageGenerationSettingsInput,
   AgentRuntimeSettingsInput,
+  AgentSkillSettingsInput,
+  AgentSkillSettingsView,
   AgentSkillCurationReport,
   AgentCapabilitySettingsPatchInput,
   AgentCapabilitySettingsView,
@@ -170,6 +172,10 @@ export const api = {
     command<CommandResult | null>('preview_replace_source_with_file', { ownerId, sourceValueId }),
   agentGetProviderSettings: () =>
     command<AgentProviderSettingsView>('agent_get_provider_settings'),
+  agentGetSkillSettings: () =>
+    command<AgentSkillSettingsView>('agent_get_skill_settings'),
+  agentUpdateSkillSettings: (settings: AgentSkillSettingsInput) =>
+    command<AgentSkillSettingsView>('agent_update_skill_settings', { settings }),
   memorySettings: (threadId?: string) =>
     command<MemorySettingsView>('memory_settings_get', threadId ? { threadId } : undefined),
   memorySetFeatureMode: (mode: MemoryFeatureMode) =>

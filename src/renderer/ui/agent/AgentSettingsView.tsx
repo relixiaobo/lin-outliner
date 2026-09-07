@@ -5,6 +5,7 @@ import type {
   AgentProviderSettingsView,
   AgentCapabilitySettingsView,
   AgentDelegationSettingsInput,
+  AgentSkillSettingsView,
   AgentSkillSourceMode,
 } from '../../api/types';
 import { api } from '../../api/client';
@@ -345,6 +346,17 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     settingsInitializedRef.current = true;
   }
 
+  function applyLoadedSkillSettings(next: AgentSkillSettingsView) {
+    latestDisabledSkillsRef.current = [...next.disabledSkills];
+    const nextSkillDraft: SkillDraft = { disabledSkills: [...next.disabledSkills] };
+    skillDraftRef.current = nextSkillDraft;
+    setSkillDraft(nextSkillDraft);
+    setSettings((current) => current ? {
+      ...current,
+      agent: { ...current.agent, disabledSkills: [...next.disabledSkills] },
+    } : current);
+  }
+
   useEffect(() => {
     const requestId = beginSettingsRequest();
     setLoading(true);
@@ -355,11 +367,13 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     void Promise.all([
       api.agentGetProviderSettings(),
       api.agentGetCapabilitySettings(),
+      api.agentGetSkillSettings(),
     ])
-      .then(([next, nextCapabilities]) => {
+      .then(([next, nextCapabilities, nextSkills]) => {
         if (!isCurrentSettingsRequest(requestId)) return;
         setCapabilitySettings(nextCapabilities);
-        applyLoadedSettings(next);
+        applyLoadedSettings(next, false);
+        applyLoadedSkillSettings(nextSkills);
       })
       .catch((caught) => {
         if (isCurrentSettingsRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
@@ -378,15 +392,17 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
       void Promise.all([
         api.agentGetProviderSettings(),
         api.agentGetCapabilitySettings(),
+        api.agentGetSkillSettings(),
       ])
-        .then(([next, nextCapabilities]) => {
+        .then(([next, nextCapabilities, nextSkills]) => {
           if (!mountedRef.current || refreshId !== providerRefreshRequestRef.current) return;
           // Invalidate an older initial load only after this replacement is known
           // to be complete. A failed refresh must not strand the window in its
           // loading state with the successful initial response marked stale.
           beginSettingsRequest();
           setCapabilitySettings(nextCapabilities);
-          applyLoadedSettings(next, !settingsInitializedRef.current);
+          applyLoadedSettings(next, false);
+          applyLoadedSkillSettings(nextSkills);
           setLoading(false);
         })
         .catch(() => { /* a refetch failure leaves the prior list in place */ });
@@ -461,19 +477,28 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         path,
         mode: currentModes[path] ?? mode,
       }));
-    const updated = await api.agentUpdateRuntimeSettings(
-      additionalSkillSourceBindings === undefined
-        ? { additionalSkillDirectories: next }
-        : { additionalSkillSourceBindings },
-    );
+    const updated = await api.agentUpdateSkillSettings({
+      sourceBindings: additionalSkillSourceBindings ?? next.map((path) => ({
+        path,
+        mode: currentModes[path] ?? 'container',
+      })),
+    });
     if (isCurrentMutation(mutationKey, generation)) {
-      setSettings((current) => current ? { ...current, agent: updated.agent } : updated);
+      setSettings((current) => current ? {
+        ...current,
+        agent: {
+          ...current.agent,
+          additionalSkillDirectories: updated.sourceBindings.map((source) => source.path),
+          additionalSkillSourceModes: Object.fromEntries(updated.sourceBindings.map((source) => [source.path, source.mode])),
+          disabledSkills: [...updated.disabledSkills],
+        },
+      } : current);
     }
     await reportAppliedRefreshFailure(onApplied, 'skill-directories-refresh', mutationKey);
     // Returned so the caller can see what main actually kept. The list is
     // bounded, and a request that silently lost its entry would otherwise
     // look like nothing happened at all.
-    return updated.agent.additionalSkillDirectories;
+    return updated.sourceBindings.map((source) => source.path);
   }
 
   async function changeDelegation(input: AgentDelegationSettingsInput): Promise<void> {
@@ -527,15 +552,18 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         ? [...new Set([...persisted, skillName])]
         : persisted.filter((name) => name !== skillName);
       try {
-        const updated = await api.agentUpdateRuntimeSettings({ disabledSkills: next });
+        const updated = await api.agentUpdateSkillSettings({ disabledSkills: next });
         // Recorded outside the isCurrentRequest guard: the next queued write
         // must build on what main actually stored, even if this reply is too
         // late to be applied to the view.
-        latestDisabledSkillsRef.current = updated.agent.disabledSkills ?? [];
+        latestDisabledSkillsRef.current = updated.disabledSkills;
         if (isCurrentMutation(mutationKey, generation)) {
           skillDisabledTargetsRef.current.delete(skillName);
           applySkillDisabledToView(skillName, latestDisabledSkillsRef.current.includes(skillName));
-          setSettings((current) => current ? { ...current, agent: updated.agent } : updated);
+          setSettings((current) => current ? {
+            ...current,
+            agent: { ...current.agent, disabledSkills: [...updated.disabledSkills] },
+          } : current);
         }
         await reportAppliedRefreshFailure(onApplied, 'skill-toggle-refresh', skillName);
         return true;

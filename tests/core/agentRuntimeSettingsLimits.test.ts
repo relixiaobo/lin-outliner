@@ -157,6 +157,19 @@ describe('agent runtime settings limits', () => {
     expect((await getAgentRuntimeSettings()).disabledSkills).toEqual(names);
   });
 
+  test('exposes Skill-owned settings without the aggregate runtime DTO', async () => {
+    const { getAgentSkillSettings, updateAgentSkillSettings } = await settingsModule();
+    await updateAgentSkillSettings({
+      disabledSkills: ['notes'],
+      sourceBindings: [{ path: '/tmp/skills', mode: 'container' }],
+    });
+
+    expect(await getAgentSkillSettings()).toEqual({
+      disabledSkills: ['notes'],
+      sourceBindings: [{ path: '/tmp/skills', mode: 'container' }],
+    });
+  });
+
   test('keeps a disable appended past the twentieth entry', async () => {
     const { getAgentRuntimeSettings, updateAgentRuntimeSettings } = await settingsModule();
     const existing = Array.from({ length: 20 }, (_, index) => `skill-${index}`);

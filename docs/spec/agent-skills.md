@@ -377,6 +377,13 @@ would put managed lifecycle state into settings, or settings into an index that
 does not own the Skills they describe. The toggle routes by source; what it
 *means* never branches on source.
 
+Skill source bindings and disabled identities are exposed through a Skill-owned
+settings view and update route. They still persist under
+`config/settings.jsonc`, but the Skill Library does not edit the aggregate Agent
+runtime settings DTO; the Host applies the accepted file result to the active
+Skill runtime and broadcasts the normal settings refresh. This keeps Skill
+configuration ownership local while preserving one source of desired state.
+
 ### Acquisition behind `+`
 
 Acquiring a Skill is occasional, so it does not occupy the page. The list header

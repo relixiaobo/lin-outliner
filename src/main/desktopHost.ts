@@ -117,6 +117,7 @@ import {
   getConfiguredDefaultSelection,
   getProviderRuntimeConfig,
   getAgentRuntimeSettings,
+  getAgentSkillSettings,
   getProviderSecretStatus,
   getStoredProviderApiKey,
   getProviderSettings,
@@ -128,6 +129,7 @@ import {
   updateImageGenerationSettings,
   updateModelDefault,
   updateAgentRuntimeSettings,
+  updateAgentSkillSettings,
   upsertProviderConfig,
   prepareProviderConnectionProbe,
   recordProviderConnectionCheck,
@@ -153,6 +155,7 @@ import type {
   AgentProviderConfigInput,
   AgentRuntimeSettingsInput,
   AgentRuntimeSettings,
+  AgentSkillSettingsInput,
   AgentProviderSettingsView,
   ManagedSkillCommandResult,
 } from '../core/types';
@@ -2177,6 +2180,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
   switch (command) {
     case 'agent_get_provider_settings':
       return withDelegationRunners(await getProviderSettings());
+    case 'agent_get_skill_settings':
+      return getAgentSkillSettings();
     case 'agent_refresh_provider_models':
       return withDelegationRunners(await refreshProviderModels(String(args.providerId)));
     case 'agent_pick_skill_directory': {
@@ -2238,6 +2243,12 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       );
       agentHost.skills.updateRuntimeSettings(settings.agent);
       return withDelegationRunners(settings);
+    }
+    case 'agent_update_skill_settings': {
+      const next = await updateAgentSkillSettings(args.settings as AgentSkillSettingsInput);
+      agentHost.skills.updateRuntimeSettings(await getAgentRuntimeSettings());
+      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
+      return next;
     }
     case 'agent_update_image_generation_settings':
       return withDelegationRunners(await updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput));
