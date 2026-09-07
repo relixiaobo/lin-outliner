@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { filePreferencesPath } from '../../src/main/configuration/filePreferences';
+import { preserveStoredSkillDirectoryForms } from '../../src/main/agent/capabilities/skillSettingsPaths';
 
 /**
  * `disabledSkills` is keyed by name over EVERY source, so its length scales with
@@ -155,6 +156,40 @@ describe('agent runtime settings limits', () => {
     await updateAgentRuntimeSettings({ disabledSkills: names });
 
     expect((await getAgentRuntimeSettings()).disabledSkills).toEqual(names);
+  });
+
+  test('exposes Skill-owned settings without the aggregate runtime DTO', async () => {
+    const { getAgentSkillSettings, updateAgentSkillSettings } = await settingsModule();
+    await updateAgentSkillSettings({
+      disabledSkills: ['notes'],
+      sourceBindings: [{ path: '/tmp/skills', mode: 'container' }],
+    });
+
+    expect(await getAgentSkillSettings()).toEqual({
+      disabledSkills: ['notes'],
+      sourceBindings: [{ path: '/tmp/skills', mode: 'container' }],
+    });
+  });
+
+  test('preserves relative source paths and exact modes through a canonical round-trip', () => {
+    const input = preserveStoredSkillDirectoryForms(
+      {
+        additionalSkillSourceBindings: [
+          { path: '/workspace/skills', mode: 'skill' },
+          { path: '/extra-skills', mode: 'container' },
+        ],
+      },
+      {
+        additionalSkillDirectories: ['./skills'],
+        additionalSkillSourceModes: { './skills': 'skill' },
+      } as AgentRuntimeSettings,
+      '/workspace',
+    );
+
+    expect(input.additionalSkillSourceBindings).toEqual([
+      { path: './skills', mode: 'skill' },
+      { path: '/extra-skills', mode: 'container' },
+    ]);
   });
 
   test('keeps a disable appended past the twentieth entry', async () => {

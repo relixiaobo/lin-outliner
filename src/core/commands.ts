@@ -100,8 +100,10 @@ export const RUNTIME_DOCUMENT_COMMANDS = [
 
 export const AGENT_COMMANDS = [
   'agent_get_provider_settings',
+  'agent_get_skill_settings',
   'agent_refresh_provider_models',
   'agent_update_runtime_settings',
+  'agent_update_skill_settings',
   'agent_update_image_generation_settings',
   'agent_update_model_default',
   'agent_get_capability_settings',

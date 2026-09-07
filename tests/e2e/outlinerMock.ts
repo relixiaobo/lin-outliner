@@ -5217,6 +5217,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (options.providerSettingsDelayMs) await delay(options.providerSettingsDelayMs);
           return clone(agentSettings) as T;
         }
+        if (cmd === 'agent_get_skill_settings') {
+          return clone({
+            disabledSkills: agentSettings.agent.disabledSkills,
+            sourceBindings: agentSettings.agent.additionalSkillDirectories.map((path) => ({
+              path,
+              mode: agentSettings.agent.additionalSkillSourceModes?.[path] ?? 'container',
+            })),
+          }) as T;
+        }
         if (cmd === 'agent_refresh_provider_models') {
           const providerId = String(args.providerId ?? '');
           const provider = agentSettings.availableProviders.find((item) => item.providerId === providerId);
@@ -5300,6 +5309,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 : agentSettings.agent.providerCacheRetention,
           };
           return clone(agentSettings) as T;
+        }
+        if (cmd === 'agent_update_skill_settings') {
+          const settings = args.settings as {
+            disabledSkills?: string[];
+            sourceBindings?: Array<{ path: string; mode: 'skill' | 'container' }>;
+          };
+          if (Array.isArray(settings.disabledSkills)) {
+            agentSettings.agent.disabledSkills = settings.disabledSkills.map(String);
+          }
+          if (Array.isArray(settings.sourceBindings)) {
+            agentSettings.agent.additionalSkillDirectories = settings.sourceBindings.map((binding) => String(binding.path));
+            agentSettings.agent.additionalSkillSourceModes = Object.fromEntries(
+              settings.sourceBindings.map((binding) => [String(binding.path), binding.mode]),
+            );
+          }
+          return clone({
+            disabledSkills: agentSettings.agent.disabledSkills,
+            sourceBindings: agentSettings.agent.additionalSkillDirectories.map((path) => ({
+              path,
+              mode: agentSettings.agent.additionalSkillSourceModes?.[path] ?? 'container',
+            })),
+          }) as T;
         }
         if (cmd === 'agent_set_active_provider') {
           agentSettings.activeProviderId = String(args.providerId);

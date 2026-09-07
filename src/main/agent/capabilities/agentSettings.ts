@@ -32,6 +32,8 @@ import type {
   AgentReasoningLevel,
   AgentSkillSourceBinding,
   AgentSkillSourceMode,
+  AgentSkillSettingsInput,
+  AgentSkillSettingsView,
   AgentProviderSecretStatus,
   AgentProviderStoredApiKey,
   AgentProviderSettingsView,
@@ -298,6 +300,33 @@ export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
     disabledSkills: [...preferences.agent.skills.disabled],
     disabledTools: [...preferences.agent.tools.disabled],
   });
+}
+
+export async function getAgentSkillSettings(): Promise<AgentSkillSettingsView> {
+  const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  return {
+    disabledSkills: [...preferences.agent.skills.disabled],
+    sourceBindings: [...preferences.agent.skills.sources],
+  };
+}
+
+export async function updateAgentSkillSettings(input: AgentSkillSettingsInput): Promise<AgentSkillSettingsView> {
+  const current = await getAgentSkillSettings();
+  const updates: { path: readonly string[]; value: unknown }[] = [];
+  if (input.disabledSkills !== undefined) {
+    updates.push({
+      path: ['agent', 'skills', 'disabled'],
+      value: normalizeStringList(input.disabledSkills, MAX_DISABLED_SKILLS),
+    });
+  }
+  if (input.sourceBindings !== undefined) {
+    updates.push({
+      path: ['agent', 'skills', 'sources'],
+      value: normalizeSkillSourceBindings(input.sourceBindings, MAX_ADDITIONAL_SKILL_DIRECTORIES),
+    });
+  }
+  if (updates.length > 0) updateFilePreferences(electron.app.getPath('userData'), updates);
+  return updates.length > 0 ? getAgentSkillSettings() : current;
 }
 
 export async function getAgentDelegationConfiguration(): Promise<{

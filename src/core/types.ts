@@ -711,6 +711,17 @@ export interface AgentSkillSourceBinding {
   readonly mode: AgentSkillSourceMode;
 }
 
+/** Skill-owned desired state, projected from config/settings.jsonc. */
+export interface AgentSkillSettingsView {
+  readonly disabledSkills: readonly string[];
+  readonly sourceBindings: readonly AgentSkillSourceBinding[];
+}
+
+export interface AgentSkillSettingsInput {
+  readonly disabledSkills?: readonly string[];
+  readonly sourceBindings?: readonly AgentSkillSourceBinding[];
+}
+
 export interface AgentDelegationRunnerSettings {
   enabled: boolean;
   /** Provider-qualified model id. Null inherits the invoking root model. */

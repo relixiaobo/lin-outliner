@@ -5,6 +5,7 @@ import { parseHTML } from 'linkedom';
 import type {
   AgentCapabilitySettingsView,
   AgentProviderSettingsView,
+  AgentSkillSettingsView,
   SkillDefinition,
 } from '../../src/renderer/api/types';
 import type { SettingsOpenTarget } from '../../src/core/settingsWindow';
@@ -222,11 +223,11 @@ test('a failed provider toggle reverts and reports at its row', async () => {
 });
 
 test('two local Skill clicks before render persist disabled then enabled', async () => {
-  const writes = [deferred<AgentProviderSettingsView>(), deferred<AgentProviderSettingsView>()];
+  const writes = [deferred<AgentSkillSettingsView>(), deferred<AgentSkillSettingsView>()];
   const calls: Array<Record<string, unknown> | undefined> = [];
   const rendered = await renderSettings({ page: 'skills' }, async (command, args) => {
     if (command === 'agent_list_all_skills') return [localSkill('notes')];
-    if (command === 'agent_update_runtime_settings') {
+    if (command === 'agent_update_skill_settings') {
       const index = calls.push(args) - 1;
       return writes[index]!.promise;
     }
@@ -243,7 +244,7 @@ test('two local Skill clicks before render persist disabled then enabled', async
   expect(calls).toHaveLength(1);
 
   await act(async () => {
-    writes[0]!.resolve(settingsWithDisabled(['notes']));
+    writes[0]!.resolve({ disabledSkills: ['notes'], sourceBindings: [] });
     await settle();
   });
   expect(calls).toHaveLength(2);
@@ -251,10 +252,89 @@ test('two local Skill clicks before render persist disabled then enabled', async
     .toEqual([['notes'], []]);
 
   await act(async () => {
-    writes[1]!.resolve(settingsWithDisabled([]));
+    writes[1]!.resolve({ disabledSkills: [], sourceBindings: [] });
     await settle();
   });
   expect(control.getAttribute('aria-checked')).toBe('true');
+});
+
+test('a refresh started before a Skill write cannot overwrite its result', async () => {
+  const refresh = deferred<AgentSkillSettingsView>();
+  const write = deferred<AgentSkillSettingsView>();
+  let skillReads = 0;
+  let notifySettingsChanged: (() => void) | undefined;
+  const rendered = await renderSettings({ page: 'skills' }, async (command) => {
+    if (command === 'agent_list_all_skills') return [localSkill('notes'), localSkill('other')];
+    if (command === 'agent_get_skill_settings') {
+      skillReads += 1;
+      return skillReads === 1 ? { disabledSkills: [], sourceBindings: [] } : refresh.promise;
+    }
+    if (command === 'agent_update_skill_settings') return write.promise;
+    return fixtureCommand(command);
+  }, {
+    onSettingsChanged: (listener: () => void) => {
+      notifySettingsChanged = listener;
+      return () => undefined;
+    },
+  });
+  const notes = switchFor(rendered.document, 'Toggle notes');
+
+  await act(async () => {
+    notifySettingsChanged?.();
+    notes.click();
+    await settle();
+  });
+  write.resolve({ disabledSkills: ['notes'], sourceBindings: [] });
+  await act(async () => { await settle(); });
+  refresh.resolve({ disabledSkills: [], sourceBindings: [] });
+  await act(async () => { await settle(); });
+
+  expect(notes.getAttribute('aria-checked')).toBe('false');
+});
+
+test('a refresh during a pending Skill write cannot erase queued toggles', async () => {
+  const refresh = deferred<AgentSkillSettingsView>();
+  const writes = [deferred<AgentSkillSettingsView>(), deferred<AgentSkillSettingsView>()];
+  const calls: Array<Record<string, unknown> | undefined> = [];
+  let skillReads = 0;
+  let notifySettingsChanged: (() => void) | undefined;
+  const rendered = await renderSettings({ page: 'skills' }, async (command, args) => {
+    if (command === 'agent_list_all_skills') return [localSkill('notes'), localSkill('other')];
+    if (command === 'agent_get_skill_settings') {
+      skillReads += 1;
+      return skillReads === 1 ? { disabledSkills: [], sourceBindings: [] } : refresh.promise;
+    }
+    if (command === 'agent_update_skill_settings') {
+      const index = calls.push(args) - 1;
+      return writes[index]!.promise;
+    }
+    return fixtureCommand(command);
+  }, {
+    onSettingsChanged: (listener: () => void) => {
+      notifySettingsChanged = listener;
+      return () => undefined;
+    },
+  });
+  const notes = switchFor(rendered.document, 'Toggle notes');
+  const other = switchFor(rendered.document, 'Toggle other');
+
+  await act(async () => {
+    notes.click();
+    other.click();
+    notifySettingsChanged?.();
+    await settle();
+  });
+  refresh.resolve({ disabledSkills: [], sourceBindings: [] });
+  await act(async () => { await settle(); });
+  writes[0]!.resolve({ disabledSkills: ['notes'], sourceBindings: [] });
+  await act(async () => { await settle(); });
+
+  expect(calls.map((args) => (args?.settings as { disabledSkills?: string[] }).disabledSkills))
+    .toEqual([['notes'], ['notes', 'other']]);
+  writes[1]!.resolve({ disabledSkills: ['notes', 'other'], sourceBindings: [] });
+  await act(async () => { await settle(); });
+  expect(notes.getAttribute('aria-checked')).toBe('false');
+  expect(other.getAttribute('aria-checked')).toBe('false');
 });
 
 test('a failed concurrent capability removal restores only its own rule', async () => {
@@ -376,6 +456,7 @@ async function renderSettings(
 
 async function fixtureCommand(command: string): Promise<unknown> {
   if (command === 'agent_get_provider_settings') return providerSettings(true);
+  if (command === 'agent_get_skill_settings') return { disabledSkills: [], sourceBindings: [] } satisfies AgentSkillSettingsView;
   if (command === 'agent_get_capability_settings') return { blocks: [], diagnostics: [] };
   if (command === 'agent_list_all_skills') return [];
   if (command === 'agent_managed_skill_list' || command === 'agent_managed_skill_check_updates') {

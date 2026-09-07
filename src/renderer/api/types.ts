@@ -16,6 +16,8 @@ export type {
   AgentSkillCurationFinding,
   AgentSkillCurationReport,
   AgentSkillCurationRow,
+  AgentSkillSettingsInput,
+  AgentSkillSettingsView,
   AgentImageGenerationSettings,
   AgentImageGenerationSettingsInput,
   AgentSlashCommandView,
