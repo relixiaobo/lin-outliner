@@ -439,7 +439,11 @@ preference is introduced. Reusable global Translation defaults would be a
 separate product decision, not a side effect of moving storage.
 
 The contextual tool must resolve exactly one preview, return unavailable for
-missing/ambiguous context, and clear only that preview's saved translations.
+missing/ambiguous context, and clear saved translations for its current content.
+Saved entries are shared by content; both clearing scopes retain live displays
+and pending translation results while fencing older cache writes. A same-source
+preview's later lookup can miss cleared shared entries; clearing is not disabling
+caching or removing already displayed translations.
 Data separately owns global cache status and clearing, including closed webpage,
 caption, and EPUB entries. Deleting contextual preferences is an explicit
 behavior change; the capability promise covers contextual control and both
@@ -497,7 +501,7 @@ Protected shared interfaces still follow the repository's coordination rule.
 | C. Root configuration and delegation policy | Public root-source discovery/schema/status and structural UI edits, file-backed Runner/Session defaults, access inspection/block operations; no Agent-type editor | A and final delegation runtime; surviving root Profile/presentation, delegation policy, and Access owners; FR-2 through FR-6 |
 | D. [Skill lifecycle operations](archive/skill-lifecycle-operations.md) | Shared human/Agent install/update/reversal/provenance operations, with file-only availability and no managed enable writer | A, Skill identity foundation, and domain-owned declarative Skill settings; Skill owners; FR-2 through FR-6 |
 | E1. [Memory operations](archive/memory-operations.md) | Shared human/Agent status, Open Memory, confirmed Reset, and per-Thread mode; global enablement remains a file edit | A; Memory, Thread details, and root tool owners; FR-5, FR-6 |
-| E2. Preview translation and data operations | Preview-local translation controls and scoped clearing, plus website/session and global translation-cache inspection/clearing | A; preview, session, and cache owners; FR-5 through FR-7 |
+| E2. [Preview translation and data operations](preview-translation-data-operations.md) | Preview-local translation controls and scoped clearing, plus website/session and global translation-cache inspection/clearing | A; preview, session, and cache owners; FR-5 through FR-7 |
 | E3. Application and diagnostic operations | Shared human/Agent version/build/release information, update checking/opening, Help/license destinations, and local diagnostics reveal/export | A; application, Updates, and diagnostics owners; FR-5, FR-6 |
 | F. Configurable shortcuts | Full file/UI/Agent remapping, registry/hint parity, physical recording, safe system registration | A; shortcut and launcher owners; FR-8, FR-9 |
 | G. Unified settings discovery | Final flat search/modified/reset UI, direct domain destinations, no nested Settings shell or aggregate loading/state | A-F; Settings routing/components/preload and narrow owner events; FR-10, FR-11 |
@@ -524,7 +528,7 @@ the renderer preference singletons when the preview-local replacements ship.
 Do not remove remembered root model selection, which is not a Translation
 preference. Cache data stays private and disposable. Scope tests must include two
 previews of the same source, not only two different URLs: a context clear must
-not silently invalidate the other preview's state or pending work. Global clear
+not invalidate the other preview's live state or pending results. Global clear
 must include cold webpage, caption, and EPUB entries, invalidate pre-clear writes,
 and state whether live displays were also cleared. Website/session clearing is
 limited to Tenon's preview partition, never the external browser's session or
@@ -586,7 +590,8 @@ replacement entity restores them.
 - **FR-5:** Every capability-ledger job has complete human and Agent reachability.
 - **FR-6:** Credential handling and domain interactions preserve canonical
   authority contracts without claiming same-account isolation.
-- **FR-7:** Translation choices and scoped clearing remain preview-local; Data
+- **FR-7:** Translation choices remain preview-local; contextual clearing targets
+  the current content's shared saved cache and retains live displays. Data
   retains installation-wide clearing.
 - **FR-8:** Shortcut source, registry, editor, runtime, and hints share semantics.
 - **FR-9:** Fixed grammar and previous effective bindings survive failed edits.
