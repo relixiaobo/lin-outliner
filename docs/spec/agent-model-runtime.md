@@ -165,14 +165,15 @@ command fails.
 
 For every newly admitted Turn-start or steering input, main records
 `turnEnvironment` evidence containing the accepted UTC instant, local date/time, IANA
-timezone and offset, locale, working directory, execution/conversation mode, reply
+timezone and offset, locale, execution/conversation mode, reply
 identity, and Today Node identity/title. Canonical evidence retains all of those facts
 for audit and replay. The Turn brief publishes one compact local timestamp at every
-input admission, the Host-owned working directory at the first retained baseline and
-when it changes, and execution behavior only when it is not the ordinary interactive
-root or when it changes. Today and reply identity do not independently enter the brief.
-Rerun reconstructs the source Turn's admitted evidence and does not resample the clock,
-working directory, or view.
+input admission and execution behavior only when it is not the ordinary
+interactive root or when it changes. Execution directories belong to the keyed
+task context contributions below, not a single Turn environment field. Today
+and reply identity do not independently enter the brief. Rerun reconstructs the
+source Turn's admitted evidence and does not resample the clock, task contexts,
+or view.
 Stateless provider calls still resend the retained historical messages. Those earlier
 reminder bytes are an unchanged cacheable prefix; they are not regenerated as new
 current-Turn evidence. "No repeat" in this contract means that a later input appends
@@ -279,12 +280,26 @@ raw range is not sent as a second copy.
 At each canonical tail position, the pure Turn-brief compiler converts complete typed
 evidence into decision-relevant semantic statements. Execution-context contributions
 carry a stable Host-private `contextSlotKey = { turnId, toolTaskId,
-contextSnapshotRef }`. Projection uses keyed `upsert` and `clear` operations, so a
-later task can replace or clear only its own context slot. A provider boundary may
-mark the latest admitted `toolTaskId` as current, but it retains the bounded ordered
-slots for other directories used by the same Turn. Replay reconstructs those slots
-from canonical Turn and Tool Task evidence in admission order; it never treats one
-global active cwd as the history authority. All contiguous text statements are
+contextSnapshotRef }` and kind `admission` or `observation`. Projection uses keyed
+`upsert` and `clear` operations, so a later task can replace or clear only its own
+context slot. A provider boundary may mark the latest admitted `toolTaskId` as
+current, but it retains the bounded ordered slots for other directories used by
+the same Turn. Discovery completion never moves this marker.
+
+The first task in an uninspected directory has a persisted generation-0 pending
+snapshot before execution. Discovery publishes an immutable successor and a
+separate observation event. For task A, `{ turnId, A, S0 }` remains admission
+context and `{ turnId, A, S1 }` means facts observed later; A's execution receipt
+always references S0. A subsequent task B can admit S1 under `{ turnId, B, S1 }`.
+An observation cannot be projected before its durable publication boundary or
+be labelled as instructions available to an earlier model call. Failure records
+degraded successor evidence; restart/replay never substitutes it for S0.
+
+Replay folds canonical admission and observation events in event order and
+uses each boundary's retained slot keys and clear operations. Bounded eviction
+affects live projection, not canonical payload retention. Missing inspection
+bytes degrade to unavailable evidence. This never treats one global active cwd
+or a current discovery cache as history authority. All contiguous text statements are
 serialized into ordered `<context authority="..." purpose="...">` children inside one
 provider-facing `<system-reminder>`. Exactly three wrapper pairs are valid:
 `application/observation`, `untrusted/observation`, and
@@ -682,8 +697,10 @@ only when every classified action kind is read-only; an empty, unknown,
 mixed-write, or new classification yields a structured unavailable result. A
 worktree policy likewise rejects Bash commands classified as live-outline
 mutations before process launch. Both `outline.edit` and `outline.delete` fail
-before process launch, and all descendant file and shell writes use the
-persisted worktree path as their containment root.
+before process launch. All descendant file and shell writes validate their
+task addresses and canonical targets against the managed-resource reference in
+the admitted execution policy. Missing or mismatched isolation evidence returns
+structured non-success without a Thread-directory or ancestor fallback.
 
 The kernel freezes a schema-valid canonical call
 before `ToolRuntime` evaluates argument-dependent capability blocks. A valid blocked

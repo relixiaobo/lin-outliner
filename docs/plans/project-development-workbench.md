@@ -62,10 +62,10 @@ Project
 ```
 
 `ToolTask.executionContext` contains immutable references to
-`ExecutionAddress`, `ExecutionPolicy`, and `ContextSnapshot`. The address and
-policy are fixed before spawn. A later command with another cwd receives a new
-address and snapshot. No Thread stores `cwd`, `defaultWorkspaceRef`, task
-target, or a second path alias.
+`ExecutionAddress`, `ExecutionPolicy`, and `ContextSnapshot`. All three
+references are fixed and durable before spawn. A later command with another
+cwd receives a new address and snapshot. No Thread stores `cwd`,
+`defaultWorkspaceRef`, task target, or a second path alias.
 
 Project stores user-facing relationship and context presets only. A saved root
 hint is a lookup/display value, not runtime truth, a permission boundary, or a
@@ -126,9 +126,11 @@ as evidence, never into the stable prompt fingerprint. They cannot override
 Host authority or user intent. Each context contribution carries a stable
 `contextSlotKey = { turnId, toolTaskId, contextSnapshotRef }`; projection
 operations are keyed `upsert` or `clear` by that slot. A later task adds or
-replaces its own slot and cannot clear an earlier task's evidence. Replay
-reconstructs the ordered slot map from canonical Turn/Tool Task references and
-marks the latest admitted slot as current without collapsing the other slots.
+replaces its own slot and cannot clear an earlier task's evidence. Slots
+distinguish context used at admission from observations published afterward.
+Replay reconstructs the ordered slot map from canonical admission, observation,
+and projection events and marks the latest admitted task as current without
+collapsing the other slots. Discovery completion never moves that marker.
 
 Context admission is required for every executable Turn: root, fork, child,
 delegated, scheduled, and resumed. A Turn records the exact context reference
@@ -138,10 +140,16 @@ gets a fresh snapshot or a structured non-success result. A Turn may reference
 multiple snapshots when its Tool Tasks use multiple directories; there is no
 single Turn-wide cwd.
 
-The first task against a new directory may execute before discovery is complete.
-Its receipt returns the discovered facts, and the next provider boundary gets
-the corresponding reminder. Discovery degradation does not block ordinary
-Full Access work.
+Before the first task in a directory starts, the Host persists an immutable
+generation-0 snapshot with pending discovery, unknown observations, and a
+degradation reason. Its admission and terminal receipt retain that reference.
+Discovery publishes generation 1 as a separate, later observation slot at the
+next provider boundary; only later admissions may consume it as execution
+context. Failure, restart, and replay never fill in or rewrite generation 0.
+The exact ordering is defined by the
+[snapshot lifecycle](project-context-runtime.md#snapshot-admission-and-discovery-lifecycle).
+Discovery degradation does not block ordinary Full Access work; mandatory
+address, policy, claim, and isolation validation still completes before spawn.
 
 ### Project and user interaction
 
@@ -205,8 +213,19 @@ Project metadata. It does not cancel active Tool Tasks, delete user files, or
 invalidate receipts: active tasks retain self-contained address, policy, and
 snapshot facts. Isolated resources have their own cleanup owner and parent
 fence; cleanup receives a deleted-parent tombstone and cannot resolve a
-missing Project. Active or paused Automations block deletion; completed
-Automation history retains a self-contained non-resumable snapshot.
+missing Project. Active or paused Automations whose hints reference the Project,
+and pending claims that still depend on it, block deletion. Completed Automation
+history retains self-contained dispatch snapshots and cannot resume historical
+runs; reactivating a definition requires fresh hint validation.
+
+Automation scheduling is keyed by definition identity, stable context-hint
+identity, and occurrence identity. Those keys are not paths or repository
+identities. Each new dispatch resolves its claimed hint into an immutable
+address/policy/context snapshot; recovery uses that captured dispatch evidence,
+not the current Project catalog. Every subsequent Tool Task still owns its
+actual execution context. Cursor, overlap, edit, deletion, continuity, and
+managed-worktree recovery rules have one authority in
+[Agent Automations](../spec/agent-automations.md).
 
 Restart reconciles unfinished Tool Tasks before resuming. Missing terminal
 evidence is `lost` or `stopped`, never success. A lost provider response never
@@ -249,7 +268,8 @@ Pi. Tenon owns the product and persistence model.
   address contract and records its canonical target; none reads a Thread cwd.
 - **FR-3:** Project is optional organization and context; it cannot narrow
   Full Access or silently redirect an existing Chat.
-- **FR-4:** Every Tool Task has immutable address, policy, and snapshot facts.
+- **FR-4:** Every Tool Task has immutable address, policy, and snapshot facts
+  durably recorded before execution, even while discovery is pending.
 - **FR-5:** Every executable Turn records the context used by every Tool Task.
 - **FR-6:** Context is projected through typed evidence and system-reminder.
 - **FR-7:** Requested isolation fails closed; ordinary Full Access remains usable.
@@ -268,7 +288,8 @@ Pi. Tenon owns the product and persistence model.
   task-scoped path resolves one canonical address and appears in its Tool Task
   receipt; no path uses retired Thread cwd state.
 - **AC-4:** A Turn with multiple directories records one context reference per
-  Tool Task and replays them in order.
+  Tool Task and replays them in order. Later discovery has separate observation
+  slots and never changes an executed task's reference.
 - **AC-5:** Child, fork, delegated, scheduled, and resumed Turns cannot execute
   without a valid context reference.
 - **AC-6:** Project deletion cannot leave dangling lineage or active-task
@@ -292,16 +313,39 @@ Define codecs, admission, Tool Task receipt fields, capability interaction,
 context references, and recovery for task-scoped `cwd`. Remove planned
 Thread/workspace execution authority and update all fork, child, Automation,
 delegation, diagnostics, preload, and renderer consumers in the same clean cut.
-The existing current-behavior specs remain authoritative until this complete
-Unit A cut lands; no consumer may implement the new `cwd` or context-slot
-contract against a partial protocol. Unit A must update the permission,
-model-runtime, Agent Core, Automation, and delegation specs in the same change.
+This is one complete execution refactor: it includes durable generation-0
+snapshots and their admission/receipt/projection path, so all tools work before
+Unit B adds richer discovery. No consumer implements against a partial protocol.
+
+The specs in this design PR describe the intended replacement contract; they
+do not claim that the runtime cut has shipped. Unit A must reconcile code and
+all of these authorities together: `agent-tool-design`, `agent-tool-permissions`,
+`agent-subagent-threads`, `agent-model-runtime`, `agent-thread-rendering`, `agent-core`,
+`agent-automations`, and the active `agent-delegation-runtime` plan. This includes
+local path resolution, child resource inheritance/orphan recovery, configuration
+source lookup, transcript indexes, task-relative renderer links, and removal of
+a single working directory from Turn environment evidence. Add codec rejection
+and production-reader guards specified in the
+context plan, not only tests of the new Bash field.
+
+Automation's complete adapter change is in this same unit: replace
+`AutomationProjectBinding` and `AutomationRun.projectBindingKey` in
+`src/core/agent/automation.ts`; change `AutomationStore` cursor/claim/continuity
+queries, `AutomationScheduler` occurrence admission, `AutomationService`
+definition and lifecycle validation, `AutomationDispatcher.dispatch` and
+`recoverAcceptedTurn`, and `AutomationWorktree.prepare`, `resumePrepared`, and
+`snapshotAndRemove`. DTOs, codecs, model-tool schema, preload, renderer editing,
+and recovery fixtures must consume the final hint/dispatch-snapshot contract.
+This adds no parallel scheduler, workspace store, or compatibility reader.
 
 ### Unit B: Context projection and optional Project catalog
 
 Implement bounded root inspection, instruction/profile snapshots, generations,
 degraded facts, system-reminder projection, Project grouping, and confirmed
-Agent binding requests. Project metadata remains non-authoritative.
+Agent binding requests. Extend Unit A's generation-0 mechanism with immutable
+successors and observation events, including failure/restart/replay behavior.
+Project metadata remains non-authoritative; its catalog deletion fence uses
+Unit A's Automation lifecycle contract.
 
 ### Unit C: Verification and bounded self-iteration
 
@@ -335,15 +379,18 @@ plan must use the entities and invariants in this plan; a child plan cannot
 reintroduce Thread cwd, defaultWorkspaceRef, task target, Project-owned runtime
 identity, or a parallel ledger.
 
-Collision self-check (2026-09-06): `gh pr list --state open` found only this
-claim, PR #639; no other open PR or `docs/TASKS.md` scope overlaps these plan
-files. The batch reports **no overlap**.
+Collision self-check (2026-09-07): `gh pr list --state open` found this claim,
+PR #639, and #643 (Settings Unit D, Skill configuration/lifecycle). #643 claims
+Skill/settings implementation, with no changed files at inspection; its scope
+does not overlap this documentation batch. `docs/TASKS.md` still carries the
+delegation dependency below. The batch has **no file overlap**; runtime and
+configuration consumers must use the final merged mechanisms at implementation.
 
-The active `agent-delegation-runtime` plan is a semantic predecessor, not an
-independent implementation lane. Main must rebase it on Unit A before marking
-that board item eligible: Session policy may request an isolated worktree, but
-Session or Runner must never become the owner of a sticky cwd or a second
-execution ledger.
+Unit A is the semantic predecessor of the execution-context consumers in the
+active `agent-delegation-runtime` plan. Main must rebase that plan on Unit A
+before marking that board item eligible: Session policy may request an isolated
+worktree, but Session or Runner must never become the owner of a sticky cwd or
+a second execution ledger.
 
 ## Verification strategy
 
@@ -366,7 +413,5 @@ the main-agent gate.
 
 - The Host default for a relative `cwd` is an implementation detail and must
   not become a Thread-owned persisted fact.
-- Context discovery may complete after the first task; the receipt and next
-  provider boundary must make the generation visible.
 - Publication confirmation semantics remain governed by the explicit Git
   review/publication contract.

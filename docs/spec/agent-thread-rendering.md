@@ -546,8 +546,10 @@ reach it.
   meaning; keyboard focus plus Enter opens in the current pane. The shared
   inline-file hover preview, right-click context menu, and title tooltip still
   attach through the same delegation attributes. Absolute paths link directly,
-  while relative values in path-bearing JSON fields resolve against the Thread
-  working directory; glob checks apply only outside declared path fields. Glob
+  while relative values in path-bearing JSON fields resolve against the owning
+  Tool Task's admitted execution address. Missing task-address evidence leaves
+  a relative value as plain text; it never borrows the selected Thread's latest
+  task or Project hint. Glob checks apply only outside declared path fields. Glob
   expressions and URL text are not treated as concrete local paths, and
   main-process preview checks remain authoritative
 - Agent-task Items and Subagent activity link directly to their canonical child
@@ -1409,7 +1411,8 @@ explanatory empty state followed by a second creation click. Provider loading is
 neutral. When no provider is usable, the dock creates nothing and offers the
 Providers settings action instead. Starting a Thread resolves the remembered
 execution selection when it is still usable, or the current provider and Profile
-defaults otherwise, plus the working directory at the main-process boundary.
+defaults otherwise. It does not persist an execution directory; each Tool Task
+resolves its address at the main-process admission boundary.
 Automatic creation is asynchronous: if the reader focuses another surface while
 it is pending, completion preserves that newer focus instead of pulling the next
 keystroke into the composer. Explicit creation reclaims only its own initiating

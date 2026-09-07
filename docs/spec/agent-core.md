@@ -292,7 +292,13 @@ source Thread's effective execution selection.
 An ordinary renderer-created root has no persisted execution cwd; the renderer
 does not submit one as Thread state. Every executable Turn resolves an
 ExecutionAddress for each Tool Task, and descendants validate or refresh their
-own context references. Explicit project and automation roots are context hints
+own context references. Before any Tool Task starts, its immutable address,
+policy, and context snapshot references are durable. Initial discovery uses a
+generation-0 pending snapshot with explicit unknown observations; its terminal
+receipt retains that reference. Discovery publishes a successor as a separate
+observation event for later provider boundaries and task admissions. Replay
+preserves both generations and never attributes later observations to an
+earlier task. Explicit project and automation roots are context hints
 registered as source scopes, not Thread execution authority. Host-managed
 scratch and isolated worktrees are Tool Task/Goal resources with explicit
 cleanup ownership. Deleting a Thread or Project does not delete a user-managed

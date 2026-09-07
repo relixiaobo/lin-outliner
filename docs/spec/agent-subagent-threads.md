@@ -141,12 +141,14 @@ identity and omits that field. It never includes a worktree path, branch, Thread
 content, prompt, or tool output. Diagnostics is inspection-only; the execution
 ledger remains the recovery authority even when reporting fails.
 
-A delegated Thread without an execution record is a reverse orphan. Without a
-persisted recovery intent, only `child.cwd === parent.cwd` proves that it never
-entered an independent worktree. Any distinct cwd is quarantined rather than
-deriving recovery state from the checkout's current HEAD. Until recovery
-settles, every delegated runtime entry point fails closed before Skills, tools,
-extensions, or provider I/O can run.
+A delegated Thread without an execution record is a reverse orphan. Recovery
+uses durable admission receipts and managed-resource intents, including an
+explicit non-isolated decision where applicable. It never infers absence of an
+independent worktree from equal parent/child directories. Missing policy or
+resource evidence quarantines the orphan without deleting files or deriving a
+base commit from current HEAD. Until recovery settles, every delegated runtime
+entry point returns structured non-success before Skills, tools, extensions, or
+provider I/O can run; readable history remains available.
 
 Terminal-notification and `main`-message delivery use that same availability
 gate for both the recipient Thread and the sending Agent. The check runs before
@@ -226,9 +228,11 @@ unreadable catalog becomes a stable built-in-only baseline. Normal catalog
 journaling therefore retracts any custom Roles announced before the file broke
 instead of leaving them selectable in model context. Only typed
 configuration-read failures degrade; unrelated resolver defects still
-propagate. `identities/get` is scoped to a Thread because that Thread's cwd is
-the authority for its project layer. The renderer retains catalogs per loaded
-Thread: opening a child reads the child's catalog, and an unresolved child
+propagate. `identities/get` is scoped to a Thread for presentation and uses its
+recorded configuration selection and source references. Task-specific project
+layers name their admitted context snapshot; they never establish a Thread
+execution directory. The renderer retains catalogs per loaded Thread: opening
+a child reads the child's catalog, and an unresolved child
 falls back to its raw type rather than borrowing the selected root's identity.
 After every successful Turn admission, the renderer re-reads the submitted
 Thread's catalog, so an external configuration break or recovery reaches that
@@ -787,7 +791,9 @@ rule. Root Turns, scheduled work, and isolated Skills do not share this counter.
 ## Worktree Isolation
 
 `isolation: "worktree"` creates a host-managed temporary git worktree before
-provider I/O and makes it the Agent cwd for file and shell tools. Path and git
+provider I/O and supplies an explicit resource reference to the child's
+execution policy. Every file or shell Tool Task resolves its own
+`ExecutionAddress` and validates that policy before side effects. Path and git
 containment checks reject mutation redirection into the main checkout. The shell
 sandbox treats the shared Git object database as append-only: commits may create
 new loose objects, while existing objects plus `objects/pack` and `objects/info`
@@ -804,12 +810,16 @@ recompute the crash-era base from the current checkout. This ordering makes a
 crash after any Git mutation recoverable without treating a later HEAD as
 historical evidence.
 
-Isolation is inherited down the execution tree. A nested Agent or isolated Skill
-keeps the ancestor's outline-mutation restriction even when its own call omits
-`isolation`; file and shell write containment uses the authoritative worktree
-`path`, not merely the child's current `cwd`. An active worktree row whose path
-does not match its Thread cwd records a warning and lookup continues through the
-ancestor chain rather than killing the Turn.
+Isolation is inherited down the execution tree through explicit policy/resource
+references fixed at child admission. A nested Agent or isolated Skill keeps the
+ancestor's outline-mutation restriction even when its own call omits
+`isolation`. Every task revalidates the referenced worktree's canonical path,
+registration, and shared Git identity; file and shell write containment uses
+that resource together with the task's canonical targets. No execution path
+compares Thread directories or searches ancestors for a replacement worktree.
+A missing or mismatched resource records a diagnostic and returns structured
+non-success at task admission. Inspection-only catalog or UI failures may
+degrade; missing isolation evidence cannot admit a write.
 
 An unchanged worktree is removed at terminal settlement. Resume then creates a
 new managed worktree from the persisted `sourceCwd` and `baseCommit`, even when
@@ -818,8 +828,17 @@ an authoritative tombstone: lookup does not fall through to an ancestor
 worktree or to an unrestricted boundary before resume recreates it. A changed
 worktree is retained, reported with its path and branch, and reused by the next
 generation. A missing, externally altered, or wrongly registered retained
-worktree fails that generation. Tenon never falls back to the parent cwd,
-because doing so would break the isolation promise.
+worktree fails that generation. Resume validates the resource and captures new
+task address/policy/snapshot references before execution. Old receipts retain
+their exact references. It never substitutes a parent's address or a Project
+hint for an unavailable isolated resource.
+
+The execution-context protocol cut must test relative file paths, absolute
+targets, nested isolation without an explicit request, mismatched registration,
+removed-resource resume, reverse-orphan quarantine, and restart. A production
+reader guard removes Thread directory lookup and ancestor worktree fallback;
+the test fixture deliberately uses different parent and child task addresses
+so agreement cannot be an accidental consequence of equal directories.
 
 ## Request Budget
 
@@ -966,8 +985,10 @@ canonical Turns with an atomic temporary-file rename, then resumes appending.
 Membership deduplicates by Turn ID, not by most-recent position.
 
 `ThreadTranscriptIndex` derives `index.tsv` from artifacts on disk joined to
-current Thread records. It contains `threadId`, source, cwd, timestamps, status,
-name, and transcript path, newest activity first. One serialized atomic rewrite
+current Thread records. It contains `threadId`, source, timestamps, status,
+name, and transcript path, newest activity first. Execution directories are
+available through the transcript's task receipts, not a synthetic single cwd
+column. One serialized atomic rewrite
 coalesces updates, rechecks for work before clearing its chain, and loads Thread
 records in one query. Artifacts on disk define membership; excluded sessions are
 subtracted even if deletion was interrupted. Rename, archive, deletion, exclusion,

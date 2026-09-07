@@ -18,6 +18,25 @@ An `Automation` is one revisioned definition containing:
 - optional provider, model, and reasoning selections
 - `active`, `paused`, or `completed` status and timestamps
 
+Each explicit context hint has a stable Host-issued UUIDv7 `contextHintId` and
+a source of either `{ kind: project, projectId }` or
+`{ kind: directory, rootHint }`. The latter is
+an absolute lookup path, not a persisted canonical execution address. The Host
+may validate its current availability when saved but does not freeze the
+validation result as runtime identity. There are at most 32 hints. Zero hints
+means one implicit `default` hint using the documented Host default. An
+existing-Thread destination accepts at most one explicit hint.
+
+Hint IDs identify scheduling/continuity slots within an Automation. They survive
+reordering and edits to a slot's source or policy, do not encode a directory,
+and are never reused after removal. A removed hint's history retains its saved
+source. Project root-hint edits affect future claim snapshots, not pending
+claims or existing execution contexts. Claim creation captures the effective
+root hint and display values under the Project lifecycle fence.
+The implicit `default` slot lasts for the definition's lifetime. It is inactive
+while explicit hints exist; returning to zero hints reactivates its cursor from
+edit time without replaying its previously claimed occurrences.
+
 The accepted schedule form contains exactly one floating local `DTSTART` and one
 RRULE. Hourly, daily, weekly, monthly, and yearly frequencies are supported.
 Local wall time remains stable across timezone offset changes. A nonexistent
@@ -31,9 +50,13 @@ An `AutomationRun` is a narrow scheduling and routing record. It captures the
 Automation revision, scheduled instant, one context hint, complete saved
 definition and configuration-selection snapshot, optional isolation policy,
 reciprocal Thread/Turn IDs, read state, and pin state. Main resolves a fresh
-ExecutionAddress and ContextSnapshot at dispatch, resolves the effective
-provider/model, and fails closed when the selected provider, model, or address
-is unavailable. The run does not copy model
+ExecutionAddress, ExecutionPolicy, and ContextSnapshot for each new dispatch,
+then stores `dispatchSnapshotRef` referencing immutable context evidence. The
+dispatch snapshot contains the captured hint, source/execution address refs,
+policy ref, initial context ref, and any managed-resource intent reference.
+The run row holds references; it is not a second source of execution facts.
+Provider/model selection and address validation fail dispatch when unavailable;
+incomplete discovery uses a durable degraded snapshot. The run does not copy model
 output, Turn status, Goal status, tool history, or errors that occur after Turn
 admission.
 
@@ -43,20 +66,27 @@ Run routing states are:
 - `dispatched`: the canonical Turn was accepted and reciprocal provenance is
   durable
 - `failed`: dispatch failed before a Turn existed
-- `omitted`: the occurrence was superseded by catch-up, overlap, pause, or delete
+- `omitted`: the occurrence was superseded by catch-up, overlap, update, pause,
+  or delete
 
 Omitted occurrences use one bounded `{ from, through, count, reason }` audit
 record per contiguous batch. Aggregation never crosses an intervening successful
-run or an Automation revision.
+run, context hint, or Automation revision.
 
 ## Scheduling And Durability
 
 `AutomationStore` owns `<userData>/agent/automations.sqlite`. Definitions,
-per-binding evaluated-through cursors, overlap deferrals, and run claims commit
-with SQLite WAL and full synchronous durability. A unique
-`(automationId, scheduledFor, projectBindingKey)` key prevents duplicate
-occurrences. Standalone claims reserve their UUIDv7 Thread identity before any
-Thread side effect.
+per-context-hint evaluated-through cursors, overlap deferrals, and run claims
+commit with SQLite WAL and full synchronous durability. The unique claim key is
+`(automationId, contextHintId, occurrenceKey)`: scheduled occurrences use their
+UTC scheduled instant in a `scheduled` namespace, while Start now uses a durable
+request ID in a `manual` namespace, reused on retry. The `default` hint is an
+explicit key value, not SQL null. Canonical paths,
+Project IDs, worktree identities, and definition revisions are not claim keys.
+An edit cannot duplicate an already claimed occurrence by changing its path or
+revision. Standalone claims reserve their UUIDv7 Thread identity before any
+Thread side effect. Cursors and overlap state use `(automationId, contextHintId)`;
+run claims capture the exact definition revision and hint values they consumed.
 
 The Electron main process owns one `AutomationScheduler`. It starts after
 Thread and Memory recovery, wakes for the nearest active schedule, retries
@@ -67,26 +97,42 @@ required local machine resources are available.
 
 Startup reconciles all pending claims and dispatched provenance bindings without
 a renderer pagination cap before calculating new work. Across an offline
-interval, each Automation/project binding claims only the latest missed
+interval, each Automation/context hint claims only the latest missed
 occurrence and stores older ones as one `catchUp` omission. While one occurrence
 is active, later due work is persistently marked as overlap-deferred. When the
 active Turn becomes terminal, only the latest deferred occurrence starts and
 older due work becomes an `overlap` omission. One active occurrence per
-Automation/project binding is therefore enforced across normal wakes, Start now,
-and restart.
+Automation/context hint is therefore enforced across normal wakes, Start now,
+edits, and restart. This is a scheduling rule; different hints that resolve to
+the same worktree still use the canonical Tool Task mutation claim. Their hint
+IDs grant no filesystem ownership or permission.
 
 Create, update, pause, resume, delete, Start now, worktree pinning, scheduled
-admission, and worktree cleanup share the scheduler mutex. Revision preconditions
+admission, Project hint capture/deletion fencing, and worktree cleanup share
+the scheduler lifecycle ordering. Revision preconditions
 reject stale edits. Before pause or delete classifies a pending claim, the host
 looks up its `clientUserMessageId` binding and durably restores any already
 accepted Turn as `dispatched`. Pause and delete then atomically convert only
 genuinely undispatched claims to omissions; an already dispatched Turn continues
 as canonical history, and a paused or completed definition cannot Start now.
 Delete tombstones the definition so run snapshot and foreign-key history remain
-intact. Any finite RRULE definition becomes
-completed after every project binding has durably claimed its final occurrence.
-Changing a completed definition's schedule reactivates it from the edit time;
-other edits preserve its completed state.
+intact. Any finite RRULE definition becomes completed after every context hint
+has durably claimed its final occurrence. This means recurrence is exhausted;
+its last claims may still be pending or executing. Historical runs are never
+resumable. Changing a completed definition's schedule reactivates the definition
+from the edit time only after validating its current hints, destination, and
+configuration; other edits preserve its completed state. Direct resume of a
+completed definition is rejected.
+
+An update first reconciles accepted Turns, then atomically omits genuinely
+undispatched claims from the replaced revision with reason `updated`. Already
+dispatched work keeps its captured snapshot and continues to occupy its hint's
+overlap slot. Schedule edits reset evaluated-through cursors from edit time and
+clear old deferrals; a new hint starts at its addition time, and a removed hint
+retires its cursor. Unchanged schedules/hints retain their cursors. A source or
+policy edit cannot revive an omitted occurrence or redirect a running task.
+Resume validates the current definition and wakes scheduling from durable
+cursors using the same catch-up/coalescing rules. It does not resume old runs.
 
 Start now uses the saved definition and same durable claim/dispatch path. It does
 not bypass no-overlap, model validation, execution-context admission, inherited
@@ -97,22 +143,31 @@ Thread configuration, or explicit capability blocks.
 A standalone occurrence creates one persistent root Thread per context hint
 with `threadSource` classified as feature `automation`. It uses the Automation
 name, captured model selection, default Configuration Profile, and a freshly
-admitted ExecutionAddress/ContextSnapshot. Its composer is read-only because
+admitted dispatch snapshot. Its composer is read-only because
 only the host feature path may add Turns.
 
 An existing-Thread occurrence adds a Turn to one active persistent root user
-Thread and preserves that Thread's history, provider, and Goal. Dispatch
-resolves a fresh ExecutionAddress from the Automation hint or explicit task
-input; it does not read a sticky Thread cwd or require a Project workspace
-match. A busy Thread leaves the claim pending until the same single-Turn
-coordinator becomes idle.
+Thread and preserves that Thread's history, provider, and Goal. Dispatch uses
+the claimed Automation hint to prepare its initial context independently of
+Thread metadata or Project membership. A busy Thread leaves the claim pending
+until the same single-Turn coordinator becomes idle.
+
+The initial dispatch snapshot is source-labelled input to the Turn, not a
+sticky execution directory. Each Tool Task resolves and records its actual
+address, policy, and snapshot, including explicit cross-directory calls. An
+isolated policy applies equally to either destination and is enforced at each
+task; an existing Thread neither disables nor owns that policy.
 
 Both destinations call the privileged `ThreadService` feature admission with
 `clientUserMessageId=AutomationRun.id`. Retrying after a crash therefore returns
 the already accepted Turn instead of appending another. Every dispatch attempt
-performs this lookup before project/worktree preparation and configuration
-resolution; failure finalization repeats it and leaves the claim pending if the
-reciprocal run binding cannot yet be committed. Before model execution,
+performs this lookup before address/worktree preparation and configuration
+resolution. A claim without prepared evidence resolves its saved hint once and
+persists the resulting dispatch snapshot before Turn admission. Retries of that
+same prepared claim validate and reuse its recorded identity; only a new
+occurrence may resolve a new identity. Failure finalization repeats the accepted
+Turn lookup and leaves the claim pending if the reciprocal run binding cannot
+yet be committed. Before model execution,
 the Turn durably records:
 
 ```ts
@@ -130,8 +185,11 @@ it reports the ordinary missing-Thread error, and its absence does not disable
 future scheduling.
 
 Main also injects trusted `additionalContext.automation_info` with Automation,
-run, revision, scheduled time, destination, canonical execution cwd, project,
-and worktree facts.
+run, revision, occurrence/context-hint identity, scheduled time, destination,
+and the initial dispatch snapshot reference and source-labelled observations.
+It distinguishes the saved root hint from the resolved source and any isolated
+execution address. Later task contexts and discovery successors use keyed
+`system-reminder` evidence; they never rewrite the initial dispatch snapshot.
 This application context helps the model but is not provenance, a ThreadItem, or
 renderer-authored input.
 
@@ -145,12 +203,15 @@ digest of the runs before it. Everything stays pull-based: the digest is a
 pointer, and the transcript enters context only if the model reads it with the
 existing file tools. No model tool is added.
 
-`recentRuns` holds the three most recent runs of the same Automation **on the
-same project binding**, newest first, excluding the current one, queried by
-binding in SQL. The binding filter is the feature rather than a refinement: an
-Automation may carry up to 32 bindings and its runs interleave across all of
-them, so a binding-blind read would show a fresh run its siblings' history and
-none of its own.
+`recentRuns` holds the three most recent runs of the same Automation and
+`contextHintId`, newest first, excluding the current occurrence, queried by
+that logical slot in SQL. An Automation's hints interleave, so history from a
+different hint must not displace this slot's predecessors. Each entry names its
+captured hint and dispatch snapshot reference, with bounded resolved-address
+display when available. The same hint may have resolved to another directory
+after an edit or filesystem change; those entries are explicitly labelled as
+different context, never presented as proof about the current checkout. A
+failed/omitted run with no prepared snapshot reports its address as unavailable.
 
 Each entry carries the run id, scheduled time, finish time, a status, one
 bounded outcome line, and a nullable `transcriptPath`. The outcome is derived
@@ -197,16 +258,18 @@ model, or reasoning configuration both when saved and when dispatched.
 
 Automation has no public Profile, tool, Skill, Plugin, or MCP selection fields.
 A standalone occurrence inherits those capabilities from the default
-Configuration Profile for its project; an existing-Thread occurrence inherits
-the destination Thread's complete persisted configuration. These capability
+Configuration Profile selected at dispatch; an existing-Thread occurrence
+inherits the destination Thread's complete persisted configuration. These capability
 ceilings remain host-private and are enforced by the normal Turn runtime. A
 prompt may invoke an available Skill explicitly with `$skill-name`; the prompt
 text does not create a separate Automation allowlist or dependency record.
 
 Creating or resuming an Automation is standing authorization for future
-occurrences under Tenon's Full Access model. Automation introduces no sandbox,
-permission profile, approval policy, or authorization prompt. Current explicit
-capability blocks and native provider, operating-system, filesystem, network,
+occurrences under Tenon's Full Access model and any explicitly selected
+isolation policy. Automation introduces no separate permission mechanism;
+requested isolation uses the common Host policy and fails closed when
+unavailable. Current explicit capability blocks and native provider,
+operating-system, filesystem, network,
 and service failures are evaluated by their existing owners. A root Automation
 Turn may use `request_user_input` for missing product input; while its Turn waits,
 later occurrences continue to coalesce instead of overlapping.
@@ -221,15 +284,33 @@ from the call, never from the patch. It is
 subject to the `agent.automation.manage` capability action like every other
 model tool.
 
-## Projects And Worktrees
+## Execution Addresses And Worktrees
 
-No-project runs use the agent local-file root. Create and update resolve each
-project directory through `realpath` and persist that canonical path; dispatch
-requires a fresh `realpath` to equal the stored path exactly, preventing a saved
-location from being redirected through a later symlink. Worktree mode also
-requires the fresh Git top-level to equal that same stored root and creates a
-detached worktree at the captured source `HEAD` under the app-owned
-`<userData>/agent/automation-worktrees/` tree.
+Each new occurrence resolves its captured hint through fresh `realpath` and
+records the requested path, canonical directory, and root/worktree identity in
+its dispatch snapshot. With no explicit hint it resolves the documented Host
+default. Save-time validation is not an equality constraint on future runs:
+for example, a symlink may resolve differently on the next occurrence, and both
+runs must show their distinct resolved addresses. Unavailable hints return
+structured dispatch failure; they never fall back to a Thread directory or to
+an old Project root. Once a dispatch is prepared, identity drift fails its
+admission/recovery instead of redirecting that occurrence.
+
+Worktree isolation resolves the source Git checkout and captures its exact
+`HEAD`, shared Git identity, deterministic managed destination, and cleanup
+owner in durable preparation intent before the first Git mutation. Git
+preparation is an ordinary Host-owned Tool Task. The resulting detached
+worktree under `<userData>/agent/automation-worktrees/` supplies the execution
+address/resource reference in the final dispatch snapshot before Turn admission.
+The original hint and resolved source address remain evidence, not cleanup
+targets. Non-Git roots cannot satisfy requested worktree isolation.
+
+Recovery looks up the accepted Turn first, then any saved preparation intent or
+dispatch snapshot. It never invokes fresh preparation when a persisted intent
+already owns a possible side effect. Reconcile the recorded Tool Task and Git
+registration using the captured source, managed path, shared Git identity, and
+base commit. Missing or mismatched evidence retains the resource and reports
+failure; it never guesses a new base or consults the current Project catalog.
 
 Every managed path is containment-checked. Cleanup never targets the source
 checkout, an unknown path, or a user branch. Active and pinned worktrees remain.
@@ -243,7 +324,67 @@ Cleanup revalidates those conditions and refreshes the durable patch immediately
 before removal, including when resuming a previously persisted snapshot. Pending
 dispatch recovery revalidates the persisted source, managed path, registration,
 and captured base commit. A crash or any failed step resumes without using or
-removing an unrecorded or unrecognized worktree.
+removing an unrecorded or unrecognized worktree. Cleanup and pin state refer to
+the recorded managed resource, even if the definition's hint changed or its
+Project was deleted. Cleanup side effects run through Tool Tasks and append
+resource receipts; they do not mutate the dispatch snapshot. An existing-Thread
+run cannot keep an isolated resource alive by treating it as a Thread directory.
+
+## Project Deletion And Reactivation
+
+Project deletion fences claim creation, hint edits, resume, and reactivation
+using the same scheduler lifecycle ordering. It reconciles pending claims with
+accepted Turns before checking references. Deletion is refused while any active
+or paused definition has a Project-source hint naming that Project, or while a
+genuinely pending claim still names it, even if the definition is completed or
+has since removed the hint. Resolving or omitting that claim removes its fence.
+Standalone directory hints do not create Project references merely because
+their paths match a saved Project root.
+
+Otherwise deletion detaches catalog membership while preserving run snapshots,
+active Tool Tasks, and managed-resource ownership. Historical runs with terminal
+Turns, and failed/omitted claims, are self-contained and cannot dispatch again.
+A previously accepted
+Turn may still complete and recover its routing link using its original
+snapshot; that is reconciliation, not a new occurrence. A completed definition
+may remain readable with an unavailable Project hint. Direct resume stays
+invalid, and an edit that reactivates it must replace/remove missing hints or
+fail validation before persistence. Saved historical root values are never
+fallback input for reactivation.
+
+Startup respects the durable Project deletion fence before scheduler wakes.
+Incomplete deletion retries the reference check and membership detach; it
+cannot reopen admission from an in-memory catalog cache. History and worktree
+cleanup load their recorded references without requiring a surviving Project.
+
+## Execution-Context Verification
+
+The protocol cut updates Automation DTOs/codecs, definition validation, scheduler
+storage, dispatch, continuity, worktree preparation/cleanup, and renderer
+projections in one change. It must cover:
+
+| Scenario | Required result |
+| --- | --- |
+| No hint, directory hint, Project hint | One explicit scheduling slot per effective hint; dispatch records requested and freshly resolved addresses. |
+| Reorder or edit a hint while a run is active | Stable slot ID and overlap behavior; old dispatch remains immutable; new occurrences use new captured hints. |
+| Remove/re-add hint, change schedule, pause/resume | Retired IDs are not reused; old pending claims reconcile/omit; cursors do not duplicate occurrences. |
+| Start now retry and restart at Turn acceptance | One occurrence claim and one accepted Turn via the original request and run IDs. |
+| Symlink changes between occurrences or during prepared recovery | A new occurrence records fresh resolution; the prepared occurrence fails identity validation without redirection. |
+| Existing Thread executes another directory | Its history/configuration persist; each Tool Task records its own address without a Thread-directory reader. |
+| Discovery pending, failed, or restarted | A durable initial snapshot exists; successor observations do not rewrite the dispatch or task receipt. |
+| Project deletion versus active, paused, completed, pending, and removed-hint definitions | Dependency fence covers all dispatchable references; completed history remains readable; reactivation validates current hints. |
+| Crash before/after worktree preparation or cleanup | Captured intent/resource identity is used; current catalog paths cannot become cleanup targets. |
+| Hint resolves to another checkout | Recent-run entries preserve their own dispatch context and visibly distinguish different-context evidence. |
+
+The implementation replaces the old assumptions in
+`tests/core/agentAutomations.test.ts`: `persists the canonical real path for a
+project binding`, `rejects worktree execution for an existing Thread
+destination`, and `rejects a saved project path redirected through a symlink`.
+Retain their boundary coverage with fresh-per-occurrence resolution,
+task-enforced isolation, and prepared-dispatch drift rejection respectively.
+Extend `tests/core/agentAutomationTool.test.ts` and renderer Automation tests
+for hint identity and the final strict schema. These are implementation tests;
+the design PR's checks do not establish the new runtime behavior.
 
 ## Transport And Renderer
 
