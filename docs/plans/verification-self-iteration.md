@@ -127,6 +127,31 @@ Manifest validation and conservative invalidation still apply to every check.
 Every check and edit has its own immutable execution address and context
 snapshot. A projectless Goal may use several directories in one conversation.
 
+### Model context and budgets
+
+Use the shared
+[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)
+contract. A check's canonical call/result is its outcome evidence. Publish new
+applicability or required-check changes as scoped deltas; do not rewrite a
+historical `passed` result to `stale` inside an earlier model request. Repeated
+check outcomes remain distinct events even when their exit codes match.
+
+Full manifests and complete output remain evidence resources. Model input
+contains the relevant revision relationship, failed checks, bounded diagnostics,
+and commands needed next, without repeating complete source manifests or the
+unchanged project instructions at every check. Use existing result/projection
+ownership; no second check summary feed or prompt overlay is added.
+
+Compaction checkpoints preserve the revision/invalidation facts needed for
+continuation, with exact evidence references. Restoration alone never makes a
+stored pass current: aggregation and resume still perform the validation above.
+Iteration/token limits and the provider's context capacity are separate bounds.
+The existing planner cannot compact an active Turn. Bound correction attempts;
+use existing Goal continuation after a Turn settles when permitted. Capacity
+failure records a concrete stop reason and remaining work, never an automatic
+reset, replay of edits, or unlimited retry of the same oversized input. A later
+continuation revalidates source state and resumes only uncompleted work.
+
 ### Loop and stop rules
 
 ```text
@@ -136,8 +161,11 @@ inspect -> edit -> check -> inspect failure -> bounded correction -> rerun
 The loop stops when all required checks are current and pass for one source
 revision, the user stops it, the iteration or token budget is exhausted,
 an equivalent failure repeats, a prerequisite is
-unavailable, or Host admission fails. Stop reason and all evidence remain
-durable.
+unavailable, context capacity is exhausted, or Host admission fails. Stop reason
+and all evidence remain durable. A capacity stop also records continuation
+ineligibility in the existing Goal owner before idle notification; restart
+cannot admit the unchanged attempt merely because the Goal is unfinished.
+Resume requires a new admissible context/attempt under the recovery rules.
 
 ### Recovery
 
@@ -162,6 +190,8 @@ stored result as current, revalidate; otherwise show it as historical evidence.
 - **FR-4:** Address claims coordinate admitted scopes and reconcile after
   restart; they do not attest to all shell or external writes.
 - **FR-5:** No check-run or execution authority is added beside Tool Tasks.
+- **FR-6:** Check outcomes and applicability changes use the common publication,
+  compaction, and context-budget contract without altering historical results.
 
 ## Acceptance criteria
 
@@ -184,6 +214,12 @@ stored result as current, revalidate; otherwise show it as historical evidence.
 - **AC-9:** An observed write followed by restoration still invalidates its
   revision; an unclassified shell task in the workflow cannot avoid this by
   supplying a different cwd. Out-of-scope inputs remain explicit limitations.
+- **AC-10:** A-pass/B-fail/correction preserves earlier provider prefixes while
+  appending R0 invalidation and R1 outcomes. Compaction/resume cannot count R0
+  passes or repeat manifest/instruction bodies as every check's context.
+- **AC-11:** Active-Turn capacity exhaustion stops truthfully. An admitted later
+  Goal continuation revalidates evidence, resumes missing work, and does not
+  replay settled edits or repeatedly submit the unchanged oversized request.
 
 ## Tests and evidence
 
@@ -196,6 +232,9 @@ Add the A-pass/B-fail/correction/B-pass fixture both live and across restart;
 verify A must rerun. Cover source/profile changes while checks run, unavailable
 fingerprints, ignored-input exclusions, generated outputs, same-content
 write/restore with a known mutation, and changed HEAD with unchanged files.
+Capture actual provider inputs through correction, compaction, and Goal
+continuation. Assert prefix preservation for ordinary deltas, scoped restore,
+bounded manifest projection, and the capacity-stop/no-replay behavior.
 
 ## Open questions
 

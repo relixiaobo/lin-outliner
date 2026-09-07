@@ -141,6 +141,17 @@ IDs never become model syntax. The provider wrapper carries only Host-assigned
 `authority` and `purpose`, while diagnostics retains the canonical kind in its aligned
 provenance sidecar.
 
+The execution-context refactor follows
+[Execution Context Publication](agent-model-runtime.md#execution-context-publication).
+Task admission references, source observations, and frozen publication decisions
+use the existing canonical evidence and dependency graph. Effective scoped state
+is a reducer result, not a second store or a provider-visible list of task slots.
+Publication records distinguish source causation from the consuming Turn/Item
+position. Late delivery cannot mutate an earlier published prefix. Compaction
+extends the existing restored-state payload with scoped context, invalidations,
+and the baseline actually restored to model input. Diagnostics remains
+inspection-only and is not required to reconstruct those decisions.
+
 The effective context begins after the latest `contextReset`. Within that epoch, the
 latest valid `contextCompaction` replaces only its exact covered range with the recorded
 summary and reducer checkpoint, then preserves the declared tail. Automatic preflight

@@ -77,6 +77,22 @@ after an earlier miss. Catalog budgeting preserves complete invocation
 contracts before allocating space to optional authored descriptions, so
 pressure cannot turn a parameterized Skill into an ambiguous load-only entry.
 
+Under the execution-context refactor, candidates found through task directories
+still pass through this registry, its canonical identity/precedence, and its
+catalog journal. Repository instruction scope does not invent a second Skill
+identity or override mechanism. Context discovery never invokes a Skill, copies
+its body into an additional snapshot reminder, or changes the Thread's root
+Configuration Profile. Per-task receipts remain complete while an unchanged
+catalog produces no repeated announcement. A distinct invocation remains a
+canonical event with its own arguments and instruction payload.
+
+The common
+[Execution Context Publication](agent-model-runtime.md#execution-context-publication)
+contract owns frozen publication boundaries and prefix verification. Test a
+Skill discovered during A/B/A directory work, unchanged registry refreshes,
+same-name candidate precedence, and compaction followed by invocation. Keep
+the existing lifecycle/provenance owner and declarative settings contract.
+
 ## Tool Ceiling
 
 A Skill has no execution authority of its own. Tools named in its prose remain
