@@ -221,6 +221,18 @@ instruction scope comes from its canonical target, while launcher process
 scope comes from its admitted cwd. A native CLI's internal directory changes
 remain outside Tenon's per-call observation coverage.
 
+Internal Session input follows
+[Execution Context Publication](agent-model-runtime.md#execution-context-publication).
+Each hidden Thread has its own announced-state baseline and cache affinity.
+Root-side discovery or a shared payload does not establish Session visibility;
+the Session must receive its own relevant baseline before later deltas can
+refer to it. Continuations and late observations append at the consuming
+Session boundary without rewriting earlier launches or messages. Its checkpoint
+restores scoped state under the same rules as a root Thread. External native
+CLIs own their provider context and caching; Tenon's launch/process observations
+do not imply control of those requests. Verify separate root/Session baselines,
+continuation prefixes, and restart/compaction without a repeated launch.
+
 `delegate close` succeeds only for an idle, open, root-owned Session. It closes
 the binding and hidden Thread, but does not stop active work, erase a Tool Task,
 or integrate files. An unchanged managed worktree is removed on close. A

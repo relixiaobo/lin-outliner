@@ -73,6 +73,22 @@ No claim is made that the address lease alone supplies a Git transaction.
 The receipt records commit SHA, parent SHA, branch, worktree identity,
 execution address, context reference, selected paths, and result.
 
+### Model context
+
+Review uses the shared
+[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)
+contract. A new diff or baseline mismatch appends new evidence and a bounded
+explanation of what must be reviewed again. Neither an old diff nor an earlier
+reviewed-state statement is replaced in a previously sent provider message.
+Full path/index manifests remain evidence resources; frozen bounded tool output
+and relevant changes supply model context without repeating complete Git state
+or Skill instructions at each publication step.
+
+Compaction preserves the exact review references and their known applicability,
+but a restored review summary cannot authorize commit. The Host still performs
+the mandatory live baseline/content checks above. A plain read or diff remains
+available without a review-state mutation or new context-management tool.
+
 ### Remote publication
 
 Before push or PR creation, show and record remote URL/name, branch, local HEAD,
@@ -98,6 +114,8 @@ unavailable unless a profile supplies a deterministic publication adapter.
 - **FR-3:** Untracked and binary content is digest-verified before commit.
 - **FR-4:** Publication records durable result evidence and reconciles uncertainty.
 - **FR-5:** No Git or hosting ledger is added beside Git and Tool Task evidence.
+- **FR-6:** Review refresh and publication outcomes append through the common
+  context contract; compaction cannot replace live commit validation.
 
 ## Acceptance criteria
 
@@ -117,6 +135,9 @@ unavailable unless a profile supplies a deterministic publication adapter.
 - **AC-8:** Missing Git baseline observations refuse commit even if optional
   context discovery is pending or reports a plausible branch name. Concurrent
   Git state changes during execution produce truthful reconciliation evidence.
+- **AC-9:** A changed diff/HEAD/ref appends new provider evidence without
+  rewriting an earlier review. After compaction or restart, a historical
+  review summary cannot bypass current baseline validation.
 
 ## Tests and evidence
 
@@ -129,6 +150,8 @@ a new HEAD with the same tree, detached and unborn HEAD cases, failed baseline
 queries, and a branch change between review and commit. Assert no commit is
 started on an admission mismatch and no automatic retry follows uncertain Git
 settlement.
+Capture before/after provider requests for a review refresh and a compacted
+continuation, checking frozen earlier diffs and explicit renewed review needs.
 
 ## Open questions
 

@@ -21,6 +21,10 @@ Agent Core. It is a contract checklist, not project status.
   `missing`/`accepted`/`rejected` status, content digest, and bounded parse or
   validation errors through the existing Agent editor view. This is inspection
   data, not a second configuration snapshot.
+- Under the workbench refactor, resolve root configuration from its explicitly
+  selected source, not a task cwd or newly discovered repository. Project
+  grouping alone cannot apply a configuration change; check profiles and Skill
+  discovery remain separate scoped inputs.
 
 - Use Thread, Turn, Item, Goal, Tool Task, Agent Session, launcher, and Task Profile
   as distinct product vocabulary.
@@ -167,6 +171,14 @@ Agent Core. It is a contract checklist, not project status.
 
 ## Verification Contract
 
+- For workbench consumers, satisfy
+  [Execution Context Publication](agent-model-runtime.md#execution-context-publication):
+  keep exact task audit refs separate from semantic model input, append frozen
+  contributions at consuming boundaries, and restore scoped state through the
+  existing compaction checkpoint. Test actual prepared/post-adapter prefixes,
+  tool schemas, affinity, late-delivery fences, and unchanged-state suppression.
+  Cache hits are provider observations, not correctness assertions; a real
+  capability change cannot be deferred to preserve a prefix.
 - Add protocol codec and invalid-state tests.
 - Add lifecycle and restart tests for persistent behavior.
 - Exercise the complete Skill lifecycle through a provider-driven root Turn

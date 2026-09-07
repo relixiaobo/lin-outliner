@@ -181,6 +181,8 @@ reminder bytes are an unchanged cacheable prefix; they are not regenerated as ne
 current-Turn evidence. "No repeat" in this contract means that a later input appends
 only its new timestamp and any changed Thread-scoped facts rather than another copy of
 unchanged state.
+Task-scoped evidence follows the same rule under
+[Execution Context Publication](#execution-context-publication).
 Hidden internal Memory Turns remain isolated from ordinary environment, view,
 catalog, resource, and extension context.
 
@@ -274,28 +276,8 @@ payload references remain canonical state and are not sent as model guidance. Th
 raw range is not sent as a second copy.
 
 At each canonical tail position, the pure Turn-brief compiler converts complete typed
-evidence into decision-relevant semantic statements. Execution-context contributions
-carry a stable Host-private `contextSlotKey = { turnId, toolTaskId,
-contextSnapshotRef }` and kind `admission` or `observation`. Projection uses keyed
-`upsert` and `clear` operations, so a later task can replace or clear only its own
-context slot. A provider boundary may mark the latest admitted `toolTaskId` as
-current, but it retains the bounded ordered slots for other directories used by
-the same Turn. Discovery completion never moves this marker.
-
-The first task in an uninspected directory has a persisted generation-0 pending
-snapshot before execution. Discovery publishes an immutable successor and a
-separate observation event. For task A, `{ turnId, A, S0 }` remains admission
-context and `{ turnId, A, S1 }` means facts observed later; A's execution receipt
-always references S0. A subsequent task B can admit S1 under `{ turnId, B, S1 }`.
-An observation cannot be projected before its durable publication boundary or
-be labelled as instructions available to an earlier model call. Failure records
-degraded successor evidence; restart/replay never substitutes it for S0.
-
-Replay folds canonical admission and observation events in event order and
-uses each boundary's retained slot keys and clear operations. Bounded eviction
-affects live projection, not canonical payload retention. Missing inspection
-bytes degrade to unavailable evidence. This never treats one global active cwd
-or a current discovery cache as history authority. All contiguous text statements are
+evidence into decision-relevant semantic statements. Within one unpublished bundle,
+contiguous text statements are
 serialized into ordered `<context authority="..." purpose="...">` children inside one
 provider-facing `<system-reminder>`. Exactly three wrapper pairs are valid:
 `application/observation`, `untrusted/observation`, and
@@ -324,6 +306,159 @@ reminder prose. Literal user-authored `<system-reminder>`, `<context>`, or histo
 parser for those wrappers. The active provider
 supplies message metadata. No hidden provider transcript is stored or used as a history
 authority.
+
+## Execution Context Publication
+
+This is the shared contract for the execution-context refactor and its discovery,
+verification, Git, process, delegation, and Automation consumers. Unit A implements
+the common publication and restore mechanism with pending snapshots; Unit B adds
+discovery. These intended contracts do not claim that either unit has shipped.
+
+### Evidence And Effective State
+
+Every Tool Task retains its immutable admission address, policy, and snapshot
+references. `contextSlotKey = { turnId, toolTaskId, contextSnapshotRef }` may be used
+as a Host-private correlation key; it is not the identity of model-visible state.
+There is no provider-facing retained task-slot list or `currentToolTaskId` marker.
+Operational task handles already returned by tools remain available for task
+inspection and control; this rule concerns context-correlation metadata.
+Task calls and results already describe actual execution. A snapshot admitted after
+the model selected a tool call is not proof that the model saw its instructions.
+Prepared provider input and its canonical publication boundary establish visibility.
+
+A reducer over canonical evidence computes effective context by source identity,
+fact kind, Host-assigned authority/purpose, and canonical applicability scope.
+Content/version and applicability determine changes; task IDs, projection time,
+snapshot reference allocation, and collector retries do not by themselves change
+semantic content. Identical text from different sources or scopes is not equivalent.
+Nested instructions retain outer-to-inner precedence within their descendants;
+sibling scopes never override each other. A source body may be shared while new
+applicability is announced separately, provided that body is still in the effective
+provider context. A private hash or payload reference is never a substitute for
+instructions the model has not received.
+The announced baseline is reduced only through committed publications at the
+consuming cursor and their retained checkpoint/tail. Host-collected snapshots
+or pending deliveries cannot advance it before their model-facing publication.
+
+The first relevant state emits a bounded baseline; unchanged state emits no repeated
+body; a change emits a scoped replacement or explicit invalidation at the tail.
+Task evidence remains complete even when it produces no new reminder. Separate
+events such as a new check outcome or a newly validated observation retain their
+decision-relevant timing and applicability; deduplication must not suppress them
+merely because their text or exit code matches an earlier event. Every producer
+uses this pipeline, rather than injecting a second copy through tool output and
+reminder prose. Ordinary tool results remain in their owning call/result exchange.
+
+### Publication Boundaries
+
+Before each provider request, Host selects the committed evidence available at that
+boundary and durably records its ordered semantic contribution through the existing
+context-evidence projection contract. The record owns the selected evidence
+dependencies, consuming Turn/Item position, source causation, semantic operations,
+and frozen bounded text/bundle decisions. It contains no second provider transcript.
+Diagnostics observes the resulting request but is not a publication or replay owner.
+An evidence commit after the selection belongs to a later boundary. Publication
+failure cannot expose uncommitted text or mark that contribution delivered; mandatory
+task admission still fails before side effects, while optional discovery is deferred
+or represented as unavailable under the existing degradation contract.
+
+Already-published reminder bodies, message order, and content-part boundaries are
+immutable within the retained history. New facts append after the existing prefix;
+they never update an old message in place. Contiguous-bundle merging stops at a
+published boundary, even on retry or when no assistant output separates two evidence
+arrivals. Projection preserves complete tool-call/result units and cannot insert a
+reminder into the middle of an exchange. Deterministic reconstruction from canonical
+evidence must reproduce the same boundary decisions without consulting today's
+filesystem, Project catalog, or discovery cache.
+
+Discovery S0 remains pending admission evidence; S1 is an immutable successor
+observed afterward. It does not revise S0, the task receipt, or any earlier request.
+Origin and delivery are distinct: an observation retains the initiating task/Turn
+as provenance, but its model-facing evidence belongs to the consuming tail. If the
+origin Turn has ended, existing task evidence/delivery ownership retains the pending
+observation for the next eligible Turn; discovery alone does not start a Turn or
+backfill a completed Turn. Delivery is idempotent for its canonical observation and
+consuming context epoch. An observation whose known invalidation or freshness checks
+make it obsolete cannot revive current state merely because it arrives last.
+
+Pending delivery cannot cross a context reset, rollback exclusion, deleted Thread,
+or fork boundary by association with an old task. A later explicit task may reuse
+stored facts only through fresh validation and new admission. A fork copies the
+selected canonical history and its dependencies, not live collectors or pending
+deliveries. Restart restores committed publications; unpublished observations remain
+pending without repeating the original business operation.
+
+### Invalidation, Budgets, And Restore
+
+Semantic invalidation, local memory eviction, and context compaction are different
+operations. An explicit invalidation appends a source/scoped statement and changes
+effective state from that point forward; it does not erase historical text. Evicting
+an in-memory reducer/cache entry has no semantic effect and must not revoke a rule,
+forget its announced baseline, or remove a provider message. Reconstruct evicted
+state from canonical evidence before comparing subsequent contributions.
+
+One global context budget includes stable instructions, tools, history, and every
+producer's projected contribution. Bound optional content before first publication;
+freeze any truncation/degradation decision so later pressure cannot shorten an old
+message. Large manifests, complete Git state, and process logs remain ordinary
+evidence resources with bounded decision-relevant projections, not repeated full
+state dumps. Unknown or omitted rules/scopes remain explicit, never reported as a
+complete instruction set. A task counter is not a provider token budget.
+
+Physical removal of covered historical text uses canonical compaction or reset.
+Compaction extends the existing restored-state payload and dependency graph with
+the effective scoped context, original evidence references, applicability and
+invalidation state, and the baseline actually re-announced in the replacement
+context. It restores scoped instructions needed for continuation and bounded facts
+as observations at their recorded state, never as freshly validated check passes or
+Git baselines. It preserves the declared tail without re-announcing content already
+retained there. Omitted state is explicit; it is not entered into the announced
+baseline, so later use can publish it again. References alone cannot restore model
+visibility. Missing inspection dependencies degrade to unavailable without reviving
+older instructions or re-running discovery. Repeated compaction, inherited context,
+restart, and fork use the same reducer rules.
+
+The current complete-active-Turn protection remains in force. This refactor does
+not authorize mid-Turn history pruning. An oversized active Turn reports capacity
+failure; bounded Goal continuation may proceed through later Turns under its own
+admission/recovery rules, never by replaying settled mutations or retrying an
+unchanged oversized request indefinitely.
+
+### Cache Contract And Verification
+
+With the same provider/model, effective configuration, retained context, and
+available evidence, task-directory changes, discovery, check invalidation, Project
+grouping, and process updates preserve the already-published model-input prefix.
+The stable prompt and canonical tool schemas contain no task-specific paths, Git
+state, snapshots, or changing process policy. Cache affinity follows only the
+Thread/context-reset epoch contract below, not Project, cwd, task, snapshot,
+Automation hint, or verification revision. Separate Threads have separate affinity
+and announced-state baselines; no parent or previous run's cache hit proves that a
+new Session received its context. External native CLIs own their provider caching.
+
+Compaction/reset, deliberate model/configuration/tool changes, and documented
+redacted or unavailable historical replay can change a prefix. A real security or
+capability change takes effect under its admission contract even when it costs cache
+reuse. Cache preservation cannot delay revocation or conceal changed authority.
+The one-time prompt/schema cutover also has an expected cache cost.
+
+Reuse `CanonicalContextProjector`, `planSkillCatalogEvidence`,
+`planContextCompaction`, and `TurnDiagnosticsCollector` patterns rather than adding
+a cache manager, context tool, CLI, Skill, or provider-request ledger. Deterministic
+fixtures compare prepared model-input prefixes and reconstructed post-adapter
+message/content order, stable prompt/tool bytes, affinity, and provider cache-control
+placement. Moving a supported cache breakpoint is not itself a content rewrite;
+whole-request JSON equality and system-prompt fingerprints alone are insufficient.
+Keep the existing Anthropic breakpoint limit. Live cache-read/write usage is
+additional evidence, not a guaranteed hit assertion independent of provider policy.
+
+Required fixtures cover unchanged repeated tasks, A/B/A scope changes, late and
+duplicate discovery (including across Turns), scoped replacement/invalidation,
+memory eviction, restart, repeated compaction, reset/rollback/fork delivery fences,
+source-label/authority differences, internal Session isolation, and Automation
+continuity. Include a retry with new evidence but no intervening assistant message
+to prove previously published bundles are not merged or rewritten. Diagnostics
+failure must not disable canonical projection or continuation.
 
 ## User Content And Attachments
 
@@ -789,7 +924,10 @@ exact covered/preserved cursors, a `source=deterministic` bounded lossy summary,
 checkpoint for the Skill catalog journal, active inline Skill invocations,
 latest user-view baseline, and non-invalidated file/Node observations. Observation
 checkpoints reference the existing frozen projection and complete output instead of
-copying tool text. Optional manual instructions remain typed application guidance after
+copying tool text. The execution-context refactor extends this same checkpoint with
+scoped context and its re-announced baseline under
+[Execution Context Publication](#execution-context-publication); retaining a task
+snapshot ref alone is not a restore implementation. Optional manual instructions remain typed application guidance after
 the summary; they are not parsed from reminder text. A compaction with no eligible
 content is an idempotent no-op. If the deterministic summary itself exceeds its character
 budget, it retains the newest complete summarized Turn suffix. Only a single Turn that
@@ -962,6 +1100,9 @@ new affinity. Ordinary Turns, steering, restart, compaction, and changes to the 
 tree's grouping `sessionId` retain it. Tools are sorted by exact canonical name before
 Agent construction, so equivalent registries serialize identically regardless of
 assembly order.
+Project membership, execution directories, snapshot generations, and Automation
+hint identities do not change affinity. Affinity stability does not imply prefix
+equality or a cache hit; compaction still replaces covered model input.
 Diagnostic redaction never participates in provider serialization, cache-control
 selection, request fingerprints, or affinity. Exact admitted arguments remain in the
 same-Turn transient overlay, so ordinary requests and immediate tool-loop prefixes are

@@ -107,10 +107,13 @@ ordering using the existing context evidence store and Tool Task admission:
    the series rooted at S0, not to a Thread or Project. The original task and
    its terminal receipt keep S0.
 
-The collector appends a typed observation event with the initiating Turn/task
-identity and S1's reference. This is canonical context evidence, not a new
-model tool or a second task ledger. Persist payload bytes before publishing
-the referencing event. One successor publication per predecessor is committed
+The collector commits a typed observation with the initiating Turn/task
+identity and S1's reference through existing task evidence/delivery ownership.
+Its provider-facing context evidence is appended at the consuming boundary,
+not inserted into the initiating Turn's history after that position was sent.
+This adds no model tool or second task ledger. Persist payload bytes and their
+retention dependency before publishing the referencing event. One successor
+publication per predecessor is committed
 idempotently; duplicate completion callbacks cannot overwrite a snapshot or
 publish competing successors. A later refresh creates a further generation.
 
@@ -144,40 +147,71 @@ prompt fingerprint.
 
 ### Provider projection
 
-The existing provider wire format remains `system-reminder`:
+Implement the common
+[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)
+contract through `CanonicalContextProjector` and the existing evidence store:
 
 ```text
-context evidence -> ContextProjector -> add/replace/clear reminder -> provider
+immutable task/observation evidence
+  -> source- and scope-aware effective state
+  -> frozen baseline or semantic delta at a consuming boundary
+  -> appended system-reminder
 ```
 
-The reminder is a projection, not authority or history. Each contribution is
-keyed by `contextSlotKey = { turnId, toolTaskId, contextSnapshotRef }` and
-contains source, generation, resolved cwd, canonical scope mappings, degradation,
-and contribution kind
-`admission` or `observation`. `upsert` replaces
-only that slot; `clear` removes only that slot; a later task cannot clear an
-earlier task's evidence. The provider projection includes an ordered bounded
-list of retained slots and a separate `currentToolTaskId` marker. The marker
-does not collapse or authorize any slot. Repository instructions and Skills are
-source-labelled evidence and cannot change Host capability or execution
-address.
+Task references and snapshot generations remain exact audit data. Provider
+text identifies readable sources, applicable paths, meaningful changes, and
+degradation; it does not enumerate task slots or expose internal refs as model
+syntax. A Task B admission using Task A's unchanged S1 retains B's own receipt
+without repeating S1's instruction body. Host admission and model visibility
+are distinct, including when a reused snapshot was not yet published to the
+request that selected B's call.
 
-For Task A admitted with S0, its admission slot is `{ turnId, A, S0 }`.
-Discovery adds a separate `{ turnId, A, S1 }` observation slot at the next
-provider boundary after the observation event commits. The reminder explicitly
-labels S1 as observed after A's admission, not as context used by A. Task B
-admitted with S1 gets `{ turnId, B, S1 }`; A's receipt still references S0.
-Discovery completion does not move `currentToolTaskId`, which follows task
-admission only. Late discovery for directory X cannot replace directory Y's
-admission or observation slots.
+Use source identity, fact kind, authority/purpose, and applicability scope for
+semantic comparison. A/B/A directory work must preserve both sets of applicable
+rules rather than globally switching one active directory. An unchanged body
+with a new scope needs the new applicability statement; identical bytes from
+different authorities are not interchangeable. Pending, failed, unavailable,
+and explicitly empty discoveries are different states. A newer snapshot ref
+alone is not a reason to republish the same semantic state.
 
-Replay folds both admission and observation events in canonical event order;
-it does not reconstruct publication time from a current snapshot cache. Each
-provider boundary persists its retained slot keys and keyed clear operations
-under the existing evidence projection contract. Bounded eviction removes a
-slot from the live reminder only, retaining its event and payload reference for
-trajectory/replay. Missing inspection bytes produce unavailable evidence, not
-a replacement snapshot or a failed historical Turn.
+Discovery contributes a bounded observed baseline or delta, never an automatic
+Skill invocation. Skill candidates flow through the existing catalog owner and
+its `planSkillCatalogEvidence` journal; bodies enter through `skillInvocation`.
+Collection must not create another catalog or inject those bodies twice.
+Project check profiles contribute command/input-scope declarations. They never
+select root Configuration Profiles, tools, a model, or conversation identity.
+
+For Task A admitted with S0, later S1 is announced as observed after admission;
+A's receipt remains S0. Persist the canonical contribution and bundle boundary
+before provider preparation. A result arriving after the boundary selection
+waits for the next one. When A's Turn has ended, pending observation delivery
+uses the next eligible Turn's tail while preserving A as source provenance.
+It neither backfills old messages nor starts a Turn solely to publish discovery.
+Reset/rollback/fork/deletion fences and duplicate delivery follow the shared
+contract. A late obsolete observation cannot override a known newer state.
+
+Compaction extends Unit A's checkpoint with scoped instruction/profile state
+and the baseline actually restored to model input, using exact payload
+dependencies rather than fresh discovery. Preserve scope, invalidations,
+degradation, and distinctions between historical observations and current
+validation. Optional omitted content must be eligible for later announcement;
+a model that no longer has the body cannot receive only its private reference.
+In-memory cache eviction changes neither rule validity nor historical input.
+Full model-input removal uses canonical compaction/reset, not slot trimming.
+
+### Implementation references
+
+- `planSkillCatalogEvidence` in `SkillContextReducer` supplies deterministic
+  baseline/delta and unchanged-state suppression; reuse its pattern while
+  retaining this feature's multi-source applicability semantics.
+- `CanonicalContextProjector.projectAdditionalThreadState` supplies explicit
+  semantic invalidation without rewriting old messages. Extend projection
+  publication to freeze bundles across provider boundaries, not just Turns.
+- `planContextCompaction` and `buildCompactionRestoredState` own the existing
+  checkpoint and dependency graph. Extend them rather than adding a context
+  ledger or relying on the inspection-only diagnostics payload.
+- `TurnDiagnosticsCollector` supplies prepared-prefix and post-adapter request
+  evidence. Cache topology remains in `ProviderCache`; discovery does not own it.
 
 ### Project catalog and deletion
 
@@ -219,7 +253,7 @@ The cut includes [local tools](../spec/agent-tool-design.md#local-files-and-comm
 [delegation context](../spec/agent-delegation.md#task-execution-context), and
 [Automation](../spec/agent-automations.md), alongside Agent Core, permissions,
 model runtime, and the active delegation plan. Unit A delivers the durable S0
-admission, receipt, and keyed projection contract as a complete execution
+admission, receipt, and scoped publication contract as a complete execution
 refactor; Unit B adds bounded discovery and its successor events to that
 working mechanism. It must not defer mandatory snapshot persistence to Unit B.
 
@@ -228,8 +262,8 @@ working mechanism. It must not defer mandatory snapshot persistence to Unit B.
 - **FR-1:** Every Tool Task records immutable address and context snapshot refs
   before execution, including an explicitly pending S0 on first discovery.
 - **FR-2:** Every executable Turn records each context ref used by its tasks.
-- **FR-3:** Context generations preserve prior evidence and project replacement,
-  addition, and clear semantics through `system-reminder`.
+- **FR-3:** Context generations preserve prior evidence and publish scoped
+  semantic additions, replacements, and invalidations through appended reminders.
 - **FR-4:** Project metadata is optional, non-authoritative, and never a
   permission boundary.
 - **FR-5:** Child, fork, delegated, scheduled, and resumed Turns validate
@@ -241,6 +275,8 @@ working mechanism. It must not defer mandatory snapshot persistence to Unit B.
   it never revises the initiating task's admission context or receipt.
 - **FR-9:** File contexts follow canonical target scopes, with per-target
   applicability and nested rules; Bash contexts follow the admitted cwd.
+- **FR-10:** Publication, scoped deduplication, late delivery, and compaction
+  restore follow the shared model-runtime contract without rewriting old input.
 
 ## Acceptance criteria
 
@@ -250,8 +286,10 @@ working mechanism. It must not defer mandatory snapshot persistence to Unit B.
   or switching Project.
 - **AC-3:** Invalid cwd fails before execution-start; discovery failure is
   degraded evidence, not fabricated success.
-- **AC-4:** Provider input and trajectory identify the exact context ref and
-  generation used by every Tool Task, separately from later observations.
+- **AC-4:** Canonical receipts and Trajectory retain exact context refs and
+  generations for every Tool Task, separately from later observations. Provider
+  text communicates applicable facts; prepared-input provenance identifies what
+  was actually published without requiring private refs in model-visible prose.
 - **AC-5:** Child/fork/delegated/scheduled/resumed execution with stale context
   refreshes or returns structured non-success.
 - **AC-6:** Project deletion detaches the full Thread lineage, blocks active or
@@ -267,6 +305,14 @@ working mechanism. It must not defer mandatory snapshot persistence to Unit B.
 - **AC-10:** Editing an absolute path in B while cwd is A collects B's enclosing
   and nested rules only. New files, symlink content edits, symlink deletion,
   sibling targets, and recursive-search-then-edit retain their distinct scopes.
+- **AC-11:** Repeated unchanged tasks emit no repeated instruction bodies;
+  A/B/A work, source/authority differences, and explicit invalidation preserve
+  applicability and already-published prefixes.
+- **AC-12:** Late discovery across Turn completion or retry appends once at the
+  consuming boundary. Reset, rollback, fork, and deletion cannot deliver stale
+  pending observations into a different effective history.
+- **AC-13:** Repeated compaction restores scoped state and its announced baseline
+  without reviving invalid rules or treating old observations as freshly checked.
 
 ## Tests and evidence
 
@@ -280,12 +326,18 @@ fixtures:
 | --- | --- |
 | First task with delayed discovery | S0 exists before execution-start; admission and terminal receipt both name S0; S1 is a separate observation. |
 | Discovery fails or is cancelled | S0 remains pending historical evidence; committed failure successor is degraded; command success does not imply discovery success. |
-| Two directories, out-of-order completion | Independent admission/observation slots; late X discovery cannot replace Y or move the current-task marker. |
+| Two directories, out-of-order completion | Independent scope/source state; late X discovery cannot replace Y, create an active cwd, or backfill published input. |
 | Restart before/after successor publication | Uncommitted payload cannot enter projection; committed S1 is restored once; business mutation is never replayed. |
 | Duplicate collector callback | At most one successor event for the same predecessor. |
-| Replay after files change or Project deletion | Original S0/S1 references, kinds, publication order, and boundary slot selection remain exact; missing bytes show unavailable. |
+| Replay after files change or Project deletion | Original S0/S1 references, kinds, publication order, and frozen boundary contributions remain exact; missing bytes show unavailable. |
 | Local tools and delegated isolation | Relative/absolute targets use task addresses; a mismatched isolated resource fails admission without ancestor fallback. |
 | File targets outside cwd and in nested scopes | Canonical target-to-source mappings survive replay; A/B and sibling contexts cannot share a cache entry solely because cwd matches. |
+| Repeated unchanged tasks and A/B/A visits | Receipts remain complete while instruction bodies are not repeated; new applicability remains visible. |
+| Retry without intervening assistant output | New evidence forms a later bundle; the previous request's reminder bytes and content boundaries stay unchanged. |
+| Origin Turn ends before discovery | The next eligible consuming Turn receives the observation once; completed history is not modified. |
+| Reset, rollback, fork, or deletion before delivery | Old pending observations do not cross the boundary; no discovery callback starts business work. |
+| Changed rule, memory eviction, and repeated compaction | Invalidation remains effective; eviction does not clear rules; restored/omitted bodies produce the correct next delta. |
+| Skill discovered in a visited directory | Catalog eligibility and invocation use existing Skill owners; no duplicated body or implicit configuration change. |
 
 Unit A adds codec fixtures rejecting retired Thread/start-request fields and a
 production-source guard covering `ThreadMetadataStore`, `ThreadCatalogOps`,
@@ -297,6 +349,10 @@ accessors and ancestor worktree fallback; a text-only search for `thread.cwd`
 is insufficient because aliases can hide readers. Existing receipt cwd fields
 remain valid task facts. This guard belongs to the implementation cut, when
 the old runtime readers are removed, not to this design-only PR.
+The cut must also retire the task-discovery route into
+`composeStablePrompt`/`startupContextBlocks`; repository observations belong to
+canonical evidence, not the former `repository-startup` L1 block. Explicit
+conversation configuration remains the stable prompt's own input.
 
 ## Open questions
 

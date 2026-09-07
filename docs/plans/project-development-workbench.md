@@ -112,27 +112,51 @@ The Host collects bounded facts for the actual task address:
 cwd / Git / instruction files / profile / checks
   -> ContextSnapshot with provenance and generation
   -> persisted context evidence
-  -> ContextProjector replacement/diff/clear
-  -> existing system-reminder envelope
+  -> scoped effective-state reduction
+  -> frozen semantic delta at a canonical publication boundary
+  -> appended system-reminder envelope
   -> provider input
 ```
 
-The stable prompt contains only cross-project rules:
+The stable prompt contains reusable rules and explicitly selected configuration:
 
 - **L0:** security, capability, process ownership, evidence, recovery, and
   untrusted-data rules.
 - **L1:** how to use Bash, Skills, Tool Tasks, checks, and evidence.
+- **L2:** explicitly selected conversation identity and configuration guidance.
 
 Per-Turn context facts and source-labelled repository instructions are injected
 as evidence, never into the stable prompt fingerprint. They cannot override
-Host authority or user intent. Each context contribution carries a stable
-`contextSlotKey = { turnId, toolTaskId, contextSnapshotRef }`; projection
-operations are keyed `upsert` or `clear` by that slot. A later task adds or
-replaces its own slot and cannot clear an earlier task's evidence. Slots
-distinguish context used at admission from observations published afterward.
-Replay reconstructs the ordered slot map from canonical admission, observation,
-and projection events and marks the latest admitted task as current without
-collapsing the other slots. Discovery completion never moves that marker.
+Host authority or user intent. Tool Task receipts retain exact address, policy,
+and snapshot references; a reducer derives current scoped knowledge; the provider
+receives only decision-relevant additions, changes, and invalidations. These are
+representations of the same evidence, not independent stores. Task correlation
+keys remain private and do not require a model-visible task-slot list or a
+current-task marker. A new task using unchanged instructions does not repeat
+their body. Audit evidence and model visibility remain distinct.
+
+The shared authority is
+[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication).
+It owns publication order, semantic equality, source/scope isolation, frozen
+bundle boundaries, compaction restoration, cache affinity, and validation.
+All child features consume it. They cannot replace earlier reminder text,
+insert a late observation into a completed Turn, or use slot eviction to remove
+historical model input. Context reset and compaction are explicit history
+boundaries with an expected cache cost, not ordinary state updates.
+
+Stable guidance teaches source authority, scoped applicability, and reading
+uninspected project instructions before relying on them. Development, checking,
+Git publication, and interactive-process recipes live in Skills and use existing
+CLIs. Runtime code enforces publication, deduplication, budgets, and restore;
+neither a prompt rule nor a Skill is responsible for cache correctness.
+
+Task discovery does not select a root Configuration Profile, persona, model,
+or tool catalog. Those follow the explicitly selected conversation configuration
+source, including a Project source when explicitly selected through that owner.
+Project grouping alone does not apply a configuration change. Project check
+profiles describe scoped commands and verification inputs; they are not root
+Configuration Profiles. Deliberate configuration or capability changes retain
+their existing admission semantics even when they change cacheable input.
 
 Context admission is required for every executable Turn: root, fork, child,
 delegated, scheduled, and resumed. A Turn records the exact context reference
@@ -145,7 +169,7 @@ single Turn-wide cwd.
 Before the first task in a directory starts, the Host persists an immutable
 generation-0 snapshot with pending discovery, unknown observations, and a
 degradation reason. Its admission and terminal receipt retain that reference.
-Discovery publishes generation 1 as a separate, later observation slot at the
+Discovery publishes generation 1 as a separate, later observation at the
 next provider boundary; only later admissions may consume it as execution
 context. Failure, restart, and replay never fill in or rewrite generation 0.
 The exact ordering is defined by the
@@ -322,6 +346,9 @@ Pi. Tenon owns the product and persistence model.
   passes never satisfy current verification.
 - **FR-13:** Commit admission verifies the reviewed HEAD/ref and file/index
   state independently of optional Git discovery.
+- **FR-14:** All producers use the common scoped publication and compaction
+  contract; ordinary context changes preserve published prefixes and never
+  select a new configuration source or cache affinity implicitly.
 
 ## Acceptance criteria
 
@@ -334,7 +361,7 @@ Pi. Tenon owns the product and persistence model.
   receipt; no path uses retired Thread cwd state.
 - **AC-4:** A Turn with multiple directories records one context reference per
   Tool Task and replays them in order. Later discovery has separate observation
-  slots and never changes an executed task's reference.
+  evidence and never changes an executed task's reference or earlier model input.
 - **AC-5:** Child, fork, delegated, scheduled, and resumed Turns cannot execute
   without a valid context reference.
 - **AC-6:** Project deletion cannot leave dangling lineage or active-task
@@ -354,6 +381,12 @@ Pi. Tenon owns the product and persistence model.
   different toolchain.
 - **AC-12:** Fixing failed check B invalidates passed A; both must pass at the
   new source revision, including after restart.
+- **AC-13:** Repeated tasks with unchanged sources do not repeat instruction
+  bodies. Cross-directory, late-discovery, invalidation, restart, and compaction
+  fixtures satisfy the shared publication contract at actual provider boundaries.
+- **AC-14:** Visiting a second directory or regrouping a Thread does not change
+  its configuration source, tool schemas, stable prompt, or cache affinity.
+  An explicitly applied configuration change still follows its owning contract.
 
 ## Delivery units
 
@@ -366,6 +399,11 @@ delegation, diagnostics, preload, and renderer consumers in the same clean cut.
 This is one complete execution refactor: it includes durable generation-0
 snapshots and their admission/receipt/projection path, so all tools work before
 Unit B adds richer discovery. No consumer implements against a partial protocol.
+It also implements scoped reduction, immutable publication boundaries, the
+extended compaction checkpoint/dependency graph, and deterministic prefix tests
+using pending context. These mechanisms cannot be deferred to Unit B or a
+separate cache scaffold. Exact receipt refs stay private while prepared-input
+provenance proves which evidence the model actually received.
 
 The specs in this design PR describe the intended replacement contract; they
 do not claim that the runtime cut has shipped. Unit A must reconcile code and
@@ -401,6 +439,10 @@ Implement bounded root inspection, instruction/profile snapshots, generations,
 degraded facts, system-reminder projection, Project grouping, and confirmed
 Agent binding requests. Extend Unit A's generation-0 mechanism with immutable
 successors and observation events, including failure/restart/replay behavior.
+Use Unit A's publication/restore contract for source-scoped baselines and
+deltas; discovery adds no parallel catalog, Skill-invocation owner, or prompt
+overlay. Exercise multi-directory and delayed-publication fixtures with real
+instruction/profile sources.
 Project metadata remains non-authoritative; its catalog deletion fence uses
 Unit A's Automation lifecycle contract.
 
@@ -438,13 +480,14 @@ plan must use the entities and invariants in this plan; a child plan cannot
 reintroduce Thread cwd, defaultWorkspaceRef, task target, Project-owned runtime
 identity, or a parallel ledger.
 
-Collision self-check (2026-09-07): `gh pr list --state open` found this claim,
-PR #639, and #643 (Settings Unit D, Skill configuration/lifecycle). #643 claims
-Skill/settings implementation and `agent-skills.md`; none of its changed files
-overlaps this documentation batch. `docs/TASKS.md` records the shipped internal
-delegation (#628), native launchers (#637), and Settings Units A-C. The batch
-has **no file overlap**; runtime/configuration consumers use these final merged
-mechanisms at implementation.
+Collision self-check (2026-09-07): the revision starts from main after #639 and
+#643. Draft #644 claims Skill lifecycle operations and Agent/Skill specs. Its
+current `settings-control-plane.md` change links the Skill delivery unit; this
+revision changes the configuration-source section of that same file. Preserve
+both hunks and reconcile any later shared-spec changes at main review. This
+documentation claim changes no Skill lifecycle APIs, public settings schemas,
+runtime source, or infrastructure-owned file. Implementation claims must recheck
+the live PR scopes and use the final merged Skill mechanism.
 
 Unit A follows the shipped delegation/native-launcher baseline and updates its
 task-context consumers in one refactor. Future features consume that merged
@@ -455,7 +498,12 @@ blocked on this proposal.
 ## Verification strategy
 
 Run protocol/codec, lifecycle, restart, concurrency, digest, renderer, and
-cross-project end-to-end tests. Before a PR is ready, run:
+cross-project end-to-end tests for implementation. The common publication
+fixtures are defined once in model-runtime; each delivery unit adds its own
+producer scenarios and uses actual prepared/post-adapter input as evidence.
+Unit A owns the generic fixtures, B owns discovery/scope cases, and C/D/E own
+correction, review, and process continuations. No separate cache feature is
+required. Before an implementation PR is ready, run:
 
 ```text
 bun run typecheck

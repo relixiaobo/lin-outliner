@@ -190,10 +190,23 @@ Main also injects trusted `additionalContext.automation_info` with Automation,
 run, revision, occurrence/context-hint identity, scheduled time, destination,
 and the initial dispatch snapshot reference and source-labelled observations.
 It distinguishes the saved root hint from the resolved source and any isolated
-execution address. Later task contexts and discovery successors use keyed
+execution address. Later task contexts and discovery successors use appended
 `system-reminder` evidence; they never rewrite the initial dispatch snapshot.
-This application context helps the model but is not provenance, a ThreadItem, or
-renderer-authored input.
+These values are admitted as canonical context-evidence payloads, not a direct
+prompt overlay or renderer-authored input. The Turn trigger remains the
+provenance authority; reminder text is not used to reconstruct it.
+
+All Automation input follows
+[Execution Context Publication](agent-model-runtime.md#execution-context-publication).
+Capture `automation_info`, including `recentRuns` when applicable, at Turn
+admission. Retry and historical projection reuse that admitted payload; they
+do not rebuild the old digest from current run outcomes or Project metadata.
+Later meaningful updates append new evidence. A standalone run starts its own
+baseline and Thread cache affinity; an existing-Thread run keeps that Thread's
+history and affinity. Neither the scheduling hint nor a dispatch snapshot is a
+provider cache key. Dispatch/task directories do not implicitly select another
+root configuration source. Explicit Automation configuration selection retains
+the owning configuration contract and existing-Thread preservation above.
 
 ## Run Continuity
 
@@ -376,6 +389,9 @@ projections in one change. It must cover:
 | Project deletion versus active, paused, completed, pending, and removed-hint definitions | Dependency fence covers all dispatchable references; completed history remains readable; reactivation validates current hints. |
 | Crash before/after worktree preparation or cleanup | Captured intent/resource identity is used; current catalog paths cannot become cleanup targets. |
 | Hint resolves to another checkout | Recent-run entries preserve their own dispatch context and visibly distinguish different-context evidence. |
+| Retry/replay after an earlier run changes | Reuses admitted automation_info and recentRuns bytes; new dispatches may capture a new digest. |
+| Existing-Thread and standalone context | Existing-Thread input appends with unchanged affinity; a new Thread receives its own complete baseline. |
+| Late discovery and compaction | Uses the consuming Turn's publication boundary and scoped checkpoint; no earlier dispatch reminder is rewritten. |
 
 The implementation replaces the old assumptions in
 `tests/core/agentAutomations.test.ts`: `persists the canonical real path for a

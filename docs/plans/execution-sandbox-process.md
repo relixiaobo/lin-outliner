@@ -62,6 +62,24 @@ The experiment must prove no duplicate process on retry, bounded output,
 correct cancellation, restart discovery, and inherited capability/worktree
 limits. `tmux` state is evidence, not a second process ledger.
 
+### Model context
+
+Use the common
+[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)
+contract for isolation facts and process updates. Keep canonical tool names,
+descriptions, and schemas independent of the current cwd, session name, and
+per-process policy. Actual enforcement and actionable failures belong to the
+admitted task/result, not dynamically rewritten system instructions. A genuine
+capability revocation still applies immediately under its owner contract,
+regardless of any cache cost.
+
+Each poll/capture is a new observation with bounded, frozen output; do not
+rewrite old captures to show the latest terminal or repeatedly inject the full
+process list and unchanged Skill body. Prefer changed output or a bounded
+current capture when supported by the CLI. Compaction retains references to
+owned processes and observed lifecycle facts; it never declares a process alive
+without reconciliation or starts another process to reconstruct context.
+
 ### Reference mechanisms
 
 Codex process ownership and sandbox resolution are the primary execution
@@ -76,6 +94,8 @@ authority.
 - **FR-2:** Requested isolation fails closed when its backend is unavailable.
 - **FR-3:** Interactive process ownership and recovery are measured before a
   native persistent-session capability is proposed.
+- **FR-4:** Isolation and process observations use the common context contract
+  without task-specific tool-schema or stable-prompt changes.
 
 ## Acceptance criteria
 
@@ -86,12 +106,17 @@ authority.
 - **AC-4:** The tmux experiment starts, captures, accepts input, stops, and
   reopens one owned session, or records the failed property.
 - **AC-5:** No native persistent terminal is added without experiment evidence.
+- **AC-6:** Repeated captures preserve earlier request prefixes and bounded
+  output; restart/compaction reconciles the original process without a duplicate
+  start. Task-directory changes leave tool schemas and cache affinity unchanged.
 
 ## Tests and evidence
 
 Add receipt/codec tests, dependency-failure tests, macOS profile tests, denied
 write/network tests where supported, and restart/duplicate-process/output-loss
 evidence for tmux. Linux and Windows are separate experiments.
+Include repeated capture and compacted-continuation provider fixtures alongside
+the process receipts, with actual runtime enforcement checked independently.
 
 ## Open questions
 

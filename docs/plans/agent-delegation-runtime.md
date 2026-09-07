@@ -69,6 +69,14 @@ admits its own `ExecutionAddress`, `ExecutionPolicy`, and `ContextSnapshot`;
 Session configuration and settlement records retain only the relevant links.
 Future consumers of Unit A use its task-scoped contract; the existing launcher
 baseline is an input to that refactor, not work blocked on a future predecessor.
+Context delivery and caching follow
+[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication).
+Each internal Session builds its own announced-state baseline and cache affinity
+from its hidden Thread; root publication never counts as child visibility. New
+messages and observations append to that Session's canonical tail, with its own
+checkpoint/restart rules. Source task IDs and snapshot refs remain private audit
+links. External launchers retain vendor-owned prompts, transcripts, and caches;
+Tenon does not rewrite their requests or claim cache continuity it cannot observe.
 
 ## Non-goals
 
@@ -743,6 +751,12 @@ does not receive the root conversation. Its normalized conversation is the
 hidden Thread's canonical Turn history; Runner-native transcripts and logs are
 bounded Tool Task or Session resources. It has no routable child Agent identity
 and never appears in the Thread list.
+Inherited instruction bytes are published to the Session through its own context
+pipeline; sharing a payload resource with the root is not a deduplication signal
+for model input. Continuation publishes only that Session's semantic changes.
+Compaction restores its scoped instruction baseline and reconciles process state
+without replaying a launch. Integration tests compare root and Session inputs,
+then exercise Session continuation, late observation, restart, and compaction.
 
 Effective tools are:
 
