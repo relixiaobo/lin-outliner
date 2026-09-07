@@ -80,12 +80,12 @@ export class AutomationScheduler {
   ): Promise<{ readonly truncated: boolean }> {
     let truncated = false;
     for (const cursor of this.options.store.bindingCursors(automation)) {
-      const binding = contextHintForRun(automation, cursor.bindingKey);
-      const unsettled = this.options.store.latestUnsettledRun(automation.id, cursor.bindingKey);
+      const binding = contextHintForRun(automation, cursor.contextHintKey);
+      const unsettled = this.options.store.latestUnsettledRun(automation.id, cursor.contextHintKey);
       if (unsettled && this.options.dispatcher.isRunActive(unsettled)) {
         const next = nextAutomationOccurrence(automation.schedule, cursor.evaluatedThrough);
         if (next !== null && next <= through) {
-          this.options.store.markOverlapDeferred(automation.id, cursor.bindingKey);
+          this.options.store.markOverlapDeferred(automation.id, cursor.contextHintKey);
         }
         continue;
       }

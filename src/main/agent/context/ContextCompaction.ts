@@ -55,7 +55,8 @@ export async function planContextCompaction(input: {
   readonly readContext: (ref: ThreadContextPayloadReference) => Promise<ThreadContextPayload | null>;
   readonly readInternalTextProjection?: ReadInternalTextArgumentProjection;
 }): Promise<ContextCompactionPlan | null> {
-  const selected = selectEffectiveContext(input.turns).turns;
+  const selection = selectEffectiveContext(input.turns);
+  const selected = selection.turns;
   const located = selected.flatMap((turn) => turn.items.map((item) => ({ turn, item })));
   const preserveIndex = input.preserveFrom
     ? located.findIndex(({ turn, item }) => (
@@ -72,8 +73,15 @@ export async function planContextCompaction(input: {
   const visible = summarized.filter(({ item }) => isCompactionEligibleItem(item));
   if (visible.length === 0) return null;
 
-  const first = located[0]!;
-  const last = summarized.at(-1)!;
+  // Projection moves the previous checkpoint ahead of its preserved tail.
+  // Durable coverage cursors must still name a forward range in raw history.
+  const raw = input.turns.flatMap((turn) => turn.items.map((item) => ({ turn, item })));
+  const resetIndex = selection.latestReset ? raw.findIndex(({ item }) => item.id === selection.latestReset!.id) : -1;
+  const rawPreserveIndex = input.preserveFrom
+    ? raw.findIndex(({ turn, item }) => turn.id === input.preserveFrom!.turnId && item.id === input.preserveFrom!.itemId)
+    : raw.length;
+  const first = raw[resetIndex + 1]!;
+  const last = raw[rawPreserveIndex - 1]!;
   const restoredTurns = input.preserveFrom
     ? turnsBeforeCursor(input.turns, input.preserveFrom)
     : input.turns;
@@ -124,12 +132,22 @@ function turnsBeforeCursor(turns: readonly Turn[], cursor: ContextCursor): Turn[
   if (turnIndex < 0 || itemIndex < 0) {
     throw new Error(`Compaction preserve cursor is unreachable: ${cursor.turnId}/${cursor.itemId}`);
   }
-  return [
+  const prefix = [
     ...turns.slice(0, turnIndex),
     ...(itemIndex > 0
       ? [{ ...turns[turnIndex]!, items: turns[turnIndex]!.items.slice(0, itemIndex) }]
       : []),
   ];
+  const previous = selectEffectiveContext(turns).latestCompaction;
+  if (previous && !prefix.some((turn) => turn.items.some((item) => item.id === previous.id))) {
+    const owner = turns.find((turn) => turn.items.some((item) => item.id === previous.id))!;
+    const preservedReachable = previous.preservedFrom && prefix.some((turn) => turn.id === previous.preservedFrom!.turnId
+      && turn.items.some((item) => item.id === previous.preservedFrom!.itemId));
+    // Retain the checkpoint whose semantic position precedes this cut, even
+    // when its physical Item was appended after the tail being preserved.
+    prefix.push({ ...owner, items: [{ ...previous, preservedFrom: preservedReachable ? previous.preservedFrom : null }] });
+  }
+  return prefix;
 }
 
 async function buildCompactionRestoredState(

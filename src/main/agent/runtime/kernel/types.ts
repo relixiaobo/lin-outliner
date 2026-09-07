@@ -122,11 +122,14 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
   readonly canonicalIdentity?: ModelToolIdentity;
   prepareArguments?: (args: unknown) => Static<TParameters>;
   readonly largeTextArguments?: AgentToolLargeTextArguments;
+  /** Local tasks acknowledge start only after durable address/policy admission. */
+  readonly deferredExecutionStart?: boolean;
   execute: (
     toolCallId: string,
     params: Static<TParameters>,
     signal?: AbortSignal,
     onUpdate?: AgentToolUpdateCallback<TDetails>,
+    onExecutionStart?: () => Promise<void>,
   ) => Promise<AgentToolResult<TDetails>>;
   executionMode?: ToolExecutionMode;
 }

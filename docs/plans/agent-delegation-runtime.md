@@ -67,6 +67,12 @@ its continuity reference. That reference identifies a resource, not a sticky
 Thread cwd or a second execution ledger. Every initial and continued Tool Task
 admits its own `ExecutionAddress`, `ExecutionPolicy`, and `ContextSnapshot`;
 Session configuration and settlement records retain only the relevant links.
+The Session execution is a Host Tool Task; native subprocesses and internal local
+calls inherit its covered claims. External results complete a canonical delegated
+Turn through a Host-only executor before settlement. Worktree registration and
+source identity are validated again for local admissions; cancellation/recovery
+settle covered child tasks before releasing the owner claim. No native process
+uses a second supervision path.
 Future consumers of Unit A use its task-scoped contract; the existing launcher
 baseline is an input to that refactor, not work blocked on a future predecessor.
 Context delivery and caching follow

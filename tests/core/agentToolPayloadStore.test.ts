@@ -23,7 +23,7 @@ function turnEnvironmentPayload(acceptedAt = 1_720_000_000_000) {
     timeZone: 'UTC',
     utcOffsetMinutes: 0,
     locale: 'en-US',
-    
+
     conversationMode: 'interactive',
     executionMode: 'root',
     replyIdentity: null,

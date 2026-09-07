@@ -203,8 +203,6 @@ import type {
 import type { LauncherInitialState } from '../core/launcher/commands';
 import {
   hasExplicitAgentLocalRoot,
-  removeAgentConversationWorkspace,
-  resolveAgentConversationWorkspace,
   resolveAgentScratchRoot,
   resolveAgentWorkdir,
 } from './agent/capabilities/agentLocalRoot';
@@ -288,7 +286,7 @@ const agentLocalFileRoot = resolveAgentWorkdir({
 });
 const agentScratchRoot = resolveAgentScratchRoot({ userDataPath: app.getPath('userData') });
 const hasExplicitAgentRoot = hasExplicitAgentLocalRoot(process.env.LIN_AGENT_LOCAL_ROOT);
-// The workspace collection and scratch roots are app-owned. An explicit
+// The default working directory and scratch roots are app-owned. An explicit
 // `LIN_AGENT_LOCAL_ROOT` is user-owned and must already exist.
 function ensureAgentDir(dir: string): void {
   try {
@@ -478,7 +476,7 @@ const agentHost = createAgentHost({
     // with. Delegated Threads are hidden and use no renderer identity catalog.
     resolvePersona: (thread) => configuration.resolveThreadPersona(thread, reportError),
   }),
-  createThreadOptions: ({ configuration, worktrees }) => ({
+  createThreadOptions: ({ configuration }) => ({
     defaultExecutionDirectory: agentLocalFileRoot,
     resolveConfiguration: (request) => configuration.resolveProfile(
       request.configurationProfile,
@@ -561,7 +559,7 @@ const agentHost = createAgentHost({
     ),
   }),
   createImageGenerationRuntime: createThreadImageGenerationRuntime,
-  resolveAutomationConfiguration: async (selection, cwd, { configuration }) => {
+  resolveAutomationConfiguration: async (selection, _directory, { configuration }) => {
     const resolvedConfiguration = configuration.resolveProfile(undefined);
     const effectiveConfiguration = Object.freeze({
       ...resolvedConfiguration,

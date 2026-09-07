@@ -2,7 +2,7 @@ import type { ThreadItem } from '../../projectionTypes';
 import {
   FileCreateToolIcon, FileDeleteToolIcon, FileEditToolIcon,
   FileGlobToolIcon, FileGrepToolIcon, FileReadToolIcon, FileWriteToolIcon,
-  GenericToolIcon, McpToolIcon, MoveToIcon,
+  GenericToolIcon, InfoIcon, McpToolIcon, MoveToIcon, StopIcon,
   PlanToolIcon, QuestionToolIcon, SkillIcon, TerminalIcon,
   WebFetchToolIcon, WebSearchToolIcon, type AppIcon,
 } from '../../../ui/icons';
@@ -36,6 +36,8 @@ const DYNAMIC_OPERATIONS: Readonly<Record<string, ToolPresentation>> = {
   update_plan: { operation: 'plan', Icon: PlanToolIcon },
   skill: { operation: 'skill', Icon: SkillIcon },
   request_user_input: { operation: 'question', Icon: QuestionToolIcon },
+  task_status: { operation: 'taskStatus', Icon: InfoIcon },
+  task_stop: { operation: 'taskStop', Icon: StopIcon },
 };
 
 export function normalizedToolIdentity(namespace: string | null, tool: string): string {

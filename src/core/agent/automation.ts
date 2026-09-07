@@ -351,7 +351,7 @@ export function decodeAutomation(value: unknown, path = 'automation'): Automatio
     'status', 'revision', 'nextOccurrenceAt', 'createdAt', 'updatedAt',
   ], path);
   const destination = decodeAutomationDestination(record.destination, `${path}.destination`);
-  const contextHints = decodeProjectBindings(record.contextHints, `${path}.contextHints`);
+  const contextHints = decodeContextHints(record.contextHints, `${path}.contextHints`);
   assertDestinationBindings(destination, contextHints, path);
   const createdAt = timestamp(record.createdAt, `${path}.createdAt`);
   const updatedAt = timestamp(record.updatedAt, `${path}.updatedAt`);
@@ -395,7 +395,7 @@ export function decodeAutomationRun(value: unknown, path = 'automationRun'): Aut
     throw new Error(`${path}.contextHintId does not match its snapshot`);
   }
   if (worktree && snapshot.contextHint?.executionMode !== 'worktree') {
-    throw new Error(`${path}.worktree requires a worktree project binding`);
+    throw new Error(`${path}.worktree requires a worktree context hint`);
   }
   const pinned = booleanValue(record.pinned, `${path}.pinned`);
   if (pinned && (!worktree || worktree.removedAt !== null)) {
@@ -629,7 +629,7 @@ export function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-function decodeProjectBindings(value: unknown, path: string): readonly AutomationContextHint[] {
+function decodeContextHints(value: unknown, path: string): readonly AutomationContextHint[] {
   return decodeContextHintInputs(value, path).map((hint) => ({
     ...hint, contextHintId: uuid(hint.contextHintId, `${path}.contextHintId`),
   }));
@@ -673,7 +673,7 @@ function decodeRunSnapshot(value: unknown, path: string): AutomationRunConfigura
   const destination = decodeAutomationDestination(record.destination, `${path}.destination`);
   const contextHint = record.contextHint === null
     ? null
-    : decodeProjectBindings([record.contextHint], `${path}.contextHint`)[0]!;
+    : decodeContextHints([record.contextHint], `${path}.contextHint`)[0]!;
   assertDestinationBindings(destination, contextHint ? [contextHint] : [], path);
   return Object.freeze({
     automationName: boundedString(record.automationName, `${path}.automationName`, AUTOMATION_NAME_MAX_LENGTH),
@@ -824,7 +824,7 @@ function assertDestinationBindings(
   path: string,
 ): void {
   if (destination.kind !== 'existingThread') return;
-  if (bindings.length > 1) throw new Error(`${path} existing-Thread destination accepts at most one project binding`);
+  if (bindings.length > 1) throw new Error(`${path} existing-Thread destination accepts at most one context hint`);
 }
 
 function booleanValue(value: unknown, path: string): boolean {

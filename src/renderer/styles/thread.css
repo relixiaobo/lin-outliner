@@ -3116,12 +3116,33 @@
 }
 
 .thread-tool-task-detail {
+  container-type: inline-size;
   display: grid;
   width: 100%;
   min-width: 0;
   gap: var(--space-1);
   padding: var(--space-1) 0 var(--space-1) calc(var(--icon-size-xs) + var(--space-2));
   color: var(--text-tertiary);
+}
+
+.thread-tool-task-context {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.thread-tool-task-context dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+
+@container (max-width: 300px) {
+  .thread-tool-task-context {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .thread-tool-task-output {

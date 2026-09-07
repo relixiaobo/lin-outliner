@@ -416,7 +416,7 @@ function environment(): TurnEnvironmentContextPayload {
     timeZone: 'Asia/Shanghai',
     utcOffsetMinutes: 480,
     locale: 'en-US',
-    
+
     conversationMode: 'interactive',
     executionMode: 'root',
     replyIdentity: null,

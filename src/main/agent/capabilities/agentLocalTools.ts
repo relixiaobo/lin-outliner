@@ -76,7 +76,7 @@ import type {
 } from '../tasks/ToolTaskService';
 import type { ToolTaskRecord, ToolTaskSchedulerLimits, ToolTaskSchedulingPolicy } from '../tasks/toolTaskTypes';
 import type { TaskExecutionContext } from '../../../core/agent/executionContext';
-import { ExecutionAdmissionError, pendingExecutionContext, resolveExecutionAddress } from '../tasks/ExecutionContext';
+import { ExecutionAdmissionError, executionDigest, pendingExecutionContext, resolveExecutionAddress } from '../tasks/ExecutionContext';
 import {
   parsePrivilegedDelegateCommand,
   type DelegateStateCommand,
@@ -137,6 +137,8 @@ export interface AgentLocalWorkspaceContext {
   capability?: 'full-access' | 'read-only';
   inheritedClaimTaskId?: string;
   onTaskAdmitted?: (task: ToolTaskRecord) => Promise<void>;
+  /** Revalidate the Host-owned isolation resource, independently of tool cwd. */
+  validateIsolation?: () => Promise<void>;
   // App-owned ephemeral area for web fetches, tool output, and PDF pages. A sibling of `root`,
   // so it does not appear in default workdir listings. Defaults to
   // `<root>/tmp` when no explicit scratch root is supplied.
@@ -769,6 +771,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
     const tool = factory(workspace);
     return {
       ...tool,
+      deferredExecutionStart: true,
       parameters: {
         ...tool.parameters,
         properties: {
@@ -776,11 +779,12 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
           cwd: { type: 'string', minLength: 1, description: 'Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls.' },
         },
       },
-      execute: async (itemId, raw, signal, onUpdate) => {
+      execute: async (itemId, raw, signal, onUpdate, onExecutionStart) => {
         const started = Date.now();
         let candidatePath: string | undefined;
         try {
           signal?.throwIfAborted();
+          await workspace.validateIsolation?.();
           const params = asRecord(raw);
           if (params.cwd !== undefined && (typeof params.cwd !== 'string' || !params.cwd.trim() || params.cwd.includes('\0'))) {
             throw new ExecutionAdmissionError('invalid_cwd', 'cwd must be a non-empty directory path.');
@@ -796,13 +800,14 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
           if (['file_edit', 'file_write', 'file_delete'].includes(tool.name)) {
             assertWorkspaceWritePath(workspace, candidatePath);
           }
-          const address = await resolveExecutionAddress({
+          const addressInput = {
             defaultCwd: workspace.root,
             followFinalSymlink: tool.name !== 'file_delete',
-            targetKind: fileField === 'path' ? 'directory' : 'entry',
+            targetKind: fileField === 'path' ? 'directory' as const : 'entry' as const,
             ...(params.cwd === undefined ? {} : { cwd: expandHome(params.cwd as string) }),
             ...(tool.name === 'bash' ? {} : { targets: target ? [target] : [] }),
-          });
+          };
+          const address = await resolveExecutionAddress(addressInput);
           const capability = workspace.capability ?? 'full-access';
           if (capability === 'read-only' && ['file_edit', 'file_write', 'file_delete'].includes(tool.name)) {
             throw new LocalToolFailure('operation_unavailable', 'This task has read-only authority.');
@@ -817,11 +822,28 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
               : 'unsandboxed',
             writablePaths: workspace.writeBoundary?.shellWritablePaths ?? [],
           });
+          const validateAddress = async () => {
+            await workspace.validateIsolation?.();
+            if (executionDigest(await resolveExecutionAddress(addressInput)) !== executionDigest(address)) {
+              throw new ExecutionAdmissionError('invalid_target', 'The requested execution address changed during admission.');
+            }
+          };
           // Preserve logical aliases for the existing file/Skill APIs; the task
           // owns their independently resolved canonical address and claim keys.
-          const scoped = { ...workspace, root: callRoot, executionContext };
-          const execute = (executionSignal = signal) => factory(scoped).execute(itemId, params, executionSignal, onUpdate);
+          const onTaskAdmitted = async (task: ToolTaskRecord) => {
+            await workspace.onTaskAdmitted?.(task);
+            await validateAddress();
+            signal?.throwIfAborted();
+            await onExecutionStart?.();
+          };
+          const scoped = { ...workspace, root: callRoot, executionContext, onTaskAdmitted };
+          const execute = async (executionSignal = signal) => {
+            executionSignal?.throwIfAborted();
+            await validateAddress();
+            return factory(scoped).execute(itemId, params, executionSignal, onUpdate);
+          };
           if (tool.name === 'bash' || !options.toolTaskService || !workspace.threadId || !options.turnId) {
+            if (!options.toolTaskService || !workspace.threadId || !options.turnId) await onExecutionStart?.();
             const result = await execute();
             return { ...result, executionContext };
           }
@@ -829,7 +851,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
             ownerThreadId: workspace.threadId, sourceTurnId: options.turnId, sourceItemId: itemId,
             producer: tool.name, executionContext, signal,
             inheritedClaimTaskId: workspace.inheritedClaimTaskId,
-            onAdmitted: async (task) => { await workspace.onTaskAdmitted?.(task); },
+            onAdmitted: onTaskAdmitted,
             execute: async (executionSignal) => {
               const result = await execute(executionSignal);
               return {

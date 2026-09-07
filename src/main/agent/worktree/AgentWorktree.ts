@@ -294,6 +294,11 @@ export class AgentWorktree {
     });
   }
 
+  async validate(metadata: AgentWorktreeMetadata): Promise<void> {
+    const repository = await resolveRepository(metadata.sourceCwd);
+    await this.resumePrepared(metadata, repository, metadata.path, metadata.branch);
+  }
+
   async inspect(metadata: AgentWorktreeMetadata): Promise<AgentWorktreeInspection> {
     if (!metadata.managed || metadata.removedAt !== null) {
       throw new Error('Agent worktree inspection requires an active Host-managed worktree');

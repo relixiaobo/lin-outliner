@@ -255,13 +255,13 @@ export class AutomationService {
 
   private async validateDefinition(input: AutomationCreateInput): Promise<AutomationCreateInput> {
     const bindings = input.contextHints ?? [];
-    const resolvedBindings = await Promise.all(bindings.map(validateProjectBinding));
+    await Promise.all(bindings.map(validateContextHint));
     const configuration: AutomationConfiguration = {
       ...EMPTY_AUTOMATION_CONFIGURATION,
       ...input.configuration,
     };
     if (input.destination.kind === 'existingThread') {
-      if (bindings.length > 1) throw new Error('Existing-Thread Automations accept at most one project binding');
+      if (bindings.length > 1) throw new Error('Existing-Thread Automations accept at most one context hint');
       const context = this.options.threads.persistentThreadExecutionContext(input.destination.threadId);
       if (context.thread.threadSource !== 'user') {
         throw new Error('An existing-Thread Automation must target a user root Thread');
@@ -286,7 +286,7 @@ export class AutomationService {
   }
 }
 
-async function validateProjectBinding(binding: AutomationContextHintInput): Promise<string> {
+async function validateContextHint(binding: AutomationContextHintInput): Promise<string> {
   const rootHint = automationDirectoryHint(binding);
   const cwd = await realpath(rootHint);
   const value = await stat(cwd);

@@ -941,6 +941,7 @@ export class ToolTaskService {
     const lost = await this.createLostReceipt(task, 'supervisor_missing');
     await atomicJsonWrite(paths.receipt, lost).catch(() => undefined);
     try {
+      await this.settleCoveredChildren(task.taskId);
       const terminalReceipt = await this.reconcileProducer(task, lost);
       const stabilized = await stabilizeOutput(paths, task, terminalReceipt, this.limits.taskDetailBytes);
       await this.settleArtifacts(

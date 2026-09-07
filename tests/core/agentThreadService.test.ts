@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import type { Message } from '@earendil-works/pi-ai';
 import { mkdirSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
@@ -60,6 +61,8 @@ import type {
   DelegationCoordinator,
   DelegationSessionBinding,
 } from '../../src/main/agent/delegation';
+import { DelegationSessionStore, DelegationRunnerRegistry, InternalDelegationSessionRuntime } from '../../src/main/agent/delegation';
+import { AgentWorktree } from '../../src/main/agent/worktree/AgentWorktree';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import type {
   ThreadNameGenerationContext,
@@ -646,7 +649,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
       timeZone: 'UTC',
       utcOffsetMinutes: 0,
       locale: 'en-US',
-      
+
       conversationMode: 'interactive',
       executionMode: 'root',
       replyIdentity: null,
@@ -1824,6 +1827,50 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('settles a native launcher result through a real canonical delegated Turn', async () => {
+    const fixture = await createFixture();
+    const source = join(fixture.root, 'repository');
+    await mkdir(source);
+    execFileSync('git', ['init', '-q', source]);
+    await writeFile(join(source, 'tracked.txt'), 'original');
+    execFileSync('git', ['-C', source, 'add', '.']);
+    execFileSync('git', ['-C', source, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'Initial']);
+    const owner = (await fixture.service.startThread({ source: 'app', threadSource: 'user',
+      modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
+    const database = new Database(':memory:');
+    const sessions = new DelegationSessionStore(database as unknown as SqliteDatabase);
+    const session = sessions.createSession({ sessionId: uuidV7(), ownerThreadId: owner.id, now: fixture.clock(),
+      policy: { runnerId: 'codex', runnerVersion: 'native', modelProvider: null, modelId: null, effort: null,
+        profile: 'explore', access: 'read-only', capabilityCeilingDigest: 'a'.repeat(64),
+        schedulingPolicyDigest: 'b'.repeat(64), configurationRevision: 'test', cwd: source, worktreePolicy: 'dedicated' } });
+    const runtime = new InternalDelegationSessionRuntime(fixture.service, sessions, new AgentWorktree(fixture.root), fixture.clock,
+      new DelegationRunnerRegistry([{ id: 'codex', version: 'native', detected: true, ready: true, enabled: true, diagnostic: null,
+        resolveExplicitModel: async () => ({ providerId: 'external', modelId: 'native', effort: 'medium', supportedEfforts: ['medium'] }),
+        run: async (input) => {
+          expect(fixture.service.readTurnForHost(session.sessionId, input.turnId)?.status).toBe('inProgress');
+          expect(fixture.service.toolTaskService().store.sessionExecution(session.sessionId)?.executionContext.snapshot.generation).toBe(0);
+          return { version: 1, kind: 'delegate.execution-result', sessionId: session.sessionId, turnId: input.turnId,
+            outcome: 'succeeded', runner: { id: 'codex', version: 'native' }, model: 'external/native', durationMs: 1,
+            text: 'Native result', error: null, partialEvidence: false, committedMessageSequence: 0,
+            continuation: 'available', usage: { state: 'unknown' }, artifacts: [], worktree: { disposition: 'none' } };
+        } }]));
+    try {
+      await runtime.ensureSession(session);
+      const turnId = uuidV7();
+      const active = sessions.readSession(session.sessionId)!;
+      const result = await runtime.run({ session: active, turnId, prompt: 'Inspect', messages: [], signal: new AbortController().signal });
+      expect(result.outcome).toBe('succeeded');
+      const turn = fixture.service.readTurnForHost(session.sessionId, turnId)!;
+      expect(turn.status).toBe('completed');
+      expect(turnTerminalAnswer(turn.items)).toBe('Native result');
+      expect(turn.items.some((item) => item.type === 'contextEvidence' && item.kind === 'taskExecutionContext')).toBe(true);
+      expect(fixture.executor.contexts).toHaveLength(0);
+      await expect(runtime.commitResult({ session: active, turnId } as Parameters<typeof runtime.commitResult>[0])).resolves.toBeUndefined();
+      expect(fixture.service.toolTaskService().store.nonterminal()).toHaveLength(0);
+      expect(sessions.readSession(session.sessionId)?.worktree.kind).toBe('cleaned');
+    } finally { database.close(); await fixture.service.close(); }
+  });
+
   test('keeps Delegation Session Threads behind privileged Host operations', async () => {
     const fixture = await createFixture();
     const owner = (await fixture.service.startThread({
@@ -1961,6 +2008,7 @@ describe('ThreadService', () => {
   test('normalizes attachment content before start and steer Items become authoritative', async () => {
     const resolvedPaths: string[] = [];
     const fixture = await createFixture(undefined, {
+      defaultExecutionDirectory: '/host-default',
       resolveUserContent: (content, context) => content.map((part) => {
         if (part.type !== 'attachment') return part;
         const path = join(context.cwd, 'resolved', part.name);
@@ -2004,8 +2052,8 @@ describe('ThreadService', () => {
     const userItems = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0]?.items
       .filter((item) => item.type === 'userMessage') ?? [];
     expect(userItems.map((item) => item.content[0])).toMatchObject([
-      { source: { kind: 'localFile', path: join(fixture.root, 'agent-scratch', 'resolved', 'start.pdf') } },
-      { source: { kind: 'localFile', path: join(fixture.root, 'agent-scratch', 'resolved', 'steer.txt') } },
+      { source: { kind: 'localFile', path: '/host-default/resolved/start.pdf' } },
+      { source: { kind: 'localFile', path: '/host-default/resolved/steer.txt' } },
     ]);
     expect(userItems.map((item) => item.author)).toEqual([{ kind: 'reader' }, { kind: 'reader' }]);
     expect(resolvedPaths).toHaveLength(2);
@@ -3512,7 +3560,14 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
     const root = await mkdtemp(join(tmpdir(), 'tenon-thread-workspace-'));
     roots.push(root);
     const workspaceRoot = join(root, 'agent', 'workspaces');
-    const opened = await openFixture(root, new FinalCitationExecutor('Done'), () => Date.now(), undefined, { defaultExecutionDirectory: root });
+    let admissionDirectory: string | undefined;
+    const opened = await openFixture(root, new FinalCitationExecutor('Done'), () => Date.now(), undefined, {
+      defaultExecutionDirectory: root,
+      resolveUserContent: (content, context) => {
+        admissionDirectory = context.cwd;
+        return content;
+      },
+    });
     await opened.service.initialize();
     const thread = (await opened.service.startThread({
       source: 'app',
@@ -3523,6 +3578,8 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
     expect(opened.service.defaultExecutionDirectory()).toBe(root);
     await expect(stat(workspaceRoot)).rejects.toThrow();
     await writeFile(join(root, 'draft.txt'), 'user content');
+    await opened.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Hello' }] });
+    expect(admissionDirectory).toBe(root);
 
     await opened.service.deleteThread(thread.id);
 
@@ -4285,7 +4342,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       timeZone: 'Asia/Shanghai',
       utcOffsetMinutes: 480,
       locale: 'zh-CN',
-      
+
       conversationMode: 'interactive',
       executionMode: 'root',
       replyIdentity: null,

@@ -631,6 +631,7 @@ export class ThreadCatalogOps {
           await this.core.rollout.delete(descendantId);
           await this.core.payloads.deleteThread(descendantId);
           await this.core.resources.deleteThread(descendantId);
+          await this.resourceOps.deleteThreadScratch(descendantId);
         }
         for (const record of [...subtree.records].reverse()) {
           if (this.core.hiddenEphemeralThreads.has(record.thread.id)) continue;

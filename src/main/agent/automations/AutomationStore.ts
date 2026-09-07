@@ -64,7 +64,7 @@ interface AutomationRunRow {
 
 export interface AutomationBindingCursor {
   readonly automationId: string;
-  readonly bindingKey: string;
+  readonly contextHintKey: string;
   readonly evaluatedThrough: number;
   readonly overlapDeferred: boolean;
 }
@@ -109,10 +109,10 @@ export class AutomationStore {
       ) STRICT;
       CREATE TABLE IF NOT EXISTS automation_binding_cursors (
         automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
-        binding_key TEXT NOT NULL,
+        context_hint_id TEXT NOT NULL,
         evaluated_through INTEGER NOT NULL,
         overlap_deferred INTEGER NOT NULL DEFAULT 0 CHECK (overlap_deferred IN (0, 1)),
-        PRIMARY KEY (automation_id, binding_key)
+        PRIMARY KEY (automation_id, context_hint_id)
       ) STRICT;
       CREATE TABLE IF NOT EXISTS automation_run_event_clock (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -202,7 +202,7 @@ export class AutomationStore {
         now,
         now,
       );
-      this.syncBindingCursors(id, contextHints, now - 1);
+      this.syncContextHintCursors(id, contextHints, now - 1);
     });
     return this.read(id, now)!;
   }
@@ -260,8 +260,8 @@ export class AutomationStore {
       );
       if (result.changes !== 1) throw revisionConflict(this.require(input.id, now));
       this.omitPending(next.id, next.status === 'paused' ? 'paused' : 'updated', now);
-      const previousKeys = new Set(bindingKeys(current.contextHints));
-      this.syncBindingCursors(next.id, next.contextHints, now, scheduleChanged, previousKeys);
+      const previousKeys = new Set(contextHintKeys(current.contextHints));
+      this.syncContextHintCursors(next.id, next.contextHints, now, scheduleChanged, previousKeys);
     });
     return this.read(input.id, now)!;
   }
@@ -347,23 +347,23 @@ export class AutomationStore {
   }
 
   bindingCursors(automation: Automation): readonly AutomationBindingCursor[] {
-    const keys = bindingKeys(automation.contextHints);
+    const keys = contextHintKeys(automation.contextHints);
     const rows = this.db.prepare(`
-      SELECT automation_id, binding_key, evaluated_through, overlap_deferred
+      SELECT automation_id, context_hint_id, evaluated_through, overlap_deferred
       FROM automation_binding_cursors WHERE automation_id = ?
     `).all(automation.id) as Array<{
       automation_id: string;
-      binding_key: string;
+      context_hint_id: string;
       evaluated_through: number;
       overlap_deferred: number;
     }>;
-    const byKey = new Map(rows.map((row) => [row.binding_key, row]));
-    return Object.freeze(keys.map((bindingKey) => {
-      const row = byKey.get(bindingKey);
-      if (!row) throw new Error(`Missing Automation binding cursor: ${automation.id}/${bindingKey}`);
+    const byKey = new Map(rows.map((row) => [row.context_hint_id, row]));
+    return Object.freeze(keys.map((contextHintKey) => {
+      const row = byKey.get(contextHintKey);
+      if (!row) throw new Error(`Missing Automation context hint cursor: ${automation.id}/${contextHintKey}`);
       return {
         automationId: row.automation_id,
-        bindingKey: row.binding_key,
+        contextHintKey: row.context_hint_id,
         evaluatedThrough: row.evaluated_through,
         overlapDeferred: row.overlap_deferred === 1,
       };
@@ -374,7 +374,7 @@ export class AutomationStore {
     if (input.occurrences.length === 0) {
       const advanced = this.advanceCursor(
         input.automation.id,
-        bindingKey(input.binding),
+        contextHintKey(input.binding),
         input.expectedEvaluatedThrough,
         input.evaluatedThrough,
       );
@@ -386,7 +386,7 @@ export class AutomationStore {
     this.transaction(() => {
       const current = this.read(input.automation.id, input.now);
       if (!current || current.status !== 'active' || current.revision !== input.automation.revision) return;
-      const key = bindingKey(input.binding);
+      const key = contextHintKey(input.binding);
       const cursor = this.readCursor(current.id, key);
       if (!cursor || cursor.evaluatedThrough !== input.expectedEvaluatedThrough) return;
       const omittedOccurrences = input.truncated ? input.occurrences : input.occurrences.slice(0, -1);
@@ -440,10 +440,10 @@ export class AutomationStore {
   markOverlapDeferred(automationId: string, contextHintId: string): void {
     const result = this.db.prepare(`
       UPDATE automation_binding_cursors SET overlap_deferred = 1
-      WHERE automation_id = ? AND binding_key = ?
+      WHERE automation_id = ? AND context_hint_id = ?
     `).run(automationId, contextHintId);
     if (result.changes !== 1) {
-      throw new Error(`Missing Automation binding cursor: ${automationId}/${contextHintId}`);
+      throw new Error(`Missing Automation context hint cursor: ${automationId}/${contextHintId}`);
     }
   }
 
@@ -522,7 +522,7 @@ export class AutomationStore {
   }
 
   /**
-   * The most recent runs of one Automation on ONE project binding, newest first.
+   * The most recent runs of one Automation on ONE context hint, newest first.
    *
    * Filtering in SQL rather than over a scanned page is what makes this correct
    * at the binding cap: an Automation may carry 32 bindings and its runs
@@ -530,7 +530,7 @@ export class AutomationStore {
    * heavily-bound Automation is far wider than one occurrence needs, and any
    * window narrow enough to be cheap would silently return fewer than asked.
    */
-  recentRunsForBinding(
+  recentRunsForContextHint(
     automationId: string,
     contextHintId: string,
     limit: number,
@@ -614,12 +614,12 @@ export class AutomationStore {
 
   private readCursor(
     automationId: string,
-    bindingKeyValue: string,
+    contextHintKeyValue: string,
   ): { readonly evaluatedThrough: number; readonly overlapDeferred: boolean } | null {
     const row = this.db.prepare(`
       SELECT evaluated_through, overlap_deferred FROM automation_binding_cursors
-      WHERE automation_id = ? AND binding_key = ?
-    `).get(automationId, bindingKeyValue) as {
+      WHERE automation_id = ? AND context_hint_id = ?
+    `).get(automationId, contextHintKeyValue) as {
       evaluated_through: number;
       overlap_deferred: number;
     } | undefined;
@@ -630,31 +630,31 @@ export class AutomationStore {
 
   private advanceCursor(
     automationId: string,
-    bindingKeyValue: string,
+    contextHintKeyValue: string,
     expected: number,
     next: number,
   ): boolean {
-    if (next < expected) throw new Error('Automation binding cursor cannot move backwards');
+    if (next < expected) throw new Error('Automation context hint cursor cannot move backwards');
     return this.db.prepare(`
       UPDATE automation_binding_cursors SET evaluated_through = ?, overlap_deferred = 0
-      WHERE automation_id = ? AND binding_key = ? AND evaluated_through = ?
-    `).run(next, automationId, bindingKeyValue, expected).changes === 1;
+      WHERE automation_id = ? AND context_hint_id = ? AND evaluated_through = ?
+    `).run(next, automationId, contextHintKeyValue, expected).changes === 1;
   }
 
-  private syncBindingCursors(
+  private syncContextHintCursors(
     automationId: string,
     bindings: readonly AutomationContextHint[],
     evaluatedThrough: number,
     reset = true,
     previousKeys: ReadonlySet<string> = new Set(),
   ): void {
-    const keys = bindingKeys(bindings);
+    const keys = contextHintKeys(bindings);
     for (const key of keys) {
       if (!reset && previousKeys.has(key)) continue;
       this.db.prepare(`
-        INSERT INTO automation_binding_cursors(automation_id, binding_key, evaluated_through, overlap_deferred)
+        INSERT INTO automation_binding_cursors(automation_id, context_hint_id, evaluated_through, overlap_deferred)
         VALUES (?, ?, ?, 0)
-        ON CONFLICT(automation_id, binding_key) DO UPDATE SET
+        ON CONFLICT(automation_id, context_hint_id) DO UPDATE SET
           evaluated_through = excluded.evaluated_through,
           overlap_deferred = 0
       `).run(automationId, key, evaluatedThrough);
@@ -694,7 +694,7 @@ export class AutomationStore {
     reason: AutomationRunOmission['reason'],
     now: number,
   ): AutomationRun {
-    const key = bindingKey(binding);
+    const key = contextHintKey(binding);
     const previous = this.db.prepare(`
       SELECT * FROM automation_runs
       WHERE automation_id = ? AND context_hint_id = ?
@@ -733,7 +733,7 @@ export class AutomationStore {
     now: number,
     occurrenceKey = `scheduled:${scheduledFor}`,
   ): AutomationRun {
-    const existing = this.runForOccurrence(automation.id, occurrenceKey, bindingKey(binding));
+    const existing = this.runForOccurrence(automation.id, occurrenceKey, contextHintKey(binding));
     if (existing) return existing;
     const id = uuidV7(now);
     const eventSequence = this.nextRunEventSequence();
@@ -750,7 +750,7 @@ export class AutomationStore {
       automation.revision,
       eventSequence,
       scheduledFor,
-      bindingKey(binding),
+      contextHintKey(binding),
       occurrenceKey,
       json(runSnapshot(automation, binding)),
       threadId,
@@ -802,7 +802,7 @@ function automationFromRow(row: AutomationRow, now: number): Automation {
     destination: parseJson<AutomationDestination>(row.destination_json, 'Automation destination'),
     contextHints: Object.freeze(parseJson<AutomationContextHint[]>(
       row.context_hints_json,
-      'Automation project bindings',
+      'Automation context hints',
     )),
     configuration: Object.freeze(parseJson<AutomationConfiguration>(
       row.configuration_json,
@@ -864,11 +864,11 @@ function fullConfiguration(value: Partial<AutomationConfiguration> | undefined):
   return Object.freeze({ ...EMPTY_AUTOMATION_CONFIGURATION, ...value });
 }
 
-function bindingKeys(bindings: readonly AutomationContextHint[]): readonly string[] {
+function contextHintKeys(bindings: readonly AutomationContextHint[]): readonly string[] {
   return bindings.length === 0 ? [AUTOMATION_DEFAULT_CONTEXT_HINT_ID] : bindings.map((binding) => binding.contextHintId);
 }
 
-function bindingKey(binding: AutomationContextHint | null): string {
+function contextHintKey(binding: AutomationContextHint | null): string {
   return binding?.contextHintId ?? AUTOMATION_DEFAULT_CONTEXT_HINT_ID;
 }
 

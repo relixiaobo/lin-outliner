@@ -13,7 +13,6 @@ import type {
   ThreadResourceReference,
   ThreadUserContent,
 } from '../../../core/agent/protocol';
-import { isPathInside } from '../capabilities/agentAttachmentMaterialization';
 import type { ThreadUserContentResolutionContext } from '../ThreadService';
 
 export interface AttachmentResolverOptions {
@@ -169,10 +168,6 @@ async function canonicalAttachmentPath(cwd: string, inputPath: string): Promise<
   const candidate = path.resolve(path.isAbsolute(inputPath) ? inputPath : path.join(root, inputPath));
   const canonical = await realpath(candidate);
   const fileStat = await stat(canonical);
-  if (fileStat.isFile()) return canonical;
-  if (fileStat.isDirectory() && isPathInside(root, canonical)) return canonical;
-  if (fileStat.isDirectory()) {
-    throw new Error('Directory attachments outside the Thread working directory are not supported.');
-  }
-  throw new Error('Only regular file attachments can be used by the Agent.');
+  if (fileStat.isFile() || fileStat.isDirectory()) return canonical;
+  throw new Error('Only regular files and directories can be attached.');
 }

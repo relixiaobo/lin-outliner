@@ -1026,7 +1026,7 @@ describe('Automation Thread dispatch', () => {
     const host = threadHost();
     const dispatcher = dispatcherFor(store, host, now + 1);
     await dispatcher.dispatch(store.claimNow(automation, null, now + 2));
-    store.recentRunsForBinding = () => { throw new Error('the run table is unreadable'); };
+    store.recentRunsForContextHint = () => { throw new Error('the run table is unreadable'); };
 
     const dispatched = await dispatcher.dispatch(store.claimNow(automation, null, now + 3));
 
@@ -1149,6 +1149,68 @@ describe('Automation Thread dispatch', () => {
 });
 
 describe('Automation worktrees', () => {
+  test('keeps manual retries separate from scheduled claims and retains hint identity across edits', async () => {
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    const store = automationStore();
+    const automation = store.create({ ...definition('20260724T100000'), contextHints: [
+      { source: { kind: 'directory', rootHint: '/a' }, executionMode: 'local' },
+      { source: { kind: 'directory', rootHint: '/b' }, executionMode: 'local' },
+    ] }, now);
+    const hint = automation.contextHints[0]!;
+    const requestId = uuidV7();
+    const first = store.claimNow(automation, hint, now + 1, requestId);
+    expect(store.claimNow(automation, hint, now + 2, requestId).id).toBe(first.id);
+    const edited = store.update({ id: automation.id, expectedRevision: automation.revision,
+      contextHints: [automation.contextHints[1]!, { ...hint, source: { kind: 'directory', rootHint: '/c' } }] }, now + 3);
+    expect(edited.contextHints[1]!.contextHintId).toBe(hint.contextHintId);
+    expect(store.claimNow(edited, edited.contextHints[1]!, now + 4, requestId).id).toBe(first.id);
+    expect(store.readRun(first.id)?.snapshot.contextHint?.source).toEqual({ kind: 'directory', rootHint: '/a' });
+    const cursor = store.bindingCursors(edited).find((cursor) => cursor.contextHintKey === hint.contextHintId)!;
+    const scheduled = store.claimDueBatch({ automation: edited, binding: edited.contextHints[1]!,
+      expectedEvaluatedThrough: cursor.evaluatedThrough, evaluatedThrough: now + 5,
+      occurrences: [now + 1], truncated: false, now: now + 5 }).claimed!;
+    expect(scheduled.id).not.toBe(first.id);
+    expect(scheduled.occurrenceKey).toBe(`scheduled:${now + 1}`);
+    const removed = store.update({ id: edited.id, expectedRevision: edited.revision,
+      contextHints: [edited.contextHints[0]!] }, now + 6);
+    expect(() => store.update({ id: removed.id, expectedRevision: removed.revision,
+      contextHints: [...removed.contextHints, hint] }, now + 7)).toThrow('Host allocates');
+  });
+
+  test('retries prepared dispatch with its frozen configuration and canonical address', async () => {
+    const root = await tempRoot('automation-frozen-dispatch-');
+    const source = join(root, 'source');
+    const replacement = join(root, 'replacement');
+    await mkdir(source); await mkdir(replacement);
+    const alias = join(root, 'alias');
+    await symlink(source, alias);
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    const store = automationStore();
+    const automation = store.create({ ...definition('20260724T100000'), contextHints: [
+      { source: { kind: 'directory', rootHint: alias }, executionMode: 'local' },
+    ] }, now);
+    const run = store.claimNow(automation, automation.contextHints[0]!, now + 1);
+    const host = threadHost(); host.busy = true;
+    let resolutions = 0;
+    const frozenConfiguration = { ...defaultEffectiveThreadConfiguration(), developerInstructions: ['Original configuration'] };
+    const dispatcher = dispatcherFor(store, host, now + 2, async () => {
+      resolutions += 1;
+      if (resolutions > 1) throw new Error('A prepared dispatch must not reload configuration');
+      return { modelProvider: 'openai', configuration: frozenConfiguration };
+    });
+    const pending = await dispatcher.dispatch(run);
+    expect(pending.state).toBe('pending');
+    expect(pending.dispatchSnapshotRef).not.toBeNull();
+    await rm(alias); await symlink(replacement, alias);
+    host.busy = false;
+    const dispatched = await dispatcher.dispatch(pending);
+    expect(dispatched.state).toBe('dispatched');
+    expect(dispatched.dispatchSnapshotRef).toEqual(pending.dispatchSnapshotRef);
+    expect(host.turnCalls[0]?.dispatchContext.executionContext.address.cwd).toBe(await realpath(source));
+    expect(host.turnCalls[0]?.dispatchContext.configuration).toEqual(frozenConfiguration);
+    expect(resolutions).toBe(1);
+  });
+
   test('resolves an unprepared directory hint again at dispatch', async () => {
     const root = await tempRoot('automation-project-redirection-');
     const source = join(root, 'source');

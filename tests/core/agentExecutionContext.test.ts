@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { decodeTaskExecutionContext } from '../../src/core/agent/executionContext';
-import { pendingExecutionContext, resolveExecutionAddress } from '../../src/main/agent/tasks/ExecutionContext';
+import { pendingExecutionContext, resolveExecutionAddress, revalidateExecutionContext, validateExecutionContext } from '../../src/main/agent/tasks/ExecutionContext';
 import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
@@ -49,6 +49,97 @@ describe('task execution context', () => {
     expect(decodeTaskExecutionContext(context)).toEqual(context);
     expect(Object.isFrozen(context.snapshot.facts)).toBe(true);
     expect(context.snapshot.generation).toBe(0);
+  });
+
+  test('rejects unavailable cwd, redirected targets, changed Git identity and corrupt references', async () => {
+    const root = await fixture();
+    const directory = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root, cwd: 'a' }), policy);
+    expect(() => validateExecutionContext({ ...directory, addressRef: '0'.repeat(64) })).toThrow('digest mismatch');
+    await rm(join(root, 'a'), { recursive: true });
+    await expect(revalidateExecutionContext(directory)).rejects.toMatchObject({ code: 'invalid_cwd' });
+    await symlink(join(root, 'b'), join(root, 'a'));
+    await expect(revalidateExecutionContext(directory)).rejects.toMatchObject({ code: 'invalid_cwd' });
+    const file = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root, targets: ['b/file'] }), policy);
+    await symlink(join(root, 'b'), join(root, 'b', 'file'));
+    await expect(revalidateExecutionContext(file)).rejects.toMatchObject({ code: 'invalid_target' });
+    const entry = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root, targets: ['b/file'], followFinalSymlink: false }), policy);
+    await expect(revalidateExecutionContext(entry)).resolves.toEqual(entry);
+    execFileSync('git', ['init', '-q', root]);
+    await expect(revalidateExecutionContext(entry)).rejects.toMatchObject({ code: 'invalid_target' });
+  });
+
+  test('stops a Host operation before releasing its inherited owner claim', async () => {
+    const root = await fixture();
+    const db = new Database(':memory:');
+    const store = new ToolTaskStore(db as unknown as SqliteDatabase);
+    const service = new ToolTaskService(store, join(root, 'tasks'));
+    service.bindHost({ ownerExists: () => true, canInheritClaim: () => true,
+      readDeliveryAdmission: async () => null, startCompletionTurn: async () => false, taskChanged: () => {} });
+    await service.initialize();
+    const executionContext = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root }), policy);
+    const ready = Promise.withResolvers<string>();
+    let childWork: Promise<unknown> | undefined;
+    let childStopped = false;
+    const work = service.runHostOperation({
+      ownerThreadId: owner, sourceTurnId: turn, sourceItemId: 'parent', producer: 'delegate_execution', executionContext,
+      onAdmitted: async () => {},
+      execute: async (signal) => {
+        const parent = store.nonterminal()[0]!;
+        childWork = service.runHostOperation({
+          ownerThreadId: owner, sourceTurnId: turn, sourceItemId: 'child', producer: 'file_write', executionContext,
+          inheritedClaimTaskId: parent.taskId, onAdmitted: async () => {},
+          execute: async (childSignal) => {
+            ready.resolve(parent.taskId);
+            await new Promise<void>((resolve) => childSignal.addEventListener('abort', () => resolve(), { once: true }));
+            expect(store.read(parent.taskId)?.state).not.toBe('cancelled');
+            childStopped = true;
+            childSignal.throwIfAborted();
+            return { result: null, success: true };
+          },
+        });
+        void childWork.catch(() => {});
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+        signal.throwIfAborted();
+        return { result: null, success: true };
+      },
+    });
+    void work.catch(() => {});
+    try {
+      const taskId = await ready.promise;
+      expect(store.nonterminal()).toHaveLength(2);
+      expect((await service.stop(taskId, owner))?.state).toBe('cancelled');
+      await expect(work).rejects.toThrow();
+      await expect(childWork!).rejects.toThrow();
+      expect(childStopped).toBe(true);
+      expect(store.nonterminal()).toHaveLength(0);
+      await expect(service.runHostOperation({ ownerThreadId: owner, sourceTurnId: turn, sourceItemId: 'next',
+        producer: 'file_write', executionContext, onAdmitted: async () => {},
+        execute: async () => ({ result: 'released', success: true }) })).resolves.toBe('released');
+    } finally { await service.close(2_000); db.close(); }
+  });
+
+  test('rejects a logical file alias redirected after evidence admission', async () => {
+    const root = await fixture();
+    await writeFile(join(root, 'a', 'file'), 'alpha');
+    await writeFile(join(root, 'b', 'file'), 'beta');
+    const alias = join(root, 'link');
+    await symlink(join(root, 'a', 'file'), alias);
+    const db = new Database(':memory:');
+    const store = new ToolTaskStore(db as unknown as SqliteDatabase);
+    const service = new ToolTaskService(store, join(root, 'tasks'));
+    service.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+      startCompletionTurn: async () => false, taskChanged: () => {} });
+    await service.initialize();
+    try {
+      const tool = createLocalTools({ workspace: { root, scratchRoot: root, readFileState: new Map(), threadId: owner,
+        onTaskAdmitted: async () => { await rm(alias); await symlink(join(root, 'b', 'file'), alias); } },
+        toolTaskService: service, turnId: turn }).find((tool) => tool.name === 'file_read')!;
+      let started = false;
+      const result = await tool.execute('read', { file_path: 'link' }, undefined, undefined, () => { started = true; });
+      expect(result.details).toMatchObject({ ok: false, error: { code: 'invalid_target' } });
+      expect(started).toBe(false);
+      expect(store.nonterminal()).toHaveLength(0);
+    } finally { await service.close(2_000); db.close(); }
   });
 
   test('persists host-operation context before mutation, rolls back multi-scope claims, and releases on settlement', async () => {

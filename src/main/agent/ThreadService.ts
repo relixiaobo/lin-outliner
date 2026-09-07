@@ -399,6 +399,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.core,
       options.stores.resources,
       options.attachmentScratchRoot,
+      this.hostDefaultDirectory,
       options.resolveUserContent ?? ((content) => content),
     );
     this.historyReferences = new ThreadHistoryReferenceService(
@@ -1847,15 +1848,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
 }
 
-function delegationSessionCwd(session: DelegationSessionBinding): string {
-  if (session.policy.worktreePolicy === 'none') return session.policy.cwd;
-  if (session.worktree.kind === 'active' || session.worktree.kind === 'unchanged'
-    || session.worktree.kind === 'changed' || session.worktree.kind === 'retained') {
-    return session.worktree.metadata.path;
-  }
-  throw new Error(`Delegation Session has no usable worktree: ${session.sessionId}`);
-}
-
 function rendererRequestThreadId(value: unknown): ThreadId | null {
   if (!value || typeof value !== 'object' || !('threadId' in value)) return null;
   const threadId = (value as { readonly threadId?: unknown }).threadId;
@@ -1907,7 +1899,7 @@ function defaultConfiguration(request: ThreadStartRequest): EffectiveThreadConfi
 }
 
 function missingRendererStartDefaults(): never {
-  throw new Error('Thread start requires a model provider and working directory.');
+  throw new Error('Thread start requires a configured model provider.');
 }
 
 function emptyResponse(): EmptyAgentCoreResponse {

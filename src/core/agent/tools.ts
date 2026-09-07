@@ -559,7 +559,7 @@ const automationDestinationSchema: JsonSchema = {
   ],
 };
 
-const automationProjectBindingSchema = objectSchema({
+const automationContextHintSchema = objectSchema({
   contextHintId: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH, 'Existing context hint identity. Omit for a new hint; the Host allocates it.'),
   source: { anyOf: [
     objectSchema({ kind: enumSchema(['directory']), rootHint: boundedStringSchema(AUTOMATION_PATH_MAX_LENGTH, 'Absolute directory lookup hint.') }, ['kind', 'rootHint']),
@@ -582,7 +582,7 @@ const automationDefinitionProperties = {
   prompt: boundedStringSchema(AUTOMATION_PROMPT_MAX_LENGTH, 'Durable prompt for each occurrence.'),
   schedule: automationScheduleSchema,
   destination: automationDestinationSchema,
-  contextHints: boundedArraySchema(automationProjectBindingSchema, AUTOMATION_CONTEXT_HINTS_MAX_COUNT),
+  contextHints: boundedArraySchema(automationContextHintSchema, AUTOMATION_CONTEXT_HINTS_MAX_COUNT),
   configuration: automationConfigurationSchema,
 };
 const automationMutableProperties = {
@@ -596,7 +596,7 @@ const automationOutputSchema = objectSchema({
   prompt: boundedStringSchema(AUTOMATION_PROMPT_MAX_LENGTH),
   schedule: automationScheduleSchema,
   destination: automationDestinationSchema,
-  contextHints: boundedArraySchema(automationProjectBindingSchema, AUTOMATION_CONTEXT_HINTS_MAX_COUNT),
+  contextHints: boundedArraySchema(automationContextHintSchema, AUTOMATION_CONTEXT_HINTS_MAX_COUNT),
   configuration: objectSchema({
     modelProvider: nullableStringSchema,
     model: nullableStringSchema,

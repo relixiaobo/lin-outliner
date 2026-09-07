@@ -155,6 +155,12 @@ function TaskDetail({
   const output = [detail.output?.stdout, detail.output?.stderr].filter(Boolean).join('\n');
   return (
     <div className="thread-tool-task-detail">
+      <dl className="thread-tool-task-context">
+        <dt>{t.agent.thread.tasks.directory}</dt>
+        <dd>{detail.task.executionContext.address.cwd}</dd>
+        <dt>{t.agent.thread.tasks.executionPolicy}</dt>
+        <dd>{detail.task.executionContext.policy.capability} / {detail.task.executionContext.policy.isolation}</dd>
+      </dl>
       {output ? <pre className="thread-tool-task-output">{output}</pre> : null}
       {detail.task.artifacts.length > 0 ? (
         <div className="thread-tool-task-artifacts">

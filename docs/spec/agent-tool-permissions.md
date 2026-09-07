@@ -101,20 +101,31 @@ actions under the host account. It still cannot use hard-blocked root controls
 or background processes. The complete policy is specified in
 [`agent-delegation.md`](agent-delegation.md).
 
-## Admission Is Not Permission## Admission Is Not Permission
+## Admission Is Not Permission
 
 Full Access authorizes a valid operation exposed in the Thread; it does not make an
 unknown tool or malformed argument object valid. Each provider call resolves the
 canonical tool, normalizes model syntax, and passes that tool's strict schema before
-capability evaluation. `bash.cwd` is a known optional task-scoped field: the Host
-validates and canonicalizes it before capability evaluation and records the resolved
-execution address on the Tool Task. Unknown fields remain rejected as
+capability evaluation. Local tools accept a strict optional task-scoped `cwd`.
+Path action classification uses that call's directory and canonical target,
+including a default directory-search target and symlink-entry deletion.
+The Host validates and records the immutable execution address, policy and S0
+snapshot before the local task acknowledges `tool_execution_start`. An invalid
+directory returns a structured result without that event or a process launch.
+Unknown fields remain rejected as
 `invalidArguments`, persisted only as bounded redacted correction evidence, and
 never replayed as another tool call. The Host executes an admitted Bash command in
 the resolved task address; no Thread-owned cwd is consulted. Under Full Access,
 absolute host paths remain valid. Read-only, worktree, and isolation policies
 revalidate the canonical address against their own Host-enforced ceilings before
 spawn.
+
+Local task admission and its pre-execution check revalidate logical path aliases,
+canonical targets and Git scope identities. Dedicated delegation worktrees also
+revalidate their recorded source, registration and Git metadata through
+`AgentWorktree.validate`; isolated Automation calls revalidate the frozen dispatch
+contexts. These checks do not turn a known-address claim into a universal
+filesystem lock or remove the external-native-CLI enforcement limits.
 
 The phases remain observable and separate:
 

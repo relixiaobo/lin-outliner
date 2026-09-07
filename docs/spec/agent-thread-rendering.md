@@ -125,6 +125,10 @@ reach it.
   second presentation model. `bash` is the deliberate exception to JSON argument rendering:
   its expanded input shows the envelope's `command` as copyable shell text with bash
   highlighting, while optional fields remain available through canonical diagnostics.
+  Every completed local tool Item carries its admitted task cwd for relative file
+  links; an unadmitted command keeps `cwd: null`. Thread metadata supplies no
+  path base. Background task details show the actual execution directory and
+  recorded capability/isolation policy without adding a composer permission badge.
   Presentation Item construction receives the complete transient redacted argument
   structure and applies bounds to each stored display field, so a large `file_write`
   retains its path even when content moves to a payload. Command output,

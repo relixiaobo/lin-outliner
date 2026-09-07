@@ -32,6 +32,7 @@ import type { TurnExecutionContext } from './types';
 import { compileToolParameters } from './kernel/exactToolArguments';
 import { createToolArtifactSink, type ToolArtifactSink } from './ToolArtifactSink';
 import { HostToolDenial } from './kernel/HostToolDenial';
+import { revalidateExecutionContext } from '../tasks/ExecutionContext';
 import {
   delegatedBashExecutionAllowed,
   delegatedToolContractAllowed,
@@ -87,6 +88,7 @@ export class ToolRuntime {
       ? this.options.localWorkspace(context)
       : this.options.localWorkspace;
     let automationBoundary: AgentLocalWorkspaceContext['writeBoundary'];
+    let validateAutomationIsolation: (() => Promise<void>) | undefined;
     if (context.turn.provenance.trigger.kind === 'feature' && context.turn.provenance.trigger.feature === 'automation') {
       const evidence = context.turn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'automationDispatch');
       const snapshot = evidence?.type === 'contextEvidence' ? await context.readContext(evidence.payloadRef) : null;
@@ -94,6 +96,10 @@ export class ToolRuntime {
         throw new Error('Automation execution requires its admitted dispatch snapshot');
       }
       if (snapshot.executionContext.policy.isolation !== 'unsandboxed') {
+        validateAutomationIsolation = async () => {
+          await revalidateExecutionContext(snapshot.sourceContext);
+          await revalidateExecutionContext(snapshot.executionContext);
+        };
         automationBoundary = {
           root: snapshot.executionContext.address.cwd,
           shellWritablePaths: snapshot.executionContext.policy.writablePaths,
@@ -105,6 +111,7 @@ export class ToolRuntime {
       threadId: context.thread.id,
       capability: delegationPolicy?.access === 'read-only' ? 'read-only' as const : 'full-access' as const,
       ...(automationBoundary ? { writeBoundary: automationBoundary } : {}),
+      ...(validateAutomationIsolation ? { validateIsolation: validateAutomationIsolation } : {}),
       onTaskAdmitted: async (task: import('../tasks/toolTaskTypes').ToolTaskRecord) => {
         await context.persistContextEvidence({
           schemaVersion: 1, kind: 'taskExecutionContext', taskId: task.taskId,
@@ -385,7 +392,7 @@ export class ToolRuntime {
       throw new AgentToolFailure('operation_unavailable', 'This Skill operation is no longer available in the initiating Turn.', 'Inspect the current configuration before retrying.');
     }
     const decision = evaluateAgentToolCapability({ toolName: name, args, fileWritePath, policy: {
-      workspaceRoot: context.thread.cwd, capabilityConfig: await this.capabilityConfig(),
+      workspaceRoot: this.service.defaultExecutionDirectory(), capabilityConfig: await this.capabilityConfig(),
     } });
     if (decision.behavior === 'unavailable') {
       throw new AgentToolFailure('operation_unavailable', decision.reason, 'Respect the current action blocks.');
@@ -402,7 +409,7 @@ export class ToolRuntime {
     return {
       ...tool,
       canonicalIdentity: identity,
-      execute: async (itemId, params, signal, onUpdate) => {
+      execute: async (itemId, params, signal, onUpdate, onExecutionStart) => {
         const args = jsonValue(params);
         const observableArgs = (await redactSecretLikeJsonAsync(args)).value;
         await this.service.notifyToolStarted(
@@ -473,7 +480,7 @@ export class ToolRuntime {
           if (canonicalIdentity === 'skill') {
             await this.authorizeDeferredTool(context, canonicalIdentity, args, signal);
           }
-          const rawResult = await tool.execute(itemId, params, signal, onUpdate);
+          const rawResult = await tool.execute(itemId, params, signal, onUpdate, onExecutionStart);
           const result = withCapabilityAudit(rawResult, capabilityAudit(capability));
           await this.service.notifyToolCompleted(
             context.thread.id,

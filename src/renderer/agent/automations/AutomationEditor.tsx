@@ -27,7 +27,7 @@ import {
 } from './AutomationScheduleDraft';
 
 type ProjectMode = 'none' | 'local' | 'worktree';
-type ProjectBindingDraft = {
+type ContextHintDraft = {
   readonly id: string;
   readonly contextHintId?: string;
   readonly cwd: string;
@@ -311,7 +311,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
                         ...state,
                         contextHints: replaceBinding(state.contextHints, index, {
                           ...binding,
-                          executionMode: event.target.value as ProjectBindingDraft['executionMode'],
+                          executionMode: event.target.value as ContextHintDraft['executionMode'],
                         }),
                       })}
                       value={binding.executionMode}
@@ -409,7 +409,7 @@ interface EditorState {
   readonly timezone: string;
   readonly destination: 'standalone' | 'existingThread';
   readonly threadId: string;
-  readonly contextHints: readonly ProjectBindingDraft[];
+  readonly contextHints: readonly ContextHintDraft[];
   readonly modelProvider: string;
   readonly model: string;
   readonly reasoningEffort: ReasoningEffort | '';
@@ -464,10 +464,10 @@ function stateSignature(state: EditorState): string {
 }
 
 function replaceBinding(
-  bindings: readonly ProjectBindingDraft[],
+  bindings: readonly ContextHintDraft[],
   index: number,
-  value: ProjectBindingDraft,
-): readonly ProjectBindingDraft[] {
+  value: ContextHintDraft,
+): readonly ContextHintDraft[] {
   return bindings.map((binding, candidate) => candidate === index ? value : binding);
 }
 

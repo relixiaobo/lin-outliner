@@ -2224,9 +2224,8 @@ export interface AgentIdentityEntry {
 
 export interface AgentIdentityCatalogRequest {
   /**
-   * Whose project layer to read. A Thread names a working directory, and a
-   * project may define a presentation override; null asks for the user layer
-   * alone, which is what an empty dock has.
+   * Resolve the Thread's explicitly selected configuration source. Directory
+   * visits never change presentation; null selects the user layer alone.
    */
   readonly threadId: ThreadId | null;
 }

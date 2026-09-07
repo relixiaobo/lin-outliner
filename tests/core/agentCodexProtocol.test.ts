@@ -454,6 +454,16 @@ const thread: Thread = {
 };
 
 describe('Codex Agent Core protocol codec', () => {
+  test('rejects retired conversation execution fields at persistence and start boundaries', () => {
+    for (const field of ['cwd', 'defaultWorkspaceRef', 'taskTarget']) {
+      expect(() => decodeThread({ ...thread, [field]: '/old-directory' })).toThrow();
+      expect(() => decodeAgentCoreRequest('thread/start', {
+        source: 'app', modelProvider: 'openai', [field]: '/old-directory',
+      })).toThrow();
+    }
+    expect(() => decodeThread({ ...thread, configurationSource: { kind: 'project', root: 'relative' } })).toThrow();
+  });
+
   test('round-trips and freezes the canonical Thread graph', () => {
     const decoded = decodeThreadJson(encodeThread(thread));
 
@@ -824,7 +834,7 @@ describe('Codex Agent Core protocol codec', () => {
         timeZone: 'Asia/Shanghai',
         utcOffsetMinutes: 480,
         locale: 'zh-CN',
-        
+
         conversationMode: 'interactive',
         executionMode: 'root',
         replyIdentity: 'local-user',
@@ -1570,7 +1580,7 @@ describe('Codex Agent Core protocol codec', () => {
       timeZone: 'UTC',
       utcOffsetMinutes: 0,
       locale: 'en-US',
-      
+
       conversationMode: 'interactive',
       executionMode: 'root',
       replyIdentity: 'Neva',

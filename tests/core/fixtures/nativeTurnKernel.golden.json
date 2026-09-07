@@ -54,7 +54,6 @@
       { "type": "agentMessage", "text": "", "phase": "commentary" },
       { "type": "dynamicToolCall", "tool": "golden_tool", "status": "completed", "success": true },
       { "type": "contextEvidence", "kind": "toolOutputProjection" },
-      { "type": "contextEvidence", "kind": "executionContextPublication" },
       { "type": "agentMessage", "text": "Done", "phase": "final_answer" }
     ],
     "activities": [

@@ -155,6 +155,7 @@ describe('AgentResourceStore', () => {
       core,
       fixture.store,
       path.join(fixture.root, 'observations'),
+      fixture.root,
       (content) => content,
     );
     const copied = await ops.selectHistoricalResource(
@@ -167,6 +168,17 @@ describe('AgentResourceStore', () => {
     expect(copied?.path?.startsWith(`${currentWorkspace}${path.sep}`)).toBe(true);
     expect(await readFile(copied!.path!, 'utf8')).toBe('historical exact bytes');
     expect(await readFile(oldPath, 'utf8')).toBe('newer old-workspace bytes');
+    const otherOps = new ThreadResourceOps(historicalResourceCore([copied!.ref]), fixture.store,
+      path.join(fixture.root, 'observations'), fixture.root, (content) => content);
+    const otherCopy = await otherOps.selectHistoricalResource('01951d6e-7c25-7c31-8d62-313038616240',
+      '01951d6e-7c25-7c31-8d62-313038616239', copied!.ref, 'edit');
+    expect(otherCopy?.path).not.toBe(copied!.path);
+    expect(otherCopy?.path).toContain('edits/01951d6e-7c25-7c31-8d62-313038616240/');
+    await writeFile(otherCopy!.path!, 'independent edit');
+    expect(await readFile(copied!.path!, 'utf8')).toBe('historical exact bytes');
+    await otherOps.deleteThreadScratch('01951d6e-7c25-7c31-8d62-313038616240');
+    await expect(readFile(otherCopy!.path!, 'utf8')).rejects.toThrow();
+    expect(await readFile(copied!.path!, 'utf8')).toBe('historical exact bytes');
 
     const concurrentCopies = await Promise.all([oldRef, secondOldRef].map((ref) => (
       ops.selectHistoricalResource(
@@ -217,7 +229,7 @@ function historicalResourceCore(
   }] as unknown as Turn[];
   return {
     requireThread: (threadId: string) => ({ thread: threads.get(threadId)! }),
-    allTurns: (threadId: string) => threadId === historicalId ? turns : [],
+    allTurns: () => turns,
   } as unknown as ThreadCore;
 }
 

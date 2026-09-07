@@ -135,13 +135,14 @@ test.each(['disabled', 'blocked', 'turn_ended', 'aborted'] as const)(
 
 function turnContext(tools: string[], delegated = false, turnId = 'turn'): TurnExecutionContext {
   return {
-    thread: { id: 'thread', cwd: process.cwd(), parentThreadId: delegated ? 'parent' : null,
+    thread: { id: 'thread', configurationSource: { kind: 'user' }, parentThreadId: delegated ? 'parent' : null,
       threadSource: delegated ? 'delegation' : 'user' },
-    turn: { id: turnId }, configuration: { tools, plugins: [], mcpServers: [] },
+    turn: { id: turnId, provenance: { trigger: { kind: 'user' } } }, configuration: { tools, plugins: [], mcpServers: [] },
   } as unknown as TurnExecutionContext;
 }
 function service(active = () => true): ThreadService {
   return {
+    defaultExecutionDirectory: () => process.cwd(),
     extensionToolContributions: async () => [], notifyToolStarted: async () => {}, notifyToolCompleted: async () => {},
     readTurnForHost: () => ({ status: active() ? 'inProgress' : 'completed' }),
   } as unknown as ThreadService;

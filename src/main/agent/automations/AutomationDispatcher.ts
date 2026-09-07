@@ -56,7 +56,7 @@ export class AutomationDispatcher {
    */
   private get continuity(): AutomationRunContinuityReader {
     return {
-      recentRunsForBinding: (...args) => this.options.store.recentRunsForBinding(...args),
+      recentRunsForContextHint: (...args) => this.options.store.recentRunsForContextHint(...args),
       readTurn: (threadId, turnId) => this.options.threads.readTurnForHost(threadId, turnId),
       transcriptPath: (threadId) => this.options.threads.threadTranscriptPath(threadId),
     };
@@ -378,11 +378,11 @@ function requireThreadId(run: AutomationRun): string {
 
 export function contextHintForRun(
   automation: Automation,
-  bindingKey: string,
+  contextHintKey: string,
 ): AutomationContextHint | null {
   if (automation.contextHints.length === 0) return null;
-  const binding = automation.contextHints.find((candidate) => candidate.contextHintId === bindingKey);
-  if (!binding) throw new Error(`Automation project binding not found: ${bindingKey}`);
+  const binding = automation.contextHints.find((candidate) => candidate.contextHintId === contextHintKey);
+  if (!binding) throw new Error(`Automation context hint not found: ${contextHintKey}`);
   return binding;
 }
 

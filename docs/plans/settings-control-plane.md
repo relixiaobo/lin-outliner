@@ -81,7 +81,7 @@ Reference patterns, rather than requirements to copy:
 - [Zed](https://zed.dev/docs/configuring-zed): searchable UI saves to configuration;
   advanced structured values remain editable in the file.
 - [Zed providers](https://zed.dev/docs/ai/use-api-access) and
-  [Agent profiles](https://zed.dev/docs/ai/agent-profiles): non-secret resource
+  [Zed configuration](https://zed.dev/docs/configuring-zed): non-secret resource
   definitions and model/tool choices can be configuration; auth has its own owner.
 
 These sources establish feasible patterns, not measured Tenon usability.

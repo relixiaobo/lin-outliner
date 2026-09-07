@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ThreadFileSource, ThreadResourceReference } from '../../src/core/agent/protocol';
@@ -20,6 +20,19 @@ afterEach(async () => {
 });
 
 describe('AttachmentResolver', () => {
+  test('accepts a directory outside the Host default without binding conversation state', async () => {
+    const defaultDirectory = await temporaryRoot('tenon-attachment-default-');
+    const external = await temporaryRoot('tenon-attachment-project-');
+    const resolver = resolverWithResources(new Map());
+    const context = resolutionContext(defaultDirectory);
+    const before = { ...context };
+    const [resolved] = await resolver.resolve([
+      attachment('directory', 'Project', 'inode/directory', { kind: 'localFile', path: external }),
+    ], context);
+    expect(resolved).toMatchObject({ source: { kind: 'localFile', path: await realpath(external) }, sizeBytes: 0 });
+    expect(context).toEqual(before);
+  });
+
   test('rejects message attachment and image count overflow before resolving sources', async () => {
     const workdir = await temporaryRoot('tenon-attachment-workdir-');
     let resolutions = 0;

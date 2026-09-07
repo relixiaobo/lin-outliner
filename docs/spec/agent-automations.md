@@ -26,6 +26,9 @@ may validate its current availability when saved but does not freeze the
 validation result as runtime identity. There are at most 32 hints. Zero hints
 means one implicit `default` hint using the documented Host default. An
 existing-Thread destination accepts at most one explicit hint.
+Directory sources are executable now. Project-ID sources remain unavailable until
+the Project catalog supplies its lifecycle owner; they never fall back to the
+Host default or a guessed directory.
 
 Hint IDs identify scheduling/continuity slots within an Automation. They survive
 reordering and edits to a slot's source or policy, do not encode a directory,
@@ -52,13 +55,19 @@ definition and configuration-selection snapshot, optional isolation policy,
 reciprocal Thread/Turn IDs, read state, and pin state. Main resolves a fresh
 ExecutionAddress, ExecutionPolicy, and ContextSnapshot for each new dispatch,
 then stores `dispatchSnapshotRef` referencing immutable context evidence. The
-dispatch snapshot contains the captured hint, source/execution address refs,
-policy ref, initial context ref, and any managed-resource intent reference.
+dispatch snapshot links to the immutable claimed run and contains source/execution
+contexts, frozen effective configuration, and bounded Automation input. The run
+snapshot owns its captured hint; its worktree metadata owns any prepared intent.
 The run row holds references; it is not a second source of execution facts.
 Provider/model selection and address validation fail dispatch when unavailable;
 incomplete discovery uses a durable degraded snapshot. The run does not copy model
 output, Turn status, Goal status, tool history, or errors that occur after Turn
 admission.
+
+Once `dispatchSnapshotRef` exists, retries reuse those bytes and revalidate the
+captured canonical identities. They do not resolve a redirected root alias or
+reload a changed configuration file. A changed existing destination configuration
+fails admission rather than silently replacing its prepared selection.
 
 Run routing states are:
 
@@ -395,7 +404,7 @@ projections in one change. It must cover:
 
 The implementation replaces the old assumptions in
 `tests/core/agentAutomations.test.ts`: `persists the canonical real path for a
-project binding`, `rejects worktree execution for an existing Thread
+context hint`, `rejects worktree execution for an existing Thread
 destination`, and `rejects a saved project path redirected through a symlink`.
 Retain their boundary coverage with fresh-per-occurrence resolution,
 task-enforced isolation, and prepared-dispatch drift rejection respectively.

@@ -348,6 +348,22 @@ describe('skill provenance and undo', () => {
 });
 
 describe('agent skills', () => {
+  test('visiting a repository does not select its Skill configuration source', async () => {
+    const root = await createSkillFixture('visited-project-skill', {
+      frontmatter: ['description: Repository-specific instructions'], body: 'Use only when explicitly configured.',
+    });
+    const unbound = new AgentSkillRuntime({ includeUserSkills: false });
+    const first = await unbound.buildSkillCatalogSnapshot();
+    await unbound.notifyFileTouched([path.join(root, 'src', 'file.ts')]);
+    expect(await unbound.getSkill('visited-project-skill')).toBeNull();
+    expect((await unbound.buildSkillCatalogSnapshot()).catalogHash).toBe(first.catalogHash);
+    const selected = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
+    expect(await selected.getSkill('visited-project-skill')).not.toBeNull();
+    const boundDirectory = new AgentSkillRuntime({ includeUserSkills: false,
+      additionalSkillDirectories: [path.join(root, '.agents', 'skills')] });
+    expect(await boundDirectory.getSkill('visited-project-skill')).not.toBeNull();
+  });
+
   test('builds deterministic admission-time catalogs and refreshes existing Threads', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: ['description: Demo skill', 'when_to_use: Use for demo work'],

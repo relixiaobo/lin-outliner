@@ -1859,6 +1859,17 @@ describe('PiTurnExecutor event normalization', () => {
         }, { capability: 'full-access', isolation: 'unsandboxed', mutation: false, writablePaths: [] }),
       }, 'Execution observation');
     };
+    let failPublication = true;
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      persistContextEvidence: async (payload, summary) => {
+        if (payload.kind === 'executionContextPublication' && failPublication) {
+          failPublication = false;
+          throw new Error('Publication commit unavailable');
+        }
+        return fixture.context.persistContextEvidence(payload, summary);
+      },
+    };
     const executor = new PiTurnExecutor({
       resolveRuntimeSettings: async () => runtimeSettings(),
       resolveRuntime: async () => runtimeSelection(),
@@ -1868,6 +1879,12 @@ describe('PiTurnExecutor event normalization', () => {
         prompt: async () => {
           for (const [index, directory] of ['/project-a', '/project-b', '/project-a'].entries()) {
             await observe(directory, `task-${index}`);
+            if (index === 0) {
+              await expect(options.transformContext!([])).rejects.toThrow('Publication commit unavailable');
+              expect(fixture.recorder.orderedItems().filter((item) => (
+                item.type === 'contextEvidence' && item.kind === 'executionContextPublication'
+              ))).toHaveLength(0);
+            }
             for (let retry = 0; retry < 2; retry += 1) {
               const messages = await options.transformContext!([]);
               requests.push(convertResponsesMessages(testModel, { messages }, new Set([testModel.provider]), { includeSystemPrompt: false }));
@@ -1876,7 +1893,7 @@ describe('PiTurnExecutor event normalization', () => {
         },
       }),
     });
-    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+    await expect(executor.execute(context)).resolves.toMatchObject({ status: 'completed' });
     expect(requests).toHaveLength(6);
     for (let index = 1; index < requests.length; index += 1) {
       expect(requests[index]!.slice(0, requests[index - 1]!.length)).toEqual(requests[index - 1]);
@@ -2217,7 +2234,7 @@ describe('PiTurnExecutor event normalization', () => {
       timeZone: 'Asia/Shanghai',
       utcOffsetMinutes: 480,
       locale: 'zh-CN',
-      
+
       conversationMode: 'interactive',
       executionMode: 'root',
       replyIdentity: null,

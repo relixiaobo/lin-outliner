@@ -73,11 +73,22 @@ export class ThreadResourceOps {
     private readonly core: ThreadCore,
     private readonly resources: AgentResourceStore,
     private readonly attachmentScratchRoot: string,
+    private readonly defaultExecutionDirectory: string,
     private readonly resolveUserContent: (
       content: readonly ThreadUserContent[],
       context: ThreadUserContentResolutionContext,
     ) => readonly ThreadUserContent[] | Promise<readonly ThreadUserContent[]>,
   ) {}
+  async deleteThreadScratch(threadId: ThreadId): Promise<void> {
+    for (const [key, entry] of this.detachedResourceObservations) {
+      if (!key.startsWith(`${threadId}\0`)) continue;
+      this.detachedResourceObservations.delete(key);
+      await entry.observation.dispose();
+    }
+    await rm(join(this.attachmentScratchRoot, 'edits', threadId), { recursive: true, force: true });
+    this.resources.unregisterScope(`attachments:${threadId}`);
+  }
+
   async readItemOutput(request: ThreadItemOutputReadRequest): Promise<ThreadItemOutputReadResponse> {
     const turn = this.core.readTurn(request.threadId, request.turnId);
     if (!turn) return { output: null };
@@ -259,7 +270,7 @@ export class ThreadResourceOps {
     ref: ThreadResourceReference,
     representation: 'reveal' | 'replay' | 'edit' | 'observe',
   ): Promise<HistoricalResourceSelection | null> {
-    const current = this.core.requireThread(currentThreadId).thread;
+    this.core.requireThread(currentThreadId);
     this.core.requireThread(historicalThreadId);
     if (!this.threadResourceReferences(historicalThreadId).some((candidate) => (
       resourceReferenceKey(candidate) === resourceReferenceKey(ref)
@@ -665,7 +676,7 @@ export class ThreadResourceOps {
     try {
       const resolved = await this.resolveUserContent(content, {
         threadId: thread.id,
-        cwd: this.attachmentScratchRoot,
+        cwd: this.defaultExecutionDirectory,
         recordCreatedResource: (ref) => createdResources.push(ref),
       });
       assertCanonicalUserContent(resolved);
