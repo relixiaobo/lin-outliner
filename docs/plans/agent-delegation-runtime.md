@@ -57,6 +57,19 @@ continue the same isolated context after a Turn settles. The replacement keeps
 that capability through a root-owned hidden Thread plus Skill-guided CLI
 commands, without restoring Agent trees, peer messaging, nesting, or Subagent UI.
 
+**Workbench integration:** The execution-context refactor in
+`project-development-workbench.md` consumes the internal delegation and native
+CLI launcher mechanisms described in [Agent Delegation](../spec/agent-delegation.md).
+It updates their address admission without restoring the retired Subagent
+product or replacing the launcher contract with vendor-specific adapters.
+Every writable Session requires a dedicated Host-managed worktree and retains
+its continuity reference. That reference identifies a resource, not a sticky
+Thread cwd or a second execution ledger. Every initial and continued Tool Task
+admits its own `ExecutionAddress`, `ExecutionPolicy`, and `ContextSnapshot`;
+Session configuration and settlement records retain only the relevant links.
+Future consumers of Unit A use its task-scoped contract; the existing launcher
+baseline is an input to that refactor, not work blocked on a future predecessor.
+
 ## Non-goals
 
 - No model-visible delegation, Agent, spawn, send, wait, inbox, or roster tool.
@@ -547,20 +560,24 @@ Turn preserves its old revision, so neither can clear the fence or start another
 paid Turn. Replay returns the original refusal or admission outcome rather than
 re-evaluating it against a later revision.
 
-Every Session resolves Runner, effective model/effort, Task Profile, maximum
-access, cwd, and worktree policy once at creation. Settings changes affect new
-Sessions only. Every continued Turn revalidates live model authorization and
-intersects the original Session ceiling with the root's current ceiling, so it
-may narrow but never widen authority. An unavailable pinned model or disabled
-Runner blocks that Turn before Provider I/O without changing the Session binding
-or silently selecting another Runner.
+Every Session resolves launcher, effective model/effort, Task Profile, maximum
+access, and required isolation policy once at creation. Effective
+`workspace-write` access requires a dedicated worktree; external `read-only`
+launchers require a disposable worktree as well. Settings
+changes affect new Sessions only. Every continued Turn revalidates live model
+authorization and admits address/policy/snapshot references for each of its
+Tool Tasks. It intersects the original Session ceiling with the root's
+current ceiling, so it may narrow but never widen authority. An unavailable
+pinned model or disabled Runner blocks that Turn before Provider I/O without
+changing the Session binding or silently selecting another Runner.
 
-Writable Sessions own one dedicated worktree across all Turns. Each Tool Task
-reports independently computed current patch evidence, but the worktree remains
-attached until the root closes and integrates or explicitly rejects the Session.
-This lets the root request corrections against the same isolated state. Idle
-Sessions hold no scheduler lease or process. An open Session auto-closes after
-30 days without an active Tool Task or committed root message; owner Thread
+The mandatory writable worktree remains a Host-managed resource
+available across Session Turns through an explicit continuity reference. Each
+Tool Task records its own immutable ExecutionAddress and current patch evidence;
+the Session binding is not the resource or process ledger. This lets the root
+request corrections against the same isolated state without creating a sticky
+Thread cwd. Idle Sessions hold no scheduler lease or process. An open Session
+auto-closes after 30 days without an active Tool Task or committed root message; owner Thread
 archive closes its idle Sessions, and owner deletion follows the Tool Task and
 changed-worktree refusal rules before deleting their hidden Threads.
 
@@ -862,11 +879,16 @@ lower a local limit, but never claims a diagnosed account capacity.
 
 ### Workspace, failure, and result
 
-Read-only work uses the root cwd under a Host-enforced read-only ceiling. Every
-workspace-write Session gets one dedicated git worktree before its first Runner
-Turn. All continued Turns use that same worktree. Non-git or unisolatable
-writable work is refused. The worktree remains Session-owned while continuation
-is possible; unchanged worktrees are removed when the Session closes. Changed or
+Internal read-only work uses a Host-admitted ExecutionAddress under a
+Host-enforced read-only ceiling. External read-only launchers use disposable
+worktrees under the native CLI contract. Every effective workspace-write
+Session must receive one dedicated Git worktree before its first launcher
+execution. The policy is mandatory, not a model-selectable isolation option.
+Each continued Turn revalidates that same resource and every Tool Task records
+its admitted address/policy/snapshot. Non-Git, unavailable, or mismatched
+writable resources refuse execution with no source-checkout fallback. The
+Host-managed worktree remains available while continuation is
+possible; unchanged worktrees are removed when the Session closes. Changed or
 crash-ambiguous worktrees remain artifacts and are never merged or copied
 automatically.
 
@@ -1139,7 +1161,9 @@ unit. This dev plan does not edit main-owned `docs/TASKS.md` or `CHANGELOG.md`.
 - **FR-7:** Writable work is isolated.
   - **AC-14:** Writable Sessions start only in one dedicated worktree reused by
     all their Turns; changed or ambiguous state is retained and never integrated
-    automatically.
+    automatically. Omitting isolation input does not disable this rule. Missing,
+    mismatched, or non-Git resources refuse before launcher execution; the
+    Session continuity reference never becomes Thread cwd authority.
   - **AC-24:** Every changed worktree returns a CLI-computed base revision,
     changed-file manifest, patch, path, and verification evidence; the root
     distinguishes Runner success from successful integration and verifies any

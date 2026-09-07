@@ -1,0 +1,138 @@
+# Git Review And Publication
+
+**Shape:** One complete feature. It provides auditable review and explicit
+publication over Git and hosting CLIs without creating a Git ledger under the
+[Agent Capability-First Development Workbench](project-development-workbench.md).
+
+## Goal
+
+Let a developer inspect the exact changes produced in one or more Tool Task
+execution addresses, select an explicit file set, and commit, push, or create
+a PR with durable evidence and safe retry behavior.
+
+## Non-goals
+
+- A native Git implementation or parallel Git state store.
+- Automatic merge, force-push, or publication.
+- Treating a hosting CLI response as authoritative without evidence.
+
+## Design
+
+### Review snapshot
+
+The review Skill uses existing Bash/Tool Tasks:
+
+```text
+git status --short
+git diff --stat
+git diff [selected paths]
+git diff --cached [selected paths]
+```
+
+The snapshot records the execution address, context snapshot, worktree
+identity, and each staged, unstaged, untracked, renamed, deleted, and binary
+path. Every path record contains canonical path, file kind, byte size, and a
+content/diff digest. Untracked files are not silently included in a commit.
+
+The same review snapshot captures a mandatory Git baseline directly from Git:
+canonical worktree and shared Git directory, exact HEAD commit OID, and HEAD
+attachment (`symbolic` with full ref such as `refs/heads/feature`, or `detached`
+with its OID). An unborn branch records its symbolic ref and explicit absent
+HEAD state. Resolve these through ordinary Git CLI queries such as
+`rev-parse --verify HEAD`, `symbolic-ref -q HEAD`, and worktree/common-directory
+inspection; distinguish expected detached/unborn results from command failure.
+Missing or inconsistent baseline evidence makes commit unavailable. A pending
+or degraded ContextSnapshot's optional Git observations cannot supply it.
+
+Capture the baseline before and after path/index inspection and accept the
+snapshot only if both agree. Record the selected index entries/stages and
+working-tree digests with it. The snapshot describes one observed review state,
+not whichever branch happens to be selected when publication later runs.
+
+### Explicit commit
+
+Commit input contains an explicit path set, message, and review snapshot ref.
+Host acquires the admitted worktree scope claim, then independently reads the
+mandatory Git baseline and recomputes the reviewed path/index state before
+execution. A HEAD OID, symbolic ref, detached/unborn state, worktree identity,
+path, size, file-kind, or digest mismatch rejects the commit and requires a
+refreshed review. Switching branches at the same OID must fail even if the
+selected files and diffs are identical. This applies to untracked, renamed,
+deleted, and binary files as well as normal tracked diffs. Unrelated dirty files remain
+untouched.
+
+Keep the claim through settlement and revalidate immediately before the Git
+mutation after any preparation step. The claim coordinates Tenon-admitted
+scopes; it cannot lock out an external editor, arbitrary shell, or other Git
+client. Use Git's own index/ref concurrency checks and verify the resulting
+commit's parent and ref against the admitted baseline. A concurrent baseline
+change or uncertain Git result is non-success pending reconciliation, never an
+automatic retry, reset, or assertion that the intended branch was published.
+No claim is made that the address lease alone supplies a Git transaction.
+
+The receipt records commit SHA, parent SHA, branch, worktree identity,
+execution address, context reference, selected paths, and result.
+
+### Remote publication
+
+Before push or PR creation, show and record remote URL/name, branch, local HEAD,
+upstream state, commit range, PR base/head, and hosting provider. After an
+uncertain push, query the remote branch before retrying. After an uncertain PR
+creation, query by head/base before creating another PR. A discovered remote
+ref or PR becomes result evidence, not a duplicate operation.
+
+The Skill may use `gh` or a profile-selected hosting CLI. Output is bounded and
+redacted before persistence. A hosting failure never authorizes fallback or
+force-push.
+
+### Non-Git roots
+
+Non-Git review supports bounded file diffs and checks. Commit, push, and PR are
+unavailable unless a profile supplies a deterministic publication adapter.
+
+## Requirements
+
+- **FR-1:** Review records path state, execution address, context, and worktree.
+- **FR-2:** Commit requires explicit paths and a matching reviewed snapshot,
+  including mandatory HEAD/ref/attachment and index state independent of discovery.
+- **FR-3:** Untracked and binary content is digest-verified before commit.
+- **FR-4:** Publication records durable result evidence and reconciles uncertainty.
+- **FR-5:** No Git or hosting ledger is added beside Git and Tool Task evidence.
+
+## Acceptance criteria
+
+- **AC-1:** Review distinguishes staged, unstaged, untracked, renamed, deleted,
+  and binary content.
+- **AC-2:** A multi-directory Turn keeps each review snapshot tied to its own
+  execution address and context reference.
+- **AC-3:** Modifying any reviewed untracked or binary file causes commit
+  admission to fail until review is refreshed.
+- **AC-4:** Explicit commit records SHA and leaves unrelated dirty files intact.
+- **AC-5:** Push/PR preview shows remote, branch, and commit range.
+- **AC-6:** Uncertain remote operations reconcile before retry and never
+  duplicate effects.
+- **AC-7:** Switching to another branch at the same HEAD with identical selected
+  contents/diffs rejects commit admission. A changed HEAD, detached/unborn
+  transition, or changed worktree registration also requires renewed review.
+- **AC-8:** Missing Git baseline observations refuse commit even if optional
+  context discovery is pending or reports a plausible branch name. Concurrent
+  Git state changes during execution produce truthful reconciliation evidence.
+
+## Tests and evidence
+
+Use a temporary Git repository with unrelated dirty files, staged/untracked,
+renamed/deleted, binary paths, a local remote, and interrupted publication.
+Add renderer tests for path selection and preview, plus a non-Git fixture where
+review works and publication is unavailable.
+Include two branches at the same OID with identical dirty changes, movement to
+a new HEAD with the same tree, detached and unborn HEAD cases, failed baseline
+queries, and a branch change between review and commit. Assert no commit is
+started on an admission mismatch and no automatic retry follows uncertain Git
+settlement.
+
+## Open questions
+
+- The first GitHub profile standardizes on bounded `gh` JSON output.
+- A reviewed-state mismatch always requires a new review; it is never implicitly
+  refreshed.
+- Non-Git publication remains deferred until a deterministic adapter exists.

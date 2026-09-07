@@ -54,8 +54,9 @@ provider-visible ID is the one stored in replayable history; raw provider input 
 becomes a Core identity.
 Command text, file changes, MCP/dynamic display arguments, Agent-task summaries,
 results, and host execution metadata never reconstruct model arguments. In particular,
-`commandExecution.cwd` is the Thread's host-resolved working directory and is not part
-of the `bash` model call. During the active Turn only, a transient raw-call overlay lets
+`commandExecution.cwd` is the Tool Task's Host-resolved execution address and is not
+part of the `bash` model call unless the optional task-scoped `cwd` field was admitted.
+During the active Turn only, a transient raw-call overlay lets
 the next provider boundary observe the exact just-executed arguments. It is not durable;
 later Turns, restart, fork, and compaction use only the frozen envelope. An admitted
 call whose live provider replay metadata exceeds its durable bound still executes and
@@ -289,16 +290,25 @@ developer instructions, and capability ceilings remain host-private. Feature
 and delegation Threads have no renderer-editable configuration. A fork inherits the
 source Thread's effective execution selection.
 
-An ordinary renderer-created root receives a Host-managed workspace at
-`<userData>/agent/workspaces/<root-thread-id>`; the renderer does not submit a
-`cwd`. Descendants inherit the root binding unless an explicit worktree overlay is
-active. Explicit project and automation roots remain supported and are registered as
-separate source scopes. Deleting a managed root drains descendants and pending citation
-capture before removing only that workspace container. An explicit-cwd root never owns
-that directory, so Thread deletion leaves it untouched. Workspace cleanup happens after
-the metadata commit; a cleanup failure is logged for maintenance and does not turn the
-already-committed deletion into a failed user action. Exact revisions retained by other
-links and user-managed external sources survive.
+An ordinary renderer-created root has no persisted execution cwd; the renderer
+does not submit one as Thread state. Every executable Turn resolves an
+ExecutionAddress for each Tool Task, and descendants validate or refresh their
+own context references. Before any Tool Task starts, its immutable address,
+policy, and context snapshot references are durable. Initial discovery uses a
+generation-0 pending snapshot with explicit unknown observations; its terminal
+receipt retains that reference. Discovery publishes a successor as a separate
+observation event for later provider boundaries and task admissions. Replay
+preserves both generations and never attributes later observations to an
+earlier task. Explicit project and automation roots are context hints
+registered as source scopes, not Thread execution authority. Host-managed
+scratch and isolated worktrees are Tool Task/Goal resources with explicit
+cleanup ownership. Deleting a Thread or Project does not delete a user-managed
+external directory or invalidate a settled Tool Task receipt; cleanup occurs
+only after the owning resource reaches its terminal fence.
+
+Transcript headers and `ThreadTranscriptIndex` retain conversation identity and
+timestamps without a synthetic single Thread cwd. Directory facts are read from
+the owning task receipts; index navigation never supplies execution authority.
 
 `presentationOverrides.main` may change only the root conversation's persona
 and palette colour. Presentation is renderer-facing and never changes provider
@@ -614,10 +624,11 @@ scopes, Thread links, and final-citation bindings. Each persistent Thread owns o
 append-only rollout JSONL as the history source of truth. Complete textual tool outputs,
 semantic context payloads, private internal text, and immutable Turn diagnostics remain
 in the Thread-owned payload directory. Exact file revisions live once under the neutral
-app-level `content/` store and are retained by Host-private anchors. Ordinary root
-conversations use `agent/workspaces/<root-thread-id>`; children inherit that binding.
-Uploads and disposable observations use `agent/scratch`; readable transcripts remain
-independent rebuildable artifacts under `thread-transcripts/`.
+app-level `content/` store and are retained by Host-private anchors. Host-managed
+scratch and isolated execution resources use app-owned paths with Tool Task/Goal
+cleanup ownership; they are not Thread execution bindings. Uploads and disposable
+observations use `agent/scratch`; readable transcripts remain independent rebuildable
+artifacts under `thread-transcripts/`.
 Decoded Thread catalog records use a 256-entry in-process LRU shared by single,
 batch, and list reads, so repeated notification admission does not decode or
 select unchanged metadata. Every `threads` row write invalidates through one

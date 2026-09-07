@@ -182,13 +182,44 @@ external harness.
 
 A `workspace-write` launcher task durably records a planned Host-managed
 worktree intent before creation, then records the complete admitted worktree
-identity. The source checkout remains unchanged. External `read-only` tasks
+identity. This is mandatory for both internal and native external launchers;
+there is no optional-isolation switch for writable delegation. The launcher
+starts in the dedicated worktree, and ordinary relative edits affect it rather
+than the source checkout. A worktree alone is not an OS sandbox and cannot
+prove that arbitrary native CLI code never writes an absolute external path.
+Actual enforcement is recorded by the common execution policy. External `read-only` tasks
 also use a disposable managed worktree because arbitrary CLIs do not share a
 read-only protocol; all changes in that worktree are discarded at settlement.
 Tracked and untracked files from a writable task become a patch resource owned
 by the root Thread and a generic Tool Task artifact. Ignored content and nested
 Git repositories fail inspection because they cannot be represented by complete
 patch evidence.
+
+### Task Execution Context
+
+Under the execution-context refactor, each initial or continued launcher Tool
+Task validates the continuity resource and captures immutable `ExecutionAddress`,
+`ExecutionPolicy`, and `ContextSnapshot` references before spawn. The launch
+capability binds that task's resolved address, not a hidden Thread directory.
+Internal file/process tasks use the same address admission; configured external
+launchers receive the admitted cwd through their native process invocation.
+Tenon records their process/worktree evidence without reconstructing vendor
+tools, configuration, or per-call history it cannot observe.
+
+Writable continuation requires the same canonical worktree resource, validated
+against its recorded source/base/registration. Missing, removed, or mismatched
+evidence refuses admission rather than resolving a parent's address or scanning
+ancestors for another worktree. Session policy retains a continuity reference;
+the resource and Tool Task receipts own actual execution facts. Project edits or
+deletion cannot redirect that resource. Non-Git sources cannot satisfy writable
+delegation. Internal read-only ceilings and external disposable-worktree
+behavior retain their distinct enforcement limits.
+
+Initial pending context is durable before execution; later discovery is a
+separate observation and never rewrites a launcher receipt. File-capability
+instruction scope comes from its canonical target, while launcher process
+scope comes from its admitted cwd. A native CLI's internal directory changes
+remain outside Tenon's per-call observation coverage.
 
 `delegate close` succeeds only for an idle, open, root-owned Session. It closes
 the binding and hidden Thread, but does not stop active work, erase a Tool Task,
@@ -315,6 +346,10 @@ Coverage must prove:
 - failed, timed-out, cancelled, and lost outcomes block queued input and never
   trigger continuation;
 - delegated tool/access ceilings and the absence of nested delegation;
+- mandatory writable worktree admission without an explicit isolation request,
+  same-resource continuation, non-Git/missing/mismatched refusal, and no parent
+  directory or ancestor fallback; internal and native launcher paths both
+  retain exact task-context references after restart;
 - generic Tool Task completion, status, stop, recovery, and renderer behavior;
   and
 - residue guards for every retired schema, field, store, route, UI component,

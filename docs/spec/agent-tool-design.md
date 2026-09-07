@@ -166,14 +166,41 @@ settlement contract.
 - `task_status`
 - `task_stop`, shared with Agent orchestration
 
-Relative paths resolve from the Thread working directory. Full Access permits
-absolute host paths unless an explicit block removes the capability. File tools
-return bounded content and persist oversized output in app-owned scratch space.
-When an Agent inherits worktree isolation, file and shell mutations are bounded
-to the persisted worktree `path`, including in descendants whose current call
-did not request a new worktree. File writes require both lexical and canonical
-containment; an unreadable, cyclic, dangling-symlink, or otherwise unresolved
-canonical path fails closed instead of falling back to the lexical check.
+Every local file/process call uses its Tool Task's admitted `ExecutionAddress`.
+The Host resolves an optional task-scoped `cwd` against its documented default,
+then resolves relative file paths from that address's `resolvedCwd`. An explicit
+absolute file path is canonicalized as the task's target independently of cwd.
+File instruction/profile collection follows that canonical target's parent and
+ancestors, with nested applicability retained per target. Directory searches
+use their canonical search root and label deeper uninspected scopes as unknown;
+later file edits admit those exact target scopes. Following a symlink for a
+content edit uses its referent; deleting the link uses the link's parent.
+New files resolve through the nearest existing canonical parent plus suffix.
+Bash instruction scope remains its admitted cwd. Neither an unrelated cwd nor
+Project membership supplies the rules for an absolute file target.
+Full Access permits absolute host paths unless an explicit block removes the
+capability. Thread metadata, Project membership, and ancestor lookup supply no
+execution directory. Receipts retain the resolved address, canonical targets,
+`ExecutionPolicy`, and immutable `ContextSnapshot` reference used at admission.
+File tools return bounded content and persist oversized output in app-owned
+scratch space.
+
+Task address claims cover typed file targets and the admitted cwd for Bash.
+They coordinate matching declared scopes only. Arbitrary Full Access shell
+effects or native CLI calls outside that cwd are not inferred, contained, or
+serialized by the claim; the receipt marks that coverage as `cwd-only`.
+
+Inherited worktree isolation is an explicit resource reference in the admitted
+`ExecutionPolicy`. The Host validates its registration and identity against the
+task address before any file or shell mutation, including calls inside a
+delegated Session that carry no isolation override. Containment uses that validated
+resource's writable root; it is not derived from a Thread directory or a
+best-effort ancestor match. File writes require both lexical and canonical
+containment. A new file resolves through its nearest existing parent and records
+the unresolved suffix; unreadable, cyclic, or dangling symlinks still fail
+closed. Missing or mismatched isolation evidence returns structured non-success
+before side effects, without falling back to an unrestricted address. See
+[Task Execution Context](agent-delegation.md#task-execution-context).
 
 Ordinary text `file_read` bounds the observation rather than the source. It
 classifies encoding and binary content from an 8 KiB prefix, streams only until
@@ -583,8 +610,9 @@ used for capability evaluation, execution, and Item presentation; the frozen ori
 remains the model-call history authority. This distinction lets a tool derive a UI-only
 default without rewriting what the provider actually submitted.
 
-Host context such as Thread `cwd`, workspace and scratch roots, environment,
-credentials, and private handles is never added to the model arguments. `bash` history
+Host context such as the resolved task address, managed-resource and scratch
+roots, environment, credentials, and private handles is never added to the
+model arguments. `bash` history
 therefore records its exact admitted `command` and optional model fields while
 `commandExecution.cwd` remains host-owned audit metadata.
 
