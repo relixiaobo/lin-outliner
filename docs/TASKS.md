@@ -31,9 +31,10 @@ A: file-backed preferences, schema/status/recovery, global Skill/tool controls,
 and the configuration Skill. PR #638 now ships Unit B: file-backed model
 connections, model declarations, and default model selection. PR #640 now ships
 Unit C: layered root Agent configuration, source inspection/schema discovery,
-JSONC-preserving edits, and public delegation policy. Units D-G remain open
-under their dependency and collision checks; the aggregate plan is still the
-design authority for those units.
+JSONC-preserving edits, and public delegation policy. PR #643 ships Skill
+declarative settings ownership; Unit D's Agent-facing lifecycle/provenance
+operations and coverage remain open alongside Units E-G. The aggregate plan
+remains their design authority under its dependency and collision checks.
 
 Trajectory paging shipped in #625 and exact-or-unavailable evidence completed
 in #627; the plan is archived and its shared-file claim is released. Bounded
@@ -108,7 +109,7 @@ does not mix their product decisions into the architectural queue above.
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
 | P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623, internal delegation plus Subagent/isolated-Skill retirement shipped in #628, and the external Runner adapter feature shipped in #637. Remaining work follows the aggregate plan's declared boundaries. |
-| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-C shipped in #636, #638, and #640; Units D-G follow their declared dependency/collision checks, including #628 and #641. |
+| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-C shipped in #636, #638, and #640; #643 ships Skill declarative settings ownership. Unit D's Agent-facing lifecycle/provenance routes and coverage, plus Units E-G, remain open under their dependency/collision checks. |
 | P2 | [interaction-jank-cleanups](plans/archive/interaction-jank-cleanups.md) | `done` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, the Runtime-index unit shipped in #633, and PR-3 translation geometry shipped in #634. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Settings redesign landed in #626; Provider/managed-Skill working-state behavior is absorbed by Units B and D, so claim it through those units rather than as a separate implementation. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
@@ -226,6 +227,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **skill-declarative-settings** (`done`, #643, 2026-09-07) - Skill-owned file-backed read/update routes preserve source spelling and queued toggle state; Unit D's Agent-facing lifecycle/provenance work remains in the active Settings plan.
 - **agent-skill-curation-report** (`done`, #642, 2026-09-06) - Settings now offers an opt-in, read-only report over the loaded Skill registry; unchanged user/project Skills with reliable Agent-write provenance are analyzed for broken or root-escaping Markdown resources, exact content duplicates, and retired tool names, while excluded sources and hashes remain visible; [plan archived](plans/archive/agent-skill-curation-report.md).
 - **agent-skill-authoring-foundation** (`done`, #641, 2026-09-06) - local Skill sources now persist explicit `skill` or `container` modes, exact Skill bindings stay scoped to the selected directory, and discovery, reload, authoring, and unbind share that identity; [plan archived](plans/archive/agent-skill-authoring-foundation.md).
 - **settings-control-plane Unit A** (`done`, #636, 2026-09-05) - file-backed JSONC preferences, schema/status/recovery, global Skill/tool controls, and the configuration Skill now converge through the Host; Units B-G remain in the active plan.

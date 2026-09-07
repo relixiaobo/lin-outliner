@@ -2610,3 +2610,17 @@ misattribute support files, or leave an admitted root ungoverned.
 chosen shape and reuse it at discovery, reload, authoring, and unbind boundaries.**
 The picker, runtime, persistence decoder, and ownership resolver must share the
 same mode contract; tests should cover both shapes and a malformed exact root.
+
+## Refresh fences must cover the full queued-write lifetime
+
+PR #643 initially invalidated Skill settings refreshes only when mutation intent
+was expressed. A refresh started during a pending write retained the current
+epoch after that write completed and could overwrite both its displayed result
+and the baseline for the next queued write.
+
+**Invalidate refreshes at mutation intent and settlement, and reject their
+snapshots while writes remain pending.** Cover success and failure settlement;
+queued writes must derive from authoritative write results. Regression coverage
+must include reads started before and during a write, delayed read completion
+after the write, and completion while another mutation remains queued. One
+passing event ordering does not establish that the race is fixed.
