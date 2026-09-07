@@ -62,28 +62,19 @@ export function ManagedSkillsSettings({
   const {
     busy,
     catalog,
-    confirmAction,
     error,
-    installReview,
     installedCatalogIds,
     loading,
     notice,
     selectedCandidateId,
     selection,
     sourceUrl,
-    updatePreview,
-    applyUpdate,
     beginDiscovery,
-    installSelected,
     loadAll,
     reviewSelectedCandidate,
-    runConfirmedAction,
-    setConfirmAction,
-    setInstallReview,
     setSelectedCandidateId,
     setSelection,
     setSourceUrl,
-    setUpdatePreview,
   } = controller;
   return (
     <>
@@ -199,7 +190,7 @@ export function ManagedSkillsSettings({
               large, no SKILL.md — rendered into page flow under a dimming
               overlay, so the primary error path of this panel was invisible and
               the button simply returned from "Resolving…" to "Add". */}
-          {error && !installReview && !updatePreview && !confirmAction ? (
+          {error ? (
             <div className="agent-settings-alert" role="alert">
               <WarningIcon size={ICON_SIZE.menu} />
               <span>{managedSkillErrorMessage(error, t)}</span>
@@ -217,7 +208,7 @@ export function ManagedSkillsSettings({
         </Dialog>
       ) : null}
 
-      {error && !open && !installReview && !updatePreview && !confirmAction ? (
+      {error && !open ? (
         <div className="agent-settings-alert" role="alert">
           <WarningIcon size={ICON_SIZE.menu} />
           <span>{managedSkillErrorMessage(error, t)}</span>
@@ -232,33 +223,6 @@ export function ManagedSkillsSettings({
           onContinue={reviewSelectedCandidate}
           onSelect={setSelectedCandidateId}
           selectedCandidateId={selectedCandidateId}
-        />
-      ) : null}
-      {installReview ? (
-        <InstallReviewDialog
-          busy={busy?.startsWith('install:') === true}
-          error={error}
-          onCancel={() => setInstallReview(null)}
-          onInstall={() => void installSelected()}
-          review={installReview}
-        />
-      ) : null}
-      {updatePreview ? (
-        <UpdatePreviewDialog
-          busy={busy?.startsWith('apply:') === true}
-          error={error}
-          onApply={() => void applyUpdate()}
-          onCancel={() => setUpdatePreview(null)}
-          preview={updatePreview}
-        />
-      ) : null}
-      {confirmAction ? (
-        <ManagedSkillActionDialog
-          action={confirmAction}
-          busy={busy === `${confirmAction.kind}:${confirmAction.skill.id}`}
-          error={error}
-          onCancel={() => setConfirmAction(null)}
-          onConfirm={() => void runConfirmedAction()}
         />
       ) : null}
     </>
@@ -311,7 +275,7 @@ function CandidateSelectionDialog({
   );
 }
 
-function InstallReviewDialog({
+export function InstallReviewDialog({
   busy,
   error,
   onCancel,
@@ -335,33 +299,32 @@ function InstallReviewDialog({
       surfaceClassName="managed-skill-dialog"
     >
       <h2 className="confirm-dialog-title" id={titleId}>{t.settings.skills.managedInstallTitle({ name: review.candidate.name })}</h2>
-      <ManagedSkillDetails
-        commit={review.discovery.resolvedCommit}
-        compatibility={review.candidate.compatibility.declaredRange ?? t.settings.skills.managedCompatibilityUnknown}
-        repository={review.discovery.repository}
-        scripts={review.candidate.scripts}
-        subdirectory={review.candidate.subdirectory}
-        distribution={review.discovery.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
-        version={review.candidate.version}
-      />
-      {/* What the Skill will tell the model, shown because installing enables and
-          enabling puts this text into the agent's context. The update path has
-          always shown its diff; only the initial install asked people to consent
-          to a file list, which was survivable while a second toggle stood between
-          the bytes and the model and is not now. */}
-      {review.candidate.description ? (
-        <p className="managed-skill-review-description">{review.candidate.description}</p>
-      ) : null}
-      {review.candidate.skillBody ? (
-        <>
-          <p className="managed-skill-review-body-label">{t.settings.skills.managedSkillBodyLabel}</p>
-          <pre className="managed-skill-diff">{review.candidate.skillBody}</pre>
-          {review.candidate.skillBodyTruncated ? (
-            <p className="managed-skill-review-truncated">{t.settings.skills.managedSkillBodyTooLargeToInstall}</p>
-          ) : null}
-        </>
-      ) : null}
-      <ManagedSkillDialogError error={error} />
+      <div className="managed-skill-review-content">
+        <ManagedSkillDetails
+          commit={review.discovery.resolvedCommit}
+          compatibility={review.candidate.compatibility.declaredRange ?? t.settings.skills.managedCompatibilityUnknown}
+          repository={review.discovery.repository}
+          scripts={review.candidate.scripts}
+          subdirectory={review.candidate.subdirectory}
+          distribution={review.discovery.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
+          version={review.candidate.version}
+        />
+        {/* Installation can make these instructions eligible immediately; preserve
+            the full admissible body even when the model receives a shorter preview. */}
+        {review.candidate.description ? (
+          <p className="managed-skill-review-description">{review.candidate.description}</p>
+        ) : null}
+        {review.candidate.skillBody ? (
+          <>
+            <p className="managed-skill-review-body-label">{t.settings.skills.managedSkillBodyLabel}</p>
+            <pre className="managed-skill-diff">{review.candidate.skillBody}</pre>
+            {review.candidate.skillBodyTruncated ? (
+              <p className="managed-skill-review-truncated">{t.settings.skills.managedSkillBodyTooLargeToInstall}</p>
+            ) : null}
+          </>
+        ) : null}
+        <ManagedSkillDialogError error={error} />
+      </div>
       <div className="confirm-dialog-actions">
         <Button disabled={busy} onClick={onCancel} variant="ghost">{t.dialog.cancel}</Button>
         <Button disabled={busy || review.candidate.skillBodyTruncated === true} onClick={onInstall} variant="primary">
@@ -373,18 +336,20 @@ function InstallReviewDialog({
   );
 }
 
-function UpdatePreviewDialog({
+export function UpdatePreviewDialog({
   busy,
   error,
   onApply,
   onCancel,
   preview,
+  skillBody,
 }: {
   busy: boolean;
   error: ManagedSkillErrorView | null;
   onApply: () => void;
   onCancel: () => void;
   preview: ManagedSkillUpdatePreviewView;
+  skillBody: string;
 }) {
   const t = useT();
   const titleId = useId();
@@ -397,27 +362,30 @@ function UpdatePreviewDialog({
       surfaceClassName="managed-skill-dialog managed-skill-update-dialog"
     >
       <h2 className="confirm-dialog-title" id={titleId}>{t.settings.skills.managedUpdateTitle}</h2>
-      <ManagedSkillDetails
-        commit={`${shortHash(preview.current.commit)} -> ${shortHash(preview.candidate.commit)}`}
-        compatibility={preview.compatibility.declaredRange ?? t.settings.skills.managedCompatibilityUnknown}
-        contentHash={`${shortHash(preview.current.contentHash)} -> ${shortHash(preview.candidate.contentHash)}`}
-        repository={preview.repository}
-        scripts={preview.scripts}
-        subdirectory={preview.subdirectory}
-        distribution={preview.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
-        version={`${preview.current.version ?? t.settings.skills.managedCompatibilityUnknown} -> ${preview.candidate.version ?? t.settings.skills.managedCompatibilityUnknown}`}
-      />
-      <div className="managed-skill-changed-paths">
-        <span>{t.settings.skills.managedChangedFiles}</span>
-        <span>{preview.changedPaths.join(', ') || t.settings.skills.managedNoFileChanges}</span>
+      <div className="managed-skill-review-content">
+        <pre className="managed-skill-diff">{skillBody}</pre>
+        <ManagedSkillDetails
+          commit={`${shortHash(preview.current.commit)} -> ${shortHash(preview.candidate.commit)}`}
+          compatibility={preview.compatibility.declaredRange ?? t.settings.skills.managedCompatibilityUnknown}
+          contentHash={`${shortHash(preview.current.contentHash)} -> ${shortHash(preview.candidate.contentHash)}`}
+          repository={preview.repository}
+          scripts={preview.scripts}
+          subdirectory={preview.subdirectory}
+          distribution={preview.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
+          version={`${preview.current.version ?? t.settings.skills.managedCompatibilityUnknown} -> ${preview.candidate.version ?? t.settings.skills.managedCompatibilityUnknown}`}
+        />
+        <div className="managed-skill-changed-paths">
+          <span>{t.settings.skills.managedChangedFiles}</span>
+          <span>{preview.changedPaths.join(', ') || t.settings.skills.managedNoFileChanges}</span>
+        </div>
+        <pre className="managed-skill-diff">{preview.skillDiff}</pre>
+        {/* `diffTruncated` was produced and never read, so a review gate that exists
+            to let the user consent to specific bytes could silently hide the rest. */}
+        {preview.diffTruncated ? (
+          <p className="managed-skill-review-truncated">{t.settings.skills.managedSkillBodyTruncated}</p>
+        ) : null}
+        <ManagedSkillDialogError error={error} />
       </div>
-      <pre className="managed-skill-diff">{preview.skillDiff}</pre>
-      {/* `diffTruncated` was produced and never read, so a review gate that exists
-          to let the user consent to specific bytes could silently hide the rest. */}
-      {preview.diffTruncated ? (
-        <p className="managed-skill-review-truncated">{t.settings.skills.managedSkillBodyTruncated}</p>
-      ) : null}
-      <ManagedSkillDialogError error={error} />
       <div className="confirm-dialog-actions">
         <Button disabled={busy} onClick={onCancel} variant="ghost">{t.dialog.cancel}</Button>
         <Button disabled={busy} onClick={onApply} variant="primary">
@@ -470,7 +438,7 @@ function ManagedSkillDetails({
   );
 }
 
-function ManagedSkillActionDialog({
+export function ManagedSkillActionDialog({
   action,
   busy,
   error,
@@ -506,18 +474,20 @@ function ManagedSkillActionDialog({
       surfaceClassName="managed-skill-dialog"
     >
       <h2 className="confirm-dialog-title" id={titleId}>{title}</h2>
-      <p className="confirm-dialog-message">{message}</p>
-      <ManagedSkillDetails
-        commit={version?.commit ?? action.skill.active.commit}
-        compatibility={version?.compatibility?.declaredRange ?? action.skill.compatibility.declaredRange ?? t.settings.skills.managedCompatibilityUnknown}
-        contentHash={version?.contentHash ?? action.skill.active.contentHash}
-        repository={action.skill.repository}
-        scripts={version?.scripts ?? action.skill.scripts}
-        subdirectory={action.skill.subdirectory}
-        distribution={action.skill.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
-        version={version?.version}
-      />
-      <ManagedSkillDialogError error={error} />
+      <div className="managed-skill-review-content">
+        <p className="confirm-dialog-message">{message}</p>
+        <ManagedSkillDetails
+          commit={version?.commit ?? action.skill.active.commit}
+          compatibility={version?.compatibility?.declaredRange ?? action.skill.compatibility.declaredRange ?? t.settings.skills.managedCompatibilityUnknown}
+          contentHash={version?.contentHash ?? action.skill.active.contentHash}
+          repository={action.skill.repository}
+          scripts={version?.scripts ?? action.skill.scripts}
+          subdirectory={action.skill.subdirectory}
+          distribution={action.skill.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
+          version={version?.version}
+        />
+        <ManagedSkillDialogError error={error} />
+      </div>
       <div className="confirm-dialog-actions">
         <Button disabled={busy} onClick={onCancel} ref={cancelRef} variant="ghost">{t.dialog.cancel}</Button>
         <Button
@@ -570,7 +540,7 @@ export function managedSkillAttentionLabel(
 ): string | undefined {
   // Enabled/disabled is already stated by the adjacent switch. Only states that
   // need attention earn a chip, so the two representations cannot contradict.
-  if (skill.status === 'installed-disabled' || skill.status === 'enabled') return undefined;
+  if (skill.status === 'installed') return undefined;
   if (skill.status === 'update-available') return t.settings.skills.managedStatusUpdate;
   if (skill.status === 'modified') return t.settings.skills.managedStatusModified;
   return t.settings.skills.managedStatusFailure;
@@ -705,6 +675,19 @@ export function managedSkillErrorMessage(error: ManagedSkillErrorView, t: Return
     case 'update_failed':
     case 'unexpected_error':
       message = t.settings.skills.managedErrorUnexpected;
+      break;
+    case 'cancelled':
+      message = t.settings.skills.managedErrorCancelled;
+      break;
+    case 'review_expired':
+      message = t.settings.skills.managedErrorReviewExpired;
+      break;
+    case 'interaction_unavailable':
+      message = t.settings.skills.managedErrorInteractionUnavailable;
+      break;
+    case 'operation_unavailable':
+    case 'undo_unavailable':
+      message = t.settings.skills.managedErrorOperationUnavailable;
       break;
   }
   return error.detail ? `${message} (${error.detail})` : message;

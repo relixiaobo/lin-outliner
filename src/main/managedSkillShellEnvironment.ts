@@ -22,7 +22,7 @@ export interface ManagedSkillShellEnvironmentContributor {
 }
 
 export interface ManagedSkillShellEnvironmentRegistryOptions {
-  activeSkillIds: () => Promise<ReadonlySet<string>>;
+  activeSkillIds: (threadId: string, turnId: string) => Promise<ReadonlySet<string>>;
   contributors: readonly ManagedSkillShellEnvironmentContributor[];
   outputRootBoundary: string;
   onError?: (message: string, error: unknown) => void;
@@ -39,7 +39,7 @@ interface CachedTurnEnvironment {
  * Contributor failures are isolated so an optional integration cannot disable Bash.
  */
 export class ManagedSkillShellEnvironmentRegistry {
-  private readonly activeSkillIds: () => Promise<ReadonlySet<string>>;
+  private readonly activeSkillIds: ManagedSkillShellEnvironmentRegistryOptions['activeSkillIds'];
   private readonly contributors: readonly ManagedSkillShellEnvironmentContributor[];
   private readonly outputRootBoundary: string;
   private readonly onError: (message: string, error: unknown) => void;
@@ -67,7 +67,7 @@ export class ManagedSkillShellEnvironmentRegistry {
     if (!turnEnvironment) {
       turnEnvironment = {
         threadId,
-        activeSkillIds: this.loadActiveSkillIds(),
+        activeSkillIds: this.loadActiveSkillIds(threadId, turnId),
         executionEnvironments: new Map(),
       };
       this.turnEnvironments.set(turnId, turnEnvironment);
@@ -94,9 +94,9 @@ export class ManagedSkillShellEnvironmentRegistry {
     this.turnEnvironments.clear();
   }
 
-  private async loadActiveSkillIds(): Promise<ReadonlySet<string>> {
+  private async loadActiveSkillIds(threadId: string, turnId: string): Promise<ReadonlySet<string>> {
     try {
-      return new Set(await this.activeSkillIds());
+      return new Set(await this.activeSkillIds(threadId, turnId));
     } catch (error) {
       this.onError('[managed-skills] active Skill lookup failed; continuing without managed shell environment', error);
       return new Set();

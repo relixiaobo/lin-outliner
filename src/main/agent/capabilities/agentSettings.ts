@@ -431,46 +431,18 @@ export async function getProviderRuntimeConfig(
 
 export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInput) {
   const current = await getAgentRuntimeSettings();
-  const sourceBindings = input.additionalSkillSourceBindings ?? (
-    input.additionalSkillDirectories === undefined
-      ? undefined
-      : input.additionalSkillDirectories.map((sourcePath) => ({
-        path: sourcePath,
-        mode: current.additionalSkillSourceModes[sourcePath] ?? 'container',
-      }))
-  );
   const next = normalizeAgentRuntimeSettings({
     ...current,
     ...input,
-    ...(sourceBindings === undefined ? {} : {
-      additionalSkillDirectories: sourceBindings.map((source) => source.path),
-      additionalSkillSourceBindings: sourceBindings,
-      additionalSkillSourceModes: Object.fromEntries(sourceBindings.map((source) => [source.path, source.mode])),
-    }),
   });
   if (
-    input.additionalSkillDirectories !== undefined
-    || input.additionalSkillSourceBindings !== undefined
-    || input.disabledSkills !== undefined
-    || input.disabledTools !== undefined
+    input.disabledTools !== undefined
     || input.providerTimeoutMs !== undefined
     || input.providerMaxRetries !== undefined
     || input.providerMaxRetryDelayMs !== undefined
     || input.providerCacheRetention !== undefined
   ) {
     const updates: { path: readonly string[]; value: unknown }[] = [];
-    if (input.disabledSkills !== undefined) {
-      updates.push({ path: ['agent', 'skills', 'disabled'], value: next.disabledSkills });
-    }
-    if (input.additionalSkillDirectories !== undefined || input.additionalSkillSourceBindings !== undefined) {
-      updates.push({
-        path: ['agent', 'skills', 'sources'],
-        value: next.additionalSkillDirectories.map((sourcePath) => ({
-          path: sourcePath,
-          mode: next.additionalSkillSourceModes[sourcePath] ?? 'container',
-        } satisfies AgentSkillSourceBinding)),
-      });
-    }
     if (input.disabledTools !== undefined) {
       updates.push({ path: ['agent', 'tools', 'disabled'], value: next.disabledTools });
     }
@@ -860,10 +832,11 @@ async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Pr
   const availableProviders = await getAvailableProviders(file.providers);
   const availableProviderById = new Map(availableProviders.map((provider) => [provider.providerId, provider]));
   const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  const { additionalSkillDirectories: _directories, additionalSkillSourceModes: _modes, disabledSkills: _disabled, ...agent } = await getAgentRuntimeSettings();
   return {
     activeProviderId: file.activeProviderId,
     defaultModel: preferences.models.default,
-    agent: await getAgentRuntimeSettings(),
+    agent,
     imageGeneration: normalizeImageGenerationSettings(file.imageGeneration),
     providers: await Promise.all(file.providers.map(async (provider): Promise<AgentProviderConfigView> => {
       const catalogProvider = availableProviderById.get(provider.providerId);

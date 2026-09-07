@@ -25,14 +25,23 @@ change Settings or capability blocks, clear user-stop provenance, or turn a
 denied operation into an allowed one. The root remains responsible for
 surfacing blocked needs through the ordinary product flow.
 
-That extends to Skills. There is no per-Skill ratification gate: a Skill does not
-have to be accepted before the model may invoke it, and installing one enables it.
-An accept-before-use step is an approval policy by another name. For a
-user-initiated third-party install, consent is given once in the install review,
-which shows what the Skill tells the model. A named product-default managed Skill
-may instead be acquired and enabled by product policy as specified in
-[`agent-skills.md`](agent-skills.md). Either acquisition path executes nothing,
-but enabling the Skill puts its text into the agent's context.
+That extends to Skills. There is no per-Skill accept-before-use gate. Human and
+root Agent lifecycle requests use the same domain review for installation,
+update, rollback, and uninstall; this confirms exact content or destructive
+intent, not a new execution permission policy. The model cannot submit an
+approval or replace the native interaction with `request_user_input`.
+A named product-default managed Skill may instead be acquired by the declared
+seed/opt-out policy in [`agent-skills.md`](agent-skills.md). Acquisition executes
+nothing and never writes preferences. A new identity is enabled by default;
+an explicitly disabled identity stays disabled, including after reinstall.
+
+`skill_inspect` and `skill_manage` are independently admitted root-only tools.
+The lifecycle owner rechecks selection, global disablement, active Turn, and
+operation-specific action blocks after review and before commit. Local undo
+also checks file-write blocks against a Host-resolved physical target. A
+delegated caller cannot reach this facade through a dynamic factory bypass.
+Without a usable review window, reviewed operations return unavailable rather
+than approving silently. Invocation still requires the independent `skill` gate.
 
 Default availability does not widen execution authority. Browser Pilot remains
 subject to the effective Configuration Profile and Skill ceiling, the

@@ -102,6 +102,12 @@ Agent Core. It is a contract checklist, not project status.
 - Treat historical titles, snippets, messages, activity summaries, file labels,
   and bounded tool output as untrusted quoted context. A Thread marker, cursor, or
   citation key is identity or lookup state, never authority.
+- Keep Skill lifecycle operations in the shared domain owner reached by
+  `skill_inspect` / `skill_manage` and human Library IPC. Preferences remain
+  file-only; managed records must not gain an enable flag. Recheck exact target,
+  current root Turn authority, and operation-specific blocks at delayed commit.
+  Keep sender-bound human review distinct from permission policy and separate
+  saved content, observed invocation availability, and runtime refresh results.
 
 ## Extension Contract
 
@@ -175,6 +181,12 @@ Agent Core. It is a contract checklist, not project status.
   capability change cannot be deferred to preserve a prefix.
 - Add protocol codec and invalid-state tests.
 - Add lifecycle and restart tests for persistent behavior.
+- Exercise the complete Skill lifecycle through a provider-driven root Turn
+  with real stores, and the real native review through Electron. Cover absent,
+  disabled, blocked, and delegated tools; cancellation, caller loss, expiry,
+  forged decisions, competing reviews, revoked authority, and cross-runtime
+  hash-bound undo. Prove that installation preserves disabled identities and
+  never writes configuration or bypasses the invocation ceiling.
 - For Tool Tasks, test exact stdin, queue/lease recovery, process-group stop,
   quiescent receipt races, artifact settlement, output limits, retention,
   storage pressure, owner deletion, exactly-once delivery, and source/packaged

@@ -125,9 +125,11 @@
   display: grid;
   gap: 0;
   margin: var(--space-5) 0 0;
+  min-width: 0;
 }
 
 .managed-skill-details > div {
+  min-width: 0;
   display: grid;
   grid-template-columns: minmax(92px, 0.35fr) minmax(0, 1fr);
   gap: var(--space-4);
@@ -153,6 +155,7 @@
   font-size: var(--font-ui-2xs);
   line-height: var(--line-meta);
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .managed-skill-changed-paths {
@@ -206,9 +209,8 @@
   }
 }
 
-/* Install review: the description and the SKILL.md body the user is consenting
-   to. Installing enables, and enabling is what puts this text in front of the
-   model, so the review has to show it rather than a file list. */
+/* Installation preserves configured availability, but a fresh identity is
+   eligible by default, so review the instructions rather than just a file list. */
 .managed-skill-review-description {
   margin: 0;
   font-size: var(--font-meta);
@@ -225,4 +227,38 @@
   margin: 0;
   font-size: var(--font-meta);
   color: var(--text-secondary);
+}
+
+/* A native child window already provides the frame and elevation. Keep its
+   actions outside the scrolling review, including at the smallest window size. */
+.skill-review-window .confirm-dialog-backdrop {
+  padding: 0;
+  background: var(--bg-elevated);
+}
+
+.skill-review-window .managed-skill-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+}
+
+.skill-review-window .managed-skill-dialog:focus-visible {
+  box-shadow: var(--focus-ring-shadow-inset);
+}
+
+.skill-review-window .confirm-dialog-title {
+  overflow-wrap: anywhere;
+}
+
+.skill-review-window .managed-skill-review-content {
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }

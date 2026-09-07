@@ -11,6 +11,7 @@ import {
   type WebContents,
 } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { SKILL_REVIEW_PRELOAD_ARG } from '../../core/agent/skillOperations';
 import { join } from 'node:path';
 import type { EffectStep } from '../../core/actions/bindings';
 import { externalPageLabel } from '../../core/actions/registry';
@@ -83,6 +84,7 @@ import { AppUpdateService } from '../appUpdateService';
 import { AppUpdateStore } from '../appUpdateStore';
 import { captureExternalContext } from '../context/contextCapture';
 import { getFrontmostApp, type FrontmostApp } from '../context/providers/browser';
+import { createSkillReviewHost } from './skillReviewHost';
 import { isAccessibilityTrusted, promptAccessibility } from '../context/nativeBrowserTab';
 import {
   createLauncherWindow,
@@ -121,6 +123,9 @@ export interface WindowApplicationHostOptions {
 }
 
 export interface WindowApplicationHost {
+  reviewSkillOperation: import('../hostDomain/skillLifecycle').ReviewSkillOperation;
+  readSkillReview(event: IpcMainInvokeEvent): import('../../core/agent/skillOperations').SkillReview;
+  decideSkillReview(event: IpcMainInvokeEvent, decision: unknown): void;
   readonly windows: {
     main(): BrowserWindow | null;
     settings(): BrowserWindow | null;
@@ -612,6 +617,8 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     height: number;
     parent?: BrowserWindow;
     query: Record<string, string>;
+    skillReview?: boolean;
+    modal?: boolean;
   }): BrowserWindow => {
     const bounds = liveWindow(config.parent)?.getBounds();
     const target = new BrowserWindow({
@@ -623,7 +630,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         y: Math.round(bounds.y + Math.max(48, (bounds.height - config.height) / 2)),
       } : {}),
       parent: config.parent,
-      modal: Boolean(config.parent),
+      modal: config.modal ?? Boolean(config.parent),
       show: false,
       resizable: false,
       minimizable: false,
@@ -632,13 +639,14 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       backgroundColor: prePaintBackgroundColor(),
       frame: false,
       webPreferences: {
+        ...(config.skillReview ? { additionalArguments: [SKILL_REVIEW_PRELOAD_ARG] } : {}),
         preload: join(options.moduleDir, '../preload/index.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
       },
     });
-    registerRendererCapabilities(target.webContents, APP_RENDERER_CAPABILITIES);
+    if (!config.skillReview) registerRendererCapabilities(target.webContents, APP_RENDERER_CAPABILITIES);
     options.hardenWebContents(target.webContents);
     attachNativeContextMenu(target.webContents);
     applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
@@ -649,6 +657,15 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     loadRendererSurface(target, config.query);
     return target;
   };
+
+  const skillReviews = createSkillReviewHost(({ caller }) => {
+    if (released) throw new Error('Window Host is unavailable.');
+    const parent = caller.origin.kind === 'window'
+      ? BrowserWindow.fromId(caller.origin.windowId) : liveWindow(mainWindow);
+    if (!parent || parent.isDestroyed()) throw new Error('The originating window is unavailable.');
+    return createConfigChildWindow({ title: 'Skill Review', width: 760, height: 700,
+      parent, modal: false, skillReview: true, query: { [WINDOW_SURFACE_QUERY_PARAM]: 'skill-review' } });
+  });
 
   const openProviderConfig = (providerId: string, mode: ProviderConfigMode): void => {
     const current = liveWindow(providerConfigWindow);
@@ -787,6 +804,9 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
   });
 
   const host: WindowApplicationHost = {
+    reviewSkillOperation: skillReviews.review,
+    readSkillReview: skillReviews.read,
+    decideSkillReview: skillReviews.decide,
     windows: {
       main: () => liveWindow(mainWindow) ?? null,
       settings: () => liveWindow(settingsWindow) ?? null,
@@ -940,6 +960,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     release: () => {
       if (released) return;
       released = true;
+      skillReviews.release();
       if (app.isReady()) unregisterLauncherHotkeys();
       for (const release of releases.splice(0).reverse()) release();
       for (const resolve of pendingAmbientSeeds.values()) resolve(null);

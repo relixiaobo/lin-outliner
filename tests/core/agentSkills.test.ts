@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { undoSkillForTest } from '../fixtures/skillUndo';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, realpath, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
@@ -159,11 +160,11 @@ describe('skill provenance and undo', () => {
     const afterEdit = await runtime.getSkill('undone');
     expect(afterEdit?.canUndoLastAgentEdit).toBe(true);
 
-    await runtime.undoLastAgentSkillEdit('undone');
+    await undoSkillForTest(runtime, 'undone');
     const restored = await runtime.getSkill('undone');
     expect(restored?.body).toContain('The user-authored original.');
     expect(restored?.canUndoLastAgentEdit).toBe(false);
-    await expect(runtime.undoLastAgentSkillEdit('undone')).rejects.toThrow('no recorded previous version');
+    await expect(undoSkillForTest(runtime, 'undone')).rejects.toThrow('no unchanged Agent edit');
   });
 
   test('undo is refused once a user hand-edit follows the agent write', async () => {
@@ -185,7 +186,7 @@ describe('skill provenance and undo', () => {
     await runtime.notifySkillContentWritten([skillFile]);
     const afterHandEdit = await runtime.getSkill('guard-undo');
     expect(afterHandEdit?.canUndoLastAgentEdit).toBe(false);
-    await expect(runtime.undoLastAgentSkillEdit('guard-undo')).rejects.toThrow('edited after the last agent write');
+    await expect(undoSkillForTest(runtime, 'guard-undo')).rejects.toThrow('no unchanged Agent edit');
     expect((await runtime.getSkill('guard-undo'))?.body).toContain('hand-tuned');
 
     // A later agent write re-arms undo with the user's bytes as the new previous
@@ -195,7 +196,7 @@ describe('skill provenance and undo', () => {
     await runtime.recordAgentSkillWrite(skillFile, skillContentHash(repatched), { hash: skillContentHash(handEdited), content: handEdited });
     await runtime.notifySkillContentWritten([skillFile]);
     expect((await runtime.getSkill('guard-undo'))?.canUndoLastAgentEdit).toBe(true);
-    await runtime.undoLastAgentSkillEdit('guard-undo');
+    await undoSkillForTest(runtime, 'guard-undo');
     const restored = await runtime.getSkill('guard-undo');
     expect(restored?.body).toContain('hand-tuned');
   });
@@ -213,7 +214,7 @@ describe('skill provenance and undo', () => {
     await runtime.recordAgentSkillWrite(skillFile, skillContentHash(v3), { hash: skillContentHash(v2), content: v2 });
     await runtime.notifySkillContentWritten([skillFile]);
 
-    await runtime.undoLastAgentSkillEdit('slot');
+    await undoSkillForTest(runtime, 'slot');
     const restored = await runtime.getSkill('slot');
     expect(restored?.body).toContain('Version two.');
     expect(restored?.body).not.toContain('Version one.');
@@ -313,7 +314,7 @@ describe('skill provenance and undo', () => {
     expect(before.entries.find((entry) => entry.name === 'shared-undo'))
       .toMatchObject({ contentHash: skillContentHash(secondContent) });
 
-    await settingsRuntime.undoLastAgentSkillEdit('shared-undo');
+    await undoSkillForTest(settingsRuntime, 'shared-undo');
     await conversationRuntime.refreshProvenanceRecords();
     expect(acknowledgePendingCatalogRefresh(conversationRuntime)).toBe(true);
     const after = await conversationRuntime.buildSkillCatalogSnapshot();
@@ -340,7 +341,7 @@ describe('skill provenance and undo', () => {
     await runtime.recordAgentSkillWrite(skillFile, skillContentHash(v2), { hash: skillContentHash(v1), content: v1 });
     await runtime.notifySkillContentWritten([skillFile]);
 
-    await runtime.undoLastAgentSkillEdit('agent-born');
+    await undoSkillForTest(runtime, 'agent-born');
     const restored = await runtime.getSkill('agent-born');
     expect(restored?.body).toContain('Agent version one.');
   });

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { SKILL_LIBRARY_CHANGED_CHANNEL, SKILL_REVIEW_DECIDE_CHANNEL, SKILL_REVIEW_GET_CHANNEL, SKILL_REVIEW_PRELOAD_ARG } from '../core/agent/skillOperations';
 import {
   STARTUP_GET_CHANNEL, STARTUP_QUIT_CHANNEL, STARTUP_RETRY_CHANNEL, STARTUP_STATE_CHANNEL,
   type StartupState,
@@ -305,6 +306,15 @@ function readInitialUrlPageTranslationPreferences(): UrlPageTranslationPreferenc
 }
 
 const api = {
+  skillReview: {
+    get: () => ipcRenderer.invoke(SKILL_REVIEW_GET_CHANNEL) as Promise<import('../core/agent/skillOperations').SkillReview>,
+    decide: (approved: boolean) => ipcRenderer.invoke(SKILL_REVIEW_DECIDE_CHANNEL, approved) as Promise<void>,
+  },
+  onSkillLibraryChanged: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on(SKILL_LIBRARY_CHANGED_CHANNEL, handler);
+    return () => { ipcRenderer.removeListener(SKILL_LIBRARY_CHANGED_CHANNEL, handler); };
+  },
   startup: {
     get: () => ipcRenderer.invoke(STARTUP_GET_CHANNEL) as Promise<StartupState>,
     retry: () => ipcRenderer.invoke(STARTUP_RETRY_CHANNEL) as Promise<StartupState>,
@@ -601,6 +611,10 @@ function isLauncherWindow(): boolean {
 // One exposure per window. The launcher gets its own narrow API and never the
 // generic command surface; the page cannot re-run this file, so it cannot
 // reach what was not exposed to it.
-contextBridge.exposeInMainWorld('lin', isLauncherWindow() ? buildLauncherPreloadApi() : api);
+contextBridge.exposeInMainWorld('lin', isLauncherWindow() ? buildLauncherPreloadApi()
+  : process.argv.includes(SKILL_REVIEW_PRELOAD_ARG) ? {
+      skillReview: api.skillReview, initialLanguage: api.initialLanguage,
+      onLanguageChanged: api.onLanguageChanged, reportRendererError: api.reportRendererError,
+    } : api);
 
 export type LinApi = typeof api;

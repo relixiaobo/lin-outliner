@@ -28,6 +28,8 @@ import { AutomationScheduler } from '../agent/automations/AutomationScheduler';
 import { AutomationService } from '../agent/automations/AutomationService';
 import { AutomationStore } from '../agent/automations/AutomationStore';
 import { createAutomationTool } from '../agent/automations/AutomationTool';
+import { createSkillLifecycleTools } from '../agent/capabilities/skillLifecycleTools';
+import type { SkillOperationCaller } from './skillLifecycle';
 import { AutomationWorktree } from '../agent/automations/AutomationWorktree';
 import { MemoryControlStore } from '../agent/extensions/memory/MemoryControlStore';
 import { MemoryExtension } from '../agent/extensions/memory/MemoryExtension';
@@ -80,6 +82,8 @@ export interface AgentHostComposition {
 }
 
 export interface AgentHostOptions {
+  readonly reviewSkillOperation: import('./skillLifecycle').ReviewSkillOperation;
+  readonly onSkillLibraryChanged: () => void;
   readonly userDataDir: string;
   readonly scratchRoot: string;
   readonly defaultCwd: string;
@@ -228,18 +232,13 @@ export interface AgentSkillsCapability {
   }): void;
   list(userInvocableOnly: boolean): ReturnType<ReturnType<typeof createManagedSkillsHost>['listPrimarySkills']>;
   listCurationCandidates(): ReturnType<ReturnType<typeof createManagedSkillsHost>['listPrimaryCurationCandidates']>;
-  undoAgentEdit(skillName: string): ReturnType<ReturnType<typeof createManagedSkillsHost>['undoPrimarySkillEdit']>;
+  manage(input: unknown, caller: Pick<SkillOperationCaller, 'origin' | 'authorize' | 'signal'>): Promise<unknown>;
   readonly catalog: {
     load: ManagedSkillService['loadCatalog'];
     discover: ManagedSkillService['discover'];
-    install: ManagedSkillService['install'];
     list: ManagedSkillService['list'];
     checkUpdates: ManagedSkillService['checkUpdates'];
     previewUpdate: ManagedSkillService['previewUpdate'];
-    applyUpdate: ManagedSkillService['applyUpdate'];
-    setEnabled: ManagedSkillService['setEnabled'];
-    rollback: ManagedSkillService['rollback'];
-    uninstall: ManagedSkillService['uninstall'];
   };
 }
 
@@ -250,6 +249,8 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     scratchRoot: options.scratchRoot,
     appVersion: options.appVersion,
     loadRuntimeSettings: options.loadRuntimeSettings,
+    reviewSkillOperation: options.reviewSkillOperation,
+    onLibraryChanged: options.onSkillLibraryChanged,
   });
   const extensions = new ExtensionRegistry();
   const memoryControl = new MemoryControlStore(join(options.userDataDir, 'agent', 'memories.sqlite'));
@@ -553,7 +554,13 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       context,
       localWorkspaceForContext(context),
     ),
-    dynamicTools: () => [createAutomationTool(automationService)],
+    dynamicTools: (context, authorize) => [createAutomationTool(automationService),
+      ...createSkillLifecycleTools(managedSkills.lifecycle, (itemId, signal) => ({
+        key: `agent:${context.thread.id}:${context.turn.id}`,
+        origin: { kind: 'agent', threadId: context.thread.id, turnId: context.turn.id, itemId },
+        runtime: managedSkills.runtimeForTurn(context.turn.id), authorize, signal,
+      })),
+    ],
     delegationPolicy: (threadId) => {
       const session = delegationStore.readSession(threadId);
       return session ? { profile: session.policy.profile, access: session.policy.access } : null;
@@ -623,7 +630,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       updateRuntimeSettings: (settings) => managedSkills.updateRuntimeSettings(settings),
       list: (userInvocableOnly) => managedSkills.listPrimarySkills(userInvocableOnly),
       listCurationCandidates: () => managedSkills.listPrimaryCurationCandidates(),
-      undoAgentEdit: (skillName) => managedSkills.undoPrimarySkillEdit(skillName),
+      manage: (input, caller) => managedSkills.manageForWindow(input, caller),
       catalog: managedSkills.catalog,
     },
     delegationRunners: async () => {

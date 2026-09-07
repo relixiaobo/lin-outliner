@@ -82,6 +82,8 @@ export interface AgentCapabilityEvaluationInput {
   args: unknown;
   /** Resolved runtime contract actions for extension and MCP tools. */
   actionKinds?: readonly AgentToolActionKind[];
+  /** Host-resolved target, never read from model arguments. */
+  fileWritePath?: string;
   policy: AgentCapabilityPolicyInput;
 }
 
@@ -100,6 +102,7 @@ export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInpu
   const descriptorInput = {
     toolName,
     args: input.args,
+    fileWritePath: input.fileWritePath,
     ...(input.actionKinds === undefined ? {} : { actionKinds: input.actionKinds }),
     policy,
     access,
@@ -136,11 +139,28 @@ export function deriveAgentToolActionDescriptors(input: {
   toolName: string;
   args: unknown;
   actionKinds?: readonly AgentToolActionKind[];
+  fileWritePath?: string;
   policy: AgentCapabilityPolicy;
   access: AgentCapabilityAccess;
 }): ToolActionDescriptor[] {
   const toolName = normalizeToolName(input.toolName);
   if (toolName === 'bash') return deriveBashCapability(getStringArg(input.args, 'command'), input.args).descriptors;
+  if (toolName === 'skill_inspect' || toolName === 'skill_manage') {
+    const request = getUnknownArg(input.args, 'request');
+    const operation = getStringArg(request, 'operation') ?? '';
+    const result = [simpleDescriptor(toolName, input.args,
+      toolName === 'skill_inspect' ? 'agent.skill.inspect' : 'agent.skill.manage',
+      'Skill lifecycle', `Skill ${operation}.`)];
+    if (['catalog', 'discover', 'check_updates', 'preview_update', 'install'].includes(operation)) {
+      result.push(descriptor(toolName, 'web.fetch', {
+        accessScope: 'external_system', title: 'Skill source read', summary: 'Fetch reviewed Skill source data.', consequence: 'Read public source content without executing it.',
+      }));
+    }
+    if (operation === 'undo_edit') {
+      result.push(derivePathToolActionDescriptor(toolName, { file_path: input.fileWritePath }, input.policy, 'write', 'file_path'));
+    }
+    return result;
+  }
   if (toolName === 'task_stop') {
     return [
       descriptor(toolName, 'task.stop', {

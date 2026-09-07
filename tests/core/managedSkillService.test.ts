@@ -55,8 +55,8 @@ describe('managed skill service', () => {
     const [installed] = await service.list();
     expect(installed).toMatchObject({
       id: 'browser-pilot',
-      enabled: true,
-      status: 'enabled',
+
+      status: 'installed',
       trackingRef: 'skill-stable',
       active: { commit: manifest.initialCommit, contentHash: skill.contentHash },
     });
@@ -75,8 +75,9 @@ describe('managed skill service', () => {
     await store.initialize();
     await store.installValidatedContent(manifest.id, skill);
     await store.replaceIndex({
-      schemaVersion: 2,
+      schemaVersion: 3,
       skills: [{
+        revision: 'fixture-revision',
         id: manifest.id,
         name: manifest.name,
         origin: {
@@ -87,7 +88,7 @@ describe('managed skill service', () => {
           trackingRef: 'main',
         },
         recommended: false,
-        enabled: false,
+
         active: storedVersionFromValidated(manifest.initialCommit, 100, skill),
       }],
     });
@@ -125,7 +126,7 @@ describe('managed skill service', () => {
 
     expect(await service.uninstall({
       skillId: installed!.id,
-      expectedActiveHash: installed!.active.contentHash,
+      expectedRevision: installed!.revision, expectedActiveHash: installed!.active.contentHash,
     })).toEqual([]);
     expect(await store.hasDefaultOptOut(manifest.id)).toBe(true);
 
@@ -174,7 +175,7 @@ describe('managed skill service', () => {
 
     expect(await service.uninstall({
       skillId: installed.id,
-      expectedActiveHash: installed.active.contentHash,
+      expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash,
     })).toEqual([]);
     expect(await store.hasDefaultOptOut(manifest.id)).toBe(true);
 
@@ -240,7 +241,7 @@ describe('managed skill service', () => {
 
     await expect(service.uninstall({
       skillId: installed!.id,
-      expectedActiveHash: installed!.active.contentHash,
+      expectedRevision: installed!.revision, expectedActiveHash: installed!.active.contentHash,
     })).rejects.toThrow('opt-out storage failed');
     expect((await store.readIndex()).skills).toHaveLength(1);
   });
@@ -294,7 +295,7 @@ describe('managed skill service', () => {
     expect(github.downloadCalls).toBe(0);
   });
 
-  test('installs enabled, toggles off and on, discovers updates without activation, then applies and rolls back', async () => {
+  test('installs without a preference writer, discovers updates, then applies and rolls back', async () => {
     const root = await temporaryRoot();
     const github = new FakeGitHub();
     let changes = 0;
@@ -313,32 +314,13 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    // Installing enables. Leaving it off made the model unable to invoke a Skill
-    // the user had just chosen, with the only explanation rendered behind the
-    // dialog that was still open; the consent moment is the review, which now
-    // shows the SKILL.md body rather than a file list.
-    expect(installed).toMatchObject({ status: 'enabled', enabled: true });
+    expect(installed).toMatchObject({ status: 'installed' });
+    expect(installed).not.toHaveProperty('installed');
     expect((await service.activeRuntimeRoots())[0]).toMatchObject({
       id: installed.id,
       contentHash: installed.active.contentHash,
     });
 
-    // Turning it off and on again still works, and is still a per-record flag —
-    // only the default moved.
-    const disabled = await service.setEnabled({
-      skillId: installed.id,
-      enabled: false,
-      expectedActiveHash: installed.active.contentHash,
-    });
-    expect(disabled.status).toBe('installed-disabled');
-    expect(await service.activeRuntimeRoots()).toEqual([]);
-
-    const enabled = await service.setEnabled({
-      skillId: installed.id,
-      enabled: true,
-      expectedActiveHash: installed.active.contentHash,
-    });
-    expect(enabled.status).toBe('enabled');
     await service.assertInvocable(installed.id, installed.active.contentHash);
 
     github.version = 2;
@@ -348,7 +330,7 @@ describe('managed skill service', () => {
 
     const preview = await service.previewUpdate({
       skillId: installed.id,
-      expectedActiveHash: installed.active.contentHash,
+      expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash,
     });
     expect(preview.candidate.commit).toBe('b'.repeat(40));
     expect(preview.candidate.contentHash).not.toBe(installed.active.contentHash);
@@ -357,7 +339,7 @@ describe('managed skill service', () => {
     const updated = await service.applyUpdate({
       skillId: installed.id,
       previewId: preview.id,
-      expectedActiveHash: installed.active.contentHash,
+      expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash,
       expectedCandidateHash: preview.candidate.contentHash,
     });
     expect(updated.active.contentHash).toBe(preview.candidate.contentHash);
@@ -366,7 +348,7 @@ describe('managed skill service', () => {
 
     const rolledBack = await service.rollback({
       skillId: installed.id,
-      expectedActiveHash: updated.active.contentHash,
+      expectedRevision: updated.revision, expectedActiveHash: updated.active.contentHash,
       expectedPreviousHash: installed.active.contentHash,
     });
     expect(rolledBack.active.contentHash).toBe(installed.active.contentHash);
@@ -376,7 +358,7 @@ describe('managed skill service', () => {
     // row offered "Preview update" for exactly the version they backed out of.
     expect(rolledBack.updateCommit).toBeUndefined();
     expect(rolledBack.status).not.toBe('update-available');
-    expect(changes).toBeGreaterThanOrEqual(4);
+    expect(changes).toBeGreaterThanOrEqual(3);
   });
 
   test('keeps installed bytes usable offline and preserves the active version after update failure', async () => {
@@ -393,7 +375,7 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    await service.setEnabled({ skillId: installed.id, enabled: true, expectedActiveHash: installed.active.contentHash });
+
 
     github.offline = true;
     expect((await service.list())[0]?.active.contentHash).toBe(installed.active.contentHash);
@@ -404,7 +386,7 @@ describe('managed skill service', () => {
     // otherwise flag every managed Skill at once, while each row's own diagnostic
     // line stayed deliberately muted. The Skill keeps working and the failure is
     // reported as a diagnostic, not as a status.
-    expect(checked?.status).toBe('enabled');
+    expect(checked?.status).toBe('installed');
     expect(checked?.active.contentHash).toBe(installed.active.contentHash);
     expect(checked?.diagnostic).toEqual({ code: 'unexpected_error' });
   });
@@ -422,11 +404,12 @@ describe('managed skill service', () => {
     const discovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
     store.replaceIndex = async () => { throw new Error('index restoration failed'); };
 
-    await expect(service.install({
+    await service.install({
       discoveryId: discovery.id,
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
-    })).rejects.toThrow('registry refresh failed');
+    });
+    expect(service.runtimeRefresh.state).toBe('failed');
 
     const [persisted] = (await store.readIndex()).skills;
     expect(persisted).toBeDefined();
@@ -458,7 +441,7 @@ describe('managed skill service', () => {
     const staleCheck = service.checkUpdates(installed.id);
     await updateCheckStarted;
 
-    await service.uninstall({ skillId: installed.id, expectedActiveHash: installed.active.contentHash });
+    await service.uninstall({ skillId: installed.id, expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash });
     github.version = 3;
     const rediscovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
     const reinstalled = await service.install({
@@ -492,7 +475,7 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    await original.setEnabled({ skillId: installed.id, enabled: true, expectedActiveHash: installed.active.contentHash });
+
 
     const upgraded = new ManagedSkillService({
       appVersion: '0.2.0',
@@ -502,7 +485,7 @@ describe('managed skill service', () => {
     const [incompatible] = await upgraded.list();
     expect(incompatible).toMatchObject({
       status: 'failed',
-      enabled: true,
+
       compatibility: { status: 'incompatible', appVersion: '0.2.0' },
     });
     expect(incompatible?.diagnostic).toMatchObject({ code: 'incompatible_tenon' });
@@ -511,7 +494,7 @@ describe('managed skill service', () => {
       .rejects.toThrow('not compatible with this Tenon version');
   });
 
-  test('restores an active same-hash version when post-flip registry refresh fails', async () => {
+  test('keeps a committed same-hash update when post-flip registry refresh fails', async () => {
     const root = await temporaryRoot();
     const github = new FakeGitHub();
     github.sameContentUpdate = true;
@@ -530,30 +513,27 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    const enabled = await service.setEnabled({
-      skillId: installed.id,
-      enabled: true,
-      expectedActiveHash: installed.active.contentHash,
-    });
+    const enabled = installed;
     github.version = 2;
     const preview = await service.previewUpdate({
       skillId: enabled.id,
-      expectedActiveHash: enabled.active.contentHash,
+      expectedRevision: enabled.revision, expectedActiveHash: enabled.active.contentHash,
     });
     expect(preview.candidate.contentHash).toBe(enabled.active.contentHash);
 
     rejectRefresh = true;
-    await expect(service.applyUpdate({
+    await service.applyUpdate({
       skillId: enabled.id,
       previewId: preview.id,
-      expectedActiveHash: enabled.active.contentHash,
+      expectedRevision: enabled.revision, expectedActiveHash: enabled.active.contentHash,
       expectedCandidateHash: preview.candidate.contentHash,
-    })).rejects.toThrow('registry refresh failed');
+    });
+    expect(service.runtimeRefresh).toEqual({ state: 'failed', message: 'registry refresh failed' });
     rejectRefresh = false;
 
     const [restored] = await service.list();
     expect(restored?.active).toMatchObject({
-      commit: 'a'.repeat(40),
+      commit: 'b'.repeat(40),
       contentHash: enabled.active.contentHash,
     });
     await service.assertInvocable(enabled.id, enabled.active.contentHash);
@@ -581,17 +561,18 @@ describe('managed skill service', () => {
     github.version = 2;
     const preview = await service.previewUpdate({
       skillId: installed.id,
-      expectedActiveHash: installed.active.contentHash,
+      expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash,
     });
     store.replaceIndex = async () => { throw new Error('index restoration failed'); };
     rejectRefresh = true;
 
-    await expect(service.applyUpdate({
+    await service.applyUpdate({
       skillId: installed.id,
       previewId: preview.id,
-      expectedActiveHash: installed.active.contentHash,
+      expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash,
       expectedCandidateHash: preview.candidate.contentHash,
-    })).rejects.toThrow('registry refresh failed');
+    });
+    expect(service.runtimeRefresh.state).toBe('failed');
 
     const [persisted] = (await store.readIndex()).skills;
     expect(persisted?.active.contentHash).toBe(preview.candidate.contentHash);
@@ -616,10 +597,10 @@ describe('managed skill service', () => {
     github.version = 2;
     const stalePreview = await service.previewUpdate({
       skillId: installed.id,
-      expectedActiveHash: installed.active.contentHash,
+      expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash,
     });
 
-    await service.uninstall({ skillId: installed.id, expectedActiveHash: installed.active.contentHash });
+    await service.uninstall({ skillId: installed.id, expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash });
     github.version = 1;
     const rediscovery = await service.discover({ sourceUrl: 'https://github.com/public/repo' });
     const reinstalled = await service.install({
@@ -632,7 +613,7 @@ describe('managed skill service', () => {
     await expect(service.applyUpdate({
       skillId: reinstalled.id,
       previewId: stalePreview.id,
-      expectedActiveHash: reinstalled.active.contentHash,
+      expectedRevision: reinstalled.revision, expectedActiveHash: reinstalled.active.contentHash,
       expectedCandidateHash: stalePreview.candidate.contentHash,
     })).rejects.toThrow('changed after this update preview');
     expect((await service.list())[0]?.active.commit).toBe('a'.repeat(40));
@@ -653,17 +634,17 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    await service.setEnabled({ skillId: installed.id, enabled: true, expectedActiveHash: installed.active.contentHash });
+
 
     github.version = 2;
     const sameHashPreview = await service.previewUpdate({
       skillId: installed.id,
-      expectedActiveHash: installed.active.contentHash,
+      expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash,
     });
     const sameHash = await service.applyUpdate({
       skillId: installed.id,
       previewId: sameHashPreview.id,
-      expectedActiveHash: installed.active.contentHash,
+      expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash,
       expectedCandidateHash: sameHashPreview.candidate.contentHash,
     });
     expect(sameHash.active).toMatchObject({ commit: 'b'.repeat(40), contentHash: installed.active.contentHash });
@@ -672,19 +653,19 @@ describe('managed skill service', () => {
     github.version = 3;
     const changedPreview = await service.previewUpdate({
       skillId: sameHash.id,
-      expectedActiveHash: sameHash.active.contentHash,
+      expectedRevision: sameHash.revision, expectedActiveHash: sameHash.active.contentHash,
     });
     const changed = await service.applyUpdate({
       skillId: sameHash.id,
       previewId: changedPreview.id,
-      expectedActiveHash: sameHash.active.contentHash,
+      expectedRevision: sameHash.revision, expectedActiveHash: sameHash.active.contentHash,
       expectedCandidateHash: changedPreview.candidate.contentHash,
     });
     expect(changed.previous?.contentHash).toBe(installed.active.contentHash);
 
     const rolledBack = await service.rollback({
       skillId: changed.id,
-      expectedActiveHash: changed.active.contentHash,
+      expectedRevision: changed.revision, expectedActiveHash: changed.active.contentHash,
       expectedPreviousHash: installed.active.contentHash,
     });
     expect(rolledBack.active).toMatchObject({ commit: 'b'.repeat(40), contentHash: installed.active.contentHash });
@@ -705,13 +686,13 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    await service.setEnabled({ skillId: installed.id, enabled: true, expectedActiveHash: installed.active.contentHash });
+
     github.version = 2;
-    const firstPreview = await service.previewUpdate({ skillId: installed.id, expectedActiveHash: installed.active.contentHash });
+    const firstPreview = await service.previewUpdate({ skillId: installed.id, expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash });
     const firstUpdate = await service.applyUpdate({
       skillId: installed.id,
       previewId: firstPreview.id,
-      expectedActiveHash: installed.active.contentHash,
+      expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash,
       expectedCandidateHash: firstPreview.candidate.contentHash,
     });
     const previousFile = path.join(store.contentPath(installed.id, installed.active.contentHash), 'SKILL.md');
@@ -719,11 +700,11 @@ describe('managed skill service', () => {
     await writeFile(previousFile, 'locally modified previous\n', 'utf8');
 
     github.version = 3;
-    const secondPreview = await service.previewUpdate({ skillId: firstUpdate.id, expectedActiveHash: firstUpdate.active.contentHash });
+    const secondPreview = await service.previewUpdate({ skillId: firstUpdate.id, expectedRevision: firstUpdate.revision, expectedActiveHash: firstUpdate.active.contentHash });
     await expect(service.applyUpdate({
       skillId: firstUpdate.id,
       previewId: secondPreview.id,
-      expectedActiveHash: firstUpdate.active.contentHash,
+      expectedRevision: firstUpdate.revision, expectedActiveHash: firstUpdate.active.contentHash,
       expectedCandidateHash: secondPreview.candidate.contentHash,
     })).rejects.toThrow('will not be removed automatically');
 
@@ -767,12 +748,12 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    await service.setEnabled({ skillId: installed.id, enabled: true, expectedActiveHash: installed.active.contentHash });
+
 
     conflict = { source: 'project', location: '/workspace/.agents/skills/demo-skill/SKILL.md' };
     await expect(service.assertInvocable(installed.id, installed.active.contentHash))
       .rejects.toThrow('conflicts with a project skill');
-    expect((await service.list())[0]).toMatchObject({ status: 'failed', enabled: true });
+    expect((await service.list())[0]).toMatchObject({ status: 'failed',  });
   });
 
   test('keeps a modified diagnostic authoritative when a name conflict also appears', async () => {
@@ -880,7 +861,7 @@ describe('managed skill service', () => {
     github.version = 2;
     expect((await service.previewUpdate({
       skillId: installed.id,
-      expectedActiveHash: installed.active.contentHash,
+      expectedRevision: installed.revision, expectedActiveHash: installed.active.contentHash,
     })).candidate.commit).toBe('b'.repeat(40));
     expect((await service.loadCatalog()).entries[0]?.installedSkillId).toBe(installed.id);
   });
@@ -978,11 +959,7 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    await service.setEnabled({
-      skillId: installed.id,
-      enabled: true,
-      expectedActiveHash: installed.active.contentHash,
-    });
+
 
     const window = 6 * 60 * 60 * 1_000;
     checks = 0;
@@ -1023,11 +1000,7 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    await service.setEnabled({
-      skillId: installed.id,
-      enabled: true,
-      expectedActiveHash: installed.active.contentHash,
-    });
+
     const activeBefore = await service.activeRuntimeRoots();
 
     github.offline = true;
@@ -1035,7 +1008,7 @@ describe('managed skill service', () => {
     // Skill exactly as enabled and as invocable as it was (A12).
     const after = await service.checkUpdates(undefined, { throttleMs: 6 * 60 * 60 * 1_000 });
 
-    expect(after[0]?.enabled).toBe(true);
+    expect(after[0]).not.toHaveProperty('enabled');
     expect(after[0]?.diagnostic).toEqual({ code: 'unexpected_error' });
     expect(after[0]?.active.contentHash).toBe(installed.active.contentHash);
     expect(await service.activeRuntimeRoots()).toEqual(activeBefore);
@@ -1066,11 +1039,7 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    await service.setEnabled({
-      skillId: installed.id,
-      enabled: true,
-      expectedActiveHash: installed.active.contentHash,
-    });
+
 
     const window = 6 * 60 * 60 * 1_000;
     github.offline = true;
@@ -1175,11 +1144,7 @@ describe('managed skill service', () => {
       candidateId: discovery.candidates[0]!.id,
       expectedCommit: discovery.resolvedCommit,
     });
-    await service.setEnabled({
-      skillId: installed.id,
-      enabled: true,
-      expectedActiveHash: installed.active.contentHash,
-    });
+
 
     github.offline = true;
     checks = 0;
@@ -1233,6 +1198,7 @@ class DefaultFakeGitHub {
           subdirectory,
           compatibility: this.skill.compatibility,
           scripts: [...this.skill.scripts],
+          skillBody: Buffer.from(this.skill.files.find((file) => file.relativePath === 'SKILL.md')!.bytes).toString('utf8'),
         },
         repositoryTree: [],
       }],
@@ -1294,6 +1260,7 @@ class FakeGitHub {
           subdirectory: 'skills/demo-skill',
           compatibility: skill.compatibility,
           scripts: [],
+          skillBody: Buffer.from(skill.files.find((file) => file.relativePath === 'SKILL.md')!.bytes).toString('utf8'),
           ...(this.truncateDiscovery ? { skillBody: 'partial', skillBodyTruncated: true } : {}),
         },
         repositoryTree: [],

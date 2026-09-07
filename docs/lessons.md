@@ -13,6 +13,19 @@ UI-refactor round), **A11** (batch work resumable by construction), **A12**
 append-into-the-existing-category changelog rule (the 21-duplicate-section
 untangle of 2026-08-03).
 
+## Human review is a presentation boundary, not a mutation credential
+
+PR #644 moved Skill acquisition and destructive operations behind a native
+human review window. The reviewed source, revision, and content hash establish
+what the person saw, but the review result alone cannot authorize a delayed
+commit: the initiating Turn, global capability blocks, target revision, and
+review expiry may all change while the window is open.
+
+**Treat review as consent to a specific snapshot, then revalidate every live
+authority and snapshot binding immediately before the write.** Keep the review
+window Host-owned and sender-bound, and test cancellation, expiry, window loss,
+delayed revocation, concurrent mutations, and downloaded-content mismatch.
+
 ## An irreversible freeze needs an authority-lifetime contract
 
 PR #592 initially committed mutation admission closed during Electron quit but
