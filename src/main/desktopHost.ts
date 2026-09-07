@@ -31,10 +31,10 @@ import { preserveStoredSkillDirectoryForms } from './agent/capabilities/skillSet
 import { isValidSkillName } from './agent/capabilities/agentSkillAuthoring';
 import { analyzeAgentSkills } from './agent/capabilities/agentSkillCuration';
 import {
-  decodeMemoryFeatureMode,
-  decodeThreadMemoryMode,
   memoryTagId,
 } from '../core/agent/memory';
+import { MEMORY_CHANGED_CHANNEL } from '../core/agent/memoryOperations';
+import type { MemoryOperationCaller } from './hostDomain/memoryOperations';
 import { decodeThreadResourceReference } from '../core/agent/codec';
 import { threadTranscriptRoot } from './agent/thread/ThreadTranscriptArtifact';
 import { threadTranscriptIndexPath } from './agent/thread/ThreadTranscriptIndex';
@@ -168,7 +168,7 @@ import {
   loadAppPreferences,
   saveLastAgentThreadConfiguration,
 } from './appPreferences';
-import { DEFAULT_FILE_PREFERENCES, loadFilePreferences } from './configuration/filePreferences';
+import { DEFAULT_FILE_PREFERENCES, loadFilePreferences, updateFilePreferences } from './configuration/filePreferences';
 import { writeFilePreferencesStatus } from './configuration/status';
 import { writeFilePreferencesSchema } from './configuration/schema';
 import type { ThemeMode } from '../core/theme';
@@ -380,7 +380,7 @@ function startFilePreferencesWatcher(): void {
       getAgentRuntimeSettings().then((settings) => {
         agentHost.skills.updateRuntimeSettings(settings);
       }),
-      Promise.resolve(agentHost.memory.settings()).then((current) => {
+      Promise.resolve(agentHost.memory.view()).then((current) => {
         const mode = loaded.preferences.agent.memory.enabled ? 'enabled' : 'disabled';
         return current.status.featureMode === mode ? undefined : agentHost.memory.setFeatureMode(mode);
       }),
@@ -426,6 +426,31 @@ function startFilePreferencesWatcher(): void {
 const agentImageObservationMutex = new Mutex();
 const agentHost = createAgentHost({
   reviewSkillOperation: (input) => windowApplicationHost.reviewSkillOperation(input),
+  reviewMemoryReset: (review, caller) => windowApplicationHost.reviewMemoryReset(review, caller),
+  onMemoryChanged: () => {
+    for (const target of [windowApplicationHost.windows.main(), windowApplicationHost.windows.settings()]) {
+      try {
+        if (target && !target.isDestroyed() && !target.webContents.isDestroyed()) target.webContents.send(MEMORY_CHANGED_CHANNEL);
+      } catch (error) { console.warn('[memory] window notification failed', error); }
+    }
+  },
+  openMemory: async (authorize) => {
+    let nodeId: string | undefined;
+    await outlineHost.timeline.runPlannedChanges(async () => {
+      await authorize();
+      return [{ op: 'ensure', resource: 'tag-search',
+        tag: { target: { selector: { by: 'id', id: memoryTagId('memory') }, cardinality: 'one' } }, bind: 'search' }];
+    }, {
+      settlement: 'durable',
+      focus: (_operation, diff) => {
+        nodeId = diff.bindings.search?.[0];
+        return nodeId ? { nodeId, selectAll: false } : undefined;
+      },
+    });
+    if (!nodeId) throw new Error('The Memory saved search could not be resolved.');
+    const navigation = await windowApplicationHost.openMemoryNode(nodeId, authorize).catch(() => 'unavailable' as const);
+    return { operation: 'open', nodeId, navigation };
+  },
   onSkillLibraryChanged: () => {
     for (const target of BrowserWindow.getAllWindows()) {
       if (!target.isDestroyed()) target.webContents.send(SKILL_LIBRARY_CHANGED_CHANNEL);
@@ -970,7 +995,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
       } else if (isAssetCommand(command)) {
         await lifecycle.ready('outline-documents');
       }
-      if (command.startsWith('memory_')) return handleMemoryCommand(command, args ?? {});
+      if (command.startsWith('memory_')) return handleMemoryCommand(event, command, args ?? {});
       if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
       if (isAssetCommand(command)) return handleAssetCommand(event, command, args ?? {});
       if (isUrlPageTranslationCommand(command)) {
@@ -1343,47 +1368,36 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
   });
 }
 
-async function handleMemoryCommand(command: string, args: Record<string, unknown>) {
-  switch (command) {
-    case 'memory_settings_get':
-      return agentHost.memory.settings(typeof args.threadId === 'string' ? args.threadId : null);
-    case 'memory_feature_mode_set':
-      return agentHost.memory.setFeatureMode(decodeMemoryFeatureMode(args.mode));
-    case 'memory_thread_mode_set':
-      return agentHost.memory.setThreadMode(
-        requiredNonEmptyString(args.threadId, 'threadId'),
-        decodeThreadMemoryMode(args.mode),
-      );
-    case 'memory_open':
-      {
-        const outcome = await outlineHost.document.runChanges(
-          [
-            {
-              op: 'ensure',
-              resource: 'tag-search',
-              tag: {
-                target: {
-                  selector: { by: 'id', id: memoryTagId('memory') },
-                  cardinality: 'one',
-                },
-              },
-              bind: 'search',
-            },
-          ],
-          {
-            focus: (_operation, diff) => {
-              const nodeId = diff.bindings.search?.[0];
-              return nodeId ? { nodeId, selectAll: false } : undefined;
-            },
-          },
-        );
-        windowApplicationHost.navigateMainToNode(outcome.focus?.nodeId ?? DAILY_NOTES_ID);
-      }
-      return agentHost.memory.settings();
-    case 'memory_reset':
-      return agentHost.memory.reset();
-    default:
-      throw new Error(`Unknown Memory command: ${command}`);
+async function handleMemoryCommand(event: IpcMainInvokeEvent, command: string, args: Record<string, unknown>) {
+  const sender = event.sender;
+  const parent = BrowserWindow.fromWebContents(sender);
+  const frame = event.senderFrame;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const authorize = async () => {
+    controller.signal.throwIfAborted();
+    if (closeSettlement || sender.isDestroyed() || !parent || parent.isDestroyed()
+      || frame !== sender.mainFrame || (!windowApplicationHost.isMainSender(event) && !windowApplicationHost.isSettingsSender(event))) {
+      throw new Error('Memory operations require a live main or Settings window.');
+    }
+  };
+  await authorize();
+  sender.once('destroyed', abort);
+  sender.on('did-start-loading', abort);
+  const caller: MemoryOperationCaller = { origin: { kind: 'window', windowId: parent!.id }, signal: controller.signal, authorize };
+  try {
+    if (command === 'memory_inspect') return await agentHost.memory.operations.inspect(args, caller);
+    if (command === 'memory_manage') return await agentHost.memory.operations.manage(args, caller);
+    if (command === 'memory_enabled_update') {
+      if (Object.keys(args).length !== 1 || typeof args.enabled !== 'boolean') throw new Error('Memory enabled must be a boolean.');
+      await authorize();
+      updateFilePreferences(resolvedUserDataDir, [{ path: ['agent', 'memory', 'enabled'], value: args.enabled }]);
+      return;
+    }
+    throw new Error(`Unknown Memory command: ${command}`);
+  } finally {
+    sender.removeListener('destroyed', abort);
+    sender.removeListener('did-start-loading', abort);
   }
 }
 

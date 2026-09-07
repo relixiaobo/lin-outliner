@@ -30,6 +30,8 @@ import { AutomationStore } from '../agent/automations/AutomationStore';
 import { createAutomationTool } from '../agent/automations/AutomationTool';
 import { createSkillLifecycleTools } from '../agent/capabilities/skillLifecycleTools';
 import type { SkillOperationCaller } from './skillLifecycle';
+import { createMemoryOperations, type MemoryOperations, type OpenMemory, type ReviewMemoryReset } from './memoryOperations';
+import { createMemoryTools } from '../agent/capabilities/memoryTools';
 import { AutomationWorktree } from '../agent/automations/AutomationWorktree';
 import { MemoryControlStore } from '../agent/extensions/memory/MemoryControlStore';
 import { MemoryExtension } from '../agent/extensions/memory/MemoryExtension';
@@ -82,6 +84,9 @@ export interface AgentHostComposition {
 }
 
 export interface AgentHostOptions {
+  readonly reviewMemoryReset: ReviewMemoryReset;
+  readonly openMemory: OpenMemory;
+  readonly onMemoryChanged: () => void;
   readonly reviewSkillOperation: import('./skillLifecycle').ReviewSkillOperation;
   readonly onSkillLibraryChanged: () => void;
   readonly userDataDir: string;
@@ -206,10 +211,9 @@ export interface AgentThreadCapability {
 }
 
 export interface AgentMemoryCapability {
-  settings: MemoryExtension['settings'];
+  view: MemoryExtension['view'];
   setFeatureMode: MemoryExtension['setFeatureMode'];
-  setThreadMode: MemoryExtension['setThreadMode'];
-  reset: MemoryExtension['reset'];
+  operations: MemoryOperations;
 }
 
 export interface AgentAutomationCapability {
@@ -479,6 +483,8 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   };
   threadCapabilityReference.set(threads);
   memory.bindHost(threadService);
+  memory.subscribe(options.onMemoryChanged);
+  const memoryOperations = createMemoryOperations({ memory, review: options.reviewMemoryReset, open: options.openMemory });
   extensions.register(memory, { applicationInstructions: true });
 
   const automationStore = new AutomationStore(join(options.userDataDir, 'agent', 'automations.sqlite'));
@@ -559,6 +565,10 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       localWorkspaceForContext(context),
     ),
     dynamicTools: (context, authorize) => [createAutomationTool(automationService),
+      ...(context.thread.parentThreadId === null && context.thread.threadSource === 'user' && !context.thread.ephemeral
+        ? createMemoryTools(memoryOperations, (itemId, signal) => ({
+          origin: { kind: 'agent', threadId: context.thread.id, turnId: context.turn.id, itemId }, authorize, signal,
+        })) : []),
       ...createSkillLifecycleTools(managedSkills.lifecycle, (itemId, signal) => ({
         key: `agent:${context.thread.id}:${context.turn.id}`,
         origin: { kind: 'agent', threadId: context.thread.id, turnId: context.turn.id, itemId },
@@ -619,10 +629,9 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     },
     threads,
     memory: {
-      settings: (...args) => memory.settings(...args),
+      view: (...args) => memory.view(...args),
       setFeatureMode: (...args) => memory.setFeatureMode(...args),
-      setThreadMode: (...args) => memory.setThreadMode(...args),
-      reset: (...args) => memory.reset(...args),
+      operations: memoryOperations,
     },
     automations: {
       request: (...args) => automationService.request(...args),

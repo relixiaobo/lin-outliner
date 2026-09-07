@@ -123,6 +123,8 @@ export interface WindowApplicationHostOptions {
 }
 
 export interface WindowApplicationHost {
+  reviewMemoryReset: import('../hostDomain/memoryOperations').ReviewMemoryReset;
+  openMemoryNode(nodeId: string, authorize: () => Promise<void>): Promise<'opened' | 'unavailable' | 'unknown'>;
   reviewSkillOperation: import('../hostDomain/skillLifecycle').ReviewSkillOperation;
   readSkillReview(event: IpcMainInvokeEvent): import('../../core/agent/skillOperations').SkillReview;
   decideSkillReview(event: IpcMainInvokeEvent, decision: unknown): void;
@@ -804,6 +806,39 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
   });
 
   const host: WindowApplicationHost = {
+    reviewMemoryReset: async (review, caller) => {
+      caller.signal?.throwIfAborted();
+      const parent = caller.origin.kind === 'window' ? BrowserWindow.fromId(caller.origin.windowId) : liveWindow(mainWindow);
+      if (released || !parent || parent.isDestroyed()) throw new Error('The Memory review window is unavailable.');
+      const strings = getMessages(effectiveLocale());
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      parent.once('closed', abort);
+      caller.signal?.addEventListener('abort', abort, { once: true });
+      try {
+        const result = await dialog.showMessageBox(parent, {
+          type: 'warning', title: strings.settings.general.memoryResetConfirmTitle,
+          message: strings.settings.general.memoryResetConfirmMessage,
+          detail: strings.settings.general.memoryResetTargetCounts({ containers: review.containerCount, nodes: review.nodeCount, ordinary: review.ordinaryNodeCount }),
+          buttons: [strings.settings.general.memoryResetAction, strings.dialog.cancel],
+          defaultId: 1, cancelId: 1, signal: controller.signal,
+        });
+        return !released && !parent.isDestroyed() && !controller.signal.aborted && result.response === 0;
+      } finally {
+        parent.removeListener('closed', abort);
+        caller.signal?.removeEventListener('abort', abort);
+      }
+    },
+    openMemoryNode: async (nodeId, authorize) => {
+      if (released) return 'unavailable';
+      if (!liveWindow(mainWindow)) createMainWindow();
+      if (!await waitForMainRendererLoad()) return 'unavailable';
+      await authorize();
+      // Send through the existing acknowledged renderer action transport, not the queued launcher route.
+      if (released || !liveWindow(mainWindow) || mainWindow!.webContents.isLoading()) return 'unavailable';
+      const result = await routeActionRendererStep({ on: 'mainRenderer', kind: 'navigate', nodeId, inPlace: true }, `memory:${randomUUID()}`);
+      return result.status === 'ok' ? 'opened' : result.status === 'gone' || result.status === 'notDelivered' ? 'unavailable' : 'unknown';
+    },
     reviewSkillOperation: skillReviews.review,
     readSkillReview: skillReviews.read,
     decideSkillReview: skillReviews.decide,

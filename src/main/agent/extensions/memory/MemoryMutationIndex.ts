@@ -1,4 +1,4 @@
-import { memoryTagId } from '../../../../core/agent/memory';
+import { memoryTagId, memoryCategoryForTagId } from '../../../../core/agent/memory';
 import {
   TAG_DAY_ID,
   isContentBearingNode,
@@ -35,6 +35,7 @@ const HIERARCHY_TAG_IDS: ReadonlySet<NodeId> = new Set([
 export class MemoryMutationIndex {
   private nodes = new Map<NodeId, NodeProjection>();
   private readonly owned = new Set<NodeId>();
+  private readonly stray = new Set<NodeId>();
   private readonly canonicalById = new Map<NodeId, CanonicalMemoryNode>();
   private readonly canonicalDependenciesById = new Map<NodeId, readonly NodeId[]>();
   private readonly canonicalDependentsByAncestor = new Map<NodeId, Set<NodeId>>();
@@ -52,6 +53,8 @@ export class MemoryMutationIndex {
   revision(): number {
     return this.currentRevision;
   }
+
+  strayTaggedNodeCount(): number { return this.stray.size; }
 
   applyProjectionUpdate(update: ProjectionUpdate): MemoryMutationIndexUpdate {
     if (update.kind === 'full') {
@@ -136,11 +139,13 @@ export class MemoryMutationIndex {
   private rebuild(projection: DocumentProjection): void {
     this.nodes = new Map(projection.nodes.map((node) => [node.id, node]));
     this.owned.clear();
+    this.stray.clear();
     this.canonicalById.clear();
     this.canonicalDependenciesById.clear();
     this.canonicalDependentsByAncestor.clear();
 
     const graph = canonicalMemoryGraph(projection);
+    for (const nodeId of graph.strayTaggedNodeIds) this.stray.add(nodeId);
     for (const container of graph.containers) {
       for (const nodeId of nodeAndDescendantIds(this.nodes, container.node.id)) this.owned.add(nodeId);
     }
@@ -192,10 +197,12 @@ export class MemoryMutationIndex {
     if (!isContentBearingNode(node)) return;
     const canonical = canonicalMemoryNodeFromIndex(node, this.nodes);
     if (canonical) this.addCanonicalEntry(canonical);
+    else if (node.tags.some((tagId) => memoryCategoryForTagId(tagId) !== null)) this.stray.add(node.id);
   }
 
   private removeDerivedState(nodeId: NodeId): void {
     this.owned.delete(nodeId);
+    this.stray.delete(nodeId);
     this.removeCanonicalEntry(nodeId);
   }
 

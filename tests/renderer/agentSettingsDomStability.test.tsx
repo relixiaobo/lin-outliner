@@ -238,9 +238,10 @@ const INVOKE_RESULTS: Record<string, unknown> = {
   agent_managed_skill_list: { ok: true, value: MANAGED_SKILLS },
   agent_managed_skill_catalog: { ok: true, value: CATALOG },
   agent_managed_skill_check_updates: { ok: true, value: MANAGED_SKILLS },
-  memory_settings_get: {
+  memory_inspect: {
+    operation: 'status',
     status: {
-      featureMode: 'off',
+      featureMode: 'disabled',
       featureModeGeneration: 1,
       resetEpoch: 0,
       memoryVisibilityGeneration: 1,

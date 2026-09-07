@@ -599,6 +599,17 @@ is untrusted command output with a stable Session handle, terminal outcome,
 bounded text/error, usage, artifacts, and worktree disposition. Only an explicit
 later `delegate send` invocation continues that Session.
 
+### Memory Management
+
+Memory management has two independent root-only contracts, `memory_inspect` and
+`memory_manage`, backed by the same domain facade as the human UI. Their closed,
+object-rooted schemas carry nested `request` variants and bounded `result`
+variants. Status, exact Thread revision, Reset settlement, and acknowledged
+navigation are management data; content retrieval/editing remains ordinary
+Outline work. Global Memory enablement is a configuration file edit. Reset
+accepts neither model approval nor a supplied deletion target. See
+[`agent-memory.md`](agent-memory.md#user-surface) for ownership and settlement.
+
 ### Skills
 
 `skill` loads one configuration-selected inline Skill by canonical identity.

@@ -496,9 +496,56 @@ Protected shared interfaces still follow the repository's coordination rule.
 | B. Model configuration and bootstrap | File-backed connection/default definitions, shared composer/admission precedence, complete Models UI, auth/test/catalog operations, sensitive input, complete snapshot recovery | A; Provider/credential/catalog/image owners, root start defaults, and Tool/Trajectory boundary; FR-2, FR-5, FR-6, FR-12 |
 | C. Root configuration and delegation policy | Public root-source discovery/schema/status and structural UI edits, file-backed Runner/Session defaults, access inspection/block operations; no Agent-type editor | A and final delegation runtime; surviving root Profile/presentation, delegation policy, and Access owners; FR-2 through FR-6 |
 | D. [Skill lifecycle operations](archive/skill-lifecycle-operations.md) | Shared human/Agent install/update/reversal/provenance operations, with file-only availability and no managed enable writer | A, Skill identity foundation, and domain-owned declarative Skill settings; Skill owners; FR-2 through FR-6 |
-| E. Memory, data, and contextual operations | Complete Memory, Data, update, diagnostics, and preview Translation jobs through their actual owners | A; preserve preview shell and use owner-local contracts; FR-5 through FR-7 |
+| E1. [Memory operations](archive/memory-operations.md) | Shared human/Agent status, Open Memory, confirmed Reset, and per-Thread mode; global enablement remains a file edit | A; Memory, Thread details, and root tool owners; FR-5, FR-6 |
+| E2. Preview translation and data operations | Preview-local translation controls and scoped clearing, plus website/session and global translation-cache inspection/clearing | A; preview, session, and cache owners; FR-5 through FR-7 |
+| E3. Application and diagnostic operations | Shared human/Agent version/build/release information, update checking/opening, Help/license destinations, and local diagnostics reveal/export | A; application, Updates, and diagnostics owners; FR-5, FR-6 |
 | F. Configurable shortcuts | Full file/UI/Agent remapping, registry/hint parity, physical recording, safe system registration | A; shortcut and launcher owners; FR-8, FR-9 |
 | G. Unified settings discovery | Final flat search/modified/reset UI, direct domain destinations, no nested Settings shell or aggregate loading/state | A-F; Settings routing/components/preload and narrow owner events; FR-10, FR-11 |
+
+E1-E3 together are Unit E. Each is a complete owner-sized feature, not a
+foundation for another E feature. Their default order is E1, E2, then E3; F has
+no dependency on E. G requires all three E features and F. Shared composition
+files are collision-ordered even when the features have no behavior dependency.
+
+E2 keeps contextual controls and both cache-clearing scopes in one PR because
+they share request cancellation, cache identity, and clear-generation semantics.
+`ResourcePreviewHost`, `PageTranslationService`, and
+`PreviewTranslationCacheStore` remain the respective native resource, request,
+and durable cache owners. Active preview identity belongs to the preview
+lifecycle, not a URL, model request `sessionId`, latest focused window, or Agent
+task cwd. Agent actions resolve one live preview and revalidate its lifetime and
+revision before applying; renderer acknowledgement distinguishes a sent action
+from an effective control change. A missing acknowledgement is unknown, not
+success. Provider completion remains a separate translation result.
+
+Remove `translationLanguage`, `translationModel`, `autoTranslateUrls`, and
+`autoTranslateEpubs` from `appPreferences`, their global preload broadcasts, and
+the renderer preference singletons when the preview-local replacements ship.
+Do not remove remembered root model selection, which is not a Translation
+preference. Cache data stays private and disposable. Scope tests must include two
+previews of the same source, not only two different URLs: a context clear must
+not silently invalidate the other preview's state or pending work. Global clear
+must include cold webpage, caption, and EPUB entries, invalidate pre-clear writes,
+and state whether live displays were also cleared. Website/session clearing is
+limited to Tenon's preview partition, never the external browser's session or
+Agent credentials. Both Data inspections expose bounded aggregate facts, not
+cookies, URLs, source text, or cache-directory edits.
+
+E3 reuses `AppUpdateService` for checks and validated release destinations,
+`parseChangelogReleases` for bundled release information, and `DiagnosticLogStore`
+for redacted local exports. Opening a release or download is not installing an
+update; signing, notarization, and automatic installation are outside this work.
+Help, issues, and license use application-owned destinations; diagnostics export
+uses a native save interaction and never uploads or posts anything. Cached update
+availability is not a successful fresh check. The automatic-check preference
+continues to use the public settings source. No application operation becomes an
+arbitrary URL opener, path writer, or configuration setter.
+
+Each E feature supplies owner-local observation and operation state. It does not
+extend the aggregate Settings DTO, broad `lin:settings-changed` notifications, or
+shared loading/error state. Its current human entry remains usable; G owns final
+flat discovery and removal of the enclosing category shell. The configuration
+Skill gains only routing for operations actually shipped in that feature.
 
 Existing human routes stay usable until their replacement ships. A-F consume
 the current UI where needed through the final source owner; no temporary second

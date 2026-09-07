@@ -50,11 +50,7 @@ import type {
   RendererAgentCoreResponseByMethod,
   ThreadResourceReference,
 } from '../../core/agent/protocol';
-import type {
-  MemoryFeatureMode,
-  MemorySettingsView,
-  ThreadMemoryMode,
-} from '../../core/agent/memory';
+import type { MemoryInspectRequest, MemoryInspectResult, MemoryManageRequest, MemoryManageResult } from '../../core/agent/memoryOperations';
 import type {
   AutomationMethod,
   AutomationNotification,
@@ -176,14 +172,9 @@ export const api = {
     command<AgentSkillSettingsView>('agent_get_skill_settings'),
   agentUpdateSkillSettings: (settings: AgentSkillSettingsInput) =>
     command<AgentSkillSettingsView>('agent_update_skill_settings', { settings }),
-  memorySettings: (threadId?: string) =>
-    command<MemorySettingsView>('memory_settings_get', threadId ? { threadId } : undefined),
-  memorySetFeatureMode: (mode: MemoryFeatureMode) =>
-    command<MemorySettingsView>('memory_feature_mode_set', { mode }),
-  memorySetThreadMode: (threadId: string, mode: ThreadMemoryMode) =>
-    command<MemorySettingsView>('memory_thread_mode_set', { threadId, mode }),
-  memoryOpen: () => command<MemorySettingsView>('memory_open'),
-  memoryReset: () => command<MemorySettingsView>('memory_reset'),
+  memoryInspect: (request: MemoryInspectRequest) => command<MemoryInspectResult>('memory_inspect', { request }),
+  memoryManage: (request: MemoryManageRequest) => command<MemoryManageResult>('memory_manage', { request }),
+  memorySetEnabled: (enabled: boolean) => command<void>('memory_enabled_update', { enabled }),
   agentRefreshProviderModels: (providerId: string) =>
     command<AgentProviderSettingsView>('agent_refresh_provider_models', { providerId }),
   agentUpdateRuntimeSettings: (settings: AgentRuntimeSettingsInput) =>

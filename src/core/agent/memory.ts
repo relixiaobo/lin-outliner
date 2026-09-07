@@ -41,9 +41,11 @@ export interface MemoryStatus {
 export interface ThreadMemoryStatus {
   readonly threadId: ThreadId;
   readonly mode: ThreadMemoryMode;
+  readonly revision: number;
+  readonly appliesAt: 'subsequent_admissions';
 }
 
-export interface MemorySettingsView {
+export interface MemoryView {
   readonly status: MemoryStatus;
   readonly thread: ThreadMemoryStatus | null;
 }

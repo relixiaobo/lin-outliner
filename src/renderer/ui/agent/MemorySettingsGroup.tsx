@@ -1,189 +1,96 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MemorySettingsView } from '../../../core/agent/memory';
+import type { MemoryResetView } from '../../../core/agent/memoryOperations';
 import { api } from '../../api/client';
+import { useMemoryView } from '../../agent/useMemoryView';
 import { useI18n } from '../../i18n/I18nProvider';
 import { formatDateTime } from '../formatting';
 import { Button } from '../primitives/Button';
-import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 
-interface MemorySettingsGroupProps {
-  readonly onError: (message: string | null) => void;
-  readonly onNotice: (message: string | null) => void;
-}
-
-export function MemorySettingsGroup({ onError, onNotice }: MemorySettingsGroupProps) {
+export function MemorySettingsGroup() {
   const { locale, t } = useI18n();
-  const [settings, setSettings] = useState<MemorySettingsView | null>(null);
+  const { view, error: readError, refresh } = useMemoryView();
   const [busy, setBusy] = useState(false);
-  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [reset, setReset] = useState<MemoryResetView | null>(null);
+  const [desiredEnabled, setDesiredEnabled] = useState<boolean | null>(null);
   const busyRef = useRef(false);
-  const requestGenerationRef = useRef(0);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const enabled = view?.status.featureMode === 'enabled';
+  const pendingReset = reset?.state === 'prepared' || reset?.state === 'unknown';
 
   useEffect(() => {
+    if (desiredEnabled === null || desiredEnabled !== enabled) return;
+    setNotice(enabled ? t.settings.general.memoryEnabledNotice : t.settings.general.memoryDisabledNotice);
+    setDesiredEnabled(null);
+  }, [desiredEnabled, enabled, t.settings.general.memoryEnabledNotice, t.settings.general.memoryDisabledNotice]);
+
+  useEffect(() => {
+    if (!reset || !pendingReset) return;
     let active = true;
-    let refreshing = false;
-    const refresh = async () => {
-      if (refreshing || busyRef.current) return;
-      refreshing = true;
-      const generation = ++requestGenerationRef.current;
-      try {
-        const value = await api.memorySettings();
-        if (active && generation === requestGenerationRef.current) setSettings(value);
-      } catch (error) {
-        if (active && generation === requestGenerationRef.current) onError(errorMessage(error));
-      } finally {
-        refreshing = false;
-      }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 5_000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [onError]);
+    void api.memoryInspect({ operation: 'reset', operationId: reset.operationId }).then((result) => {
+      if (active && result.operation === 'reset') setReset(result.reset);
+    }).catch(() => { /* Retain unresolved evidence until a later owner notification. */ });
+    return () => { active = false; };
+  }, [view, reset?.operationId, pendingReset]);
 
-  async function setEnabled(enabled: boolean) {
+  async function run(action: () => Promise<void>) {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
-    onError(null);
-    onNotice(null);
-    const generation = ++requestGenerationRef.current;
-    try {
-      const value = await api.memorySetFeatureMode(enabled ? 'enabled' : 'disabled');
-      if (generation === requestGenerationRef.current) {
-        setSettings(value);
-        onNotice(enabled ? t.settings.general.memoryEnabledNotice : t.settings.general.memoryDisabledNotice);
-      }
-    } catch (error) {
-      if (generation === requestGenerationRef.current) onError(errorMessage(error));
-    } finally {
-      if (generation === requestGenerationRef.current) {
-        busyRef.current = false;
-        setBusy(false);
-      }
+    setError(null);
+    setNotice(null);
+    setDesiredEnabled(null);
+    setReset((current) => current?.state === 'prepared' || current?.state === 'unknown' ? current : null);
+    try { await action(); }
+    catch (caught) { if (mounted.current) setError(caught instanceof Error ? caught.message : String(caught)); }
+    finally {
+      busyRef.current = false;
+      if (mounted.current) { setBusy(false); refresh(); }
     }
   }
 
-  async function reset() {
-    if (busyRef.current) return;
-    setConfirmingReset(false);
-    busyRef.current = true;
-    setBusy(true);
-    onError(null);
-    onNotice(null);
-    const generation = ++requestGenerationRef.current;
-    try {
-      const value = await api.memoryReset();
-      if (generation === requestGenerationRef.current) {
-        setSettings(value);
-        onNotice(t.settings.general.memoryResetNotice);
-      }
-    } catch (error) {
-      if (generation === requestGenerationRef.current) onError(errorMessage(error));
-    } finally {
-      if (generation === requestGenerationRef.current) {
-        busyRef.current = false;
-        setBusy(false);
-      }
-    }
-  }
-
-  async function openMemory() {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    onError(null);
-    const generation = ++requestGenerationRef.current;
-    try {
-      const value = await api.memoryOpen();
-      if (generation === requestGenerationRef.current) setSettings(value);
-    } catch (error) {
-      if (generation === requestGenerationRef.current) onError(errorMessage(error));
-    } finally {
-      if (generation === requestGenerationRef.current) {
-        busyRef.current = false;
-        setBusy(false);
-      }
-    }
-  }
-
-  const enabled = settings?.status.featureMode === 'enabled';
-  const status = settings?.status;
-  const workerStatusCopy = status?.lastError
+  const status = view?.status;
+  const workerStatus = !status ? t.common.loading : status.lastError
     ? t.settings.general.memoryError({ error: status.lastError })
-    : status?.pendingJobs
-      ? t.settings.general.memoryPending({ count: status.pendingJobs })
-      : status?.lastSuccessfulRunAt
-        ? t.settings.general.memoryUpdated({
-            date: formatDateTime(status.lastSuccessfulRunAt, locale, {
-              dateStyle: 'medium',
-              timeStyle: 'short',
-            }),
-          })
+    : status.pendingJobs ? t.settings.general.memoryPending({ count: status.pendingJobs })
+      : status.lastSuccessfulRunAt ? t.settings.general.memoryUpdated({ date: formatDateTime(status.lastSuccessfulRunAt, locale, { dateStyle: 'medium', timeStyle: 'short' }) })
         : t.settings.general.memoryReady;
   const statusCopy = status && status.strayTaggedNodeCount > 0
-    ? `${workerStatusCopy} ${t.settings.general.memoryStrayTaggedNodes({ count: status.strayTaggedNodeCount })}`
-    : workerStatusCopy;
+    ? `${workerStatus} ${t.settings.general.memoryStrayTaggedNodes({ count: status.strayTaggedNodeCount })}` : workerStatus;
+  const resetCopy = reset ? {
+    finalized: t.settings.general.memoryResetNotice, prepared: t.settings.general.memoryResetPending,
+    conflicted: t.settings.general.memoryResetConflicted, unknown: t.settings.general.memoryResetUnknown,
+  }[reset.state] : null;
+  const preferenceCopy = desiredEnabled === null ? null : t.settings.general.memoryPreferenceSaved;
 
-  return (
-    <>
-      <InsetGroup ariaLabel={t.settings.general.memoryGroup} label={t.settings.general.memoryGroup}>
-        <InsetRow
-          label={t.settings.general.memoryLabel}
-          sublabel={t.settings.general.memorySublabel}
-          trailing={(
-            <SwitchControl
-              checked={enabled}
-              disabled={busy || !settings}
-              label={t.settings.general.memoryLabel}
-              onCheckedChange={(value) => void setEnabled(value)}
-            >
-              <SwitchMark checked={enabled} />
-            </SwitchControl>
-          )}
-          wrap
-        />
-        <InsetRow
-          label={t.settings.general.memoryStatusLabel}
-          sublabel={statusCopy}
-          trailing={(
-            <Button disabled={busy} onClick={() => void openMemory()}>
-              {t.settings.general.memoryOpenAction}
-            </Button>
-          )}
-          wrap
-        />
-        <InsetRow
-          label={t.settings.general.memoryResetLabel}
-          sublabel={t.settings.general.memoryResetSublabel}
-          trailing={(
-            <Button disabled={busy} onClick={() => setConfirmingReset(true)} variant="danger">
-              {t.settings.general.memoryResetAction}
-            </Button>
-          )}
-          wrap
-        />
-      </InsetGroup>
-      {confirmingReset ? (
-        <ConfirmDialog
-          cancelLabel={t.dialog.cancel}
-          confirmLabel={t.settings.general.memoryResetAction}
-          danger
-          message={t.settings.general.memoryResetConfirmMessage}
-          onCancel={() => setConfirmingReset(false)}
-          onConfirm={() => void reset()}
-          title={t.settings.general.memoryResetConfirmTitle}
-        />
-      ) : null}
-    </>
-  );
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return <>
+    <InsetGroup ariaLabel={t.settings.general.memoryGroup} label={t.settings.general.memoryGroup}>
+      <InsetRow label={t.settings.general.memoryLabel} sublabel={t.settings.general.memorySublabel} trailing={
+        <SwitchControl checked={enabled} disabled={busy || !view} label={t.settings.general.memoryLabel}
+          onCheckedChange={(value) => void run(async () => {
+            await api.memorySetEnabled(value);
+            if (mounted.current) setDesiredEnabled(value);
+          })}><SwitchMark checked={enabled} /></SwitchControl>
+      } wrap />
+      <InsetRow label={t.settings.general.memoryStatusLabel} sublabel={statusCopy} trailing={
+        <Button disabled={busy || !view} onClick={() => void run(async () => {
+          const result = await api.memoryManage({ operation: 'open' });
+          if (mounted.current && result.operation === 'open' && result.navigation !== 'opened') setNotice(t.settings.general.memoryNavigationUnavailable);
+        })}>{t.settings.general.memoryOpenAction}</Button>
+      } wrap />
+      <InsetRow label={t.settings.general.memoryResetLabel} sublabel={t.settings.general.memoryResetSublabel} trailing={
+        <Button disabled={busy || !view || pendingReset} variant="danger" onClick={() => void run(async () => {
+          const result = await api.memoryManage({ operation: 'reset' });
+          if (mounted.current && result.operation === 'reset') setReset(result.reset);
+        })}>{t.settings.general.memoryResetAction}</Button>
+      } wrap />
+    </InsetGroup>
+    {error || readError ? <div className="agent-settings-error" role="alert">{error ?? readError}</div> : null}
+    {notice || resetCopy || preferenceCopy ? <div className="agent-settings-notice" role="status">{notice ?? resetCopy ?? preferenceCopy}</div> : null}
+  </>;
 }
