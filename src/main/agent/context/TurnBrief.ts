@@ -33,9 +33,6 @@ export function environmentBrief(
   const lines = [
     `Local time at this input: ${next.localDate}T${next.localTime}${formatUtcOffset(next.utcOffsetMinutes)} [${next.timeZone}].`,
   ];
-  if (!previous || previous.workingDirectory !== next.workingDirectory) {
-    lines.push(`Working directory: ${next.workingDirectory}.`);
-  }
   if (!previous) {
     const execution = executionDescription(next);
     if (execution) lines.push(`Execution: ${execution}.`);

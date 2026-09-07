@@ -264,6 +264,11 @@ export function assertContextPayloadDependencies(
 
 export function contextPayloadDependencies(payload: ThreadContextPayload): ContextPayloadDependencies {
   switch (payload.kind) {
+    case 'executionContextPublication':
+      return emptyDependencies({ contexts: payload.evidenceRefs });
+    case 'taskExecutionContext':
+    case 'automationDispatch':
+      return emptyDependencies();
     case 'referencedResources':
       return emptyDependencies({
         resources: payload.resources.flatMap((resource) => resource.resourceRef ? [resource.resourceRef] : []),
@@ -292,6 +297,7 @@ export function contextPayloadDependencies(payload: ThreadContextPayload): Conte
     case 'compactionRestoredState':
       return {
         contexts: [
+          ...payload.executionContext.entries.map((entry) => entry.evidenceRef),
           ...payload.activeSkills.map((skill) => skill.payloadRef),
           ...(payload.userViewBaselineRef ? [payload.userViewBaselineRef] : []),
           ...(payload.additionalContextBaselineRef ? [payload.additionalContextBaselineRef] : []),

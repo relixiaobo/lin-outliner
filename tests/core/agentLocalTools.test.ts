@@ -1402,7 +1402,7 @@ describe('agent local tools', () => {
     const fileDelete = tools.find((tool) => tool.name === 'file_delete')!;
     const bash = tools.find((tool) => tool.name === 'bash')!;
 
-    expect(fileRead.description).toContain('relative paths resolve from the Thread working directory');
+    expect(fileRead.description).toContain('relative paths resolve from the call working directory');
     expect(fileRead.description).toContain('For PDF files only');
     expect(JSON.stringify(fileRead.parameters)).toContain('The line number to start reading from');
     expect(JSON.stringify(fileRead.parameters)).toContain('PDF FILES ONLY');
@@ -2382,7 +2382,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_delete refuses the Thread working directory root and the agent trash itself', async () => {
+  test('file_delete refuses the call working directory root and the agent trash itself', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const rootDelete = await executeTool(workspaceRoot, 'file_delete', {
         file_path: workspaceRoot,

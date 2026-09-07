@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,7 @@ import {
   decodeAutomationRequest,
   decodeAutomationResponse,
   EMPTY_AUTOMATION_CONFIGURATION,
+  automationDirectoryHint,
   type Automation,
   type AutomationCreateInput,
   type AutomationRun,
@@ -17,6 +19,8 @@ import {
 import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentConfigurationLoader';
 import { closeAgentServices } from '../../src/main/agent/closeAgentServices';
 import { threadFeatureSource, type Thread, type Turn } from '../../src/core/agent/protocol';
+import { encodeThreadContextPayload } from '../../src/core/agent/codec';
+import type { AutomationDispatchContextPayload, ThreadContextPayload, ThreadContextPayloadReference } from '../../src/core/agent/protocol';
 import { AutomationDispatcher } from '../../src/main/agent/automations/AutomationDispatcher';
 import {
   automationOccurrencesBetween,
@@ -55,17 +59,17 @@ describe('Automation protocol and schedule', () => {
     expect(() => decodeAutomationRequest('create', { ...input, name: 'x'.repeat(201) })).toThrow('at most 200');
     expect(() => decodeAutomationRequest('create', {
       ...input,
-      projectBindings: [{ id: 'repo', cwd: 'relative/project', executionMode: 'local' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: 'relative/project' }, executionMode: 'local' }],
     })).toThrow('absolute path');
     expect(() => decodeAutomationRequest('create', {
       ...input,
-      projectBindings: [{ id: 'no-project', cwd: '/tmp/project', executionMode: 'local' }],
-    })).toThrow('reserved binding ID');
-    expect(() => decodeAutomationRequest('create', {
+      contextHints: [{ contextHintId: 'default', source: { kind: 'directory', rootHint: '/tmp/project' }, executionMode: 'local' }],
+    })).toThrow('UUIDv7');
+    expect(decodeAutomationRequest('create', {
       ...input,
       destination: { kind: 'existingThread', threadId: uuidV7() },
-      projectBindings: [{ id: 'repo', cwd: '/tmp/project', executionMode: 'worktree' }],
-    })).toThrow('only a local project binding');
+      contextHints: [{ source: { kind: 'directory', rootHint: '/tmp/project' }, executionMode: 'worktree' }],
+    })).toHaveProperty('contextHints');
     expect(() => decodeAutomationRequest('update', { id: uuidV7(), expectedRevision: 1 })).toThrow('change');
     expect(decodeAutomationRequest('update', {
       id: uuidV7(),
@@ -113,7 +117,7 @@ describe('Automation protocol and schedule', () => {
       data: [{ ...run, state: 'dispatched', turnId: null }],
     })).toThrow('inconsistent');
     expect(() => decodeAutomationResponse('runs', {
-      data: [{ ...run, projectBindingKey: 'other-project' }],
+      data: [{ ...run, contextHintId: 'other-project' }],
     })).toThrow('does not match its snapshot');
     expect(() => decodeAutomationResponse('runs', {
       data: [{ ...run, threadId: null }],
@@ -320,7 +324,8 @@ describe('Automation durable scheduling', () => {
 
     const omissions = store.listRuns({ automationId: automation.id })
       .filter((run) => run.state === 'omitted');
-    expect(omissions).toHaveLength(2);
+    expect(omissions).toHaveLength(3);
+    expect(omissions.filter((run) => run.omission?.reason === 'updated')).toHaveLength(1);
     expect(new Set(omissions.map((run) => run.automationRevision))).toEqual(new Set([1, 2]));
   });
 
@@ -402,9 +407,9 @@ describe('Automation durable scheduling', () => {
     const due = Date.parse('2026-07-24T09:00:00Z');
     const automation = store.create({
       ...definition('20260724T090000', 'FREQ=DAILY;COUNT=1'),
-      projectBindings: [
-        { id: 'project-a', cwd: '/tmp/a', executionMode: 'local' },
-        { id: 'project-b', cwd: '/tmp/b', executionMode: 'local' },
+      contextHints: [
+        { source: { kind: 'directory', rootHint: await tempRoot('automation-source-a-') }, executionMode: 'local' },
+        { source: { kind: 'directory', rootHint: await tempRoot('automation-source-b-') }, executionMode: 'local' },
       ],
     }, due - 1);
     const scheduler = schedulerFor(store, due, {
@@ -479,15 +484,16 @@ describe('Automation durable scheduling', () => {
     const now = Date.parse('2026-07-24T08:00:00Z');
     const automation = store.create({
       ...definition('20260724T090000'),
-      projectBindings: [{ id: 'repo', cwd: '/tmp/source', executionMode: 'worktree' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: '/tmp/source' }, executionMode: 'worktree' }],
     }, now);
     let oldestRunId = '';
     for (let index = 0; index < 501; index += 1) {
-      const run = store.claimNow(automation, automation.projectBindings[0]!, now + index + 1);
+      const run = store.claimNow(automation, automation.contextHints[0]!, now + index + 1);
       if (index === 0) {
         oldestRunId = run.id;
         store.setWorktree(run.id, {
           sourceCwd: '/tmp/source',
+          gitCommonDir: '/tmp/source/.git',
           path: '/tmp/worktree',
           baseCommit: '0123456789abcdef0123456789abcdef01234567',
           snapshotPath: null,
@@ -543,7 +549,7 @@ describe('Automation service serialization', () => {
         },
       });
 
-      const start = service.request('startNow', { id: automation.id });
+      const start = service.request('startNow', { id: automation.id, requestId: uuidV7() });
       await entered;
       let controlSettled = false;
       const control = action === 'pause'
@@ -619,9 +625,9 @@ describe('Automation service serialization', () => {
       if (notification.type === 'automationRun/changed') states.push(notification.run.state);
     });
 
-    const first = await service.request('startNow', { id: automation.id });
+    const first = await service.request('startNow', { id: automation.id, requestId: uuidV7() });
     expect(first.runs[0]?.state).toBe('pending');
-    await expect(service.request('startNow', { id: automation.id })).rejects.toThrow('active occurrence');
+    await expect(service.request('startNow', { id: automation.id, requestId: uuidV7() })).rejects.toThrow('active occurrence');
 
     await service.request('pause', { id: automation.id, expectedRevision: automation.revision });
     expect(states).toEqual(['pending', 'omitted']);
@@ -638,6 +644,7 @@ describe('Automation service serialization', () => {
     const claimed = store.claimNow(automation, null, now + 1);
     store.setWorktree(claimed.id, {
       sourceCwd: '/tmp/source',
+      gitCommonDir: '/tmp/source/.git',
       path: '/tmp/worktree',
       baseCommit: '0123456789abcdef0123456789abcdef01234567',
       snapshotPath: null,
@@ -702,7 +709,7 @@ describe('Automation service serialization', () => {
       },
     });
 
-    await expect(service.request('startNow', { id: automation.id })).rejects.toThrow('Only an active Automation');
+    await expect(service.request('startNow', { id: automation.id, requestId: uuidV7() })).rejects.toThrow('Only an active Automation');
     await expect(service.create(definition('20260724T110000'))).rejects.toThrow('Skills: missing-skill');
     expect(store.list()).toHaveLength(1);
   });
@@ -718,18 +725,18 @@ describe('Automation service serialization', () => {
 
     await expect(service.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'repo', cwd: nested, executionMode: 'worktree' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: nested }, executionMode: 'worktree' }],
     })).rejects.toThrow('Git repository root');
     expect(store.list()).toHaveLength(0);
 
     const automation = await service.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'repo', cwd: source, executionMode: 'worktree' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: source }, executionMode: 'worktree' }],
     });
-    expect(automation.projectBindings[0]?.cwd).toBe(await realpath(source));
+    expect(automation.contextHints[0]?.source.rootHint).toBe(source);
   });
 
-  test('persists the canonical real path for a project binding', async () => {
+  test('retains a directory hint and resolves its identity at dispatch', async () => {
     const root = await tempRoot('automation-project-realpath-');
     const source = join(root, 'source');
     const alias = join(root, 'source-alias');
@@ -740,12 +747,12 @@ describe('Automation service serialization', () => {
 
     const automation = await service.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'repo', cwd: alias, executionMode: 'local' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: alias }, executionMode: 'local' }],
     });
-    expect(automation.projectBindings[0]?.cwd).toBe(await realpath(source));
+    expect(automation.contextHints[0]?.source.rootHint).toBe(alias);
   });
 
-  test('rejects worktree execution for an existing Thread destination', async () => {
+  test('allows isolated execution independently of an existing Thread destination', async () => {
     const root = await tempRoot('automation-existing-thread-project-');
     const source = join(root, 'source');
     await initializeGitRepository(source);
@@ -758,13 +765,13 @@ describe('Automation service serialization', () => {
     await expect(service.create({
       ...definition('20260724T100000'),
       destination: { kind: 'existingThread', threadId: destination.id },
-      projectBindings: [{ id: 'repo', cwd: source, executionMode: 'worktree' }],
-    })).rejects.toThrow('only a local project binding');
+      contextHints: [{ source: { kind: 'directory', rootHint: source }, executionMode: 'worktree' }],
+    })).resolves.toHaveProperty('id');
 
     const automation = await service.create({
       ...definition('20260724T100000'),
       destination: { kind: 'existingThread', threadId: destination.id },
-      projectBindings: [{ id: 'repo', cwd: source, executionMode: 'local' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: source }, executionMode: 'local' }],
     });
     expect(automation.destination).toEqual({ kind: 'existingThread', threadId: destination.id });
   });
@@ -827,7 +834,7 @@ describe('Automation Thread dispatch', () => {
       author: { kind: 'feature', feature: 'automation', ref: standaloneRun.id },
       trigger: { kind: 'feature', feature: 'automation', ref: standaloneRun.id },
     });
-    expect(JSON.parse(standaloneHost.turnCalls[0]!.additionalContext.automation_info.value)).toMatchObject({
+    expect(JSON.parse(standaloneHost.turnCalls[0]!.dispatchContext.info)).toMatchObject({
       automationId: standalone.id,
       automationRunId: standaloneRun.id,
       destination: 'standalone',
@@ -872,9 +879,9 @@ describe('Automation Thread dispatch', () => {
       feature: 'automation',
       ref: existingRun.id,
     });
-    expect(JSON.parse(existingHost.turnCalls[0]!.additionalContext.automation_info.value)).toMatchObject({
-      cwd: '/tmp/existing',
-      projectCwd: null,
+    expect(JSON.parse(existingHost.turnCalls[0]!.dispatchContext.info)).toMatchObject({
+      cwd: await realpath(tmpdir()),
+      source: null,
       worktree: null,
     });
   });
@@ -884,15 +891,15 @@ describe('Automation Thread dispatch', () => {
     const store = automationStore();
     const automation = store.create({
       ...definition('20260724T100000'),
-      projectBindings: [
-        { id: 'project-a', cwd: '/tmp/a', executionMode: 'local' },
-        { id: 'project-b', cwd: '/tmp/b', executionMode: 'local' },
+      contextHints: [
+        { source: { kind: 'directory', rootHint: await tempRoot('automation-source-a-') }, executionMode: 'local' },
+        { source: { kind: 'directory', rootHint: await tempRoot('automation-source-b-') }, executionMode: 'local' },
       ],
     }, now);
     const host = threadHost();
     const dispatcher = dispatcherFor(store, host, now + 1);
-    const bindingA = automation.projectBindings[0]!;
-    const bindingB = automation.projectBindings[1]!;
+    const bindingA = automation.contextHints[0]!;
+    const bindingB = automation.contextHints[1]!;
 
     const failedOnA = await dispatcher.dispatch(store.claimNow(automation, bindingA, now + 2));
     host.transcriptPaths.set(failedOnA.threadId!, `/app-data/thread-transcripts/${failedOnA.threadId}.md`);
@@ -913,7 +920,7 @@ describe('Automation Thread dispatch', () => {
     });
 
     await dispatcher.dispatch(store.claimNow(automation, bindingA, now + 6));
-    const context = JSON.parse(host.turnCalls[2]!.additionalContext.automation_info.value);
+    const context = JSON.parse(host.turnCalls[2]!.dispatchContext.info);
 
     expect(context.guidance).toContain('untrusted data');
     // Ahead of the data it governs, so the contract is read before any of it.
@@ -944,7 +951,7 @@ describe('Automation Thread dispatch', () => {
     await dispatcher.dispatch(store.claimNow(automation, null, now + 2));
 
     // The Thread it joins already holds every prior run as ordinary history.
-    const context = JSON.parse(host.turnCalls[0]!.additionalContext.automation_info.value);
+    const context = JSON.parse(host.turnCalls[0]!.dispatchContext.info);
     expect(context.recentRuns).toBeUndefined();
     expect(context.guidance).toBeUndefined();
   });
@@ -965,7 +972,7 @@ describe('Automation Thread dispatch', () => {
     );
 
     await dispatcher.dispatch(store.claimNow(automation, null, now + 5));
-    const context = JSON.parse(host.turnCalls[1]!.additionalContext.automation_info.value);
+    const context = JSON.parse(host.turnCalls[1]!.dispatchContext.info);
 
     expect(context.recentRuns).toEqual([
       {
@@ -1004,7 +1011,7 @@ describe('Automation Thread dispatch', () => {
     });
 
     await dispatcher.dispatch(store.claimNow(automation, null, now + 4));
-    const context = JSON.parse(host.turnCalls[1]!.additionalContext.automation_info.value);
+    const context = JSON.parse(host.turnCalls[1]!.dispatchContext.info);
 
     // The digest is a pointer to the record, never a copy of it: the full answer
     // stays behind `transcriptPath`, where reading it is the model's choice.
@@ -1024,7 +1031,7 @@ describe('Automation Thread dispatch', () => {
     const dispatched = await dispatcher.dispatch(store.claimNow(automation, null, now + 3));
 
     expect(dispatched.state).toBe('dispatched');
-    const context = JSON.parse(host.turnCalls[1]!.additionalContext.automation_info.value);
+    const context = JSON.parse(host.turnCalls[1]!.dispatchContext.info);
     expect(context.recentRuns).toEqual([]);
   });
 
@@ -1142,7 +1149,7 @@ describe('Automation Thread dispatch', () => {
 });
 
 describe('Automation worktrees', () => {
-  test('rejects a saved project path redirected through a symlink', async () => {
+  test('resolves an unprepared directory hint again at dispatch', async () => {
     const root = await tempRoot('automation-project-redirection-');
     const source = join(root, 'source');
     const replacement = join(root, 'replacement');
@@ -1152,18 +1159,18 @@ describe('Automation worktrees', () => {
     const store = automationStore();
     const automation = store.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'project', cwd: canonicalSource, executionMode: 'local' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: canonicalSource }, executionMode: 'local' }],
     }, Date.parse('2026-07-24T09:00:00Z'));
     const run = store.claimNow(
       automation,
-      automation.projectBindings[0]!,
+      automation.contextHints[0]!,
       Date.parse('2026-07-24T09:01:00Z'),
     );
     await rm(canonicalSource, { recursive: true });
     await symlink(replacement, canonicalSource);
 
-    await expect(new AutomationWorktree(root).prepare(run))
-      .rejects.toThrow('project path changed before dispatch');
+    expect((await prepareWorktree(new AutomationWorktree(root), store, run)).cwd)
+      .toBe(await realpath(replacement));
   });
 
   test('creates only contained worktrees and snapshots changes before removal', async () => {
@@ -1180,11 +1187,11 @@ describe('Automation worktrees', () => {
     const store = automationStore();
     const automation = store.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'repo', cwd: canonicalSource, executionMode: 'worktree' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: canonicalSource }, executionMode: 'worktree' }],
     }, Date.parse('2026-07-24T09:00:00Z'));
-    const run = store.claimNow(automation, automation.projectBindings[0]!, Date.parse('2026-07-24T09:01:00Z'));
+    const run = store.claimNow(automation, automation.contextHints[0]!, Date.parse('2026-07-24T09:01:00Z'));
     const worktrees = new AutomationWorktree(root);
-    const prepared = await worktrees.prepare(run);
+    const prepared = await prepareWorktree(worktrees, store, run);
     const rel = relative(await realpath(join(root, 'agent', 'automation-worktrees')), prepared.cwd);
     expect(rel.startsWith('..')).toBe(false);
     expect(isAbsolute(rel)).toBe(false);
@@ -1193,10 +1200,10 @@ describe('Automation worktrees', () => {
     await writeFile(join(source, 'source-only.txt'), 'source advanced\n');
     await execFileAsync('git', ['-C', source, 'add', 'source-only.txt']);
     await execFileAsync('git', ['-C', source, 'commit', '-m', 'Advance source']);
-    const recovered = await worktrees.prepare(run);
+    const recovered = await prepareWorktree(worktrees, store, run);
     expect(recovered.worktree).toEqual(prepared.worktree);
     const persisted = store.setWorktree(run.id, recovered.worktree!);
-    const resumed = await worktrees.prepare(persisted);
+    const resumed = await prepareWorktree(worktrees, store, persisted);
     expect(resumed.worktree).toEqual(prepared.worktree);
 
     await writeFile(join(prepared.cwd, 'tracked.txt'), 'after\n');
@@ -1213,6 +1220,41 @@ describe('Automation worktrees', () => {
     expect(await readFile(join(source, 'tracked.txt'), 'utf8')).toBe('before\n');
   });
 
+  test('recovers an intent-only worktree from its frozen commit and cleans unused intents', async () => {
+    const root = await tempRoot('automation-worktree-intent-');
+    const source = join(root, 'source');
+    await initializeGitRepository(source);
+    const canonicalSource = await realpath(source);
+    const store = automationStore();
+    const automation = store.create({ ...definition('20260724T100000'),
+      contextHints: [{ source: { kind: 'directory', rootHint: canonicalSource }, executionMode: 'worktree' }],
+    }, Date.parse('2026-07-24T09:00:00Z'));
+    const run = store.claimNow(automation, automation.contextHints[0]!, Date.parse('2026-07-24T09:01:00Z'));
+    const worktrees = new AutomationWorktree(root);
+    await expect(worktrees.prepare(run, canonicalSource, async (intent) => {
+      store.setWorktree(run.id, intent);
+      throw new Error('Interrupted after durable intent');
+    })).rejects.toThrow('Interrupted after durable intent');
+    const intent = store.readRun(run.id)!.worktree!;
+    await expect(realpath(intent.path)).rejects.toThrow();
+    await writeFile(join(source, 'new.txt'), 'after intent');
+    await execFileAsync('git', ['-C', source, 'add', '.']);
+    await execFileAsync('git', ['-C', source, 'commit', '-m', 'Advance source']);
+    const recovered = await prepareWorktree(new AutomationWorktree(root), store, run);
+    expect(recovered.worktree).toEqual(intent);
+    expect((await execFileAsync('git', ['-C', recovered.cwd, 'rev-parse', 'HEAD'])).stdout.trim()).toBe(intent.baseCommit);
+    await expect(realpath(join(recovered.cwd, 'new.txt'))).rejects.toThrow();
+
+    const unused = store.claimNow(automation, automation.contextHints[0]!, Date.parse('2026-07-24T09:02:00Z'));
+    await expect(worktrees.prepare(unused, canonicalSource, async (metadata) => {
+      store.setWorktree(unused.id, metadata);
+      throw new Error('Interrupted');
+    })).rejects.toThrow('Interrupted');
+    const cleaned = await worktrees.snapshotAndRemove(store.readRun(unused.id)!.worktree!);
+    expect(cleaned.removedAt).not.toBeNull();
+    expect(await readFile(cleaned.snapshotPath!, 'utf8')).toBe('');
+  });
+
   test('rejects unregistered managed paths and retains a worktree when snapshotting fails', async () => {
     const root = await tempRoot('automation-worktree-guard-');
     const source = join(root, 'source');
@@ -1221,20 +1263,20 @@ describe('Automation worktrees', () => {
     const store = automationStore();
     const automation = store.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'repo', cwd: canonicalSource, executionMode: 'worktree' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: canonicalSource }, executionMode: 'worktree' }],
     }, Date.parse('2026-07-24T09:00:00Z'));
-    const run = store.claimNow(automation, automation.projectBindings[0]!, Date.parse('2026-07-24T09:01:00Z'));
+    const run = store.claimNow(automation, automation.contextHints[0]!, Date.parse('2026-07-24T09:01:00Z'));
     const managedPath = join(root, 'agent', 'automation-worktrees', automation.id, run.id);
     await mkdir(managedPath, { recursive: true });
     await execFileAsync('git', ['init', managedPath]);
     const worktrees = new AutomationWorktree(root);
 
-    await expect(worktrees.prepare(run)).rejects.toThrow('not registered');
+    await expect(prepareWorktree(worktrees, store, run)).rejects.toThrow('exists without recoverable');
     await rm(managedPath, { recursive: true, force: true });
-    const prepared = await worktrees.prepare(run);
+    const prepared = await prepareWorktree(worktrees, store, run);
     await rm(join(prepared.cwd, '.git'));
     const persisted = store.setWorktree(run.id, prepared.worktree!);
-    await expect(worktrees.prepare(persisted)).rejects.toThrow();
+    await expect(prepareWorktree(worktrees, store, persisted)).rejects.toThrow();
     await expect(worktrees.snapshotAndRemove(prepared.worktree!)).rejects.toThrow();
     expect(await readFile(join(prepared.cwd, 'tracked.txt'), 'utf8')).toBe('before\n');
   });
@@ -1250,11 +1292,11 @@ describe('Automation worktrees', () => {
     const store = automationStore();
     const automation = store.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'repo', cwd: canonicalSource, executionMode: 'worktree' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: canonicalSource }, executionMode: 'worktree' }],
     }, Date.parse('2026-07-24T09:00:00Z'));
-    const run = store.claimNow(automation, automation.projectBindings[0]!, Date.parse('2026-07-24T09:01:00Z'));
+    const run = store.claimNow(automation, automation.contextHints[0]!, Date.parse('2026-07-24T09:01:00Z'));
     const worktrees = new AutomationWorktree(root);
-    const prepared = await worktrees.prepare(run);
+    const prepared = await prepareWorktree(worktrees, store, run);
 
     const ignoredPath = join(prepared.cwd, 'ignored-output');
     await writeFile(ignoredPath, 'must survive\n');
@@ -1290,11 +1332,11 @@ describe('Automation worktrees', () => {
     const store = automationStore();
     const automation = store.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'repo', cwd: canonicalSource, executionMode: 'worktree' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: canonicalSource }, executionMode: 'worktree' }],
     }, Date.parse('2026-07-24T09:00:00Z'));
-    const run = store.claimNow(automation, automation.projectBindings[0]!, Date.parse('2026-07-24T09:01:00Z'));
+    const run = store.claimNow(automation, automation.contextHints[0]!, Date.parse('2026-07-24T09:01:00Z'));
     const worktrees = new AutomationWorktree(root);
-    const prepared = await worktrees.prepare(run);
+    const prepared = await prepareWorktree(worktrees, store, run);
 
     const removed = await worktrees.snapshotAndRemove(prepared.worktree!, async () => {
       await writeFile(join(prepared.cwd, 'late-output.txt'), 'created after snapshot persistence\n');
@@ -1311,15 +1353,15 @@ describe('Automation worktrees', () => {
     const store = automationStore();
     const automation = store.create({
       ...definition('20260724T100000'),
-      projectBindings: [{ id: 'repo', cwd: canonicalSource, executionMode: 'worktree' }],
+      contextHints: [{ source: { kind: 'directory', rootHint: canonicalSource }, executionMode: 'worktree' }],
     }, Date.parse('2026-07-24T09:00:00Z'));
     const claimed = store.claimNow(
       automation,
-      automation.projectBindings[0]!,
+      automation.contextHints[0]!,
       Date.parse('2026-07-24T09:01:00Z'),
     );
     const worktrees = new AutomationWorktree(root);
-    const prepared = await worktrees.prepare(claimed);
+    const prepared = await prepareWorktree(worktrees, store, claimed);
     store.setWorktree(claimed.id, prepared.worktree!);
     store.setStatus(automation.id, 'paused', automation.revision, Date.parse('2026-07-24T09:02:00Z'));
     expect(store.readRun(claimed.id)?.state).toBe('omitted');
@@ -1351,13 +1393,20 @@ function definition(
     prompt: 'Review the project and report the important changes.',
     schedule: { rrule: `DTSTART:${dtstart}\nRRULE:${rule}`, timezone: 'UTC' },
     destination: { kind: 'standalone' },
-    projectBindings: [],
+    contextHints: [],
     configuration: EMPTY_AUTOMATION_CONFIGURATION,
   };
 }
 
 function automationStore(path = ':memory:'): AutomationStore {
   return tracked(new AutomationStore(path, new Database(path, { create: true }) as unknown as SqliteDatabase));
+}
+
+async function prepareWorktree(worktrees: AutomationWorktree, store: AutomationStore, run: AutomationRun) {
+  const current = store.readRun(run.id)!;
+  return worktrees.prepare(current, current.worktree?.sourceCwd ?? automationDirectoryHint(current.snapshot.contextHint!), async (intent) => {
+    store.setWorktree(run.id, intent);
+  });
 }
 
 function tracked(store: AutomationStore): AutomationStore {
@@ -1445,7 +1494,8 @@ interface TurnCall {
   readonly clientUserMessageId: string;
   readonly author: { readonly kind: 'feature'; readonly feature: 'automation'; readonly ref: string };
   readonly trigger: { readonly kind: 'feature'; readonly feature: string; readonly ref: string };
-  readonly additionalContext: { readonly automation_info: { readonly kind: 'application'; readonly value: string } };
+  readonly initialContext: { readonly storageOwner: string; readonly refs: readonly ThreadContextPayloadReference[] };
+  readonly dispatchContext: AutomationDispatchContextPayload;
   readonly returnedTurnId: string;
 }
 
@@ -1471,6 +1521,8 @@ interface ThreadHostProbe {
   /** Seam for a predecessor that has already ended. */
   finishTurn(turnId: string, patch: Partial<Turn>): void;
   readonly transcriptPaths: Map<string, string>;
+  writeFeatureContext(owner: string, payload: ThreadContextPayload): Promise<ThreadContextPayloadReference>;
+  readFeatureContext(owner: string, ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
   threadTranscriptPath(threadId: string): Promise<string | null>;
 }
 
@@ -1484,12 +1536,20 @@ function threadHost(
   const turnCalls: TurnCall[] = [];
   const deleted: string[] = [];
   const transcriptPaths = new Map<string, string>();
+  const featureContexts = new Map<string, ThreadContextPayload>();
   return {
     busy: false,
     ensureCalls,
     turnCalls,
     deleted,
     transcriptPaths,
+    async writeFeatureContext(owner, payload) {
+      const bytes = encodeThreadContextPayload(payload);
+      const id = createHash('sha256').update(bytes).digest('hex');
+      featureContexts.set(`${owner}:${id}`, payload);
+      return { id, kind: payload.kind, byteLength: Buffer.byteLength(bytes) };
+    },
+    async readFeatureContext(owner, ref) { return featureContexts.get(`${owner}:${ref.id}`) ?? null; },
     persistentThreadExecutionContext(threadId) {
       const thread = threads.get(threadId);
       if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -1516,7 +1576,9 @@ function threadHost(
       ));
       const turn = existingTurn ?? automationTurn(input.threadId, input.trigger);
       turns.set(turn.id, turn);
-      turnCalls.push({ ...input, returnedTurnId: turn.id });
+      const dispatchContext = await this.readFeatureContext(input.initialContext.storageOwner, input.initialContext.refs[0]!);
+      if (dispatchContext?.kind !== 'automationDispatch') throw new Error('Missing dispatch snapshot');
+      turnCalls.push({ ...input, dispatchContext, returnedTurnId: turn.id });
       return turn;
     },
     readTurnForHost(_threadId, turnId) {
@@ -1568,8 +1630,8 @@ function dispatcherFor(
   return new AutomationDispatcher({
     store,
     threads: host as unknown as ThreadService,
-    worktrees: (worktrees ?? { prepare: async () => ({ cwd: '', worktree: null }) }) as AutomationWorktree,
-    defaultCwd: '/tmp/default',
+    worktrees: (worktrees ?? { prepare: async (_run, cwd) => ({ cwd, worktree: null }) }) as AutomationWorktree,
+    defaultCwd: tmpdir(),
     resolveConfiguration: resolve,
     validateEffectiveConfiguration: validateEffectiveConfiguration ?? (async () => undefined),
     now: () => now,
@@ -1588,7 +1650,7 @@ function userThread(id: string, cwd: string, overrides: Partial<Thread> = {}): T
     source: 'app',
     threadSource: 'user',
     modelProvider: 'openai',
-    cwd,
+    configurationSource: { kind: 'user' },
     createdAt: 1,
     updatedAt: 1,
     status: { type: 'idle' },

@@ -155,7 +155,6 @@ function turnEnvironment(input: {
     timeZone,
     utcOffsetMinutes: timeZoneOffsetMinutes(instant, timeZone),
     locale,
-    workingDirectory: input.thread.cwd,
     conversationMode: input.thread.parentThreadId === null && input.thread.threadSource === 'user'
       ? 'interactive'
       : 'headless',

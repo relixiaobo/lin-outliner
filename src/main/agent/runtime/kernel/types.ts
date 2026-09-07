@@ -63,6 +63,8 @@ export const EMPTY_USAGE: Usage = {
 };
 
 interface AgentToolResultBase<T> {
+  /** Host evidence; never serialized as model-facing tool content. */
+  readonly executionContext?: import('../../../../core/agent/executionContext').TaskExecutionContext;
   content: (TextContent | ImageContent)[];
   details: T;
   terminate?: boolean;

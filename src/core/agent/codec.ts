@@ -1,3 +1,4 @@
+import { decodeExecutionContextFact, decodeTaskExecutionContext } from './executionContext';
 import {
   CONTEXT_EVIDENCE_KINDS,
   CONTEXT_PAYLOAD_KINDS,
@@ -138,7 +139,7 @@ export function decodeThread(value: unknown): Thread {
     'source',
     'threadSource',
     'modelProvider',
-    'cwd',
+    'configurationSource',
     'createdAt',
     'updatedAt',
     'status',
@@ -158,7 +159,7 @@ export function decodeThread(value: unknown): Thread {
     source: stringValue(record.source, 'thread.source'),
     threadSource: decodeThreadSource(record.threadSource),
     modelProvider: stringValue(record.modelProvider, 'thread.modelProvider'),
-    cwd: stringValue(record.cwd, 'thread.cwd'),
+    configurationSource: decodeThreadConfigurationSource(record.configurationSource),
     createdAt: finiteNumber(record.createdAt, 'thread.createdAt'),
     updatedAt: finiteNumber(record.updatedAt, 'thread.updatedAt'),
     status: decodeThreadStatus(record.status),
@@ -333,7 +334,7 @@ function decodeNonMessageThreadItem(
         // the model can read it — not a Turn that dies at admission with
         // nothing recorded.
         command: stringValue(record.command, 'item.command', true),
-        cwd: stringValue(record.cwd, 'item.cwd'),
+        cwd: nullableString(record.cwd, 'item.cwd'),
         processId: nullableString(record.processId, 'item.processId'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
@@ -348,11 +349,12 @@ function decodeNonMessageThreadItem(
       };
       break;
     case 'fileChange':
-      exactKeys(record, ['type', 'id', 'provenance', 'changes', 'status', 'outputRef', 'resourceRefs', 'modelCall'], 'item');
+      exactKeys(record, ['type', 'id', 'provenance', 'changes', 'status', 'outputRef', 'resourceRefs', 'modelCall', 'cwd'], 'item');
       result = {
         ...base,
         type,
         changes: arrayValue(record.changes, 'item.changes').map(decodeFileChange),
+        ...(record.cwd === undefined ? {} : { cwd: nullableString(record.cwd, 'item.cwd') }),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
         resourceRefs: decodeToolItemResourceReferences(record.resourceRefs),
@@ -362,13 +364,14 @@ function decodeNonMessageThreadItem(
     case 'mcpToolCall':
       exactKeys(record, [
         'type', 'id', 'provenance', 'server', 'tool', 'status', 'arguments', 'pluginId', 'result',
-        'error', 'durationMs', 'outputRef', 'resourceRefs',
+        'error', 'durationMs', 'outputRef', 'resourceRefs', 'cwd',
         'modelCall',
       ], 'item');
       result = {
         ...base,
         type,
         server: stringValue(record.server, 'item.server'),
+        ...(record.cwd === undefined ? {} : { cwd: nullableString(record.cwd, 'item.cwd') }),
         tool: stringValue(record.tool, 'item.tool'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
@@ -384,13 +387,14 @@ function decodeNonMessageThreadItem(
     case 'dynamicToolCall':
       exactKeys(record, [
         'type', 'id', 'provenance', 'namespace', 'tool', 'arguments', 'status', 'contentItems',
-        'success', 'durationMs', 'outputRef', 'resourceRefs',
+        'success', 'durationMs', 'outputRef', 'resourceRefs', 'cwd',
         'modelCall',
       ], 'item');
       result = {
         ...base,
         type,
         namespace: nullableString(record.namespace, 'item.namespace'),
+        ...(record.cwd === undefined ? {} : { cwd: nullableString(record.cwd, 'item.cwd') }),
         tool: stringValue(record.tool, 'item.tool'),
         arguments: jsonValue(record.arguments, 'item.arguments'),
         status: itemExecutionStatus(record.status, 'item.status'),
@@ -406,7 +410,7 @@ function decodeNonMessageThreadItem(
       break;
     case 'webSearch':
       exactKeys(record, [
-        'type', 'id', 'provenance', 'query', 'status', 'results', 'error', 'outputRef', 'resourceRefs', 'modelCall',
+        'type', 'id', 'provenance', 'query', 'status', 'results', 'error', 'outputRef', 'resourceRefs', 'modelCall', 'cwd',
       ], 'item');
       result = {
         ...base,
@@ -415,6 +419,7 @@ function decodeNonMessageThreadItem(
         // field is not nullable, so refusing empty here would make a
         // `web_search` whose argument the model omitted undecodable.
         query: stringValue(record.query, 'item.query', true),
+        ...(record.cwd === undefined ? {} : { cwd: nullableString(record.cwd, 'item.cwd') }),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
         resourceRefs: decodeToolItemResourceReferences(record.resourceRefs),
@@ -546,15 +551,25 @@ function decodeRendererTurnSubmitRequest(value: unknown): RendererTurnSubmitRequ
   });
 }
 
+function decodeInitialContext(value: unknown): NonNullable<PrivilegedTurnStartRequest['initialContext']> {
+  const record = recordValue(value, 'initialContext');
+  exactKeys(record, ['storageOwner', 'refs'], 'initialContext');
+  return {
+    storageOwner: uuidV7(record.storageOwner, 'initialContext.storageOwner'),
+    refs: arrayValue(record.refs, 'initialContext.refs').map((ref) => decodeThreadContextPayloadReference(ref, 'initialContext.ref')),
+  };
+}
+
 export function decodePrivilegedTurnStartRequest(value: unknown): PrivilegedTurnStartRequest {
   const record = recordValue(value, 'privilegedTurnStart');
   exactKeys(record, [
     'threadId', 'turnId', 'input', 'clientUserMessageId', 'additionalContext', 'additionalContextSource',
     'additionalContextResourceRefs',
-    'userView', 'author', 'trigger', 'toolTaskAdmission',
+    'userView', 'author', 'trigger', 'toolTaskAdmission', 'initialContext',
   ], 'privilegedTurnStart');
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'privilegedTurnStart.threadId'),
+    ...(record.initialContext === undefined ? {} : { initialContext: decodeInitialContext(record.initialContext) }),
     ...(record.turnId === undefined ? {} : { turnId: uuidV7(record.turnId, 'privilegedTurnStart.turnId') }),
     input: arrayValue(record.input, 'privilegedTurnStart.input').map(decodeUserContent),
     ...(record.clientUserMessageId === undefined
@@ -1691,10 +1706,20 @@ function decodeThreadReadRequest(value: unknown): AgentCoreRequestByMethod['thre
   });
 }
 
+export function decodeThreadConfigurationSource(value: unknown): import('./protocol').ThreadConfigurationSource {
+  const source = recordValue(value, 'configurationSource');
+  const kind = enumValue(source.kind, ['user', 'project'], 'configurationSource.kind');
+  exactKeys(source, kind === 'user' ? ['kind'] : ['kind', 'root'], 'configurationSource');
+  if (kind === 'user') return { kind };
+  const root = stringValue(source.root, 'configurationSource.root');
+  if (!/^(?:\/|[A-Za-z]:[\\/])/u.test(root) || root.includes('\0')) fail('configurationSource.root', 'expected absolute directory');
+  return { kind, root };
+}
+
 function decodeRendererThreadStartRequest(value: unknown): AgentCoreRequestByMethod['thread/start'] {
   const record = recordValue(value, 'thread/start');
   exactKeys(record, [
-    'id', 'name', 'ephemeral', 'source', 'threadSource', 'modelProvider', 'cwd', 'configurationProfile',
+    'id', 'name', 'ephemeral', 'source', 'threadSource', 'modelProvider', 'configurationSource', 'configurationProfile',
   ], 'thread/start');
   if (record.source !== undefined && record.source !== 'app') fail('thread/start.source', 'renderer source must be app');
   if (record.threadSource !== undefined && record.threadSource !== 'user') {
@@ -1711,7 +1736,7 @@ function decodeRendererThreadStartRequest(value: unknown): AgentCoreRequestByMet
     ...(record.modelProvider === undefined
       ? {}
       : { modelProvider: stringValue(record.modelProvider, 'thread/start.modelProvider') }),
-    ...(record.cwd === undefined ? {} : { cwd: stringValue(record.cwd, 'thread/start.cwd') }),
+    ...(record.configurationSource === undefined ? {} : { configurationSource: decodeThreadConfigurationSource(record.configurationSource) }),
     ...(record.configurationProfile === undefined
       ? {}
       : { configurationProfile: stringValue(record.configurationProfile, 'thread/start.configurationProfile') }),
@@ -2179,7 +2204,7 @@ function decodeToolTaskProjection(value: unknown, path: string): import('./proto
     'taskId', 'ownerThreadId', 'sourceTurnId', 'sourceItemId', 'producer', 'description',
     'state', 'deliveryState', 'progress', 'exitCode', 'signal', 'outcomeReason', 'error',
     'detailState', 'artifacts', 'artifactWarnings', 'outputBytes', 'detailBytes', 'storagePressure',
-    'startedAt', 'completedAt', 'deliveryTurnId',
+    'startedAt', 'completedAt', 'deliveryTurnId', 'executionContext',
   ], path);
   let progress: import('./protocol').ToolTaskProgress | null = null;
   if (record.progress !== null) {
@@ -2218,6 +2243,7 @@ function decodeToolTaskProjection(value: unknown, path: string): import('./proto
   }
   return {
     taskId: boundedUtf8String(record.taskId, `${path}.taskId`, 256),
+    executionContext: decodeTaskExecutionContext(record.executionContext),
     ownerThreadId: uuidV7(record.ownerThreadId, `${path}.ownerThreadId`),
     sourceTurnId: uuidV7(record.sourceTurnId, `${path}.sourceTurnId`),
     sourceItemId: boundedUtf8String(record.sourceItemId, `${path}.sourceItemId`, 256),
@@ -3651,10 +3677,48 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
   const kind = enumValue(record.kind, CONTEXT_PAYLOAD_KINDS, 'contextPayload.kind');
 
   switch (kind) {
+    case 'automationDispatch': {
+      exactKeys(record, ['schemaVersion', 'kind', 'automationRunId', 'sourceContext', 'executionContext', 'modelProvider', 'configuration', 'info'], 'contextPayload');
+      const configuration = recordValue(record.configuration, 'dispatch.configuration');
+      exactKeys(configuration, ['profileName', 'developerInstructions', 'model', 'reasoningEffort', 'tools', 'skills', 'preloadedSkills', 'plugins', 'mcpServers'], 'dispatch.configuration');
+      const strings = (field: string) => arrayValue(configuration[field], `dispatch.configuration.${field}`).map((value) => stringValue(value, field, true));
+      return deepFreeze({
+        schemaVersion: 1, kind, automationRunId: uuidV7(record.automationRunId, 'dispatch.automationRunId'),
+        sourceContext: decodeTaskExecutionContext(record.sourceContext),
+        executionContext: decodeTaskExecutionContext(record.executionContext),
+        modelProvider: stringValue(record.modelProvider, 'dispatch.modelProvider'),
+        configuration: {
+          profileName: nullableString(configuration.profileName, 'dispatch.profileName'),
+          model: stringValue(configuration.model, 'dispatch.model'),
+          reasoningEffort: enumValue(configuration.reasoningEffort, REASONING_EFFORTS, 'dispatch.reasoningEffort'),
+          developerInstructions: strings('developerInstructions'), tools: strings('tools'), skills: strings('skills'),
+          preloadedSkills: strings('preloadedSkills'), plugins: strings('plugins'), mcpServers: strings('mcpServers'),
+        },
+        info: stringValue(record.info, 'dispatch.info'),
+      });
+    }
+    case 'taskExecutionContext':
+      exactKeys(record, ['schemaVersion', 'kind', 'taskId', 'sourceTurnId', 'sourceItemId', 'executionContext'], 'contextPayload');
+      return deepFreeze({
+        schemaVersion: 1, kind,
+        taskId: stringValue(record.taskId, 'contextPayload.taskId'),
+        sourceTurnId: uuidV7(record.sourceTurnId, 'contextPayload.sourceTurnId'),
+        sourceItemId: stringValue(record.sourceItemId, 'contextPayload.sourceItemId'),
+        executionContext: decodeTaskExecutionContext(record.executionContext),
+      });
+    case 'executionContextPublication':
+      exactKeys(record, ['schemaVersion', 'kind', 'evidenceRefs', 'operations', 'text'], 'contextPayload');
+      return deepFreeze({
+        schemaVersion: 1, kind,
+        evidenceRefs: arrayValue(record.evidenceRefs, 'contextPayload.evidenceRefs')
+          .map((ref) => decodeThreadContextPayloadReference(ref, 'contextPayload.evidenceRefs')),
+        operations: arrayValue(record.operations, 'contextPayload.operations').map(decodeExecutionContextFact),
+        text: stringValue(record.text, 'contextPayload.text', true),
+      });
     case 'turnEnvironment':
       exactKeys(record, [
         'schemaVersion', 'kind', 'acceptedAt', 'utcInstant', 'localDate', 'localTime',
-        'timeZone', 'utcOffsetMinutes', 'locale', 'workingDirectory', 'conversationMode',
+        'timeZone', 'utcOffsetMinutes', 'locale', 'conversationMode',
         'executionMode', 'replyIdentity', 'todayNodeId', 'todayNodeTitle',
       ], 'contextPayload');
       return deepFreeze({
@@ -3667,7 +3731,6 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
         timeZone: stringValue(record.timeZone, 'contextPayload.timeZone'),
         utcOffsetMinutes: safeInteger(record.utcOffsetMinutes, 'contextPayload.utcOffsetMinutes'),
         locale: stringValue(record.locale, 'contextPayload.locale'),
-        workingDirectory: stringValue(record.workingDirectory, 'contextPayload.workingDirectory'),
         conversationMode: enumValue(
           record.conversationMode,
           ['interactive', 'headless'],
@@ -3837,7 +3900,7 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
     case 'compactionRestoredState':
       exactKeys(record, [
         'schemaVersion', 'kind', 'skillCatalogHash', 'announcedSkills', 'activeSkills',
-        'userViewBaselineRef', 'additionalContextBaselineRef', 'activeObservations', 'degradations',
+        'userViewBaselineRef', 'additionalContextBaselineRef', 'activeObservations', 'degradations', 'executionContext',
       ], 'contextPayload');
       return decodeCompactionRestoredState(record, kind);
     case 'compactionInstructions': {
@@ -3893,6 +3956,20 @@ function decodeCompactionRestoredState(
   record: Record<string, unknown>,
   kind: 'compactionRestoredState',
 ): ThreadContextPayload {
+  const execution = recordValue(record.executionContext, 'contextPayload.executionContext');
+  exactKeys(execution, ['entries', 'text', 'omitted'], 'contextPayload.executionContext');
+  const executionContext = {
+    entries: arrayValue(execution.entries, 'contextPayload.executionContext.entries').map((value) => {
+      const entry = recordValue(value, 'executionContext.entry');
+      exactKeys(entry, ['fact', 'evidenceRef'], 'executionContext.entry');
+      return {
+        fact: decodeExecutionContextFact(entry.fact),
+        evidenceRef: decodeThreadContextPayloadReference(entry.evidenceRef, 'executionContext.entry.evidenceRef'),
+      };
+    }),
+    text: stringValue(execution.text, 'contextPayload.executionContext.text', true),
+    omitted: nonNegativeInteger(execution.omitted, 'contextPayload.executionContext.omitted'),
+  };
   const announcedSkills = arrayValue(record.announcedSkills, 'contextPayload.announcedSkills')
     .map((entry, index) => decodeCatalogCheckpoint(entry, `contextPayload.announcedSkills[${index}]`));
   const activeSkills = arrayValue(record.activeSkills, 'contextPayload.activeSkills')
@@ -3919,6 +3996,7 @@ function decodeCompactionRestoredState(
     schemaVersion: 1,
     kind,
     skillCatalogHash: nullableSha256(record.skillCatalogHash, 'contextPayload.skillCatalogHash'),
+    executionContext,
     announcedSkills,
     activeSkills,
     userViewBaselineRef: record.userViewBaselineRef === null

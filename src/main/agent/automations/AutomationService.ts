@@ -6,12 +6,13 @@ import {
   decodeAutomationCreateInput,
   decodeAutomationUpdateInput,
   EMPTY_AUTOMATION_CONFIGURATION,
+  automationDirectoryHint,
   type Automation,
   type AutomationConfiguration,
   type AutomationCreateInput,
   type AutomationMethod,
   type AutomationNotification,
-  type AutomationProjectBinding,
+  type AutomationContextHintInput,
   type AutomationRequestByMethod,
   type AutomationResponseByMethod,
   type AutomationRun,
@@ -117,7 +118,7 @@ export class AutomationService {
       }
       case 'startNow': {
         const value = decoded as AutomationRequestByMethod['startNow'];
-        return { runs: await this.startNow(value.id) } as AutomationResponseByMethod[Method];
+        return { runs: await this.startNow(value.id, value.requestId) } as AutomationResponseByMethod[Method];
       }
       case 'runs':
         return { data: this.options.store.listRuns(decoded as AutomationRequestByMethod['runs']) } as AutomationResponseByMethod[Method];
@@ -184,20 +185,18 @@ export class AutomationService {
       prompt: normalized.prompt ?? current.prompt,
       schedule: normalized.schedule ?? current.schedule,
       destination: normalized.destination ?? current.destination,
-      projectBindings: normalized.projectBindings ?? current.projectBindings,
+      contextHints: normalized.contextHints ?? current.contextHints,
       configuration: normalized.configuration
         ? { ...current.configuration, ...normalized.configuration }
         : current.configuration,
       status: current.status === 'paused' ? 'paused' : 'active',
     });
-    const canonicalUpdate = normalized.projectBindings
-      ? { ...normalized, projectBindings: validated.projectBindings }
+    const canonicalUpdate = normalized.contextHints
+      ? { ...normalized, contextHints: validated.contextHints }
       : normalized;
     return this.options.scheduler.runExclusive(async () => {
-      if (canonicalUpdate.status === 'paused') {
-        await this.options.dispatcher.recoverPendingRuns(input.id);
-      }
-      const pending = canonicalUpdate.status === 'paused' ? this.options.store.pendingRuns(input.id) : [];
+      await this.options.dispatcher.recoverPendingRuns(input.id);
+      const pending = this.options.store.pendingRuns(input.id);
       const automation = this.options.store.update(canonicalUpdate, this.now());
       for (const run of pending) await this.runChanged(this.options.store.readRun(run.id)!);
       await this.automationChanged(automation);
@@ -230,14 +229,15 @@ export class AutomationService {
     });
   }
 
-  private async startNow(id: string): Promise<readonly AutomationRun[]> {
+  private async startNow(id: string, requestId: string): Promise<readonly AutomationRun[]> {
     return this.options.scheduler.runExclusive(async () => {
       const automation = this.options.store.read(id, this.now());
       if (!automation) throw new Error(`Automation not found: ${id}`);
       if (automation.status !== 'active') throw new Error('Only an active Automation can start now');
-      const bindings = automation.projectBindings.length === 0 ? [null] : automation.projectBindings;
+      const bindings = automation.contextHints.length === 0 ? [null] : automation.contextHints;
       for (const binding of bindings) {
-        const key = binding?.id ?? 'no-project';
+        const key = binding?.contextHintId ?? 'default';
+        if (this.options.store.runForOccurrence(id, `manual:${requestId}`, key)) continue;
         const active = this.options.store.latestUnsettledRun(automation.id, key);
         if (active && this.options.dispatcher.isRunActive(active)) {
           throw new Error(`Automation already has an active occurrence for ${key}`);
@@ -245,7 +245,7 @@ export class AutomationService {
       }
       const runs: AutomationRun[] = [];
       for (const binding of bindings) {
-        const claimed = this.options.store.claimNow(automation, binding, this.now());
+        const claimed = this.options.store.claimNow(automation, binding, this.now(), requestId);
         await this.runChanged(claimed);
         runs.push(await this.options.dispatcher.dispatch(claimed));
       }
@@ -254,7 +254,7 @@ export class AutomationService {
   }
 
   private async validateDefinition(input: AutomationCreateInput): Promise<AutomationCreateInput> {
-    const bindings = input.projectBindings ?? [];
+    const bindings = input.contextHints ?? [];
     const resolvedBindings = await Promise.all(bindings.map(validateProjectBinding));
     const configuration: AutomationConfiguration = {
       ...EMPTY_AUTOMATION_CONFIGURATION,
@@ -262,18 +262,9 @@ export class AutomationService {
     };
     if (input.destination.kind === 'existingThread') {
       if (bindings.length > 1) throw new Error('Existing-Thread Automations accept at most one project binding');
-      if (bindings[0]?.executionMode === 'worktree') {
-        throw new Error('Existing-Thread Automations accept only local project bindings');
-      }
       const context = this.options.threads.persistentThreadExecutionContext(input.destination.threadId);
       if (context.thread.threadSource !== 'user') {
         throw new Error('An existing-Thread Automation must target a user root Thread');
-      }
-      if (bindings[0]) {
-        const cwd = resolvedBindings[0]!;
-        if (cwd !== await realpath(context.thread.cwd)) {
-          throw new Error('Automation project does not match the destination Thread workspace');
-        }
       }
       assertAutomationConfigurationMatchesThread(
         configuration,
@@ -285,20 +276,9 @@ export class AutomationService {
         context.configuration,
       );
     } else {
-      const workspaces = resolvedBindings.length > 0 ? resolvedBindings : [undefined];
-      await Promise.all(workspaces.map((cwd) => this.options.dispatcher.validateConfiguration(configuration, cwd)));
+      await this.options.dispatcher.validateConfiguration(configuration);
     }
-    return Object.freeze({
-      ...input,
-      ...(input.projectBindings === undefined
-        ? {}
-        : {
-            projectBindings: Object.freeze(input.projectBindings.map((binding, index) => Object.freeze({
-              ...binding,
-              cwd: resolvedBindings[index]!,
-            }))),
-          }),
-    });
+    return Object.freeze(input);
   }
 
   private async publish(notification: AutomationNotification): Promise<void> {
@@ -306,20 +286,21 @@ export class AutomationService {
   }
 }
 
-async function validateProjectBinding(binding: AutomationProjectBinding): Promise<string> {
-  const cwd = await realpath(binding.cwd);
+async function validateProjectBinding(binding: AutomationContextHintInput): Promise<string> {
+  const rootHint = automationDirectoryHint(binding);
+  const cwd = await realpath(rootHint);
   const value = await stat(cwd);
-  if (!value.isDirectory()) throw new Error(`Automation project is not a directory: ${binding.cwd}`);
+  if (!value.isDirectory()) throw new Error(`Automation hint is not a directory: ${rootHint}`);
   if (binding.executionMode === 'worktree') {
     // Git repository validation is repeated during dispatch to prevent stale path substitution.
     const { stdout } = await execFileAsync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
       maxBuffer: 1024 * 1024,
     }).catch(() => {
-      throw new Error(`Automation worktree mode requires a Git project root: ${binding.cwd}`);
+      throw new Error(`Automation worktree mode requires a Git project root: ${rootHint}`);
     });
     const root = await realpath(stdout.trim());
     if (root !== cwd) {
-      throw new Error(`Automation worktree mode requires the Git repository root: ${binding.cwd}`);
+      throw new Error(`Automation worktree mode requires the Git repository root: ${rootHint}`);
     }
   }
   return cwd;

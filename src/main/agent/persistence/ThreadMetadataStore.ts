@@ -53,7 +53,7 @@ interface ThreadRow {
   source: string;
   thread_source: string;
   model_provider: string;
-  cwd: string;
+  configuration_source_json: string;
   created_at: number;
   updated_at: number;
   status_json: string;
@@ -85,7 +85,7 @@ export class ThreadMetadataStore {
         source TEXT NOT NULL,
         thread_source TEXT NOT NULL,
         model_provider TEXT NOT NULL,
-        cwd TEXT NOT NULL,
+        configuration_source_json TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         status_json TEXT NOT NULL,
@@ -129,7 +129,7 @@ export class ThreadMetadataStore {
     this.writeThread(thread.id, () => this.db.prepare(`
         INSERT INTO threads (
           id, session_id, parent_thread_id, forked_from_id,
-          name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
+          name, name_origin, preview, ephemeral, source, thread_source, model_provider, configuration_source_json,
           created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
@@ -144,7 +144,7 @@ export class ThreadMetadataStore {
         thread.source,
         thread.threadSource,
         thread.modelProvider,
-        thread.cwd,
+        JSON.stringify(thread.configurationSource),
         thread.createdAt,
         thread.updatedAt,
         JSON.stringify(thread.status),
@@ -174,14 +174,14 @@ export class ThreadMetadataStore {
     this.writeThread(thread.id, () => this.db.prepare(`
         INSERT INTO threads (
           id, session_id, parent_thread_id, forked_from_id,
-          name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
+          name, name_origin, preview, ephemeral, source, thread_source, model_provider, configuration_source_json,
           created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         thread.id, thread.sessionId, thread.parentThreadId, thread.forkedFromId,
         thread.name, record.nameOrigin,
         thread.preview, thread.ephemeral ? 1 : 0, thread.source, thread.threadSource, thread.modelProvider,
-        thread.cwd, thread.createdAt, thread.updatedAt, JSON.stringify(thread.status),
+        JSON.stringify(thread.configurationSource), thread.createdAt, thread.updatedAt, JSON.stringify(thread.status),
         record.archived ? 1 : 0, JSON.stringify(record.configuration),
         record.toolCeiling === null ? null : JSON.stringify(record.toolCeiling),
       ));
@@ -310,14 +310,6 @@ export class ThreadMetadataStore {
     this.updateOne(
       'UPDATE threads SET status_json = ?, updated_at = ? WHERE id = ?',
       [JSON.stringify(status), updatedAt, threadId],
-      threadId,
-    );
-  }
-
-  setCwd(threadId: ThreadId, cwd: string, updatedAt: number): void {
-    this.updateOne(
-      'UPDATE threads SET cwd = ?, updated_at = ? WHERE id = ?',
-      [cwd, updatedAt, threadId],
       threadId,
     );
   }
@@ -536,7 +528,7 @@ function recordFromRow(row: ThreadRow): ThreadCatalogRecord {
     source: row.source,
     threadSource: row.thread_source,
     modelProvider: row.model_provider,
-    cwd: row.cwd,
+    configurationSource: JSON.parse(row.configuration_source_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     status: JSON.parse(row.status_json),

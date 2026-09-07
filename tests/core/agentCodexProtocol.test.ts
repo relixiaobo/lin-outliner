@@ -119,6 +119,13 @@ const projectionContextRef = {
 };
 
 const toolTask = {
+  executionContext: {
+    addressRef: 'a'.repeat(64), policyRef: 'b'.repeat(64), snapshotRef: 'c'.repeat(64),
+    address: { requestedCwd: null, cwd: '/workspace', targets: [], targetMode: 'follow', coverage: 'cwd-only',
+      scopes: [{ key: 'directory:/workspace', directory: '/workspace', worktree: null, gitDirectory: null }] },
+    policy: { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [], mutation: true },
+    snapshot: { generation: 0, predecessorRef: null, discovery: 'pending', degradation: 'Discovery pending', facts: [] },
+  },
   taskId: 'task-1',
   ownerThreadId: THREAD_ID,
   sourceTurnId: TURN_ID,
@@ -438,7 +445,7 @@ const thread: Thread = {
   source: 'app',
   threadSource: threadFeatureSource('automation'),
   modelProvider: 'openai',
-  cwd: '/tmp/project',
+  configurationSource: { kind: 'user' },
   createdAt: 100,
   updatedAt: 200,
   status: { type: 'idle' },
@@ -817,7 +824,7 @@ describe('Codex Agent Core protocol codec', () => {
         timeZone: 'Asia/Shanghai',
         utcOffsetMinutes: 480,
         locale: 'zh-CN',
-        workingDirectory: '/tmp/project',
+        
         conversationMode: 'interactive',
         executionMode: 'root',
         replyIdentity: 'local-user',
@@ -956,6 +963,7 @@ describe('Codex Agent Core protocol codec', () => {
         text: 'Lossy summary',
       },
       {
+      executionContext: { entries: [], text: '', omitted: 0 },
         schemaVersion: 1,
         kind: 'compactionRestoredState',
         skillCatalogHash: '2'.repeat(64),
@@ -1562,7 +1570,7 @@ describe('Codex Agent Core protocol codec', () => {
       timeZone: 'UTC',
       utcOffsetMinutes: 0,
       locale: 'en-US',
-      workingDirectory: '/tmp/project',
+      
       conversationMode: 'interactive',
       executionMode: 'root',
       replyIdentity: 'Neva',
@@ -2121,7 +2129,7 @@ describe('Codex Agent Core protocol codec', () => {
       source: 'automation-host',
       threadSource: 'automation',
       modelProvider: 'openai',
-      cwd: '/tmp/project',
+      configurationSource: { kind: 'user' },
     })).toThrow('renderer source must be app');
     expect(() => decodeAgentCoreRequest('goal/update', {
       threadId: THREAD_ID,

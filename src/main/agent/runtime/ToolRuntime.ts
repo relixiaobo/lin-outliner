@@ -81,9 +81,35 @@ export class ToolRuntime {
       throw new Error(`Delegation Session ${context.thread.id} has no persisted tool policy`);
     }
     const skillRuntime = await this.skillRuntime(context);
-    const workspace = typeof this.options.localWorkspace === 'function'
+    const configuredWorkspace = typeof this.options.localWorkspace === 'function'
       ? this.options.localWorkspace(context)
       : this.options.localWorkspace;
+    let automationBoundary: AgentLocalWorkspaceContext['writeBoundary'];
+    if (context.turn.provenance.trigger.kind === 'feature' && context.turn.provenance.trigger.feature === 'automation') {
+      const evidence = context.turn.items.find((item) => item.type === 'contextEvidence' && item.kind === 'automationDispatch');
+      const snapshot = evidence?.type === 'contextEvidence' ? await context.readContext(evidence.payloadRef) : null;
+      if (snapshot?.kind !== 'automationDispatch' || snapshot.automationRunId !== context.turn.provenance.trigger.ref) {
+        throw new Error('Automation execution requires its admitted dispatch snapshot');
+      }
+      if (snapshot.executionContext.policy.isolation !== 'unsandboxed') {
+        automationBoundary = {
+          root: snapshot.executionContext.address.cwd,
+          shellWritablePaths: snapshot.executionContext.policy.writablePaths,
+        };
+      }
+    }
+    const workspace = {
+      ...(configuredWorkspace ?? { root: this.service.defaultExecutionDirectory(), scratchRoot: this.service.defaultExecutionDirectory(), readFileState: new Map() }),
+      threadId: context.thread.id,
+      capability: delegationPolicy?.access === 'read-only' ? 'read-only' as const : 'full-access' as const,
+      ...(automationBoundary ? { writeBoundary: automationBoundary } : {}),
+      onTaskAdmitted: async (task: import('../tasks/toolTaskTypes').ToolTaskRecord) => {
+        await context.persistContextEvidence({
+          schemaVersion: 1, kind: 'taskExecutionContext', taskId: task.taskId,
+          sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId, executionContext: task.executionContext,
+        }, `Execution context: ${task.executionContext.address.cwd}`);
+      },
+    };
     const imageGeneration = typeof this.options.imageGeneration === 'function'
       ? this.options.imageGeneration(context)
       : this.options.imageGeneration;
@@ -91,7 +117,7 @@ export class ToolRuntime {
     const capabilityTools = this.options.capabilityTools
       ? this.options.capabilityTools(context)
       : (await import('../capabilities/agentTools')).createAgentTools({
-          localFileRoot: context.thread.cwd,
+          localFileRoot: this.service.defaultExecutionDirectory(),
           ...(workspace === undefined ? {} : { localWorkspace: workspace }),
           ...(this.options.imageNormalizer === undefined ? {} : { imageNormalizer: this.options.imageNormalizer }),
           ...(skillRuntime === undefined ? {} : { skillRuntime }),
@@ -372,7 +398,7 @@ export class ToolRuntime {
           args,
           ...(contract.schemaOwner === 'extension' ? { actionKinds: contract.actionKinds } : {}),
           policy: {
-            workspaceRoot: context.thread.cwd,
+            workspaceRoot: this.service.defaultExecutionDirectory(),
             capabilityConfig: await this.capabilityConfig(),
           },
         });

@@ -359,7 +359,7 @@ function thread(id: string, name: string, updatedAt: number): Thread {
     source: 'test',
     threadSource: 'user',
     modelProvider: 'openai',
-    cwd: '/workspace',
+    configurationSource: { kind: 'user' },
     createdAt: updatedAt - 1,
     updatedAt,
     status: 'idle',

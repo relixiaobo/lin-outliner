@@ -419,6 +419,7 @@ describe('ThreadTrajectoryProjection', () => {
       kind: 'compactionSummary',
     };
     const restoredStateRef: ThreadContextPayloadReference = {
+      executionContext: { entries: [], text: '', omitted: 0 },
       ...summaryRef,
       id: '5'.repeat(64),
       kind: 'compactionRestoredState',
@@ -1831,7 +1832,7 @@ function trajectoryThread(): Thread {
     source: 'test',
     threadSource: { kind: 'user' },
     modelProvider: 'openai',
-    cwd: '/redacted',
+    configurationSource: { kind: 'user' },
     createdAt: 100,
     updatedAt: 300,
     status: { type: 'idle' },
@@ -2039,7 +2040,7 @@ function turnEnvironmentPayload(): ThreadContextPayload {
     timeZone: 'Asia/Shanghai',
     utcOffsetMinutes: 480,
     locale: 'en-US',
-    workingDirectory: '/redacted',
+    
     conversationMode: 'interactive',
     executionMode: 'root',
     replyIdentity: null,

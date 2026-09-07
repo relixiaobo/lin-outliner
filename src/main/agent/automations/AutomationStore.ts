@@ -2,14 +2,15 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
   AUTOMATION_ERROR_MAX_LENGTH,
-  AUTOMATION_NO_PROJECT_BINDING_KEY,
+  AUTOMATION_DEFAULT_CONTEXT_HINT_ID,
   EMPTY_AUTOMATION_CONFIGURATION,
   type Automation,
   type AutomationConfiguration,
   type AutomationCreateInput,
   type AutomationDestination,
   type AutomationListInput,
-  type AutomationProjectBinding,
+  type AutomationContextHint,
+  type AutomationContextHintInput,
   type AutomationRun,
   type AutomationRunConfigurationSnapshot,
   type AutomationRunListInput,
@@ -30,7 +31,7 @@ interface AutomationRow {
   prompt: string;
   schedule_json: string;
   destination_json: string;
-  project_bindings_json: string;
+  context_hints_json: string;
   configuration_json: string;
   status: AutomationStatus;
   revision: number;
@@ -45,7 +46,9 @@ interface AutomationRunRow {
   automation_revision: number;
   event_sequence: number;
   scheduled_for: number;
-  project_binding_key: string;
+  context_hint_id: string;
+  occurrence_key: string;
+  dispatch_snapshot_ref_json: string | null;
   snapshot_json: string;
   state: AutomationRun['state'];
   thread_id: string | null;
@@ -68,7 +71,7 @@ export interface AutomationBindingCursor {
 
 export interface DueClaimInput {
   readonly automation: Automation;
-  readonly binding: AutomationProjectBinding | null;
+  readonly binding: AutomationContextHint | null;
   readonly expectedEvaluatedThrough: number;
   readonly evaluatedThrough: number;
   readonly occurrences: readonly number[];
@@ -96,7 +99,7 @@ export class AutomationStore {
         prompt TEXT NOT NULL,
         schedule_json TEXT NOT NULL,
         destination_json TEXT NOT NULL,
-        project_bindings_json TEXT NOT NULL,
+        context_hints_json TEXT NOT NULL,
         configuration_json TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('active', 'paused', 'completed')),
         revision INTEGER NOT NULL CHECK (revision > 0),
@@ -122,7 +125,9 @@ export class AutomationStore {
         automation_revision INTEGER NOT NULL CHECK (automation_revision > 0),
         event_sequence INTEGER NOT NULL CHECK (event_sequence > 0),
         scheduled_for INTEGER NOT NULL,
-        project_binding_key TEXT NOT NULL,
+        context_hint_id TEXT NOT NULL,
+        occurrence_key TEXT NOT NULL,
+        dispatch_snapshot_ref_json TEXT,
         snapshot_json TEXT NOT NULL,
         state TEXT NOT NULL CHECK (state IN ('pending', 'dispatched', 'failed', 'omitted')),
         thread_id TEXT,
@@ -134,7 +139,7 @@ export class AutomationStore {
         pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
-        UNIQUE (automation_id, scheduled_for, project_binding_key),
+        UNIQUE (automation_id, context_hint_id, occurrence_key),
         CHECK (
           (state = 'dispatched' AND thread_id IS NOT NULL AND turn_id IS NOT NULL AND omission_json IS NULL)
           OR (state = 'omitted' AND thread_id IS NULL AND turn_id IS NULL AND omission_json IS NOT NULL)
@@ -152,14 +157,37 @@ export class AutomationStore {
     this.db.close();
   }
 
+  private admitHints(inputs: readonly AutomationContextHintInput[], current: readonly AutomationContextHint[], now: number): readonly AutomationContextHint[] {
+    const currentIds = new Set(current.map((hint) => hint.contextHintId));
+    return inputs.map((hint) => {
+      if (hint.contextHintId && !currentIds.has(hint.contextHintId)) {
+        throw new Error('New context hints must omit contextHintId; the Host allocates their identity.');
+      }
+      return { ...hint, contextHintId: hint.contextHintId ?? uuidV7(now) };
+    });
+  }
+
+  setDispatchSnapshot(id: string, ref: import('../../../core/agent/protocol').ThreadContextPayloadReference, now: number): AutomationRun {
+    const current = this.requireRun(id);
+    if (current.dispatchSnapshotRef) {
+      if (json(current.dispatchSnapshotRef) !== json(ref)) throw new Error('Automation dispatch snapshot is immutable');
+      return current;
+    }
+    if (current.state !== 'pending') throw new Error('Only pending claims can prepare dispatch');
+    this.db.prepare('UPDATE automation_runs SET dispatch_snapshot_ref_json = ?, event_sequence = ?, updated_at = ? WHERE id = ? AND dispatch_snapshot_ref_json IS NULL')
+      .run(json(ref), this.nextRunEventSequence(), now, id);
+    return this.requireRun(id);
+  }
+
   create(input: AutomationCreateInput, now = Date.now()): Automation {
     const id = uuidV7(now);
     const status = input.status ?? 'active';
     const configuration = fullConfiguration(input.configuration);
+    const contextHints = this.admitHints(input.contextHints ?? [], [], now);
     this.transaction(() => {
       this.db.prepare(`
         INSERT INTO automations(
-          id, name, prompt, schedule_json, destination_json, project_bindings_json,
+          id, name, prompt, schedule_json, destination_json, context_hints_json,
           configuration_json, status, revision, deleted_at, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)
       `).run(
@@ -168,13 +196,13 @@ export class AutomationStore {
         input.prompt,
         json(input.schedule),
         json(input.destination),
-        json(input.projectBindings ?? []),
+        json(contextHints),
         json(configuration),
         status,
         now,
         now,
       );
-      this.syncBindingCursors(id, input.projectBindings ?? [], now - 1);
+      this.syncBindingCursors(id, contextHints, now - 1);
     });
     return this.read(id, now)!;
   }
@@ -184,8 +212,8 @@ export class AutomationStore {
     if (current.revision !== input.expectedRevision) throw revisionConflict(current);
     const scheduleChanged = input.schedule !== undefined
       && json(input.schedule) !== json(current.schedule);
-    const bindingsChanged = input.projectBindings !== undefined
-      && json(input.projectBindings) !== json(current.projectBindings);
+    const bindingsChanged = input.contextHints !== undefined
+      && json(input.contextHints) !== json(current.contextHints);
     if (current.status === 'completed' && input.status !== undefined && !scheduleChanged) {
       throw new AgentToolFailure(
         'automation_invalid_state',
@@ -202,7 +230,7 @@ export class AutomationStore {
       prompt: input.prompt ?? current.prompt,
       schedule: input.schedule ?? current.schedule,
       destination: input.destination ?? current.destination,
-      projectBindings: input.projectBindings ?? current.projectBindings,
+      contextHints: input.contextHints ? this.admitHints(input.contextHints, current.contextHints, now) : current.contextHints,
       configuration: input.configuration
         ? fullConfiguration({ ...current.configuration, ...input.configuration })
         : current.configuration,
@@ -215,14 +243,14 @@ export class AutomationStore {
       const result = this.db.prepare(`
         UPDATE automations SET
           name = ?, prompt = ?, schedule_json = ?, destination_json = ?,
-          project_bindings_json = ?, configuration_json = ?, status = ?, revision = ?, updated_at = ?
+          context_hints_json = ?, configuration_json = ?, status = ?, revision = ?, updated_at = ?
         WHERE id = ? AND revision = ? AND deleted_at IS NULL
       `).run(
         next.name,
         next.prompt,
         json(next.schedule),
         json(next.destination),
-        json(next.projectBindings),
+        json(next.contextHints),
         json(next.configuration),
         next.status,
         next.revision,
@@ -231,12 +259,9 @@ export class AutomationStore {
         input.expectedRevision,
       );
       if (result.changes !== 1) throw revisionConflict(this.require(input.id, now));
-      if (next.status === 'paused' && current.status !== 'paused') this.omitPending(next.id, 'paused', now);
-      if (
-        scheduleChanged
-        || bindingsChanged
-        || (current.status === 'paused' && next.status === 'active')
-      ) this.syncBindingCursors(next.id, next.projectBindings, now);
+      this.omitPending(next.id, next.status === 'paused' ? 'paused' : 'updated', now);
+      const previousKeys = new Set(bindingKeys(current.contextHints));
+      this.syncBindingCursors(next.id, next.contextHints, now, scheduleChanged, previousKeys);
     });
     return this.read(input.id, now)!;
   }
@@ -263,7 +288,6 @@ export class AutomationStore {
         WHERE id = ? AND deleted_at IS NULL
       `).run(status, now, id);
       if (status === 'paused') this.omitPending(id, 'paused', now);
-      else this.syncBindingCursors(id, current.projectBindings, now);
     });
     return this.read(id, now)!;
   }
@@ -323,7 +347,7 @@ export class AutomationStore {
   }
 
   bindingCursors(automation: Automation): readonly AutomationBindingCursor[] {
-    const keys = bindingKeys(automation.projectBindings);
+    const keys = bindingKeys(automation.contextHints);
     const rows = this.db.prepare(`
       SELECT automation_id, binding_key, evaluated_through, overlap_deferred
       FROM automation_binding_cursors WHERE automation_id = ?
@@ -391,10 +415,8 @@ export class AutomationStore {
     return { claimed, omissions, cursorAdvanced };
   }
 
-  claimNow(automation: Automation, binding: AutomationProjectBinding | null, now = Date.now()): AutomationRun {
-    let scheduledFor = now;
-    while (this.runForOccurrence(automation.id, scheduledFor, bindingKey(binding))) scheduledFor += 1;
-    return this.insertClaim(automation, binding, scheduledFor, now);
+  claimNow(automation: Automation, binding: AutomationContextHint | null, now = Date.now(), requestId = uuidV7(now)): AutomationRun {
+    return this.insertClaim(automation, binding, now, now, `manual:${requestId}`);
   }
 
   pendingRuns(automationId?: string): readonly AutomationRun[] {
@@ -406,22 +428,22 @@ export class AutomationStore {
     return Object.freeze(rows.map(runFromRow));
   }
 
-  latestUnsettledRun(automationId: string, projectBindingKey: string): AutomationRun | null {
+  latestUnsettledRun(automationId: string, contextHintId: string): AutomationRun | null {
     const row = this.db.prepare(`
       SELECT * FROM automation_runs
-      WHERE automation_id = ? AND project_binding_key = ? AND state IN ('pending', 'dispatched')
+      WHERE automation_id = ? AND context_hint_id = ? AND state IN ('pending', 'dispatched')
       ORDER BY scheduled_for DESC, id DESC LIMIT 1
-    `).get(automationId, projectBindingKey) as AutomationRunRow | undefined;
+    `).get(automationId, contextHintId) as AutomationRunRow | undefined;
     return row ? runFromRow(row) : null;
   }
 
-  markOverlapDeferred(automationId: string, projectBindingKey: string): void {
+  markOverlapDeferred(automationId: string, contextHintId: string): void {
     const result = this.db.prepare(`
       UPDATE automation_binding_cursors SET overlap_deferred = 1
       WHERE automation_id = ? AND binding_key = ?
-    `).run(automationId, projectBindingKey);
+    `).run(automationId, contextHintId);
     if (result.changes !== 1) {
-      throw new Error(`Missing Automation binding cursor: ${automationId}/${projectBindingKey}`);
+      throw new Error(`Missing Automation binding cursor: ${automationId}/${contextHintId}`);
     }
   }
 
@@ -510,14 +532,14 @@ export class AutomationStore {
    */
   recentRunsForBinding(
     automationId: string,
-    projectBindingKey: string,
+    contextHintId: string,
     limit: number,
   ): readonly AutomationRun[] {
     const rows = this.db.prepare(`
       SELECT * FROM automation_runs
-      WHERE automation_id = ? AND project_binding_key = ?
+      WHERE automation_id = ? AND context_hint_id = ?
       ORDER BY scheduled_for DESC, id DESC LIMIT ?
-    `).all(automationId, projectBindingKey, limit) as AutomationRunRow[];
+    `).all(automationId, contextHintId, limit) as AutomationRunRow[];
     return Object.freeze(rows.map(runFromRow));
   }
 
@@ -621,11 +643,14 @@ export class AutomationStore {
 
   private syncBindingCursors(
     automationId: string,
-    bindings: readonly AutomationProjectBinding[],
+    bindings: readonly AutomationContextHint[],
     evaluatedThrough: number,
+    reset = true,
+    previousKeys: ReadonlySet<string> = new Set(),
   ): void {
     const keys = bindingKeys(bindings);
     for (const key of keys) {
+      if (!reset && previousKeys.has(key)) continue;
       this.db.prepare(`
         INSERT INTO automation_binding_cursors(automation_id, binding_key, evaluated_through, overlap_deferred)
         VALUES (?, ?, ?, 0)
@@ -638,7 +663,7 @@ export class AutomationStore {
 
   private omitPending(
     automationId: string,
-    reason: Extract<AutomationRunOmission['reason'], 'paused' | 'deleted'>,
+    reason: Extract<AutomationRunOmission['reason'], 'paused' | 'deleted' | 'updated'>,
     now: number,
   ): void {
     const rows = this.db.prepare(`
@@ -662,7 +687,7 @@ export class AutomationStore {
 
   private recordOmission(
     automation: Automation,
-    binding: AutomationProjectBinding | null,
+    binding: AutomationContextHint | null,
     from: number,
     through: number,
     count: number,
@@ -672,7 +697,7 @@ export class AutomationStore {
     const key = bindingKey(binding);
     const previous = this.db.prepare(`
       SELECT * FROM automation_runs
-      WHERE automation_id = ? AND project_binding_key = ?
+      WHERE automation_id = ? AND context_hint_id = ?
       ORDER BY scheduled_for DESC LIMIT 1
     `).get(automation.id, key) as AutomationRunRow | undefined;
     if (previous?.state === 'omitted' && previous.automation_revision === automation.revision) {
@@ -693,31 +718,32 @@ export class AutomationStore {
     const omission: AutomationRunOmission = { from, through, count, reason };
     this.db.prepare(`
       INSERT INTO automation_runs(
-        id, automation_id, automation_revision, event_sequence, scheduled_for, project_binding_key,
+        id, automation_id, automation_revision, event_sequence, scheduled_for, context_hint_id, occurrence_key,
         snapshot_json, state, thread_id, turn_id, worktree_json, omission_json,
         error, read_at, pinned, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'omitted', NULL, NULL, NULL, ?, NULL, NULL, 0, ?, ?)
-    `).run(id, automation.id, automation.revision, eventSequence, through, key, json(snapshot), json(omission), now, now);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'omitted', NULL, NULL, NULL, ?, NULL, NULL, 0, ?, ?)
+    `).run(id, automation.id, automation.revision, eventSequence, through, key, `omitted:${id}`, json(snapshot), json(omission), now, now);
     return this.requireRun(id);
   }
 
   private insertClaim(
     automation: Automation,
-    binding: AutomationProjectBinding | null,
+    binding: AutomationContextHint | null,
     scheduledFor: number,
     now: number,
+    occurrenceKey = `scheduled:${scheduledFor}`,
   ): AutomationRun {
-    const existing = this.runForOccurrence(automation.id, scheduledFor, bindingKey(binding));
+    const existing = this.runForOccurrence(automation.id, occurrenceKey, bindingKey(binding));
     if (existing) return existing;
     const id = uuidV7(now);
     const eventSequence = this.nextRunEventSequence();
     const threadId = automation.destination.kind === 'standalone' ? uuidV7(now) : automation.destination.threadId;
     this.db.prepare(`
       INSERT INTO automation_runs(
-        id, automation_id, automation_revision, event_sequence, scheduled_for, project_binding_key,
+        id, automation_id, automation_revision, event_sequence, scheduled_for, context_hint_id, occurrence_key,
         snapshot_json, state, thread_id, turn_id, worktree_json, omission_json,
         error, read_at, pinned, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)
     `).run(
       id,
       automation.id,
@@ -725,6 +751,7 @@ export class AutomationStore {
       eventSequence,
       scheduledFor,
       bindingKey(binding),
+      occurrenceKey,
       json(runSnapshot(automation, binding)),
       threadId,
       now,
@@ -733,11 +760,11 @@ export class AutomationStore {
     return this.requireRun(id);
   }
 
-  private runForOccurrence(automationId: string, scheduledFor: number, projectBindingKey: string): AutomationRun | null {
+  runForOccurrence(automationId: string, occurrenceKey: string, contextHintId: string): AutomationRun | null {
     const row = this.db.prepare(`
       SELECT * FROM automation_runs
-      WHERE automation_id = ? AND scheduled_for = ? AND project_binding_key = ?
-    `).get(automationId, scheduledFor, projectBindingKey) as AutomationRunRow | undefined;
+      WHERE automation_id = ? AND occurrence_key = ? AND context_hint_id = ?
+    `).get(automationId, occurrenceKey, contextHintId) as AutomationRunRow | undefined;
     return row ? runFromRow(row) : null;
   }
 
@@ -773,8 +800,8 @@ function automationFromRow(row: AutomationRow, now: number): Automation {
     prompt: row.prompt,
     schedule,
     destination: parseJson<AutomationDestination>(row.destination_json, 'Automation destination'),
-    projectBindings: Object.freeze(parseJson<AutomationProjectBinding[]>(
-      row.project_bindings_json,
+    contextHints: Object.freeze(parseJson<AutomationContextHint[]>(
+      row.context_hints_json,
       'Automation project bindings',
     )),
     configuration: Object.freeze(parseJson<AutomationConfiguration>(
@@ -798,7 +825,9 @@ function runFromRow(row: AutomationRunRow): AutomationRun {
     automationRevision: row.automation_revision,
     eventSequence: row.event_sequence,
     scheduledFor: row.scheduled_for,
-    projectBindingKey: row.project_binding_key,
+    contextHintId: row.context_hint_id,
+    occurrenceKey: row.occurrence_key,
+    dispatchSnapshotRef: row.dispatch_snapshot_ref_json === null ? null : JSON.parse(row.dispatch_snapshot_ref_json),
     snapshot: Object.freeze(parseJson<AutomationRunConfigurationSnapshot>(row.snapshot_json, 'AutomationRun snapshot')),
     state: row.state,
     threadId: row.thread_id,
@@ -819,14 +848,14 @@ function runFromRow(row: AutomationRunRow): AutomationRun {
 
 function runSnapshot(
   automation: Automation,
-  projectBinding: AutomationProjectBinding | null,
+  contextHint: AutomationContextHint | null,
 ): AutomationRunConfigurationSnapshot {
   return Object.freeze({
     automationName: automation.name,
     prompt: automation.prompt,
     schedule: automation.schedule,
     destination: automation.destination,
-    projectBinding,
+    contextHint,
     configuration: automation.configuration,
   });
 }
@@ -835,12 +864,12 @@ function fullConfiguration(value: Partial<AutomationConfiguration> | undefined):
   return Object.freeze({ ...EMPTY_AUTOMATION_CONFIGURATION, ...value });
 }
 
-function bindingKeys(bindings: readonly AutomationProjectBinding[]): readonly string[] {
-  return bindings.length === 0 ? [AUTOMATION_NO_PROJECT_BINDING_KEY] : bindings.map((binding) => binding.id);
+function bindingKeys(bindings: readonly AutomationContextHint[]): readonly string[] {
+  return bindings.length === 0 ? [AUTOMATION_DEFAULT_CONTEXT_HINT_ID] : bindings.map((binding) => binding.contextHintId);
 }
 
-function bindingKey(binding: AutomationProjectBinding | null): string {
-  return binding?.id ?? AUTOMATION_NO_PROJECT_BINDING_KEY;
+function bindingKey(binding: AutomationContextHint | null): string {
+  return binding?.contextHintId ?? AUTOMATION_DEFAULT_CONTEXT_HINT_ID;
 }
 
 function json(value: unknown): string {

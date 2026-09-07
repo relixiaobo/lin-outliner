@@ -471,31 +471,10 @@ const agentHost = createAgentHost({
     resolvePersona: (thread) => configuration.resolveThreadPersona(thread, reportError),
   }),
   createThreadOptions: ({ configuration, worktrees }) => ({
-    resolveRootWorkspace: async (threadId) => {
-      if (hasExplicitAgentRoot) return agentLocalFileRoot;
-      const workspace = resolveAgentConversationWorkspace({
-        userDataPath: resolvedUserDataDir,
-        threadId,
-      });
-      await mkdir(workspace, { recursive: true, mode: 0o700 });
-      return workspace;
-    },
-    cleanupRootWorkspace: hasExplicitAgentRoot ? undefined : async (threadId, cwd) => {
-      await removeAgentConversationWorkspace({
-        userDataPath: resolvedUserDataDir,
-        threadId,
-        cwd,
-      });
-    },
-    ownsRootWorkspace: hasExplicitAgentRoot ? undefined : (threadId, cwd) => (
-      resolve(cwd) === resolve(resolveAgentConversationWorkspace({
-        userDataPath: resolvedUserDataDir,
-        threadId,
-      }))
-    ),
+    defaultExecutionDirectory: agentLocalFileRoot,
     resolveConfiguration: (request) => configuration.resolveProfile(
       request.configurationProfile,
-      request.cwd,
+      request.configurationSource?.kind === 'project' ? request.configurationSource.root : undefined,
     ),
     resolveIdentityCatalog: (cwd, reportFailure) => (
       configuration.resolveIdentityCatalogForUserPath(cwd, reportFailure)
@@ -508,7 +487,6 @@ const agentHost = createAgentHost({
       request,
       remembered: loadAppPreferences().lastAgentThreadConfiguration,
       getConfiguredDefaultSelection,
-      cwd: agentLocalFileRoot,
       getProviderRuntimeConfig,
       getActiveProviderRuntimeConfig,
       validateRememberedSelection: (selection, provider) => {
@@ -552,12 +530,12 @@ const agentHost = createAgentHost({
     },
   }),
   createAdmissionSkillRuntimeOptions: ({ thread, configuration }) => ({
-    localRoot: thread.cwd,
+    localRoot: thread.configurationSource.kind === 'project' ? thread.configurationSource.root : undefined,
     threadId: thread.id,
     enabledSkills: configuration.skills,
   }),
   createTurnSkillRuntimeOptions: (context) => ({
-    localRoot: context.thread.cwd,
+    localRoot: context.thread.configurationSource.kind === 'project' ? context.thread.configurationSource.root : undefined,
     threadId: context.thread.id,
     enabledSkills: context.configuration.skills,
   }),
@@ -576,7 +554,7 @@ const agentHost = createAgentHost({
   }),
   createImageGenerationRuntime: createThreadImageGenerationRuntime,
   resolveAutomationConfiguration: async (selection, cwd, { configuration }) => {
-    const resolvedConfiguration = configuration.resolveProfile(undefined, cwd);
+    const resolvedConfiguration = configuration.resolveProfile(undefined);
     const effectiveConfiguration = Object.freeze({
       ...resolvedConfiguration,
       ...(selection.model === null ? {} : { model: selection.model }),

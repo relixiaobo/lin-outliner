@@ -200,6 +200,7 @@ export interface ToolTaskStoragePressure {
 
 export interface ToolTaskProjection {
   readonly taskId: string;
+  readonly executionContext: import('./executionContext').TaskExecutionContext;
   readonly ownerThreadId: ThreadId;
   readonly sourceTurnId: TurnId;
   readonly sourceItemId: string;
@@ -240,13 +241,17 @@ export interface Thread {
   readonly source: string;
   readonly threadSource: ThreadSource;
   readonly modelProvider: string;
-  readonly cwd: string;
+  readonly configurationSource: ThreadConfigurationSource;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly status: ThreadStatus;
   readonly historyMode: ThreadHistoryMode;
   readonly turns?: readonly Turn[];
 }
+
+export type ThreadConfigurationSource =
+  | { readonly kind: 'user' }
+  | { readonly kind: 'project'; readonly root: string };
 
 /** Renderer-visible execution choices. Capability ceilings remain host-private. */
 export interface ThreadConfigurationSummary {
@@ -838,6 +843,9 @@ export const CONTEXT_EVIDENCE_KINDS = Object.freeze([
   'skillInvocation',
   'toolOutputProjection',
   'inheritedContext',
+  'taskExecutionContext',
+  'executionContextPublication',
+  'automationDispatch',
 ] as const);
 export type ContextEvidenceKind = typeof CONTEXT_EVIDENCE_KINDS[number];
 
@@ -864,7 +872,6 @@ export interface TurnEnvironmentContextPayload {
   readonly timeZone: string;
   readonly utcOffsetMinutes: number;
   readonly locale: string;
-  readonly workingDirectory: string;
   readonly conversationMode: 'interactive' | 'headless';
   readonly executionMode: 'root' | 'delegation' | 'automation' | 'memory' | 'feature';
   readonly replyIdentity: string | null;
@@ -1046,6 +1053,35 @@ export interface ToolOutputProjectionContextPayload {
   readonly projection: ToolOutputProjection;
 }
 
+export interface TaskExecutionContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'taskExecutionContext';
+  readonly taskId: string;
+  readonly sourceTurnId: string;
+  readonly sourceItemId: string;
+  readonly executionContext: import('./executionContext').TaskExecutionContext;
+}
+
+export interface ExecutionContextPublicationPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'executionContextPublication';
+  readonly evidenceRefs: readonly ThreadContextPayloadReference[];
+  readonly operations: readonly import('./executionContext').ExecutionContextFact[];
+  /** Frozen reminder body; an empty boundary still separates subsequent bundles. */
+  readonly text: string;
+}
+
+export interface AutomationDispatchContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'automationDispatch';
+  readonly automationRunId: string;
+  readonly sourceContext: import('./executionContext').TaskExecutionContext;
+  readonly executionContext: import('./executionContext').TaskExecutionContext;
+  readonly modelProvider: string;
+  readonly configuration: import('./configuration').EffectiveThreadConfiguration;
+  readonly info: string;
+}
+
 export interface InheritedContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'inheritedContext';
@@ -1103,6 +1139,16 @@ export interface CompactionRestoredStateContextPayload {
   readonly additionalContextBaselineRef: ThreadContextPayloadReference | null;
   readonly activeObservations: readonly ActiveObservationCheckpointEntry[];
   readonly degradations: readonly ContextDegradationCheckpointEntry[];
+  readonly executionContext: ExecutionContextCheckpoint;
+}
+
+export interface ExecutionContextCheckpoint {
+  readonly entries: readonly {
+    readonly fact: import('./executionContext').ExecutionContextFact;
+    readonly evidenceRef: ThreadContextPayloadReference;
+  }[];
+  readonly text: string;
+  readonly omitted: number;
 }
 
 export interface CompactionInstructionsContextPayload {
@@ -1120,6 +1166,9 @@ export interface ToolCallArgumentsContextPayload {
 }
 
 export type ThreadContextPayload =
+  | AutomationDispatchContextPayload
+  | TaskExecutionContextPayload
+  | ExecutionContextPublicationPayload
   | TurnEnvironmentContextPayload
   | UserViewContextPayload
   | AdditionalContextPayload
@@ -1148,6 +1197,8 @@ const CONTEXT_PAYLOAD_KINDS_ARE_EXHAUSTIVE: MissingContextPayloadKind extends ne
 void CONTEXT_PAYLOAD_KINDS_ARE_EXHAUSTIVE;
 
 interface ThreadToolItemBase extends ThreadItemBase {
+  /** Receipt-derived path base, present only for admitted local execution. */
+  readonly cwd?: string | null;
   readonly status: ItemExecutionStatus;
   readonly outputRef: ThreadItemOutputReference | null;
   /** Durable non-image files produced by this exact tool execution. */
@@ -1205,7 +1256,8 @@ export interface CommandExecutionThreadItem extends ThreadToolItemBase {
    * `python3 - <<'PY'` heredocs. Null when the caller omitted it.
    */
   readonly description: string | null;
-  readonly cwd: string;
+  /** Admitted canonical address, absent until Host admission succeeds. */
+  readonly cwd: string | null;
   readonly processId: string | null;
   readonly commandActions: readonly CommandAction[];
   readonly aggregatedOutput: string | null;
@@ -1457,18 +1509,17 @@ export interface ThreadStartRequest {
   readonly source: string;
   readonly threadSource: ThreadSource;
   readonly modelProvider: string;
-  readonly cwd: string;
+  readonly configurationSource?: ThreadConfigurationSource;
   readonly configurationProfile?: string;
 }
 
 export interface RendererThreadStartRequest extends Omit<
   ThreadStartRequest,
-  'source' | 'threadSource' | 'modelProvider' | 'cwd'
+  'source' | 'threadSource' | 'modelProvider'
 > {
   readonly source?: 'app';
   readonly threadSource?: 'user';
   readonly modelProvider?: string;
-  readonly cwd?: string;
 }
 
 export interface ThreadStartResponse {
@@ -2027,6 +2078,10 @@ export interface RendererTurnSubmitRequest extends Omit<RendererTurnStartRequest
 }
 
 export interface PrivilegedTurnStartRequest extends TurnInputRequest {
+  readonly initialContext?: {
+    readonly storageOwner: string;
+    readonly refs: readonly ThreadContextPayloadReference[];
+  };
   readonly author: PrivilegedThreadInputAuthor;
   readonly turnId?: TurnId;
   readonly additionalContextSource?: string;

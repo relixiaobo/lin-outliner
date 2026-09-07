@@ -1,3 +1,4 @@
+import { checkpointExecutionContext } from './ExecutionContextPublication';
 import type {
   ActiveObservationCheckpointEntry,
   CompactionRestoredStateContextPayload,
@@ -82,6 +83,7 @@ export async function planContextCompaction(input: {
     input.readInternalTextProjection,
   );
   const contextRefs = uniqueContextRefs([
+    ...restoredState.executionContext.entries.map((entry) => entry.evidenceRef),
     ...restoredState.activeSkills.map((entry) => entry.payloadRef),
     ...(restoredState.userViewBaselineRef ? [restoredState.userViewBaselineRef] : []),
     ...(restoredState.additionalContextBaselineRef ? [restoredState.additionalContextBaselineRef] : []),
@@ -167,6 +169,7 @@ async function buildCompactionRestoredState(
   return {
     schemaVersion: 1,
     kind: 'compactionRestoredState',
+    executionContext: await checkpointExecutionContext(turns, readContext),
     skillCatalogHash: skillState.catalogHash,
     announcedSkills: [...skillState.catalogEntries.values()]
       .map(catalogCheckpoint)

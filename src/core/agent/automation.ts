@@ -1,5 +1,6 @@
 import { REASONING_EFFORTS, type ReasoningEffort } from './configuration';
 import type { ThreadId, TurnId } from './protocol';
+import { decodeThreadContextPayloadReference } from './codec';
 
 export const AUTOMATION_DESTINATIONS = ['standalone', 'existingThread'] as const;
 export type AutomationDestinationKind = typeof AUTOMATION_DESTINATIONS[number];
@@ -13,14 +14,14 @@ export type AutomationExecutionMode = typeof AUTOMATION_EXECUTION_MODES[number];
 export const AUTOMATION_RUN_STATES = ['pending', 'dispatched', 'failed', 'omitted'] as const;
 export type AutomationRunState = typeof AUTOMATION_RUN_STATES[number];
 
-export const AUTOMATION_NO_PROJECT_BINDING_KEY = 'no-project';
+export const AUTOMATION_DEFAULT_CONTEXT_HINT_ID = 'default';
 export const AUTOMATION_NAME_MAX_LENGTH = 200;
 export const AUTOMATION_PROMPT_MAX_LENGTH = 120_000;
 export const AUTOMATION_RRULE_MAX_LENGTH = 4_096;
 export const AUTOMATION_TIMEZONE_MAX_LENGTH = 128;
 export const AUTOMATION_IDENTIFIER_MAX_LENGTH = 256;
 export const AUTOMATION_PATH_MAX_LENGTH = 4_096;
-export const AUTOMATION_PROJECT_BINDINGS_MAX_COUNT = 32;
+export const AUTOMATION_CONTEXT_HINTS_MAX_COUNT = 32;
 export const AUTOMATION_ERROR_MAX_LENGTH = 32_768;
 
 export interface AutomationSchedule {
@@ -32,10 +33,18 @@ export type AutomationDestination =
   | { readonly kind: 'standalone' }
   | { readonly kind: 'existingThread'; readonly threadId: ThreadId };
 
-export interface AutomationProjectBinding {
-  readonly id: string;
-  readonly cwd: string;
+export interface AutomationContextHint {
+  readonly contextHintId: string;
+  readonly source: { readonly kind: 'directory'; readonly rootHint: string }
+    | { readonly kind: 'project'; readonly projectId: string };
   readonly executionMode: AutomationExecutionMode;
+}
+
+export type AutomationContextHintInput = Omit<AutomationContextHint, 'contextHintId'> & { readonly contextHintId?: string };
+
+export function automationDirectoryHint(hint: AutomationContextHint | AutomationContextHintInput): string {
+  if (hint.source.kind !== 'directory') throw new Error('Project catalog hints are not available until Project catalog support is installed.');
+  return hint.source.rootHint;
 }
 
 export interface AutomationConfiguration {
@@ -50,7 +59,7 @@ export interface Automation {
   readonly prompt: string;
   readonly schedule: AutomationSchedule;
   readonly destination: AutomationDestination;
-  readonly projectBindings: readonly AutomationProjectBinding[];
+  readonly contextHints: readonly AutomationContextHint[];
   readonly configuration: AutomationConfiguration;
   readonly status: AutomationStatus;
   readonly revision: number;
@@ -64,7 +73,7 @@ export interface AutomationRunConfigurationSnapshot {
   readonly prompt: string;
   readonly schedule: AutomationSchedule;
   readonly destination: AutomationDestination;
-  readonly projectBinding: AutomationProjectBinding | null;
+  readonly contextHint: AutomationContextHint | null;
   readonly configuration: AutomationConfiguration;
 }
 
@@ -72,11 +81,12 @@ export interface AutomationRunOmission {
   readonly from: number;
   readonly through: number;
   readonly count: number;
-  readonly reason: 'catchUp' | 'overlap' | 'paused' | 'deleted';
+  readonly reason: 'catchUp' | 'overlap' | 'paused' | 'deleted' | 'updated';
 }
 
 export interface AutomationWorktreeMetadata {
   readonly sourceCwd: string;
+  readonly gitCommonDir: string;
   readonly path: string;
   readonly baseCommit: string;
   readonly snapshotPath: string | null;
@@ -90,7 +100,9 @@ export interface AutomationRun {
   readonly automationRevision: number;
   readonly eventSequence: number;
   readonly scheduledFor: number;
-  readonly projectBindingKey: string;
+  readonly contextHintId: string;
+  readonly occurrenceKey: string;
+  readonly dispatchSnapshotRef: import('./protocol').ThreadContextPayloadReference | null;
   readonly snapshot: AutomationRunConfigurationSnapshot;
   readonly state: AutomationRunState;
   readonly threadId: ThreadId | null;
@@ -109,7 +121,7 @@ export interface AutomationCreateInput {
   readonly prompt: string;
   readonly schedule: AutomationSchedule;
   readonly destination: AutomationDestination;
-  readonly projectBindings?: readonly AutomationProjectBinding[];
+  readonly contextHints?: readonly AutomationContextHintInput[];
   readonly configuration?: Partial<AutomationConfiguration>;
   readonly status?: Extract<AutomationStatus, 'active' | 'paused'>;
 }
@@ -121,7 +133,7 @@ export interface AutomationUpdateInput {
   readonly prompt?: string;
   readonly schedule?: AutomationSchedule;
   readonly destination?: AutomationDestination;
-  readonly projectBindings?: readonly AutomationProjectBinding[];
+  readonly contextHints?: readonly AutomationContextHintInput[];
   readonly configuration?: Partial<AutomationConfiguration>;
   readonly status?: Extract<AutomationStatus, 'active' | 'paused'>;
 }
@@ -158,7 +170,7 @@ export interface AutomationRequestByMethod {
   readonly pause: { readonly id: string; readonly expectedRevision?: number };
   readonly resume: { readonly id: string; readonly expectedRevision?: number };
   readonly delete: { readonly id: string; readonly expectedRevision?: number };
-  readonly startNow: { readonly id: string };
+  readonly startNow: { readonly id: string; readonly requestId: string };
   readonly runs: AutomationRunListInput;
   readonly runRead: { readonly id: string };
   readonly runMarkRead: { readonly id: string };
@@ -207,7 +219,6 @@ export function decodeAutomationRequest<Method extends AutomationMethod>(
     case 'runs':
       return decodeAutomationRunListInput(value) as AutomationRequestByMethod[Method];
     case 'read':
-    case 'startNow':
     case 'runRead':
     case 'runMarkRead':
       return decodeIdRequest(value, `automation ${method}`) as AutomationRequestByMethod[Method];
@@ -229,6 +240,11 @@ export function decodeAutomationRequest<Method extends AutomationMethod>(
         id: uuid(record.id, 'automation runPin.id'),
         pinned: booleanValue(record.pinned, 'automation runPin.pinned'),
       }) as AutomationRequestByMethod[Method];
+    }
+    case 'startNow': {
+      const record = objectValue(value, 'automation startNow');
+      exactKeys(record, ['id', 'requestId'], 'automation startNow');
+      return Object.freeze({ id: uuid(record.id, 'automation startNow.id'), requestId: boundedString(record.requestId, 'automation startNow.requestId', 256) }) as AutomationRequestByMethod[Method];
     }
   }
 }
@@ -331,12 +347,12 @@ export function decodeAutomationNotification(value: unknown): AutomationNotifica
 export function decodeAutomation(value: unknown, path = 'automation'): Automation {
   const record = objectValue(value, path);
   exactKeys(record, [
-    'id', 'name', 'prompt', 'schedule', 'destination', 'projectBindings', 'configuration',
+    'id', 'name', 'prompt', 'schedule', 'destination', 'contextHints', 'configuration',
     'status', 'revision', 'nextOccurrenceAt', 'createdAt', 'updatedAt',
   ], path);
   const destination = decodeAutomationDestination(record.destination, `${path}.destination`);
-  const projectBindings = decodeProjectBindings(record.projectBindings, `${path}.projectBindings`);
-  assertDestinationBindings(destination, projectBindings, path);
+  const contextHints = decodeProjectBindings(record.contextHints, `${path}.contextHints`);
+  assertDestinationBindings(destination, contextHints, path);
   const createdAt = timestamp(record.createdAt, `${path}.createdAt`);
   const updatedAt = timestamp(record.updatedAt, `${path}.updatedAt`);
   return Object.freeze({
@@ -345,7 +361,7 @@ export function decodeAutomation(value: unknown, path = 'automation'): Automatio
     prompt: boundedString(record.prompt, `${path}.prompt`, AUTOMATION_PROMPT_MAX_LENGTH),
     schedule: decodeAutomationSchedule(record.schedule, `${path}.schedule`),
     destination,
-    projectBindings,
+    contextHints,
     configuration: decodeAutomationConfiguration(record.configuration, `${path}.configuration`),
     status: enumValue(record.status, AUTOMATION_STATUSES, `${path}.status`),
     revision: positiveInteger(record.revision, `${path}.revision`),
@@ -358,9 +374,9 @@ export function decodeAutomation(value: unknown, path = 'automation'): Automatio
 export function decodeAutomationRun(value: unknown, path = 'automationRun'): AutomationRun {
   const record = objectValue(value, path);
   exactKeys(record, [
-    'id', 'automationId', 'automationRevision', 'eventSequence', 'scheduledFor', 'projectBindingKey',
+    'id', 'automationId', 'automationRevision', 'eventSequence', 'scheduledFor', 'contextHintId',
     'snapshot', 'state', 'threadId', 'turnId', 'worktree', 'omission', 'error',
-    'readAt', 'pinned', 'createdAt', 'updatedAt',
+    'readAt', 'pinned', 'createdAt', 'updatedAt', 'occurrenceKey', 'dispatchSnapshotRef',
   ], path);
   const state = enumValue(record.state, AUTOMATION_RUN_STATES, `${path}.state`);
   const threadId = nullableUuid(record.threadId, `${path}.threadId`);
@@ -369,16 +385,16 @@ export function decodeAutomationRun(value: unknown, path = 'automationRun'): Aut
   const omission = record.omission === null ? null : decodeOmission(record.omission, `${path}.omission`);
   const error = nullableBoundedString(record.error, `${path}.error`, AUTOMATION_ERROR_MAX_LENGTH);
   const snapshot = decodeRunSnapshot(record.snapshot, `${path}.snapshot`);
-  const projectBindingKey = boundedString(
-    record.projectBindingKey,
-    `${path}.projectBindingKey`,
+  const contextHintId = boundedString(
+    record.contextHintId,
+    `${path}.contextHintId`,
     AUTOMATION_IDENTIFIER_MAX_LENGTH,
   );
-  const expectedBindingKey = snapshot.projectBinding?.id ?? AUTOMATION_NO_PROJECT_BINDING_KEY;
-  if (projectBindingKey !== expectedBindingKey) {
-    throw new Error(`${path}.projectBindingKey does not match its snapshot`);
+  const expectedBindingKey = snapshot.contextHint?.contextHintId ?? AUTOMATION_DEFAULT_CONTEXT_HINT_ID;
+  if (contextHintId !== expectedBindingKey) {
+    throw new Error(`${path}.contextHintId does not match its snapshot`);
   }
-  if (worktree && snapshot.projectBinding?.executionMode !== 'worktree') {
+  if (worktree && snapshot.contextHint?.executionMode !== 'worktree') {
     throw new Error(`${path}.worktree requires a worktree project binding`);
   }
   const pinned = booleanValue(record.pinned, `${path}.pinned`);
@@ -413,7 +429,10 @@ export function decodeAutomationRun(value: unknown, path = 'automationRun'): Aut
     automationRevision: positiveInteger(record.automationRevision, `${path}.automationRevision`),
     eventSequence: positiveInteger(record.eventSequence, `${path}.eventSequence`),
     scheduledFor: timestamp(record.scheduledFor, `${path}.scheduledFor`),
-    projectBindingKey,
+    contextHintId,
+    occurrenceKey: boundedString(record.occurrenceKey, `${path}.occurrenceKey`, 256),
+    dispatchSnapshotRef: record.dispatchSnapshotRef === null ? null
+      : decodeThreadContextPayloadReference(record.dispatchSnapshotRef, `${path}.dispatchSnapshotRef`),
     snapshot,
     state,
     threadId,
@@ -437,22 +456,22 @@ export const EMPTY_AUTOMATION_CONFIGURATION: AutomationConfiguration = Object.fr
 export function decodeAutomationCreateInput(value: unknown): AutomationCreateInput {
   const record = objectValue(value, 'automation create');
   exactKeys(record, [
-    'name', 'prompt', 'schedule', 'destination', 'projectBindings', 'configuration', 'status',
+    'name', 'prompt', 'schedule', 'destination', 'contextHints', 'configuration', 'status',
   ], 'automation create');
   const status = record.status === undefined
     ? undefined
     : enumValue(record.status, ['active', 'paused'] as const, 'automation create.status');
   const destination = decodeAutomationDestination(record.destination, 'automation create.destination');
-  const projectBindings = record.projectBindings === undefined
+  const contextHints = record.contextHints === undefined
     ? undefined
-    : decodeProjectBindings(record.projectBindings, 'automation create.projectBindings');
-  assertDestinationBindings(destination, projectBindings ?? [], 'automation create');
+    : decodeContextHintInputs(record.contextHints, 'automation create.contextHints');
+  assertDestinationBindings(destination, contextHints ?? [], 'automation create');
   return Object.freeze({
     name: boundedString(record.name, 'automation create.name', AUTOMATION_NAME_MAX_LENGTH),
     prompt: boundedString(record.prompt, 'automation create.prompt', AUTOMATION_PROMPT_MAX_LENGTH),
     schedule: decodeAutomationSchedule(record.schedule, 'automation create.schedule'),
     destination,
-    ...(projectBindings === undefined ? {} : { projectBindings }),
+    ...(contextHints === undefined ? {} : { contextHints }),
     ...(record.configuration === undefined
       ? {}
       : { configuration: decodeConfigurationPatch(record.configuration, 'automation create.configuration') }),
@@ -463,7 +482,7 @@ export function decodeAutomationCreateInput(value: unknown): AutomationCreateInp
 export function decodeAutomationUpdateInput(value: unknown): AutomationUpdateInput {
   const record = objectValue(value, 'automation update');
   exactKeys(record, [
-    'id', 'expectedRevision', 'name', 'prompt', 'schedule', 'destination', 'projectBindings', 'configuration', 'status',
+    'id', 'expectedRevision', 'name', 'prompt', 'schedule', 'destination', 'contextHints', 'configuration', 'status',
   ], 'automation update');
   const result: AutomationUpdateInput = {
     id: uuid(record.id, 'automation update.id'),
@@ -480,9 +499,9 @@ export function decodeAutomationUpdateInput(value: unknown): AutomationUpdateInp
     ...(record.destination === undefined
       ? {}
       : { destination: decodeAutomationDestination(record.destination, 'automation update.destination') }),
-    ...(record.projectBindings === undefined
+    ...(record.contextHints === undefined
       ? {}
-      : { projectBindings: decodeProjectBindings(record.projectBindings, 'automation update.projectBindings') }),
+      : { contextHints: decodeContextHintInputs(record.contextHints, 'automation update.contextHints') }),
     ...(record.configuration === undefined
       ? {}
       : { configuration: decodeConfigurationPatch(record.configuration, 'automation update.configuration') }),
@@ -507,7 +526,7 @@ export type AutomationToolCommand =
   | { readonly mode: 'delete'; readonly id: string; readonly expectedRevision: number };
 
 const AUTOMATION_PATCH_FIELDS = [
-  'name', 'prompt', 'schedule', 'destination', 'projectBindings', 'configuration', 'status',
+  'name', 'prompt', 'schedule', 'destination', 'contextHints', 'configuration', 'status',
 ] as const;
 
 export function decodeAutomationToolInput(value: unknown): AutomationToolCommand {
@@ -610,26 +629,38 @@ export function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-function decodeProjectBindings(value: unknown, path: string): readonly AutomationProjectBinding[] {
+function decodeProjectBindings(value: unknown, path: string): readonly AutomationContextHint[] {
+  return decodeContextHintInputs(value, path).map((hint) => ({
+    ...hint, contextHintId: uuid(hint.contextHintId, `${path}.contextHintId`),
+  }));
+}
+
+function decodeContextHintInputs(value: unknown, path: string): readonly AutomationContextHintInput[] {
   if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
-  if (value.length > AUTOMATION_PROJECT_BINDINGS_MAX_COUNT) {
-    throw new Error(`${path} must contain at most ${AUTOMATION_PROJECT_BINDINGS_MAX_COUNT} entries`);
+  if (value.length > AUTOMATION_CONTEXT_HINTS_MAX_COUNT) {
+    throw new Error(`${path} must contain at most ${AUTOMATION_CONTEXT_HINTS_MAX_COUNT} entries`);
   }
-  const bindings = value.map((entry, index): AutomationProjectBinding => {
+  const bindings = value.map((entry, index): AutomationContextHintInput => {
     const itemPath = `${path}[${index}]`;
     const record = objectValue(entry, itemPath);
-    exactKeys(record, ['id', 'cwd', 'executionMode'], itemPath);
+    exactKeys(record, ['contextHintId', 'source', 'executionMode'], itemPath);
+    const source = objectValue(record.source, `${itemPath}.source`);
+    const kind = enumValue(source.kind, ['directory', 'project'] as const, `${itemPath}.source.kind`);
+    exactKeys(source, kind === 'directory' ? ['kind', 'rootHint'] : ['kind', 'projectId'], `${itemPath}.source`);
     return Object.freeze({
-      id: boundedString(record.id, `${itemPath}.id`, AUTOMATION_IDENTIFIER_MAX_LENGTH),
-      cwd: absolutePath(record.cwd, `${itemPath}.cwd`),
+      ...(record.contextHintId === undefined ? {} : { contextHintId: uuid(record.contextHintId, `${itemPath}.contextHintId`) }),
+      source: kind === 'directory'
+        ? { kind, rootHint: absolutePath(source.rootHint, `${itemPath}.source.rootHint`) }
+        : { kind, projectId: uuid(source.projectId, `${itemPath}.source.projectId`) },
       executionMode: enumValue(record.executionMode, AUTOMATION_EXECUTION_MODES, `${itemPath}.executionMode`),
     });
   });
-  if (new Set(bindings.map((binding) => binding.id)).size !== bindings.length) {
+  const ids = bindings.flatMap((binding) => binding.contextHintId ? [binding.contextHintId] : []);
+  if (new Set(ids).size !== ids.length) {
     throw new Error(`${path} contains duplicate binding IDs`);
   }
-  if (bindings.some((binding) => binding.id === AUTOMATION_NO_PROJECT_BINDING_KEY)) {
-    throw new Error(`${path} uses the reserved binding ID ${AUTOMATION_NO_PROJECT_BINDING_KEY}`);
+  if (bindings.some((binding) => binding.contextHintId === AUTOMATION_DEFAULT_CONTEXT_HINT_ID)) {
+    throw new Error(`${path} uses the reserved binding ID ${AUTOMATION_DEFAULT_CONTEXT_HINT_ID}`);
   }
   return Object.freeze(bindings);
 }
@@ -637,26 +668,26 @@ function decodeProjectBindings(value: unknown, path: string): readonly Automatio
 function decodeRunSnapshot(value: unknown, path: string): AutomationRunConfigurationSnapshot {
   const record = objectValue(value, path);
   exactKeys(record, [
-    'automationName', 'prompt', 'schedule', 'destination', 'projectBinding', 'configuration',
+    'automationName', 'prompt', 'schedule', 'destination', 'contextHint', 'configuration',
   ], path);
   const destination = decodeAutomationDestination(record.destination, `${path}.destination`);
-  const projectBinding = record.projectBinding === null
+  const contextHint = record.contextHint === null
     ? null
-    : decodeProjectBindings([record.projectBinding], `${path}.projectBinding`)[0]!;
-  assertDestinationBindings(destination, projectBinding ? [projectBinding] : [], path);
+    : decodeProjectBindings([record.contextHint], `${path}.contextHint`)[0]!;
+  assertDestinationBindings(destination, contextHint ? [contextHint] : [], path);
   return Object.freeze({
     automationName: boundedString(record.automationName, `${path}.automationName`, AUTOMATION_NAME_MAX_LENGTH),
     prompt: boundedString(record.prompt, `${path}.prompt`, AUTOMATION_PROMPT_MAX_LENGTH),
     schedule: decodeAutomationSchedule(record.schedule, `${path}.schedule`),
     destination,
-    projectBinding,
+    contextHint,
     configuration: decodeAutomationConfiguration(record.configuration, `${path}.configuration`),
   });
 }
 
 function decodeWorktree(value: unknown, path: string): AutomationWorktreeMetadata {
   const record = objectValue(value, path);
-  exactKeys(record, ['sourceCwd', 'path', 'baseCommit', 'snapshotPath', 'removedAt', 'managed'], path);
+  exactKeys(record, ['sourceCwd', 'gitCommonDir', 'path', 'baseCommit', 'snapshotPath', 'removedAt', 'managed'], path);
   if (record.managed !== true) throw new Error(`${path}.managed must be true`);
   const baseCommit = boundedString(record.baseCommit, `${path}.baseCommit`, AUTOMATION_IDENTIFIER_MAX_LENGTH);
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(baseCommit)) {
@@ -669,6 +700,7 @@ function decodeWorktree(value: unknown, path: string): AutomationWorktreeMetadat
   }
   return Object.freeze({
     sourceCwd: absolutePath(record.sourceCwd, `${path}.sourceCwd`),
+    gitCommonDir: absolutePath(record.gitCommonDir, `${path}.gitCommonDir`),
     path: absolutePath(record.path, `${path}.path`),
     baseCommit,
     snapshotPath,
@@ -687,7 +719,7 @@ function decodeOmission(value: unknown, path: string): AutomationRunOmission {
     from,
     through,
     count: positiveInteger(record.count, `${path}.count`),
-    reason: enumValue(record.reason, ['catchUp', 'overlap', 'paused', 'deleted'] as const, `${path}.reason`),
+    reason: enumValue(record.reason, ['catchUp', 'overlap', 'paused', 'deleted', 'updated'] as const, `${path}.reason`),
   });
 }
 
@@ -788,14 +820,11 @@ function absolutePath(value: unknown, path: string): string {
 
 function assertDestinationBindings(
   destination: AutomationDestination,
-  bindings: readonly AutomationProjectBinding[],
+  bindings: readonly AutomationContextHintInput[],
   path: string,
 ): void {
   if (destination.kind !== 'existingThread') return;
   if (bindings.length > 1) throw new Error(`${path} existing-Thread destination accepts at most one project binding`);
-  if (bindings[0]?.executionMode === 'worktree') {
-    throw new Error(`${path} existing-Thread destination accepts only a local project binding`);
-  }
 }
 
 function booleanValue(value: unknown, path: string): boolean {

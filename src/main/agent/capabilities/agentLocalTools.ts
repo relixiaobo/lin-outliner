@@ -73,7 +73,9 @@ import type {
   ToolTaskProcessPreparationContext,
   ToolTaskService,
 } from '../tasks/ToolTaskService';
-import type { ToolTaskSchedulerLimits, ToolTaskSchedulingPolicy } from '../tasks/toolTaskTypes';
+import type { ToolTaskRecord, ToolTaskSchedulerLimits, ToolTaskSchedulingPolicy } from '../tasks/toolTaskTypes';
+import type { TaskExecutionContext } from '../../../core/agent/executionContext';
+import { ExecutionAdmissionError, pendingExecutionContext, resolveExecutionAddress } from '../tasks/ExecutionContext';
 import {
   parsePrivilegedDelegateCommand,
   type DelegateStateCommand,
@@ -128,8 +130,12 @@ export type AgentShellProcessEnvironmentProvider = (context: AgentShellProcessEn
 );
 
 export interface AgentLocalWorkspaceContext {
-  // The Thread working directory: cwd, default file-tool search root, and relative-path base.
+  // The call working directory: cwd, default file-tool search root, and relative-path base.
   root: string;
+  executionContext?: TaskExecutionContext;
+  capability?: 'full-access' | 'read-only';
+  inheritedClaimTaskId?: string;
+  onTaskAdmitted?: (task: ToolTaskRecord) => Promise<void>;
   // App-owned ephemeral area for web fetches, tool output, and PDF pages. A sibling of `root`,
   // so it does not appear in default workdir listings. Defaults to
   // `<root>/tmp` when no explicit scratch root is supplied.
@@ -648,7 +654,7 @@ const FILE_READ_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the Thread working directory.' },
+    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the call working directory.' },
     offset: { type: 'integer', minimum: 0, description: 'The line number to start reading from. Only provide if the file is too large to read at once.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_FILE_READ_LIMIT, description: 'The number of lines to read. Only provide if the file is too large to read at once.' },
     pages: { type: 'string', minLength: 1, description: `PDF FILES ONLY. Omit pages to extract text from the entire PDF by default. Provide a page range for PDF layout inspection, for example "1-5", "3", or "10-20". Never use for text, images, Office documents, notebooks, or other non-PDF files. Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.` },
@@ -661,7 +667,7 @@ const FILE_GLOB_PARAMETERS = {
   required: ['pattern'],
   properties: {
     pattern: { type: 'string', minLength: 1, description: 'The glob pattern to match files against.' },
-    path: { type: 'string', minLength: 1, description: 'An absolute directory or one relative to the Thread working directory. Omit it to search the Thread working directory.' },
+    path: { type: 'string', minLength: 1, description: 'An absolute directory or one relative to the call working directory. Omit it to search the call working directory.' },
   },
 };
 
@@ -671,7 +677,7 @@ const FILE_GREP_PARAMETERS = {
   required: ['pattern'],
   properties: {
     pattern: { type: 'string', minLength: 1, description: 'The regular expression pattern to search for in file contents.' },
-    path: { type: 'string', minLength: 1, description: 'An absolute file or directory, or one relative to the Thread working directory. Defaults to the Thread working directory.' },
+    path: { type: 'string', minLength: 1, description: 'An absolute file or directory, or one relative to the call working directory. Defaults to the call working directory.' },
     glob: { type: 'string', minLength: 1, description: 'Glob pattern to filter files, for example "*.js" or "*.{ts,tsx}".' },
     output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'], description: 'Output mode: "content" shows matching lines, "files_with_matches" shows file paths, "count" shows match counts. Defaults to "files_with_matches".' },
     '-B': { type: 'integer', minimum: 0, description: 'Number of lines to show before each match. Requires output_mode: "content", ignored otherwise.' },
@@ -692,7 +698,7 @@ const FILE_EDIT_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path', 'old_string', 'new_string'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the Thread working directory.' },
+    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the call working directory.' },
     old_string: { type: 'string', description: 'The exact text to replace.' },
     new_string: { type: 'string', description: 'The text to replace it with. Must be different from old_string.' },
     replace_all: { type: 'boolean', description: 'Replace all occurrences of old_string. Defaults to false.' },
@@ -704,7 +710,7 @@ const FILE_WRITE_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path', 'content'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the Thread working directory.' },
+    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the call working directory.' },
     content: { type: 'string', description: 'The content to write to the file.' },
   },
 };
@@ -714,7 +720,7 @@ const FILE_DELETE_PARAMETERS = {
   additionalProperties: false,
   required: ['file_path'],
   properties: {
-    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the Thread working directory to move to agent trash.' },
+    file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the call working directory to move to agent trash.' },
   },
 };
 
@@ -753,15 +759,91 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
         options.threadId,
         options.delegateCommandRuntime,
       );
-  return [
-    createFileReadTool(workspace, options.imageNormalizer),
-    createFileGlobTool(workspace),
-    createFileGrepTool(workspace),
-    createFileEditTool(workspace),
-    createFileWriteTool(workspace),
-    createFileDeleteTool(workspace),
-    createBashTool(workspace, options.artifactSink, options.toolTaskService, options.turnId),
+  const factories = [
+    (scope: WorkspaceContext) => createFileReadTool(scope, options.imageNormalizer),
+    createFileGlobTool, createFileGrepTool, createFileEditTool, createFileWriteTool, createFileDeleteTool,
+    (scope: WorkspaceContext) => createBashTool(scope, options.artifactSink, options.toolTaskService, options.turnId),
   ];
+  return factories.map((factory): AgentTool<any> => {
+    const tool = factory(workspace);
+    return {
+      ...tool,
+      parameters: {
+        ...tool.parameters,
+        properties: {
+          ...tool.parameters.properties,
+          cwd: { type: 'string', minLength: 1, description: 'Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls.' },
+        },
+      },
+      execute: async (itemId, raw, signal, onUpdate) => {
+        const started = Date.now();
+        let candidatePath: string | undefined;
+        try {
+          signal?.throwIfAborted();
+          const params = asRecord(raw);
+          if (params.cwd !== undefined && (typeof params.cwd !== 'string' || !params.cwd.trim() || params.cwd.includes('\0'))) {
+            throw new ExecutionAdmissionError('invalid_cwd', 'cwd must be a non-empty directory path.');
+          }
+          const fileField = tool.name === 'file_glob' || tool.name === 'file_grep' ? 'path' : 'file_path';
+          const target = tool.name === 'bash' ? undefined
+            : typeof params[fileField] === 'string' ? expandHome(params[fileField] as string) : undefined;
+          if (tool.name !== 'bash' && fileField === 'file_path' && !target) {
+            throw new LocalToolFailure('invalid_args', 'file_path is required.');
+          }
+          const callRoot = path.resolve(workspace.root, expandHome(params.cwd as string ?? '.'));
+          candidatePath = target ? path.resolve(callRoot, target) : callRoot;
+          if (['file_edit', 'file_write', 'file_delete'].includes(tool.name)) {
+            assertWorkspaceWritePath(workspace, candidatePath);
+          }
+          const address = await resolveExecutionAddress({
+            defaultCwd: workspace.root,
+            followFinalSymlink: tool.name !== 'file_delete',
+            targetKind: fileField === 'path' ? 'directory' : 'entry',
+            ...(params.cwd === undefined ? {} : { cwd: expandHome(params.cwd as string) }),
+            ...(tool.name === 'bash' ? {} : { targets: target ? [target] : [] }),
+          });
+          const capability = workspace.capability ?? 'full-access';
+          if (capability === 'read-only' && ['file_edit', 'file_write', 'file_delete'].includes(tool.name)) {
+            throw new LocalToolFailure('operation_unavailable', 'This task has read-only authority.');
+          }
+          const delegateControl = tool.name === 'bash' && workspace.delegateCommandRuntime
+            && typeof params.command === 'string' && parsePrivilegedDelegateCommand(params.command) !== null;
+          const mutation = !delegateControl && capability !== 'read-only' && ['bash', 'file_edit', 'file_write', 'file_delete'].includes(tool.name);
+          const executionContext = pendingExecutionContext(address, {
+            capability, mutation,
+            isolation: workspace.writeBoundary
+              ? tool.name === 'bash' ? 'macos-write-sandbox' : 'host-write-boundary'
+              : 'unsandboxed',
+            writablePaths: workspace.writeBoundary?.shellWritablePaths ?? [],
+          });
+          // Preserve logical aliases for the existing file/Skill APIs; the task
+          // owns their independently resolved canonical address and claim keys.
+          const scoped = { ...workspace, root: callRoot, executionContext };
+          const execute = (executionSignal = signal) => factory(scoped).execute(itemId, params, executionSignal, onUpdate);
+          if (tool.name === 'bash' || !options.toolTaskService || !workspace.threadId || !options.turnId) {
+            const result = await execute();
+            return { ...result, executionContext };
+          }
+          return await options.toolTaskService.runHostOperation({
+            ownerThreadId: workspace.threadId, sourceTurnId: options.turnId, sourceItemId: itemId,
+            producer: tool.name, executionContext, signal,
+            inheritedClaimTaskId: workspace.inheritedClaimTaskId,
+            onAdmitted: async (task) => { await workspace.onTaskAdmitted?.(task); },
+            execute: async (executionSignal) => {
+              const result = await execute(executionSignal);
+              return {
+                result: { ...result, executionContext },
+                success: result.details.ok,
+              };
+            },
+          });
+        } catch (error) {
+          signal?.throwIfAborted();
+          return localErrorResult(tool.name, error, started, candidatePath);
+        }
+      },
+    };
+  });
 }
 
 export async function runLocalBashCommand(
@@ -1089,7 +1171,7 @@ function createFileReadTool(
     label: 'File Read',
     description: [
       'Reads a local file.',
-      'Use an absolute file_path when known; relative paths resolve from the Thread working directory.',
+      'Use an absolute file_path when known; relative paths resolve from the call working directory.',
       `By default, it reads up to ${DEFAULT_FILE_READ_LIMIT} lines starting from the beginning of the file.`,
       'You can optionally specify a line offset and limit, especially for long files.',
       'This tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. It can only read files, not directories.',
@@ -1566,7 +1648,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
     label: 'File Delete',
     description: [
       'Moves a local file or directory to agent trash instead of permanently deleting it.',
-      'Use this for reversible cleanup. It cannot delete the Thread working directory root.',
+      'Use this for reversible cleanup. It cannot delete the call working directory root.',
       'The result includes the trash path so the item can be recovered if needed.',
     ].join('\n'),
     parameters: FILE_DELETE_PARAMETERS,
@@ -1586,7 +1668,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
           );
         }
         if (isWorkdirRoot(workspace, filePath)) {
-          throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the Thread working directory root.', 'Delete a specific file or subdirectory instead.');
+          throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the call working directory root.', 'Delete a specific file or subdirectory instead.');
         }
         const trashRoot = agentTrashRoot(workspace);
         if (isPathInside(trashRoot, path.resolve(filePath))) {
@@ -1624,7 +1706,7 @@ function createBashTool(
     name: 'bash',
     label: 'Bash',
     description: [
-      'Executes a shell command in the Thread working directory with the current OS account authority.',
+      'Executes a shell command in the call working directory with the current OS account authority.',
       'Use file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.',
       'For document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).',
       'Set run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.',
@@ -2460,6 +2542,9 @@ async function startSupervisedBackgroundCommand(
     description: params.description ?? 'Background command',
     command: params.command,
     cwd: workspace.root,
+    executionContext: workspace.executionContext,
+    inheritedClaimTaskId: workspace.inheritedClaimTaskId,
+    onAdmitted: workspace.onTaskAdmitted,
     ...(params.stdin === undefined ? {} : { stdin: params.stdin }),
     timeoutMs: delegateScheduling?.timeoutMs ?? params.timeout ?? BASH_DEFAULT_TIMEOUT_MS,
     env,
@@ -2536,6 +2621,9 @@ async function runSupervisedForegroundCommand(
     description: params.description ?? 'Background command',
     command: params.command,
     cwd: workspace.root,
+    executionContext: workspace.executionContext,
+    inheritedClaimTaskId: workspace.inheritedClaimTaskId,
+    onAdmitted: workspace.onTaskAdmitted,
     ...(params.stdin === undefined ? {} : { stdin: params.stdin }),
     timeoutMs,
     env: buildWorkspaceShellProcessEnv(shellEnvironment),
@@ -4265,7 +4353,7 @@ function countOccurrences(content: string, needle: string): number {
 }
 
 function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string): string {
-  // Relative paths use the Thread working directory. Absolute paths address the host filesystem directly.
+  // Relative paths use the call working directory. Absolute paths address the host filesystem directly.
   const root = path.resolve(workspace.root);
   const expanded = expandHome(inputPath);
   return path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
@@ -4419,7 +4507,9 @@ function localErrorResult<TData>(tool: string, error: unknown, started: number, 
     && (error.code === 'ENOENT' || isNativeFilePermissionError(error))
     ? localFsError(error, filePath)
     : error;
-  const failure = normalizedError instanceof LocalToolFailure
+  const failure = normalizedError instanceof ExecutionAdmissionError
+    ? new LocalToolFailure(normalizedError.code, normalizedError.message)
+    : normalizedError instanceof LocalToolFailure
     ? normalizedError
     : normalizedError instanceof AgentFileIngestionFailure
       ? new LocalToolFailure(normalizedError.code, normalizedError.message, normalizedError.instructions)

@@ -1556,9 +1556,9 @@ function toolRuntimeContext(): TurnExecutionContext {
     thread: {
       id: '00000000-0000-7000-8000-000000000001',
       parentThreadId: null,
-      cwd: process.cwd(),
+      configurationSource: { kind: 'user' },
     },
-    turn: { id: '00000000-0000-7000-8000-000000000002' },
+    turn: { id: '00000000-0000-7000-8000-000000000002', provenance: { trigger: { kind: 'user' } } },
     configuration: {
       profileName: 'kernel-tool-adapter-test',
       developerInstructions: [],
@@ -1575,6 +1575,7 @@ function toolRuntimeContext(): TurnExecutionContext {
 
 function toolRuntimeService(overrides: Partial<ThreadService>): ThreadService {
   return {
+    defaultExecutionDirectory: () => process.cwd(),
     collaborationToolContributions: async () => [],
     extensionToolContributions: async () => [],
     notifyToolStarted: async () => undefined,

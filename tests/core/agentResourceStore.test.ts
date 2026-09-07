@@ -110,9 +110,9 @@ describe('AgentResourceStore', () => {
     const fixture = await createFixture();
     const oldWorkspace = path.join(fixture.root, 'old-workspace');
     const secondOldWorkspace = path.join(fixture.root, 'second-old-workspace');
-    const currentWorkspace = path.join(fixture.root, 'current-workspace');
+    const currentWorkspace = path.join(fixture.root, 'observations', 'edits', '01951d6e-7c25-7c31-8d62-313038616239');
     const externalRoot = path.join(fixture.root, 'external');
-    await Promise.all([mkdir(oldWorkspace), mkdir(secondOldWorkspace), mkdir(currentWorkspace), mkdir(externalRoot)]);
+    await Promise.all([mkdir(oldWorkspace), mkdir(secondOldWorkspace), mkdir(externalRoot)]);
     const oldPath = path.join(oldWorkspace, 'report.txt');
     const secondOldPath = path.join(secondOldWorkspace, 'report.txt');
     const externalPath = path.join(externalRoot, 'shared.txt');
@@ -150,7 +150,7 @@ describe('AgentResourceStore', () => {
     await writeFile(oldPath, 'newer old-workspace bytes');
 
     const historicalRefs: ThreadResourceReference[] = [oldRef, secondOldRef, externalRef];
-    const core = historicalResourceCore(currentWorkspace, historicalRefs);
+    const core = historicalResourceCore(historicalRefs);
     const ops = new ThreadResourceOps(
       core,
       fixture.store,
@@ -192,14 +192,13 @@ describe('AgentResourceStore', () => {
 });
 
 function historicalResourceCore(
-  currentWorkspace: string,
   refs: readonly ThreadResourceReference[],
 ): ThreadCore {
   const currentId = '01951d6e-7c25-7c31-8d62-313038616239';
   const historicalId = '01951d6e-7c25-7c31-8d62-313038616240';
   const threads = new Map([
-    [currentId, { id: currentId, cwd: currentWorkspace, parentThreadId: null }],
-    [historicalId, { id: historicalId, cwd: '/old', parentThreadId: null }],
+    [currentId, { id: currentId, configurationSource: { kind: 'user' }, parentThreadId: null }],
+    [historicalId, { id: historicalId, configurationSource: { kind: 'user' }, parentThreadId: null }],
   ]);
   const turns = [{
     id: 'turn-history',

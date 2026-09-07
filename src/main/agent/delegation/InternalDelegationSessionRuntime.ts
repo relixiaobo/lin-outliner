@@ -15,6 +15,9 @@ import type {
 import type { DelegationSessionBinding } from './delegationSessionTypes';
 import { DelegationSessionStore } from './DelegationSessionStore';
 import type { DelegationRunnerRegistry } from './DelegationPolicyResolver';
+import { pendingExecutionContext, resolveExecutionAddress } from '../tasks/ExecutionContext';
+import type { ThreadContextPayloadReference } from '../../../core/agent/protocol';
+import { nativeAgentProcessExecutor } from './NativeAgentProcess';
 
 /** Runs delegated work through the canonical Thread/Turn executor. */
 export class InternalDelegationSessionRuntime implements DelegationSessionRuntime {
@@ -34,12 +37,84 @@ export class InternalDelegationSessionRuntime implements DelegationSessionRuntim
   }
 
   async run(input: DelegationSessionRunInput): Promise<DelegateExecutionResult> {
+    const session = this.store.readSession(input.session.sessionId) ?? input.session;
+    const directory = session.worktree.kind === 'active' || session.worktree.kind === 'unchanged'
+      || session.worktree.kind === 'changed' || session.worktree.kind === 'retained'
+      ? session.worktree.metadata.path : session.policy.cwd;
+    const executionContext = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: directory }), {
+      capability: session.policy.runnerId === 'internal' && session.policy.access === 'read-only' ? 'read-only' : 'full-access',
+      mutation: session.policy.access !== 'read-only' || session.policy.runnerId !== 'internal',
+      isolation: session.policy.runnerId === 'internal' && session.policy.worktreePolicy === 'dedicated'
+        ? 'host-write-boundary' : 'unsandboxed',
+      writablePaths: session.policy.worktreePolicy === 'dedicated' ? [directory] : [],
+    });
+    let evidence: ThreadContextPayloadReference;
+    return this.threads.toolTaskService().runHostOperation({
+      ownerThreadId: session.sessionId, sourceTurnId: input.turnId, sourceItemId: 'delegate_execution',
+      producer: 'delegate_execution', executionContext, signal: input.signal,
+      ...(session.currentTaskId ? { inheritedClaimTaskId: session.currentTaskId } : {}),
+      onAdmitted: async (task) => {
+        const payload = {
+          schemaVersion: 1 as const, kind: 'taskExecutionContext' as const,
+          taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId, executionContext,
+        };
+        evidence = await this.threads.writeFeatureContext(session.sessionId, payload);
+      },
+      execute: async (signal) => {
+        const result = await this.runAdmitted({ ...input, session, signal }, evidence!);
+        return { result, success: result.outcome === 'succeeded' };
+      },
+    });
+  }
+
+  private async runAdmitted(input: DelegationSessionRunInput, evidence: ThreadContextPayloadReference): Promise<DelegateExecutionResult> {
     const adapter = this.runners?.adapter(input.session.policy.runnerId);
     if (input.session.policy.runnerId !== 'internal' && !adapter?.run) {
       throw new Error(`Delegation Runner is not executable: ${input.session.policy.runnerId}`);
     }
     if (input.session.policy.runnerId !== 'internal' && adapter?.run) {
-      const result = await adapter.run(input);
+      let result: DelegateExecutionResult | null = null;
+      await this.threads.startPrivilegedTurn({
+        threadId: input.session.sessionId, turnId: input.turnId,
+        input: [{ type: 'text', text: input.messages.length === 0 ? input.prompt
+          : input.messages.map((message) => message.text).filter((text): text is string => text !== null).join('\n\n') }],
+        author: { kind: 'feature', feature: 'delegation', ref: input.session.ownerThreadId },
+        trigger: { kind: 'feature', feature: 'delegation', ref: input.session.currentTaskId ?? undefined },
+        initialContext: { storageOwner: input.session.sessionId, refs: [evidence] },
+      }, { execute: async (context) => {
+          const service = this.threads.toolTaskService();
+          const owner = service.store.sessionExecution(input.session.sessionId);
+          if (!owner) throw new Error('Native launcher execution context is unavailable');
+          const signal = AbortSignal.any([input.signal, context.signal]);
+          result = await adapter.run!({ ...input, signal,
+            executeProcess: nativeAgentProcessExecutor(service, owner, signal, async (task) => {
+              await context.persistContextEvidence({
+                schemaVersion: 1, kind: 'taskExecutionContext', taskId: task.taskId,
+                sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId, executionContext: task.executionContext,
+              }, 'Native Agent execution context');
+            }),
+          });
+          if (result.text) {
+            const id = context.recorder.createItemId();
+            await context.recorder.completedImmediately({
+              type: 'agentMessage', id, provenance: context.recorder.localProvenance(id),
+              text: result.text, phase: 'final_answer', memoryCitation: null,
+            });
+          }
+          return {
+            status: result.outcome === 'succeeded' ? 'completed' : result.outcome === 'cancelled' ? 'interrupted' : 'failed',
+            error: result.error ? { message: result.error } : null,
+          };
+      } });
+      await this.threads.waitForIdle(input.session.sessionId);
+      const turn = this.threads.readTurnForHost(input.session.sessionId, input.turnId);
+      if (!result || !turn || turn.status === 'inProgress') throw new Error('Native Agent Turn did not produce a terminal result.');
+      // The canonical Turn may fail after the adapter returns, for example when persisting its answer.
+      result = result as DelegateExecutionResult;
+      if (turn.status !== 'completed' && result.outcome === 'succeeded') {
+        result = { ...result, outcome: turn.status === 'interrupted' ? 'cancelled' : 'failed',
+          error: turn.error?.message ?? 'Native Agent Turn did not complete.' };
+      }
       if (result.adapterSessionId) {
         const current = this.store.readSession(input.session.sessionId) ?? input.session;
         this.store.setAdapterSessionId(
@@ -70,6 +145,19 @@ export class InternalDelegationSessionRuntime implements DelegationSessionRuntim
         input: [{ type: 'text', text: content }],
         author: { kind: 'feature', feature: 'delegation', ref: input.session.ownerThreadId },
         trigger: { kind: 'feature', feature: 'delegation', ref: input.session.currentTaskId ?? undefined },
+        initialContext: { storageOwner: input.session.sessionId, refs: [evidence] },
+        additionalContext: {
+          delegation_execution: {
+            kind: 'application',
+            value: JSON.stringify({
+              directory: input.session.worktree.kind === 'active' || input.session.worktree.kind === 'unchanged'
+                || input.session.worktree.kind === 'changed' || input.session.worktree.kind === 'retained'
+                ? input.session.worktree.metadata.path : input.session.policy.cwd,
+              access: input.session.policy.access,
+              guidance: 'Use the stated directory as cwd for each relevant local tool call. It is an execution hint, not a conversation-wide default.',
+            }),
+          },
+        },
       });
       if (input.signal.aborted) interrupt();
       await this.threads.waitForIdle(input.session.sessionId);

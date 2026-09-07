@@ -1256,7 +1256,7 @@ function thread(id: string, updatedAt: number): Thread {
     source: 'app',
     threadSource: 'user',
     modelProvider: 'openai',
-    cwd: '/workspace',
+    configurationSource: { kind: 'user' },
     createdAt: updatedAt,
     updatedAt,
     status: { type: 'idle' },

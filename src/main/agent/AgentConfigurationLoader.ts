@@ -107,7 +107,7 @@ export class AgentConfigurationLoader {
 
   constructor(private readonly userDataPath: string) {}
 
-  resolveProfile(requestedName: string | undefined, cwd: string): EffectiveThreadConfiguration {
+  resolveProfile(requestedName: string | undefined, cwd?: string): EffectiveThreadConfiguration {
     const merged = this.loadMerged(cwd);
     const name = normalizeSelectedName(requestedName ?? merged.defaultProfile ?? DEFAULT_PROFILE.name);
     const profile = merged.profiles.get(name) ?? (name === DEFAULT_PROFILE.name ? DEFAULT_PROFILE : null);
@@ -115,7 +115,7 @@ export class AgentConfigurationLoader {
     return effectiveConfiguration(profile);
   }
 
-  resolveIdentityCatalog(cwd: string): readonly AgentIdentityEntry[] {
+  resolveIdentityCatalog(cwd?: string): readonly AgentIdentityEntry[] {
     const presentation = resolveMainPresentation(this.loadMerged(cwd));
     return Object.freeze([{
       agentType: MAIN_PRESENTATION_KEY,
@@ -126,7 +126,7 @@ export class AgentConfigurationLoader {
   }
 
   resolveIdentityCatalogForUserPath(
-    cwd: string,
+    cwd: string | undefined,
     reportFailure?: AgentConfigurationReadFailureReporter,
   ): readonly AgentIdentityEntry[] {
     return this.readForUserPath(
@@ -138,11 +138,11 @@ export class AgentConfigurationLoader {
   }
 
   resolveThreadPersona(thread: {
-    readonly cwd: string;
+    readonly configurationSource: import('../../core/agent/protocol').ThreadConfigurationSource;
   }, reportFailure?: AgentConfigurationReadFailureReporter): string {
     return this.readForUserPath(
       'resolve-agent-persona',
-      () => resolveMainPresentation(this.loadMerged(thread.cwd)).persona,
+      () => resolveMainPresentation(this.loadMerged(thread.configurationSource.kind === 'project' ? thread.configurationSource.root : undefined)).persona,
       () => DEFAULT_MAIN_IDENTITY.persona,
       reportFailure,
     );
@@ -199,9 +199,9 @@ export class AgentConfigurationLoader {
     ]);
   }
 
-  private loadMerged(cwd: string): ConfigurationLayer {
+  private loadMerged(cwd?: string): ConfigurationLayer {
     const user = this.readLayerAndClearFailure(userConfigurationPath(this.userDataPath), 'user');
-    const project = this.readLayerAndClearFailure(projectConfigurationPath(cwd), 'project');
+    const project = cwd === undefined ? EMPTY_LAYER : this.readLayerAndClearFailure(projectConfigurationPath(cwd), 'project');
     return {
       defaultProfile: project.defaultProfile ?? user.defaultProfile,
       profiles: new Map([...user.profiles, ...project.profiles]),

@@ -2718,6 +2718,7 @@ test.describe('canonical agent Thread surface', () => {
           kind: 'compactionSummary',
         };
         const restoredStateRef = {
+      executionContext: { entries: [], text: '', omitted: 0 },
           id: 'b'.repeat(64),
           mimeType: 'application/vnd.tenon.agent-context+json',
           byteLength: 100,

@@ -53,7 +53,7 @@ export interface RecentAutomationRun {
 export interface AutomationRunContinuityReader {
   recentRunsForBinding(
     automationId: string,
-    projectBindingKey: string,
+    contextHintId: string,
     limit: number,
   ): readonly AutomationRun[];
   readTurn(threadId: ThreadId, turnId: TurnId): Turn | null;
@@ -91,7 +91,7 @@ export async function recentAutomationRuns(
   // One extra row, because the newest row on this binding is usually the run
   // being dispatched right now — asking for exactly three would then return two.
   const candidates = reader
-    .recentRunsForBinding(current.automationId, current.projectBindingKey, RECENT_AUTOMATION_RUN_COUNT + 1)
+    .recentRunsForBinding(current.automationId, current.contextHintId, RECENT_AUTOMATION_RUN_COUNT + 1)
     .filter((run) => run.id !== current.id)
     .slice(0, RECENT_AUTOMATION_RUN_COUNT);
   return Promise.all(candidates.map((run) => describeRun(run, reader)));

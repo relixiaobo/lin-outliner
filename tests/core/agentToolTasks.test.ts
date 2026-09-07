@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -20,6 +21,7 @@ import {
 } from '../../src/main/agent/tasks/ToolTaskService';
 import type { ToolTaskSchedulerLimits } from '../../src/main/agent/tasks/toolTaskTypes';
 import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
+import { pendingExecutionContext, resolveExecutionAddress } from '../../src/main/agent/tasks/ExecutionContext';
 import type {
   ToolTaskFinalReceipt,
   ToolTaskRecord,
@@ -49,7 +51,9 @@ const childProcesses: ChildProcess[] = [];
 afterEach(async () => {
   await Promise.allSettled(services.splice(0).reverse().map((service) => service.close(2_000)));
   for (const database of databases.splice(0)) database.close(false);
-  for (const child of childProcesses.splice(0)) child.kill('SIGKILL');
+  for (const child of childProcesses.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
   const cleanupRoots = roots.splice(0);
   await Promise.allSettled(cleanupRoots.map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -283,7 +287,7 @@ describe('ToolTaskService', () => {
     expect(seen).toEqual([{
       taskId: started.taskId,
       nonce: expect.any(String),
-      cwd: process.cwd(),
+      cwd: started.executionContext.address.cwd,
       stdin: 'task intent',
     }]);
   });
@@ -1236,6 +1240,8 @@ function passiveHost(): ToolTaskHost {
 }
 
 function startInput(command: string, overrides: Partial<Parameters<ToolTaskService['start']>[0]> = {}) {
+  const cwd = overrides.cwd ?? realpathSync(mkdtempSync(path.join(tmpdir(), 'task-execution-')));
+  if (!overrides.cwd) roots.push(cwd);
   return {
     ownerThreadId: OWNER_ID,
     sourceTurnId: SOURCE_TURN_ID,
@@ -1243,7 +1249,7 @@ function startInput(command: string, overrides: Partial<Parameters<ToolTaskServi
     producer: 'bash',
     description: 'Test command',
     command,
-    cwd: process.cwd(),
+    cwd,
     timeoutMs: 5_000,
     env: process.env,
     ...overrides,
@@ -1286,6 +1292,9 @@ async function seedRunningTask(
     writeFile(path.join(detailPath, 'stdout.log'), ''),
     writeFile(path.join(detailPath, 'stderr.log'), ''),
   ]);
+  const executionContext = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: fixture.root }), {
+    capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+  });
   return fixture.store.create({
     taskId,
     ownerThreadId: OWNER_ID,
@@ -1294,7 +1303,10 @@ async function seedRunningTask(
     producer: 'fixture',
     description: taskId,
     commandDigest: createHash('sha256').update(taskId).digest('hex'),
-    cwd: fixture.root,
+    cwd: executionContext.address.cwd,
+    executionContext,
+    operationKind: 'process',
+    inheritedClaimTaskId: null,
     nonce: `nonce-${taskId}`,
     detailPath,
     backgroundEnabled: false,

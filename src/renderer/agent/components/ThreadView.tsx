@@ -194,7 +194,6 @@ interface ThreadViewProps {
   readonly providerSettingsLoaded: boolean;
   readonly slashCommands: readonly AgentSlashCommandView[];
   readonly threadModelProvider: string;
-  readonly threadCwd: string;
   readonly threadId: string;
   readonly threadsById: ReadonlyMap<ThreadId, Thread>;
   readonly turns: readonly Turn[];
@@ -664,7 +663,6 @@ export function ThreadView({
   providerSettingsLoaded,
   plan,
   slashCommands,
-  threadCwd,
   threadModelProvider,
   threadId,
   threadsById,
@@ -3153,7 +3151,6 @@ export function ThreadView({
                         providerRetry={providerRetry?.turnId === turn.id ? providerRetry.status : null}
                         threadId={threadId}
                         threadReferences={threadReferences}
-                        threadCwd={threadCwd}
                         turn={turn}
                         waitingOnUserInput={waitingOnUserInput}
                       />
@@ -3427,7 +3424,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   providerRetry,
   threadId,
   threadReferences,
-  threadCwd,
   turn,
   waitingOnUserInput,
 }: {
@@ -3456,7 +3452,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly providerRetry: ProviderRetryStatus | null;
   readonly threadId: string;
   readonly threadReferences: ReadonlyMap<string, ThreadReferenceView>;
-  readonly threadCwd: string;
   readonly turn: Turn;
   readonly waitingOnUserInput: boolean;
 }) {
@@ -3627,7 +3622,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
         threadId={threadId}
         threadReferences={threadReferences}
-        threadCwd={threadCwd}
         active={active}
         workingTextEnabled={workingTextEnabled}
       />
@@ -3684,7 +3678,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
                 onReadToolArguments={readToolArguments}
                 onReadToolOutput={readToolOutput}
                 threadId={threadId}
-                threadCwd={threadCwd}
                 workingTextEnabled={workingTextEnabled}
               />
             ) : renderItem(group.item, false))}

@@ -16,13 +16,18 @@ import {
 } from '../../src/main/agent/delegation';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import { AgentWorktree } from '../../src/main/agent/worktree/AgentWorktree';
+import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
+import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
+import type { TurnExecutor } from '../../src/main/agent/runtime/types';
 
 const execFileAsync = promisify(execFile);
 const OWNER_ID = '00000000-0000-7000-8000-000000000001' as ThreadId;
 const roots: string[] = [];
 const databases: Database[] = [];
+const services: ToolTaskService[] = [];
 
 afterEach(async () => {
+  for (const service of services.splice(0)) await service.close(2_000);
   for (const database of databases.splice(0)) database.close(false);
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -201,6 +206,9 @@ describe('InternalDelegationSessionRuntime', () => {
 });
 
 class FakeThreadService {
+  constructor(readonly tasks: ToolTaskService) {}
+  toolTaskService() { return this.tasks; }
+  async writeFeatureContext() { return { id: 'a'.repeat(64), byteLength: 100 }; }
   readonly ensured: DelegationSessionBinding[] = [];
   readonly ensuredCwds: string[] = [];
   readonly closed: ThreadId[] = [];
@@ -218,7 +226,12 @@ class FakeThreadService {
     return {};
   }
 
-  async startPrivilegedTurn(): Promise<void> {
+  async startPrivilegedTurn(_request: unknown, executor?: TurnExecutor): Promise<void> {
+    if (executor) await executor.execute({
+      signal: new AbortController().signal,
+      recorder: { createItemId: () => 'answer', localProvenance: () => ({}), completedImmediately: async () => undefined },
+      persistContextEvidence: async () => undefined,
+    } as unknown as Parameters<TurnExecutor['execute']>[0]);
     await this.onStart();
   }
 
@@ -274,7 +287,12 @@ async function runtimeFixture(): Promise<{
   const database = new Database(join(root, 'delegation.sqlite'), { create: true });
   databases.push(database);
   const store = new DelegationSessionStore(database as unknown as SqliteDatabase);
-  const threads = new FakeThreadService();
+  const tasks = new ToolTaskService(new ToolTaskStore(database as unknown as SqliteDatabase), join(root, 'tasks'));
+  services.push(tasks);
+  tasks.bindHost({ ownerExists: () => true, canInheritClaim: () => true,
+    readDeliveryAdmission: async () => null, startCompletionTurn: async () => false, taskChanged: () => undefined });
+  await tasks.initialize();
+  const threads = new FakeThreadService(tasks);
   const runtime = new InternalDelegationSessionRuntime(
     threads as unknown as ThreadService,
     store,

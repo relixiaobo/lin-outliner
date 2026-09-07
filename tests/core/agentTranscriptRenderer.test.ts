@@ -70,7 +70,6 @@ taskPath: /root/audit
 parentThreadId: thread-parent
 role: worker
 nickname: Auditor
-cwd: /w
 detail: brief
 
 ## Turn 1 — completed

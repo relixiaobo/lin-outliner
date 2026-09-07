@@ -522,8 +522,9 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       && context.thread.parentThreadId === null
       ? withDelegateCliEnvironment(workspaceOptions.processEnvironment, options.delegateCliRuntime)
       : workspaceOptions.processEnvironment;
-    return createAgentLocalWorkspaceContext(
-      context.thread.cwd,
+    return {
+      ...createAgentLocalWorkspaceContext(
+      threadService.defaultExecutionDirectory(),
       options.scratchRoot,
       managedSkills.runtimeForTurn(context.turn.id),
       processEnvironment,
@@ -535,7 +536,11 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
           }
         : workspaceOptions.writeBoundary,
       context.thread.id,
-    );
+      ),
+      ...(delegationSession ? {
+        inheritedClaimTaskId: threadService.toolTaskService().store.sessionExecution(delegationSession.sessionId)?.taskId,
+      } : {}),
+    };
   };
   const toolRuntime = new ToolRuntime(threadService, {
     ...options.createToolOptions(composition),

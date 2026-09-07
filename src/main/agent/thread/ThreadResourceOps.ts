@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
-import { copyFile,lstat,realpath,rm,stat } from 'node:fs/promises';
-import { basename, extname, join } from 'node:path';
+import { copyFile,lstat,mkdir,realpath,rm,stat } from 'node:fs/promises';
+import { basename, dirname, extname, join } from 'node:path';
 import { decodeTurn } from '../../../core/agent/codec';
 import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import type {
@@ -278,10 +278,11 @@ export class ThreadResourceOps {
 
     const source = await this.resources.resolve(ref, 'editSource');
     const scope = this.resources.sourceScope(ref);
+    const editingRoot = join(this.attachmentScratchRoot, 'edits', currentThreadId);
     if (
       source.status === 'resolvedSource'
       && scope
-      && (scope.kind === 'external' || isPathInside(current.cwd, source.path))
+      && (scope.kind === 'external' || isPathInside(editingRoot, source.path))
       && this.resources.linkReference(currentThreadId, ref)
     ) {
       return { ref, path: source.path, entryKind: source.entryKind };
@@ -289,12 +290,13 @@ export class ThreadResourceOps {
 
     const exact = await this.resources.resolve(ref, 'observeExactRevision');
     if (exact.status !== 'resolvedExactRevision') return null;
-    const destination = await copyHistoricalExactRevision(exact.path, current.cwd, ref.fileName);
-    const scopeId = `execution:${currentThreadId}`;
+    await mkdir(editingRoot, { recursive: true, mode: 0o700 });
+    const destination = await copyHistoricalExactRevision(exact.path, editingRoot, ref.fileName);
+    const scopeId = `attachments:${currentThreadId}`;
     this.resources.registerScope({
       scopeId,
-      kind: current.parentThreadId ? 'managedWorktree' : 'managedWorkspace',
-      rootPath: current.cwd,
+      kind: 'managedWorkspace',
+      rootPath: editingRoot,
       editable: true,
     });
     try {
@@ -546,13 +548,6 @@ export class ThreadResourceOps {
     return resourceReferencesFromTurns(this.core.allTurns(threadId));
   }
   async bindFinalCitations(thread: Thread, item: ThreadItem): Promise<ThreadItem> {
-    const scopeId = `execution:${thread.id}`;
-    this.resources.registerScope({
-      scopeId,
-      kind: thread.parentThreadId ? 'managedWorktree' : 'managedWorkspace',
-      rootPath: thread.cwd,
-      editable: thread.parentThreadId === null,
-    });
     if (
       item.type !== 'agentMessage'
       || !item.text
@@ -566,6 +561,9 @@ export class ThreadResourceOps {
           const fileStat = await lstat(marker.target.path);
           const expectedKind = fileStat.isFile() ? 'file' : fileStat.isDirectory() ? 'directory' : null;
           if (!expectedKind) throw new Error('unsupportedKind');
+          const root = dirname(await realpath(marker.target.path));
+          const scopeId = `citation:${thread.id}:${root}`;
+          this.resources.registerScope({ scopeId, kind: 'external', rootPath: root, editable: thread.parentThreadId === null });
           const source = await this.resources.sourceLocator(scopeId, marker.target.path, expectedKind);
           if (expectedKind === 'directory') {
             const ref = this.resources.createSourceReference({
@@ -667,7 +665,7 @@ export class ThreadResourceOps {
     try {
       const resolved = await this.resolveUserContent(content, {
         threadId: thread.id,
-        cwd: thread.cwd,
+        cwd: this.attachmentScratchRoot,
         recordCreatedResource: (ref) => createdResources.push(ref),
       });
       assertCanonicalUserContent(resolved);

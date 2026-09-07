@@ -783,6 +783,7 @@ function tenonResultShapeIssue(result: TenonAgentToolResult<unknown>): string | 
     'warnings',
     'content',
     'details',
+    'executionContext',
     'terminate',
     'resourceRefs',
     'persistedTextReplacements',
@@ -877,6 +878,7 @@ function compileTenonToolResult(
     kind: 'native',
     content: [{ type: 'text', text: redacted }, ...result.content],
     details: result.details,
+    ...(result.executionContext === undefined ? {} : { executionContext: result.executionContext }),
     ...(result.terminate === undefined ? {} : { terminate: result.terminate }),
     ...(result.resourceRefs === undefined ? {} : { resourceRefs: result.resourceRefs }),
     ...(result.persistedTextReplacements === undefined

@@ -295,9 +295,9 @@ const RUNTIME_CONTEXT = {
   thread: {
     id: '00000000-0000-7000-8000-000000000001',
     parentThreadId: null,
-    cwd: process.cwd(),
+    configurationSource: { kind: 'user' },
   },
-  turn: { id: '00000000-0000-7000-8000-000000000002' },
+  turn: { id: '00000000-0000-7000-8000-000000000002', provenance: { trigger: { kind: 'user' } } },
   configuration: CONFIGURATION,
 } as unknown as TurnExecutionContext;
 
@@ -305,6 +305,7 @@ function runtimeService(
   extensionTools: readonly ModelToolContract[] = [],
 ): ThreadService {
   return {
+    defaultExecutionDirectory: () => process.cwd(),
     extensionToolContributions: async () => extensionTools.length > 0
       ? [{ extensionId: 'extension-probe', tools: extensionTools }]
       : [],

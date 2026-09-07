@@ -2,6 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
+import { supervisedNativeProcess } from './fixtures/supervisedNative';
 import {
   createExternalAgentCliLauncher,
   EXTERNAL_AGENT_CLI_DEFINITIONS,
@@ -60,6 +61,7 @@ describe('external Agent CLI launchers', () => {
         session: { ...session, policy: { ...session.policy, runnerId: 'future' } },
         turnId: '01dddddd-dddd-7ddd-8ddd-dddddddddddd',
         prompt: 'hello launcher',
+        executeProcess: supervisedNativeProcess(root),
         messages: [],
         signal: new AbortController().signal,
       });
@@ -103,6 +105,7 @@ describe('external Agent CLI launchers', () => {
         session: { ...session, policy: { ...session.policy, runnerId: 'codex' } },
         turnId: '01dddddd-dddd-7ddd-8ddd-dddddddddddd',
         prompt: 'hello',
+        executeProcess: supervisedNativeProcess(root),
         messages: [],
         signal: new AbortController().signal,
       });
@@ -138,6 +141,7 @@ describe('external Agent CLI launchers', () => {
         session: { ...session, policy: { ...session.policy, runnerId: 'large' } },
         turnId: '01dddddd-dddd-7ddd-8ddd-dddddddddddd',
         prompt: 'hello',
+        executeProcess: supervisedNativeProcess(root),
         messages: [],
         signal: new AbortController().signal,
       });
@@ -166,6 +170,7 @@ describe('external Agent CLI launchers', () => {
         session: { ...session, policy: { ...session.policy, runnerId: 'openclaw' } },
         turnId: '01dddddd-dddd-7ddd-8ddd-dddddddddddd',
         prompt,
+        executeProcess: supervisedNativeProcess(root),
         messages: [],
         signal: new AbortController().signal,
       });
