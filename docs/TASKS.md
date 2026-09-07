@@ -16,6 +16,15 @@ the latest published train is `v0.7.0`.
 
 ## In Flight
 
+PR #639 approved the capability-first development workbench design. Runtime
+implementation has not shipped. Unit A is eligible now as one complete
+execution-context refactor over the shipped delegation/native-launcher and
+Settings mechanisms. Its development owner opens a new scoped Draft PR from
+current main before implementation; the design PR is not an implementation
+claim. Units B, D, and E follow Unit A; verification Unit C follows Unit B's
+context/profile mechanism. All five plans remain active until their respective
+implementation, spec reconciliation, and archive gate complete.
+
 PR #628 shipped internal Agent delegation and complete Subagent/isolated-Skill
 retirement under the design merged in #620. Generic Background Tool Tasks
 shipped in #623, and the external Runner adapter feature shipped in #637. The
@@ -108,6 +117,11 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
+| P1 | [project-development-workbench](plans/project-development-workbench.md) | `draft` | Design approved in #639. Unit A is eligible now: one complete task-context protocol/admission refactor including local tools, delegation/native launchers, Automation, evidence, recovery, and all consumers. Open a new scoped Draft PR; preserve #643's Skill settings mechanism. The aggregate remains active for Units A-E. |
+| P1 | [project-context-runtime](plans/project-context-runtime.md) | `draft` | Unit B follows merged Unit A: bounded target-scoped discovery, immutable successor observations, and optional Project catalog/lifecycle. |
+| P1 | [verification-self-iteration](plans/verification-self-iteration.md) | `draft` | Unit C follows Units A and B: source-state-bound checks and bounded correction through the final Tool Task/context mechanisms. |
+| P2 | [git-review-publication](plans/git-review-publication.md) | `draft` | Unit D follows Unit A; mandatory Git baselines are independent of optional context discovery. Recheck Tool Task/renderer collisions before claiming. |
+| P2 | [execution-sandbox-process](plans/execution-sandbox-process.md) | `draft` | Unit E follows Unit A: truthful isolation receipts and the bounded interactive-process experiment. Recheck process/receipt collisions before claiming. |
 | P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623, internal delegation plus Subagent/isolated-Skill retirement shipped in #628, and the external Runner adapter feature shipped in #637. Remaining work follows the aggregate plan's declared boundaries. |
 | P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-C shipped in #636, #638, and #640; #643 ships Skill declarative settings ownership. Unit D's Agent-facing lifecycle/provenance routes and coverage, plus Units E-G, remain open under their dependency/collision checks. |
 | P2 | [interaction-jank-cleanups](plans/archive/interaction-jank-cleanups.md) | `done` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, the Runtime-index unit shipped in #633, and PR-3 translation geometry shipped in #634. |
@@ -227,6 +241,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **project-development-workbench design gate** (`done`, #639, 2026-09-07) - approved task-scoped execution, context, verification, publication, and process designs; Unit A is eligible for implementation and the five workbench plans remain active.
 - **skill-declarative-settings** (`done`, #643, 2026-09-07) - Skill-owned file-backed read/update routes preserve source spelling and queued toggle state; Unit D's Agent-facing lifecycle/provenance work remains in the active Settings plan.
 - **agent-skill-curation-report** (`done`, #642, 2026-09-06) - Settings now offers an opt-in, read-only report over the loaded Skill registry; unchanged user/project Skills with reliable Agent-write provenance are analyzed for broken or root-escaping Markdown resources, exact content duplicates, and retired tool names, while excluded sources and hashes remain visible; [plan archived](plans/archive/agent-skill-curation-report.md).
 - **agent-skill-authoring-foundation** (`done`, #641, 2026-09-06) - local Skill sources now persist explicit `skill` or `container` modes, exact Skill bindings stay scoped to the selected directory, and discovery, reload, authoring, and unbind share that identity; [plan archived](plans/archive/agent-skill-authoring-foundation.md).

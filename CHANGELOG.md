@@ -681,6 +681,19 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Capability-first development workbench design approved (PR #639)** - merged
+  the plans for task-scoped execution addresses, immutable context snapshots,
+  optional Project organization, source-state-bound verification, explicit Git
+  publication, and truthful process-isolation evidence. Review resolved writable
+  delegation isolation, address-claim coverage, stale check results, target-scoped
+  instructions, and HEAD/ref-bound commit admission. This is a design-only
+  integration; runtime behavior and behavioral acceptance tests remain with
+  Units A-E. Unit A is eligible first, followed by context, verification,
+  publication, and process work under their recorded dependencies. The reviewed
+  head and current-main merge preview passed typecheck, `docs:check`, and
+  whitespace checks. Non-gating E2E comparison reported no introduced failures;
+  one sample's artifact upload failed.
+
 - **Workspace and document status audit (2026-09-05)** - refreshed the live
   board against GitHub: #627 is complete, #628 owns the active internal
   delegation implementation, and #626's Settings rewrite remains a draft

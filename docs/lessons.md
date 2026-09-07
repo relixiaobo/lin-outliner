@@ -2624,3 +2624,16 @@ queued writes must derive from authoritative write results. Regression coverage
 must include reads started before and during a write, delayed read completion
 after the write, and completion while another mutation remains queued. One
 passing event ordering does not establish that the race is fixed.
+
+## Evidence must name both its scope and observation boundary
+
+PR #639's design review exposed guarantees that exceeded their evidence: an
+admitted cwd did not cover every shell write, a past check pass did not verify
+later source edits, and a file digest did not identify the reviewed Git branch.
+
+**Record what an observation covers and when it became true before using it
+to authorize or summarize later work.** Keep admission receipts immutable and
+publish later discovery separately. Bind reusable checks and publication
+admission to the source state and Git baseline they actually verified. A
+cooperative address claim must report its coverage; it cannot imply filesystem
+containment or exclusion of external writers.
