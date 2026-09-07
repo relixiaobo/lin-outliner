@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   Automation,
   AutomationCreateInput,
+  AutomationContextHintInput,
   AutomationUpdateInput,
 } from '../../../core/agent/automation';
 import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../../../core/agentModelId';
@@ -114,11 +115,10 @@ export function AutomationEditor(props: AutomationEditorProps) {
       const destination = state.destination === 'standalone'
         ? { kind: 'standalone' as const }
         : { kind: 'existingThread' as const, threadId: required(state.threadId, t.fieldRequired({ field: t.thread })) };
-      const contextHints = state.contextHints.map((binding) => ({
-        ...binding,
-        ...(binding.contextHintId ? { contextHintId: binding.contextHintId } : {}),
-        source: { kind: 'directory' as const, rootHint: required(binding.cwd, t.fieldRequired({ field: t.cwd })) },
-      }));
+      const contextHints = state.contextHints.map((binding) => toAutomationContextHintInput(
+        binding,
+        required(binding.cwd, t.fieldRequired({ field: t.cwd })),
+      ));
       const definition: AutomationCreateInput = {
         name: state.name.trim(),
         prompt: state.prompt.trim(),
@@ -469,6 +469,18 @@ function replaceBinding(
   value: ContextHintDraft,
 ): readonly ContextHintDraft[] {
   return bindings.map((binding, candidate) => candidate === index ? value : binding);
+}
+
+/** Convert editor state to the closed Core contract; UI row ids never cross this boundary. */
+export function toAutomationContextHintInput(
+  binding: Pick<ContextHintDraft, 'id' | 'contextHintId' | 'executionMode'>,
+  rootHint: string,
+): AutomationContextHintInput {
+  return {
+    ...(binding.contextHintId ? { contextHintId: binding.contextHintId } : {}),
+    source: { kind: 'directory', rootHint },
+    executionMode: binding.executionMode,
+  };
 }
 
 function nullable(value: string): string | null {
