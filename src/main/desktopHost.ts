@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, shell } from 'electron';
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
+import { SKILL_LIBRARY_CHANGED_CHANNEL, SKILL_REVIEW_DECIDE_CHANNEL, SKILL_REVIEW_GET_CHANNEL } from '../core/agent/skillOperations';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, watch } from 'node:fs';
 import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
@@ -71,9 +72,10 @@ import {
   THREAD_MESSAGE_CONTEXT_MENU_CHANNEL,
 } from '../core/agent/transport';
 import {
-  ManagedSkillServiceError,
   managedSkillErrorView,
 } from './managedSkillService';
+import { AgentToolFailure } from './agent/AgentToolFailure';
+import { MANAGED_SKILL_ERROR_CODES, type ManagedSkillErrorCode } from '../core/types';
 import type { ProviderConfigMode } from '../core/settingsWindow';
 import {
   ASSET_URL_SCHEME,
@@ -425,6 +427,12 @@ function startFilePreferencesWatcher(): void {
 
 const agentImageObservationMutex = new Mutex();
 const agentHost = createAgentHost({
+  reviewSkillOperation: (input) => windowApplicationHost.reviewSkillOperation(input),
+  onSkillLibraryChanged: () => {
+    for (const target of BrowserWindow.getAllWindows()) {
+      if (!target.isDestroyed()) target.webContents.send(SKILL_LIBRARY_CHANGED_CHANNEL);
+    }
+  },
   userDataDir: resolvedUserDataDir,
   scratchRoot: agentScratchRoot,
   defaultCwd: agentLocalFileRoot,
@@ -1179,6 +1187,8 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
     windowApplicationHost.setUrlPageTranslationPreferences(raw)
   ));
   ipcMain.handle('lin:set-language', (_event, raw: unknown) => windowApplicationHost.setLocale(raw));
+  ipcMain.handle(SKILL_REVIEW_GET_CHANNEL, (event) => windowApplicationHost.readSkillReview(event));
+  ipcMain.handle(SKILL_REVIEW_DECIDE_CHANNEL, (event, approved: unknown) => windowApplicationHost.decideSkillReview(event, approved));
   ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {
     const providerId = typeof args?.providerId === 'string' ? args.providerId : '';
     const mode: ProviderConfigMode = args?.mode === 'custom' ? 'custom' : 'configure';
@@ -2078,31 +2088,6 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
  * directory's Skills would lose their local chip and their unbind action while
  * the directory itself rendered, two rows down, as empty.
  */
-function withCanonicalSkillDirectories(settings: AgentProviderSettingsView): AgentProviderSettingsView {
-  // Applied to EVERY handler that returns this view, not just the two that look
-  // skill-related. The renderer stores all of them into one settings state, so a
-  // single un-expanded reply — switching provider, signing out — silently
-  // restores the raw list and the library loses its local chips and unbind
-  // actions until the pane is reopened.
-  const expanded = settings.agent.additionalSkillDirectories
-    .map((dir) => expandSkillDirectory(dir, agentLocalFileRoot))
-    .filter(Boolean);
-  const additionalSkillSourceModes = Object.fromEntries(
-    Object.entries(settings.agent.additionalSkillSourceModes ?? {}).map(([dir, mode]) => [
-      expandSkillDirectory(dir, agentLocalFileRoot),
-      mode,
-    ]),
-  );
-  return {
-    ...settings,
-    agent: {
-      ...settings.agent,
-      additionalSkillDirectories: expanded,
-      additionalSkillSourceModes,
-    },
-  };
-}
-
 function withCanonicalSkillSettings(settings: AgentSkillSettingsView): AgentSkillSettingsView {
   return {
     ...settings,
@@ -2115,7 +2100,7 @@ function withCanonicalSkillSettings(settings: AgentSkillSettingsView): AgentSkil
 
 async function withDelegationRunners(settings: AgentProviderSettingsView) {
   return {
-    ...withCanonicalSkillDirectories(settings),
+    ...settings,
     delegationRunners: await agentHost.delegationRunners(),
   };
 }
@@ -2150,6 +2135,9 @@ async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<
   try {
     return { ok: true, value: await operation() };
   } catch (error) {
+    if (error instanceof AgentToolFailure && (MANAGED_SKILL_ERROR_CODES as readonly string[]).includes(error.code)) {
+      return { ok: false, error: { code: error.code as ManagedSkillErrorCode } };
+    }
     return { ok: false, error: managedSkillErrorView(error) };
   }
 }
@@ -2216,29 +2204,14 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return { revealed: true };
     }
     case 'agent_update_runtime_settings': {
-      const settings = await updateAgentRuntimeSettings(
-        preserveStoredSkillDirectoryForms(
-          args.settings as AgentRuntimeSettingsInput,
-          await getAgentRuntimeSettings(),
-          agentLocalFileRoot,
-        ),
-      );
-      agentHost.skills.updateRuntimeSettings(settings.agent);
+      const settings = await updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
+      agentHost.skills.updateRuntimeSettings(await getAgentRuntimeSettings());
       return withDelegationRunners(settings);
     }
     case 'agent_update_skill_settings': {
-      const stored = await getAgentRuntimeSettings();
+      const stored = await getAgentSkillSettings();
       const requested = args.settings as AgentSkillSettingsInput;
-      const preserved = requested.sourceBindings === undefined
-        ? requested
-        : {
-          ...requested,
-          sourceBindings: preserveStoredSkillDirectoryForms(
-            { additionalSkillSourceBindings: [...requested.sourceBindings] },
-            stored,
-            agentLocalFileRoot,
-          ).additionalSkillSourceBindings,
-        };
+      const preserved = preserveStoredSkillDirectoryForms(requested, stored, agentLocalFileRoot);
       const next = await updateAgentSkillSettings(preserved);
       agentHost.skills.updateRuntimeSettings(await getAgentRuntimeSettings());
       notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
@@ -2354,8 +2327,30 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentHost.skills.list(args.userInvocableOnly === true);
     case 'agent_skill_curation_report':
       return analyzeAgentSkills(await agentHost.skills.listCurationCandidates());
-    case 'agent_undo_skill_agent_edit': {
-      return agentHost.skills.undoAgentEdit(String(args.skillName));
+    case 'agent_skill_manage': {
+      const callerWindow = BrowserWindow.fromWebContents(event.sender);
+      if (!callerWindow || event.senderFrame !== event.sender.mainFrame
+        || (!windowApplicationHost.isMainSender(event) && !windowApplicationHost.isSettingsSender(event))) {
+        throw new Error('Skill operations require the main or Settings window.');
+      }
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      callerWindow.once('closed', cancel);
+      event.sender.once('render-process-gone', cancel);
+      event.sender.once('destroyed', cancel);
+      try {
+        return await managedSkillCommand(() => agentHost.skills.manage(args, {
+          origin: { kind: 'window', windowId: callerWindow.id }, signal: controller.signal,
+          authorize: async () => {
+            controller.signal.throwIfAborted();
+            if (callerWindow.isDestroyed()) throw new Error('The originating window closed.');
+          },
+        }));
+      } finally {
+        callerWindow.removeListener('closed', cancel);
+        event.sender.removeListener('render-process-gone', cancel);
+        event.sender.removeListener('destroyed', cancel);
+      }
     }
     // Main Agent configuration file IO stays behind the seam (A2).
     case 'agent_identity_catalog':
@@ -2380,12 +2375,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         sourceUrl: typeof args.sourceUrl === 'string' ? args.sourceUrl : undefined,
         catalogId: typeof args.catalogId === 'string' ? args.catalogId : undefined,
       }));
-    case 'agent_managed_skill_install':
-      return managedSkillCommand(() => agentHost.skills.catalog.install({
-        discoveryId: String(args.discoveryId ?? ''),
-        candidateId: String(args.candidateId ?? ''),
-        expectedCommit: String(args.expectedCommit ?? ''),
-      }));
     case 'agent_managed_skill_list':
       return managedSkillCommand(() => agentHost.skills.catalog.list());
     case 'agent_managed_skill_check_updates':
@@ -2397,36 +2386,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       ));
     case 'agent_managed_skill_preview_update':
       return managedSkillCommand(() => agentHost.skills.catalog.previewUpdate({
-        skillId: String(args.skillId ?? ''),
-        expectedActiveHash: String(args.expectedActiveHash ?? ''),
-      }));
-    case 'agent_managed_skill_apply_update':
-      return managedSkillCommand(() => agentHost.skills.catalog.applyUpdate({
-        skillId: String(args.skillId ?? ''),
-        previewId: String(args.previewId ?? ''),
-        expectedActiveHash: String(args.expectedActiveHash ?? ''),
-        expectedCandidateHash: String(args.expectedCandidateHash ?? ''),
-      }));
-    case 'agent_managed_skill_set_enabled': {
-      return managedSkillCommand(() => {
-        if (typeof args.enabled !== 'boolean') {
-          throw new ManagedSkillServiceError('invalid_request', 'Managed skill enabled state must be boolean.');
-        }
-        return agentHost.skills.catalog.setEnabled({
-          skillId: String(args.skillId ?? ''),
-          enabled: args.enabled,
-          expectedActiveHash: String(args.expectedActiveHash ?? ''),
-        });
-      });
-    }
-    case 'agent_managed_skill_rollback':
-      return managedSkillCommand(() => agentHost.skills.catalog.rollback({
-        skillId: String(args.skillId ?? ''),
-        expectedActiveHash: String(args.expectedActiveHash ?? ''),
-        expectedPreviousHash: String(args.expectedPreviousHash ?? ''),
-      }));
-    case 'agent_managed_skill_uninstall':
-      return managedSkillCommand(() => agentHost.skills.catalog.uninstall({
         skillId: String(args.skillId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
       }));

@@ -577,10 +577,24 @@ later `delegate send` invocation continues that Session.
 Skill instructions may call other tools only when those tools survive the
 current Thread catalog and explicit blocks.
 
-The effective presence of `skill` gates the entire Skill surface. When absent,
-the Host constructs no Skill runtime, emits no catalog or Skill stable-prompt
-module, and does not recognize direct slash or natural-language Skill
-invocation. A configured Skill name cannot bypass that gate.
+The effective presence of `skill` gates instruction invocation. When absent or
+globally disabled, the Host emits no instruction catalog or Skill stable-prompt
+module and does not recognize direct slash or natural-language Skill invocation.
+A configured Skill name cannot bypass that gate. A registry may still exist for
+separately admitted lifecycle inspection; it grants no invocation authority.
+
+`skill_inspect` and `skill_manage` are independent root-only domain tools with
+strict nested operation schemas. They call the same lifecycle owner as the
+human Library. Inspection owns bounded discovery, exact targets, update previews,
+and diagnostics; management owns install, apply update, rollback, uninstall, and
+hash-bound Agent-edit undo. Tool selection, global disablement, and explicit
+action blocks are checked at admission and again before delayed commit. Network
+descriptors follow the selected operation; undo checks its Host-resolved mutable
+file target. Human review is sender-bound native UI, never a model argument.
+Results separate committed content, observed availability, and refresh failure.
+Preference edits still use public configuration files, with no settings CLI or
+private-store fallback. The full lifecycle contract lives in
+[`agent-skills.md`](agent-skills.md).
 
 A successful invocation returns only `{"status":"loaded"}` before its
 supplemental instruction content is projected canonically. The result has no

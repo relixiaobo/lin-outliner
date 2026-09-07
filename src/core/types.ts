@@ -764,15 +764,11 @@ export interface AgentRuntimeSettings {
 }
 
 export interface AgentRuntimeSettingsInput {
-  additionalSkillDirectories?: string[];
-  additionalSkillSourceBindings?: AgentSkillSourceBinding[];
-  additionalSkillSourceModes?: Record<string, AgentSkillSourceMode>;
   providerTimeoutMs?: number | null;
   providerMaxRetries?: number | null;
   providerMaxRetryDelayMs?: number | null;
   providerCacheRetention?: AgentCacheRetention;
   delegation?: AgentDelegationSettingsInput;
-  disabledSkills?: string[];
   disabledTools?: string[];
 }
 
@@ -805,6 +801,7 @@ export interface SkillDefinition {
   modelInvocable: boolean;
   /** True when one previous version of the last agent edit is held for single-step undo. */
   canUndoLastAgentEdit?: boolean;
+  undoTarget?: import('./agent/skillOperations').SkillUndoTarget;
   /** sha256 of the raw SKILL.md content; absent for code-registered built-ins. */
   contentHash?: string;
   /** Whole-subtree hash for a pinned Tenon-managed skill version. */
@@ -850,6 +847,11 @@ export interface AgentSkillCurationReport {
 export type ManagedSkillCompatibilityStatus = 'compatible' | 'unknown' | 'incompatible';
 
 export const MANAGED_SKILL_ERROR_CODES = [
+  'cancelled',
+  'review_expired',
+  'interaction_unavailable',
+  'operation_unavailable',
+  'undo_unavailable',
   'invalid_github_url',
   'unsupported_github_url',
   'github_not_found',
@@ -990,14 +992,14 @@ export interface ManagedSkillVersionView {
 }
 
 export type ManagedSkillStatus =
-  | 'installed-disabled'
-  | 'enabled'
+  | 'installed'
   | 'update-available'
   | 'modified'
   | 'failed';
 
 export interface ManagedSkillView {
   id: string;
+  revision: string;
   name: string;
   description: string;
   /** Whether the active version may appear as a slash command. */
@@ -1006,7 +1008,6 @@ export interface ManagedSkillView {
   subdirectory: string;
   trackingRef: string;
   recommended: boolean;
-  enabled: boolean;
   status: ManagedSkillStatus;
   compatibility: ManagedSkillCompatibilityView;
   active: ManagedSkillVersionView;
@@ -1276,7 +1277,7 @@ export interface AgentProviderSettingsView {
   defaultModel?: string;
   providers: AgentProviderConfigView[];
   availableProviders: AgentProviderOption[];
-  agent: AgentRuntimeSettings;
+  agent: Omit<AgentRuntimeSettings, 'additionalSkillDirectories' | 'additionalSkillSourceModes' | 'disabledSkills'>;
   imageGeneration: AgentImageGenerationSettings;
 }
 

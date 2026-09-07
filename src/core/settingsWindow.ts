@@ -6,7 +6,7 @@
 // surface and listens for change broadcasts).
 
 export const WINDOW_SURFACE_QUERY_PARAM = 'surface';
-export type WindowSurface = 'main' | 'settings' | 'provider-config';
+export type WindowSurface = 'main' | 'settings' | 'provider-config' | 'skill-review';
 
 /**
  * The three rail categories, cut along what a user is trying to affect rather
@@ -50,6 +50,7 @@ export function windowSurfaceFromSearch(search: string): WindowSurface {
   const surface = new URLSearchParams(search).get(WINDOW_SURFACE_QUERY_PARAM);
   if (surface === 'settings') return 'settings';
   if (surface === 'provider-config') return 'provider-config';
+  if (surface === 'skill-review') return 'skill-review';
   return 'main';
 }
 

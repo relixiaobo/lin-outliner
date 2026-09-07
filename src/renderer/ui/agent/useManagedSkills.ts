@@ -1,322 +1,124 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type {
-  ManagedSkillCatalogView,
-  ManagedSkillDiscoveryCandidateView,
-  ManagedSkillDiscoveryView,
-  ManagedSkillErrorView,
-  ManagedSkillUpdatePreviewView,
-  ManagedSkillView,
-} from '../../api/types';
+import type { ManagedSkillCatalogView, ManagedSkillDiscoveryCandidateView, ManagedSkillDiscoveryView, ManagedSkillErrorView, ManagedSkillView } from '../../api/types';
+import type { SkillManageRequest } from '../../../core/agent/skillOperations';
 import { api, managedSkillErrorFromUnknown } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 
-export type ManagedConfirmAction =
-  | { kind: 'rollback'; skill: ManagedSkillView }
-  | { kind: 'uninstall'; skill: ManagedSkillView };
+export type ManagedConfirmAction = { kind: 'rollback' | 'uninstall'; skill: ManagedSkillView };
+export interface ManagedInstallReview { discovery: ManagedSkillDiscoveryView; candidate: ManagedSkillDiscoveryCandidateView }
 
-export interface ManagedInstallReview {
-  discovery: ManagedSkillDiscoveryView;
-  candidate: ManagedSkillDiscoveryCandidateView;
-}
-
-/**
- * Managed-skill state and operations for the Skill library.
- *
- * This is a hook rather than component state because the library now shows
- * managed skills as rows in the one list while acquiring them happens in a
- * separate surface. Both need the same catalog, the same installed list, and the
- * same busy/error envelope, so neither can own it.
- */
-export function useManagedSkills(
-  onApplied: () => Promise<void>,
-  onInstalled?: (skill: ManagedSkillView) => Promise<boolean>,
-) {
+/** The Library owns list state; the Host owns every review and commit. */
+export function useManagedSkills(onApplied: () => Promise<void>) {
   const t = useT();
   const [catalog, setCatalog] = useState<ManagedSkillCatalogView | null>(null);
   const [skills, setSkills] = useState<ManagedSkillView[]>([]);
-  // Whether the installed list has actually been read. An empty list before the
-  // first successful read means "unknown", not "none" — reporting it as none
-  // wipes a badge the shell had already computed correctly.
   const [listLoaded, setListLoaded] = useState(false);
   const [sourceUrl, setSourceUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<ManagedSkillErrorView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [selection, setSelection] = useState<ManagedSkillDiscoveryView | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
-  const [installReview, setInstallReview] = useState<ManagedInstallReview | null>(null);
-  const [updatePreview, setUpdatePreview] = useState<ManagedSkillUpdatePreviewView | null>(null);
-  const [confirmAction, setConfirmAction] = useState<ManagedConfirmAction | null>(null);
   const mounted = useRef(true);
-
-  const installedCatalogIds = useMemo(
-    () => new Set(catalog?.entries.filter((entry) => entry.installedSkillId).map((entry) => entry.id) ?? []),
-    [catalog],
-  );
+  const epoch = useRef(0);
+  const mutating = useRef(false);
+  const installedCatalogIds = useMemo(() => new Set(catalog?.entries.filter((entry) => entry.installedSkillId).map((entry) => entry.id) ?? []), [catalog]);
 
   useEffect(() => {
     mounted.current = true;
     void loadAll(true);
-    return () => { mounted.current = false; };
+    const unsubscribe = window.lin?.onSkillLibraryChanged?.(() => {
+      if (!mutating.current) void loadAll(false);
+    });
+    return () => { mounted.current = false; epoch.current += 1; unsubscribe?.(); };
   }, []);
 
-  async function loadAll(checkUpdatesOnLoad: boolean) {
+  async function loadAll(ambient: boolean) {
+    const generation = ++epoch.current;
+    const current = () => mounted.current && epoch.current === generation;
     setLoading(true);
-    setError(null);
     try {
-      const [nextCatalog, installed] = await Promise.all([
-        api.agentManagedSkillCatalog(),
-        api.agentManagedSkillList(),
-      ]);
-      if (!mounted.current) return;
-      setCatalog(nextCatalog);
-      setSkills(installed);
-      setListLoaded(true);
-      if (checkUpdatesOnLoad && installed.length > 0) {
-        // Opening the pane is not a request to check — it is ambient, so main
-        // throttles it on each record's lastCheckedAt.
-        void api.agentManagedSkillCheckUpdates(undefined, { ambient: true })
-          .then((checked) => { if (mounted.current) setSkills(checked); })
-          .catch((cause) => { if (mounted.current) setError(managedSkillErrorFromUnknown(cause)); });
+      const [nextCatalog, installed] = await Promise.all([api.agentManagedSkillCatalog(), api.agentManagedSkillList()]);
+      if (!current()) return;
+      setCatalog(nextCatalog); setSkills(installed); setListLoaded(true);
+      if (ambient && installed.length > 0) {
+        void api.agentManagedSkillCheckUpdates(undefined, { ambient: true }).then((checked) => {
+          if (current()) setSkills(checked);
+        }).catch((cause) => { if (current()) setError(managedSkillErrorFromUnknown(cause)); });
       }
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setLoading(false);
-    }
+    } catch (cause) { if (current()) setError(managedSkillErrorFromUnknown(cause)); }
+    finally { if (current()) setLoading(false); }
   }
 
+  function clearFeedback() { setError(null); setNotice(null); }
+  async function run(operation: string, action: () => Promise<void>) {
+    if (mutating.current) return;
+    mutating.current = true;
+    epoch.current += 1;
+    setBusy(operation); clearFeedback();
+    try { await action(); }
+    catch (cause) {
+      const failure = managedSkillErrorFromUnknown(cause);
+      if (mounted.current && failure.code !== 'cancelled') setError(failure);
+    } finally {
+      mutating.current = false;
+      if (mounted.current) { setBusy(null); await loadAll(false); }
+    }
+  }
+  async function manage(request: SkillManageRequest, message: string) {
+    await api.agentSkillManage(request);
+    if (mounted.current) setNotice(message);
+    await onApplied().catch(() => undefined);
+  }
+  async function install(discovery: ManagedSkillDiscoveryView, candidate: ManagedSkillDiscoveryCandidateView) {
+    await manage({ operation: 'install', discoveryId: discovery.id, candidateId: candidate.id,
+      expectedCommit: discovery.resolvedCommit }, t.settings.skills.managedInstalledNotice({ name: candidate.name }));
+    if (mounted.current) setSourceUrl('');
+  }
   async function beginDiscovery(input: { sourceUrl?: string; catalogId?: string }) {
-    const operation = input.catalogId ? `catalog:${input.catalogId}` : 'github';
-    setBusy(operation);
-    clearFeedback();
-    try {
+    await run(input.catalogId ? `catalog:${input.catalogId}` : 'github', async () => {
       const discovery = await api.agentManagedSkillDiscover(input);
       if (!mounted.current) return;
-      if (discovery.selectionRequired) {
-        setSelection(discovery);
-        setSelectedCandidateId(null);
-      } else {
-        const candidate = discovery.candidates[0];
-        if (!candidate) {
-          setError({ code: 'candidate_not_found' });
-          return;
-        }
-        setInstallReview({ discovery, candidate });
-      }
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
+      if (discovery.selectionRequired) { setSelection(discovery); setSelectedCandidateId(null); }
+      else if (discovery.candidates[0]) await install(discovery, discovery.candidates[0]);
+    });
   }
-
   function reviewSelectedCandidate() {
     const candidate = selection?.candidates.find((entry) => entry.id === selectedCandidateId);
     if (!selection || !candidate) return;
-    setInstallReview({ discovery: selection, candidate });
-    setSelection(null);
-    setSelectedCandidateId(null);
+    const discovery = selection;
+    setSelection(null); setSelectedCandidateId(null);
+    void run(`install:${candidate.id}`, () => install(discovery, candidate));
   }
-
-  async function installSelected() {
-    if (!installReview) return;
-    const review = installReview;
-    setBusy(`install:${review.candidate.id}`);
-    clearFeedback();
-    try {
-      const installed = await api.agentManagedSkillInstall({
-        discoveryId: review.discovery.id,
-        candidateId: review.candidate.id,
-        expectedCommit: review.discovery.resolvedCommit,
-      });
-      if (!mounted.current) return;
-      const fullyEnabled = await onInstalled?.(installed) ?? true;
-      if (!mounted.current) return;
-      setInstallReview(null);
-      setSourceUrl('');
-      if (fullyEnabled) {
-        setNotice(t.settings.skills.managedInstalledNotice({ name: review.candidate.name }));
-      }
-      await loadAll(false);
-      await onApplied();
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
-  }
-
-  async function setEnabled(
-    skill: ManagedSkillView,
-    enabled: boolean,
-  ): Promise<{ ok: true; value: ManagedSkillView } | { ok: false; error: ManagedSkillErrorView }> {
-    try {
-      const next = await api.agentManagedSkillSetEnabled(skill.id, enabled, skill.active.contentHash);
-      if (mounted.current) replaceSkill(next);
-      // Persistence already succeeded. A secondary refresh failure must not turn
-      // this into a rejected toggle and make the row lie about what is on disk.
-      await onApplied().catch(() => undefined);
-      return { ok: true, value: next };
-    } catch (cause) {
-      return { ok: false, error: managedSkillErrorFromUnknown(cause) };
-    }
-  }
-
-  function showEnabledNotice(name: string, enabled: boolean) {
-    setNotice(enabled
-      ? t.settings.skills.managedEnabledNotice({ name })
-      : t.settings.skills.managedDisabledNotice({ name }));
-  }
-
   async function checkUpdates(skillId?: string) {
-    setBusy(skillId ? `check:${skillId}` : 'check:all');
-    clearFeedback();
-    try {
+    await run(skillId ? `check:${skillId}` : 'check:all', async () => {
       const next = await api.agentManagedSkillCheckUpdates(skillId);
-      if (!mounted.current) return;
-      setSkills(next);
-      setNotice(t.settings.skills.managedCheckedNotice);
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
+      if (mounted.current) { setSkills(next); setNotice(t.settings.skills.managedCheckedNotice); }
+    });
   }
-
   async function previewUpdate(skill: ManagedSkillView) {
-    setBusy(`preview:${skill.id}`);
-    clearFeedback();
-    try {
+    await run(`preview:${skill.id}`, async () => {
       const preview = await api.agentManagedSkillPreviewUpdate(skill.id, skill.active.contentHash);
-      if (mounted.current) setUpdatePreview(preview);
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
+      await manage({ operation: 'apply_update', skillId: skill.id, expectedRevision: skill.revision,
+        previewId: preview.id, expectedActiveHash: preview.current.contentHash,
+        expectedCandidateHash: preview.candidate.contentHash }, t.settings.skills.managedUpdatedNotice({ name: skill.name }));
+    });
   }
-
-  async function applyUpdate() {
-    if (!updatePreview) return;
-    const preview = updatePreview;
-    setBusy(`apply:${preview.skillId}`);
-    clearFeedback();
-    try {
-      const next = await api.agentManagedSkillApplyUpdate({
-        skillId: preview.skillId,
-        previewId: preview.id,
-        expectedActiveHash: preview.current.contentHash,
-        expectedCandidateHash: preview.candidate.contentHash,
-      });
-      if (!mounted.current) return;
-      replaceSkill(next);
-      setUpdatePreview(null);
-      setNotice(t.settings.skills.managedUpdatedNotice({ name: next.name }));
-      await onApplied();
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
-  }
-
-  async function runConfirmedAction() {
-    if (!confirmAction) return;
-    const action = confirmAction;
-    setBusy(`${action.kind}:${action.skill.id}`);
-    clearFeedback();
-    try {
-      if (action.kind === 'rollback') {
-        if (!action.skill.previous) {
-          setError({ code: 'previous_version_missing' });
-          return;
-        }
-        const next = await api.agentManagedSkillRollback(
-          action.skill.id,
-          action.skill.active.contentHash,
-          action.skill.previous.contentHash,
-        );
-        if (mounted.current) {
-          replaceSkill(next);
-          setNotice(t.settings.skills.managedRolledBackNotice({ name: next.name }));
-        }
-      } else {
-        const next = await api.agentManagedSkillUninstall(action.skill.id, action.skill.active.contentHash);
-        if (mounted.current) {
-          setSkills(next);
-          setNotice(t.settings.skills.managedUninstalledNotice({ name: action.skill.name }));
-          setCatalog((current) => current ? {
-            ...current,
-            entries: current.entries.map((entry) => entry.installedSkillId === action.skill.id
-              ? { ...entry, installedSkillId: undefined }
-              : entry),
-          } : current);
-        }
-      }
-      if (!mounted.current) return;
-      setConfirmAction(null);
-      await onApplied();
-    } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
-    }
-  }
-
-  function replaceSkill(next: ManagedSkillView) {
-    setSkills((current) => current.map((skill) => skill.id === next.id ? next : skill));
-  }
-
-  function clearFeedback() {
-    setError(null);
-    setNotice(null);
-    setOpenMenu(null);
-  }
-
   function openConfirmAction(action: ManagedConfirmAction) {
-    clearFeedback();
-    setConfirmAction(action);
+    const { skill } = action;
+    const target = { skillId: skill.id, expectedRevision: skill.revision, expectedActiveHash: skill.active.contentHash };
+    void run(`${action.kind}:${skill.id}`, async () => {
+      if (action.kind === 'rollback') {
+        if (!skill.previous) { setError({ code: 'previous_version_missing' }); return; }
+        await manage({ operation: 'rollback', ...target, expectedPreviousHash: skill.previous.contentHash }, t.settings.skills.managedRolledBackNotice({ name: skill.name }));
+      } else {
+        await manage({ operation: 'uninstall', ...target }, t.settings.skills.managedUninstalledNotice({ name: skill.name }));
+      }
+    });
   }
-
-  return {
-    busy,
-    catalog,
-    clearFeedback,
-    confirmAction,
-    error,
-    installReview,
-    installedCatalogIds,
-    listLoaded,
-    loading,
-    notice,
-    openMenu,
-    selectedCandidateId,
-    selection,
-    skills,
-    sourceUrl,
-    updatePreview,
-    applyUpdate,
-    beginDiscovery,
-    checkUpdates,
-    installSelected,
-    loadAll,
-    openConfirmAction,
-    previewUpdate,
-    reviewSelectedCandidate,
-    runConfirmedAction,
-    setEnabled,
-    showEnabledNotice,
-    setConfirmAction,
-    setInstallReview,
-    setOpenMenu,
-    setSelectedCandidateId,
-    setSelection,
-    setSourceUrl,
-    setUpdatePreview,
-  };
+  return { busy, catalog, clearFeedback, error, installedCatalogIds, listLoaded, loading, notice,
+    selectedCandidateId, selection, skills, sourceUrl, beginDiscovery, checkUpdates, loadAll,
+    openConfirmAction, previewUpdate, reviewSelectedCandidate, setSelectedCandidateId, setSelection, setSourceUrl };
 }
-
 export type ManagedSkillsController = ReturnType<typeof useManagedSkills>;

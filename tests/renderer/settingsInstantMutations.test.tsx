@@ -222,18 +222,25 @@ test('a failed provider toggle reverts and reports at its row', async () => {
   expect(rendered.reports).toHaveLength(1);
 });
 
-test('two local Skill clicks before render persist disabled then enabled', async () => {
+test.each(['local', 'managed'])('two %s Skill clicks before render use only the file-backed queue', async (source) => {
   const writes = [deferred<AgentSkillSettingsView>(), deferred<AgentSkillSettingsView>()];
   const calls: Array<Record<string, unknown> | undefined> = [];
   const rendered = await renderSettings({ page: 'skills' }, async (command, args) => {
-    if (command === 'agent_list_all_skills') return [localSkill('notes')];
+    if (command === 'agent_list_all_skills') return source === 'local' ? [localSkill('notes')] : [];
+    if (source === 'managed' && (command === 'agent_managed_skill_list' || command === 'agent_managed_skill_check_updates')) {
+      return { ok: true, value: [{ id: 'notes', revision: 'revision', name: 'notes', description: 'Notes',
+        status: 'installed', userInvocable: true, repository: 'https://github.com/public/skills', subdirectory: 'notes',
+        trackingRef: 'main', recommended: false, scripts: [], compatibility: { status: 'compatible', appVersion: '0.1.0' },
+        active: { contentHash: 'a'.repeat(64), commit: 'a'.repeat(40), installedAt: 1, fileCount: 1, totalBytes: 10 },
+      }] };
+    }
     if (command === 'agent_update_skill_settings') {
       const index = calls.push(args) - 1;
       return writes[index]!.promise;
     }
     return fixtureCommand(command);
   });
-  const control = switchFor(rendered.document, 'Toggle notes');
+  const control = switchFor(rendered.document, source === 'local' ? 'Toggle notes' : 'Enable notes');
 
   await act(async () => {
     control.click();

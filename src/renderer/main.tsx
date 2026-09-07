@@ -9,6 +9,7 @@ import { windowSurfaceFromSearch } from '../core/settingsWindow';
 import { App } from './ui/App';
 import { SettingsWindow } from './ui/SettingsWindow';
 import { ProviderConfigWindow } from './ui/agent/ProviderConfigWindow';
+import { SkillReviewWindow } from './ui/agent/SkillReviewWindow';
 import { I18nProvider } from './i18n/I18nProvider';
 import { installRendererDiagnostics } from './diagnostics';
 import { installInputModalityTracking } from './ui/focus/inputModality';
@@ -52,7 +53,9 @@ if (surface === 'main') {
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <I18nProvider>
-      {surface === 'settings' ? (
+      {surface === 'skill-review' ? (
+        <SkillReviewWindow />
+      ) : surface === 'settings' ? (
         <SettingsWindow />
       ) : surface === 'provider-config' ? (
         <ProviderConfigWindow />

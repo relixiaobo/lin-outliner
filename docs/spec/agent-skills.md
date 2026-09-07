@@ -138,6 +138,15 @@ Undo restores only the version immediately preceding the latest model write and
 is refused after a subsequent user edit. Built-ins and configured immutable
 resource roots cannot be authoring targets.
 
+Undo binds a Host-resolved identity, the current Agent-write hash, and the
+retained previous hash. Governed `file_edit`, `file_write`, and undo share a
+per-canonical-physical-file write guard. After waiting, undo reloads the shared
+provenance store, re-resolves mutable ownership, and compares the current bytes
+before restoring. Unbinding, retargeting a symlink, or a competing write refuses
+the stale operation. The restored version consumes the one-step history; there
+is no undo chain or fallback by display name. This coordinates Tenon writers,
+not external editors through an OS lock.
+
 `skillify` is the built-in authoring workflow. It derives a concrete Skill
 contract from an explicit request, writes the mutable bundle, and relies on the
 same provenance and capability checks as any file edit.
@@ -348,7 +357,7 @@ lines with the full text on hover; clamping rather than shrinking keeps rows a
 uniform height, so the list does not ripple as descriptions vary.
 
 Managed rows are read from the managed index rather than the loaded catalog, so a
-Skill that is installed but not activated still appears — installed-but-off is a
+Skill that is installed but configured off still appears — installed-but-off is a
 state the user owns and must be able to see and reverse.
 
 The count shown one level up follows that same library, not only the currently
@@ -361,37 +370,35 @@ Managed frontmatter treats `user-invocable` as a strict boolean and defaults it
 to `true`; strings and numbers are invalid rather than truthy aliases. The value
 is stored with both the active and previous immutable versions, projected on
 every managed row, and therefore follows update and rollback. The managed index
-schema is version 2 and fails closed on the old shape; this pre-release format has
-no compatibility reader.
+schema is version 3 and fails closed on the old shape before pruning content;
+this pre-release format has no compatibility reader or automatic reset. Records
+have no enabled flag. A fresh revision identifies every install, update, or
+rollback, including uninstall/reinstall of identical bytes. Existing development
+stores require an explicitly coordinated reset and managed Skills must then be
+reacquired; never reset an unrelated or production store implicitly.
 
-### One enable predicate, two writers
+### One preference source, separate availability
 
-"On" has one meaning — *available to the model right now*:
+`config/settings.jsonc` alone owns configured availability for every source:
 
 ```
-enabled(skill) = activation(skill) && !disabledSkills.includes(skill.name)
+configuredOn(skill) = !agent.skills.disabled.includes(skill.name)
 ```
 
-`activation` is the managed index's per-record flag for `managed` Skills and
-constant-true for every other source. The predicate lives in main
-(`isSkillEnabled`, `agentSkills.ts`) so the model-facing catalog and the UI cannot
-disagree; the library row applies the same predicate rather than reporting the
-activation flag alone.
+The row switch reflects this preference, not integrity, compatibility, name
+shadowing, path conditions, or a particular Turn's ceilings. Those conditions
+remain separate availability diagnostics. Invocation additionally requires the
+selected `skill` tool and current explicit blocks. Managed shell contributors
+use the same configured and per-Turn eligibility, including `skill` selection;
+retaining lifecycle inspection never grants executable environment access.
 
-The two **stores** stay separate on purpose. `disabledSkills` is a user setting
-keyed by name; the activation flag is per-installed-record and participates in
-install / rollback / uninstall, which is what makes "installed but switched off" a
-state the record can hold at all. It is not the default: installing a Skill
-enables it, because a Skill that installs into a do-nothing state reads as broken,
-and for user-initiated installs the review dialog — which shows the source, the
-commit, the scripts, the description and the SKILL.md body — is where consent is
-given. Product-default acquisition is the single declared exception and follows
-the reviewed seed plus opt-out lifecycle above. Consent covers the instruction
-because enabling is what puts a Skill's text in front of the model; the inertness
-boundary below is about execution and does not reach it. Merging the two stores
-would put managed lifecycle state into settings, or settings into an index that
-does not own the Skills they describe. The toggle routes by source; what it
-*means* never branches on source.
+All switches use the same serialized file-backed mutation queue. Install,
+update, rollback, uninstall, and product-default acquisition never write
+configuration. A new identity is on by default, but a disabled identity remains
+off across installation and uninstall/reinstall. Installation records own
+origin, immutable versions, revision, and diagnostics only; the default
+acquisition owner separately retains uninstall opt-outs. There is no activation
+writer, post-install enable write, or cross-store preference transaction.
 
 Skill source bindings and disabled identities are exposed through a Skill-owned
 settings view and update route. They still persist under
@@ -399,6 +406,58 @@ settings view and update route. They still persist under
 runtime settings DTO; the Host applies the accepted file result to the active
 Skill runtime and broadcasts the normal settings refresh. This keeps Skill
 configuration ownership local while preserving one source of desired state.
+
+### Lifecycle owner and Agent tools
+
+`createManagedSkillsHost` exposes one lifecycle facade over the managed service,
+provenance store, and Skill runtimes. Human IPC and root Agent tools use that
+owner; neither calls the other. `skill_inspect` lists the library, inspects exact
+targets and provenance, browses the catalog, discovers sources, checks and
+previews updates, and reads curation reports. `skill_manage` installs, applies
+updates, rolls back, uninstalls, or undoes an Agent definition edit. Preference
+changes remain ordinary public configuration edits; no settings CLI exists.
+
+Both tools have strict object-rooted schemas with nested operation variants.
+They are root-only, independently selected and globally disableable. Admission
+and deferred commit checks enforce the active Turn, selection, global tool
+disablement, and action blocks. `agent.skill.inspect` and `agent.skill.manage`
+are distinct actions. Network-bearing operations add `web.fetch`; local
+rollback and undo do not. Undo also evaluates the Host-resolved file-write path,
+including sensitive-path blocks. A lifecycle tool never grants `skill` invocation.
+
+Managed mutations bind identity, revision, and active hash. Update adds a
+preview and candidate hash; rollback adds the retained previous hash. Discovery
+pins repository, subdirectory, candidate, and commit. The downloaded instruction
+body must match the full reviewed body. No model-provided approval, private
+path, or display-name fallback can select or authorize a mutation.
+
+Install, update, rollback, and uninstall open the same Skill-owned native review
+window for human and Agent callers. It shows full admissible instructions as
+inert text, source, commit, scripts, and bounded update differences. The window
+fills its native frame; content scrolls independently of its action footer.
+Only its designated main frame may submit a boolean decision through the
+narrow preload. The Host binds it to its originating window or Thread/Turn/Item,
+exact target, and the remaining 30-minute discovery/preview lifetime. Caller
+loss, cancellation, renderer/window/Host loss, or timeout writes nothing. Target
+and authority are checked again under the mutation guard; no lock is held while
+waiting for the user. Concurrent reviews remain independent and unrelated Turns
+can progress. Undo's validated one-step restore needs no new review prompt.
+
+Lists and curation reports default to 20 entries and cap at 50, with cursors
+bound to the caller view and snapshot. Discovery, update summaries, and preview
+paths are byte-bounded with explicit omission counts and narrower-query
+guidance. Model truncation never shortens the human instruction review.
+Canonical results distinguish cancellation, expiry, stale targets, unavailable
+resources, conflicts, and denial. Success reports the committed version,
+removal, or restored hash separately from observed availability and runtime
+refresh. Post-commit cleanup or refresh failure does not reverse saved content
+or imply that replay is safe.
+
+Lifecycle commits invalidate primary and active Turn registries; undo reloads
+provenance. The next eligible provider boundary appends the canonical catalog
+delta without rewriting history or adding a tool to an admitted Turn. A narrow
+library-change event refreshes open lists, provenance, and category counts;
+refresh generations and pending-mutation fences preserve newer user changes.
 
 ### Acquisition behind `+`
 
@@ -412,7 +471,7 @@ carries an icon-only `+` (B6) whose menu has two entries:
    `additionalSkillDirectories`.
 
 The install review shows the candidate description and the complete bounded
-`SKILL.md` body before enabling it. Discovery marks a body that exceeded the
+`SKILL.md` body before installation. Discovery marks a body that exceeded the
 review bound; that candidate's Install action is disabled, and main repeats the
 check before any candidate download so a stale or bypassed renderer cannot admit
 instructions the user could not review in full.

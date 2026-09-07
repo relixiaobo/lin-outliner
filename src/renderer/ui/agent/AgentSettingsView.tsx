@@ -178,6 +178,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   // reason as the badge: the library owns the list but is only mounted on its
   // own page, and the row has to be right before anyone opens it.
   const [skillCount, setSkillCount] = useState(0);
+  const [skillSources, setSkillSources] = useState<AgentSkillSettingsView['sourceBindings']>([]);
   const [appUpdate, setAppUpdate] = useState<AppUpdateView | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(false);
@@ -208,21 +209,20 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
 
   useEffect(() => {
     let active = true;
-    const allSkillsRequest = api.agentListAllSkills();
-    const managedSkillsRequest = api.agentManagedSkillList();
-    // Read-only, and silent on failure: a badge that cannot be computed is
-    // simply absent. It never blocks the page or raises an alert.
-    void managedSkillsRequest
-      .then((skills) => {
-        if (active) setSkillUpdateCount(skills.filter((skill) => skill.updateCommit).length);
-      })
-      .catch(() => { /* no badge */ });
-    void Promise.all([allSkillsRequest, managedSkillsRequest])
-      .then(([allSkills, managedSkills]) => {
-        if (active) setSkillCount(skillLibraryCount(allSkills, managedSkills));
-      })
-      .catch(() => { /* the row falls back to zero rather than blocking the pane */ });
-    return () => { active = false; };
+    let generation = 0;
+    const refresh = () => {
+      const request = ++generation;
+      void Promise.all([api.agentListAllSkills(), api.agentManagedSkillList()])
+        .then(([allSkills, managedSkills]) => {
+          if (!active || request !== generation) return;
+          setSkillUpdateCount(managedSkills.filter((skill) => skill.updateCommit).length);
+          setSkillCount(skillLibraryCount(allSkills, managedSkills));
+        })
+        .catch(() => { /* Counts are inspection-only; retain the previous observation. */ });
+    };
+    refresh();
+    const unsubscribe = window.lin?.onSkillLibraryChanged?.(refresh);
+    return () => { active = false; unsubscribe?.(); };
   }, []);
 
   // App update state has two consumers (the General rail and About), so the
@@ -335,16 +335,10 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     );
   }
 
-  function applyLoadedSettings(next: AgentProviderSettingsView, applySkillState = true) {
+  function applyLoadedSettings(next: AgentProviderSettingsView) {
     providerSettingsRef.current = next;
     setSettings(next);
     setProviderDraft(resolveInitialProviderDraft(next));
-    if (applySkillState) {
-      latestDisabledSkillsRef.current = next.agent.disabledSkills ?? [];
-      const nextSkillDraft = resolveSkillDraft(next);
-      skillDraftRef.current = nextSkillDraft;
-      setSkillDraft(nextSkillDraft);
-    }
     settingsInitializedRef.current = true;
   }
 
@@ -355,10 +349,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     const nextSkillDraft: SkillDraft = { disabledSkills: [...next.disabledSkills] };
     skillDraftRef.current = nextSkillDraft;
     setSkillDraft(nextSkillDraft);
-    setSettings((current) => current ? {
-      ...current,
-      agent: { ...current.agent, disabledSkills: [...next.disabledSkills] },
-    } : current);
+    setSkillSources(next.sourceBindings);
   }
 
   function beginSkillSettingsMutation(): void {
@@ -388,7 +379,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
       .then(([next, nextCapabilities, nextSkills]) => {
         if (!isCurrentSettingsRequest(requestId)) return;
         setCapabilitySettings(nextCapabilities);
-        applyLoadedSettings(next, false);
+        applyLoadedSettings(next);
         applyLoadedSkillSettings(nextSkills, 0);
       })
       .catch((caught) => {
@@ -418,7 +409,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
           // loading state with the successful initial response marked stale.
           beginSettingsRequest();
           setCapabilitySettings(nextCapabilities);
-          applyLoadedSettings(next, false);
+          applyLoadedSettings(next);
           applyLoadedSkillSettings(nextSkills, skillEpoch);
           setLoading(false);
         })
@@ -488,7 +479,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     const mutationKey = 'skill-directories';
     const generation = beginMutation(mutationKey);
     beginSkillSettingsMutation();
-    const currentModes = settings?.agent.additionalSkillSourceModes ?? {};
+    const currentModes = Object.fromEntries(skillSources.map((source) => [source.path, source.mode]));
     const additionalSkillSourceBindings = mode === undefined
       ? undefined
       : next.map((path) => ({
@@ -503,15 +494,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         })),
       });
       if (isCurrentMutation(mutationKey, generation)) {
-        setSettings((current) => current ? {
-          ...current,
-          agent: {
-            ...current.agent,
-            additionalSkillDirectories: updated.sourceBindings.map((source) => source.path),
-            additionalSkillSourceModes: Object.fromEntries(updated.sourceBindings.map((source) => [source.path, source.mode])),
-            disabledSkills: [...updated.disabledSkills],
-          },
-        } : current);
+        setSkillSources(updated.sourceBindings);
       }
       await reportAppliedRefreshFailure(onApplied, 'skill-directories-refresh', mutationKey);
       // Returned so the caller can see what main actually kept. The list is
@@ -583,10 +566,6 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         if (isCurrentMutation(mutationKey, generation)) {
           skillDisabledTargetsRef.current.delete(skillName);
           applySkillDisabledToView(skillName, latestDisabledSkillsRef.current.includes(skillName));
-          setSettings((current) => current ? {
-            ...current,
-            agent: { ...current.agent, disabledSkills: [...updated.disabledSkills] },
-          } : current);
         }
         await reportAppliedRefreshFailure(onApplied, 'skill-toggle-refresh', skillName);
         return true;
@@ -824,13 +803,12 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         <div ref={contentRef} className="settings-content" aria-busy={loading ? 'true' : undefined}>
             {route.page === 'skills' ? (
               <SettingsSkillLibrarySection
-                additionalSkillDirectories={settings?.agent.additionalSkillDirectories ?? []}
+                additionalSkillDirectories={skillSources.map((source) => source.path)}
                 disabledSkills={skillDraft.disabledSkills}
                 onApplied={onApplied}
                 onDirectoriesChange={changeSkillDirectories}
                 onError={setError}
                 onNotice={setNotice}
-                onPersistSkillDisabled={persistSkillDisabled}
                 onSkillCountChange={setSkillCount}
                 onToggleSkill={toggleSkill}
                 onUpdateCountChange={setSkillUpdateCount}
@@ -929,10 +907,6 @@ function resolveProviderDraftFor(settings: AgentProviderSettingsView, providerId
   const existing = settings.providers.find((provider) => provider.providerId === providerId);
   if (existing) return providerToDraft(existing);
   return resolveInitialProviderDraft(settings);
-}
-
-function resolveSkillDraft(settings: AgentProviderSettingsView): SkillDraft {
-  return { disabledSkills: settings.agent.disabledSkills ?? [] };
 }
 
 function emptyCapabilitySettings(): AgentCapabilitySettingsView {

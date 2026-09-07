@@ -32,11 +32,12 @@ import {
   type ValidatedManagedSkill,
 } from './managedSkillValidation';
 import type { ManagedSkillDefaultManifest } from './managedSkillDefaults';
+import { SKILL_OPERATION_TTL_MS, type ManagedSkillTarget, type SkillManageRequest, type SkillReview } from '../core/agent/skillOperations';
 
 export const MANAGED_SKILL_CATALOG_URL = 'https://raw.githubusercontent.com/relixiaobo/lin-outliner/main/catalog/managed-skills-v1.json';
 const CATALOG_SCHEMA_VERSION = 1;
 const MAX_CATALOG_ENTRIES = 256;
-const SESSION_TTL_MS = 30 * 60 * 1_000;
+const SESSION_TTL_MS = SKILL_OPERATION_TTL_MS;
 const MAX_SESSIONS = 8;
 const MAX_CHANGED_PATHS = 200;
 const MAX_DIFF_LINES = 240;
@@ -137,6 +138,7 @@ interface UpdatePreviewSession {
 }
 
 export class ManagedSkillService {
+  private refreshFailure: string | null = null;
   private readonly github: ManagedSkillGitHubClient;
   private readonly now: () => number;
   private readonly ready: Promise<void>;
@@ -155,6 +157,57 @@ export class ManagedSkillService {
 
   get contentRoot(): string {
     return this.options.store.contentRoot;
+  }
+
+  get runtimeRefresh(): { state: 'applied' | 'failed'; message?: string } {
+    return this.refreshFailure === null ? { state: 'applied' } : { state: 'failed', message: this.refreshFailure };
+  }
+
+  async review(input: Exclude<SkillManageRequest, { operation: 'undo_edit' }>): Promise<{ review: SkillReview; expiresAt: number }> {
+    await this.readyForUse();
+    if (input.operation === 'install') {
+      const session = this.discoverySession(input.discoveryId);
+      const candidate = session.discovery.candidates.find((entry) => entry.view.id === input.candidateId);
+      if (!candidate || session.discovery.origin.commit !== input.expectedCommit) {
+        throw new ManagedSkillServiceError('stale_discovery', 'Discover the selected source again.');
+      }
+      if (candidate.view.skillBodyTruncated || !candidate.view.skillBody) {
+        throw new ManagedSkillServiceError('invalid_request', 'The complete Skill instructions are unavailable for review.');
+      }
+      return { review: { kind: 'install', discovery: discoveryView(session), candidate: candidate.view }, expiresAt: session.createdAt + SESSION_TTL_MS };
+    }
+    const record = requireRecord(await this.options.store.readIndex(), input.skillId);
+    this.assertExpectedTarget(record, input);
+    if (input.operation === 'apply_update') {
+      const preview = this.updatePreview(input.previewId);
+      if (!sameManagedRecordSnapshot(record, preview.expectedRecord) || preview.validated.contentHash !== input.expectedCandidateHash) {
+        throw new ManagedSkillServiceError('stale_update_preview', 'Preview this Skill update again.');
+      }
+      const definition = preview.validated.files.find((file) => file.relativePath === 'SKILL.md');
+      if (!definition) throw new ManagedSkillServiceError('missing_skill_file', 'The candidate has no Skill instructions.');
+      return { review: { kind: 'update', preview: preview.view, skillBody: Buffer.from(definition.bytes).toString('utf8') }, expiresAt: preview.createdAt + SESSION_TTL_MS };
+    }
+    if (input.operation === 'rollback' && record.previous?.contentHash !== input.expectedPreviousHash) {
+      throw new ManagedSkillServiceError('previous_version_missing', 'The previous version changed.');
+    }
+    return { review: { kind: input.operation, skill: managedSkillView(record, this.options.appVersion) }, expiresAt: this.now() + SESSION_TTL_MS };
+  }
+
+  private async notifyChanged(): Promise<void> {
+    try {
+      await this.options.onChanged?.();
+      this.refreshFailure = null;
+    } catch (error) {
+      // Index persistence is the commit boundary. A refresh must never undo it.
+      this.refreshFailure = errorMessage(error);
+    }
+  }
+
+  private assertExpectedTarget(record: ManagedSkillRecord, input: ManagedSkillTarget): void {
+    this.assertExpectedActive(record, input.expectedActiveHash);
+    if (record.revision !== input.expectedRevision) {
+      throw new ManagedSkillServiceError('stale_skill_version', 'The installed Skill identity changed. Inspect it again.');
+    }
   }
 
   bootstrapDefaults(
@@ -249,7 +302,7 @@ export class ManagedSkillService {
     discoveryId: string;
     candidateId: string;
     expectedCommit: string;
-  }): Promise<ManagedSkillView> {
+  }, authorize: () => Promise<void> = async () => {}): Promise<ManagedSkillView> {
     await this.readyForUse();
     const session = this.discoverySession(input.discoveryId);
     if (session.discovery.origin.commit !== input.expectedCommit) {
@@ -276,8 +329,14 @@ export class ManagedSkillService {
         `${candidate.view.name} -> ${validated.name}`,
       );
     }
+    const definition = validated.files.find((file) => file.relativePath === 'SKILL.md');
+    if (!definition || Buffer.from(definition.bytes).toString('utf8') !== candidate.view.skillBody) {
+      throw new ManagedSkillServiceError('candidate_changed', 'The downloaded instructions differ from the reviewed Skill. Discover it again.');
+    }
 
     return this.withMutation(async () => {
+      await authorize();
+      this.discoverySession(input.discoveryId);
       const before = await this.options.store.readIndex();
       await this.assertNameAvailable(before, validated.name);
       const installedAt = this.now();
@@ -285,6 +344,7 @@ export class ManagedSkillService {
       await this.options.store.installValidatedContent(validated.name, validated);
       const record: ManagedSkillRecord = {
         id: validated.name,
+        revision: randomUUID(),
         name: validated.name,
         origin: {
           owner: session.discovery.origin.owner,
@@ -296,18 +356,12 @@ export class ManagedSkillService {
         recommended: session.recommended,
         ...(session.catalogId ? { catalogId: session.catalogId } : {}),
         ...(session.catalogCompatibilityRange ? { catalogCompatibilityRange: session.catalogCompatibilityRange } : {}),
-        // Installing enables. A Skill that installs into a do-nothing state reads
-        // as broken — the user chose it, saw an "Installed" chip, and nothing
-        // happened — and the second toggle was an approval step for something
-        // already approved in the review dialog, which is the posture #410 ruled
-        // out. The dialog now shows the SKILL.md body, so what is consented to is
-        // the instruction itself, not just where it came from.
-        enabled: true,
         active,
       };
       try {
+        await authorize();
         await this.options.store.updateIndex((index) => ({ ...index, skills: [...index.skills, record] }));
-        await this.options.onChanged?.();
+        await this.notifyChanged();
       } catch (error) {
         const restored = await this.restoreIndex(before);
         if (restored && !indexReferencesVersion(before, record.id, active.contentHash)) {
@@ -334,8 +388,7 @@ export class ManagedSkillService {
     const index = await this.refreshIntegrityDiagnostics('detached');
     return index.skills.flatMap((record): ManagedSkillRuntimeRoot[] => {
       if (
-        !record.enabled
-        || record.diagnostic?.code === 'modified'
+        record.diagnostic?.code === 'modified'
         || record.diagnostic?.code === 'name_conflict'
         || currentCompatibility(record.active, this.options.appVersion).error
       ) return [];
@@ -352,7 +405,6 @@ export class ManagedSkillService {
     await this.readyForUse();
     const index = await this.options.store.readIndex();
     const record = requireRecord(index, skillId);
-    if (!record.enabled) throw new ManagedSkillServiceError('skill_disabled', `Managed skill ${record.name} is disabled.`);
     if (record.active.contentHash !== expectedContentHash) {
       throw new ManagedSkillServiceError('stale_skill_version', `Managed skill ${record.name} changed versions. Invoke it again.`);
     }
@@ -508,10 +560,11 @@ export class ManagedSkillService {
 
   async applyUpdate(input: {
     skillId: string;
+    expectedRevision: string;
     previewId: string;
     expectedActiveHash: string;
     expectedCandidateHash: string;
-  }): Promise<ManagedSkillView> {
+  }, authorize: () => Promise<void> = async () => {}): Promise<ManagedSkillView> {
     await this.readyForUse();
     const preview = this.updatePreview(input.previewId);
     if (
@@ -522,9 +575,11 @@ export class ManagedSkillService {
       throw new ManagedSkillServiceError('stale_update_preview', 'The update preview no longer matches the requested versions.');
     }
     return this.withMutation(async () => {
+      await authorize();
+      this.updatePreview(input.previewId);
       const before = await this.options.store.readIndex();
       const record = requireRecord(before, input.skillId);
-      this.assertExpectedActive(record, input.expectedActiveHash);
+      this.assertExpectedTarget(record, input);
       if (!sameManagedRecordSnapshot(record, preview.expectedRecord)) {
         throw new ManagedSkillServiceError('stale_update_preview', 'The installed skill changed after this update preview was created.');
       }
@@ -551,17 +606,19 @@ export class ManagedSkillService {
       );
       const nextRecord: ManagedSkillRecord = {
         ...record,
+        revision: randomUUID(),
         active: appliedVersion,
         previous: record.active,
         updateCommit: undefined,
         diagnostic: undefined,
       };
       try {
+        await authorize();
         await this.options.store.updateIndex((current) => ({
           ...current,
           skills: current.skills.map((candidate) => candidate.id === record.id ? nextRecord : candidate),
         }));
-        await this.options.onChanged?.();
+        await this.notifyChanged();
       } catch (error) {
         const restored = await this.restoreIndex(before);
         if (restored && !indexReferencesVersion(before, record.id, appliedVersion.contentHash)) {
@@ -581,42 +638,18 @@ export class ManagedSkillService {
     });
   }
 
-  async setEnabled(input: { skillId: string; enabled: boolean; expectedActiveHash: string }): Promise<ManagedSkillView> {
-    await this.readyForUse();
-    return this.withMutation(async () => {
-      const before = await this.options.store.readIndex();
-      const record = requireRecord(before, input.skillId);
-      this.assertExpectedActive(record, input.expectedActiveHash);
-      if (input.enabled) {
-        this.assertVersionCompatible(record.name, record.active);
-        await this.assertRecordClean(record);
-        await this.assertExternalNameAvailable(record.name, record.id);
-      }
-      const nextRecord = { ...record, enabled: input.enabled };
-      try {
-        await this.options.store.updateIndex((current) => ({
-          ...current,
-          skills: current.skills.map((candidate) => candidate.id === record.id ? nextRecord : candidate),
-        }));
-        await this.options.onChanged?.();
-      } catch (error) {
-        await this.restoreIndex(before);
-        throw error;
-      }
-      return managedSkillView(nextRecord, this.options.appVersion);
-    });
-  }
-
   async rollback(input: {
     skillId: string;
+    expectedRevision: string;
     expectedActiveHash: string;
     expectedPreviousHash: string;
-  }): Promise<ManagedSkillView> {
+  }, authorize: () => Promise<void> = async () => {}): Promise<ManagedSkillView> {
     await this.readyForUse();
     return this.withMutation(async () => {
+      await authorize();
       const before = await this.options.store.readIndex();
       const record = requireRecord(before, input.skillId);
-      this.assertExpectedActive(record, input.expectedActiveHash);
+      this.assertExpectedTarget(record, input);
       if (!record.previous || record.previous.contentHash !== input.expectedPreviousHash) {
         throw new ManagedSkillServiceError('previous_version_missing', 'The previous managed skill version is no longer available.');
       }
@@ -633,6 +666,7 @@ export class ManagedSkillService {
       await this.assertExternalNameAvailable(record.name, record.id);
       const nextRecord: ManagedSkillRecord = {
         ...record,
+        revision: randomUUID(),
         active: record.previous,
         previous: record.active,
         // No updateCommit. Setting it to the commit just abandoned made the app
@@ -651,11 +685,12 @@ export class ManagedSkillService {
         },
       };
       try {
+        await authorize();
         await this.options.store.updateIndex((current) => ({
           ...current,
           skills: current.skills.map((candidate) => candidate.id === record.id ? nextRecord : candidate),
         }));
-        await this.options.onChanged?.();
+        await this.notifyChanged();
       } catch (error) {
         await this.restoreIndex(before);
         throw error;
@@ -664,18 +699,20 @@ export class ManagedSkillService {
     });
   }
 
-  async uninstall(input: { skillId: string; expectedActiveHash: string }): Promise<ManagedSkillView[]> {
+  async uninstall(input: ManagedSkillTarget, authorize: () => Promise<void> = async () => {}): Promise<ManagedSkillView[]> {
     await this.readyForUse();
     return this.withMutation(async () => {
+      await authorize();
       const before = await this.options.store.readIndex();
       const record = requireRecord(before, input.skillId);
-      this.assertExpectedActive(record, input.expectedActiveHash);
+      this.assertExpectedTarget(record, input);
       const productDefault = this.defaultManifestForRecord(record);
+      await authorize();
       if (productDefault) await this.options.store.recordDefaultOptOut(productDefault.id);
       const next = { ...before, skills: before.skills.filter((candidate) => candidate.id !== record.id) };
       try {
         await this.options.store.replaceIndex(next);
-        await this.options.onChanged?.();
+        await this.notifyChanged();
       } catch (error) {
         await this.restoreIndex(before);
         throw error;
@@ -764,6 +801,7 @@ export class ManagedSkillService {
       await this.options.store.installValidatedContent(manifest.id, validated);
       const record: ManagedSkillRecord = {
         id: manifest.id,
+        revision: randomUUID(),
         name: manifest.name,
         origin: {
           owner: manifest.owner,
@@ -775,12 +813,11 @@ export class ManagedSkillService {
         recommended: true,
         catalogId: manifest.catalogId,
         catalogCompatibilityRange: manifest.catalogCompatibilityRange,
-        enabled: true,
         active,
       };
       try {
         await this.options.store.updateIndex((index) => ({ ...index, skills: [...index.skills, record] }));
-        await this.options.onChanged?.();
+        await this.notifyChanged();
       } catch (error) {
         const restored = await this.restoreIndex(before);
         if (restored && !indexReferencesVersion(before, record.id, active.contentHash)) {
@@ -838,9 +875,9 @@ export class ManagedSkillService {
       }),
     }));
     if (notification === 'await') {
-      await this.options.onChanged?.();
+      await this.notifyChanged();
     } else if (this.options.onChanged) {
-      void Promise.resolve().then(() => this.options.onChanged?.()).catch(() => undefined);
+      void this.notifyChanged();
     }
     return next;
   }
@@ -1129,11 +1166,10 @@ function managedSkillView(record: ManagedSkillRecord, appVersion: string): Manag
       ? 'failed'
       : record.updateCommit
         ? 'update-available'
-        : record.enabled
-          ? 'enabled'
-          : 'installed-disabled';
+        : 'installed';
   return {
     id: record.id,
+    revision: record.revision,
     name: record.name,
     description: record.active.description,
     userInvocable: record.active.userInvocable,
@@ -1141,7 +1177,6 @@ function managedSkillView(record: ManagedSkillRecord, appVersion: string): Manag
     subdirectory: record.origin.subdirectory,
     trackingRef: record.origin.trackingRef,
     recommended: record.recommended,
-    enabled: record.enabled,
     status,
     compatibility: compatibility.view,
     active: versionView(record.active, appVersion),
@@ -1231,6 +1266,7 @@ function indexReferencesVersion(index: ManagedSkillIndex, skillId: string, conte
 
 function sameManagedRecordSnapshot(current: ManagedSkillRecord, expected: ManagedSkillRecord): boolean {
   return current.id === expected.id
+    && current.revision === expected.revision
     && current.active.commit === expected.active.commit
     && current.active.contentHash === expected.active.contentHash
     && current.active.installedAt === expected.active.installedAt

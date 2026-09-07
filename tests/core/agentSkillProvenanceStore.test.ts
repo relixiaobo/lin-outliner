@@ -29,22 +29,22 @@ afterEach(async () => {
 
 describe('agent skill provenance store', () => {
   test('serializes concurrent saves from separate store instances', async () => {
-    const first = createAgentSkillProvenanceStore();
-    const second = createAgentSkillProvenanceStore();
+    const first = createAgentSkillProvenanceStore(userData);
+    const second = createAgentSkillProvenanceStore(userData);
 
     await Promise.all([
       first.save('/workspace/.agents/skills/a/SKILL.md', { agentHash: 'agent-a' }),
       second.save('/workspace/.agents/skills/b/SKILL.md', { agentHash: 'agent-b' }),
     ]);
 
-    expect(await createAgentSkillProvenanceStore().load()).toEqual({
+    expect(await createAgentSkillProvenanceStore(userData).load()).toEqual({
       '/workspace/.agents/skills/a/SKILL.md': { agentHash: 'agent-a' },
       '/workspace/.agents/skills/b/SKILL.md': { agentHash: 'agent-b' },
     });
   });
 
   test('writes the provenance file with private permissions on POSIX', async () => {
-    const store = createAgentSkillProvenanceStore();
+    const store = createAgentSkillProvenanceStore(userData);
     await store.save('/workspace/.agents/skills/a/SKILL.md', { agentHash: 'agent-a' });
 
     const filePath = path.join(userData, 'agent-skill-provenance.json');

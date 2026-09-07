@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { undoSkillForTest } from '../fixtures/skillUndo';
 import { Database } from 'bun:sqlite';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -2740,7 +2741,7 @@ describe('agent local tools', () => {
       expect(edited?.canUndoLastAgentEdit).toBe(true);
 
       // Undo restores the user's bytes and consumes the one-shot previous-version slot.
-      await skillRuntime.undoLastAgentSkillEdit('undoable-skill');
+      await undoSkillForTest(skillRuntime, 'undoable-skill');
       const restored = await skillRuntime.getSkill('undoable-skill');
       expect(restored?.body).toContain('hand-tuned instructions');
       expect(restored?.canUndoLastAgentEdit).toBe(false);

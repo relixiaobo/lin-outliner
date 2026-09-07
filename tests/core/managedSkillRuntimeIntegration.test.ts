@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,6 +7,9 @@ import type { ManagedSkillGitHubClient } from '../../src/main/managedSkillGitHub
 import { ManagedSkillService } from '../../src/main/managedSkillService';
 import { ManagedSkillStore, storedVersionFromValidated } from '../../src/main/managedSkillStore';
 import { validateManagedSkillFiles } from '../../src/main/managedSkillValidation';
+import { createManagedSkillsHost } from '../../src/main/hostDomain/managedSkillsHost';
+import { BrowserPilotHost } from '../../src/main/browserPilotHost';
+import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 
 const roots: string[] = [];
 
@@ -15,6 +18,38 @@ afterEach(async () => {
 });
 
 describe('managed skill runtime integration', () => {
+  test('Host shell contributors require file preference, Skill ceiling, and the invocation tool', async () => {
+    const fixture = await managedFixture('browser-pilot');
+    const bootstrap = spyOn(ManagedSkillService.prototype, 'bootstrapDefaults').mockResolvedValue([]);
+    const activeRoots = spyOn(ManagedSkillService.prototype, 'activeRuntimeRoots').mockResolvedValue([{
+      id: 'browser-pilot', name: 'browser-pilot', rootDir: fixture.versionRoot, contentHash: fixture.hash,
+    }]);
+    const contribution = spyOn(BrowserPilotHost.prototype, 'processEnvironment').mockResolvedValue({ env: { BROWSER_ACTIVE: 'true' } });
+    const settings = { additionalSkillDirectories: [] as string[], disabledSkills: [] as string[], disabledTools: [] as string[] };
+    try {
+      const host = createManagedSkillsHost({ userDataDir: fixture.userData, localRoot: fixture.workspace,
+        scratchRoot: path.join(fixture.userData, 'scratch'), appVersion: '0.1.0',
+        loadRuntimeSettings: async () => settings, reviewSkillOperation: async () => false, onLibraryChanged: () => {},
+      });
+      for (const mode of ['available', 'lifecycle_only', 'skill_ceiling', 'disabled_skill', 'disabled_tool']) {
+        settings.disabledSkills = mode === 'disabled_skill' ? ['browser-pilot'] : [];
+        settings.disabledTools = mode === 'disabled_tool' ? ['skill'] : [];
+        host.updateRuntimeSettings(settings);
+        const context = { turn: { id: mode }, thread: { id: 'thread' },
+          configuration: { tools: mode === 'lifecycle_only' ? ['skill_manage'] : ['skill'] },
+          historyBeforeTurn: [], recorder: { orderedItems: () => [] },
+        } as unknown as TurnExecutionContext;
+        await host.prepareTurnRuntime(context, { localRoot: fixture.workspace, includeUserSkills: false,
+          builtInSkills: [], builtInSkillDirectories: [], enabledSkills: mode === 'skill_ceiling' ? [] : ['*'],
+        });
+        expect(await host.processEnvironment('thread', mode, { toolCallId: 'call', command: 'true' }))
+          .toEqual(mode === 'available' ? { env: { BROWSER_ACTIVE: 'true' } } : {});
+        host.clearTurn(mode);
+      }
+      expect(contribution).toHaveBeenCalledTimes(1);
+    } finally { contribution.mockRestore(); activeRoots.mockRestore(); bootstrap.mockRestore(); }
+  });
+
   test('managed change notification invalidates without eagerly rescanning the registry', async () => {
     const fixture = await managedFixture('lazy-refresh');
     let rootLoads = 0;
@@ -145,8 +180,9 @@ describe('managed skill runtime integration', () => {
     const version = storedVersionFromValidated('a'.repeat(40), 1, validated);
     await store.installValidatedContent('modified-during-load', validated);
     await store.replaceIndex({
-      schemaVersion: 2,
+      schemaVersion: 3,
       skills: [{
+        revision: 'fixture-revision',
         id: 'modified-during-load',
         name: 'modified-during-load',
         origin: {
@@ -157,7 +193,7 @@ describe('managed skill runtime integration', () => {
           trackingRef: 'main',
         },
         recommended: false,
-        enabled: true,
+
         active: version,
       }],
     });
@@ -190,6 +226,7 @@ describe('managed skill runtime integration', () => {
     expect((await service.list())[0]?.status).toBe('modified');
     await service.uninstall({
       skillId: 'modified-during-load',
+      expectedRevision: 'fixture-revision',
       expectedActiveHash: validated.contentHash,
     });
   });

@@ -11,6 +11,9 @@ import type {
   SkillInvocationContextPayload,
 } from '../../../core/agent/protocol';
 import type { SkillDefinition } from '../../../core/types';
+import type { SkillUndoTarget } from '../../../core/agent/skillOperations';
+import { acquireSkillWriteGuard } from './agentSkillWriteGuard';
+import { AgentToolFailure } from '../AgentToolFailure';
 import type { AgentSkillCurationCandidate } from './agentSkillCuration';
 // Runtime-only cycle: agentSkillAuthoring imports the shared resolver/hash from this
 // module; we import its validator for the undo restore path. Neither side touches the
@@ -33,6 +36,14 @@ import {
 import { runAgentToolProcess } from './agentToolProcess';
 
 export const SKILL_TOOL_NAME = 'skill';
+
+export function skillLifecycleIdentity(skill: Pick<SkillDefinition, 'source' | 'skillFile' | 'identity'>): string {
+  return `${skill.source}:${skillContentHash(skill.identity ?? skill.skillFile)}`;
+}
+
+function undoUnavailable(message: string): AgentToolFailure {
+  return new AgentToolFailure('undo_unavailable', message, 'Inspect the current Skill and its provenance again.');
+}
 
 const SKILL_FILE_NAME = 'SKILL.md';
 const DEFAULT_SKILL_LISTING_CHAR_BUDGET = 8_000;
@@ -335,8 +346,13 @@ export class AgentSkillRuntime {
   }
 
 
-  async undoLastAgentSkillEdit(name: string): Promise<void> {
-    await this.registry.undoLastAgentEdit(name);
+  async inspectUndoTarget(identity: string): Promise<SkillUndoTarget> {
+    return this.registry.inspectUndoTarget(identity);
+  }
+
+  async undoLastAgentSkillEdit(target: SkillUndoTarget, authorize: (filePath: string) => Promise<void> = async () => {}): Promise<void> {
+    await this.registry.undoLastAgentEdit(target, authorize);
+    this.requestCatalogRefresh();
   }
 
   /**
@@ -361,6 +377,13 @@ export class AgentSkillRuntime {
 
   async listAllSkills(): Promise<SkillDefinition[]> {
     return this.registry.listAllSkills();
+  }
+
+  async lifecycleAvailability(skill: SkillDefinition): Promise<{ available: boolean; reason: string | null }> {
+    if (!this.isEnabledByConfiguration(skill)) return { available: false, reason: 'configuration_ceiling' };
+    if (this.isDisabledByRuntimeSettings(skill)) return { available: false, reason: 'disabled_or_unavailable' };
+    if (!(await this.registry.resolveSkill(skill.name))) return { available: false, reason: 'path_condition' };
+    return { available: true, reason: null };
   }
 
   async listCurationCandidates(): Promise<AgentSkillCurationCandidate[]> {
@@ -436,7 +459,7 @@ export class AgentSkillRuntime {
   private isDisabledByRuntimeSettings(skill: SkillDefinition): boolean {
     return !isSkillEnabled(skill, {
       disabledSkills: this.disabledSkills,
-      activeManagedSkillNames: this.registry.activatedManagedSkillNames(),
+      activeManagedSkillNames: this.registry.eligibleManagedSkillNames(),
     });
   }
 
@@ -522,38 +545,22 @@ export interface SkillEnablementInput {
   /** User setting, keyed by skill name, applying to every source. */
   disabledSkills: readonly string[];
   /**
-   * The managed index's activation flag, as the set of activated managed skill
-   * names. Only `managed` skills consult it.
+   * Integrity-checked, compatible managed roots, not a preference store.
    */
   activeManagedSkillNames: ReadonlySet<string>;
 }
 
 /**
- * The single meaning of "on" — available to the model right now:
- *
- *     enabled(skill) = activation(skill) && !disabledSkills.includes(skill.name)
- *
- * `activation` is the managed index's per-record flag for `managed` skills and
- * constant-true for every other source.
- *
- * The two writers stay separate on purpose. `disabledSkills` is a user setting
- * keyed by name; the managed activation flag is per-installed-record and
- * participates in install / rollback / uninstall (it is what makes "install, but
- * do not enable yet" possible). Merging the stores would either put managed
- * lifecycle state into settings or put settings into an index that does not own
- * the skills they describe — so only the predicate is unified, not the storage.
- *
- * Both terms are evaluated explicitly rather than inferred from catalog
- * membership, so a deactivated managed skill still resolves correctly when it is
- * loaded for display rather than for use.
+ * Desired availability comes only from the public configuration. Managed
+ * integrity and compatibility additionally constrain runtime eligibility.
  */
 export function isSkillEnabled(
   skill: Pick<SkillDefinition, 'name' | 'source'>,
   input: SkillEnablementInput,
 ): boolean {
-  const activated = skill.source !== 'managed'
+  const eligible = skill.source !== 'managed'
     || input.activeManagedSkillNames.has(normalizeSkillName(skill.name));
-  return activated && !input.disabledSkills.includes(skill.name);
+  return eligible && !input.disabledSkills.includes(skill.name);
 }
 
 export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, ToolEnvelope<SkillToolData>> {
@@ -706,9 +713,8 @@ class SkillRegistry {
   private readonly provenanceStore?: AgentSkillProvenanceStore;
   private readonly managedSkillRoots?: SkillLoadOptions['managedSkillRoots'];
   private readonly managedSkillContentRoot?: string;
-  // Names of the managed skills the last load activated. The managed index owns
-  // this flag; the runtime mirrors it so the enable predicate can evaluate
-  // activation explicitly instead of inferring it from catalog membership.
+  // Eligible managed roots from the latest integrity/compatibility observation.
+  // Desired availability is exclusively the public disabled-Skill setting.
   private activeManagedSkillNames: ReadonlySet<string> = new Set();
   private provenanceLoaded = false;
 
@@ -736,8 +742,8 @@ class SkillRegistry {
       : undefined;
   }
 
-  /** The managed index's activation flag as of the last load. */
-  activatedManagedSkillNames(): ReadonlySet<string> {
+  /** Intact, compatible managed roots admitted by the last load. */
+  eligibleManagedSkillNames(): ReadonlySet<string> {
     return this.activeManagedSkillNames;
   }
 
@@ -747,14 +753,16 @@ class SkillRegistry {
     previous?: { hash: string; content: string } | null,
   ): Promise<void> {
     await this.ensureProvenanceLoaded();
-    const normalized = path.resolve(skillFile);
-    const existing = this.provenance.get(normalized);
+    const normalized = await canonicalPathPreservingSuffixAsync(skillFile);
+    const existing = this.provenanceStore
+      ? (await this.provenanceStore.load().catch(() => ({} as Record<string, AgentSkillProvenanceRecord>)))[normalized]
+      : this.provenance.get(normalized);
     const record: AgentSkillProvenanceRecord = {
       agentHash: contentHash,
       // Single-step undo keeps only the version preceding THIS write; a create
       // (previous == null) has nothing to restore.
       ...(previous
-        ? { previousVersion: { hash: previous.hash, content: previous.content, ...(existing?.agentHash ? { agentHash: existing.agentHash } : {}) } }
+        ? { previousVersion: { hash: previous.hash, content: previous.content, ...(existing?.agentHash === previous.hash ? { agentHash: existing.agentHash } : {}) } }
         : {}),
     };
     this.provenance.set(normalized, record);
@@ -772,58 +780,68 @@ class SkillRegistry {
    * the provenance facts that belonged to those bytes. Strictly one-shot — the
    * previous-version slot is consumed; deeper history is git's job.
    */
-  async undoLastAgentEdit(name: string): Promise<void> {
-    const skill = await this.resolveMutableSkill(name);
-    const normalized = path.resolve(skill.skillFile);
-    const existing = this.provenance.get(normalized);
-    const previous = existing?.previousVersion;
-    if (!previous) {
-      throw new Error(`Skill ${skill.name} has no recorded previous version to restore.`);
+  async inspectUndoTarget(identity: string): Promise<SkillUndoTarget> {
+    const skill = await this.resolveMutableSkill(identity);
+    const physical = await canonicalPathPreservingSuffixAsync(skill.skillFile);
+    if (skillLifecycleIdentity({ ...skill, identity: physical }) !== identity) throw undoUnavailable('Skill target moved. Inspect it again.');
+    const records = this.provenanceStore ? await this.provenanceStore.load() : Object.fromEntries(this.provenance);
+    const record = records[physical];
+    const currentHash = skillContentHash(await readFile(skill.skillFile, 'utf8'));
+    if (!record?.previousVersion || record.agentHash !== currentHash || skillContentHash(record.previousVersion.content) !== record.previousVersion.hash) {
+      throw undoUnavailable('This Skill has no unchanged Agent edit to undo.');
     }
-    // Undo may only overwrite the agent's own bytes. After a user hand-edit the
-    // previous-version record lingers, but restoring over it would silently destroy
-    // user content with no way back — so the gate re-reads the file and requires the
-    // on-disk content to still be exactly the last agent write (fresher than the
-    // loaded snapshot, which also closes the render-to-click race).
-    const currentRaw = await readFile(skill.skillFile, 'utf8');
-    if (existing.agentHash === undefined || existing.agentHash !== skillContentHash(currentRaw)) {
-      throw new Error(`Skill ${skill.name} was edited after the last agent write; undo would overwrite those edits.`);
-    }
-    const target = await this.resolveSkillTarget(skill.skillFile);
-    if (!target?.isSkillFile) {
-      throw new Error(`Skill file for ${skill.name} no longer resolves to a governed skill path.`);
-    }
+    return { identity, currentHash, previousHash: record.previousVersion.hash };
+  }
+
+  async undoLastAgentEdit(expected: SkillUndoTarget, authorize: (filePath: string) => Promise<void>): Promise<void> {
+    const skill = await this.resolveMutableSkill(expected.identity);
+    const ownership = await this.resolveSkillTarget(skill.skillFile);
+    if (!ownership?.isSkillFile) throw undoUnavailable('The Skill no longer has a mutable owner.');
+    const physical = await canonicalPathPreservingSuffixAsync(skill.skillFile);
+    const release = await acquireSkillWriteGuard(skill.skillFile);
     try {
-      validateAgentSkillContentWrite({
-        target,
-        content: previous.content,
-        previousContent: currentRaw,
-        operation: 'file_write',
-      });
-    } catch (error) {
-      if (error instanceof AgentSkillAuthoringError) {
-        throw new Error(`Cannot restore the previous version of ${skill.name}: ${error.message}`);
+      const actual = await this.inspectUndoTarget(expected.identity);
+      if (actual.currentHash !== expected.currentHash || actual.previousHash !== expected.previousHash) {
+        throw undoUnavailable('The Skill edit changed. Inspect its provenance again.');
       }
-      throw error;
+      const records = this.provenanceStore ? await this.provenanceStore.load() : Object.fromEntries(this.provenance);
+      const existing = records[physical];
+      const previous = existing?.previousVersion;
+      if (!previous || previous.hash !== expected.previousHash || skillContentHash(previous.content) !== previous.hash) {
+        throw undoUnavailable(`Skill ${skill.name} has no matching previous version to restore.`);
+      }
+      await authorize(physical);
+      const target = await this.resolveSkillTarget(skill.skillFile);
+      if (JSON.stringify(target) !== JSON.stringify(ownership)
+        || physical !== await canonicalPathPreservingSuffixAsync(skill.skillFile)) {
+        throw undoUnavailable('The Skill ownership changed while waiting to undo.');
+      }
+      const currentRaw = await readFile(physical, 'utf8');
+      if (existing.agentHash !== expected.currentHash || skillContentHash(currentRaw) !== expected.currentHash) {
+        throw undoUnavailable(`Skill ${skill.name} was edited after the last agent write; undo would overwrite those edits.`);
+      }
+      try {
+        validateAgentSkillContentWrite({ target: ownership, content: previous.content,
+          previousContent: currentRaw, operation: 'file_write' });
+      } catch (error) {
+        if (error instanceof AgentSkillAuthoringError) {
+          throw undoUnavailable(`Cannot restore the previous version of ${skill.name}: ${error.message}`);
+        }
+        throw error;
+      }
+      await writeFile(physical, previous.content, 'utf8');
+      const persisted = previous.agentHash ? { agentHash: previous.agentHash } : null;
+      if (persisted) this.provenance.set(physical, persisted);
+      else this.provenance.delete(physical);
+      try {
+        await this.provenanceStore?.save(physical, persisted);
+      } catch {
+        // The restored bytes stand even if provenance persistence is unavailable.
+      }
+      this.reloadAll();
+    } finally {
+      release();
     }
-    await writeFile(skill.skillFile, previous.content, 'utf8');
-    // The file write is the primary mutation; provenance restore is best-effort like
-    // the agent-write path (the in-memory record still guards this Thread).
-    const record: AgentSkillProvenanceRecord = {
-      ...(previous.agentHash ? { agentHash: previous.agentHash } : {}),
-    };
-    const persisted = record.agentHash ? record : null;
-    if (persisted) {
-      this.provenance.set(normalized, persisted);
-    } else {
-      this.provenance.delete(normalized);
-    }
-    try {
-      await this.provenanceStore?.save(normalized, persisted);
-    } catch {
-      // Best-effort persistence; the restored file and in-memory record stand.
-    }
-    this.reloadAll();
   }
 
   private async resolveMutableSkill(name: string): Promise<SkillDefinition> {
@@ -831,17 +849,11 @@ class SkillRegistry {
     // that have not been activated yet — the Skills panel lists them (listAllSkills)
     // and exposes Undo before they match a file.
     await this.ensureLoaded();
-    const normalized = normalizeSkillName(name);
-    const skill = normalized
-      ? this.skills.get(normalized)
-        ?? this.conditionalSkills.get(normalized)
-        ?? [...this.skills.values(), ...this.conditionalSkills.values()]
-          .find((candidate) => candidate.displayName === normalized)
-        ?? null
-      : null;
-    if (!skill) throw new Error(`Unknown skill: ${name}`);
+    const skill = [...this.skills.values(), ...this.conditionalSkills.values()]
+      .find((candidate) => skillLifecycleIdentity(candidate) === name);
+    if (!skill) throw undoUnavailable(`Unknown skill: ${name}`);
     if (skill.source === 'built-in' || skill.source === 'managed' || !skill.contentHash) {
-      throw new Error(`Skill ${skill.name} is ${skill.source} and has no editable provenance record.`);
+      throw undoUnavailable(`Skill ${skill.name} is ${skill.source} and has no editable provenance record.`);
     }
     return skill;
   }
@@ -992,14 +1004,14 @@ class SkillRegistry {
   }
 
   /**
-   * The activated managed roots, or none.
+   * The intact, compatible managed roots, or none.
    *
    * Managed skills are one source among five, and the only one behind a
    * user-writable JSON index. Letting that index's decode failure propagate made
    * every skill load throw — slash commands, the Skill library, and any turn that
    * touches skills — and the catch below clears built-in and workspace skills too,
    * so one unreadable managed index took out the whole skill system (A12). It
-   * degrades to "no managed skills" instead; the store heals the index itself.
+   * degrades to "no managed skills" instead, leaving the index for explicit repair.
    */
   private async loadManagedSkillRoots(): Promise<Array<{ id: string; name: string; rootDir: string; contentHash: string }>> {
     if (!this.managedSkillRoots) return [];
@@ -1036,8 +1048,7 @@ class SkillRegistry {
         await this.addLoadedSkill(skill);
       }
       const managedRoots = await this.loadManagedSkillRoots();
-      // The service hands back only the activated records, so this set is the
-      // managed index's activation flag as of this load.
+      // The service excludes integrity, compatibility, and ownership conflicts.
       this.activeManagedSkillNames = new Set(managedRoots.map((managed) => normalizeSkillName(managed.name)));
       for (const managed of managedRoots) {
         // A12: a managed root that no longer holds a readable SKILL.md is one
@@ -1134,7 +1145,7 @@ class SkillRegistry {
       };
     }
     this.seenSkillFileIds.add(fileId);
-    const record = this.provenance.get(path.resolve(skill.skillFile));
+    const record = this.provenance.get(fileId);
     const skillWithIdentity = {
       ...skill,
       identity: normalizePathForPrompt(fileId),
