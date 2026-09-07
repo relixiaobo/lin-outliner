@@ -104,6 +104,32 @@ origin, and status through the root configuration owner, without copying fields
 into application settings. A Profile's model pin specializes root execution
 under the precedence below; it does not override the application settings file.
 
+Under the execution-context refactor, the configuration owner resolves a Project
+layer from an explicitly selected configuration source, not a Tool Task cwd or
+the latest discovered repository. Project grouping/binding alone does not apply
+a Profile or change an existing configuration snapshot. Creating a Thread with
+an explicitly selected Project configuration may load that source; existing
+Threads retain their selected configuration until the owning configuration
+operation changes it. Source inspection/editing uses that same selection and
+cannot fall back to whichever directory a task last visited.
+The configuration owner retains the accepted source identity with its existing
+selection/snapshot metadata; it does not recreate a Thread execution-directory
+field. An unavailable selected source reports its ordinary missing/rejected
+state instead of silently using another task's repository configuration.
+
+Root Configuration Profiles (instructions, model, tools, and identity) are
+distinct from discovered project check profiles (commands and measured inputs).
+The latter are scoped context evidence and cannot change the former. Skill
+discovery/lifecycle remains under the Skill owner and its canonical catalog.
+The shared
+[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)
+contract defines how task observations preserve stable prompt/tool bytes and
+affinity. Explicit model/tool/configuration edits can change that prefix under
+their own admission rules; cache reuse cannot defer security revocation.
+Unit A of the workbench must test A/B directory visits, Project regrouping, and
+explicit configuration selection against source inspection, persona, tools,
+and actual provider input while preserving this plan's public source ownership.
+
 The prerequisite [approved delegation retirement](https://github.com/relixiaobo/lin-outliner/pull/620) removes
 Role-backed Agent types, their definitions, per-type presentation, and
 `agentExecution` selections. Do not preserve the old loader/writer contract as

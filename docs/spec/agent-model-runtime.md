@@ -320,6 +320,8 @@ Every Tool Task retains its immutable admission address, policy, and snapshot
 references. `contextSlotKey = { turnId, toolTaskId, contextSnapshotRef }` may be used
 as a Host-private correlation key; it is not the identity of model-visible state.
 There is no provider-facing retained task-slot list or `currentToolTaskId` marker.
+Operational task handles already returned by tools remain available for task
+inspection and control; this rule concerns context-correlation metadata.
 Task calls and results already describe actual execution. A snapshot admitted after
 the model selected a tool call is not proof that the model saw its instructions.
 Prepared provider input and its canonical publication boundary establish visibility.
@@ -334,6 +336,9 @@ sibling scopes never override each other. A source body may be shared while new
 applicability is announced separately, provided that body is still in the effective
 provider context. A private hash or payload reference is never a substitute for
 instructions the model has not received.
+The announced baseline is reduced only through committed publications at the
+consuming cursor and their retained checkpoint/tail. Host-collected snapshots
+or pending deliveries cannot advance it before their model-facing publication.
 
 The first relevant state emits a bounded baseline; unchanged state emits no repeated
 body; a change emits a scoped replacement or explicit invalidation at the tail.
