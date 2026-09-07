@@ -46,7 +46,7 @@ const configuration: EffectiveThreadConfiguration = {
   developerInstructions: ['Keep project terminology exact.'],
   model: 'test-model',
   reasoningEffort: 'medium',
-  tools: ['file_read', 'web_search', 'skill', 'agent'],
+  tools: ['file_read', 'web_search', 'skill'],
   skills: [],
   preloadedSkills: [],
   plugins: [],
@@ -76,7 +76,7 @@ const projectionTools = [
 ] as const;
 
 describe('stable agent prompt composition', () => {
-  test('a renamed agent is named that way in its own prompt, and a child is named too', () => {
+  test('names root and delegated Agent Session prompts from their own identity', () => {
     const renamed = composeStablePrompt({ thread: rootThread(1), configuration, persona: 'Juniper' });
     expect(renamed.text).toContain('You are Juniper.');
     // The reader's header and the agent's own answer to "who are you" come from
@@ -84,27 +84,22 @@ describe('stable agent prompt composition', () => {
     expect(renamed.text).not.toContain(`You are ${DEFAULT_AGENT_PERSONA_NAME}.`);
 
     const child = composeStablePrompt({
-      thread: { ...rootThread(1), parentThreadId: 'thread-parent', agentRole: 'explorer' },
+      thread: { ...rootThread(1), parentThreadId: 'thread-parent', threadSource: 'delegation' },
       configuration,
       persona: 'Rena',
     });
-    // Named AND typed: the name says who, the Role line says what — the same
-    // split the transcript header makes.
-    expect(child.text).toContain('You are Rena, a headless Tenon Subagent Thread');
-    expect(child.text).toContain('Role: explorer');
+    expect(child.text).toContain('You are Rena, running one bounded task in a headless Tenon Agent Session.');
     expect(child.text).toContain('Your final response is a handoff, not a host-verified completion claim.');
     expect(child.text).toContain('what you produced or concluded');
     expect(child.text).toContain('what remains incomplete/uncertain/unchecked and why');
     expect(child.text).toContain('do not invent a completion percentage');
     expect(child.text).not.toContain('Complete the assigned task and return a concise');
 
-    // A participant with no resolved name keeps the sentence it had before
-    // there was one, rather than being called after its Role key.
     const unnamed = composeStablePrompt({
-      thread: { ...rootThread(1), parentThreadId: 'thread-parent', agentRole: 'default' },
+      thread: { ...rootThread(1), parentThreadId: 'thread-parent', threadSource: 'delegation' },
       configuration,
     });
-    expect(unnamed.text).toContain('You are a headless Tenon Subagent Thread');
+    expect(unnamed.text).toContain('You are running one bounded task in a headless Tenon Agent Session.');
   });
 
   test('names the conversation agent from configuration and selects modules from canonical tool keys', () => {
@@ -130,12 +125,8 @@ describe('stable agent prompt composition', () => {
       'framework-firmware',
       'files',
       'skills',
-      'agent',
       'agent-identity',
     ]);
-    expect(prompt.text).toContain('# Agents');
-    expect(prompt.text).toContain('work product to inspect and synthesize');
-    expect(prompt.text).toContain('Background finish notification is delivered automatically');
     expect(prompt.text).toContain('# Skills');
     expect(prompt.text).toContain('the latest invocation is authoritative');
     expect(prompt.text).toContain('[[file:///absolute/path]]');
@@ -206,7 +197,6 @@ describe('stable agent prompt composition', () => {
           'example.file_read',
           'example.web_search',
           'example.skill',
-          'example.spawn_agent',
           'example__file_glob',
         ],
       },
@@ -216,74 +206,16 @@ describe('stable agent prompt composition', () => {
       'agent-identity',
     ]);
 
-    const agentMessageOnly = composeStablePrompt({
-      thread: rootThread(1),
-      configuration: { ...configuration, tools: ['agent_message'] },
-    });
-    expect(agentMessageOnly.blocks.map((block) => block.id)).toEqual([
-      'framework-firmware',
-      'agent',
-      'agent-identity',
-    ]);
-  });
-
-  test('describes only the Agent capabilities exposed by each runtime tool', () => {
-    const promptFor = (...tools: string[]) => composeStablePrompt({
-      thread: rootThread(1),
-      configuration: { ...configuration, tools },
-    }).text;
-    const spawn = 'A new agent call starts a fresh Agent';
-    const sharedState = 'Agents share host files, processes, credentials, ports, and application state';
-    const backgroundCompletion = 'Background finish notification is delivered automatically';
-    const workProduct = 'A finished Agent output is work product to inspect and synthesize';
-    const steer = 'Use agent_message with the Agent ID to steer or resume';
-    const stop = 'Use task_stop with the task ID to stop a running task';
-
-    const agentOnly = promptFor('agent');
-    expect(agentOnly).toContain(spawn);
-    expect(agentOnly).toContain(sharedState);
-    expect(agentOnly).toContain(backgroundCompletion);
-    expect(agentOnly).toContain(workProduct);
-    expect(agentOnly).not.toContain(steer);
-    expect(agentOnly).not.toContain(stop);
-
-    const agentMessageOnly = promptFor('agent_message');
-    expect(agentMessageOnly).toContain(steer);
-    expect(agentMessageOnly).not.toContain(spawn);
-    expect(agentMessageOnly).not.toContain(sharedState);
-    expect(agentMessageOnly).not.toContain(backgroundCompletion);
-    expect(agentMessageOnly).not.toContain(workProduct);
-    expect(agentMessageOnly).not.toContain(stop);
-
-    const taskStopOnly = promptFor('task_stop');
-    expect(taskStopOnly).toContain(stop);
-    expect(taskStopOnly).not.toContain(spawn);
-    expect(taskStopOnly).not.toContain(sharedState);
-    expect(taskStopOnly).not.toContain(backgroundCompletion);
-    expect(taskStopOnly).not.toContain(workProduct);
-    expect(taskStopOnly).not.toContain(steer);
-
-    const controlsOnly = promptFor('agent_message', 'task_stop');
-    expect(controlsOnly).toContain(steer);
-    expect(controlsOnly).toContain(stop);
-    expect(controlsOnly).not.toContain(spawn);
-
-    const allAgentTools = promptFor('agent', 'agent_message', 'task_stop');
-    for (const capability of [spawn, sharedState, backgroundCompletion, workProduct, steer, stop]) {
-      expect(allAgentTools).toContain(capability);
-    }
   });
 
   test('describes only provider-visible runtime tools when configuration is broader', () => {
     const prompt = composeStablePrompt({
       thread: rootThread(1),
-      configuration: { ...configuration, tools: ['agent', 'file_read'] },
+      configuration: { ...configuration, tools: ['file_read'] },
       availableToolNames: ['file_read'],
     });
 
     expect(prompt.blocks.map((block) => block.id)).toContain('files');
-    expect(prompt.blocks.map((block) => block.id)).not.toContain('agent');
-    expect(prompt.text).not.toContain('# Agents');
   });
 
   test('keeps stable fingerprints independent of Thread identity and volatile context', () => {
@@ -293,7 +225,7 @@ describe('stable agent prompt composition', () => {
     expect(later.text).toBe(first.text);
 
     const child = composeStablePrompt({
-      thread: { ...rootThread(3), parentThreadId: rootThread(1).id, agentRole: 'worker', agentNickname: 'Build' },
+      thread: { ...rootThread(3), parentThreadId: rootThread(1).id, threadSource: 'delegation' },
       configuration: {
         ...configuration,
         developerInstructions: ['Execute the assigned implementation and verify it.'],
@@ -303,8 +235,8 @@ describe('stable agent prompt composition', () => {
     expect(child.fingerprints.l1).toBe(first.fingerprints.l1);
     expect(child.fingerprints.l2).not.toBe(first.fingerprints.l2);
     expect(child.text).not.toContain(agentPersonaPrompt(DEFAULT_AGENT_PERSONA_NAME));
-    expect(child.text).toContain('You are a headless Tenon Subagent Thread');
-    expect(child.text).toContain('concurrent Threads share files, processes, ports, credentials');
+    expect(child.text).toContain('You are running one bounded task in a headless Tenon Agent Session.');
+    expect(child.text).toContain('concurrent sessions share files, processes, ports, credentials');
     expect(child.text).toContain('Execute the assigned implementation and verify it.');
     expect(child.text).not.toContain('# Memory');
   });
@@ -690,45 +622,7 @@ describe('canonical context projection', () => {
     expect(steeringMessage).toEqual(turnMessage);
   });
 
-  test('keeps authored Subagent and image markers out of the assistant channel', async () => {
-    const payloads = new Map<string, ThreadContextPayload>();
-    const messages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
-      turn(1, [
-        userItem('user-1', 1_720_000_000_123, 'Research the pricing pages'),
-        agentItem('agent-1', 'Delegating.'),
-        subAgentActivityItem('activity-started', 'started'),
-        subAgentActivityItem('activity-completed', 'completed'),
-        imageViewItem('image-1'),
-      ], true),
-    ]);
-
-    for (const message of messages) {
-      expect(messageText(message)).not.toContain('[Subagent ');
-      expect(messageText(message)).not.toContain('[Viewed image:');
-    }
-    const assistant = messages.filter((message): message is AssistantMessage => message.role === 'assistant');
-    expect(assistant).toHaveLength(1);
-    expect(messageText(assistant[0]!)).toBe('Delegating.');
-  });
-
-  test('keeps a Subagent activity recorded mid-batch out of the provider message boundary', async () => {
-    const payloads = new Map<string, ThreadContextPayload>();
-    const messages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
-      turn(1, [
-        userItem('user-1', 1_720_000_000_123, 'Delegate both parts'),
-        dynamicToolItem('tool-1', 'file_read', 'first'),
-        subAgentActivityItem('activity-started', 'started'),
-        dynamicToolItem('tool-2', 'file_read', 'second'),
-      ], true),
-    ]);
-
-    const assistant = messages.filter((message): message is AssistantMessage => message.role === 'assistant');
-    expect(assistant).toHaveLength(1);
-    expect(assistant[0]!.content.filter((part) => part.type === 'toolCall')).toHaveLength(2);
-    expect(messages.filter((message) => message.role === 'toolResult')).toHaveLength(2);
-  });
-
-  test('projects inline Skill instructions but keeps isolated instructions out of the parent context', async () => {
+  test('projects loaded Skill instructions into the current context', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const inline = {
       schemaVersion: 1,
@@ -741,42 +635,18 @@ describe('canonical context projection', () => {
       contentHash: 'a'.repeat(64),
       instructions: 'INLINE PRIVATE INSTRUCTIONS',
       arguments: 'user supplied argument',
-      execution: 'inline',
       invocationSource: 'model',
-      constraints: { allowedTools: [], model: null, effort: null },
       invokedAt: 1_720_000_000_100,
     } as const;
-    const isolated = {
-      ...inline,
-      name: 'isolated-demo',
-      displayName: 'Isolated Demo',
-      identity: 'project:isolated-demo',
-      contentHash: 'b'.repeat(64),
-      instructions: 'ISOLATED CHILD-ONLY INSTRUCTIONS',
-      arguments: '',
-      execution: 'isolated',
-      constraints: { allowedTools: ['file_read'], model: 'test-model', effort: 'high' },
-      invokedAt: 1_720_000_010_100,
-    } as const;
-    const turns = [
-      turn(1, [
-        evidence(payloads, inline, 'inline-skill'),
-        userItem('user-inline', 1_720_000_000_123, 'Run inline'),
-      ], true),
-      turn(2, [
-        evidence(payloads, isolated, 'isolated-skill'),
-        userItem('user-isolated', 1_720_000_010_123, 'Run isolated'),
-      ], false),
-    ];
+    const turns = [turn(1, [
+      evidence(payloads, inline, 'inline-skill'),
+      userItem('user-inline', 1_720_000_000_123, 'Run the Skill'),
+    ], true)];
 
     const messages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns(turns);
     const inlineText = messageText(messages[0]!);
-    const isolatedText = messageText(messages.at(-1)!);
     expect(inlineText).toContain('INLINE PRIVATE INSTRUCTIONS');
     expect(inlineText).not.toContain('user supplied argument');
-    expect(isolatedText).toContain('Active Skill: Isolated Demo (isolated-demo).');
-    expect(isolatedText).toContain('Allowed tools: file_read.');
-    expect(isolatedText).not.toContain('ISOLATED CHILD-ONLY INSTRUCTIONS');
   });
 
   test('keeps post-tool evidence before later tools with a terminalization-stable timestamp', async () => {
@@ -792,9 +662,7 @@ describe('canonical context projection', () => {
       contentHash: 'c'.repeat(64),
       instructions: 'FOLLOW DEMO AFTER TOOL ONE',
       arguments: '',
-      execution: 'inline',
       invocationSource: 'model',
-      constraints: { allowedTools: [], model: null, effort: null },
       invokedAt: 1_720_000_000_200,
     } as const;
     const active = turn(3, [
@@ -1015,7 +883,6 @@ describe('canonical context projection', () => {
       'file_write',
       'web_fetch',
       'update_plan',
-      'agent',
       'web_search',
       'skill',
       'docs__search',
@@ -1031,12 +898,6 @@ describe('canonical context projection', () => {
       ['file_write', { file_path: '/workspace/write.txt', content: 'exact content', overwrite: true }],
       ['web_fetch', { url: 'https://example.test', format: 'markdown' }],
       ['update_plan', { plan: [{ step: 'Ship', status: 'in_progress' }] }],
-      ['agent', {
-        description: 'review',
-        prompt: 'Inspect it',
-        subagent_type: 'general-purpose',
-        run_in_background: true,
-      }],
       ['web_search', { query: 'canonical history' }],
       ['skill', { skill: 'code-review' }],
       ['docs__search', { query: 'Thread protocol', limit: 5 }],
@@ -1090,22 +951,6 @@ describe('canonical context projection', () => {
       dynamic('family-outline', expected[3][0], expected[3][1]),
       dynamic('family-control', expected[4][0], expected[4][1]),
       {
-        type: 'collabAgentToolCall',
-        id: 'family-collaboration',
-        provenance: provenance('family-collaboration'),
-        tool: 'agent',
-        status: 'completed',
-        outputRef: null,
-        senderThreadId: rootThread(1).id,
-        receiverThreadIds: [],
-        prompt: 'presentation only',
-        summary: null,
-        model: null,
-        reasoningEffort: null,
-        agentsStates: {},
-        modelCall: modelCallFor(expected[5][0], expected[5][1]),
-      },
-      {
         type: 'webSearch',
         id: 'family-web',
         provenance: provenance('family-web'),
@@ -1114,9 +959,9 @@ describe('canonical context projection', () => {
         outputRef: null,
         results: [],
         error: null,
-        modelCall: modelCallFor(expected[6][0], expected[6][1]),
+        modelCall: modelCallFor(expected[5][0], expected[5][1]),
       },
-      dynamic('family-skill', expected[7][0], expected[7][1]),
+      dynamic('family-skill', expected[6][0], expected[6][1]),
       {
         type: 'mcpToolCall',
         id: 'family-mcp',
@@ -1130,9 +975,9 @@ describe('canonical context projection', () => {
         result: { matches: 1 },
         error: null,
         durationMs: 1,
-        modelCall: modelCallFor(expected[8][0], expected[8][1]),
+        modelCall: modelCallFor(expected[7][0], expected[7][1]),
       },
-      dynamic('family-plugin', expected[9][0], expected[9][1], 'plugin', 'render'),
+      dynamic('family-plugin', expected[8][0], expected[8][1], 'plugin', 'render'),
     ];
     const messages = await new CanonicalContextProjector(
       model,
@@ -1543,8 +1388,6 @@ describe('canonical context projection', () => {
       skillCatalogHash: null,
       announcedSkills: [],
       activeSkills: [],
-      roleCatalogHash: null,
-      announcedRoles: [],
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
@@ -1606,7 +1449,6 @@ describe('canonical context projection', () => {
   test('reprojects complete catalog, user-view, and Thread-state baselines after compaction', async () => {
     const payloads = new Map<string, ThreadContextPayload>();
     const skill = skillCatalog();
-    const role = roleCatalog();
     const baselineView = userView('Before compact');
     const additionalState = {
       schemaVersion: 1 as const,
@@ -1627,12 +1469,10 @@ describe('canonical context projection', () => {
       }],
     };
     const skillItem = evidence(payloads, skill, 'skill-catalog-before-compact');
-    const roleItem = evidence(payloads, role, 'role-catalog-before-compact');
     const viewItem = evidence(payloads, baselineView, 'view-before-compact');
     const additionalItem = evidence(payloads, additionalState, 'additional-before-compact');
     const original = turn(10, [
       skillItem,
-      roleItem,
       viewItem,
       additionalItem,
       userItem('user-before-baseline-compact', 1_720_000_300_123, 'Keep the active context.'),
@@ -1650,8 +1490,6 @@ describe('canonical context projection', () => {
       skillCatalogHash: skill.catalogHash,
       announcedSkills: skill.entries.map(({ name, identity, contentHash }) => ({ name, identity, contentHash })),
       activeSkills: [],
-      roleCatalogHash: role.catalogHash,
-      announcedRoles: role.entries.map(({ name, identity, contentHash }) => ({ name, identity, contentHash })),
       userViewBaselineRef: viewItem.payloadRef,
       additionalContextBaselineRef: additionalItem.payloadRef,
       activeObservations: [],
@@ -1691,14 +1529,11 @@ describe('canonical context projection', () => {
     expect(compactedText.match(/<system-reminder>/g)).toHaveLength(1);
     expect(compactedText).toContain('Available Skills:');
     expect(compactedText).toContain('Review the current change.');
-    expect(compactedText).toContain('Available Agent types:');
-    expect(compactedText).toContain('Review delegated work.');
     expect(compactedText).toContain('Focused node: &quot;Before compact&quot; node-1.');
     expect(compactedText).toContain('RESTORE THIS THREAD STATE');
     expect(compactedText).not.toContain('restored_after_compaction');
     expect(compactedText).not.toContain('DO NOT RESTORE THIS TURN EVENT');
     expect(compactedText).not.toContain('catalog_hash=');
-    expect(compactedText).not.toContain('identity=built-in:reviewer');
     expect(compactedText).not.toContain('content_hash=');
     expect(changedText).toContain('Focused node: &quot;After compact&quot; node-1.');
     expect(changedText).toContain('Local time at this input:');
@@ -1726,9 +1561,7 @@ describe('canonical context projection', () => {
       contentHash: 'a'.repeat(64),
       instructions: 'ALPHA CHECKPOINT INSTRUCTIONS',
       arguments: '',
-      execution: 'inline' as const,
       invocationSource: 'model' as const,
-      constraints: { allowedTools: [], model: null, effort: null },
       invokedAt: 1_720_000_600_100,
     };
     const activeSkillRef = storePayload(payloads, activeSkill);
@@ -1743,8 +1576,6 @@ describe('canonical context projection', () => {
         contentHash: 'b'.repeat(64),
         payloadRef: activeSkillRef,
       }],
-      roleCatalogHash: null,
-      announcedRoles: [],
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [],
@@ -1799,8 +1630,6 @@ describe('canonical context projection', () => {
       skillCatalogHash: null,
       announcedSkills: [],
       activeSkills: [],
-      roleCatalogHash: null,
-      announcedRoles: [],
       userViewBaselineRef: null,
       additionalContextBaselineRef: null,
       activeObservations: [{
@@ -1840,8 +1669,6 @@ function rootThread(index: number): Thread {
     sessionId: uuidV7(timestamp + 100),
     parentThreadId: null,
     forkedFromId: null,
-    agentNickname: null,
-    agentRole: null,
     name: null,
     preview: '',
     ephemeral: false,
@@ -1942,20 +1769,6 @@ function agentItem(id: string, text: string): ThreadItem {
     text,
     phase: 'final_answer',
     memoryCitation: null,
-  };
-}
-
-function subAgentActivityItem(id: string, kind: 'started' | 'completed'): ThreadItem {
-  return {
-    type: 'subAgentActivity',
-    id,
-    provenance: { originThreadId: rootThread(1).id, originTurnId: uuidV7(1_720_000_100_001), originItemId: id },
-    kind,
-    agentThreadId: 'child-thread',
-    agentTurnId: uuidV7(1_720_000_100_002),
-    agentPath: '/root/root-thread/child-thread',
-    error: null,
-    spawnItemId: null,
   };
 }
 
@@ -2107,25 +1920,6 @@ function skillCatalog(): Extract<ThreadContextPayload, { kind: 'skillCatalog' }>
       identity: '/workspace/.agents/skills/review/SKILL.md',
       contentHash: 'b'.repeat(64),
       description: 'Review the current change.',
-    }],
-  };
-}
-
-function roleCatalog(): Extract<ThreadContextPayload, { kind: 'roleCatalog' }> {
-  return {
-    schemaVersion: 1,
-    kind: 'roleCatalog',
-    mode: 'baseline',
-    previousCatalogHash: null,
-    catalogHash: 'c'.repeat(64),
-    entries: [{
-      change: 'available',
-      name: 'reviewer',
-      displayName: 'Reviewer',
-      source: 'built-in',
-      identity: 'built-in:reviewer',
-      contentHash: 'd'.repeat(64),
-      description: 'Review delegated work.',
     }],
   };
 }

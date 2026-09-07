@@ -46,8 +46,6 @@ interface ThreadRow {
   session_id: string;
   parent_thread_id: string | null;
   forked_from_id: string | null;
-  agent_nickname: string | null;
-  agent_role: string | null;
   name: string | null;
   name_origin: string;
   preview: string;
@@ -80,8 +78,6 @@ export class ThreadMetadataStore {
         session_id TEXT NOT NULL,
         parent_thread_id TEXT REFERENCES threads(id) ON DELETE CASCADE,
         forked_from_id TEXT REFERENCES threads(id) ON DELETE SET NULL,
-        agent_nickname TEXT,
-        agent_role TEXT,
         name TEXT,
         name_origin TEXT NOT NULL CHECK (name_origin IN ('none', 'automatic', 'manual', 'derived')),
         preview TEXT NOT NULL,
@@ -132,17 +128,15 @@ export class ThreadMetadataStore {
     }
     this.writeThread(thread.id, () => this.db.prepare(`
         INSERT INTO threads (
-          id, session_id, parent_thread_id, forked_from_id, agent_nickname, agent_role,
+          id, session_id, parent_thread_id, forked_from_id,
           name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
           created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         thread.id,
         thread.sessionId,
         thread.parentThreadId,
         thread.forkedFromId,
-        thread.agentNickname,
-        thread.agentRole,
         thread.name,
         record.nameOrigin,
         thread.preview,
@@ -179,13 +173,13 @@ export class ThreadMetadataStore {
     if (thread.ephemeral) throw new Error('Ephemeral Threads do not belong in the persistent catalog');
     this.writeThread(thread.id, () => this.db.prepare(`
         INSERT INTO threads (
-          id, session_id, parent_thread_id, forked_from_id, agent_nickname, agent_role,
+          id, session_id, parent_thread_id, forked_from_id,
           name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
           created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         thread.id, thread.sessionId, thread.parentThreadId, thread.forkedFromId,
-        thread.agentNickname, thread.agentRole, thread.name, record.nameOrigin,
+        thread.name, record.nameOrigin,
         thread.preview, thread.ephemeral ? 1 : 0, thread.source, thread.threadSource, thread.modelProvider,
         thread.cwd, thread.createdAt, thread.updatedAt, JSON.stringify(thread.status),
         record.archived ? 1 : 0, JSON.stringify(record.configuration),
@@ -536,8 +530,6 @@ function recordFromRow(row: ThreadRow): ThreadCatalogRecord {
     sessionId: row.session_id,
     parentThreadId: row.parent_thread_id,
     forkedFromId: row.forked_from_id,
-    agentNickname: row.agent_nickname,
-    agentRole: row.agent_role,
     name: row.name,
     preview: row.preview,
     ephemeral: row.ephemeral === 1,

@@ -19,7 +19,6 @@ A `ThreadItem` is the smallest persisted history fact. Canonical Item kinds are:
 
 - `userMessage`, `agentMessage`, and `reasoning`
 - `commandExecution`, `fileChange`, `mcpToolCall`, and `dynamicToolCall`
-- `collabAgentToolCall` and `subAgentActivity`
 - `webSearch` and `imageView`
 - `contextEvidence`, `contextReset`, and `contextCompaction`
 
@@ -111,7 +110,7 @@ reversed ranges.
 
 Context payload schema version 1 is an exact-key discriminated union, not arbitrary
 JSON. It covers environment, user view, additional context, referenced resources,
-Skill/Role catalog journals, Skill invocation, tool-output projection, inherited
+Skill catalog journals, Skill invocation, tool-output projection, inherited
 context, the three compaction payloads, and large `toolCallArguments` skeletons with
 private internal-text bindings.
 Unknown kinds, versions, and fields fail
@@ -126,10 +125,10 @@ projection reference; it stores neither scratch paths nor another copy of observ
 text. Inherited context accepts only complete terminal Turns and requires its
 covered-through cursor to resolve inside that snapshot. The canonical projector
 consumes admitted environment, user-view, additional-context, referenced-resource,
-Skill/Role, inherited-context, tool-output, and compaction evidence at every provider
-boundary. Skill and Role reducers record one catalog baseline per context epoch, append
+Skill, inherited-context, tool-output, and compaction evidence at every provider
+boundary. The Skill reducer records one catalog baseline per context epoch, appends
 only changed entries, restore validated compaction checkpoints, and start a new baseline
-after `contextReset`. A newly discovered Skill or Role can therefore join an existing
+after `contextReset`. A newly discovered Skill can therefore join an existing
 Thread without rebuilding or rewriting its earlier provider prefix.
 Path-triggered Skill observation reads the bounded path already carried by successful
 Core file Items; it never decodes historical argument payloads at Turn acceptance,
@@ -231,7 +230,7 @@ provider, filesystem, Node, Skill, import, and web capabilities live under
 `src/main/agent/capabilities/`; they may contribute tools and configuration but
 may not own Thread history or lifecycle state. The Tenon-owned turn loop,
 runtime state, tool batching, retry policy, and transport gateway live under
-`src/main/agent/runtime/kernel/`. Thread coordination is split into six owned
+`src/main/agent/runtime/kernel/`. Thread coordination is split into five owned
 modules under `src/main/agent/thread/`:
 
 - `ThreadCore` owns the stores, canonical reads, notification bus, admission
@@ -243,27 +242,30 @@ modules under `src/main/agent/thread/`:
 - `ThreadHistoryReferenceService` owns same-profile reference resolution and bounded,
   read-only historical search/read projection. Its search data is rebuildable and has no
   identity, authorization, retention, deletion, resume, fork, or Turn-creation authority.
-- `SubagentCollaboration` owns Agent execution identity, fresh child spawning,
-  direct-parent delivery, messaging, resume, stop provenance, activity queues,
-  and isolated-Skill child execution.
 - `TurnLifecycle` owns Turn admission, execution, steering, user input,
-  compaction, client bindings, active-Turn state, Agent request-budget usage, and
-  terminal notification admission.
+  compaction, client bindings, active-Turn state, Goal-budget usage, and terminal
+  notification admission.
 
 `ThreadService` constructs those owners and preserves the host, extension, and
 protocol facade; it does not duplicate their state. There are no flat
 `src/main/agent*.ts` implementations, forwarding wrappers, alternate runtimes,
 or compatibility readers.
 
-## Configuration Profiles And Roles
+## Configuration Profiles And Presentation
 
 A named `ConfigurationProfile` supplies root Thread defaults. User definitions
 load from `<userData>/agent/config.json`; project definitions load from
 `<cwd>/.tenon/agent.json` and replace same-name user definitions. Both exact-key
-JSON files may define `defaultProfile`, `profiles`, `roles`,
-`presentationOverrides`, and `agentExecution`. Invalid JSON, unknown fields,
+JSONC files may define `defaultProfile`, `profiles`, and
+`presentationOverrides`. Invalid JSONC, unknown fields,
 invalid names, duplicate capability identities, mismatched provider-qualified
 models, and unsupported reasoning effort values fail closed.
+
+The configuration owner exposes both source paths with a bounded status record:
+`missing`, `accepted`, or `rejected`, plus a SHA-256 content digest and a
+bounded error summary. User and project schema files are generated beside
+their sources (`config.schema.json` and `.tenon/agent.schema.json`) so file
+editors and the configuration Skill validate against the same live contract.
 
 Root Thread creation resolves its selected Profile into one persisted
 `EffectiveThreadConfiguration` snapshot. Later file edits do not rewrite that
@@ -276,8 +278,7 @@ compatibility reader in the catalog.
 
 The built-in default Profile uses the `*` Skill ceiling so existing discovered
 Skills remain available. A configured Skill list is an allow-list, while an
-explicit empty list disables Skills for that Thread. A child Role may retain or
-narrow the parent list but cannot widen an explicit parent ceiling.
+explicit empty list disables Skills for that Thread.
 
 The renderer may read or atomically replace only the execution selection of a
 root user Thread: `modelProvider`, provider-qualified `model`, and
@@ -286,7 +287,7 @@ effort before one SQLite update changes the configuration snapshot and Thread
 catalog metadata. A root Thread with an active Turn rejects the change, so one
 Turn cannot observe two configurations. Tools, Skills, Plugins, MCP servers,
 developer instructions, and capability ceilings remain host-private. Feature
-and child Threads have no renderer-editable configuration. A fork inherits the
+and delegation Threads have no renderer-editable configuration. A fork inherits the
 source Thread's effective execution selection.
 
 An ordinary renderer-created root has no persisted execution cwd; the renderer
@@ -305,19 +306,16 @@ cleanup ownership. Deleting a Thread or Project does not delete a user-managed
 external directory or invalidate a settled Tool Task receipt; cleanup occurs
 only after the owning resource reaches its terminal fence.
 
-An `AgentRole` configures a child Thread. The model-visible built-in Agent types
-are `general-purpose`, `explore`, and `plan`, backed respectively by hidden
-`default`, `explorer`, and `plan` Roles. User and project Roles extend the Agent
-type catalog; there is no built-in `worker`. A fresh spawn intersects its
-selected Role and mode policy with the parent's tool, Skill, plugin, and MCP
-ceilings. A separate canonical-Agent-type `agentExecution` row may select a
-provider-qualified model and reasoning effort; absent fields follow the direct
-parent. The host validates that complete selection before admission, then
-persists the resolved definition, effective provider/model/reasoning snapshot,
-and tool policy. Resume reuses that recorded configuration and Agent history
-rather than re-resolving a changed Role or execution row. The complete context
-and execution contract is owned by
-[`agent-subagent-threads.md`](agent-subagent-threads.md).
+Transcript headers and `ThreadTranscriptIndex` retain conversation identity and
+timestamps without a synthetic single Thread cwd. Directory facts are read from
+the owning task receipts; index navigation never supplies execution authority.
+
+`presentationOverrides.main` may change only the root conversation's persona
+and palette colour. Presentation is renderer-facing and never changes provider
+context, tool selection, or execution policy. Delegated Session policy belongs
+to Agent Settings and is specified in
+[`agent-delegation.md`](agent-delegation.md); Task Profiles are not
+Configuration Profiles or configurable Agent types.
 
 ## Identity And Provenance
 
@@ -379,8 +377,8 @@ lock, nothing ever cleared it, and it persists, so a single failure ended a
 conversation for good: retry refused, a new message refused, across restarts.
 Nothing writes that status now, and a Thread loaded carrying one from an earlier
 version is healed to `idle` alongside the `active` a lost process leaves behind.
-The status remains in the protocol so persisted records stay readable, and a
-child's failure is read from its latest Turn wherever it is listed.
+The status remains in the protocol so persisted records stay readable; a
+terminal failure is read from its owning Turn.
 
 A Turn that no longer owns its Thread writes no Thread status at all. Completion
 releases ownership before its tail runs — the active Turn is dropped and the
@@ -464,8 +462,8 @@ startup. A hook exception terminalizes the accepted Turn as failed, releases
 the active-Turn lock, and cannot strand a Thread in `inProgress`.
 
 Steering appends input only to the active Turn. Interrupt requires the exact
-active Turn ID. Resume reopens a stored Thread, refreshes child Role
-configuration, and lets extensions reconcile their own state; it does not create
+active Turn ID. Resume reopens a stored Thread under its persisted effective
+configuration and lets extensions reconcile their own state; it does not create
 a Turn.
 
 When a Turn becomes idle, an active Goal may admit a continuation through the
@@ -485,8 +483,8 @@ budget also arms exactly one flagged wrap-up continuation. An interrupted or
 failed Turn still accounts its usage and changes the status but does not arm a
 wrap-up, so Stop cannot launch replacement work. The wrap-up starts no
 substantive work and reports progress, remaining work, blockers, and the next
-step. Existing hard non-user Turn admission limits, including an exhausted
-Subagent request budget, remain authoritative and may refuse it.
+step. Existing hard non-user Turn admission limits remain authoritative and may
+refuse it.
 
 Before admission, the Goal ledger durably reserves a generated Turn ID and
 continuation kind. Admission commits the count and one-shot wrap-up fact;
@@ -504,14 +502,14 @@ boundary; the next real idle boundary clears it and retries the same Goal
 generation. `waitForIdle` follows the whole continuation chain, including an
 admitted wrap-up, rather than returning after only its first Turn.
 
-Archiving or deleting a Thread is a subtree operation over `parentThreadId`
-lineage. `ThreadService` first fences the complete subtree against new Turn and
-child admission, interrupts every active Turn and pending structured-input
-request, and waits for every descendant to become idle. Archive then marks the
-root and every descendant archived; unarchive restores only the explicitly
-selected Thread and never revives descendants implicitly. Delete removes every
-descendant Goal, history projection, rollout, catalog row, Agent execution edge,
-pending notification, pending activity, request-ledger membership, and barrier state. Concurrent overlapping teardown requests
+Archiving or deleting a root Thread is an ownership-tree operation over
+`parentThreadId` lineage. `ThreadService` first fences the complete tree against
+new Turn and delegation admission, interrupts every active Turn and pending
+structured-input request, and waits for every owned Thread to become idle.
+Archive marks the visible root and owned feature Threads archived; unarchive
+restores only the explicitly selected root. Delete removes every owned Goal,
+history projection, rollout, catalog row, delegation binding, Tool Task,
+resource, and barrier state through its domain owner. Concurrent overlapping teardown requests
 fail closed. Archived or stopping Threads cannot admit a Turn.
 
 ## History Replacement And Fork Semantics

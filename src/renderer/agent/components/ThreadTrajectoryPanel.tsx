@@ -42,7 +42,6 @@ interface ThreadTrajectoryPanelProps {
   readonly canGoBack: boolean;
   readonly onBack: () => void;
   readonly onClose: () => void;
-  readonly onOpenThreadTrajectory: (threadId: string) => void;
   readonly panelDragHandle?: PanelDragHandle;
   readonly selectedRecordId?: string;
   readonly showClose: boolean;
@@ -56,7 +55,6 @@ export function ThreadTrajectoryPanel({
   canGoBack,
   onBack,
   onClose,
-  onOpenThreadTrajectory,
   panelDragHandle,
   selectedRecordId,
   showClose,
@@ -419,7 +417,6 @@ export function ThreadTrajectoryPanel({
               {selectedRecord ? (
                 <TrajectoryInspector
                   onClose={closeInspector}
-                  onOpenChildTrajectory={onOpenThreadTrajectory}
                   onOpenRecord={selectRecord}
                   record={selectedRecord}
                   threadId={threadId}
@@ -469,8 +466,7 @@ function trajectoryRelevantNotification(notification: AgentCoreNotification, thr
     || notification.type === 'items/completed'
     || notification.type === 'turn/completed'
     || notification.type === 'turn/providerRetry/changed'
-    || notification.type === 'turn/plan/updated'
-    || notification.type === 'subagent/execution/changed';
+    || notification.type === 'turn/plan/updated';
 }
 
 function errorMessage(error: unknown): string {

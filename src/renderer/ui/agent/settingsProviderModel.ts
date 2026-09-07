@@ -48,6 +48,40 @@ export interface ImageModelGroup {
   models: ImageModelChoice[];
 }
 
+export interface LanguageModelGroup {
+  providerId: string;
+  label: string;
+  models: ImageModelChoice[];
+}
+
+export function buildLanguageModelMenu(
+  settings: AgentProviderSettingsView,
+  catalog: Map<string, AgentProviderOption>,
+): { groups: LanguageModelGroup[]; defaultUnavailable: boolean } {
+  const groups: LanguageModelGroup[] = [];
+  const values = new Set<string>();
+  for (const provider of settings.providers) {
+    if (!provider.enabled) continue;
+    const providerOption = catalog.get(provider.providerId);
+    if (!providerHasCredential(provider, providerOption)) continue;
+    const models = (providerOption?.models ?? []).map((model) => {
+      const value = composeProviderQualifiedModel(provider.providerId, model.id);
+      values.add(value);
+      return {
+        value,
+        label: model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id,
+      };
+    });
+    if (models.length > 0) groups.push({
+      providerId: provider.providerId,
+      label: formatProviderName(provider.providerId),
+      models,
+    });
+  }
+  const defaultModel = settings.defaultModel ?? 'auto';
+  return { groups, defaultUnavailable: defaultModel !== 'auto' && !values.has(defaultModel) };
+}
+
 export function buildProviderChoices(
   settings: AgentProviderSettingsView,
   draftProviderId: string,

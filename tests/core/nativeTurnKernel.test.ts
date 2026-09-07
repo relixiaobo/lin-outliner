@@ -20,10 +20,6 @@ import type {
 import { PiModelGateway } from '../../src/main/agent/runtime/kernel/ModelGateway';
 import { persistToolCallAdmission } from '../../src/main/agent/runtime/toolCallHistory';
 import {
-  AGENT_MESSAGE_INPUT_SCHEMA,
-  normalizeAgentMessageToolInput,
-} from '../../src/core/agent/tools';
-import {
   agentToolResult,
   MAX_TENON_RESULT_DATA_BYTES,
   successEnvelope,
@@ -382,7 +378,7 @@ describe('native turn kernel parity', () => {
       tool: controlTools.find((candidate) => candidate.name === 'task_stop')!,
       arguments: { task_id: 'missing-task' },
       code: 'task_not_found',
-      instructions: 'Use a task ID returned by agent or bash. If the task already ended, continue without stopping it.',
+      instructions: 'Use a task ID returned by a background-producing tool in this Thread.',
     }, {
       tool: controlTools.find((candidate) => candidate.name === 'create_goal')!,
       arguments: { objective: 'Existing objective' },
@@ -700,60 +696,6 @@ describe('native turn kernel parity', () => {
 
     expect(preparations).toBe(1);
     expect(executions).toEqual([argumentsValue]);
-  });
-
-  test('prepares Agent message summaries for execution without rewriting provider history', async () => {
-    const longSummary = 'x'.repeat(201);
-    const providerCalls = [
-      { to: 'agent-one', message: 'First line\nSecond line' },
-      { to: 'agent-two', summary: '   ', message: 'Blank fallback\nSecond line' },
-      { to: 'agent-three', summary: longSummary, message: 'Explicit summary' },
-    ];
-    const executions: unknown[] = [];
-    const messageTool = parameterTool(
-      'agent_message',
-      AGENT_MESSAGE_INPUT_SCHEMA as unknown as Record<string, unknown>,
-      async (_id, args) => {
-        executions.push(args);
-        return toolResult('sent');
-      },
-    );
-    messageTool.prepareArguments = normalizeAgentMessageToolInput;
-    const gateway = new ScriptedGateway([
-      () => terminalStream(assistant(providerCalls.map((argumentsValue, index) => ({
-        type: 'toolCall' as const,
-        id: `message-${index + 1}`,
-        name: 'agent_message',
-        arguments: argumentsValue,
-      })), 'toolUse')),
-      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
-    ]);
-    const admissions: Array<Extract<AgentEvent, { readonly type: 'tool_call_admission' }>> = [];
-    const runtime = createRuntime(gateway, { tools: [messageTool] });
-    runtime.subscribe((event) => {
-      if (event.type === 'tool_call_admission') admissions.push(event);
-    });
-
-    await runtime.prompt(USER);
-
-    expect(executions).toEqual([
-      { ...providerCalls[0], summary: 'First line' },
-      { ...providerCalls[1], summary: 'Blank fallback' },
-      { ...providerCalls[2], summary: `${'x'.repeat(199)}…` },
-    ]);
-    expect(admissions.map((event) => event.decision.displayArguments)).toEqual(executions);
-    expect(admissions.map((event) => (
-      event.decision.modelCall.disposition === 'replayable'
-        && event.decision.modelCall.arguments.storage === 'inline'
-        ? event.decision.modelCall.arguments.value
-        : null
-    ))).toEqual(providerCalls);
-    const replayedCalls = gateway.requests[1]!.context.messages.flatMap((message) => (
-      message.role === 'assistant'
-        ? message.content.filter((part) => part.type === 'toolCall').map((part) => part.arguments)
-        : []
-    ));
-    expect(replayedCalls).toEqual(providerCalls);
   });
 
   test('isolates canonical history from mutations inside a tool handler', async () => {
@@ -1468,181 +1410,6 @@ describe('native turn kernel parity', () => {
     ]);
   });
 
-  test('settles as interrupted before a second provider call when the Turn budget is exhausted', async () => {
-    const gateway = new ScriptedGateway([
-      () => terminalStream(assistant([
-        { type: 'toolCall', id: 'budget-call', name: 'budget-tool', arguments: {} },
-      ], 'toolUse')),
-      () => terminalStream(assistant([{ type: 'text', text: 'must not run' }])),
-    ]);
-    const runtime = createRuntime(gateway, {
-      tools: [tool('budget-tool')],
-      remainingTokenBudget: () => ({
-        remaining: 4 - gateway.requests.length * USAGE.totalTokens,
-        total: 10,
-        used: 6 + gateway.requests.length * USAGE.totalTokens,
-      }),
-    });
-    const events: AgentEvent[] = [];
-    runtime.subscribe((event) => events.push(event));
-
-    await runtime.prompt(USER);
-
-    expect(gateway.requests).toHaveLength(1);
-    expect(runtime.state.interruptionError).toEqual({
-      code: 'subagent_budget_exhausted',
-      message: 'Token budget exhausted mid-Turn (16 of 10 tokens)',
-    });
-    expect(events.filter((event) => event.type === 'turn_start')).toHaveLength(1);
-    expect(events.filter((event) => event.type === 'turn_end')).toHaveLength(1);
-    expect(events.at(-1)?.type).toBe('agent_end');
-  });
-
-  test('delivers one budget warning on the first 80 percent crossing', async () => {
-    const notice = '[Budget notice] test';
-    const gateway = new ScriptedGateway([
-      () => terminalStream(assistant([
-        { type: 'toolCall', id: 'warning-call-1', name: 'budget-tool', arguments: {} },
-      ], 'toolUse')),
-      () => terminalStream(assistant([
-        { type: 'toolCall', id: 'warning-call-2', name: 'budget-tool', arguments: {} },
-      ], 'toolUse')),
-      () => terminalStream(assistant([{ type: 'text', text: 'complete' }])),
-    ]);
-    const warnings: Array<{ remaining: number; total: number; used: number }> = [];
-    let runtime!: NativeAgentRuntime;
-    runtime = createRuntime(gateway, {
-      tools: [tool('budget-tool')],
-      remainingTokenBudget: () => ({
-        remaining: gateway.requests.length === 0 ? 23 : 3,
-        total: 25,
-        used: gateway.requests.length === 0 ? 2 : 22,
-      }),
-      onBudgetWarning: async (actuals) => {
-        warnings.push(actuals);
-        runtime.steer({ role: 'user', content: notice, timestamp: 3 });
-      },
-    });
-
-    await runtime.prompt(USER);
-
-    expect(gateway.requests).toHaveLength(3);
-    expect(warnings).toEqual([{ remaining: 3, total: 25, used: 22 }]);
-    expect(gateway.requests[1]?.context.messages.map(messageText)).toContain(notice);
-  });
-
-  test('logs a budget warning delivery failure and continues the Turn', async () => {
-    const gateway = new ScriptedGateway([
-      () => terminalStream(assistant([
-        { type: 'toolCall', id: 'warning-failure-call', name: 'budget-tool', arguments: {} },
-      ], 'toolUse')),
-      () => terminalStream(assistant([{ type: 'text', text: 'complete without notice' }])),
-    ]);
-    const warningFailure = new Error('budget notice steering failed');
-    const warningLog = spyOn(console, 'warn').mockImplementation(() => undefined);
-    const runtime = createRuntime(gateway, {
-      tools: [tool('budget-tool')],
-      remainingTokenBudget: () => ({
-        remaining: gateway.requests.length === 0 ? 100 : 20,
-        total: 100,
-        used: gateway.requests.length === 0 ? 0 : 80,
-      }),
-      onBudgetWarning: async () => { throw warningFailure; },
-    });
-
-    try {
-      await runtime.prompt(USER);
-      expect(warningLog).toHaveBeenCalledTimes(1);
-      expect(warningLog).toHaveBeenCalledWith(
-        '[agent] Budget warning delivery failed: budget notice steering failed',
-      );
-    } finally {
-      warningLog.mockRestore();
-    }
-
-    expect(gateway.requests).toHaveLength(2);
-    expect(runtime.state.interruptionError).toBeUndefined();
-    expect(runtime.state.errorMessage).toBeUndefined();
-  });
-
-  test('keeps a terminal answer completed and leaves racing steering undelivered at exhaustion', async () => {
-    const controlled = controlledStream();
-    const gateway = new ScriptedGateway([
-      () => controlled.stream,
-      () => terminalStream(assistant([{ type: 'text', text: 'must not run' }])),
-    ]);
-    const runtime = createRuntime(gateway, {
-      remainingTokenBudget: () => ({
-        remaining: 10 - gateway.requests.length * USAGE.totalTokens,
-        total: 10,
-        used: gateway.requests.length * USAGE.totalTokens,
-      }),
-    });
-    let delivered = 0;
-    const running = runtime.prompt(USER);
-    await waitFor(() => gateway.requests.length === 1);
-    runtime.steer(
-      { role: 'user', content: 'racing steer', timestamp: 3 },
-      () => { delivered += 1; },
-    );
-    controlled.finish(assistant([{ type: 'text', text: 'terminal answer' }]));
-
-    await running;
-
-    expect(gateway.requests).toHaveLength(1);
-    expect(runtime.state.interruptionError).toBeUndefined();
-    expect(delivered).toBe(0);
-  });
-
-  test('survives a binding denomination flip and still enforces the active cap', async () => {
-    const gateway = new ScriptedGateway([
-      () => terminalStream(assistant([
-        { type: 'toolCall', id: 'flip-call-1', name: 'budget-tool', arguments: {} },
-      ], 'toolUse')),
-      () => terminalStream(assistant([
-        { type: 'toolCall', id: 'flip-call-2', name: 'budget-tool', arguments: {} },
-      ], 'toolUse')),
-      () => terminalStream(assistant([
-        { type: 'toolCall', id: 'flip-call-3', name: 'budget-tool', arguments: {} },
-      ], 'toolUse')),
-      () => terminalStream(assistant([{ type: 'text', text: 'must not run' }])),
-    ]);
-    const snapshots = [
-      { remaining: 10, total: 100, used: 90 },
-      { remaining: 5, total: 20, used: 15 },
-      { remaining: 0, total: 20, used: 20 },
-    ];
-    const runtime = createRuntime(gateway, {
-      tools: [tool('budget-tool')],
-      remainingTokenBudget: () => snapshots[Math.min(gateway.requests.length - 1, 2)]!,
-    });
-
-    await runtime.prompt(USER);
-
-    expect(gateway.requests).toHaveLength(3);
-    expect(runtime.state.interruptionError).toEqual({
-      code: 'subagent_budget_exhausted',
-      message: 'Token budget exhausted mid-Turn (20 of 20 tokens)',
-    });
-  });
-
-  test('keeps a null budget port unlimited across provider calls', async () => {
-    const gateway = new ScriptedGateway([
-      () => terminalStream(assistant([
-        { type: 'toolCall', id: 'unlimited-call', name: 'budget-tool', arguments: {} },
-      ], 'toolUse')),
-      () => terminalStream(assistant([{ type: 'text', text: 'complete' }])),
-    ]);
-    const runtime = createRuntime(gateway, {
-      tools: [tool('budget-tool')],
-      remainingTokenBudget: () => null,
-    });
-
-    await runtime.prompt(USER);
-
-    expect(gateway.requests).toHaveLength(2);
-    expect(runtime.state.interruptionError).toBeUndefined();
-  });
 
   test('resolves API keys for every model call and preserves the configured fallback', async () => {
     let keyReads = 0;
@@ -1726,8 +1493,6 @@ function createRuntime(
     getApiKey?: KernelAgentOptions['getApiKey'];
     providerOptions?: KernelAgentOptions['providerOptions'];
     admitToolCall?: KernelAgentOptions['admitToolCall'];
-    remainingTokenBudget?: KernelAgentOptions['remainingTokenBudget'];
-    onBudgetWarning?: KernelAgentOptions['onBudgetWarning'];
   } = {},
 ): NativeAgentRuntime {
   return new NativeAgentRuntime({
@@ -1743,8 +1508,6 @@ function createRuntime(
     getApiKey: overrides.getApiKey,
     providerOptions: overrides.providerOptions,
     admitToolCall: overrides.admitToolCall,
-    remainingTokenBudget: overrides.remainingTokenBudget,
-    onBudgetWarning: overrides.onBudgetWarning,
   });
 }
 

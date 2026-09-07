@@ -275,7 +275,7 @@ export function App() {
       ui: source.ui,
       threadName: (threadId) => {
         const thread = threadStore.getSnapshot().threads.find((candidate) => candidate.id === threadId);
-        return thread?.name || thread?.agentNickname || thread?.agentRole || thread?.preview || null;
+        return thread?.name || thread?.preview || null;
       },
     }) : EMPTY_AGENT_USER_VIEW;
   }, []);
@@ -725,12 +725,6 @@ export function App() {
           onNavigatePanelBack={navigatePanelBack}
           onNavigatePanelPreview={navigatePanelPreview}
           onNavigatePanelRoot={navigatePanelRoot}
-          onOpenThreadTrajectory={(threadId) => {
-            openThreadTrajectoryPanel(threadId);
-            void threadStore.selectThread(threadId).catch((selectionError) => {
-              setError(selectionError instanceof Error ? selectionError.message : String(selectionError));
-            });
-          }}
           onPanelScrollPositionChange={updatePanelScroll}
           onPanelResizeKeyDown={resizePanelPairWithKeyboard}
           onPanelResizeReset={resetPanelPair}

@@ -1,10 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  isolatedSkillIdentity,
-  isolatedSkillNameFromTaskName,
-  isolatedSkillTaskName,
-} from '../../src/core/agent/subagentTaskPath';
-import {
   AgentProtocolCodecError,
   createLocalItemProvenance,
   createLocalTurnProvenance,
@@ -41,7 +36,6 @@ import {
   THREAD_MESSAGE_CONTEXT_MENU_ACTIONS,
   THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS,
   threadFeatureSource,
-  type SubagentExecutionProjection,
   type Thread,
   type ThreadContextPayload,
   type ThreadItem,
@@ -275,46 +269,6 @@ const allItems: readonly ThreadItem[] = [
     modelCall: replayableModelCall('file_read', { file_path: 'notes.md' }),
   },
   {
-    type: 'collabAgentToolCall',
-    id: 'item-9',
-    provenance: { ...itemProvenance, originItemId: 'item-9' },
-    tool: 'agent',
-    status: 'completed',
-    senderThreadId: THREAD_ID,
-    receiverThreadIds: [CHILD_THREAD_ID],
-    prompt: 'Inspect tests',
-    summary: null,
-    model: null,
-    reasoningEffort: null,
-    agentsStates: {
-      [CHILD_THREAD_ID]: {
-        status: 'running',
-        taskPath: '/root/inspect_tests',
-        nickname: null,
-        role: null,
-      },
-    },
-    outputRef: null,
-    resourceRefs: [],
-    modelCall: replayableModelCall('agent', {
-      description: 'Inspect tests',
-      prompt: 'Inspect tests',
-      subagent_type: 'explore',
-      run_in_background: true,
-    }),
-  },
-  {
-    type: 'subAgentActivity',
-    id: 'item-10',
-    provenance: { ...itemProvenance, originItemId: 'item-10' },
-    kind: 'started',
-    agentThreadId: CHILD_THREAD_ID,
-    agentTurnId: CHILD_TURN_ID,
-    agentPath: '/root/inspect_tests',
-    error: null,
-    spawnItemId: 'item-9',
-  },
-  {
     type: 'webSearch',
     id: 'item-11',
     provenance: { ...itemProvenance, originItemId: 'item-11' },
@@ -478,8 +432,6 @@ const thread: Thread = {
   sessionId: SESSION_ID,
   parentThreadId: null,
   forkedFromId: null,
-  agentNickname: null,
-  agentRole: null,
   name: 'Protocol work',
   preview: 'Implement the protocol',
   ephemeral: false,
@@ -493,67 +445,6 @@ const thread: Thread = {
   historyMode: 'paginated',
   turns: [completedTurn],
 };
-
-const subagentExecution: SubagentExecutionProjection = {
-  agentId: CHILD_THREAD_ID,
-  parentThreadId: THREAD_ID,
-  description: 'survey the runtime',
-  agentType: 'general-purpose',
-  runMode: 'background',
-  generation: 2,
-  currentTurnId: TURN_ID,
-  parentItemId: 'spawn-item',
-  stopProvenance: 'user',
-  terminalStatus: 'interrupted',
-  notificationState: 'delivered',
-  terminalError: null,
-  deliveryTurnId: TURN_ID,
-  deliveryClass: 'ordinary',
-  eligibleAfterGeneration: null,
-  coverageDisposition: null,
-  omittedOutputBytes: 0,
-  omittedOutputTokens: 0,
-  generationReceipts: [{
-    generation: 2,
-    turnId: TURN_ID,
-    parentItemId: 'spawn-item',
-    terminalStatus: 'interrupted',
-    stopProvenance: 'user',
-    durationMs: 100,
-    error: null,
-    partialOutputAvailable: true,
-    parentThreadId: THREAD_ID,
-    notificationState: 'delivered',
-    deliveryTurnId: TURN_ID,
-  }],
-  notificationCutoff: 'open',
-  executionMode: 'ordinary',
-  settlementCoverage: null,
-  worktree: { branch: 'tenon/agent-survey', path: '/tmp/project-agent-survey' },
-  createdAt: 100,
-  updatedAt: 300,
-};
-
-describe('isolated Skill task addressing', () => {
-  test('round-trips a Skill name through the address both processes share', () => {
-    const identity = isolatedSkillIdentity('01910000-0000-7000-8000-00000000ab12');
-    const taskName = isolatedSkillTaskName('Data Viz', identity);
-
-    expect(taskName).toBe(`skill_data_viz_${identity}`);
-    expect(identity).toHaveLength(12);
-    // The renderer strips exactly what main built: the two sides cannot drift
-    // apart without this test failing, which is the point of sharing the format.
-    expect(isolatedSkillNameFromTaskName(taskName)).toBe('data_viz');
-  });
-
-  test('falls back to a usable slug and rejects a segment that is not an address', () => {
-    const identity = isolatedSkillIdentity('01910000-0000-7000-8000-00000000ab12');
-
-    expect(isolatedSkillTaskName('!!!', identity)).toBe(`skill_skill_${identity}`);
-    expect(isolatedSkillNameFromTaskName('research')).toBeNull();
-    expect(isolatedSkillNameFromTaskName('skill_research_nothexnothex')).toBeNull();
-  });
-});
 
 describe('Codex Agent Core protocol codec', () => {
   test('round-trips and freezes the canonical Thread graph', () => {
@@ -581,7 +472,6 @@ describe('Codex Agent Core protocol codec', () => {
     if (user?.type !== 'userMessage') throw new Error('Missing userMessage fixture');
     const authors = [
       { kind: 'reader' as const },
-      { kind: 'agent' as const, threadId: CHILD_THREAD_ID },
       { kind: 'host' as const },
       { kind: 'feature' as const, feature: 'automation', ref: 'run-1' },
     ];
@@ -593,8 +483,8 @@ describe('Codex Agent Core protocol codec', () => {
     delete historical.author;
     expect(() => decodeThreadItem(historical)).toThrow('item.author');
     expect(() => decodeThreadItem({ ...historical, author: { kind: 'unknown' } })).toThrow('item.author.kind');
-    expect(() => decodeThreadItem({ ...historical, author: { kind: 'agent', threadId: 'invalid' } }))
-      .toThrow('item.author.threadId');
+    expect(() => decodeThreadItem({ ...historical, author: { kind: 'agent', threadId: CHILD_THREAD_ID } }))
+      .toThrow('item.author.kind');
     expect(() => decodeThreadItem({ ...historical, author: { kind: 'feature', feature: ' ' } }))
       .toThrow('item.author.feature');
   });
@@ -647,18 +537,6 @@ describe('Codex Agent Core protocol codec', () => {
     })).toThrow('expected a safe base name');
   });
 
-  test('rejects pre-status-truth Subagent Item shapes without a legacy reader', () => {
-    const collaboration = allItems.find((item) => item.type === 'collabAgentToolCall')!;
-    expect(() => decodeThreadItem({
-      ...collaboration,
-      agentsStates: { [CHILD_THREAD_ID]: 'running' },
-    })).toThrow('expected an object');
-
-    const activity = { ...allItems.find((item) => item.type === 'subAgentActivity')! } as Record<string, unknown>;
-    delete activity.error;
-    expect(() => decodeThreadItem(activity)).toThrow('item.error');
-  });
-
   test('keeps a web search Item readable when the model omitted its query', () => {
     const search = JSON.parse(encodeThreadItem(
       allItems.find((item) => item.type === 'webSearch')!,
@@ -707,63 +585,6 @@ describe('Codex Agent Core protocol codec', () => {
     })).toMatchObject({ type: 'fileChange', changes: [{ path: '' }] });
   });
 
-  test('keeps a collaboration Item readable when an optional string is empty', () => {
-    const collab = JSON.parse(encodeThreadItem(
-      allItems.find((item) => item.type === 'collabAgentToolCall')!,
-    )) as Record<string, unknown>;
-
-    // Empty is not corrupt: it must not cost the reader the whole Thread.
-    expect(decodeThreadItem({ ...collab, model: '', reasoningEffort: '' })).toMatchObject({
-      type: 'collabAgentToolCall',
-      model: '',
-      reasoningEffort: '',
-    });
-  });
-
-  test('round-trips Agent message summaries and reads Items written before the field existed', () => {
-    const collab = JSON.parse(encodeThreadItem(
-      allItems.find((item) => item.type === 'collabAgentToolCall')!,
-    )) as Record<string, unknown>;
-
-    expect(decodeThreadItem({ ...collab, tool: 'agent_message', summary: 'Request review' }))
-      .toMatchObject({ type: 'collabAgentToolCall', summary: 'Request review' });
-
-    delete collab.summary;
-    expect(decodeThreadItem(collab)).toMatchObject({
-      type: 'collabAgentToolCall',
-      summary: null,
-    });
-  });
-
-  test('rejects malformed or oversized Agent message summaries at the decode boundary', () => {
-    const collab = allItems.find((item) => item.type === 'collabAgentToolCall')!;
-
-    expect(() => decodeThreadItem({ ...collab, summary: 1 })).toThrow('item.summary');
-    expect(() => decodeThreadItem({ ...collab, summary: 'x'.repeat(201) }))
-      .toThrow('must not exceed 200 characters');
-  });
-
-  test('reads a Subagent activity persisted before it carried a spawn reference', () => {
-    // Additive and nullable: a delegation already on disk must still decode, or
-    // the Thread's transcript fails to load until its userData is wiped by hand
-    // — and the packaged app's daily-use data has no wipe step.
-    const legacy = JSON.parse(encodeThreadItem(
-      allItems.find((item) => item.type === 'subAgentActivity')!,
-    )) as Record<string, unknown>;
-    delete legacy.spawnItemId;
-
-    expect(decodeThreadItem(legacy)).toMatchObject({ type: 'subAgentActivity', spawnItemId: null });
-  });
-
-  test('reads a Subagent activity persisted before it carried an exact child Turn anchor', () => {
-    const legacy = JSON.parse(encodeThreadItem(
-      allItems.find((item) => item.type === 'subAgentActivity')!,
-    )) as Record<string, unknown>;
-    delete legacy.agentTurnId;
-
-    expect(decodeThreadItem(legacy)).toMatchObject({ type: 'subAgentActivity', agentTurnId: null });
-  });
-
   test('reads a command Item persisted before it carried a description', () => {
     // The field is additive: Threads already on disk decode with a null
     // description rather than failing, so no dev-data wipe is needed.
@@ -783,7 +604,6 @@ describe('Codex Agent Core protocol codec', () => {
       'fileChange',
       'mcpToolCall',
       'dynamicToolCall',
-      'collabAgentToolCall',
       'webSearch',
     ] as const;
 
@@ -1103,26 +923,8 @@ describe('Codex Agent Core protocol codec', () => {
         contentHash: '3'.repeat(64),
         instructions: 'Inspect the complete diff.',
         arguments: '',
-        execution: 'inline',
         invocationSource: 'model',
-        constraints: { allowedTools: [], model: null, effort: null },
         invokedAt: 110,
-      },
-      {
-        schemaVersion: 1,
-        kind: 'roleCatalog',
-        mode: 'delta',
-        previousCatalogHash: '4'.repeat(64),
-        catalogHash: '5'.repeat(64),
-        entries: [{
-          change: 'added',
-          name: 'researcher',
-          displayName: 'Researcher',
-          source: 'project',
-          identity: '/roles/researcher.md',
-          contentHash: '6'.repeat(64),
-          description: 'Research a bounded question',
-        }],
       },
       {
         schemaVersion: 1,
@@ -1164,8 +966,6 @@ describe('Codex Agent Core protocol codec', () => {
           contentHash: '3'.repeat(64),
           payloadRef: skillInvocationContextRef,
         }],
-        roleCatalogHash: '5'.repeat(64),
-        announcedRoles: [{ name: 'researcher', identity: '/roles/researcher.md', contentHash: '6'.repeat(64) }],
         userViewBaselineRef: userViewContextRef,
         additionalContextBaselineRef: additionalContextRef,
         activeObservations: [{
@@ -1208,20 +1008,9 @@ describe('Codex Agent Core protocol codec', () => {
       threadState: null,
     })).toThrow('cannot acquire instruction authority');
     expect(() => decodeThreadContextPayload({
-      ...payloads.find((payload) => payload.kind === 'skillInvocation'),
-      constraints: { allowedTools: ['file_write'], model: null, effort: null },
-    })).toThrow('inline Skills cannot widen');
-    expect(() => decodeThreadContextPayload({
       ...payloads.find((payload) => payload.kind === 'skillCatalog'),
       mode: 'delta',
     })).toThrow('delta requires a previous catalog hash');
-    const roleCatalog = payloads.find((payload) => payload.kind === 'roleCatalog')!;
-    expect(() => decodeThreadContextPayload({
-      ...roleCatalog,
-      previousCatalogHash: roleCatalog.catalogHash,
-    })).toThrow('real catalog change');
-    expect(() => decodeThreadContextPayload({ ...roleCatalog, entries: [] }))
-      .toThrow('real catalog change');
     const inherited = payloads.find((payload) => payload.kind === 'inheritedContext')!;
     expect(() => decodeThreadContextPayload({
       ...inherited,
@@ -1448,16 +1237,6 @@ describe('Codex Agent Core protocol codec', () => {
       input: [{ type: 'text', text: 'Unattributed steer' }],
       trigger: { kind: 'feature', feature: 'automation' },
     })).toThrow('unknown fields');
-    expect(decodePrivilegedTurnSteerRequest({
-      threadId: THREAD_ID,
-      expectedTurnId: TURN_ID,
-      input: [{ type: 'text', text: 'Peer steer' }],
-      additionalContextSource: `subagent:${CHILD_THREAD_ID}`,
-      author: { kind: 'agent', threadId: CHILD_THREAD_ID },
-    })).toMatchObject({
-      additionalContextSource: `subagent:${CHILD_THREAD_ID}`,
-      author: { kind: 'agent', threadId: CHILD_THREAD_ID },
-    });
   });
 
   test('accepts only bounded structural renderer user-view hints', () => {
@@ -1629,34 +1408,6 @@ describe('Codex Agent Core protocol codec', () => {
       .toThrow('cannot record transient notification turn/plan/updated');
   });
 
-  test('validates Subagent execution notifications as derived, parent-addressed state', () => {
-    const changed = {
-      type: 'subagent/execution/changed' as const,
-      threadId: THREAD_ID,
-      execution: { ...subagentExecution, executionSelectionFallback: null },
-    };
-    expect(decodeAgentCoreNotification(changed)).toEqual(changed);
-    // The envelope names the conversation the change belongs to, so a record
-    // routed to a Thread that did not delegate it is a defect, not a variant.
-    expect(() => decodeAgentCoreNotification({
-      ...changed,
-      threadId: TURN_ID,
-    })).toThrow('must match the envelope');
-    expect(() => decodeAgentCoreNotification({
-      ...changed,
-      execution: { ...subagentExecution, generation: 0 },
-    })).toThrow('expected a positive safe integer');
-    expect(() => decodeAgentCoreNotification({
-      ...changed,
-      execution: { ...subagentExecution, toolPolicy: { allowNesting: true } },
-    })).toThrow('unknown fields: toolPolicy');
-    // Execution state is derived orchestration state; canonical history is the
-    // Agent's own Thread, so this can never enter a rollout.
-    expect(() => decodeAgentCoreRecordedNotification(changed))
-      .toThrow('cannot record transient notification subagent/execution/changed');
-    expect(decodeAgentCoreTransientNotification(changed)).toEqual(changed);
-  });
-
   test('validates Tool Task notifications as bounded, owner-addressed transient state', () => {
     const changed = { type: 'toolTask/changed' as const, threadId: THREAD_ID, task: toolTask };
     expect(decodeAgentCoreNotification(changed)).toEqual(changed);
@@ -1744,7 +1495,6 @@ describe('Codex Agent Core protocol codec', () => {
       'fileChange',
       'mcpToolCall',
       'dynamicToolCall',
-      'collabAgentToolCall',
       'webSearch',
     ]);
 
@@ -1837,8 +1587,6 @@ describe('Codex Agent Core protocol codec', () => {
       'thread/list': {},
       'thread/references/search': { currentThreadId: THREAD_ID, query: 'presentation', limit: 8 },
       'thread/references/resolve': { currentThreadId: THREAD_ID, threadIds: [CHILD_THREAD_ID] },
-      'thread/descendants': { threadId: THREAD_ID },
-      'thread/subagents/list': { threadId: THREAD_ID },
       'thread/tasks/list': { threadId: THREAD_ID },
       'thread/read': { threadId: THREAD_ID, includeTurns: true },
       'thread/start': {},
@@ -1934,8 +1682,6 @@ describe('Codex Agent Core protocol codec', () => {
           availability: 'available',
         }],
       },
-      'thread/descendants': { data: [thread], queuedWorkThreadIds: [] },
-      'thread/subagents/list': { data: [subagentExecution] },
       'thread/tasks/list': { data: [toolTask] },
       'thread/read': { thread },
       'thread/start': { thread },

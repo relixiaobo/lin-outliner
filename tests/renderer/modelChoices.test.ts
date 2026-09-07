@@ -36,7 +36,7 @@ function settings(
       auth: { authKind: 'api-key', credentialed: provider.usable !== false, hasStoredKey: provider.usable !== false },
     })),
     availableProviders: providers.map((provider) => catalog(provider.id, provider.models)),
-    agent: { additionalSkillDirectories: [], subagentTokenBudget: null, disabledSkills: [] },
+    agent: { additionalSkillDirectories: [], disabledSkills: [] },
     imageGeneration: {},
   } as AgentProviderSettingsView;
 }

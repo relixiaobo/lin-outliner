@@ -514,8 +514,6 @@ function thread(id: string, now: number): Thread {
     sessionId: uuidV7(now),
     parentThreadId: null,
     forkedFromId: null,
-    agentNickname: null,
-    agentRole: null,
     name: null,
     preview: '',
     ephemeral: false,

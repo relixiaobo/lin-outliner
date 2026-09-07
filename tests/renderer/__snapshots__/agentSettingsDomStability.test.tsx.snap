@@ -279,6 +279,26 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
           </div>
         </div>
         <div class="inset-group">
+          <div class="inset-group-header">Delegation</div>
+          <div role="list" class="inset-card" aria-label="Agent delegation">
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text">
+                  <span class="inset-row-label">Experimental delegation</span>
+                </span>
+              </div>
+              <div class="inset-row-trailing">
+                <button type="button" role="switch" aria-label="Experimental delegation" aria-checked="false">
+                  <span aria-hidden="true" class="switch-mark">
+                    <span class="switch-mark-thumb">
+                    </span>
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="inset-group">
           <div class="inset-group-header">Memory</div>
           <div role="list" class="inset-card" aria-label="Memory">
             <div role="listitem" class="inset-row">
@@ -670,6 +690,29 @@ exports[`settings page DOM renders the services page byte-stably 1`] = `
       <section aria-label="Model services" class="agent-settings-section settings-providers-section">
         <div class="settings-provider-groups">
           <div class="inset-group">
+            <div class="inset-group-header">Default text model</div>
+            <div role="list" class="inset-card" aria-label="Default text model">
+              <div role="listitem" class="inset-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">Default text model</span>
+                    <span class="inset-row-sublabel">Used for new Threads without an explicit model.</span>
+                  </span>
+                </div>
+                <div class="inset-row-trailing">
+                  <span class="select-popup">
+                    <select class="select-popup-input" aria-label="Default text model">
+                      <option selected value="">Auto</option>
+                    </select>
+                    <svg data-icon="ChevronDown" class="app-icon select-popup-chevron" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-xs)" width="var(--icon-size-xs)">
+                      <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 9L12 15L18 9" />
+                    </svg>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="inset-group">
             <div class="inset-group-header">Image generation</div>
             <div role="list" class="inset-card" aria-label="Image generation settings">
               <div role="listitem" class="inset-row">
@@ -861,6 +904,12 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
                 <svg data-icon="Refresh" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
                   <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M21.8883 13.5C21.1645 18.3113 17.013 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C16.1006 2 19.6248 4.46819 21.1679 8" />
                   <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M17 8H21.4C21.7314 8 22 7.73137 22 7.4V3" />
+                </svg>
+              </button>
+              <button type="button" title="Review Skills" class="icon-button icon-button-chrome rail-toggle" aria-label="Review Skills">
+                <svg data-icon="Search" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M17 17L21 21" />
+                  <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M3 11C3 15.4183 6.58172 19 11 19C13.213 19 15.2161 18.1015 16.6644 16.6493C18.1077 15.2022 19 13.2053 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11Z" />
                 </svg>
               </button>
               <button type="button" title="Add a skill" class="icon-button icon-button-chrome rail-toggle" aria-label="Add a skill" aria-haspopup="menu" aria-expanded="false">

@@ -297,7 +297,6 @@ export function trajectoryRecordRole(record: ThreadTrajectoryRecordSummary, labe
     case 'tool': return labels.role.tool;
     case 'retry': return labels.role.retry;
     case 'compaction': return labels.role.compacted;
-    case 'delegation': return labels.role.agent;
   }
 }
 
@@ -324,11 +323,7 @@ export function trajectoryRecordLabel(record: ThreadTrajectoryRecordSummary, lab
     });
   }
   if (label.type === 'contextCompaction') return labels.record.contextCompaction;
-  if (label.action === 'delegate') return labels.record.agentDelegation;
-  if (label.action === 'message') return labels.record.agentMessage;
-  if (label.action === 'stop') return labels.record.agentStop;
-  if (label.action === 'activity') return labels.record.agentActivity;
-  return label.name;
+  return label;
 }
 
 export function trajectoryRecordMeta(
@@ -359,7 +354,7 @@ export function trajectoryRecordContent(
   if (record.kind === 'context') {
     return record.preview ? `${label} · ${record.preview}` : label;
   }
-  if (record.kind === 'tool' || record.kind === 'delegation') {
+  if (record.kind === 'tool') {
     if (!record.preview || record.preview === label) return label;
     return `${label} · ${record.preview}`;
   }
@@ -375,7 +370,6 @@ function contextKindLabel(kind: ContextPayloadKind, labels: TrajectoryLabels): s
     case 'referencedResources': return labels.record.context.referencedResources;
     case 'skillCatalog': return labels.record.context.skillCatalog;
     case 'skillInvocation': return labels.record.context.skillInvocation;
-    case 'roleCatalog': return labels.record.context.roleCatalog;
     case 'toolOutputProjection': return labels.record.context.toolOutputProjection;
     case 'compactionSummary': return labels.record.context.compactionSummary;
     case 'compactionRestoredState': return labels.record.context.compactionRestoredState;

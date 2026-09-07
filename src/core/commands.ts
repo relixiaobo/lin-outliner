@@ -103,6 +103,7 @@ export const AGENT_COMMANDS = [
   'agent_refresh_provider_models',
   'agent_update_runtime_settings',
   'agent_update_image_generation_settings',
+  'agent_update_model_default',
   'agent_get_capability_settings',
   'agent_apply_capability_settings_patch',
   'agent_append_capability_block',
@@ -118,6 +119,7 @@ export const AGENT_COMMANDS = [
   'agent_oauth_cancel',
   'agent_test_provider_connection',
   'agent_list_all_skills',
+  'agent_skill_curation_report',
   // Local Skill directories are pointed at, never copied in: the picker returns
   // a path to store, and unbinding drops the pointer without touching files.
   'agent_pick_skill_directory',
@@ -137,12 +139,8 @@ export const AGENT_COMMANDS = [
   'agent_managed_skill_set_enabled',
   'agent_managed_skill_rollback',
   'agent_managed_skill_uninstall',
-  // The Agents editor. Configuration file IO belongs to main (A2); the
-  // renderer names an Agent type and a layer, never a path.
+  // Main Agent editor. Configuration file IO belongs to main (A2).
   'agent_identity_catalog',
-  'agent_write_role',
-  'agent_delete_role',
-  'agent_write_presentation',
   'agent_write_profile',
 ] as const;
 

@@ -5,11 +5,9 @@ import path from 'node:path';
 import { AgentSkillRuntime } from '../../src/main/agent/capabilities/agentSkills';
 
 /**
- * A bound directory is a **container** of Skills, pointed at and never copied.
- * "The bound directory is itself a Skill" is a separate seam and is deliberately
- * not part of this one: resolving it meant deciding, per write, whether a path
- * belonged to the bound root or to something nested under it, and that ambiguity
- * kept producing ungoverned or wrongly-attributed writes.
+ * A bound source is pointed at and never copied. Its persisted mode explicitly
+ * selects whether the source directory itself is a Skill or a container whose
+ * direct children are Skills; discovery and authoring use the same mode.
  */
 
 const roots: string[] = [];
@@ -33,17 +31,88 @@ async function writeSkill(dir: string, name: string, description: string): Promi
   );
 }
 
-function runtimeFor(workspace: string, directories: string[]): AgentSkillRuntime {
+function runtimeFor(workspace: string, directories: string[], modes?: Record<string, 'skill' | 'container'>): AgentSkillRuntime {
   return new AgentSkillRuntime({
     localRoot: workspace,
     includeUserSkills: false,
     builtInSkillDirectories: [],
     builtInSkills: [],
     additionalSkillDirectories: directories,
+    additionalSkillSourceModes: modes,
   });
 }
 
 describe('bound local skill directories', () => {
+  test('loads the selected directory itself when mode is skill', async () => {
+    const workspace = await temporaryRoot();
+    const skillRoot = path.join(await temporaryRoot(), 'my-skill');
+    await writeSkill(skillRoot, 'my-skill', 'The exact selected workflow.');
+
+    const runtime = runtimeFor(workspace, [skillRoot], { [skillRoot]: 'skill' });
+
+    expect(await runtime.getSkill('my-skill')).toMatchObject({
+      name: 'my-skill',
+      rootDir: skillRoot,
+    });
+    expect(await runtime.resolveSkillTarget(path.join(skillRoot, 'references', 'notes.md')))
+      .toMatchObject({ skillName: 'my-skill', ownership: 'loaded-bound' });
+  });
+
+  test('an exact Skill with a broken definition keeps its root governed for repair', async () => {
+    const workspace = await temporaryRoot();
+    const skillRoot = path.join(await temporaryRoot(), 'broken-skill');
+    await mkdir(skillRoot, { recursive: true });
+    await writeFile(path.join(skillRoot, 'SKILL.md'), '---\nexecution: shell\n---\n\nRetired contract.\n', 'utf8');
+
+    const runtime = runtimeFor(workspace, [skillRoot], { [skillRoot]: 'skill' });
+
+    expect(await runtime.getSkill('broken-skill')).toBeNull();
+    expect(await runtime.resolveSkillTarget(path.join(skillRoot, 'references', 'notes.md')))
+      .toMatchObject({ skillName: 'broken-skill', ownership: 'bound-admission' });
+  });
+
+  test('an exact Skill with an invalid basename is not loaded', async () => {
+    const workspace = await temporaryRoot();
+    const skillRoot = path.join(await temporaryRoot(), 'Bad Skill');
+    await writeSkill(skillRoot, 'bad-skill', 'Invalid exact Skill basename.');
+
+    const runtime = runtimeFor(workspace, [skillRoot], { [skillRoot]: 'skill' });
+
+    expect(await runtime.listAllSkills()).toEqual([]);
+  });
+
+  test('container mode keeps sibling discovery explicit', async () => {
+    const workspace = await temporaryRoot();
+    const parent = await temporaryRoot();
+    await writeSkill(path.join(parent, 'alpha'), 'alpha', 'The alpha workflow.');
+    await writeSkill(path.join(parent, 'beta'), 'beta', 'The beta workflow.');
+
+    const runtime = runtimeFor(workspace, [parent], { [parent]: 'container' });
+
+    expect((await runtime.listAllSkills()).map((skill) => skill.name).sort()).toEqual(['alpha', 'beta']);
+  });
+
+  test('changing the persisted source mode changes discovery after reload', async () => {
+    const workspace = await temporaryRoot();
+    const selected = path.join(await temporaryRoot(), 'selected-skill');
+    await writeSkill(selected, 'selected-skill', 'The selected workflow.');
+
+    const runtime = runtimeFor(workspace, [selected], { [selected]: 'container' });
+    expect(await runtime.listAllSkills()).toEqual([]);
+
+    runtime.updateAdditionalSkillSourceModes({ [selected]: 'skill' });
+    expect((await runtime.listAllSkills()).map((skill) => skill.name)).toEqual(['selected-skill']);
+  });
+
+  test('preserves source mode when the configured path is relative to the workspace', async () => {
+    const workspace = await temporaryRoot();
+    const selected = path.join(workspace, 'selected-skill');
+    await writeSkill(selected, 'selected-skill', 'The relative selected workflow.');
+
+    const runtime = runtimeFor(workspace, ['./selected-skill'], { './selected-skill': 'skill' });
+
+    expect((await runtime.listAllSkills()).map((skill) => skill.name)).toEqual(['selected-skill']);
+  });
   test('loads the skills inside a bound folder', async () => {
     const workspace = await temporaryRoot();
     const bound = await temporaryRoot();
@@ -62,13 +131,12 @@ describe('bound local skill directories', () => {
 
     const runtime = runtimeFor(workspace, [bound]);
 
-    // Its own SKILL.md is one segment below the bound root, which is the
-    // container's own level — not a Skill's. The picker is what makes this a
-    // usable rule: it binds the parent when the chosen folder is a Skill.
+    // Without an explicit `skill` mode, the selected directory is a container;
+    // its direct SKILL.md is therefore not a child Skill.
     expect(await runtime.listAllSkills()).toEqual([]);
   });
 
-  test('binding the parent is what makes a Skill folder load', async () => {
+  test('binding the containing directory loads a child Skill in container mode', async () => {
     const workspace = await temporaryRoot();
     const parent = await temporaryRoot();
     await writeSkill(path.join(parent, 'my-pdf-skill'), 'my-pdf-skill', 'Handle PDFs.');

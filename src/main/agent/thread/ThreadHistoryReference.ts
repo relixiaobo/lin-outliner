@@ -136,7 +136,7 @@ export class ThreadHistoryReferenceService {
         }
         const target = this.core.metadata.read(threadId);
         if (!target) return { threadId, title: null, updatedAt: null, availability: 'missing' as const };
-        if (!sameProfile(current, target)) {
+        if (!isReferenceEligible(target) || !sameProfile(current, target)) {
           return { threadId, title: null, updatedAt: null, availability: 'denied' as const };
         }
         return {
@@ -403,10 +403,10 @@ export class ThreadHistoryReferenceService {
         'Call thread_search and retry with an available thread_id.',
       );
     }
-    if (!sameProfile(current, target)) {
+    if (!isReferenceEligible(target) || !sameProfile(current, target)) {
       throw historyFailure(
         'thread_access_denied',
-        'Referenced Thread belongs to another profile',
+        'Referenced Thread is not available in the current profile',
         'Choose a Thread returned by thread_search in the current profile.',
       );
     }
@@ -415,7 +415,7 @@ export class ThreadHistoryReferenceService {
 
   private resolvedThreadLabel(current: ThreadCatalogRecord, threadId: ThreadId): string {
     const target = this.core.metadata.read(threadId);
-    if (!target || !sameProfile(current, target)) return shortThreadId(threadId);
+    if (!target || !isReferenceEligible(target) || !sameProfile(current, target)) return shortThreadId(threadId);
     return threadTitle(target.thread);
   }
 
@@ -530,8 +530,6 @@ function readableItemText(
       return `[Activity: ${item.server}.${item.tool} ${item.status}]`;
     case 'dynamicToolCall':
       return `[Activity: ${[item.namespace, item.tool].filter(Boolean).join('.')} ${item.status}]`;
-    case 'collabAgentToolCall':
-      return `[Activity: ${item.tool} ${item.status}]`;
     case 'webSearch':
       return `[Activity: web search ${item.status}]`;
     default:
@@ -591,6 +589,12 @@ function pageResourceReferences(turns: readonly Turn[]): ThreadResourceReference
 
 function sameProfile(left: ThreadCatalogRecord, right: ThreadCatalogRecord): boolean {
   return left.configuration.profileName === right.configuration.profileName;
+}
+
+function isReferenceEligible(record: ThreadCatalogRecord): boolean {
+  return !record.thread.ephemeral
+    && record.thread.parentThreadId === null
+    && record.thread.threadSource === 'user';
 }
 
 function threadTitle(thread: Thread): string {

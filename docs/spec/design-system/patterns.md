@@ -165,7 +165,7 @@ instead (PM 2026-08-19, superseding the shared-glyph-column rule of
 
 PARTICIPANT identity is the one place identity colour lives: a generated mark
 (one shared form filled with the identity's `--identity-tint-*` hue, two eye
-holes) plus a persona and the Agent type, in the speaker header. Identity is its own decorative category — not a functional
+holes) plus the root conversation persona in the speaker header. Identity is its own decorative category — not a functional
 state (B3), not a status (B4), not the rose accent — and it stays on the mark:
 a card, a chip, or a row that carries a participant's work keeps neutral chrome,
 so nothing outside the mark has to be read as a colour code.

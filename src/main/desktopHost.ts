@@ -1,12 +1,15 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, shell } from 'electron';
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, watch } from 'node:fs';
 import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, join, resolve } from 'node:path';
 import { registerDesktopOutlineIpc } from './outlineClient';
 import {
-  STARTUP_GET_CHANNEL, STARTUP_QUIT_CHANNEL, STARTUP_RETRY_CHANNEL, STARTUP_STATE_CHANNEL,
+  STARTUP_GET_CHANNEL,
+  STARTUP_QUIT_CHANNEL,
+  STARTUP_RETRY_CHANNEL,
+  STARTUP_STATE_CHANNEL,
 } from '../core/startup';
 import { runOutlineActionCommand } from './outlineActionCommands';
 import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
@@ -15,27 +18,22 @@ import {
   sniffAssetMimeType as sniffMimeType,
 } from '../core/assetMetadata';
 import { resolveRendererThreadStartDefaults } from './agent/rendererThreadStartDefaults';
-import { resolveAgentExecutionSelection } from './agent/agentExecutionSelection';
-import { gitOutput } from './agent/context/AgentStartupContext';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../core/agent/tools';
 import type { ConfigurationLayerTarget } from './agent/AgentConfigurationWriter';
-import { createToolArtifactSink } from './agent/runtime/ToolArtifactSink';
+import { writeAgentConfigurationSchema } from './agent/AgentConfigurationLoader';
 import { createImageArtifactReference, ImageObservationNormalizationError } from './agent/imageArtifacts';
 import { Mutex } from './agent/Mutex';
 import { resolveToolTaskSupervisorRuntime } from './agent/tasks/toolTaskRuntime';
-import {
-  expandSkillDirectory,
-  isolatedSkillShellContext,
-} from './agent/capabilities/agentSkills';
+import { resolveDelegateCliRuntime } from './delegateRuntime';
+import { expandSkillDirectory } from './agent/capabilities/agentSkills';
 import { isValidSkillName } from './agent/capabilities/agentSkillAuthoring';
-import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
+import { analyzeAgentSkills } from './agent/capabilities/agentSkillCuration';
 import {
   decodeMemoryFeatureMode,
   decodeThreadMemoryMode,
   memoryTagId,
 } from '../core/agent/memory';
 import { decodeThreadResourceReference } from '../core/agent/codec';
-import { turnTerminalAnswer } from '../core/agent/turnAnswer';
 import { threadTranscriptRoot } from './agent/thread/ThreadTranscriptArtifact';
 import { threadTranscriptIndexPath } from './agent/thread/ThreadTranscriptIndex';
 import {
@@ -47,7 +45,6 @@ import {
 import {
   resolveAgentLocalReadPath,
   type AgentLocalWorkspaceContext,
-  type AgentWorkspaceWriteBoundary,
 } from './agent/capabilities/agentLocalTools';
 import type { AgentImageGenerationRuntime } from './agent/capabilities/agentImageGenerationTool';
 import {
@@ -59,16 +56,13 @@ import {
 import type {
   AgentCoreMethod,
   AgentCoreRequestByMethod,
-  SubagentExecutionProjection,
   ThreadAttachmentContent,
   ThreadMessageContextMenuAction,
   ThreadMessageContextMenuRequest,
 } from '../core/agent/protocol';
 import { projectAgentCoreNotification, projectAgentCoreResponse } from '../core/agent/rendererProjection';
 import {
-  REASONING_EFFORTS,
   type EffectiveThreadConfiguration,
-  type ReasoningEffort,
 } from '../core/agent/configuration';
 import {
   AGENT_CORE_NOTIFICATION_CHANNEL,
@@ -102,9 +96,7 @@ import {
   DAILY_NOTES_ID,
   type AgentCapabilityCatalog,
   type AgentEditorView,
-  type AgentExecutionSelectionDraft,
   type AgentProfileDraft,
-  type AgentRoleDraft,
   type AssetIngestInput,
 } from '../core/types';
 import {
@@ -122,6 +114,7 @@ import {
   deleteProviderApiKey,
   deleteProviderConfig,
   getActiveProviderRuntimeConfig,
+  getConfiguredDefaultSelection,
   getProviderRuntimeConfig,
   getAgentRuntimeSettings,
   getProviderSecretStatus,
@@ -133,6 +126,7 @@ import {
   setActiveProvider,
   setProviderApiKey,
   updateImageGenerationSettings,
+  updateModelDefault,
   updateAgentRuntimeSettings,
   upsertProviderConfig,
   prepareProviderConnectionProbe,
@@ -167,6 +161,9 @@ import {
   loadAppPreferences,
   saveLastAgentThreadConfiguration,
 } from './appPreferences';
+import { DEFAULT_FILE_PREFERENCES, loadFilePreferences } from './configuration/filePreferences';
+import { writeFilePreferencesStatus } from './configuration/status';
+import { writeFilePreferencesSchema } from './configuration/schema';
 import type { ThemeMode } from '../core/theme';
 import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
@@ -243,6 +240,7 @@ export interface DesktopHost {
 
 export function createDesktopHost(environment: DesktopHostEnvironment): DesktopHost {
 const resolvedUserDataDir = environment.userDataDir;
+const hostSessionId = randomUUID();
 const diagnosticLog = environment.diagnosticLog;
 const reportError = environment.reportError;
 const resources = new ResourceScope('desktop-host');
@@ -252,6 +250,7 @@ const devEffects = resources.child('dev-effects');
 const transportEffects = resources.child('transport');
 const windowEffects = resources.child('window-application');
 const backgroundEffects = resources.child('background-effects');
+let applyFilePreferencesNow: (() => void) | null = null;
 
 // Image file extensions for the native "insert image" picker. The filter's display
 // name is localized at the call site (it shows in the OS dialog).
@@ -267,6 +266,7 @@ const outlineHost = createOutlineDesktopHost({
   resourcesPath: process.resourcesPath,
   execPath: process.execPath,
   reportError,
+  hostSessionId,
   ready: (service) => lifecycle.ready(service),
 });
 const {
@@ -343,20 +343,81 @@ function scheduleAppUpdateCheck(): void {
   timer.unref?.();
 }
 
-/** How many changed paths a worktree footer will LIST; the count it states is
- *  the real total, which is why both travel back. */
-const MAX_REPORTED_WORKTREE_CHANGES = 200;
-
-/**
- * The managed worktree an Agent still holds, resolved from its execution record.
- * A removed worktree is a tombstone: its `removedAt` says the directory is gone,
- * so it never resolves to a path a reveal could open.
- */
-function retainedAgentWorktree(agentId: string): { readonly path: string } | null {
-  if (!agentId) return null;
-  const worktree = agentHost.threads.subagentExecution(agentId)?.worktree ?? null;
-  return worktree && worktree.removedAt === null ? { path: worktree.path } : null;
+function startFilePreferencesWatcher(): void {
+  const configDir = join(resolvedUserDataDir, 'config');
+  ensureAgentDir(configDir);
+  writeAgentConfigurationSchema(resolvedUserDataDir);
+  writeFilePreferencesSchema(resolvedUserDataDir);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let applying = false;
+  let pendingApply = false;
+  let effectivePreferences = DEFAULT_FILE_PREFERENCES;
+  const apply = () => {
+    if (applying) {
+      pendingApply = true;
+      return;
+    }
+    applying = true;
+    timer = null;
+    const loaded = loadFilePreferences(resolvedUserDataDir);
+    writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
+      effective: effectivePreferences,
+      applicationStatus: 'pending',
+    });
+    const { appearance } = loaded.preferences;
+    if (windowApplicationHost.theme() !== appearance.theme) {
+      windowApplicationHost.setTheme(appearance.theme);
+    }
+    if (typeof appearance.language === 'string' && windowApplicationHost.effectiveLocale() !== appearance.language) {
+      windowApplicationHost.setLocale(appearance.language);
+    }
+    void Promise.all([
+      getAgentRuntimeSettings().then((settings) => {
+        agentHost.skills.updateRuntimeSettings(settings);
+      }),
+      Promise.resolve(agentHost.memory.settings()).then((current) => {
+        const mode = loaded.preferences.agent.memory.enabled ? 'enabled' : 'disabled';
+        return current.status.featureMode === mode ? undefined : agentHost.memory.setFeatureMode(mode);
+      }),
+      windowApplicationHost.updates.applyAutomaticChecksEnabled(loaded.preferences.updates.checkAutomatically),
+    ]).then(() => {
+      effectivePreferences = loaded.preferences;
+      writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
+        effective: effectivePreferences,
+        applicationStatus: 'applied',
+      });
+    }).catch((error) => {
+      writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
+        effective: effectivePreferences,
+        applicationStatus: 'failed',
+        applicationError: error instanceof Error ? error.message : String(error),
+      });
+    }).finally(() => {
+      applying = false;
+      if (pendingApply) {
+        pendingApply = false;
+        queueMicrotask(apply);
+      }
+    });
+  };
+  applyFilePreferencesNow = apply;
+  const watcher = watch(configDir, { persistent: false }, (_event, filename) => {
+    if (filename && filename.toString() !== 'settings.jsonc') return;
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(apply, 100);
+  });
+  const initial = loadFilePreferences(resolvedUserDataDir);
+  writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, initial, {
+    effective: effectivePreferences,
+    applicationStatus: 'pending',
+  });
+  resources.defer('file-preferences-watcher', () => {
+    watcher.close();
+    if (timer !== null) clearTimeout(timer);
+    if (applyFilePreferencesNow === apply) applyFilePreferencesNow = null;
+  });
 }
+
 const agentImageObservationMutex = new Mutex();
 const agentHost = createAgentHost({
   userDataDir: resolvedUserDataDir,
@@ -364,6 +425,12 @@ const agentHost = createAgentHost({
   defaultCwd: agentLocalFileRoot,
   appVersion: app.getVersion(),
   toolTaskSupervisorRuntime: resolveToolTaskSupervisorRuntime({
+    isPackaged: app.isPackaged,
+    moduleDir: environment.moduleDir,
+    resourcesPath: process.resourcesPath,
+    processExecPath: process.execPath,
+  }),
+  delegateCliRuntime: resolveDelegateCliRuntime({
     isPackaged: app.isPackaged,
     moduleDir: environment.moduleDir,
     resourcesPath: process.resourcesPath,
@@ -395,7 +462,7 @@ const agentHost = createAgentHost({
     transcriptIndexPath: threadTranscriptIndexPath(threadTranscriptRoot(resolvedUserDataDir)),
     // One name, wherever it is drawn or spoken: the prompt now asks configuration
     // who this agent is instead of hard-coding a name the transcript disagreed
-    // with. The root Thread is `main`; a child is named by its Agent type.
+    // with. Delegated Threads are hidden and use no renderer identity catalog.
     resolvePersona: (thread) => configuration.resolveThreadPersona(thread, reportError),
   }),
   createThreadOptions: ({ configuration, worktrees }) => ({
@@ -425,42 +492,17 @@ const agentHost = createAgentHost({
       request.configurationProfile,
       request.cwd,
     ),
-    resolveRole: (name, cwd) => configuration.resolveRole(name, cwd),
-    resolveAgentType: (name, cwd) => configuration.resolveAgentType(name, cwd),
-    resolveAgentExecution: async (agentType, cwd, parent) => resolveAgentExecutionSelection({
-      selection: configuration.resolveAgentExecution(agentType, cwd),
-      parent,
-      getProviderRuntimeConfig,
-      validateSelection: (selection, provider) => {
-        validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
-      },
-    }),
-    resolveRoleCatalog: (cwd, reportFailure) => (
-      configuration.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure)
-    ),
     resolveIdentityCatalog: (cwd, reportFailure) => (
       configuration.resolveIdentityCatalogForUserPath(cwd, reportFailure)
     ),
     resolvePersona: (thread, reportFailure) => (
       configuration.resolveThreadPersona(thread, reportFailure)
     ),
-    resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
-    resolveSubagentLimits: async () => {
-      const settings = await getAgentRuntimeSettings();
-      return {
-        maxDepth: settings.subagentMaxDepth,
-        maxConcurrent: settings.subagentMaxConcurrent,
-      };
-    },
-    planAgentWorktree: (input) => worktrees.plan(input),
-    prepareAgentWorktree: (input) => worktrees.prepare(input),
-    settleAgentWorktree: (metadata, options) => worktrees.settle(metadata, options),
-    recoverAgentWorktree: (input) => worktrees.recover(input),
-    cleanupResidualAgentWorktree: (input) => worktrees.cleanupResidual(input),
     reportError,
     resolveRendererStartDefaults: (request) => resolveRendererThreadStartDefaults({
       request,
       remembered: loadAppPreferences().lastAgentThreadConfiguration,
+      getConfiguredDefaultSelection,
       cwd: agentLocalFileRoot,
       getProviderRuntimeConfig,
       getActiveProviderRuntimeConfig,
@@ -504,91 +546,18 @@ const agentHost = createAgentHost({
       return path ? { path, metadata } : null;
     },
   }),
-  createAdmissionSkillRuntimeOptions: ({ thread, turnId, configuration }, { threads }) => ({
+  createAdmissionSkillRuntimeOptions: ({ thread, configuration }) => ({
     localRoot: thread.cwd,
     threadId: thread.id,
     enabledSkills: configuration.skills,
-    executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
-      skill,
-      command,
-      localRoot: thread.cwd,
-      scratchRoot: agentScratchRoot,
-      signal,
-      processEnvironment: outlineHost.createAgentShellEnvironment(
-        thread.id,
-        turnId,
-        (shell) => agentHost.skills.processEnvironment(thread.id, turnId, shell),
-      ),
-      writeBoundary: agentWriteBoundaryForThread(thread.id),
-      subagentPolicy: threads().subagentExecution(thread.id)?.toolPolicy,
-    }),
   }),
-  createTurnSkillRuntimeOptions: (context, { threads }) => ({
+  createTurnSkillRuntimeOptions: (context) => ({
     localRoot: context.thread.cwd,
     threadId: context.thread.id,
     enabledSkills: context.configuration.skills,
-    executeSkillShell: ({ skill, command, argumentBindings, signal }) => executeAgentSkillShellCommand({
-      skill,
-      command,
-      argumentBindings,
-      localRoot: context.thread.cwd,
-      scratchRoot: agentScratchRoot,
-      signal,
-      processEnvironment: outlineHost.createAgentShellEnvironment(
-        context.thread.id,
-        context.turn.id,
-        (shell) => agentHost.skills.processEnvironment(context.thread.id, context.turn.id, shell),
-      ),
-      writeBoundary: agentWriteBoundaryForThread(context.thread.id),
-      subagentPolicy: threads().subagentExecution(context.thread.id)?.toolPolicy,
-      artifactSink: createToolArtifactSink(context),
-    }),
-    executeIsolatedSkill: async ({
-      skill,
-      renderedInstructions,
-      shellObservations,
-      args,
-      parentToolCallId,
-    }) => {
-      if (!parentToolCallId) throw new Error('An isolated Skill requires its parent dynamic-tool Item identity.');
-      const shellContext = isolatedSkillShellContext(shellObservations);
-      const spawned = await threads().spawnIsolatedSkillThread({
-        parentThreadId: context.thread.id,
-        parentTurnId: context.turn.id,
-        parentItemId: parentToolCallId,
-        skillName: skill.name,
-        skillInstructions: renderedInstructions,
-        prompt: args.trim() || `Execute the ${skill.name} Skill. No additional invocation task was supplied.`,
-        allowedTools: skill.allowedTools,
-        ...(shellContext.additionalContext === undefined ? {} : {
-          additionalContext: shellContext.additionalContext,
-          additionalContextSource: `skill:${skill.name}:shell`,
-          additionalContextResourceRefs: shellContext.resourceRefs,
-        }),
-        ...(skill.model === undefined ? {} : { model: skill.model }),
-        ...(skill.effort === undefined ? {} : { reasoningEffort: parseSkillReasoningEffort(skill.effort) }),
-      });
-      await threads().waitForIdle(spawned.thread.id);
-      const completed = threads().readThread({
-        threadId: spawned.thread.id,
-        includeTurns: true,
-      }).thread.turns?.find((turn) => turn.id === spawned.turn.id);
-      if (!completed || completed.status === 'inProgress') {
-        throw new Error(`Isolated Skill child Thread did not reach a terminal Turn: ${spawned.thread.id}`);
-      }
-      const result = turnTerminalAnswer(completed.items);
-      const transcriptPath = await threads().threadTranscriptPath(spawned.thread.id);
-      return {
-        threadId: spawned.thread.id,
-        agentRole: spawned.thread.agentRole ?? 'default',
-        status: completed.status,
-        ...(result ? { result } : {}),
-        ...(transcriptPath ? { transcriptPath } : {}),
-        ...(completed.error?.message ? { error: completed.error.message } : {}),
-      };
-    },
   }),
   createToolOptions: () => ({
+    disabledTools: async () => (await getAgentRuntimeSettings()).disabledTools ?? [],
     imageNormalizer: async ({ filePath, signal }) => {
       return prepareBoundedAgentImage(filePath, basename(filePath), signal);
     },
@@ -599,7 +568,6 @@ const agentHost = createAgentHost({
       context.turn.id,
       (shell) => agentHost.skills.processEnvironment(context.thread.id, context.turn.id, shell),
     ),
-    writeBoundary: agentWriteBoundaryForThread(context.thread.id),
   }),
   createImageGenerationRuntime: createThreadImageGenerationRuntime,
   resolveAutomationConfiguration: async (selection, cwd, { configuration }) => {
@@ -632,29 +600,13 @@ const windowApplicationHost = createWindowApplicationHost({
     await lifecycle.ready('outline-documents');
     return runOutlineActionCommand(outlineHost.document, command, args);
   },
-  searchNodes: (query, limit) => outlineHost.document.searchNodeHits(query, limit),
+  searchNodes: async (query, limit) => {
+    await lifecycle.ready('personal-ranking');
+    return outlineHost.document.searchNodeHits(query, limit);
+  },
   sanitizeInvocationSeed,
   reportError,
 });
-function parseSkillReasoningEffort(value: string): ReasoningEffort {
-  const normalized = value.trim().toLowerCase();
-  if ((REASONING_EFFORTS as readonly string[]).includes(normalized)) return normalized as ReasoningEffort;
-  throw new Error(`Unsupported isolated Skill reasoning effort: ${value}`);
-}
-
-function agentWriteBoundaryForThread(
-  threadId: string,
-): AgentWorkspaceWriteBoundary | undefined {
-  const worktree = agentHost.threads.agentWorktree(threadId);
-  if (!worktree) return undefined;
-  const sandbox = agentHost.worktrees.sandboxPaths(worktree);
-  return {
-    root: worktree.path,
-    shellWritablePaths: sandbox.writablePaths,
-    protectedGitObjectStores: sandbox.protectedGitObjectStores,
-  };
-}
-
 async function validateAutomationEffectiveConfiguration(
   modelProvider: string,
   configuration: EffectiveThreadConfiguration,
@@ -666,10 +618,7 @@ async function validateAutomationEffectiveConfiguration(
 const wakeAutomationsOnResume = () => {
   void lifecycle.ready('agent').then(() => agentHost.automations.wake()).catch(() => undefined);
 };
-agentHost.threads.subscribe((notification) => {
-  if (notification.type === 'subagent/execution/changed') {
-    notifyTerminalBackgroundAgent(notification.execution);
-  }
+agentHost.threads.subscribeRenderer((notification) => {
   windowApplicationHost.windows.main()?.webContents.send(
     AGENT_CORE_NOTIFICATION_CHANNEL,
     projectAgentCoreNotification(notification),
@@ -684,48 +633,6 @@ agentHost.threads.subscribe((notification) => {
  * life of the process. The oldest keys are dropped once it passes the cap; a
  * generation that old cannot still be settling.
  */
-const announcedAgentGenerations = new Set<string>();
-const MAX_ANNOUNCED_AGENT_GENERATIONS = 512;
-
-/**
- * The one OS notification this feature issues.
- *
- * Strictly bounded: a terminal BACKGROUND generation, only while the window is
- * unfocused, once per generation, with fixed content-free copy. Running and
- * steering never notify, foreground settlement never notifies, and the body
- * never carries an Agent's own words — an Agent's output is untrusted content,
- * and the OS notification centre is not a place a user can judge it. The
- * conversation says what happened; this only says to come back.
- */
-function notifyTerminalBackgroundAgent(execution: SubagentExecutionProjection): void {
-  if (execution.runMode !== 'background' || execution.terminalStatus === null) return;
-  const key = `${execution.agentId}:${execution.generation}`;
-  if (announcedAgentGenerations.has(key)) return;
-  const window = windowApplicationHost.windows.main();
-  // No window yet — the terminal write landed during startup — is the one case
-  // that must NOT be marked: there was nobody to tell, and the generation can
-  // still be announced once a window exists.
-  if (!window) return;
-  // Marked the moment a live window OBSERVES the settlement, focused or not.
-  // The ledger re-announces this generation on every later claim, release and
-  // delivery, so marking only on the unfocused path popped "a background Agent
-  // finished" minutes later, for work the reader had watched finish.
-  announcedAgentGenerations.add(key);
-  if (announcedAgentGenerations.size > MAX_ANNOUNCED_AGENT_GENERATIONS) {
-    const oldest = announcedAgentGenerations.values().next();
-    if (!oldest.done) announcedAgentGenerations.delete(oldest.value);
-  }
-  if (window.isFocused()) return;
-  if (!Notification.isSupported()) return;
-  try {
-    new Notification({
-      title: APP_NAME,
-      body: getMessages(windowApplicationHost.effectiveLocale()).agent.thread.agent.backgroundFinished,
-    }).show();
-  } catch (error) {
-    console.warn('[agent] Background Agent notification unavailable', error);
-  }
-}
 agentHost.automations.subscribe((notification) => {
   windowApplicationHost.windows.main()?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);
 });
@@ -881,14 +788,6 @@ function registerMainTransport(previewSession: Electron.Session): HostTransportC
   }
 }
 
-function registerOutlineTransport(ipcMain: OwnedIpcMain): void {
-  registerDesktopOutlineIpc({
-    ipcMain,
-    client: outlineHost.renderer,
-    authorize: (event) => windowApplicationHost.assertMainSender(event, 'Outline Runtime'),
-  });
-}
-
 function registerStartupTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle(STARTUP_GET_CHANNEL, (event) => {
     assertMainRenderer(event, 'Startup status');
@@ -902,6 +801,14 @@ function registerStartupTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle(STARTUP_QUIT_CHANNEL, (event) => {
     assertMainRenderer(event, 'Startup quit');
     return lifecycle.requestQuit();
+  });
+}
+
+function registerOutlineTransport(ipcMain: OwnedIpcMain): void {
+  registerDesktopOutlineIpc({
+    ipcMain,
+    client: outlineHost.renderer,
+    authorize: (event) => windowApplicationHost.assertMainSender(event, 'Outline Runtime'),
   });
 }
 
@@ -1843,12 +1750,10 @@ function agentEditorCwd(value: unknown): string {
 async function agentEditorView(cwd: string): Promise<AgentEditorView> {
   return {
     entries: agentHost.configuration.resolveIdentityCatalog(cwd),
-    roles: agentHost.configuration.listEditableRoles(cwd),
     presentationOverrides: agentHost.configuration.listPresentationOverrides(cwd),
-    executionSelections: agentHost.configuration.listAgentExecutionSelections(cwd),
     profile: agentHost.configuration.resolveEditableProfile(cwd),
-    builtInDefinitions: agentHost.configuration.listBuiltInDefinitions(),
     capabilities: await agentCapabilityCatalog(),
+    sources: agentHost.configuration.inspectSources(cwd),
   };
 }
 
@@ -1868,72 +1773,6 @@ async function agentCapabilityCatalog(): Promise<AgentCapabilityCatalog> {
     // of them are enabled is a separate setting on its own page.
     skills: (await agentHost.skills.list(false)).map((skill) => skill.name),
   };
-}
-
-/**
- * Decode a Role draft at the boundary rather than casting it through.
- *
- * A12 puts fail-closed `throw` exactly here: this is the decode point between
- * an untrusted renderer payload and a write. Casting with `as never` let a
- * malformed payload reach the writer and surface as an internal `TypeError`
- * stack, where the design is that the boundary's own sentence reaches the user.
- */
-function decodeRoleDraft(value: unknown): AgentRoleDraft {
-  const record = plainObject(value, 'role');
-  return {
-    name: requiredText(record.name, 'role.name'),
-    description: requiredText(record.description, 'role.description'),
-    developerInstructions: requiredText(record.developerInstructions, 'role.developerInstructions'),
-    ...(record.persona === undefined ? {} : { persona: requiredText(record.persona, 'role.persona') }),
-    ...(record.color === undefined ? {} : { color: requiredText(record.color, 'role.color') }),
-    ...(record.tools === undefined ? {} : { tools: textList(record.tools, 'role.tools') }),
-    ...(record.skills === undefined ? {} : { skills: textList(record.skills, 'role.skills') }),
-  };
-}
-
-function decodeExecutionSelectionDraft(value: unknown): AgentExecutionSelectionDraft {
-  const record = plainObject(value, 'execution');
-  return {
-    ...(record.modelProvider === undefined
-      ? {}
-      : { modelProvider: nullableText(record.modelProvider, 'execution.modelProvider') }),
-    ...(record.model === undefined
-      ? {}
-      : { model: nullableText(record.model, 'execution.model') }),
-    ...(record.reasoningEffort === undefined
-      ? {}
-      : { reasoningEffort: nullableText(record.reasoningEffort, 'execution.reasoningEffort') }),
-  };
-}
-
-function nullableText(value: unknown, path: string): string | null {
-  return value === null ? null : requiredText(value, path);
-}
-
-async function validateAgentExecutionDraft(
-  cwd: string,
-  layer: 'user' | 'project',
-  agentType: string,
-  draft: AgentExecutionSelectionDraft | undefined,
-): Promise<void> {
-  if (draft === undefined) return;
-  const existing = agentHost.configuration.listAgentExecutionSelections(cwd)
-    .find((row) => row.agentType === agentType && row.layer === layer);
-  const modelProvider = draft.modelProvider ?? null;
-  const model = draft.model ?? null;
-  const reasoningEffort = draft.reasoningEffort ?? null;
-  if (existing
-    && existing.modelProvider === modelProvider
-    && existing.model === model
-    && existing.reasoningEffort === reasoningEffort) return;
-  if (modelProvider === null || model === null) return;
-  const prefix = `${modelProvider}/`;
-  if (!model.startsWith(prefix)) throw new Error(`Model must be qualified by provider ${modelProvider}`);
-  const provider = await getProviderRuntimeConfig(modelProvider, model.slice(prefix.length));
-  if (!provider) throw new Error('The selected Agent model is unavailable');
-  if (reasoningEffort !== null) {
-    validateAgentModelSelection(model, reasoningEffort as never, provider);
-  }
 }
 
 function decodeProfileDraft(value: unknown): AgentProfileDraft {
@@ -2248,15 +2087,23 @@ function preserveStoredDirectoryForms(
   input: AgentRuntimeSettingsInput,
   stored: AgentRuntimeSettings,
 ): AgentRuntimeSettingsInput {
-  if (!input.additionalSkillDirectories) return input;
   const byExpanded = new Map(stored.additionalSkillDirectories.map((dir) => (
     [expandSkillDirectory(dir, agentLocalFileRoot), dir]
   )));
+  const preserve = (dir: string) => byExpanded.get(expandSkillDirectory(dir, agentLocalFileRoot)) ?? dir;
+  if (input.additionalSkillSourceBindings) {
+    return {
+      ...input,
+      additionalSkillSourceBindings: input.additionalSkillSourceBindings.map((binding) => ({
+        ...binding,
+        path: preserve(binding.path),
+      })),
+    };
+  }
+  if (!input.additionalSkillDirectories) return input;
   return {
     ...input,
-    additionalSkillDirectories: input.additionalSkillDirectories.map((dir) => (
-      byExpanded.get(expandSkillDirectory(dir, agentLocalFileRoot)) ?? dir
-    )),
+    additionalSkillDirectories: input.additionalSkillDirectories.map(preserve),
   };
 }
 
@@ -2269,7 +2116,27 @@ function withCanonicalSkillDirectories(settings: AgentProviderSettingsView): Age
   const expanded = settings.agent.additionalSkillDirectories
     .map((dir) => expandSkillDirectory(dir, agentLocalFileRoot))
     .filter(Boolean);
-  return { ...settings, agent: { ...settings.agent, additionalSkillDirectories: expanded } };
+  const additionalSkillSourceModes = Object.fromEntries(
+    Object.entries(settings.agent.additionalSkillSourceModes ?? {}).map(([dir, mode]) => [
+      expandSkillDirectory(dir, agentLocalFileRoot),
+      mode,
+    ]),
+  );
+  return {
+    ...settings,
+    agent: {
+      ...settings.agent,
+      additionalSkillDirectories: expanded,
+      additionalSkillSourceModes,
+    },
+  };
+}
+
+async function withDelegationRunners(settings: AgentProviderSettingsView) {
+  return {
+    ...withCanonicalSkillDirectories(settings),
+    delegationRunners: await agentHost.delegationRunners(),
+  };
 }
 
 /**
@@ -2309,9 +2176,9 @@ async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<
 async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
     case 'agent_get_provider_settings':
-      return withCanonicalSkillDirectories(await getProviderSettings());
+      return withDelegationRunners(await getProviderSettings());
     case 'agent_refresh_provider_models':
-      return withCanonicalSkillDirectories(await refreshProviderModels(String(args.providerId)));
+      return withDelegationRunners(await refreshProviderModels(String(args.providerId)));
     case 'agent_pick_skill_directory': {
       // Tenon points at the directory; it never copies it in. The picker returns
       // a path the caller stores in additionalSkillDirectories, so the user's
@@ -2326,11 +2193,9 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         : await dialog.showOpenDialog(options);
       const picked = result.canceled ? undefined : result.filePaths[0];
       if (!picked) return { path: null };
-      // A bound directory is a CONTAINER of Skills. Picking the folder that is
-      // itself a Skill is at least as natural, and binding it verbatim loaded
-      // nothing and said nothing — the dead end that made the old picker
-      // useless. Report the shape and let the caller bind the parent, rather
-      // than inferring ownership per write, which is a different seam.
+      // Persist the selected directory's identity explicitly. A direct
+      // SKILL.md means the directory itself is the Skill; otherwise its direct
+      // children form a container. Reload and authoring use this same mode.
       const resolvedPick = resolve(picked);
       const isSkillFolder = await stat(join(resolvedPick, 'SKILL.md')).then(
         (entry) => entry.isFile(),
@@ -2343,65 +2208,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       // their actions, and the directory would list as if it were empty.
       return {
         path: resolvedPick,
-        isSkillFolder,
-        // Identity is the directory name, so this decides whether binding the
-        // parent would actually surface it.
-        nameValid: isValidSkillName(basename(resolvedPick)),
+        mode: isSkillFolder && isValidSkillName(basename(resolvedPick)) ? 'skill' : 'container',
       };
-    }
-    case 'agent_worktree_changes': {
-      // The renderer names an Agent; the path comes from the execution record.
-      // A renderer-supplied path here would turn a footer into an arbitrary
-      // filesystem read, so it is never accepted.
-      const worktree = retainedAgentWorktree(String(args.agentId ?? ''));
-      if (!worktree) return { available: false, paths: [], total: 0 };
-      try {
-        // `-z` and `core.quotePath=false`: git otherwise quotes and octal-escapes
-        // any path with a space or a non-ASCII character, which is most of them
-        // in a Chinese workspace, and the footer would list the escaping.
-        const status = await gitOutput(worktree.path, [
-          '--no-optional-locks', '-c', 'core.quotePath=false', 'status', '--porcelain', '-z',
-        ]);
-        // `-z` is NUL-separated and never quotes, so no trimming and no ` -> `:
-        // a rename emits two records, `XY new\0old\0`, the second with no
-        // status prefix at all. Parsed as if each record were a whole entry, a
-        // rename's old path became a second row with its first three characters
-        // chopped off, and `total` counted it.
-        const records = status.split('\0').filter((record) => record.length > 0);
-        const entries: string[] = [];
-        for (let index = 0; index < records.length; index += 1) {
-          const record = records[index]!;
-          const code = record.slice(0, 2);
-          // The destination is the file that is now in the worktree, which is
-          // what the reader is being shown; the source record is consumed here.
-          if (code.includes('R') || code.includes('C')) index += 1;
-          entries.push(record.slice(3));
-        }
-        // The COUNT is the truth about the worktree; the list is capped so a
-        // 3,000-file Agent cannot flood the rail. Reporting `paths.length` as
-        // the count stated exactly 200 as a fact.
-        return {
-          available: true,
-          paths: entries.slice(0, MAX_REPORTED_WORKTREE_CHANGES),
-          total: entries.length,
-        };
-      } catch {
-        return { available: false, paths: [], total: 0 };
-      }
-    }
-    case 'agent_reveal_worktree': {
-      const worktree = retainedAgentWorktree(String(args.agentId ?? ''));
-      if (!worktree) return { revealed: false };
-      // showItemInFolder reports nothing, and the failing case — a worktree the
-      // host removed or a volume that went away — is exactly what the user
-      // clicks Reveal to investigate.
-      try {
-        await stat(worktree.path);
-      } catch {
-        return { revealed: false };
-      }
-      shell.showItemInFolder(worktree.path);
-      return { revealed: true };
     }
     case 'agent_reveal_skill_directory': {
       const target = String(args.path ?? '');
@@ -2429,10 +2237,14 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         preserveStoredDirectoryForms(args.settings as AgentRuntimeSettingsInput, await getAgentRuntimeSettings()),
       );
       agentHost.skills.updateRuntimeSettings(settings.agent);
-      return withCanonicalSkillDirectories(settings);
+      return withDelegationRunners(settings);
     }
     case 'agent_update_image_generation_settings':
-      return withCanonicalSkillDirectories(await updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput));
+      return withDelegationRunners(await updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput));
+    case 'agent_update_model_default':
+      return withDelegationRunners(await updateModelDefault(
+        typeof args.defaultModel === 'string' ? args.defaultModel : null,
+      ));
     case 'agent_get_capability_settings':
       return readAgentCapabilitySettingsView();
     case 'agent_apply_capability_settings_patch':
@@ -2443,7 +2255,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
     case 'agent_upsert_provider_config': {
       const input = args.provider as AgentProviderConfigInput;
-      const settings = withCanonicalSkillDirectories(await upsertProviderConfig(input));
+      const settings = await withDelegationRunners(await upsertProviderConfig(input));
       if (input.enabled === false) clearLastAgentThreadConfiguration();
       // Prove the connection AFTER committing it when the caller says this was a
       // connection save. The same upsert command also backs the provider-list
@@ -2463,14 +2275,14 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return settings;
     }
     case 'agent_delete_provider_config': {
-      const settings = withCanonicalSkillDirectories(
+      const settings = await withDelegationRunners(
         await deleteProviderConfig(String(args.providerId)),
       );
       clearLastAgentThreadConfiguration();
       return settings;
     }
     case 'agent_set_active_provider': {
-      const settings = withCanonicalSkillDirectories(
+      const settings = await withDelegationRunners(
         await setActiveProvider(String(args.providerId)),
       );
       clearLastAgentThreadConfiguration();
@@ -2488,7 +2300,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       // dropped, leaving the interactive step unanswerable and login() hung).
       const loginWindow = windowApplicationHost.windows.providerConfig();
       const providerId = String(args.providerId);
-      const settings = withCanonicalSkillDirectories(await oauthLoginManager.startLogin(providerId, (envelope) => {
+      const settings = await withDelegationRunners(await oauthLoginManager.startLogin(providerId, (envelope) => {
         if (loginWindow && !loginWindow.isDestroyed()) {
           loginWindow.webContents.send(LIN_AGENT_OAUTH_EVENT_CHANNEL, envelope);
         }
@@ -2500,7 +2312,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return settings;
     }
     case 'agent_oauth_logout':
-      return withCanonicalSkillDirectories(await oauthLoginManager.logout(String(args.providerId)));
+      return withDelegationRunners(await oauthLoginManager.logout(String(args.providerId)));
     case 'agent_oauth_respond':
       oauthLoginManager.respond(String(args.requestId), args.value === undefined ? undefined : String(args.value));
       return undefined;
@@ -2535,42 +2347,14 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     }
     case 'agent_list_all_skills':
       return agentHost.skills.list(args.userInvocableOnly === true);
+    case 'agent_skill_curation_report':
+      return analyzeAgentSkills(await agentHost.skills.listCurationCandidates());
     case 'agent_undo_skill_agent_edit': {
       return agentHost.skills.undoAgentEdit(String(args.skillName));
     }
-    // The Agents editor. Configuration file IO stays behind the seam (A2): the
-    // renderer names an Agent and a layer, never a path, so no renderer-side
-    // value can turn these into a write anywhere else on disk.
+    // Main Agent configuration file IO stays behind the seam (A2).
     case 'agent_identity_catalog':
       return await agentEditorView(agentEditorCwd(args.cwd));
-    case 'agent_write_role': {
-      const cwd = agentEditorCwd(args.cwd);
-      const layer = layerTarget(args.layer);
-      const role = decodeRoleDraft(args.role);
-      const execution = args.execution === undefined
-        ? undefined
-        : decodeExecutionSelectionDraft(args.execution);
-      await validateAgentExecutionDraft(cwd, layer, role.name, execution);
-      await agentHost.configuration.writeRole(
-        layer,
-        cwd,
-        role,
-        args.mode === 'create' ? 'create' : 'update',
-        execution,
-      );
-      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
-      return await agentEditorView(cwd);
-    }
-    case 'agent_delete_role': {
-      const cwd = agentEditorCwd(args.cwd);
-      await agentHost.configuration.deleteRole(
-        layerTarget(args.layer),
-        cwd,
-        requiredText(args.name, 'name'),
-      );
-      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
-      return await agentEditorView(cwd);
-    }
     case 'agent_write_profile': {
       const cwd = agentEditorCwd(args.cwd);
       await agentHost.configuration.writeProfile(
@@ -2578,28 +2362,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         cwd,
         requiredText(args.name, 'name'),
         decodeProfileDraft(args.profile),
-        args.presentation === undefined ? undefined : {
-          agentType: requiredText(args.agentType, 'agentType'),
-          draft: decodePresentationDraft(args.presentation),
-        },
-      );
-      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
-      return await agentEditorView(cwd);
-    }
-    case 'agent_write_presentation': {
-      const cwd = agentEditorCwd(args.cwd);
-      const layer = layerTarget(args.layer);
-      const agentType = requiredText(args.agentType, 'agentType');
-      const execution = args.execution === undefined
-        ? undefined
-        : decodeExecutionSelectionDraft(args.execution);
-      await validateAgentExecutionDraft(cwd, layer, agentType, execution);
-      await agentHost.configuration.writePresentation(
-        layer,
-        cwd,
-        agentType,
-        decodePresentationDraft(args.presentation),
-        execution,
+        args.presentation === undefined ? undefined : decodePresentationDraft(args.presentation),
       );
       notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
       return await agentEditorView(cwd);
@@ -2843,7 +2606,10 @@ const lifecycle = new DesktopHostLifecycle({
         transportEffects.defer('main-transport', () => mainTransport?.dispose());
       },
     },
-    { name: 'windows', run: () => windowApplicationHost.initialize() },
+    { name: 'windows', run: async () => {
+      await windowApplicationHost.initialize();
+      startFilePreferencesWatcher();
+    } },
     {
       name: 'provider-configuration',
       dependsOn: ['windows'],
@@ -2874,7 +2640,10 @@ const lifecycle = new DesktopHostLifecycle({
       name: 'agent',
       dependsOn: ['provider-configuration', 'outline-documents'],
       retryable: true,
-      run: ({ assertActive }) => agentHost.initialize(outlineHost.document.liveProjection(), assertActive),
+      run: async ({ assertActive }) => {
+        await agentHost.initialize(outlineHost.document.liveProjection(), assertActive);
+        applyFilePreferencesNow?.();
+      },
     },
     {
       name: 'background-producers',

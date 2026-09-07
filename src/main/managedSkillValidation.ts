@@ -268,17 +268,13 @@ export function parseManagedSkillFrontmatter(input: {
   if (!description || description.length > 2_000) {
     throw new ManagedSkillValidationError('invalid_description', 'Managed SKILL.md frontmatter requires a description of at most 2,000 characters.', 'description');
   }
-  if (
-    parsed.execution !== undefined
-    && (
-      typeof parsed.execution !== 'string'
-      || (parsed.execution.toLowerCase() !== 'inline' && parsed.execution.toLowerCase() !== 'isolated')
-    )
-  ) {
+  const retiredExecutionField = ['execution', 'allowed-tools', 'model', 'effort', 'shell']
+    .find((field) => Object.hasOwn(parsed, field));
+  if (retiredExecutionField) {
     throw new ManagedSkillValidationError(
       'invalid_frontmatter',
-      'Managed SKILL.md execution must be "inline" or "isolated".',
-      'execution',
+      `Managed SKILL.md uses retired execution field "${retiredExecutionField}". Use the delegate CLI for Agent execution.`,
+      retiredExecutionField,
     );
   }
   if (parsed['user-invocable'] !== undefined && typeof parsed['user-invocable'] !== 'boolean') {

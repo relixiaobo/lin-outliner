@@ -10,8 +10,6 @@ import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
 const ROSTER = [
   { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
-  { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
-  { agentType: 'auditor', persona: 'auditor', color: 'violet', source: 'user' },
 ] satisfies AgentIdentityEntry[];
 
 const mounted: Array<() => void> = [];
@@ -28,17 +26,6 @@ afterEach(() => {
 });
 
 describe('speaker headers', () => {
-  test('names a participant by its persona, with what it is beside it', async () => {
-    const { document } = await renderSpeaker({ avatarKey: 'explore', name: 'explore' });
-
-    expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('Rena');
-    // The type stays visible: a persona says who, the label says what.
-    expect(document.querySelector('.thread-speaker-role')?.textContent).toBe('explore');
-    // The mark wears the catalog colour as a palette token, never a literal.
-    expect(document.querySelector('.thread-speaker-avatar svg [fill^="var(--identity-tint-"]')
-      ?.getAttribute('fill')).toBe('var(--identity-tint-1)');
-  });
-
   test('names the conversation\'s own agent and does not label it', async () => {
     const { document } = await renderSpeaker({ avatarKey: 'main', name: 'main' });
 
@@ -52,17 +39,17 @@ describe('speaker headers', () => {
   });
 
   test('forwards the caller\'s mood to the mark and defaults to idle', async () => {
-    const idle = await renderSpeaker({ avatarKey: 'explore', name: 'explore' });
+    const idle = await renderSpeaker({ avatarKey: 'main', name: 'main' });
     expect(idle.document.querySelector('.thread-speaker-avatar svg')?.getAttribute('data-mood'))
       .toBe('idle');
-    const failed = await renderSpeaker({ avatarKey: 'explore', name: 'explore', mood: 'failed' });
+    const failed = await renderSpeaker({ avatarKey: 'main', name: 'main', mood: 'failed' });
     // The face restates what the status text says — here, that the run failed.
     expect(failed.document.querySelector('.thread-speaker-avatar svg')?.getAttribute('data-mood'))
       .toBe('failed');
   });
 
   test('gives every identity the same mark with two independent eyes', async () => {
-    const { document } = await renderSpeaker({ avatarKey: 'auditor', name: 'auditor' });
+    const { document } = await renderSpeaker({ avatarKey: 'main', name: 'main' });
 
     const avatar = document.querySelector('.thread-speaker-avatar');
     // One generated form for everyone — no image assets, no letter fallback.
@@ -73,8 +60,8 @@ describe('speaker headers', () => {
 
   test('stacks what a participant did under who they are', async () => {
     const { document } = await renderSpeaker({
-      avatarKey: 'explore',
-      name: 'explore',
+      avatarKey: 'main',
+      name: 'main',
       meta: <span className="thread-speaker-meta">Worked for 2min33s</span>,
     });
 
@@ -88,14 +75,6 @@ describe('speaker headers', () => {
       .toBe('Worked for 2min33s');
   });
 
-  test('leaves a participant that is not a type unlabelled', async () => {
-    // An isolated Skill: its own name IS what it is, so a role line would only
-    // repeat it.
-    const { document } = await renderSpeaker({ avatarKey: 'code-review', name: 'code-review' });
-
-    expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('code-review');
-    expect(document.querySelector('.thread-speaker-role')).toBeNull();
-  });
 });
 
 async function renderSpeaker({ meta, ...speaker }: {
@@ -117,7 +96,6 @@ async function renderSpeaker({ meta, ...speaker }: {
     identityCatalogByThread: new Map([
       ['thread-root', identityCatalogFrom([
         { agentType: 'main', persona: 'Juniper', color: 'pink', source: 'project' },
-        { agentType: 'explore', persona: 'Juniper', color: 'pink', source: 'project' },
       ])],
       ['thread-speaker', identityCatalogFrom(ROSTER)],
     ]),

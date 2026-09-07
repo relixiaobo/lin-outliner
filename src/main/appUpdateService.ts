@@ -84,6 +84,15 @@ export class AppUpdateService {
     return this.projectView();
   }
 
+  async applyAutomaticChecksEnabled(enabled: boolean): Promise<AppUpdateView> {
+    await this.ready;
+    if (this.state.automaticChecksEnabled === enabled) return this.projectView();
+    this.state = { ...this.state, automaticChecksEnabled: enabled };
+    this.emit();
+    if (enabled) void this.checkInBackground({ force: true });
+    return this.projectView();
+  }
+
   async openAvailableUpdate(): Promise<AppUpdateOpenResult> {
     await this.ready;
     const release = this.availableStoredRelease();

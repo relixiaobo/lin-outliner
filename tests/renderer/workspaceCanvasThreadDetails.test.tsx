@@ -77,7 +77,6 @@ test('Trajectory closes its pane when no Back destination remains', () => {
           onNavigatePanelBack={(panelId) => backCalls.push(panelId)}
           onNavigatePanelPreview={() => undefined}
           onNavigatePanelRoot={() => undefined}
-          onOpenThreadTrajectory={() => undefined}
           onPanelResizeKeyDown={() => undefined}
           onPanelResizeReset={() => undefined}
           onPanelResizeStart={() => undefined}

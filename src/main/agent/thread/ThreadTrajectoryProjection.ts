@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
   MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
-  type CollabAgentToolCallThreadItem,
   type ContextEvidenceThreadItem,
   type JsonValue,
   type Thread,
@@ -512,35 +511,7 @@ export class ThreadTrajectoryProjection {
         summaryText: summary.value,
       }, summary.availability);
     }
-    const item = itemForToolRecord(loaded.turn, record);
-    const execution = toolExecutionForRecord(loaded.diagnostics?.payload ?? null, record);
-    const [input, output] = await Promise.all([
-      this.readToolInput(
-        record.threadId,
-        loaded.diagnostics?.payload ?? null,
-        diagnosticActivityIndex(record.primaryEvidence),
-        execution,
-        item,
-      ),
-      this.readToolOutput(record.threadId, item),
-    ]);
-    const schema = toolSchemaEvidence(loaded.diagnostics?.payload ?? null, execution?.toolName ?? null);
-    return detailRead({
-      kind: 'delegation',
-      turn: turnEvidence(loaded.turn),
-      item: item ? itemEvidence(item) : null,
-      diagnostics: diagnosticsEvidence(
-        diagnostics,
-        diagnosticActivityIndex(record.primaryEvidence),
-        null,
-      ),
-      activityIndex: diagnosticActivityIndex(record.primaryEvidence),
-      executionCallId: execution?.callId ?? null,
-      input: input.value,
-      outputText: output.value,
-      schema,
-      childThreadId: record.childThreadId,
-    }, [...input.availability, ...output.availability]);
+    throw new Error(`Unsupported Trajectory record kind: ${record.kind}`);
   }
 
   private async readToolInput(
@@ -1302,7 +1273,6 @@ function appendStablePromptRecord(
     primaryEvidence: stablePromptEvidenceRef(loaded.threadId, loaded.turn),
     relatedEvidence: [],
     availability: loaded.availability,
-    childThreadId: null,
     usage: null,
   }));
 }
@@ -1351,7 +1321,6 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
               ...(providerCallRef ? [providerCallRef] : []),
             ],
             availability: loaded.availability,
-            childThreadId: null,
             usage: null,
           }));
         });
@@ -1388,7 +1357,6 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
           relatedEvidence: relatedAssistantItems(turn, diagnostics.payload)
             .map((item) => itemEvidenceRef(loaded.threadId, turn, item.id)),
           availability: loaded.availability,
-          childThreadId: null,
           usage: call.response ? providerUsageSummary(call.response.usage) : null,
         }));
         return;
@@ -1396,16 +1364,13 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
       if (activity.type === 'toolExecutionBatch') {
         activity.executions.forEach((execution, executionIndex) => {
           const item = execution.itemId ? itemsById.get(execution.itemId) ?? null : null;
-          const delegation = isDelegationExecution(execution.toolName, item);
           records.push(record({
-            kind: delegation ? 'delegation' : 'tool',
+            kind: 'tool',
             lane: 'tools',
             threadId: loaded.threadId,
             turn,
             order: [loaded.turnIndex, 1, activityIndex, 0, executionIndex, 0],
-            label: delegation
-              ? delegationLabel(item, execution.toolName)
-              : { type: 'tool', name: toolName(item, execution.toolName) },
+            label: { type: 'tool', name: toolName(item, execution.toolName) },
             meta: execution.canonicalIdentity
               ? [execution.canonicalIdentity.namespace, execution.canonicalIdentity.name].filter(Boolean).join('.')
               : execution.toolName,
@@ -1420,7 +1385,6 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
             ),
             relatedEvidence: execution.itemId ? [itemEvidenceRef(loaded.threadId, turn, execution.itemId)] : [],
             availability: loaded.availability,
-            childThreadId: childThreadIdForItem(item),
             usage: null,
             parentRecordId: assistantRecordId(turn.id, activity.sourceCallIndex),
           }));
@@ -1453,7 +1417,6 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
             ]),
           ],
           availability: loaded.availability,
-          childThreadId: null,
           usage: null,
           parentRecordId: assistantRecordId(turn.id, activity.sourceCallIndex),
         }));
@@ -1474,7 +1437,6 @@ function appendTurnRecords(records: ThreadTrajectoryRecordSummary[], loaded: Loa
         primaryEvidence: diagnosticEvidence(loaded.threadId, turn, activityIndex, activity.type),
         relatedEvidence: [itemEvidenceRef(loaded.threadId, turn, activity.itemId)],
         availability: loaded.availability,
-        childThreadId: null,
         usage: null,
       }));
     });
@@ -1515,23 +1477,19 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
       primaryEvidence: itemEvidenceRef(loaded.threadId, loaded.turn, item.id),
       relatedEvidence: [],
       availability: loaded.availability,
-      childThreadId: null,
       usage: null,
     }));
   });
   appendManualCompactionRecords(records, loaded, new Set());
   loaded.turn.items.forEach((item, itemIndex) => {
     if (!isToolItem(item)) return;
-    const delegation = isDelegationItem(item);
     records.push(record({
-      kind: delegation ? 'delegation' : 'tool',
+      kind: 'tool',
       lane: 'tools',
       threadId: loaded.threadId,
       turn: loaded.turn,
       order: [loaded.turnIndex, 1, itemIndex, 1, 0, 0],
-      label: delegation
-        ? delegationLabel(item, item.type)
-        : { type: 'tool', name: toolName(item, item.type) },
+      label: { type: 'tool', name: toolName(item, item.type) },
       meta: item.type,
       preview: compact(toolInputPreview(item)),
       state: item.status === 'inProgress' ? 'running' : item.status,
@@ -1539,7 +1497,6 @@ function appendFallbackTurnRecords(records: ThreadTrajectoryRecordSummary[], loa
       primaryEvidence: itemEvidenceRef(loaded.threadId, loaded.turn, item.id),
       relatedEvidence: [],
       availability: loaded.availability,
-      childThreadId: childThreadIdForItem(item),
       usage: null,
     }));
   });
@@ -1573,7 +1530,6 @@ function appendPreparedContextRecords(
       primaryEvidence: preparedContextPartEvidence(loaded.threadId, loaded.turn, context),
       relatedEvidence: [providerCallEvidence(loaded.threadId, loaded.turn, context.callIndex)],
       availability: loaded.availability,
-      childThreadId: null,
       usage: null,
     }));
   });
@@ -1618,7 +1574,6 @@ function appendToolCatalogRecordIfChanged(
     primaryEvidence: toolCatalogEvidenceRef(loaded.threadId, loaded.turn, catalog.callIndex),
     relatedEvidence: [providerCallEvidence(loaded.threadId, loaded.turn, catalog.callIndex)],
     availability: loaded.availability,
-    childThreadId: null,
     usage: null,
   }));
 }
@@ -1644,7 +1599,6 @@ function appendManualCompactionRecords(
       primaryEvidence: itemEvidenceRef(loaded.threadId, loaded.turn, item.id),
       relatedEvidence: [],
       availability: loaded.availability,
-      childThreadId: null,
       usage: null,
     }));
   });
@@ -1664,7 +1618,6 @@ function record(input: {
   readonly primaryEvidence: ThreadTrajectoryEvidenceRef;
   readonly relatedEvidence: readonly ThreadTrajectoryEvidenceRef[];
   readonly availability: readonly ThreadTrajectoryAvailability[];
-  readonly childThreadId: ThreadId | null;
   readonly usage: ThreadTrajectoryUsageSummary | null;
   readonly parentRecordId?: string | null;
 }): ThreadTrajectoryRecordSummary {
@@ -1689,7 +1642,6 @@ function record(input: {
     primaryEvidence: input.primaryEvidence,
     relatedEvidence: input.relatedEvidence,
     availability: input.availability,
-    childThreadId: input.childThreadId,
   };
 }
 
@@ -1926,7 +1878,7 @@ function focusRecordForTurn(
 ): ThreadTrajectoryRecordSummary | null {
   const candidates = records.filter((entry) => entry.turnId === turnId);
   if (candidates.length === 0) return null;
-  for (const kind of ['assistant', 'tool', 'delegation', 'compaction', 'context', 'input'] as const) {
+  for (const kind of ['assistant', 'tool', 'compaction', 'context', 'input'] as const) {
     const match = candidates.find((entry) => entry.kind === kind);
     if (match) return match;
   }
@@ -1989,7 +1941,6 @@ function trajectoryRecordId(
   }
   if (evidence.type === 'toolCatalog') return `turn:${turnId}:${kind}:tools:${evidence.callIndex}`;
   if (evidence.type === 'threadItem') return `turn:${turnId}:${kind}:item:${evidence.itemId}`;
-  if (evidence.type === 'subagent') return `turn:${turnId}:delegation:${evidence.agentThreadId}`;
   return `turn:${turnId}:${kind}`;
 }
 
@@ -2291,22 +2242,6 @@ function isToolItem(item: ThreadItem): item is Extract<ThreadItem, { readonly st
   return 'status' in item;
 }
 
-function isDelegationExecution(toolName: string, item: ThreadItem | null): boolean {
-  if (item && isDelegationItem(item)) return true;
-  return toolName === 'agent' || toolName === 'agent_message' || toolName === 'task_stop';
-}
-
-function isDelegationItem(item: ThreadItem): item is CollabAgentToolCallThreadItem {
-  return item.type === 'collabAgentToolCall';
-}
-
-function childThreadIdForItem(item: ThreadItem | null): ThreadId | null {
-  if (!item) return null;
-  if (item.type === 'collabAgentToolCall') return item.receiverThreadIds[0] ?? null;
-  if (item.type === 'subAgentActivity') return item.agentThreadId;
-  return null;
-}
-
 function itemCompletedAt(item: ThreadItem, turn: Turn): number | null {
   if (!isToolItem(item)) return null;
   if (item.status === 'inProgress') return null;
@@ -2335,20 +2270,7 @@ function toolName(item: ThreadItem | null, fallback: string): string {
   if (item.type === 'commandExecution') return item.description ?? fallback;
   if (item.type === 'mcpToolCall') return `${item.server}.${item.tool}`;
   if (item.type === 'dynamicToolCall') return [item.namespace, item.tool].filter(Boolean).join('.') || item.tool;
-  if (item.type === 'collabAgentToolCall') return item.tool;
   return fallback;
-}
-
-function delegationLabel(item: ThreadItem | null, fallback: string): ThreadTrajectoryRecordLabel {
-  if (item?.type === 'collabAgentToolCall') {
-    if (item.tool === 'agent') return { type: 'delegation', action: 'delegate', name: item.tool };
-    if (item.tool === 'agent_message') return { type: 'delegation', action: 'message', name: item.tool };
-    if (item.tool === 'task_stop') return { type: 'delegation', action: 'stop', name: item.tool };
-  }
-  if (item?.type === 'subAgentActivity') {
-    return { type: 'delegation', action: 'activity', name: item.agentPath };
-  }
-  return { type: 'delegation', action: 'tool', name: fallback };
 }
 
 function itemTitle(item: ThreadItem): string {
@@ -2360,8 +2282,6 @@ function itemTitle(item: ThreadItem): string {
     case 'fileChange': return 'File changes';
     case 'mcpToolCall': return `${item.server}.${item.tool}`;
     case 'dynamicToolCall': return [item.namespace, item.tool].filter(Boolean).join('.') || item.tool;
-    case 'collabAgentToolCall': return item.tool;
-    case 'subAgentActivity': return 'Agent activity';
     case 'webSearch': return 'Web search';
     case 'imageView': return 'Image view';
     case 'contextEvidence': return contextEvidenceTitle(item);
@@ -2390,8 +2310,6 @@ function itemSummary(item: ThreadItem | null | undefined): string | null {
       if (content.type === 'json') return jsonPreview(content.value);
       return content.alt ?? 'image';
     }).filter(Boolean).join(' ') ?? null;
-    case 'collabAgentToolCall': return item.summary ?? item.prompt ?? item.tool;
-    case 'subAgentActivity': return item.error?.message ?? item.agentPath;
     case 'webSearch': return item.query;
     case 'imageView': return 'Image viewed';
     case 'contextEvidence': return item.summary;

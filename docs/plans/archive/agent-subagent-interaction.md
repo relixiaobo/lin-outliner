@@ -10,7 +10,7 @@ no way back to the parent after inspecting a child. This plan fixes the
 truth/reachability layer, then the navigation/list layer, and finally adds the
 live delegation surface plus user control — the human-facing half of the
 Delegation Contract's "Account" product
-(`docs/spec/agent-subagent-threads.md`, Delegation Contract §2).
+(`docs/spec/agent-delegation.md`; the former Delegation Contract was retired).
 
 All `file:line` references are against `main` at `72a38285` (PR 1 landed).
 Prefer the symbol names in "PR 1 landed" below over the line numbers here — the

@@ -46,6 +46,15 @@ export interface ToolTaskArtifactSettlement {
   readonly warnings: readonly string[];
 }
 
+export type ToolTaskProducerReconciliation =
+  | { readonly outcome: 'preserve' }
+  | {
+    readonly outcome: 'replace';
+    readonly state: Extract<ToolTaskExecutionState, 'failed' | 'cancelled' | 'timed_out' | 'lost'>;
+    readonly reason: string;
+    readonly error: string | null;
+  };
+
 export interface ToolTaskSchedulingPolicy {
   readonly pool: string;
   readonly configurationRevision: string;
@@ -75,11 +84,22 @@ export interface ToolTaskLease {
   readonly releasedAt: number | null;
 }
 
+export type ToolTaskProcessSpec =
+  | { readonly kind: 'shell'; readonly command: string }
+  | {
+    readonly kind: 'exec';
+    readonly executable: string;
+    readonly args: readonly string[];
+    /** Complete child environment snapshot. The supervisor does not add ambient variables. */
+    readonly env: Readonly<Record<string, string>>;
+    readonly privateControl: boolean;
+  };
+
 export interface ToolTaskSupervisorConfig {
-  readonly version: 1;
+  readonly version: 2;
   readonly taskId: string;
   readonly nonce: string;
-  readonly command: string;
+  readonly process: ToolTaskProcessSpec;
   readonly cwd: string;
   readonly stdinPath: string;
   readonly stdoutPath: string;
@@ -89,9 +109,11 @@ export interface ToolTaskSupervisorConfig {
   readonly heartbeatPath: string;
   readonly stopRequestPath: string;
   readonly finalReceiptPath: string;
+  readonly preparedResultPath: string;
   readonly startedAt: number;
   readonly timeoutMs: number;
   readonly maxOutputBytes: number;
+  readonly maxPreparedResultBytes: number;
 }
 
 export interface ToolTaskSupervisorIdentity {
@@ -112,7 +134,7 @@ export interface ToolTaskSupervisorHeartbeat {
 }
 
 export interface ToolTaskFinalReceipt {
-  readonly version: 1;
+  readonly version: 2;
   readonly taskId: string;
   readonly nonce: string;
   readonly state: Extract<ToolTaskExecutionState, 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | 'lost'>;
@@ -127,6 +149,7 @@ export interface ToolTaskFinalReceipt {
   readonly stdoutBytes: number;
   readonly stderrBytes: number;
   readonly preparedResultDigest: string | null;
+  readonly preparedResultBytes: number;
   readonly receiptDigest: string;
 }
 

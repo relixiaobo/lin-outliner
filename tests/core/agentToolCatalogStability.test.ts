@@ -51,7 +51,7 @@ describe('canonical provider tool catalog', () => {
   });
 
   test('declares and compiles output-data validation for every catalog tool', () => {
-    expect(MODEL_TOOL_CATALOG).toHaveLength(23);
+    expect(MODEL_TOOL_CATALOG).toHaveLength(21);
     const failures: string[] = [];
     for (const contract of MODEL_TOOL_CATALOG) {
       const name = canonicalModelToolKey(contract.identity);
@@ -267,6 +267,16 @@ describe('canonical provider tool catalog', () => {
     expect((await runtime.createTools(RUNTIME_CONTEXT)).some((tool) => tool.name === 'data_import')).toBe(false);
   });
 
+  test('applies global disabled tools after the Thread capability ceiling', async () => {
+    const runtime = new ToolRuntime(runtimeService(), {
+      capabilityTools: runtimeSchemaTools,
+      assembleRegistry: true,
+      disabledTools: () => ['bash'],
+    });
+
+    expect((await runtime.createTools(RUNTIME_CONTEXT)).some((tool) => tool.name === 'bash')).toBe(false);
+  });
+
 });
 
 const CONFIGURATION: EffectiveThreadConfiguration = {
@@ -293,24 +303,11 @@ const RUNTIME_CONTEXT = {
 
 function runtimeService(
   extensionTools: readonly ModelToolContract[] = [],
-  toolPolicy?: {
-    kind: 'general-purpose';
-    runInBackground: boolean;
-    worktree: boolean;
-    allowNesting: boolean;
-    requestedTools: readonly string[] | null;
-  },
 ): ThreadService {
   return {
-    collaborationToolContributions: () => [],
     extensionToolContributions: async () => extensionTools.length > 0
       ? [{ extensionId: 'extension-probe', tools: extensionTools }]
       : [],
-    subagentExecution: () => toolPolicy ? {
-      agentType: 'test-agent',
-      initialAdmissionState: 'committed',
-      toolPolicy,
-    } : null,
     notifyToolStarted: async () => {},
     notifyToolCompleted: async () => {},
   } as unknown as ThreadService;

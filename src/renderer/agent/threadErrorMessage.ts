@@ -1,5 +1,4 @@
 import {
-  SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
   normalizeTurnErrorCode,
   type TurnError,
 } from '../../core/agent/protocol';
@@ -73,13 +72,8 @@ export function userFacingAgentError(raw: TurnError | string, resourceLimitMessa
   const error = typeof raw === 'string'
     ? parsedPayloadError(raw) ?? { message: raw }
     : raw;
-  return isSubagentBudgetError(error)
-    ? resourceLimitMessage
-    : threadErrorMessage(error.message);
-}
-
-export function isSubagentBudgetError(error: TurnError): boolean {
-  return error.code === SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE;
+  void resourceLimitMessage;
+  return threadErrorMessage(error.message);
 }
 
 export function userFacingAgentErrorRecord(
@@ -89,6 +83,6 @@ export function userFacingAgentErrorRecord(
   return {
     message: userFacingAgentError(error, resourceLimitMessage),
     ...(error.code ? { code: error.code } : {}),
-    ...(!isSubagentBudgetError(error) && error.detail ? { detail: error.detail } : {}),
+    ...(error.detail ? { detail: error.detail } : {}),
   };
 }

@@ -1,6 +1,6 @@
 import { useCallback, useRef, type PointerEvent, type ReactNode } from 'react';
 import type { ThreadId } from '../../../core/agent/protocol';
-import { MAIN_IDENTITY_KEY, resolveAgentIdentity } from '../agentIdentity';
+import { resolveAgentIdentity } from '../agentIdentity';
 import type { MarkMood } from '../agentMarkGeometry';
 import { useIdentityCatalog, type ThreadSnapshotSource } from '../store/threadStore';
 import { AgentMark, type AgentMarkHandle } from './AgentMark';
@@ -16,12 +16,7 @@ export interface ThreadSpeaker {
    */
   readonly participantId: string;
   /**
-   * What the identity resolves from: the Agent TYPE, or `main` for the
-   * conversation's own agent. One type, one mark — everywhere, in every
-   * conversation. It is not the displayed name, which is a persona the user
-   * can rename; and it is not the participant, which would give two siblings
-   * of one type the same NAME and different marks, and repaint an Agent on
-   * the way into its own view.
+   * What the identity resolves from. The main conversation uses `main`.
    */
   readonly avatarKey: string;
   readonly name: string;
@@ -49,12 +44,8 @@ export interface ThreadSpeaker {
  * header already says that louder: a portrait, and a name in the content
  * register.
  *
- * Every non-reader block wears this — the conversation's own agent, a delegated
- * child delivering a result, the Agent that wrote a brief. One structure for
- * everyone, so `main` answering and a Subagent reporting are visibly the same
- * kind of event: somebody spoke. Before this, `main` was unattributed prose and
- * a child's report was a labelled bubble, which made two participants look like
- * two different sorts of thing.
+ * Every non-reader block wears this, so the conversation agent and host-authored
+ * messages share one clear speaker structure.
  *
  * The reader is the exception, and deliberately: their own messages keep the
  * right-hand bubble and no avatar. Position is the fastest identity signal in
@@ -82,22 +73,9 @@ export function ThreadSpeakerGroup({
   readonly source?: ThreadSnapshotSource;
 }) {
   const catalog = useIdentityCatalog(threadId, source);
-  // Resolved from the TYPE the caller named, with the caller's own name as the
-  // fallback: a participant that is not a type at all — an isolated Skill —
-  // keeps the name it came with and simply has no persona to find.
+  // Resolve the configured main identity and retain the caller's name as a
+  // fallback for host-authored participants.
   const identity = resolveAgentIdentity(catalog, speaker.avatarKey, speaker.name);
-  // What it IS, beside what it is called — for DELEGATES only. The
-  // conversation's own agent needs no label: there is exactly one of it, the
-  // reader is talking to it, and `main` beside its name states the only thing
-  // about this participant nobody was wondering. What the label answers is
-  // "which kind of helper is this", a question only a delegate raises.
-  //
-  // A type appears verbatim because that IS the string a user configures and
-  // passes as `subagent_type`. A Skill has no type line — its name already
-  // says what it is.
-  const roleLabel = speaker.avatarKey === MAIN_IDENTITY_KEY || !catalog.has(speaker.avatarKey)
-    ? null
-    : speaker.avatarKey;
   // Gaze: the face turns toward the pointer while it crosses the HEADER — the
   // row is wide enough for the turn to read, where hovering only the 28px mark
   // would move the eyes by a hair. Events fire only over the header, so a
@@ -139,7 +117,6 @@ export function ThreadSpeakerGroup({
         <div className="thread-speaker-identity">
           <div className="thread-speaker-title">
             <span className="thread-speaker-name">{identity.name}</span>
-            {roleLabel === null ? null : <span className="thread-speaker-role">{roleLabel}</span>}
           </div>
           {meta}
         </div>

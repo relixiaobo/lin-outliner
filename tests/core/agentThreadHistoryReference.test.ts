@@ -7,6 +7,7 @@ import type { ThreadResourceOps } from '../../src/main/agent/thread/ThreadResour
 const CURRENT_ID = '01951d6e-7c25-7c31-8d62-313038616239';
 const TARGET_ID = '01951d6e-7c25-7c31-8d62-313038616240';
 const OTHER_PROFILE_ID = '01951d6e-7c25-7c31-8d62-313038616241';
+const DELEGATION_ID = '01951d6e-7c25-7c31-8d62-313038616242';
 
 const resourceRef: ThreadResourceReference = {
   id: 'resource:11111111-1111-4111-8111-111111111111',
@@ -83,7 +84,27 @@ describe('Thread history references', () => {
     await expect(fixture.service.readForAgent({
       currentThreadId: CURRENT_ID,
       threadId: OTHER_PROFILE_ID,
-    })).rejects.toThrow('another profile');
+    })).rejects.toThrow('not available in the current profile');
+  });
+
+  test('keeps hidden Delegation Threads outside explicit reference resolution and reads', async () => {
+    const fixture = historyFixture();
+
+    expect(fixture.service.resolveReferences({
+      currentThreadId: CURRENT_ID,
+      threadIds: [DELEGATION_ID],
+    })).toEqual({
+      data: [{
+        threadId: DELEGATION_ID,
+        title: null,
+        updatedAt: null,
+        availability: 'denied',
+      }],
+    });
+    await expect(fixture.service.readForAgent({
+      currentThreadId: CURRENT_ID,
+      threadId: DELEGATION_ID,
+    })).rejects.toThrow('not available in the current profile');
   });
 
   test('removes partial credentials that cross the bounded tool-output prefix', async () => {
@@ -215,10 +236,16 @@ function historyFixture(toolOutputProjection: {
     preview: 'Draft at /Users/example/private/report.key',
   }, 'default');
   const otherProfile = record(thread(OTHER_PROFILE_ID, 'Private', 100), 'other');
+  const delegation = record({
+    ...thread(DELEGATION_ID, 'Hidden delegated work', 250),
+    parentThreadId: CURRENT_ID,
+    threadSource: 'delegation',
+  }, 'default');
   const records = new Map([
     [CURRENT_ID, current],
     [TARGET_ID, target],
     [OTHER_PROFILE_ID, otherProfile],
+    [DELEGATION_ID, delegation],
   ]);
   const olderTurn = turnWithItems('turn-older', 100, [{
     id: 'user-old',
@@ -326,8 +353,6 @@ function thread(id: string, name: string, updatedAt: number): Thread {
     sessionId: `session:${id}`,
     parentThreadId: null,
     forkedFromId: null,
-    agentNickname: null,
-    agentRole: null,
     name,
     preview: name,
     ephemeral: false,

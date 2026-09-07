@@ -17,6 +17,8 @@ import { join } from 'node:path';
 import { AGENT_REASONING_LADDER } from '../../../core/types';
 import type {
   AgentModelOption,
+  AgentDelegationRunnerSettings,
+  AgentDelegationSettings,
   AgentProviderAuthKind,
   AgentRuntimeSettings,
   AgentRuntimeSettingsInput,
@@ -28,12 +30,18 @@ import type {
   AgentProviderOption,
   AgentReasoningLevelLabels,
   AgentReasoningLevel,
+  AgentSkillSourceBinding,
+  AgentSkillSourceMode,
   AgentProviderSecretStatus,
   AgentProviderStoredApiKey,
   AgentProviderSettingsView,
   ProviderConnectionCheckView,
   ProviderAuthView,
 } from '../../../core/types';
+import type { ThreadConfigurationSummary } from '../../../core/agent/protocol';
+import { composeProviderQualifiedModel } from '../../../core/agentModelId';
+import { parseProviderQualifiedModel } from '../../../core/agentModelId';
+import { defaultThinkingLevelFor } from '../../../core/agentReasoning';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
 import { createKeyedSerialMutationQueue } from '../../../core/serialMutationQueue';
 import {
@@ -44,6 +52,7 @@ import {
   type LocalGatewayProviderDefinition,
 } from '../../../core/localGatewayProviders';
 import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from '../../jsonFileStore';
+import { loadFilePreferences, updateFilePreferences } from '../../configuration/filePreferences';
 import { compareModels } from '../../modelRanking';
 import {
   configurePiCredentialStorage,
@@ -76,6 +85,7 @@ import {
   createResilientResponsesFetch,
   type ResilientResponsesFetchOptions,
 } from '../runtime/sseResilientFetch';
+import { delegationSettingsRevision } from '../delegation/DelegationPolicyResolver';
 import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
   ccSwitchModelOptionId,
@@ -94,7 +104,7 @@ import {
   type CcSwitchRegistrySnapshot,
 } from '../../ccSwitchRegistry';
 
-const PROVIDERS_FILE = 'agent-providers.json';
+const PROVIDER_STATE_FILE = 'agent-model-state.json';
 const SECRETS_FILE = 'agent-secrets.json';
 const MODEL_CATALOGS_FILE = 'agent-model-catalogs.json';
 
@@ -104,6 +114,7 @@ interface AgentProviderConfig {
   providerId: string;
   baseUrl?: string;
   enabled: boolean;
+  models?: readonly string[];
   /** Main-only identity version for rejecting probe results from an old connection. */
   connectionGeneration?: number;
   /**
@@ -115,9 +126,13 @@ interface AgentProviderConfig {
 
 interface ProviderConfigFile {
   activeProviderId?: string;
-  agent?: StoredAgentRuntimeSettings;
   imageGeneration?: StoredImageGenerationSettings;
   providers: AgentProviderConfig[];
+}
+
+interface ProviderStateFile {
+  activeProviderId?: string;
+  providers: Array<Pick<AgentProviderConfig, 'providerId' | 'connectionGeneration' | 'connectionCheck'>>;
 }
 
 export interface ProviderConnectionProbeContext {
@@ -130,7 +145,10 @@ export interface ProviderConnectionProbeContext {
   matchesStoredConnection: boolean;
 }
 
-type StoredAgentRuntimeSettings = Partial<AgentRuntimeSettings>;
+type StoredAgentRuntimeSettings = Partial<Omit<AgentRuntimeSettings, 'delegation'>> & {
+  delegation?: AgentRuntimeSettingsInput['delegation'];
+  additionalSkillSourceBindings?: AgentSkillSourceBinding[];
+};
 
 type StoredImageGenerationSettings = {
   defaultModel?: string | null;
@@ -164,17 +182,48 @@ function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
 
 const AGENT_REASONING_LEVELS = AGENT_REASONING_LADDER;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
+const DELEGATION_RUNNER_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const DELEGATION_POOL_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const MAX_DELEGATION_RUNNERS = 32;
+const MIN_DELEGATION_TIMEOUT_MS = 10_000;
+const MAX_DELEGATION_TIMEOUT_MS = 24 * 60 * 60_000;
+const MAX_DELEGATION_CONCURRENCY = 64;
+const MAX_DELEGATION_GLOBAL_QUEUE = 1_024;
+const MAX_DELEGATION_THREAD_QUEUE = 128;
+const DEFAULT_INTERNAL_DELEGATION_RUNNER: AgentDelegationRunnerSettings = {
+  enabled: true,
+  model: null,
+  effort: null,
+  maximumAccess: 'workspace-write',
+  timeoutMs: 60 * 60_000,
+  maxConcurrent: 4,
+  pool: 'agent-provider',
+  maxConcurrentPool: 4,
+};
+const DEFAULT_DELEGATION_SETTINGS: AgentDelegationSettings = {
+  enabled: false,
+  defaultRunnerId: 'internal',
+  maxConcurrentGlobal: 8,
+  maxConcurrentThread: 4,
+  maxQueuedGlobal: 32,
+  maxQueuedThread: 8,
+  runners: {
+    internal: DEFAULT_INTERNAL_DELEGATION_RUNNER,
+    codex: defaultDelegationRunnerSettings('codex'),
+    claude: defaultDelegationRunnerSettings('claude'),
+    openclaw: defaultDelegationRunnerSettings('openclaw'),
+  },
+};
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   additionalSkillDirectories: [],
-  // Captured once for each delegated execution generation's local breaker.
-  subagentTokenBudget: 1_500_000,
-  subagentMaxDepth: 3,
-  subagentMaxConcurrent: 20,
+  additionalSkillSourceModes: {},
   providerTimeoutMs: null,
   providerMaxRetries: null,
   providerMaxRetryDelayMs: 60_000,
   providerCacheRetention: 'short',
+  delegation: DEFAULT_DELEGATION_SETTINGS,
   disabledSkills: [],
+  disabledTools: [],
 };
 
 type OpenAICompatibleApiId = CcSwitchOpenAICompatibleApiId;
@@ -235,25 +284,88 @@ export async function refreshProviderModels(providerIdInput: string): Promise<Ag
 }
 
 export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
-  return normalizeAgentRuntimeSettings((await readProviderFile()).agent);
+  const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  const stored = normalizeAgentRuntimeSettings({ delegation: preferences.agent.delegation });
+  const sourceBindings = [...preferences.agent.skills.sources];
+  return normalizeAgentRuntimeSettings({
+    ...stored,
+    additionalSkillDirectories: sourceBindings.map((source) => source.path),
+    additionalSkillSourceModes: Object.fromEntries(sourceBindings.map((source) => [source.path, source.mode])),
+    providerTimeoutMs: preferences.agent.provider.timeoutMs,
+    providerMaxRetries: preferences.agent.provider.maxRetries,
+    providerMaxRetryDelayMs: preferences.agent.provider.maxRetryDelayMs,
+    providerCacheRetention: preferences.agent.provider.cacheRetention,
+    disabledSkills: [...preferences.agent.skills.disabled],
+    disabledTools: [...preferences.agent.tools.disabled],
+  });
+}
+
+export async function getAgentDelegationConfiguration(): Promise<{
+  readonly settings: AgentDelegationSettings;
+  readonly revision: string;
+}> {
+  const settings = (await getAgentRuntimeSettings()).delegation;
+  return {
+    settings,
+    revision: delegationConfigurationRevision(settings),
+  };
+}
+
+export function delegationConfigurationRevision(settings: AgentDelegationSettings): string {
+  return delegationSettingsRevision(normalizeDelegationSettings(settings));
 }
 
 export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRuntimeConfig | null> {
   await piRestoreDynamicModels();
   const file = await readProviderFile();
   const secrets = await readSecretFileSafe();
-  const active = await findUsableProvider(file.providers.filter((provider) => provider.providerId === file.activeProviderId), secrets)
-    ?? await findUsableProvider(file.providers, secrets)
-    ?? null;
+  const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  const configuredDefault = preferences.models.default === 'auto'
+    ? null
+    : parseProviderQualifiedModel(preferences.models.default, () => true);
+  const preferredCandidates = configuredDefault
+    ? file.providers.filter((provider) => provider.providerId === configuredDefault.providerId)
+    : file.providers.filter((provider) => provider.providerId === file.activeProviderId);
+  const active = configuredDefault
+    ? await findUsableProvider(preferredCandidates, secrets)
+    : await findUsableProvider(preferredCandidates, secrets) ?? await findUsableProvider(file.providers, secrets);
   if (!active) return null;
   const localGatewayProvider = localGatewayProviderDefinition(active.providerId);
   if (localGatewayProvider?.adapter === 'cc-switch-codex') {
-    return resolveCcSwitchRuntimeConfig(localGatewayProvider, active);
+    return resolveCcSwitchRuntimeConfig(localGatewayProvider, active, configuredDefault?.modelId);
   }
   // Connection only. Do not bake auth here. pi `Models.applyAuth()` resolves
   // stored/env/oauth/provider-specific auth at request time; `apiKey` is only an
   // explicit override used by tests or the connection form's unsaved key.
-  return { ...active };
+  return {
+    ...active,
+    ...(configuredDefault && configuredDefault.providerId === active.providerId
+      ? { modelId: configuredDefault.modelId }
+      : {}),
+  };
+}
+
+export async function getConfiguredDefaultSelection(): Promise<ThreadConfigurationSummary | null> {
+  const value = loadFilePreferences(electron.app.getPath('userData')).preferences.models.default;
+  if (value === 'auto') return null;
+  const qualified = parseProviderQualifiedModel(value, () => true);
+  if (!qualified) throw new Error(`Configured default model is invalid: ${value}`);
+  const provider = await getProviderRuntimeConfig(qualified.providerId);
+  if (!provider) throw new Error(`Configured default provider is unavailable: ${qualified.providerId}`);
+  const declared = normalizeDeclaredModels(provider.models);
+  if (declared.length > 0 && !declared.includes(qualified.modelId)) {
+    throw new Error(`Configured default model is not declared for provider: ${value}`);
+  }
+  const model = piFindModel(qualified.providerId, qualified.modelId)
+    ?? (provider.baseUrl
+      ? createOpenAICompatibleModel({ ...provider, modelId: qualified.modelId })
+      : null);
+  if (!model) throw new Error(`Configured default model is unavailable: ${value}`);
+  return {
+    modelProvider: qualified.providerId,
+    model: composeProviderQualifiedModel(qualified.providerId, qualified.modelId),
+    reasoningEffort: defaultThinkingLevelFor(getSupportedReasoningLevelsForModel(model)),
+  };
 }
 
 /** Resolve one specific provider without falling back to another configured row. */
@@ -273,9 +385,13 @@ export async function getProviderRuntimeConfig(
   ) ?? null;
   if (!provider) return null;
   if (modelId) {
-    const catalog = (await getAvailableProviders(file.providers))
-      .find((candidate) => candidate.providerId === providerId);
-    if (!catalog?.models.some((model) => model.id === modelId)) return null;
+    const declared = normalizeDeclaredModels(provider.models);
+    if (declared.length > 0 && !declared.includes(modelId)) return null;
+    if (declared.length === 0) {
+      const catalog = (await getAvailableProviders(file.providers))
+        .find((candidate) => candidate.providerId === providerId);
+      if (!catalog?.models.some((model) => model.id === modelId) && !provider.baseUrl) return null;
+    }
   }
   const localGatewayProvider = localGatewayProviderDefinition(provider.providerId);
   if (localGatewayProvider?.adapter === 'cc-switch-codex') {
@@ -285,22 +401,93 @@ export async function getProviderRuntimeConfig(
 }
 
 export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInput) {
-  await mutateProviderFile((file) => {
-    file.agent = normalizeAgentRuntimeSettings({
-      ...normalizeAgentRuntimeSettings(file.agent),
-      ...input,
-    });
+  const current = await getAgentRuntimeSettings();
+  const sourceBindings = input.additionalSkillSourceBindings ?? (
+    input.additionalSkillDirectories === undefined
+      ? undefined
+      : input.additionalSkillDirectories.map((sourcePath) => ({
+        path: sourcePath,
+        mode: current.additionalSkillSourceModes[sourcePath] ?? 'container',
+      }))
+  );
+  const next = normalizeAgentRuntimeSettings({
+    ...current,
+    ...input,
+    ...(sourceBindings === undefined ? {} : {
+      additionalSkillDirectories: sourceBindings.map((source) => source.path),
+      additionalSkillSourceBindings: sourceBindings,
+      additionalSkillSourceModes: Object.fromEntries(sourceBindings.map((source) => [source.path, source.mode])),
+    }),
   });
+  if (
+    input.additionalSkillDirectories !== undefined
+    || input.additionalSkillSourceBindings !== undefined
+    || input.disabledSkills !== undefined
+    || input.disabledTools !== undefined
+    || input.providerTimeoutMs !== undefined
+    || input.providerMaxRetries !== undefined
+    || input.providerMaxRetryDelayMs !== undefined
+    || input.providerCacheRetention !== undefined
+  ) {
+    const updates: { path: readonly string[]; value: unknown }[] = [];
+    if (input.disabledSkills !== undefined) {
+      updates.push({ path: ['agent', 'skills', 'disabled'], value: next.disabledSkills });
+    }
+    if (input.additionalSkillDirectories !== undefined || input.additionalSkillSourceBindings !== undefined) {
+      updates.push({
+        path: ['agent', 'skills', 'sources'],
+        value: next.additionalSkillDirectories.map((sourcePath) => ({
+          path: sourcePath,
+          mode: next.additionalSkillSourceModes[sourcePath] ?? 'container',
+        } satisfies AgentSkillSourceBinding)),
+      });
+    }
+    if (input.disabledTools !== undefined) {
+      updates.push({ path: ['agent', 'tools', 'disabled'], value: next.disabledTools });
+    }
+    if (input.providerTimeoutMs !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'timeoutMs'], value: next.providerTimeoutMs });
+    }
+    if (input.providerMaxRetries !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'maxRetries'], value: next.providerMaxRetries });
+    }
+    if (input.providerMaxRetryDelayMs !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'maxRetryDelayMs'], value: next.providerMaxRetryDelayMs });
+    }
+    if (input.providerCacheRetention !== undefined) {
+      updates.push({ path: ['agent', 'provider', 'cacheRetention'], value: next.providerCacheRetention });
+    }
+    updateFilePreferences(electron.app.getPath('userData'), updates);
+  }
+  if (input.delegation) {
+    const delegation = mergeDelegationSettings(current.delegation, input.delegation);
+    updateFilePreferences(electron.app.getPath('userData'), [
+      { path: ['agent', 'delegation'], value: delegation },
+    ]);
+  }
   return getProviderSettings();
 }
 
 export async function updateImageGenerationSettings(input: AgentImageGenerationSettingsInput) {
-  await mutateProviderFile((file) => {
-    file.imageGeneration = normalizeImageGenerationSettings({
-      ...normalizeImageGenerationSettings(file.imageGeneration),
-      ...input,
-    });
+  const current = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  const next = normalizeImageGenerationSettings({
+    defaultModel: current.models.imageDefault,
+    ...input,
   });
+  updateFilePreferences(electron.app.getPath('userData'), [
+    { path: ['models', 'imageDefault'], value: next.defaultModel },
+  ]);
+  return getProviderSettings();
+}
+
+export async function updateModelDefault(defaultModel: string | null): Promise<AgentProviderSettingsView> {
+  const value = defaultModel?.trim() || 'auto';
+  if (value !== 'auto' && !parseProviderQualifiedModel(value, () => true)) {
+    throw new Error('defaultModel must be auto or a qualified provider/model');
+  }
+  updateFilePreferences(electron.app.getPath('userData'), [
+    { path: ['models', 'default'], value },
+  ]);
   return getProviderSettings();
 }
 
@@ -350,6 +537,7 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
       const endpointUnchanged = normalizeBaseUrl(previous.baseUrl) === normalizeBaseUrl(config.baseUrl);
       file.providers[index] = {
         ...config,
+        models: previous.models,
         connectionGeneration: endpointUnchanged
           ? providerConnectionGeneration(previous)
           : allocateProviderConnectionGeneration(providerConnectionGeneration(previous)),
@@ -375,7 +563,7 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
 }
 
 /**
- * Ensure a provider has a config row in agent-providers.json. The OAuth sign-in
+ * Ensure a provider has a public model connection row. The OAuth sign-in
  * path persists a credential but, unlike the API-key form's `upsertProviderConfig`,
  * has no step that creates a provider row — so a first-time login would be
  * orphaned (credential on disk, no selectable provider). Creates a connection row
@@ -405,20 +593,29 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
  * null for a custom endpoint with no catalog.
  */
 /** A provider's catalog models, sorted by the shared ranking (newest, thinking-first). */
-export function rankedModels(providerId: string): Model<Api>[] {
+export function rankedModels(providerId: string, declaredModels?: readonly string[]): Model<Api>[] {
   try {
-    return rankProviderModels(providerId, piModelsForProvider(providerId));
+    const models = piModelsForProvider(providerId);
+    const declared = normalizeDeclaredModels(declaredModels);
+    return rankProviderModels(
+      providerId,
+      declared.length > 0 ? models.filter((model) => declared.includes(model.id)) : models,
+    );
   } catch {
     return [];
   }
+}
+
+function normalizeDeclaredModels(value: readonly string[] | undefined): string[] {
+  return [...new Set((value ?? []).map((model) => model.trim()).filter(Boolean))];
 }
 
 function rankProviderModels(providerId: string, models: readonly Model<Api>[]): Model<Api>[] {
   return [...models].sort((left, right) => compareProviderRankables(providerId, left, right));
 }
 
-function firstRankedModel(providerId: string): Model<Api> | null {
-  return rankedModels(providerId)[0] ?? null;
+function firstRankedModel(providerId: string, declaredModels?: readonly string[]): Model<Api> | null {
+  return rankedModels(providerId, declaredModels)[0] ?? null;
 }
 
 export async function deleteProviderConfig(providerIdInput: string) {
@@ -428,9 +625,6 @@ export async function deleteProviderConfig(providerIdInput: string) {
     file.providers = file.providers.filter((provider) => provider.providerId !== providerId);
     if (file.providers.length === previousLength) throw new Error(`provider not found: ${providerId}`);
     if (file.activeProviderId === providerId) file.activeProviderId = file.providers.find((provider) => provider.enabled)?.providerId;
-  });
-  await mutateSecretFile((secrets) => {
-    delete secrets.credentials[providerId];
   });
   return getProviderSettings();
 }
@@ -560,7 +754,7 @@ export async function getProviderApiKey(providerIdInput: string): Promise<string
     const file = await readProviderFile();
     const providerConfig = file.providers.find((provider) => provider.providerId === providerId);
     if (providerConfig?.baseUrl) ensurePiCustomProvider(providerConfig);
-    const model = firstRankedModel(providerId);
+    const model = firstRankedModel(providerId, providerConfig?.models);
     const authModel = model
       ?? (providerConfig?.baseUrl
         ? createOpenAICompatibleModel({ providerId, modelId: '__tenon_openai_compatible_probe__', baseUrl: providerConfig.baseUrl })
@@ -636,9 +830,11 @@ export async function prepareProviderConnectionProbe(input: {
 async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Promise<AgentProviderSettingsView> {
   const availableProviders = await getAvailableProviders(file.providers);
   const availableProviderById = new Map(availableProviders.map((provider) => [provider.providerId, provider]));
+  const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
   return {
     activeProviderId: file.activeProviderId,
-    agent: normalizeAgentRuntimeSettings(file.agent),
+    defaultModel: preferences.models.default,
+    agent: await getAgentRuntimeSettings(),
     imageGeneration: normalizeImageGenerationSettings(file.imageGeneration),
     providers: await Promise.all(file.providers.map(async (provider): Promise<AgentProviderConfigView> => {
       const catalogProvider = availableProviderById.get(provider.providerId);
@@ -688,20 +884,13 @@ function normalizeImageGenerationSettings(input?: StoredImageGenerationSettings 
 }
 
 function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null): AgentRuntimeSettings {
+  const sourceBindings = normalizeSkillSourceBindings(input?.additionalSkillSourceBindings, MAX_ADDITIONAL_SKILL_DIRECTORIES);
+  const sourceDirectories = input?.additionalSkillDirectories ?? sourceBindings.map((source) => source.path);
+  const sourceModes = input?.additionalSkillSourceModes
+    ?? Object.fromEntries(sourceBindings.map((source) => [source.path, source.mode]));
   return {
-    additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories, MAX_ADDITIONAL_SKILL_DIRECTORIES),
-    subagentTokenBudget: normalizeNullablePositiveInteger(
-      input?.subagentTokenBudget,
-      DEFAULT_AGENT_RUNTIME_SETTINGS.subagentTokenBudget,
-    ),
-    subagentMaxDepth: normalizePositiveInteger(
-      input?.subagentMaxDepth,
-      DEFAULT_AGENT_RUNTIME_SETTINGS.subagentMaxDepth,
-    ),
-    subagentMaxConcurrent: normalizePositiveInteger(
-      input?.subagentMaxConcurrent,
-      DEFAULT_AGENT_RUNTIME_SETTINGS.subagentMaxConcurrent,
-    ),
+    additionalSkillDirectories: normalizeStringList(sourceDirectories, MAX_ADDITIONAL_SKILL_DIRECTORIES),
+    additionalSkillSourceModes: normalizeSkillSourceModes(sourceModes),
     providerTimeoutMs: normalizeNullablePositiveInteger(input?.providerTimeoutMs, DEFAULT_AGENT_RUNTIME_SETTINGS.providerTimeoutMs),
     providerMaxRetries: normalizeNullableNonNegativeInteger(input?.providerMaxRetries, DEFAULT_AGENT_RUNTIME_SETTINGS.providerMaxRetries),
     providerMaxRetryDelayMs: normalizeNullableNonNegativeInteger(
@@ -711,8 +900,136 @@ function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null
     providerCacheRetention: isAgentCacheRetention(input?.providerCacheRetention)
       ? input.providerCacheRetention
       : DEFAULT_AGENT_RUNTIME_SETTINGS.providerCacheRetention,
+    delegation: normalizeDelegationSettings(input?.delegation),
     disabledSkills: normalizeStringList(input?.disabledSkills, MAX_DISABLED_SKILLS),
+    disabledTools: normalizeStringList(input?.disabledTools, MAX_DISABLED_SKILLS),
   };
+}
+
+function normalizeSkillSourceBindings(value: unknown, limit: number): AgentSkillSourceBinding[] {
+  if (!Array.isArray(value)) return [];
+  const result: AgentSkillSourceBinding[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const sourcePath = typeof record.path === 'string' ? record.path.trim() : '';
+    const mode = record.mode === 'skill' || record.mode === 'container' ? record.mode : null;
+    if (!sourcePath || !mode || seen.has(sourcePath)) continue;
+    seen.add(sourcePath);
+    result.push({ path: sourcePath, mode });
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
+function normalizeSkillSourceModes(value: unknown): Record<string, AgentSkillSourceMode> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(([, mode]) => mode === 'skill' || mode === 'container'),
+  ) as Record<string, AgentSkillSourceMode>;
+}
+
+function mergeDelegationSettings(
+  current: AgentDelegationSettings,
+  input: NonNullable<AgentRuntimeSettingsInput['delegation']>,
+): AgentDelegationSettings {
+  const runners = { ...current.runners };
+  for (const [runnerId, runner] of Object.entries(input.runners ?? {})) {
+    const inherited = current.runners[runnerId] ?? defaultDelegationRunnerSettings(runnerId);
+    runners[runnerId] = { ...inherited, ...runner };
+  }
+  return normalizeDelegationSettings({ ...current, ...input, runners });
+}
+
+function normalizeDelegationSettings(input?: AgentRuntimeSettingsInput['delegation'] | AgentDelegationSettings | null): AgentDelegationSettings {
+  const runnerEntries = Object.entries(isRecord(input?.runners) ? input.runners : {})
+    .filter(([runnerId]) => DELEGATION_RUNNER_ID_PATTERN.test(runnerId))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .slice(0, MAX_DELEGATION_RUNNERS);
+  const runners: Record<string, AgentDelegationRunnerSettings> = {};
+  for (const [runnerId, value] of runnerEntries) {
+    runners[runnerId] = normalizeDelegationRunnerSettings(runnerId, value);
+  }
+  if (!runners.internal) {
+    runners.internal = { ...DEFAULT_INTERNAL_DELEGATION_RUNNER };
+  }
+  const defaultRunnerId = normalizeRunnerId(input?.defaultRunnerId) ?? DEFAULT_DELEGATION_SETTINGS.defaultRunnerId;
+  return {
+    enabled: input?.enabled === true,
+    defaultRunnerId,
+    maxConcurrentGlobal: normalizeBoundedPositiveInteger(
+      input?.maxConcurrentGlobal,
+      DEFAULT_DELEGATION_SETTINGS.maxConcurrentGlobal,
+      1,
+      MAX_DELEGATION_CONCURRENCY,
+    ),
+    maxConcurrentThread: normalizeBoundedPositiveInteger(
+      input?.maxConcurrentThread,
+      DEFAULT_DELEGATION_SETTINGS.maxConcurrentThread,
+      1,
+      MAX_DELEGATION_CONCURRENCY,
+    ),
+    maxQueuedGlobal: normalizeBoundedPositiveInteger(
+      input?.maxQueuedGlobal,
+      DEFAULT_DELEGATION_SETTINGS.maxQueuedGlobal,
+      1,
+      MAX_DELEGATION_GLOBAL_QUEUE,
+    ),
+    maxQueuedThread: normalizeBoundedPositiveInteger(
+      input?.maxQueuedThread,
+      DEFAULT_DELEGATION_SETTINGS.maxQueuedThread,
+      1,
+      MAX_DELEGATION_THREAD_QUEUE,
+    ),
+    runners,
+  };
+}
+
+function normalizeDelegationRunnerSettings(runnerId: string, input: unknown): AgentDelegationRunnerSettings {
+  const value = isRecord(input) ? input : {};
+  const defaults = defaultDelegationRunnerSettings(runnerId);
+  const model = value.model === null ? null : normalizeOptionalString(value.model) ?? defaults.model;
+  return {
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : defaults.enabled,
+    model,
+    effort: value.effort === null || isAgentReasoningLevel(value.effort) ? value.effort : defaults.effort,
+    maximumAccess: value.maximumAccess === 'read-only' || value.maximumAccess === 'workspace-write'
+      ? value.maximumAccess
+      : defaults.maximumAccess,
+    timeoutMs: normalizeBoundedPositiveInteger(value.timeoutMs, defaults.timeoutMs, MIN_DELEGATION_TIMEOUT_MS, MAX_DELEGATION_TIMEOUT_MS),
+    maxConcurrent: normalizeBoundedPositiveInteger(
+      value.maxConcurrent,
+      defaults.maxConcurrent,
+      1,
+      MAX_DELEGATION_CONCURRENCY,
+    ),
+    pool: normalizePool(value.pool) ?? defaults.pool,
+    maxConcurrentPool: normalizeBoundedPositiveInteger(
+      value.maxConcurrentPool,
+      defaults.maxConcurrentPool,
+      1,
+      MAX_DELEGATION_CONCURRENCY,
+    ),
+  };
+}
+
+function defaultDelegationRunnerSettings(runnerId: string): AgentDelegationRunnerSettings {
+  if (runnerId === 'internal') return DEFAULT_INTERNAL_DELEGATION_RUNNER;
+  return {
+    ...DEFAULT_INTERNAL_DELEGATION_RUNNER,
+    enabled: false,
+    maximumAccess: 'read-only',
+    pool: runnerId,
+  };
+}
+
+function normalizeRunnerId(value: unknown): string | undefined {
+  return typeof value === 'string' && DELEGATION_RUNNER_ID_PATTERN.test(value) ? value : undefined;
+}
+
+function normalizePool(value: unknown): string | undefined {
+  return typeof value === 'string' && DELEGATION_POOL_PATTERN.test(value) ? value : undefined;
 }
 
 /**
@@ -748,6 +1065,11 @@ function normalizePositiveInteger(value: unknown, fallback: number): number {
   return normalizeInteger(value, fallback, 1) ?? fallback;
 }
 
+function normalizeBoundedPositiveInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const normalized = normalizeInteger(value, fallback, min) ?? fallback;
+  return normalized <= max ? normalized : fallback;
+}
+
 function normalizeNullableNonNegativeInteger(value: unknown, fallback: number | null): number | null {
   if (value === null) return null;
   return normalizeInteger(value, fallback, 0);
@@ -760,8 +1082,13 @@ function normalizeInteger(value: unknown, fallback: number | null, min: number):
 }
 
 async function getAvailableProviders(configuredProviders: readonly AgentProviderConfig[]): Promise<AgentProviderOption[]> {
+  const configuredById = new Map(configuredProviders.map((provider) => [provider.providerId, provider]));
   const builtinProviders = await Promise.all(piProviders().map(async (providerId) => {
-    const models = providerModelOptions(providerId, piModelsForProvider(providerId));
+    const models = providerModelOptions(
+      providerId,
+      piModelsForProvider(providerId),
+      configuredById.get(providerId)?.models,
+    );
     return {
       providerId,
       authKind: getProviderAuthKind(providerId),
@@ -798,7 +1125,7 @@ async function getCcSwitchProviderOption(
   const runtimeModels = registerCcSwitchRuntimeModels(localGatewayProvider, snapshot);
   const detected = snapshot.detected;
   if (!configured && !detected) return null;
-  const models = providerModelOptions(localGatewayProvider.providerId, runtimeModels);
+  const models = providerModelOptions(localGatewayProvider.providerId, runtimeModels, configured?.models);
   const baseUrl = ccSwitchRunnableSources(snapshot)[0]
     ? ccSwitchSourceBaseUrl(ccSwitchRunnableSources(snapshot)[0]!)
     : configured?.baseUrl ?? localGatewayProvider.defaultBaseUrl;
@@ -877,14 +1204,19 @@ function ccSwitchCatalogModel(localGatewayProvider: LocalGatewayProviderDefiniti
 async function resolveCcSwitchRuntimeConfig(
   localGatewayProvider: LocalGatewayProviderDefinition,
   config: AgentProviderConfig,
+  requestedModelId?: string,
 ): Promise<AgentProviderRuntimeConfig | null> {
   const snapshot = await readCcSwitchRegistry();
   registerCcSwitchRuntimeModels(localGatewayProvider, snapshot);
-  const model = rankedModels(localGatewayProvider.providerId)[0];
+  const models = rankedModels(localGatewayProvider.providerId, config.models);
+  const model = requestedModelId
+    ? models.find((candidate) => candidate.id === requestedModelId)
+    : models[0];
   if (!model) return null;
   return {
     providerId: config.providerId,
     enabled: config.enabled,
+    models: config.models,
     modelId: model.id,
     api: isOpenAICompatibleApiId(model.api) ? model.api : undefined,
   };
@@ -896,6 +1228,10 @@ function isOpenAICompatibleApiId(api: Api): api is OpenAICompatibleApiId {
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function providerCapabilities(providerId: string, languageModels: readonly AgentModelOption[]): AgentProviderCapabilitySummary[] {
@@ -930,8 +1266,13 @@ function providerCapabilities(providerId: string, languageModels: readonly Agent
   return capabilities;
 }
 
-function providerModelOptions(providerId: string, models: readonly Model<Api>[]): AgentModelOption[] {
-  return models
+function providerModelOptions(
+  providerId: string,
+  models: readonly Model<Api>[],
+  declaredModels?: readonly string[],
+): AgentModelOption[] {
+  const declared = normalizeDeclaredModels(declaredModels);
+  return (declared.length > 0 ? models.filter((model) => declared.includes(model.id)) : models)
     .map((model): AgentModelOption => ({
       id: model.id,
       name: model.name,
@@ -1014,7 +1355,7 @@ async function findUsableProvider(
 }
 
 /**
- * One-time, startup cleanup of `agent-providers.json` (provider-config-cleanup A3).
+ * One-time, startup cleanup of the private model runtime state (provider-config-cleanup A3).
  * Removes the literal bug shape — a keyless catalog row the old main-pane save side
  * effect produced — and repoints a now-dangling active pointer. Intentionally NOT
  * run on the read path: a write there raced concurrent writers and, fed the
@@ -1156,16 +1497,101 @@ function isAgentCacheRetention(value: unknown): value is AgentRuntimeSettings['p
 }
 
 async function readProviderFile(): Promise<ProviderConfigFile> {
-  return readJsonOrDefault(providerPath(), { providers: [] });
+  const state = await readJsonOrDefault<ProviderStateFile>(
+    providerPath(),
+    { providers: [] },
+    normalizeProviderStateFile,
+  );
+  const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  const stateByProvider = new Map(state.providers.map((provider) => [provider.providerId, provider]));
+  return {
+    activeProviderId: state.activeProviderId,
+    imageGeneration: { defaultModel: preferences.models.imageDefault },
+    providers: preferences.models.connections.map((connection) => ({
+      providerId: connection.providerId,
+      enabled: connection.enabled,
+      models: connection.models,
+      ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
+      ...(stateByProvider.get(connection.providerId) ?? {}),
+    })),
+  };
 }
 
 async function mutateProviderFile(mutator: (file: ProviderConfigFile) => void | Promise<void>): Promise<ProviderConfigFile> {
-  return updateJsonFile(
+  let result: ProviderConfigFile | null = null;
+  await updateJsonFile(
     providerPath(),
     { providers: [] },
-    (value) => value as ProviderConfigFile,
-    mutator,
+    normalizeProviderStateFile,
+    async (state) => {
+      const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+      const stateByProvider = new Map(state.providers.map((provider) => [provider.providerId, provider]));
+      const file: ProviderConfigFile = {
+        activeProviderId: state.activeProviderId,
+        imageGeneration: { defaultModel: preferences.models.imageDefault },
+        providers: preferences.models.connections.map((connection) => ({
+          providerId: connection.providerId,
+          enabled: connection.enabled,
+          models: connection.models,
+          ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
+          ...(stateByProvider.get(connection.providerId) ?? {}),
+        })),
+      };
+      await mutator(file);
+      const publicConnections = file.providers.map((provider) => ({
+        providerId: provider.providerId,
+        baseUrl: provider.baseUrl ?? null,
+        enabled: provider.enabled,
+        models: provider.models ?? [],
+      }));
+      const previousConnections = preferences.models.connections.map((connection) => ({
+        providerId: connection.providerId,
+        baseUrl: connection.baseUrl ?? null,
+        enabled: connection.enabled,
+        models: connection.models,
+      }));
+      const updates: { path: readonly string[]; value: unknown }[] = [];
+      if (JSON.stringify(publicConnections) !== JSON.stringify(previousConnections)) {
+        updates.push({ path: ['models', 'connections'], value: publicConnections });
+      }
+      if (file.imageGeneration?.defaultModel !== preferences.models.imageDefault) {
+        updates.push({ path: ['models', 'imageDefault'], value: file.imageGeneration?.defaultModel ?? null });
+      }
+      if (updates.length > 0) updateFilePreferences(electron.app.getPath('userData'), updates);
+      result = file;
+      return {
+        activeProviderId: file.activeProviderId,
+        providers: file.providers.map(({ providerId, connectionGeneration, connectionCheck }) => ({
+          providerId,
+          connectionGeneration,
+          ...(connectionCheck ? { connectionCheck } : {}),
+        })),
+      } satisfies ProviderStateFile;
+    },
   );
+  if (!result) throw new Error('Provider state mutation did not settle');
+  return result;
+}
+
+function normalizeProviderStateFile(value: unknown): ProviderStateFile {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { providers: [] };
+  const raw = value as Partial<ProviderStateFile>;
+  const providers = Array.isArray(raw.providers)
+    ? raw.providers.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+      const provider = entry as Partial<AgentProviderConfig>;
+      if (typeof provider.providerId !== 'string' || !provider.providerId.trim()) return [];
+      return [{
+        providerId: provider.providerId,
+        ...(Number.isSafeInteger(provider.connectionGeneration) ? { connectionGeneration: provider.connectionGeneration } : {}),
+        ...(provider.connectionCheck ? { connectionCheck: provider.connectionCheck } : {}),
+      }];
+    })
+    : [];
+  return {
+    ...(typeof raw.activeProviderId === 'string' ? { activeProviderId: raw.activeProviderId } : {}),
+    providers,
+  };
 }
 
 async function readSecretFile(): Promise<SecretFile> {
@@ -1424,7 +1850,7 @@ function isStoredModel(value: unknown): value is Model<Api> {
 }
 
 function providerPath() {
-  return join(electron.app.getPath('userData'), PROVIDERS_FILE);
+  return join(electron.app.getPath('userData'), PROVIDER_STATE_FILE);
 }
 
 function secretPath() {

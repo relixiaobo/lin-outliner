@@ -96,7 +96,7 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
   }, definitionConfigLabels(t));
   const tagOptions = useMemo(
     () => buildDefinitionTagOptions(index, node.id, t.common.untitled),
-    [index, node.id, t.common.untitled],
+    [index.semanticRevisions.definitionOptions, node.id, t.common.untitled],
   );
 
   const updateTag = (patch: TagConfigPatch) => {

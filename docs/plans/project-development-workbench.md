@@ -49,7 +49,7 @@ Tool Task
   one foreground/background process or host operation
 
 ExecutionAddress
-  requested/resolved cwd, canonical root/worktree identity
+  requested/resolved cwd, canonical target/scope identities
 
 ExecutionPolicy
   capability decision, read-only ceiling, isolation decision
@@ -99,8 +99,10 @@ File reads, writes, edits, deletes, and background producers must either carry
 the optional task-scoped `cwd` or use an explicit path that the Host
 canonicalizes into an `ExecutionAddress`. No local mutation may resolve from a
 retired Thread cwd, an unrecorded prompt value, or a Skill-local directory.
-The resulting Tool Task receipt always names the canonical target and its root
-or worktree identity.
+The receipt names the admitted address and any targets the Host resolved from
+typed file arguments. It does not infer every path a shell or native launcher
+will access from command text. Instruction/profile scope for a file call follows
+its canonical target; Bash scope follows its cwd, as defined in the context plan.
 
 ### Context admission and injection
 
@@ -186,9 +188,11 @@ Precedence is:
 4. Repository instructions, profiles, and Skills.
 5. Files, command output, and prior transcript as untrusted evidence.
 
-Full Access is the default execution contract. Read-only ceilings, isolated
-worktrees, and OS sandboxing are optional Host policies for delegated or
-explicitly isolated work. Requested isolation fails closed when unavailable;
+Full Access is the default for ordinary root work. Writable delegation requires
+a dedicated worktree under the existing launcher contract; internal read-only
+ceilings and external disposable-worktree policies remain distinct. OS
+sandboxing is a separate policy with separately recorded enforcement. Requested
+or required isolation fails closed when unavailable;
 explicit Full Access remains truthful and is recorded as `unsandboxed` where no
 OS sandbox is enforced.
 
@@ -198,11 +202,39 @@ second ledger.
 
 ### Concurrency, deletion, and recovery
 
-Tool Tasks are the only process ledger. A mutating task claims the canonical
-worktree identity atomically (Git worktree realpath when available, otherwise
-the canonical non-Git root realpath); a conflicting mutation returns `worktree_busy`
-and an isolated-worktree action instead of silently queueing behind the claim.
-The claim releases only after terminal receipt or restart reconciliation.
+Tool Tasks are the only process ledger. Address claims coordinate tasks that
+declare the same canonical scope; they are not a filesystem boundary or a
+guarantee that all Full Access writes are serialized.
+
+For tasks requiring mutation coordination, admission derives keys from their
+known scope. Bash and native launchers claim their resolved cwd's Git worktree
+identity, or their exact
+canonical directory when non-Git. Typed file mutations derive keys from their
+canonical targets' Git worktrees, or canonical parent directories for non-Git
+file entries, independently of cwd; an operation with several known
+targets claims all corresponding keys. `ToolTaskStore` persists the immutable
+key set and acquires it in one transaction with an active unique claim per
+key. A collision rolls back the whole acquisition and returns `worktree_busy`
+with an isolated-worktree action where available. Claims are never silently
+queued; release follows terminal receipt or restart reconciliation of that task.
+
+Internal tool calls executing within an already claimed launcher task receive
+a Host-private reference to that task's claim for the covered keys, not a new
+competing lease. Additional keys require ordinary admission. Child completion
+cannot release the owning task's claim, and unrelated Sessions cannot inherit
+it. Recovery settles covered child work before releasing the owner claim.
+
+Receipts label coverage `known-targets` for typed file operations or `cwd-only`
+for shell/native launcher work. Unknown shell effects remain allowed under
+Full Access and are explicitly outside claim coverage. No shell parser, new
+target tool, or model-supplied target list is treated as proof of complete write
+coverage. `bash(cwd: A, command: "git -C B ...")` may modify B without claiming
+B; two such tasks are not promised mutual exclusion. Different non-Git scope
+keys and writes by editors or external processes have the same limitation.
+The development Skill uses the actual repository as cwd for each mutation and
+splits cross-repository writes into separate calls when practical. Verification
+and commit admission independently revalidate state; they cannot treat this
+cooperative claim as isolation or proof that files stayed unchanged.
 
 Project deletion is a catalog transaction. It detaches Project membership from
 the complete Thread lineage, including fork, child, delegated, and hidden
@@ -235,6 +267,11 @@ replays a mutation by assumption.
 
 Project profiles may declare required and optional checks. Tool Tasks run them
 and retain bounded output, exit state, context references, and worktree identity.
+A source manifest and verification revision bind results to the state checked.
+Any included-source edit invalidates previous passes; a new revision reruns all
+required checks. Aggregation and restart revalidate the full declared scope,
+not merely the address or instruction snapshot. Exact rules and the limits of
+external-change observation live in the verification plan.
 A user-started Goal may compose `inspect -> edit -> check -> correct -> rerun`
 with a finite iteration/token budget and a durable stop reason. It cannot
 publish implicitly.
@@ -242,7 +279,10 @@ publish implicitly.
 Review uses existing Git/hosting CLIs through Bash and Tool Tasks. Its snapshot
 records staged, unstaged, untracked, renamed, deleted, and binary paths. Every
 path has a canonical identity, file kind, size, and content/diff digest that is
-recomputed before commit. A mismatch requires a refreshed review. Commit,
+recomputed before commit. Review also captures mandatory HEAD OID, symbolic ref
+or detached/unborn state, worktree identity, and index state independently of
+optional context discovery. Any baseline or content mismatch requires a
+refreshed review, including switching branches at the same OID. Commit,
 push, and PR operations record their factual result and reconcile uncertainty
 before retrying.
 
@@ -273,10 +313,15 @@ Pi. Tenon owns the product and persistence model.
 - **FR-5:** Every executable Turn records the context used by every Tool Task.
 - **FR-6:** Context is projected through typed evidence and system-reminder.
 - **FR-7:** Requested isolation fails closed; ordinary Full Access remains usable.
-- **FR-8:** Same-worktree mutation claims are atomic and recoverable.
+- **FR-8:** Claims on admitted address scopes are atomic and recoverable, with
+  explicit coverage limits for unknown or external writes.
 - **FR-9:** Project deletion leaves no dangling Thread or Tool Task reference.
 - **FR-10:** Verification and self-iteration are bounded and evidence-backed.
 - **FR-11:** Review verifies untracked and binary content before publication.
+- **FR-12:** Check applicability is bound to a source manifest/revision; stale
+  passes never satisfy current verification.
+- **FR-13:** Commit admission verifies the reviewed HEAD/ref and file/index
+  state independently of optional Git discovery.
 
 ## Acceptance criteria
 
@@ -294,16 +339,21 @@ Pi. Tenon owns the product and persistence model.
   without a valid context reference.
 - **AC-6:** Project deletion cannot leave dangling lineage or active-task
   references; completed history remains readable and non-resumable.
-- **AC-7:** Concurrent mutation returns `worktree_busy` or an isolated action;
-  it is never silently queued behind the worktree claim.
+- **AC-7:** Tasks claiming the same scope receive `worktree_busy` on conflict;
+  multi-key acquisition is all-or-nothing and never silently queued. A shell
+  writing B from cwd A records `cwd-only` coverage and does not claim B is locked.
+  Internal delegated tools consume their owning task's covered claim without
+  self-conflict; a different Session cannot reuse it.
 - **AC-8:** Review detects post-review changes to untracked, renamed, deleted,
-  and binary files before commit.
+  and binary files, HEAD, and branch/ref before commit.
 - **AC-9:** A bounded correction loop reports factual checks, budget use, and
   stop reason without implicit publication.
 - **AC-10:** Restart never turns missing execution evidence into success or
   replays a mutation by assumption.
 - **AC-11:** The same workflow succeeds for Tenon and a second project with a
   different toolchain.
+- **AC-12:** Fixing failed check B invalidates passed A; both must pass at the
+  new source revision, including after restart.
 
 ## Delivery units
 
@@ -320,13 +370,20 @@ Unit B adds richer discovery. No consumer implements against a partial protocol.
 The specs in this design PR describe the intended replacement contract; they
 do not claim that the runtime cut has shipped. Unit A must reconcile code and
 all of these authorities together: `agent-tool-design`, `agent-tool-permissions`,
-`agent-subagent-threads`, `agent-model-runtime`, `agent-thread-rendering`, `agent-core`,
+`agent-delegation`, `agent-model-runtime`, `agent-thread-rendering`, `agent-core`,
 `agent-automations`, and the active `agent-delegation-runtime` plan. This includes
-local path resolution, child resource inheritance/orphan recovery, configuration
+local path resolution, delegated resource continuity/recovery, configuration
 source lookup, transcript indexes, task-relative renderer links, and removal of
 a single working directory from Turn environment evidence. Add codec rejection
 and production-reader guards specified in the
 context plan, not only tests of the new Bash field.
+
+The baseline already contains internal delegation, native CLI launchers, and
+file-backed Settings. Adapt `DelegationCoordinator`, `DelegationSessionStore`,
+`DelegateCapabilityBroker`, `InternalDelegationSessionRuntime`, and
+`ExternalAgentCliLauncher` in place. Writable isolation stays mandatory, native
+CLI execution remains vendor-owned, and retired Subagent tools/ledgers/specs
+stay deleted. No new adapter or nesting mechanism is part of this cut.
 
 Automation's complete adapter change is in this same unit: replace
 `AutomationProjectBinding` and `AutomationRun.projectBindingKey` in
@@ -350,11 +407,13 @@ Unit A's Automation lifecycle contract.
 ### Unit C: Verification and bounded self-iteration
 
 Compose Tool Tasks, Goals, Skills, and project checks into a finite
-inspect-fix-rerun workflow with restart and incomplete-check recovery.
+inspect-fix-rerun workflow with source-manifest invalidation, current-result
+aggregation, and restart recovery that revalidates old passes.
 
 ### Unit D: Git review and explicit publication
 
-Implement review snapshots, content digests, selected-path commit admission,
+Implement review snapshots, mandatory HEAD/ref baselines, content digests,
+selected-path commit admission,
 remote reconciliation, and explicit push/PR previews through existing CLIs.
 
 ### Unit E: Isolation and interactive process evidence
@@ -381,16 +440,17 @@ identity, or a parallel ledger.
 
 Collision self-check (2026-09-07): `gh pr list --state open` found this claim,
 PR #639, and #643 (Settings Unit D, Skill configuration/lifecycle). #643 claims
-Skill/settings implementation, with no changed files at inspection; its scope
-does not overlap this documentation batch. `docs/TASKS.md` still carries the
-delegation dependency below. The batch has **no file overlap**; runtime and
-configuration consumers must use the final merged mechanisms at implementation.
+Skill/settings implementation and `agent-skills.md`; none of its changed files
+overlaps this documentation batch. `docs/TASKS.md` records the shipped internal
+delegation (#628), native launchers (#637), and Settings Units A-C. The batch
+has **no file overlap**; runtime/configuration consumers use these final merged
+mechanisms at implementation.
 
-Unit A is the semantic predecessor of the execution-context consumers in the
-active `agent-delegation-runtime` plan. Main must rebase that plan on Unit A
-before marking that board item eligible: Session policy may request an isolated
-worktree, but Session or Runner must never become the owner of a sticky cwd or
-a second execution ledger.
+Unit A follows the shipped delegation/native-launcher baseline and updates its
+task-context consumers in one refactor. Future features consume that merged
+contract. The active aggregate delegation plan has matching integration text;
+main owns board sequencing without treating its already shipped units as
+blocked on this proposal.
 
 ## Verification strategy
 

@@ -12,6 +12,47 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Read-only Skill curation reports now surface deterministic findings (PR #642)** - Settings can generate an opt-in, hash-bound report over the loaded Skill registry without changing files or settings. Unchanged user/project Skills with reliable Agent-write provenance are analyzed for missing or root-escaping Markdown resources, exact content duplicates, and retired tool names; built-in, managed, unprovenanced, and changed Skills remain visible with exclusion reasons. Verified with typecheck, `docs:check`, focused Core and Renderer tests (45 passed), and whitespace checks; the five non-gating E2E signal samples were still running at merge.
+
+- **Local Skill sources now have explicit binding modes (PR #641)** - additional Skill sources persist as `skill` or `container`, so selecting a Skill directory loads exactly that directory without widening to its siblings; container discovery, reload, write attribution, canonical path expansion, and unbind all reuse the stored mode. The Settings picker and Skill specification now describe the same scope, while malformed exact Skills remain governed for repair. Verified with typecheck, `docs:check`, focused Core and Renderer tests, whitespace checks, and five successful GitHub E2E samples.
+
+- **Root Agent configuration and delegation policy now use file-backed sources (PR #640)** - layered user/project root configuration supports bounded source inspection, generated schemas, strict JSONC validation, and comment-preserving structural edits; durable delegation policy now lives under `agent.delegation` in `config/settings.jsonc` while runtime and Session state remain private. Verified with typecheck, `docs:check`, focused configuration/delegation tests, whitespace checks, and five E2E signal samples with baseline subtraction.
+
+- **File-backed preferences and the configuration Skill now ship (PR #636)** - `config/settings.jsonc` is the public JSONC source for the delivered preference fields, with a generated schema, bounded status, last-known-good recovery, atomic comment-preserving writes, and live Host application. Skill/tool availability, Memory enablement, appearance, provider runtime limits, and automatic update checks use their owning consumers; the built-in configuration Skill reports accepted/effective/pending/rejected outcomes. Verified with typecheck, `docs:check`, focused configuration/runtime tests, whitespace checks, and five E2E signal samples.
+
+- **Native Agent CLI launchers now run through managed delegation (PR #637)** - user-enabled Codex, Claude Code, and OpenClaw CLIs are discovered on `PATH` and invoked through the generic Tool Task lifecycle with stdin-only prompts, provider-scoped environments, managed worktrees, cancellation, and bounded output. The root Agent learns one vendor-neutral `delegate` Skill; launcher-specific command syntax remains in the Host registry. Verified with typecheck, `docs:check`, 139 focused tests (134 passed, 5 skipped), and whitespace checks.
+
+- **Model connections and defaults now use file-backed Settings (PR #638)** - public `config/settings.jsonc` now owns provider connections, exact model declarations, image defaults, and the qualified application default while credentials, catalogs, probes, and runtime state remain in their domain stores. New Threads honor the configured default and use the shared medium-nearest reasoning rule; CC Switch runtime selection enforces declared model allow-lists. Verified with typecheck, `docs:check`, focused model/provider regression tests, and whitespace checks.
+
+- **Renderer icons now follow semantic object, action, and tool meaning (PR
+  #631)** — the app uses a shared Iconoir presentation layer for actions,
+  launcher and picker surfaces, attachments, previews, and agent tools. Tool
+  activity keeps completed and running calls distinct, grouped web-search
+  counts are localized, and mixed operation groups retain separate truthful
+  segments. Verified with typecheck, `docs:check`, focused renderer tests, and
+  icon-boundary checks.
+
+- **Settings now has an approved file-first design for people and Agents (PR
+  #626)** — the plan defines public JSONC configuration and keybinding sources,
+  same-source human editing, domain-owned Agent operations, model-selection
+  precedence, credential and connection recovery, contextual Translation,
+  complete shortcut coverage, and seven independently complete implementation
+  units. It preserves source text on invalid edits, reports current-Host
+  settlement through bounded status, and keeps retired delegation surfaces out
+  of the target. Gate verification passed `docs:check` and whitespace checks;
+  runtime behavior remains unchanged until the implementation units ship.
+
+- **Internal Agent delegation now runs through durable Tool Tasks (PR #628)** —
+  the packaged `delegate` CLI creates root-owned hidden Agent Sessions backed by
+  the internal Runner, ordered continuation messages, Host-attested direct-exec
+  admission, and exact prepared-result/final-process settlement. User stop,
+  cancellation, process failure, crash recovery, and explicit fresh continuation
+  preserve factual terminal state without replaying stale queued input. The
+  legacy Subagent and isolated-Skill execution surfaces are retired in the same
+  pre-release cutover. Verified with typecheck, `docs:check`, 44 startup and
+  lifecycle tests, 76 delegation and Tool Task tests, whitespace checks, and a
+  clean merge tree against `main`.
+
 - **Agent Trajectory now preserves exact execution evidence end to end (PR
   #627, codex-2)** — Context, provider Request and Assistant response, Tool
   Input/Output, Raw, and copy now expose the complete retained value from their
@@ -552,6 +593,39 @@ Entries reference the pull request that introduced them when one exists.
   renderer-free diff under the repository's non-gating E2E policy.
 
 ### Fixed
+
+- **Preview translation geometry now stays bounded to the viewport (PR #634, codex-2)** - URL pages maintain an IntersectionObserver-backed near-viewport candidate set with immediate work signals and teardown cleanup; EPUB readers use cached layout positions with an overlap-safe interval index and refresh coordinates on layout changes. Retry-only work retains its all-record semantics, while visible and prefetch scheduling avoid reading every translation block on scroll. Gate review found five issues covering observer typing, far-jump wakeups, overlapping EPUB intervals, stale layout caches, and observer teardown; all were fixed before the final no-findings review. Verified with typecheck, 75 focused URL/EPUB tests, 1,431 renderer tests, `docs:check`, and whitespace checks.
+
+- **Supervised Bash task statuses now match the public tool contract (PR #635)** -
+  durable `settling`, `succeeded`, `timed_out`, `lost`, and `cancelled` states
+  are normalized to the stable Bash vocabulary before model-visible result
+  validation, preventing valid background results from becoming
+  `invalid_internal_result` failures. Verified with typecheck, 109 focused Bash
+  tests (5 skipped), `docs:check`, and whitespace checks.
+
+- **Runtime selection indexes now reuse stable reads (PR #633, codex-2)** - repeated Runtime selection and projection reads reuse one index for the current document and asset-metadata revisions; asset ingestion, reconciliation, and collection invalidate it without coupling query-local evaluation to shared state. Verified with typecheck, 44 focused Core tests, `docs:check`, and whitespace checks. This completes the Runtime-index unit of the `interaction-jank-cleanups` plan; translation geometry remains separate. The non-gating five-sample GitHub E2E signal was still running at merge.
+
+- **Definition option catalogs now survive unrelated document edits (PR #632,
+  codex-2)** - table field catalogs and definition tag selectors use a semantic
+  definition revision instead of whole-index identity. Definition membership,
+  names, configuration descendants, and Trash transitions invalidate the cache;
+  table usage groups still follow the current record fields. Gate review found
+  one Medium stale-grouping defect, fixed by separating the catalog from row
+  usage. Verified with typecheck, `docs:check`, 34 focused renderer tests, real
+  Core tag deltas, browser field-entry add/remove deltas, light/dark visual
+  inspection, and whitespace checks. This completes PR-2 of the interaction-jank
+  plan; translation geometry and Runtime-index reuse remain open. Non-gating
+  GitHub E2E samples were still running at merge.
+
+- **Renderer interaction chrome now batches scroll work (PR #630, codex-2)** -
+  anchored overlays coalesce geometry updates per animation frame and ignore
+  unrelated scroll targets; virtualized Flat/Table outliners share one capture
+  dispatcher, panel title docking uses its existing frame scheduler, and the
+  workspace keyboard listener remains stable across projection updates. This
+  completes PR-1 of the `interaction-jank-cleanups` plan; definition caches,
+  preview translation geometry, and Runtime index reuse remain separate units.
+  Verified with typecheck, `docs:check`, 1,524 renderer tests, and whitespace
+  checks; the non-gating five-sample GitHub E2E signal was queued at merge.
 
 - **The desktop window appears before service startup (PR #629, codex-2)** -
   large workspaces now show the native window while document, provider, Agent,

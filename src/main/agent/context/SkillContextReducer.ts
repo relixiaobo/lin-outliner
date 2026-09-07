@@ -94,7 +94,7 @@ export async function reduceSkillContext(
         activeInvocations.clear();
         for (const checkpoint of restored.activeSkills) {
           const active = await readContext(checkpoint.payloadRef).catch(() => null);
-          if (!active || active.kind !== 'skillInvocation' || active.execution !== 'inline') {
+          if (!active || active.kind !== 'skillInvocation') {
             recordContextDegradation(
               degradations,
               contextDegradation('payloadUnavailable', 'skillInvocation', checkpoint.payloadRef.id),
@@ -145,7 +145,7 @@ export async function reduceSkillContext(
         continue;
       }
       if (payload.kind === 'skillInvocation') {
-        if (payload.execution === 'inline') activeInvocations.set(payload.name, payload);
+        activeInvocations.set(payload.name, payload);
         continue;
       }
     }

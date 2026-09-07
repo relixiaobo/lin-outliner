@@ -443,7 +443,11 @@ export class ToolTaskStore {
     taskId: string,
     receipt: ToolTaskFinalReceipt,
     now: number,
-    stabilizedOutput = { stdoutBytes: receipt.stdoutBytes, stderrBytes: receipt.stderrBytes },
+    stabilizedOutput = {
+      stdoutBytes: receipt.stdoutBytes,
+      stderrBytes: receipt.stderrBytes,
+      preparedResultBytes: receipt.preparedResultBytes,
+    },
   ): ToolTaskRecord {
     const current = this.require(taskId);
     assertFinalReceipt(current, receipt);
@@ -461,7 +465,7 @@ export class ToolTaskStore {
     }
     const artifactBytes = current.artifacts.reduce((sum, artifact) => sum + artifact.ref.byteLength, 0);
     const outputBytes = stabilizedOutput.stdoutBytes + stabilizedOutput.stderrBytes;
-    const detailBytes = outputBytes + artifactBytes;
+    const detailBytes = outputBytes + artifactBytes + stabilizedOutput.preparedResultBytes;
     if (!Number.isSafeInteger(outputBytes) || outputBytes < 0
       || !Number.isSafeInteger(detailBytes) || detailBytes < 0) {
       throw new Error(`Invalid Tool Task settled detail size: ${taskId}`);
@@ -963,6 +967,7 @@ function assertFinalReceipt(task: ToolTaskRecord, receipt: ToolTaskFinalReceipt)
   const { receiptDigest, ...unsigned } = receipt;
   const digest = createHash('sha256').update(JSON.stringify(unsigned)).digest('hex');
   if (receipt.taskId !== task.taskId || receipt.nonce !== task.nonce
+    || receipt.version !== 2
     || !['succeeded', 'failed', 'cancelled', 'timed_out', 'lost'].includes(receipt.state)
     || receipt.startedAt !== task.startedAt || !Number.isFinite(receipt.quiescedAt)
     || receipt.quiescedAt < task.startedAt || !/^[0-9a-f]{64}$/u.test(receiptDigest)
@@ -979,6 +984,8 @@ function assertFinalReceipt(task: ToolTaskRecord, receipt: ToolTaskFinalReceipt)
     || !(receipt.preparedResultDigest === null
       || (typeof receipt.preparedResultDigest === 'string'
         && /^[0-9a-f]{64}$/u.test(receipt.preparedResultDigest)))
+    || !Number.isSafeInteger(receipt.preparedResultBytes) || receipt.preparedResultBytes < 0
+    || ((receipt.preparedResultDigest === null) !== (receipt.preparedResultBytes === 0))
     || (receipt.state === 'succeeded'
       && (receipt.exitCode !== 0 || receipt.signal !== null || receipt.error !== null
         || receipt.supervisorPid === null || receipt.childPid === null))) {

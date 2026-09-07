@@ -1,15 +1,15 @@
 import type { ThreadItem } from '../../projectionTypes';
 import {
-  AgentIcon, FileCreateToolIcon, FileDeleteToolIcon, FileEditToolIcon,
+  FileCreateToolIcon, FileDeleteToolIcon, FileEditToolIcon,
   FileGlobToolIcon, FileGrepToolIcon, FileReadToolIcon, FileWriteToolIcon,
-  GenericToolIcon, InfoIcon, McpToolIcon, MessageAgentIcon, MoveToIcon,
-  PlanToolIcon, QuestionToolIcon, SkillIcon, StopIcon, TerminalIcon,
+  GenericToolIcon, McpToolIcon, MoveToIcon,
+  PlanToolIcon, QuestionToolIcon, SkillIcon, TerminalIcon,
   WebFetchToolIcon, WebSearchToolIcon, type AppIcon,
 } from '../../../ui/icons';
 
 export type ThreadToolItem = Extract<ThreadItem, {
   type: 'commandExecution' | 'fileChange' | 'mcpToolCall'
-    | 'dynamicToolCall' | 'collabAgentToolCall' | 'webSearch';
+    | 'dynamicToolCall' | 'webSearch';
 }>;
 
 type ToolOperation =
@@ -67,18 +67,6 @@ export function toolPresentation(item: ThreadToolItem): ToolPresentation {
       const identity = normalizedToolIdentity(item.namespace, item.tool);
       return Object.hasOwn(DYNAMIC_OPERATIONS, identity) ? DYNAMIC_OPERATIONS[identity]! : UNKNOWN;
     }
-    case 'collabAgentToolCall':
-      switch (item.tool) {
-        case 'agent': return { operation: 'agent', Icon: AgentIcon };
-        case 'agent_message': return { operation: 'agentMessage', Icon: MessageAgentIcon };
-        case 'task_status': return { operation: 'taskStatus', Icon: InfoIcon };
-        case 'task_stop': return { operation: 'taskStop', Icon: StopIcon };
-        default: {
-          const unexpected: never = item;
-          console.warn('Unknown collaboration tool presentation', unexpected);
-          return UNKNOWN;
-        }
-      }
     default: {
       const unexpected: never = item;
       console.warn('Unknown tool presentation', unexpected);

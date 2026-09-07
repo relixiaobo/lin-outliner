@@ -26,11 +26,20 @@ import type {
   ToolTaskSupervisorConfig,
 } from '../../src/main/agent/tasks/toolTaskTypes';
 import { resolveToolTaskSupervisorRuntime } from '../../src/main/agent/tasks/toolTaskRuntime';
+import { DelegateRuntimeHost, schedulingPolicyDigest } from '../../src/main/agent/delegation';
+import { resolveDelegateCliRuntime } from '../../src/main/delegateRuntime';
+import { parseDelegateCommand, type DelegateStateCommand } from '../../src/delegate/contract';
 
 const OWNER_ID = '00000000-0000-7000-8000-000000000001' as ThreadId;
 const SOURCE_TURN_ID = '00000000-0000-7000-8000-000000000002' as TurnId;
 const DELIVERY_TURN_ID = '00000000-0000-7000-8000-000000000003' as TurnId;
 const DAY_MS = 24 * 60 * 60_000;
+const DELEGATION_SCHEDULER_LIMITS = Object.freeze({
+  maxConcurrentGlobal: 8,
+  maxConcurrentThread: 4,
+  maxQueuedGlobal: 32,
+  maxQueuedThread: 8,
+});
 
 const roots: string[] = [];
 const services: ToolTaskService[] = [];
@@ -206,12 +215,338 @@ describe('ToolTaskService', () => {
     expect(timedOut).toMatchObject({ state: 'timed_out', outcomeReason: 'timeout' });
   });
 
-  test('stops the owned process group and preserves the first terminal race result', async () => {
+  test('runs a direct process with its exact environment and transfers private control only through fd 3', async () => {
     const fixture = await createFixture();
     const service = await createService(fixture, passiveHost());
+    const script = [
+      "const fs = require('node:fs');",
+      "const control = fs.readFileSync(3, 'utf8');",
+      "let stdin = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { stdin += chunk; });",
+      "process.stdin.on('end', () => process.stdout.write(JSON.stringify({",
+      "control, stdin, base: process.env.BASE_VISIBLE ?? 'unset', direct: process.env.DIRECT_VISIBLE,",
+      "electron: process.env.ELECTRON_RUN_AS_NODE ?? 'unset',",
+      '})));',
+    ].join('');
+    const started = await startHidden(service, 'delegate run --input - --output json', {
+      stdin: 'task intent',
+      env: { ...process.env, BASE_VISIBLE: 'base', ELECTRON_RUN_AS_NODE: '1' },
+      process: {
+        kind: 'exec',
+        executable: process.execPath,
+        args: ['-e', script],
+        env: { DIRECT_VISIBLE: 'direct' },
+        privateControl: true,
+      },
+      privateControlInput: Buffer.from('private capability'),
+    });
+    const terminal = await waitForTerminal(service, started.taskId);
+    const output = await service.output(terminal.taskId, OWNER_ID);
+
+    expect(terminal).toMatchObject({ state: 'succeeded', outcomeReason: 'exit_zero' });
+    expect(JSON.parse(output!.stdout)).toEqual({
+      control: 'private capability',
+      stdin: 'task intent',
+      base: 'unset',
+      direct: 'direct',
+      electron: 'unset',
+    });
+    expect(await readFile(path.join(terminal.detailPath, 'producer.json'), 'utf8'))
+      .not.toContain('private capability');
+  });
+
+  test('prepares a direct process only after allocating its durable task identity', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const seen: unknown[] = [];
+    const started = await startHidden(service, 'delegate run --input - --output json', {
+      stdin: 'task intent',
+      prepareProcess: async (context) => {
+        seen.push(context);
+        return {
+          process: {
+            kind: 'exec',
+            executable: process.execPath,
+            args: ['-e', "process.stdout.write('prepared')"],
+            env: {},
+            privateControl: false,
+          },
+        };
+      },
+    });
+    const terminal = await waitForTerminal(service, started.taskId);
+    const output = await service.output(terminal.taskId, OWNER_ID);
+
+    expect(terminal).toMatchObject({ state: 'succeeded', outcomeReason: 'exit_zero' });
+    expect(output?.stdout).toBe('prepared');
+    expect(seen).toEqual([{
+      taskId: started.taskId,
+      nonce: expect.any(String),
+      cwd: process.cwd(),
+      stdin: 'task intent',
+    }]);
+  });
+
+  test('disposes prepared private control when task launch fails', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    let disposed = 0;
+    const terminal = await startHidden(service, 'invalid prepared command', {
+      prepareProcess: async () => ({
+        process: {
+          kind: 'exec',
+          executable: '/definitely/missing/tenon-test-command',
+          args: [],
+          env: {},
+          privateControl: true,
+        },
+        privateControlInput: Buffer.from('private capability'),
+        disposePrivateControl: () => { disposed += 1; },
+      }),
+    });
+
+    expect(terminal).toMatchObject({ state: 'failed', outcomeReason: 'admission_failed' });
+    expect(disposed).toBe(1);
+  });
+
+  test('commits an optional prepared result only after its bytes match the final receipt', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const started = await startHidden(service, 'cooperative producer', {
+      process: {
+        kind: 'exec',
+        executable: process.execPath,
+        args: ['-e', "setTimeout(() => process.stdout.write('done'), 150)"],
+        env: {},
+        privateControl: false,
+      },
+    });
+    const result = Buffer.from('{"status":"prepared"}', 'utf8');
+    const prepared = await service.prepareResult(started.taskId, OWNER_ID, result);
+    expect(prepared).toEqual({
+      sha256: createHash('sha256').update(result).digest('hex'),
+      byteLength: result.byteLength,
+    });
+    expect(await service.prepareResult(started.taskId, OWNER_ID, result)).toEqual(prepared);
+    await expect(service.prepareResult(started.taskId, OWNER_ID, Buffer.from('different')))
+      .rejects.toThrow('immutable');
+
+    const terminal = await waitForTerminal(service, started.taskId);
+    const receipt = JSON.parse(await readFile(
+      path.join(fixture.detailRoot, started.taskId, 'final-receipt.json'),
+      'utf8',
+    )) as ToolTaskFinalReceipt;
+    expect(terminal).toMatchObject({
+      state: 'succeeded',
+      detailBytes: result.byteLength + 4,
+    });
+    expect(receipt).toMatchObject({
+      version: 2,
+      preparedResultDigest: prepared.sha256,
+      preparedResultBytes: result.byteLength,
+    });
+  });
+
+  test('keeps the first prepared result immutable across concurrent writers', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const started = await startHidden(service, 'racing cooperative producer', {
+      process: {
+        kind: 'exec',
+        executable: process.execPath,
+        args: ['-e', 'setTimeout(() => {}, 250)'],
+        env: {},
+        privateControl: false,
+      },
+    });
+    const candidates = [Buffer.from('first'), Buffer.from('second')];
+    const results = await Promise.allSettled(candidates.map((candidate) => (
+      service.prepareResult(started.taskId, OWNER_ID, candidate)
+    )));
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const stored = await readFile(
+      path.join(fixture.detailRoot, started.taskId, 'prepared-result.bin'),
+    );
+    expect(candidates.some((candidate) => candidate.equals(stored))).toBe(true);
+    await waitForTerminal(service, started.taskId);
+  });
+
+  test('downgrades only factual success when producer reconciliation fails', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, {
+      ...passiveHost(),
+      reconcileTask: async () => ({
+        outcome: 'replace',
+        state: 'failed',
+        reason: 'delegation_coordination_failed',
+        error: 'Canonical delegated context could not be reconciled.',
+      }),
+    });
+    const succeeded = await startHidden(service, 'printf complete');
+    const failed = await startHidden(service, 'exit 7');
+
+    await expect(waitForTerminal(service, succeeded.taskId)).resolves.toMatchObject({
+      state: 'failed',
+      exitCode: 0,
+      outcomeReason: 'delegation_coordination_failed',
+      error: 'Canonical delegated context could not be reconciled.',
+    });
+    await expect(waitForTerminal(service, failed.taskId)).resolves.toMatchObject({
+      state: 'failed',
+      exitCode: 7,
+      outcomeReason: 'exit_nonzero',
+    });
+  });
+
+  test('adopts a producer terminal outcome only after a factual successful process exit', async () => {
+    const fixture = await createFixture();
+    const outcomes = ['cancelled', 'timed_out', 'lost'] as const;
+    let index = 0;
+    const service = await createService(fixture, {
+      ...passiveHost(),
+      reconcileTask: async () => ({
+        outcome: 'replace',
+        state: outcomes[index++]!,
+        reason: 'delegated_execution_outcome',
+        error: null,
+      }),
+    });
+
+    for (const expected of outcomes) {
+      const terminal = await waitForTerminal(service, (await startHidden(service, 'printf complete')).taskId);
+      expect(terminal).toMatchObject({
+        state: expected,
+        exitCode: 0,
+        outcomeReason: 'delegated_execution_outcome',
+        error: null,
+      });
+    }
+  });
+
+  test('carries one admitted Delegate command through supervisor fd 3 and the Host broker', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const command = parseDelegateCommand([
+      'run', '--input', '-', '--output', 'json',
+    ]) as DelegateStateCommand;
+    const stdin = JSON.stringify({
+      version: 1,
+      prompt: 'Inspect the complete transport.',
+      profile: 'explore',
+      access: 'read-only',
+    });
+    const scheduling = {
+      pool: 'delegate-local',
+      configurationRevision: 'revision-1',
+      maxConcurrentProducer: 2,
+      maxConcurrentPool: 2,
+    } as const;
+    const broker = new DelegateRuntimeHost({
+      cli: resolveDelegateCliRuntime({
+        isPackaged: false,
+        moduleDir: path.join(process.cwd(), 'src', 'main'),
+        resourcesPath: '/unused',
+        processExecPath: '/unused/Tenon',
+      }),
+      socketPath: path.join(fixture.root, 'delegate.sock'),
+      currentConfigurationRevision: () => scheduling.configurationRevision,
+      resolveAdmission: async () => ({
+        rootUserIntentRevision: 1,
+        policy: {
+          configurationRevision: scheduling.configurationRevision,
+          capabilityCeilingDigest: 'a'.repeat(64),
+          runnerId: 'internal',
+          runnerVersion: '1',
+          modelProvider: 'provider',
+          modelId: 'provider/model',
+          effort: 'medium',
+          profile: 'explore',
+          access: 'read-only',
+          timeoutMs: 60_000,
+          schedulingPolicyDigest: schedulingPolicyDigest(scheduling),
+        },
+        session: {
+          kind: 'run',
+          preallocatedSessionId: '018f0f24-7b2e-7a3f-8a4b-123456789abd',
+        },
+      }),
+      execute: async (execution) => ({
+        taskId: execution.admission.toolTaskId,
+        prompt: (JSON.parse(execution.admission.stdin) as { prompt: string }).prompt,
+      }),
+    });
+    await broker.start();
+    try {
+      const commandRuntime = broker.commandRuntime(() => ({
+        scheduling,
+        schedulerLimits: DELEGATION_SCHEDULER_LIMITS,
+        timeoutMs: 60_000,
+      }));
+      const started = await startHidden(service, 'delegate run --input - --output json', {
+        producer: 'delegate',
+        stdin,
+        scheduling,
+        prepareProcess: (context) => commandRuntime.prepare({
+          ...context,
+          command,
+          ownerThreadId: OWNER_ID,
+          sourceTurnId: SOURCE_TURN_ID,
+          sourceItemId: 'source-item',
+          scheduling,
+          env: process.env,
+        }),
+      });
+      const terminal = await waitForTerminal(service, started.taskId);
+      const output = await service.output(terminal.taskId, OWNER_ID);
+
+      expect(terminal).toMatchObject({ state: 'succeeded', outcomeReason: 'exit_zero' });
+      expect(JSON.parse(output!.stdout)).toEqual({
+        ok: true,
+        data: {
+          taskId: started.taskId,
+          prompt: 'Inspect the complete transport.',
+        },
+      });
+    } finally {
+      await broker.stop();
+    }
+  });
+
+  test('rejects mismatched private control declarations before creating a task', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const direct = {
+      kind: 'exec' as const,
+      executable: process.execPath,
+      args: ['--version'],
+      env: {},
+      privateControl: true,
+    };
+
+    await expect(service.start(startInput('direct', { process: direct })))
+      .rejects.toThrow('private control declaration does not match');
+    await expect(service.start(startInput('shell', { privateControlInput: Buffer.from('secret') })))
+      .rejects.toThrow('requires a direct process');
+    await expect(service.start(startInput('direct', {
+      process: direct,
+      privateControlInput: Buffer.alloc(0),
+    }))).rejects.toThrow('must not be empty');
+    expect(fixture.store.nonterminal()).toEqual([]);
+  });
+
+  test('stops the owned process group and preserves the first terminal race result', async () => {
+    const fixture = await createFixture();
+    let observedSourceTurnId: string | undefined;
+    const service = await createService(fixture, {
+      ...passiveHost(),
+      beforeStop: async (_task, sourceTurnId) => { observedSourceTurnId = sourceTurnId; },
+    });
     const started = await startHidden(service, 'sleep 30 & wait');
     const stopped = await service.stop(started.taskId, OWNER_ID);
     expect(stopped?.state).toBe('cancelled');
+    expect(observedSourceTurnId).toBe(SOURCE_TURN_ID);
     const childPid = fixture.store.read(started.taskId)?.childPid;
     expect(childPid).not.toBeNull();
     if (childPid && process.platform !== 'win32') {
@@ -256,6 +591,7 @@ describe('ToolTaskService', () => {
       heartbeat: path.join(root, 'heartbeat.json'),
       stop: path.join(root, 'stop.json'),
       receipt: path.join(root, 'final-receipt.json'),
+      preparedResult: path.join(root, 'prepared-result.bin'),
       config: path.join(root, 'config.json'),
     };
     await Promise.all([
@@ -265,10 +601,10 @@ describe('ToolTaskService', () => {
     ]);
     const startedAt = Date.now();
     const config: ToolTaskSupervisorConfig = {
-      version: 1,
+      version: 2,
       taskId: 'task-identity-failure',
       nonce: 'nonce-identity-failure',
-      command: 'sleep 30',
+      process: { kind: 'shell', command: 'sleep 30' },
       cwd: root,
       stdinPath: paths.stdin,
       stdoutPath: paths.stdout,
@@ -278,9 +614,11 @@ describe('ToolTaskService', () => {
       heartbeatPath: paths.heartbeat,
       stopRequestPath: paths.stop,
       finalReceiptPath: paths.receipt,
+      preparedResultPath: paths.preparedResult,
       startedAt,
       timeoutMs: 60_000,
       maxOutputBytes: 1024,
+      maxPreparedResultBytes: 1024,
     };
     await writeFile(paths.config, `${JSON.stringify(config)}\n`);
     const supervisor = spawn(runtime.executable, [...runtime.argsPrefix, paths.config], {
@@ -548,6 +886,34 @@ describe('ToolTaskService', () => {
     expect((await waitForTerminal(service, queued.taskId)).state).toBe('succeeded');
     expect(fixture.store.readLease(second.taskId)?.state).toBe('released');
     expect((await service.output(second.taskId, OWNER_ID))?.stdout).toBe('after capacity');
+  });
+
+  test('freezes per-admission scheduler limits for active and queued delegated work', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const schedulerLimits: ToolTaskSchedulerLimits = {
+      maxConcurrentGlobal: 1,
+      maxConcurrentThread: 1,
+      maxQueuedGlobal: 1,
+      maxQueuedThread: 1,
+    };
+    const first = await service.start(startInput('sleep 30', { schedulerLimits }));
+    expect(fixture.store.readLease(first.taskId)?.state).toBe('active');
+
+    const second = await service.start(startInput(`printf 'after delegated capacity'`, { schedulerLimits }));
+    await waitUntil(() => fixture.store.queuedLeases().length === 1);
+    expect(fixture.store.read(second.taskId)?.progress).toMatchObject({ phase: 'queued' });
+
+    const refused = await service.start(startInput(`printf 'must not spawn'`, { schedulerLimits }));
+    expect(refused).toMatchObject({
+      state: 'failed',
+      outcomeReason: 'queue_limit',
+      childPid: null,
+    });
+
+    expect((await service.stop(first.taskId, OWNER_ID))?.state).toBe('cancelled');
+    expect((await waitForTerminal(service, second.taskId)).state).toBe('succeeded');
+    expect((await service.output(second.taskId, OWNER_ID))?.stdout).toBe('after delegated capacity');
   });
 
   test('cancels queued foreground admission before spawn when its Turn is interrupted', async () => {
@@ -954,7 +1320,7 @@ function receiptFor(
   quiescedAt: number,
 ): ToolTaskFinalReceipt {
   const unsigned = {
-    version: 1 as const,
+    version: 2 as const,
     taskId: task.taskId,
     nonce: task.nonce,
     state,
@@ -969,6 +1335,7 @@ function receiptFor(
     stdoutBytes: 0,
     stderrBytes: 0,
     preparedResultDigest: null,
+    preparedResultBytes: 0,
   };
   return {
     ...unsigned,

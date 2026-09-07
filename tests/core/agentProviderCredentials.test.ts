@@ -9,7 +9,7 @@ import {
 } from '@earendil-works/pi-ai';
 import { cloudflareAIGatewayAuth } from '@earendil-works/pi-ai/providers/cloudflare-auth';
 import { cloudflareStreams } from '@earendil-works/pi-ai/providers/cloudflare-stream';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -39,6 +39,7 @@ import {
   withAtomicWriteCommitBarrierForTests,
   withFileWriteLock,
 } from '../../src/main/jsonFileStore';
+import { filePreferencesPath } from '../../src/main/configuration/filePreferences';
 
 type StoredOAuth = { refresh: string; access: string; expires: number };
 
@@ -99,6 +100,7 @@ function restoreEnv(name: string, value: string | undefined) {
 
 beforeEach(async () => {
   currentUserData = await mkdtemp(path.join(tmpdir(), 'lin-oauth-creds-'));
+  await mkdir(path.dirname(filePreferencesPath(currentUserData)), { recursive: true });
   oauthRefreshImpl = async (credential) => credential;
   oauthToApiKeyImpl = async (credential) => credential.access;
   piModels().setProvider(createProvider({
@@ -294,9 +296,12 @@ describe('provider credential resolver', () => {
       },
     }));
     await Promise.all([
-      writeFile(path.join(currentUserData, 'agent-providers.json'), JSON.stringify({
+      writeFile(path.join(currentUserData, 'agent-model-state.json'), JSON.stringify({
         activeProviderId: providerId,
         providers: [{ providerId, enabled: true }],
+      })),
+      writeFile(filePreferencesPath(currentUserData), JSON.stringify({
+        models: { connections: [{ providerId, enabled: true }] },
       })),
       writeFile(secretPath(), JSON.stringify({
         credentials: { [providerId]: { type: 'api_key', key: 'startup-key' } },
@@ -703,6 +708,31 @@ describe('provider credential resolver', () => {
     const model = rankedModels(CC_SWITCH_LOCAL_PROVIDER_ID)[0];
     expect(model?.id).toBe(runtime?.modelId);
     expect(model ? await piResolveAuthApiKey(model) : undefined).toBe('registry-key');
+  });
+
+  test('applies declared model allow-lists to the CC Switch runtime provider', async () => {
+    installCcSwitchRegistry({ apiKey: 'registry-key' });
+    const initial = await getProviderSettings();
+    const option = initial.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    const declared = option?.models.at(-1)?.id;
+    if (!declared) throw new Error('Missing CC Switch catalog model');
+    await writeFile(filePreferencesPath(currentUserData), JSON.stringify({
+      models: {
+        connections: [{
+          providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+          baseUrl: null,
+          enabled: true,
+          models: [declared],
+        }],
+      },
+    }));
+
+    const runtime = await getActiveProviderRuntimeConfig();
+    expect(runtime).toMatchObject({
+      providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+      modelId: declared,
+      models: [declared],
+    });
   });
 
   test('reports an unconfigured local gateway as missing auth until a request override exists', async () => {

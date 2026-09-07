@@ -102,8 +102,6 @@ const privateThread: Thread = {
   sessionId: '018f0f24-7b2e-7a3f-8a4b-123456789abd',
   parentThreadId: null,
   forkedFromId: null,
-  agentNickname: null,
-  agentRole: null,
   name: 'Private arguments',
   preview: 'Bash stdin',
   ephemeral: false,
@@ -137,7 +135,6 @@ describe('renderer Agent Core projection', () => {
   test('removes private arguments from every response carrier', () => {
     const cases: readonly ResponseCase[] = [
       ['thread/list', { data: [privateThread], nextCursor: null }],
-      ['thread/descendants', { data: [privateThread], queuedWorkThreadIds: [] }],
       ['thread/read', { thread: privateThread }],
       ['thread/start', { thread: privateThread }],
       ['thread/resume', { thread: privateThread }],

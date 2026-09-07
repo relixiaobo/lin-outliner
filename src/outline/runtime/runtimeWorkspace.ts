@@ -35,7 +35,7 @@ import { encodeEventCursor } from './eventCursor';
 import { encodeOperationLogCursor } from './operationLogCursor';
 import { DocumentReadModel } from './documentReadModel';
 import type { Projection, ProjectionResult } from '../contract/schemas';
-import { createSelectionIndex } from './selector';
+import { createSelectionIndex, type OutlineSelectionIndex } from './selector';
 import { projectOutlineFromSelectionIndex } from './projection';
 import { assertProtectedMemoryDefinitionPatch } from './protectedDefinitions';
 import { parseAssetSourceUri } from '../../core/source';
@@ -72,6 +72,12 @@ interface DeferredMutationSettlement {
 interface PendingDurability {
   readonly input: DeferredTransactionInput;
   readonly projectionUpdate: ProjectionUpdate;
+}
+
+interface SelectionIndexCacheEntry {
+  readonly documentRevision: number;
+  readonly assetMetadataRevision: number;
+  readonly index: OutlineSelectionIndex;
 }
 
 export interface OutlineAcceptedMutation {
@@ -148,6 +154,7 @@ export class OutlineRuntimeWorkspace {
   private eventListeners = new Set<(event: OutlineEvent) => void>();
   private readonly now: () => Date;
   private readonly readModel: DocumentReadModel;
+  private selectionIndexCache?: SelectionIndexCacheEntry;
   private assetReferenceCounts: Map<string, number>;
   private pendingPublicationPatch?: CoreTransactionPatch;
   private readonly pendingDurability: PendingDurability[] = [];
@@ -363,11 +370,22 @@ export class OutlineRuntimeWorkspace {
   }
 
   selectionIndex() {
-    return createSelectionIndex(this.readModel.projection, {
+    const documentRevision = this.readModel.revision;
+    const assetMetadataRevision = this.assets.metadataRevision;
+    const cached = this.selectionIndexCache;
+    if (
+      cached
+      && cached.documentRevision === documentRevision
+      && cached.assetMetadataRevision === assetMetadataRevision
+    ) return cached.index;
+
+    const index = createSelectionIndex(this.readModel.projection, {
       nodesById: this.readModel.nodes,
       textIndex: this.readModel.textIndex,
       assetMetadataById: this.assets.metadataSnapshot(),
     });
+    this.selectionIndexCache = { documentRevision, assetMetadataRevision, index };
+    return index;
   }
 
   project(

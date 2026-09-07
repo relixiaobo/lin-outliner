@@ -6,7 +6,6 @@ import {
   resolveUserSkillInvocation,
   type SkillLoadOptions,
 } from '../agent/capabilities/agentSkills';
-import { executeAgentSkillShellCommand } from '../agent/capabilities/agentSkillShell';
 import type {
   SkillAdmissionResolution,
   SkillAdmissionResolutionInput,
@@ -27,7 +26,9 @@ export interface ManagedSkillsHostOptions {
   readonly appVersion: string;
   readonly loadRuntimeSettings: () => Promise<{
     readonly additionalSkillDirectories: readonly string[];
+    readonly additionalSkillSourceModes?: Readonly<Record<string, 'skill' | 'container'>>;
     readonly disabledSkills?: readonly string[];
+    readonly delegation?: { readonly enabled: boolean };
   }>;
 }
 
@@ -36,6 +37,7 @@ interface ManagedSkillsHost {
   updateRuntimeSettings(settings: {
     readonly additionalSkillDirectories: readonly string[];
     readonly disabledSkills?: readonly string[];
+    readonly delegation?: { readonly enabled: boolean };
   }): void;
   resolveAdmission(
     input: SkillAdmissionResolutionInput,
@@ -54,6 +56,7 @@ interface ManagedSkillsHost {
   runtimeForTurn(turnId: string): AgentSkillRuntime;
   clearTurn(turnId: string): void;
   listPrimarySkills(userInvocableOnly: boolean): ReturnType<AgentSkillRuntime['listAllSkills']>;
+  listPrimaryCurationCandidates(): ReturnType<AgentSkillRuntime['listCurationCandidates']>;
   undoPrimarySkillEdit(skillName: string): ReturnType<AgentSkillRuntime['listAllSkills']>;
   readonly catalog: {
     load: ManagedSkillService['loadCatalog'];
@@ -120,13 +123,6 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
     assertManagedSkillInvocable: (skillId, expectedContentHash) => (
       service.assertInvocable(skillId, expectedContentHash)
     ),
-    executeSkillShell: ({ skill, command, signal }) => executeAgentSkillShellCommand({
-      skill,
-      command,
-      localRoot: options.localRoot,
-      scratchRoot: options.scratchRoot,
-      signal,
-    }),
   });
   runtimeReference.set(primaryRuntime);
 
@@ -144,8 +140,7 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
   });
   void options.loadRuntimeSettings().then((settings) => {
     for (const runtime of [primaryRuntime, ...turnRuntimes.values()]) {
-      runtime.updateAdditionalSkillDirectories([...settings.additionalSkillDirectories]);
-      runtime.updateDisabledSkills([...(settings.disabledSkills ?? [])]);
+      applyRuntimeSettings(runtime, settings);
     }
   }).catch((error) => console.error('[agent] failed to load skill settings', error));
 
@@ -155,8 +150,7 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
     ),
     updateRuntimeSettings: (settings) => {
       for (const runtime of [primaryRuntime, ...turnRuntimes.values()]) {
-        runtime.updateAdditionalSkillDirectories([...settings.additionalSkillDirectories]);
-        runtime.updateDisabledSkills([...(settings.disabledSkills ?? [])]);
+        applyRuntimeSettings(runtime, settings);
       }
     },
     resolveAdmission: async (input, runtimeOptions) => {
@@ -226,6 +220,7 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
     listPrimarySkills: (userInvocableOnly) => userInvocableOnly
       ? primaryRuntime.listUserInvocableSkills()
       : primaryRuntime.listAllSkills(),
+    listPrimaryCurationCandidates: () => primaryRuntime.listCurationCandidates(),
     undoPrimarySkillEdit: async (skillName) => {
       await primaryRuntime.undoLastAgentSkillEdit(skillName);
       await Promise.all(
@@ -269,11 +264,17 @@ function applyRuntimeSettings(
   runtime: AgentSkillRuntime,
   settings: {
     readonly additionalSkillDirectories: readonly string[];
+    readonly additionalSkillSourceModes?: Readonly<Record<string, 'skill' | 'container'>>;
     readonly disabledSkills?: readonly string[];
+    readonly delegation?: { readonly enabled: boolean };
   },
 ): void {
   runtime.updateAdditionalSkillDirectories([...settings.additionalSkillDirectories]);
-  runtime.updateDisabledSkills([...(settings.disabledSkills ?? [])]);
+  runtime.updateAdditionalSkillSourceModes({ ...(settings.additionalSkillSourceModes ?? {}) });
+  runtime.updateDisabledSkills([
+    ...(settings.disabledSkills ?? []),
+    ...(settings.delegation?.enabled === true ? [] : ['delegate']),
+  ]);
 }
 
 function directSkillAdmissionInput(content: readonly ThreadUserContent[]): string | null {
@@ -295,6 +296,7 @@ async function findUnmanagedSkillNameConflict(name: string, options: ManagedSkil
   const runtime = new AgentSkillRuntime({
     localRoot: options.localRoot,
     additionalSkillDirectories: [...settings.additionalSkillDirectories],
+    additionalSkillSourceModes: { ...(settings.additionalSkillSourceModes ?? {}) },
   });
   const conflict = (await runtime.listAllSkills()).find((skill) => skill.name === normalized);
   return conflict ? { source: conflict.source, location: conflict.skillFile } : null;

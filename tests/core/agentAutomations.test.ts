@@ -28,7 +28,6 @@ import { AutomationService } from '../../src/main/agent/automations/AutomationSe
 import { AutomationStore } from '../../src/main/agent/automations/AutomationStore';
 import { AutomationWorktree } from '../../src/main/agent/automations/AutomationWorktree';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
-import { SubagentBudgetExhaustedError } from '../../src/main/agent/SubagentBudgetExhaustedError';
 import type { ThreadService } from '../../src/main/agent/ThreadService';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
@@ -1047,34 +1046,6 @@ describe('Automation Thread dispatch', () => {
     expect(store.listRuns({ automationId: automation.id })).toHaveLength(1);
   });
 
-  test('fails an automation with the complete Subagent budget refusal', async () => {
-    const now = Date.parse('2026-07-24T09:00:00Z');
-    const store = automationStore();
-    const destination = userThread(uuidV7(), '/tmp/existing');
-    const automation = store.create({
-      ...definition('20260724T100000'),
-      destination: { kind: 'existingThread', threadId: destination.id },
-    }, now);
-    const run = store.claimNow(automation, null, now + 1);
-    const host = threadHost(destination);
-    host.tryStartTurnIfIdle = async () => {
-      throw new SubagentBudgetExhaustedError(12, 10);
-    };
-    const dispatcher = dispatcherFor(store, host, now + 2);
-
-    expect(await dispatcher.dispatch(run)).toMatchObject({
-      state: 'failed',
-      error: JSON.stringify({
-        error: {
-          code: 'subagent_budget_exhausted',
-          message: 'Subagent token budget exhausted (12 of 10 tokens); the child refuses new work. '
-            + 'Interrupt, review its output, or spawn a fresh child.',
-        },
-      }),
-    });
-    expect(dispatcher.isRunActive(store.readRun(run.id)!)).toBe(false);
-  });
-
   test('retries idempotently when dispatch persistence fails after Turn admission', async () => {
     const now = Date.parse('2026-07-24T09:00:00Z');
     const store = automationStore();
@@ -1611,8 +1582,6 @@ function userThread(id: string, cwd: string, overrides: Partial<Thread> = {}): T
     sessionId: id,
     parentThreadId: null,
     forkedFromId: null,
-    agentNickname: null,
-    agentRole: null,
     name: 'Destination',
     preview: '',
     ephemeral: false,

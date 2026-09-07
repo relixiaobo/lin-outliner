@@ -8,37 +8,40 @@ and claim work with a Draft PR but do not edit it. The main agent updates it at
 integration.
 
 The live collision radar is `gh pr list` plus this board. At the 2026-09-05
-audit, Draft PRs #626 (Settings design revision) and #628 (internal Agent
-delegation implementation) remain open. The current package version is `0.8.0`;
+audit, the Settings design revision shipped in PR #626. Internal Agent
+delegation and legacy retirement shipped in PR #628; the external Runner
+adapter feature shipped in PR #637; the Skill identity and authoring foundation
+shipped in PR #641. The current package version is `0.8.0`;
 the latest published train is `v0.7.0`.
 
 ## In Flight
 
-Draft PR #628 owns internal Agent delegation and complete Subagent/isolated-Skill
+PR #628 shipped internal Agent delegation and complete Subagent/isolated-Skill
 retirement under the design merged in #620. Generic Background Tool Tasks
-shipped in #623; external Runner adapters remain separate future claims. #628
-touches Agent protocol, runtime, Settings, Skill, and packaging surfaces, so
-overlapping claims must use its final mechanisms after integration. The legacy
-Subagent and isolated-Skill behavior remains current until that cutover ships.
+shipped in #623, and the external Runner adapter feature shipped in #637. The
+legacy delegation behavior is retired and overlapping claims must use the final
+delegation mechanisms.
 
-PR #629 completed window-first startup. Subsequent Agent Host composition in
-#628 must preserve the owning readiness boundaries and recoverable startup
-behavior in [Desktop Host lifecycle](spec/architecture.md#desktop-host-lifecycle).
+PR #629 completed window-first startup. The Agent Host composition shipped in
+#628 preserves the owning readiness boundaries and recoverable startup behavior
+in [Desktop Host lifecycle](spec/architecture.md#desktop-host-lifecycle).
 
-Draft PR #626 owns the file-first Settings design revision. The plan on `main`
-still describes the previous CLI-based design; the draft proposes replacing it
-with public configuration files, a same-source flat UI, and domain-owned tools.
-Its design gate must settle the implementation units and absorbed working-state
-behavior before a Settings implementation claim. Implementation follows #628
-and the Skill authoring foundation; the draft is not shipped specification.
+PR #626 shipped the file-first Settings design revision. PR #636 now ships Unit
+A: file-backed preferences, schema/status/recovery, global Skill/tool controls,
+and the configuration Skill. PR #638 now ships Unit B: file-backed model
+connections, model declarations, and default model selection. PR #640 now ships
+Unit C: layered root Agent configuration, source inspection/schema discovery,
+JSONC-preserving edits, and public delegation policy. Units D-G remain open
+under their dependency and collision checks; the aggregate plan is still the
+design authority for those units.
 
 Trajectory paging shipped in #625 and exact-or-unavailable evidence completed
 in #627; the plan is archived and its shared-file claim is released. Bounded
 summaries remain navigation aids, not forensic evidence authority. Link/preview
 interaction polish shipped in #621 and released the shared preview-shell lane.
 The remaining primary queue is eligible under its live collision checks,
-including #628's Agent and Skill ownership. The remaining plans stay active
-until their implementation, spec fold, and archive move complete.
+including the released Agent and Skill ownership from #628. The remaining plans
+stay active until their implementation, spec fold, and archive move complete.
 
 ## Primary Delivery Queue
 
@@ -61,7 +64,6 @@ protocol, security rule, user flow, or acceptance criterion.
 Parallel now eligible:
   file-preview-office
   url-static-reader
-  agent-skill-authoring-foundation -> agent-skill-curation-report
   computer-pilot-managed-skill
 ```
 
@@ -69,8 +71,6 @@ Parallel now eligible:
 | --- | --- | --- | --- |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
-| P2 | [agent-skill-authoring-foundation](plans/agent-skill-authoring-foundation.md) | `draft` | **Now; Desktop Host shipped in #603** |
-| P3 | [agent-skill-curation-report](plans/agent-skill-curation-report.md) | `draft` | `agent-skill-authoring-foundation` |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | **Now; Agent resource lifecycle shipped in #607** |
 
 The Host composition, Bash stdin, Outline CLI Skill, Agent resource,
@@ -84,8 +84,8 @@ The split also absorbs three former planless tasks without losing their intent:
 - `inline-media-alt-text` shipped across #598 and #599 as editable Node content
   plus direct intrinsic image presentation; the retired `mediaAlt` field receives
   no replacement command.
-- `skill-directory-is-itself-a-skill` becomes the explicit binding identity in
-  `agent-skill-authoring-foundation`, before script authoring consumes it.
+- `skill-directory-is-itself-a-skill` shipped as the explicit binding identity in
+  PR #641, completing the Skill authoring foundation before curation consumes it.
 - `computer-pilot-managed-skill` now has its own complete plan and consumes the
   final Host plus Agent resource lifecycle; both foundations are complete.
 
@@ -107,12 +107,12 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Background Tool Tasks Unit 1 shipped in #623. Draft #628 owns internal delegation plus Subagent/isolated-Skill retirement and the coordinated Agent shared-interface claim; #627's Trajectory predecessor is complete. Each external Runner adapter remains a separate future claim. |
-| P2 | [settings-control-plane](plans/settings-control-plane.md) | `draft` | Design revision under review in Draft #626; implementation waits for that gate, #628, and `agent-skill-authoring-foundation`. Reconcile the delivery units and `semantic-working-state` absorption when the revised design lands. |
-| P2 | [interaction-jank-cleanups](plans/interaction-jank-cleanups.md) | `draft` | Definition-cache and Runtime-index units are eligible after #598; preview units use the live preview-shell lane. |
-| P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Paused for the Settings redesign. Draft #626 changes the absorbing delivery unit; settle that ownership at its design gate before implementing Provider/managed-Skill working states. |
+| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623, internal delegation plus Subagent/isolated-Skill retirement shipped in #628, and the external Runner adapter feature shipped in #637. Remaining work follows the aggregate plan's declared boundaries. |
+| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-C shipped in #636, #638, and #640; Units D-G follow their declared dependency/collision checks, including #628 and #641. |
+| P2 | [interaction-jank-cleanups](plans/archive/interaction-jank-cleanups.md) | `done` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, the Runtime-index unit shipped in #633, and PR-3 translation geometry shipped in #634. |
+| P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Settings redesign landed in #626; Provider/managed-Skill working-state behavior is absorbed by Units B and D, so claim it through those units rather than as a separate implementation. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
-| P3 | [icon-semantics](plans/icon-semantics.md) | `draft` | Build-ready renderer mapping cleanup. Update action menu, launcher, picker, and attachment mappings together; status color is out of scope. |
+| P3 | [icon-semantics](plans/archive/icon-semantics.md) | `done` | Shipped in PR #631: semantic Iconoir presentation and renderer tool-summary cleanup. |
 | P3 | [performance-optimization](plans/performance-optimization.md) | `draft` | Three measured tails only. Core mutation indexes are eligible after #598; filename-fallback reuse and text normalization are independent. |
 | P3 | [dark-mode-contrast-pass](plans/dark-mode-contrast-pass.md) | `draft` | Runs last after active visual consumers. #377's tertiary lift is shipped; only rendered failures justify further token changes. |
 
@@ -226,6 +226,17 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **agent-skill-curation-report** (`done`, #642, 2026-09-06) - Settings now offers an opt-in, read-only report over the loaded Skill registry; unchanged user/project Skills with reliable Agent-write provenance are analyzed for broken or root-escaping Markdown resources, exact content duplicates, and retired tool names, while excluded sources and hashes remain visible; [plan archived](plans/archive/agent-skill-curation-report.md).
+- **agent-skill-authoring-foundation** (`done`, #641, 2026-09-06) - local Skill sources now persist explicit `skill` or `container` modes, exact Skill bindings stay scoped to the selected directory, and discovery, reload, authoring, and unbind share that identity; [plan archived](plans/archive/agent-skill-authoring-foundation.md).
+- **settings-control-plane Unit A** (`done`, #636, 2026-09-05) - file-backed JSONC preferences, schema/status/recovery, global Skill/tool controls, and the configuration Skill now converge through the Host; Units B-G remain in the active plan.
+- **settings-control-plane Unit B** (`done`, #638, 2026-09-06) - model connections, exact model declarations, image defaults, and application model selection now use the public JSONC settings source while credentials, catalogs, and runtime state remain domain-owned; [plan archived](plans/archive/settings-model-configuration.md).
+- **settings-control-plane Unit C** (`done`, #640, 2026-09-06) - layered root Agent configuration now has source inspection, generated schemas, comment-preserving JSONC edits, and public delegation policy in `config/settings.jsonc`; [plan archived](plans/archive/settings-root-configuration.md).
+- **codex-cli-adapter** (`done`, #637, 2026-09-06) - user-enabled Codex, Claude Code, and OpenClaw launchers now run through the generic Tool Task path with stdin delivery, PATH readiness checks, sanitized provider environments, cancellation, bounded output, and managed worktrees; [plan archived](plans/archive/codex-cli-adapter.md).
+- **interaction-jank-cleanups PR-3** (`done`, #634, 2026-09-05) - URL and EPUB translation scheduling now use near-viewport candidates, cached layout positions, observer-driven far-jump updates, and layout refresh signals; [plan archived](plans/archive/interaction-jank-cleanups.md).
+- **interaction-jank-cleanups PR-2** (`done`, #632, 2026-09-05) - definition catalogs survive unrelated projection deltas while table field usage groups remain current; translation geometry remains open.
+- **supervised-Bash-status-normalization** (`done`, #635, 2026-09-05) - durable Tool Task states now map to the stable public Bash status vocabulary before result validation.
+- **interaction-jank-cleanups Runtime-index unit** (`done`, #633, 2026-09-05) - Runtime selection indexes are reused within a document and asset-metadata revision, with explicit invalidation for asset ingestion, reconciliation, and collection.
+- **agent-delegation-runtime internal cutover** (`done`, #628, 2026-09-05) - the packaged `delegate` CLI, root-owned hidden Agent Sessions, internal Runner, durable settlement and cancellation recovery, and complete Subagent/isolated-Skill retirement are shipped; external Runner adapters followed in #637.
 - **startup-window-first** (`done`, #629, 2026-09-05) - the desktop window paints before service startup; readiness gates, persistent Retry/Quit, and Agent conversation recovery are verified; [plan archived](plans/archive/startup-window-first.md).
 - **workspace-document-status-audit** (`done`, fast-track, 2026-09-05) - refreshed open claims, the pending Settings design boundary, README runtime ownership, and document lifecycle checks.
 - **agent-trajectory-evidence-fidelity Unit 2 / complete** (`done`, #627,
@@ -236,8 +247,8 @@ One line per recent shipped integration. Older history and review detail live in
 - **agent-delegation-runtime Unit 1** (`done`, #623, 2026-09-04) — durable
   generic Tool Tasks now supervise foreground and explicit-background Bash with
   packaged recovery, bounded scheduling/detail, exactly-once completion, and
-  shared controls/UI; the active plan remains open for internal delegation,
-  Subagent/isolated-Skill retirement, and separate external Runner adapters.
+  shared controls/UI; later units delivered internal delegation, legacy
+  retirement, and external Runner adapters.
 - **link-preview-interaction-polish** (`done`, #621, 2026-09-04) — pasted links
   retain canonical identity, Source previews use content-aware defaults,
   attachment selection is composite, and Outline/Table share one view toolbar

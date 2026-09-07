@@ -276,8 +276,6 @@ function rootThread(): Thread {
     sessionId: '018f0f24-7b2e-7a3f-8a4b-123456789abc',
     parentThreadId: null,
     forkedFromId: null,
-    agentNickname: null,
-    agentRole: null,
     name: 'Memory test',
     preview: '',
     ephemeral: false,

@@ -2532,6 +2532,16 @@ task is queued, prove that no child spawned and only one terminal receipt won,
 then run the packaged supervisor and assert that Host-only variables are absent
 while ordinary workspace variables survive.
 
+## Configuration declarations must reach every runtime boundary
+
+PR #638 initially applied model declarations to provider catalogs but left the
+CC Switch runtime resolver on an unfiltered ranked model and used the first
+supported reasoning level for application defaults. **When a public declaration
+becomes an allow-list or default, enforce it at catalog, runtime, and admission
+boundaries, and reuse the shared default-selection helper.** Regression coverage
+must exercise both ranked fallback and an explicitly selected model so a display
+filter cannot mask a runtime bypass.
+
 ## Evidence correlation needs pre-normalization coordinates
 
 PR #627 first correlated Tool Input evidence to a provider response through the
@@ -2550,6 +2560,17 @@ Regression coverage must include empty and duplicate provider identifiers and
 prove correlation through restart and fork. Tests with unique well-formed IDs
 cannot distinguish source-coordinate fidelity from a convenient value lookup.
 
+## Terminal failure must preserve truthful recovery
+
+PR #628 initially blocked every non-success process receipt before verifying
+complete prepared and canonical evidence. That prevented a fresh user request
+from continuing a Session after a normal stop. **Use permanent blocking for
+missing or contradictory evidence; once terminal evidence is complete, preserve
+the factual outcome, block only stale queued messages, and allow a newly
+authorized request to resume.** Regression coverage must exercise the complete
+fresh request through the next Turn, not only assert that automatic continuation
+stops.
+
 ## Startup recovery must reach every initialized consumer
 
 PR #629 made Host startup retryable while the renderer Thread store still cached
@@ -2566,3 +2587,26 @@ Regression coverage must let one startup dependency succeed before another
 fails, repair the failure, and exercise the real Retry action. Assert that the
 existing record is restored and the stale error disappears, not only that the
 Host reports ready.
+
+## Semantic cache keys must cover every consumer input
+
+PR #632 first keyed the entire table field menu on definition changes, but the
+menu also grouped fields by current record usage. Applying a tag changed that
+usage without changing either the definitions or the table parent object.
+
+**Before narrowing a cache key, trace every input read by its consumer.** Cache
+stable catalogs separately from live usage, and preserve invalidation for each
+part. Verify real deltas while the consumer stays mounted; a full reseed or a
+pure-function test cannot prove that React's memo dependencies are complete.
+
+## Persist source identity instead of inferring it at write time
+
+PR #641 replaced the ambiguous local Skill-directory rule with explicit
+`skill` and `container` source modes. Inferring whether a selected directory
+was a Skill from enumeration order or from a later write could widen scope,
+misattribute support files, or leave an admitted root ungoverned.
+
+**When one path can represent multiple resource shapes, persist the user's
+chosen shape and reuse it at discovery, reload, authoring, and unbind boundaries.**
+The picker, runtime, persistence decoder, and ownership resolver must share the
+same mode contract; tests should cover both shapes and a malformed exact root.

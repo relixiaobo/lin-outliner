@@ -116,7 +116,6 @@ function isCompletedToolWithOutput(item: Turn['items'][number]): item is History
     || item.type === 'fileChange'
     || item.type === 'mcpToolCall'
     || item.type === 'dynamicToolCall'
-    || item.type === 'collabAgentToolCall'
     || item.type === 'webSearch'
   ) && item.status !== 'inProgress' && item.outputRef !== null;
 }

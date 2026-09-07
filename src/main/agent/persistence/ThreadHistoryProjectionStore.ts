@@ -143,7 +143,7 @@ export class ThreadHistoryProjectionStore {
         ON thread_items(thread_id, turn_position, item_index, item_id)
         WHERE item_type IN (
           'userMessage', 'agentMessage', 'commandExecution', 'fileChange',
-          'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch'
+          'mcpToolCall', 'dynamicToolCall', 'webSearch'
         );
       CREATE TABLE IF NOT EXISTS rollout_watermarks (
         thread_id TEXT PRIMARY KEY,
@@ -517,7 +517,7 @@ export class ThreadHistoryProjectionStore {
       WHERE thread_id = ?
         AND item_type IN (
           'userMessage', 'agentMessage', 'commandExecution', 'fileChange',
-          'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch'
+          'mcpToolCall', 'dynamicToolCall', 'webSearch'
         )
       ORDER BY turn_position ${ordering}, item_index ${ordering}, item_id ${ordering}
       LIMIT ?

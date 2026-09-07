@@ -26,6 +26,7 @@ import {
   type FileGlobData,
   type FileGrepData,
 } from '../../src/main/agent/capabilities/agentLocalTools';
+import { bashTaskStatusForToolTaskState } from '../../src/core/agent/tools';
 import { AgentSkillRuntime } from '../../src/main/agent/capabilities/agentSkills';
 import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { agentDerivedFileCache } from '../../src/main/agent/capabilities/agentFileIngestionCache';
@@ -339,6 +340,119 @@ posixBashProcessTest('foreground bash and task_stop admit files from typed manag
         ref: expect.objectContaining({ fileName: 'background.txt' }),
       }),
     ]);
+  });
+});
+
+test('lowers only canonical background Delegate commands after Tool Task identity allocation', async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const ownerThreadId = '00000000-0000-7000-8000-000000000031';
+    const turnId = '00000000-0000-7000-8000-000000000032';
+    const starts: Record<string, any>[] = [];
+    const preparations: Record<string, any>[] = [];
+    const service = {
+      start: async (input: Record<string, any>) => {
+        starts.push(input);
+        if (input.prepareProcess) {
+          await input.prepareProcess({
+            taskId: 'task_550e8400-e29b-41d4-a716-446655440000',
+            nonce: '550e8400-e29b-41d4-a716-446655440001',
+            cwd: workspaceRoot,
+            stdin: input.stdin ?? '',
+          });
+        }
+        return {
+          taskId: `task-${starts.length}`,
+          state: 'running',
+          startedAt: Date.now(),
+          completedAt: null,
+          exitCode: null,
+        };
+      },
+    } as unknown as ToolTaskService;
+    const workspace = createAgentLocalWorkspaceContext(
+      workspaceRoot,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ownerThreadId,
+    );
+    const bash = createLocalTools({
+      workspace,
+      toolTaskService: service,
+      turnId,
+      delegateCommandRuntime: {
+        resolveScheduling: async () => ({
+          scheduling: {
+            pool: 'delegate-local',
+            configurationRevision: 'revision-1',
+            maxConcurrentProducer: 2,
+            maxConcurrentPool: 2,
+          },
+          schedulerLimits: {
+            maxConcurrentGlobal: 8,
+            maxConcurrentThread: 4,
+            maxQueuedGlobal: 32,
+            maxQueuedThread: 8,
+          },
+          timeoutMs: 180_000,
+        }),
+        prepare: async (input) => {
+          preparations.push(input);
+          return {
+            process: {
+              kind: 'exec',
+              executable: process.execPath,
+              args: ['--version'],
+              env: {},
+              privateControl: true,
+            },
+            privateControlInput: Buffer.from('capability'),
+          };
+        },
+      },
+    }).find((tool) => tool.name === 'bash')!;
+    const stdin = '{"version":1,"prompt":"Inspect.","profile":"explore","access":"read-only"}';
+
+    const exact = await bash.execute('delegate-exact', {
+      command: 'delegate run --input - --output json',
+      stdin,
+      description: 'Inspect independently',
+      run_in_background: true,
+      timeout: 7,
+    });
+    expect((exact.details as ToolEnvelope<BashData>).ok).toBe(true);
+    expect(starts[0]).toMatchObject({
+      producer: 'delegate',
+      scheduling: { pool: 'delegate-local', configurationRevision: 'revision-1' },
+      timeoutMs: 180_000,
+    });
+    expect(starts[0]!.process).toBeUndefined();
+    expect(preparations[0]).toMatchObject({
+      taskId: 'task_550e8400-e29b-41d4-a716-446655440000',
+      nonce: '550e8400-e29b-41d4-a716-446655440001',
+      stdin,
+      ownerThreadId,
+      sourceTurnId: turnId,
+      sourceItemId: 'delegate-exact',
+      command: { name: 'run', input: '-', output: 'json' },
+    });
+
+    await bash.execute('delegate-composed', {
+      command: 'delegate run --input - --output json | cat',
+      stdin,
+      run_in_background: true,
+    });
+    expect(starts[1]).toMatchObject({ producer: 'bash', command: expect.stringContaining('| cat') });
+    expect(starts[1]!.prepareProcess).toBeUndefined();
+    expect(preparations).toHaveLength(1);
+
+    const foreground = await bash.execute('delegate-foreground', {
+      command: 'delegate run --input - --output json',
+      stdin,
+    });
+    expect(foreground.details).toMatchObject({ ok: false, error: { code: 'invalid_args' } });
+    expect(starts).toHaveLength(2);
   });
 });
 
@@ -2300,8 +2414,6 @@ describe('agent local tools', () => {
           '---',
           'description: Draft skill for local authoring',
           'disable-model-invocation: true',
-          'allowed-tools: Bash(git status:*), file_read',
-          'execution: isolated',
           '---',
           'Use the draft workflow.',
           '',
@@ -2455,7 +2567,6 @@ describe('agent local tools', () => {
           content: [
             '---',
             `description: Admission test for ${testCase.name}`,
-            'execution: isolated',
             '---',
             '',
             'Use the prospective bundle.',
@@ -2732,9 +2843,8 @@ describe('agent local tools', () => {
       });
       const details = result.details as ToolEnvelope<unknown>;
       expect(details.ok).toBe(false);
-      expect(details.error?.message).toContain(
-        'Inline Skills cannot declare allowed-tools, model, effort, shell, or embedded shell commands',
-      );
+      expect(details.error?.message).toContain('retired execution contract');
+      expect(details.error?.message).toContain('Use the delegate CLI for Agent execution');
       expect(await skillRuntime.getSkill('risky-skill')).toBeNull();
     });
   });
@@ -2759,9 +2869,8 @@ describe('agent local tools', () => {
       const details = result.details as ToolEnvelope<unknown>;
 
       expect(details.ok).toBe(false);
-      expect(details.error?.message).toContain(
-        'Inline Skills cannot declare allowed-tools, model, effort, shell, or embedded shell commands',
-      );
+      expect(details.error?.message).toContain('retired execution contract');
+      expect(details.error?.message).toContain('Use the delegate CLI for Agent execution');
       await expect(readFile(skillFile, 'utf8')).rejects.toThrow();
       expect(await skillRuntime.getSkill('shell-skill')).toBeNull();
     });
@@ -3478,6 +3587,55 @@ describe('agent local tools', () => {
 });
 
 describe('local tool model-visible projections', () => {
+  test('normalizes durable Tool Task states to the stable Bash status vocabulary', () => {
+    expect(bashTaskStatusForToolTaskState('running')).toBe('running');
+    expect(bashTaskStatusForToolTaskState('settling')).toBe('running');
+    expect(bashTaskStatusForToolTaskState('succeeded')).toBe('completed');
+    expect(bashTaskStatusForToolTaskState('failed')).toBe('failed');
+    expect(bashTaskStatusForToolTaskState('timed_out')).toBe('failed');
+    expect(bashTaskStatusForToolTaskState('lost')).toBe('failed');
+    expect(bashTaskStatusForToolTaskState('cancelled')).toBe('stopped');
+  });
+
+  test('keeps a settling supervised task valid at the Bash boundary', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const ownerThreadId = '00000000-0000-7000-8000-000000000041';
+      const turnId = '00000000-0000-7000-8000-000000000042';
+      const service = {
+        start: async () => ({
+          taskId: 'task_550e8400-e29b-41d4-a716-446655440010',
+          state: 'settling',
+          startedAt: Date.now(),
+          completedAt: null,
+          exitCode: null,
+        }),
+      } as unknown as ToolTaskService;
+      const workspace = createAgentLocalWorkspaceContext(
+        workspaceRoot,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        ownerThreadId,
+      );
+      const bash = createLocalTools({ workspace, toolTaskService: service, turnId })
+        .find((tool) => tool.name === 'bash')!;
+
+      const result = await bash.execute('settling-supervised-task', {
+        command: 'printf queued',
+        run_in_background: true,
+      });
+
+      expect(result.details).toMatchObject({
+        ok: true,
+        data: {
+          backgroundTaskId: 'task_550e8400-e29b-41d4-a716-446655440010',
+          taskStatus: 'running',
+        },
+      });
+    });
+  });
+
   test('bash keeps output and signals, drops echoed command and telemetry', () => {
     const data: BashData = {
       stdout: 'hi',

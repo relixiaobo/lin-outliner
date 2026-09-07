@@ -37,10 +37,6 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
       const value = response as AgentCoreResponseByMethod['thread/list'];
       return freezeProjected({ ...value, data: value.data.map(projectThread) });
     }
-    case 'thread/descendants': {
-      const value = response as AgentCoreResponseByMethod['thread/descendants'];
-      return freezeProjected({ ...value, data: value.data.map(projectThread) });
-    }
     case 'thread/read':
     case 'thread/start':
     case 'thread/resume':
@@ -107,7 +103,6 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
         turn: projectTurn(value.turn),
       });
     }
-    case 'thread/subagents/list':
     case 'thread/tasks/list':
     case 'thread/references/search':
     case 'thread/references/resolve':
@@ -163,7 +158,6 @@ export function projectAgentCoreNotification(
     case 'item/delta':
     case 'turn/providerRetry/changed':
     case 'turn/plan/updated':
-    case 'subagent/execution/changed':
     case 'toolTask/changed':
     case 'userInput/requested':
     case 'userInput/resolved':

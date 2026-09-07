@@ -73,9 +73,6 @@ import {
   type ThreadUserContent,
   type ThreadResourceReference,
   type Turn,
-  type SubagentExecutionProjection,
-  type SubagentExecutionState,
-  type SubagentWorktreeSummary,
   type TurnDiagnosticsPayload,
   type ThreadTrajectoryAvailability,
   type ThreadTrajectoryDiagnosticsEvidence,
@@ -135,8 +132,6 @@ export function decodeThread(value: unknown): Thread {
     'sessionId',
     'parentThreadId',
     'forkedFromId',
-    'agentNickname',
-    'agentRole',
     'name',
     'preview',
     'ephemeral',
@@ -157,8 +152,6 @@ export function decodeThread(value: unknown): Thread {
     sessionId: uuidV7(record.sessionId, 'thread.sessionId'),
     parentThreadId: nullableUuidV7(record.parentThreadId, 'thread.parentThreadId'),
     forkedFromId: nullableUuidV7(record.forkedFromId, 'thread.forkedFromId'),
-    agentNickname: nullableString(record.agentNickname, 'thread.agentNickname'),
-    agentRole: nullableString(record.agentRole, 'thread.agentRole'),
     name: nullableString(record.name, 'thread.name'),
     preview: stringValue(record.preview, 'thread.preview', true),
     ephemeral: booleanValue(record.ephemeral, 'thread.ephemeral'),
@@ -285,15 +278,12 @@ export function decodeThreadItem(value: unknown): ThreadItem {
 
 function decodeThreadInputAuthor(value: unknown, path = 'item.author'): ThreadInputAuthor {
   const record = recordValue(value, path);
-  const kind = enumValue(record.kind, ['reader', 'agent', 'host', 'feature'], `${path}.kind`);
+  const kind = enumValue(record.kind, ['reader', 'host', 'feature'], `${path}.kind`);
   switch (kind) {
     case 'reader':
     case 'host':
       exactKeys(record, ['kind'], path);
       return { kind };
-    case 'agent':
-      exactKeys(record, ['kind', 'threadId'], path);
-      return { kind, threadId: uuidV7(record.threadId, `${path}.threadId`) };
     case 'feature':
       exactKeys(record, ['kind', 'feature', 'ref'], path);
       return {
@@ -414,86 +404,6 @@ function decodeNonMessageThreadItem(
         durationMs: nullableNumber(record.durationMs, 'item.durationMs'),
       };
       break;
-    case 'collabAgentToolCall': {
-      exactKeys(record, [
-        'type', 'id', 'provenance', 'tool', 'status', 'senderThreadId', 'receiverThreadIds', 'prompt',
-        'summary', 'model', 'reasoningEffort', 'agentsStates', 'outputRef', 'resourceRefs',
-        'modelCall',
-      ], 'item');
-      const states = recordValue(record.agentsStates, 'item.agentsStates');
-      const decodedStates: Record<string, SubagentExecutionState> = {};
-      for (const [threadId, state] of Object.entries(states)) {
-        const statePath = `item.agentsStates.${threadId}`;
-        const stateRecord = recordValue(state, statePath);
-        exactKeys(stateRecord, ['status', 'taskPath', 'nickname', 'role'], statePath);
-        decodedStates[uuidV7(threadId, 'item.agentsStates key')] = {
-          status: enumValue(
-            stateRecord.status,
-            ['pendingInit', 'running', 'interrupted', 'completed', 'errored', 'notFound'],
-            `${statePath}.status`,
-          ),
-          taskPath: nullableString(stateRecord.taskPath, `${statePath}.taskPath`, true),
-          nickname: nullableString(stateRecord.nickname, `${statePath}.nickname`, true),
-          role: nullableString(stateRecord.role, `${statePath}.role`, true),
-        };
-      }
-      result = {
-        ...base,
-        type,
-        tool: enumValue(
-          record.tool,
-          ['agent', 'agent_message', 'task_stop'],
-          'item.tool',
-        ),
-        status: itemExecutionStatus(record.status, 'item.status'),
-        outputRef: decodeThreadItemOutputReference(record.outputRef),
-        resourceRefs: decodeToolItemResourceReferences(record.resourceRefs),
-        modelCall: decodeModelToolCallHistory(record.modelCall),
-        senderThreadId: uuidV7(record.senderThreadId, 'item.senderThreadId'),
-        receiverThreadIds: arrayValue(record.receiverThreadIds, 'item.receiverThreadIds')
-          .map((entry, index) => uuidV7(entry, `item.receiverThreadIds[${index}]`)),
-        prompt: nullableString(record.prompt, 'item.prompt', true),
-        summary: boundedAgentMessageSummary(record.summary ?? null, 'item.summary'),
-        // Empty is tolerated here for the same reason it always was on `prompt`:
-        // these are optional display strings, and an Item already carrying one
-        // must stay readable. Rejecting it makes a whole Thread undecodable over
-        // a value that means nothing either way (A12 — fail closed on corrupt
-        // data, not on a blank optional string).
-        model: nullableString(record.model, 'item.model', true),
-        reasoningEffort: nullableString(record.reasoningEffort, 'item.reasoningEffort', true),
-        agentsStates: decodedStates,
-      };
-      break;
-    }
-    case 'subAgentActivity':
-      exactKeys(
-        record,
-        [
-          'type', 'id', 'provenance', 'kind', 'agentThreadId', 'agentTurnId',
-          'agentPath', 'error', 'spawnItemId',
-        ],
-        'item',
-      );
-      result = {
-        ...base,
-        type,
-        kind: enumValue(record.kind, ['started', 'completed', 'interrupted', 'errored'], 'item.kind'),
-        agentThreadId: uuidV7(record.agentThreadId, 'item.agentThreadId'),
-        // Old activity Items predate the exact child-Turn anchor. They remain
-        // readable, but consumers must not infer an unrelated latest Turn.
-        agentTurnId: nullableUuidV7(record.agentTurnId ?? null, 'item.agentTurnId'),
-        agentPath: stringValue(record.agentPath, 'item.agentPath'),
-        error: decodeTurnError(record.error, 'item.error'),
-        // Additive and nullable, so an Item written before it existed decodes
-        // as null rather than failing: requiring the key would make every
-        // delegation already on disk unreadable, and the pre-release
-        // no-migration policy covers dev userData — not the packaged app's
-        // daily-use data, which no release step wipes. An Item id otherwise,
-        // decoded the way every other Item-id reference is
-        // (`provenance.originItemId`, `turn.trigger.parentItemId`): as a string.
-        spawnItemId: nullableString(record.spawnItemId ?? null, 'item.spawnItemId'),
-      };
-      break;
     case 'webSearch':
       exactKeys(record, [
         'type', 'id', 'provenance', 'query', 'status', 'results', 'error', 'outputRef', 'resourceRefs', 'modelCall',
@@ -502,9 +412,8 @@ function decodeNonMessageThreadItem(
         ...base,
         type,
         // The producer's own fallback for a call with no query is `''`, and the
-        // field is not nullable, so refusing empty here made a `web_search`
-        // whose argument the model omitted undecodable — the same shape that
-        // killed a Turn on `collabAgentToolCall.model`.
+        // field is not nullable, so refusing empty here would make a
+        // `web_search` whose argument the model omitted undecodable.
         query: stringValue(record.query, 'item.query', true),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
@@ -879,7 +788,6 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
     'userInput/resolved',
     'goal/updated',
     'goal/cleared',
-    'subagent/execution/changed',
     'toolTask/changed',
   ], 'notification.type');
   let result: AgentCoreNotification;
@@ -917,7 +825,7 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       exactKeys(
         record,
         type === 'turn/started'
-          ? ['type', 'threadId', 'turnId', 'turn', 'subagentAdmission', 'toolTaskAdmission']
+          ? ['type', 'threadId', 'turnId', 'turn', 'toolTaskAdmission']
           : ['type', 'threadId', 'turnId', 'turn'],
         'notification',
       );
@@ -933,9 +841,6 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       if (type === 'turn/completed' && turn.status === 'inProgress') {
         fail('notification.turn', 'turn/completed requires a terminal Turn');
       }
-      const subagentAdmission = type === 'turn/started' && record.subagentAdmission !== undefined
-        ? decodeSubagentTurnAdmission(record.subagentAdmission)
-        : undefined;
       const toolTaskAdmission = type === 'turn/started' && record.toolTaskAdmission !== undefined
         ? decodeToolTaskTurnAdmission(record.toolTaskAdmission)
         : undefined;
@@ -944,7 +849,6 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
         threadId: uuidV7(record.threadId, 'notification.threadId'),
         turnId,
         turn,
-        ...(subagentAdmission === undefined ? {} : { subagentAdmission }),
         ...(toolTaskAdmission === undefined ? {} : { toolTaskAdmission }),
       };
       break;
@@ -1103,16 +1007,6 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       exactKeys(record, ['type', 'threadId'], 'notification');
       result = { type, threadId: uuidV7(record.threadId, 'notification.threadId') };
       break;
-    case 'subagent/execution/changed': {
-      exactKeys(record, ['type', 'threadId', 'execution'], 'notification');
-      const threadId = uuidV7(record.threadId, 'notification.threadId');
-      const execution = decodeSubagentExecution(record.execution, 'notification.execution');
-      if (execution.parentThreadId !== threadId) {
-        fail('notification.execution', 'execution.parentThreadId must match the envelope');
-      }
-      result = { type, threadId, execution };
-      break;
-    }
     default:
       fail('notification.type', `unknown notification: ${type}`);
   }
@@ -1123,28 +1017,6 @@ export function decodeRendererAgentCoreNotification(value: unknown): RendererAge
   return projectAgentCoreNotification(
     decodeAgentCoreNotification(inflateRendererNotification(value)),
   );
-}
-
-function decodeSubagentTurnAdmission(value: unknown): import('./protocol').SubagentTurnAdmission {
-  const record = recordValue(value, 'notification.subagentAdmission');
-  exactKeys(record, ['kind', 'batchId', 'envelopeDigest'], 'notification.subagentAdmission');
-  const batchId = stringValue(record.batchId, 'notification.subagentAdmission.batchId');
-  const envelopeDigest = stringValue(
-    record.envelopeDigest,
-    'notification.subagentAdmission.envelopeDigest',
-  );
-  if (!/^[0-9a-f]{64}$/u.test(envelopeDigest)) {
-    fail('notification.subagentAdmission.envelopeDigest', 'expected a lowercase SHA-256 digest');
-  }
-  return {
-    kind: enumValue(
-      record.kind,
-      ['exhaustedSettlement', 'explicitAdmission'],
-      'notification.subagentAdmission.kind',
-    ),
-    batchId,
-    envelopeDigest,
-  };
 }
 
 function decodeToolTaskTurnAdmission(value: unknown): import('./protocol').ToolTaskTurnAdmission {
@@ -1166,7 +1038,6 @@ export function decodeAgentCoreRecordedNotification(value: unknown): AgentCoreRe
     case 'thread/name/updated':
     case 'turn/providerRetry/changed':
     case 'turn/plan/updated':
-    case 'subagent/execution/changed':
     case 'toolTask/changed':
       fail('notification.type', `cannot record transient notification ${notification.type}`);
     default:
@@ -1180,7 +1051,6 @@ export function decodeAgentCoreTransientNotification(value: unknown): AgentCoreT
     case 'thread/name/updated':
     case 'turn/providerRetry/changed':
     case 'turn/plan/updated':
-    case 'subagent/execution/changed':
     case 'toolTask/changed':
       return notification;
     default:
@@ -1194,13 +1064,11 @@ function executionStatusOf(item: ThreadItem): 'inProgress' | 'completed' | 'fail
     case 'fileChange':
     case 'mcpToolCall':
     case 'dynamicToolCall':
-    case 'collabAgentToolCall':
     case 'webSearch':
       return item.status;
     case 'userMessage':
     case 'agentMessage':
     case 'reasoning':
-    case 'subAgentActivity':
     case 'imageView':
     case 'contextEvidence':
     case 'contextReset':
@@ -1310,12 +1178,6 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
       break;
     case 'thread/references/resolve':
       decoded = decodeThreadReferenceResolveRequest(value);
-      break;
-    case 'thread/descendants':
-      decoded = decodeThreadDescendantsRequest(value);
-      break;
-    case 'thread/subagents/list':
-      decoded = decodeThreadSubagentsRequest(value);
       break;
     case 'thread/tasks/list':
       decoded = decodeThreadToolTasksRequest(value);
@@ -1446,12 +1308,6 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
     case 'thread/references/resolve':
       decoded = decodeThreadReferenceResolveResponse(value);
       break;
-    case 'thread/descendants':
-      decoded = decodeThreadDescendantsResponse(value);
-      break;
-    case 'thread/subagents/list':
-      decoded = decodeThreadSubagentsResponse(value);
-      break;
     case 'thread/tasks/list':
       decoded = decodeThreadToolTasksResponse(value);
       break;
@@ -1579,8 +1435,6 @@ function decodeRendererThreadContextReadResponse(
 function inflateRendererResponse(method: AgentCoreMethod, value: unknown): unknown {
   switch (method) {
     case 'thread/list':
-    case 'thread/descendants':
-      return mapRendererField(value, 'data', (data) => mapRendererArray(data, inflateRendererThread));
     case 'thread/read':
     case 'thread/start':
     case 'thread/resume':
@@ -1800,18 +1654,6 @@ function decodeThreadReferenceResolveRequest(
     currentThreadId: uuidV7(record.currentThreadId, 'thread/references/resolve.currentThreadId'),
     threadIds,
   });
-}
-
-function decodeThreadDescendantsRequest(value: unknown): AgentCoreRequestByMethod['thread/descendants'] {
-  const record = recordValue(value, 'thread/descendants');
-  exactKeys(record, ['threadId'], 'thread/descendants');
-  return deepFreeze({ threadId: uuidV7(record.threadId, 'thread/descendants.threadId') });
-}
-
-function decodeThreadSubagentsRequest(value: unknown): AgentCoreRequestByMethod['thread/subagents/list'] {
-  const record = recordValue(value, 'thread/subagents/list');
-  exactKeys(record, ['threadId'], 'thread/subagents/list');
-  return deepFreeze({ threadId: uuidV7(record.threadId, 'thread/subagents/list.threadId') });
 }
 
 function decodeThreadToolTasksRequest(value: unknown): AgentCoreRequestByMethod['thread/tasks/list'] {
@@ -2276,25 +2118,6 @@ function decodeThreadReferenceResolveResponse(
   return deepFreeze({ data });
 }
 
-function decodeThreadDescendantsResponse(value: unknown): AgentCoreResponseByMethod['thread/descendants'] {
-  const record = recordValue(value, 'thread/descendants response');
-  exactKeys(record, ['data', 'queuedWorkThreadIds'], 'thread/descendants response');
-  return deepFreeze({
-    data: arrayValue(record.data, 'thread/descendants response.data').map(decodeThread),
-    queuedWorkThreadIds: arrayValue(record.queuedWorkThreadIds, 'thread/descendants response.queuedWorkThreadIds')
-      .map((value, index) => uuidV7(value, `thread/descendants response.queuedWorkThreadIds[${index}]`)),
-  });
-}
-
-function decodeThreadSubagentsResponse(value: unknown): AgentCoreResponseByMethod['thread/subagents/list'] {
-  const record = recordValue(value, 'thread/subagents/list response');
-  exactKeys(record, ['data'], 'thread/subagents/list response');
-  return deepFreeze({
-    data: arrayValue(record.data, 'thread/subagents/list response.data')
-      .map((entry, index) => decodeSubagentExecution(entry, `thread/subagents/list response.data[${index}]`)),
-  });
-}
-
 function decodeThreadToolTasksResponse(value: unknown): AgentCoreResponseByMethod['thread/tasks/list'] {
   const record = recordValue(value, 'thread/tasks/list response');
   exactKeys(record, ['data'], 'thread/tasks/list response');
@@ -2441,195 +2264,6 @@ function decodeToolTaskProjection(value: unknown, path: string): import('./proto
   };
 }
 
-function decodeSubagentExecution(value: unknown, path: string): SubagentExecutionProjection {
-  const record = recordValue(value, path);
-  exactKeys(record, [
-    'agentId', 'parentThreadId', 'description', 'agentType', 'runMode', 'generation',
-    'currentTurnId', 'parentItemId', 'stopProvenance', 'terminalStatus', 'notificationState', 'worktree',
-    'terminalError', 'deliveryTurnId', 'deliveryClass', 'eligibleAfterGeneration',
-    'coverageDisposition', 'omittedOutputBytes', 'omittedOutputTokens', 'generationReceipts',
-    'notificationCutoff', 'executionMode', 'settlementCoverage', 'executionSelectionFallback', 'createdAt', 'updatedAt',
-  ], path);
-  return {
-    agentId: uuidV7(record.agentId, `${path}.agentId`),
-    parentThreadId: uuidV7(record.parentThreadId, `${path}.parentThreadId`),
-    description: stringValue(record.description, `${path}.description`, true),
-    agentType: stringValue(record.agentType, `${path}.agentType`, true),
-    runMode: enumValue(record.runMode, ['foreground', 'background'], `${path}.runMode`),
-    generation: positiveInteger(record.generation, `${path}.generation`),
-    currentTurnId: uuidV7(record.currentTurnId, `${path}.currentTurnId`),
-    parentItemId: stringValue(record.parentItemId, `${path}.parentItemId`),
-    stopProvenance: enumValue(
-      record.stopProvenance,
-      ['none', 'model', 'user', 'budget', 'hostRestart'],
-      `${path}.stopProvenance`,
-    ),
-    terminalStatus: record.terminalStatus === null ? null : enumValue(
-      record.terminalStatus,
-      ['finished', 'failed', 'interrupted', 'killed'],
-      `${path}.terminalStatus`,
-    ),
-    notificationState: enumValue(
-      record.notificationState,
-      ['none', 'pending', 'delivering', 'delivered'],
-      `${path}.notificationState`,
-    ),
-    terminalError: decodeSubagentTerminalError(record.terminalError, `${path}.terminalError`),
-    deliveryTurnId: record.deliveryTurnId === null
-      ? null
-      : uuidV7(record.deliveryTurnId, `${path}.deliveryTurnId`),
-    deliveryClass: record.deliveryClass === null
-      ? null
-      : enumValue(record.deliveryClass, ['ordinary', 'carryForward'], `${path}.deliveryClass`),
-    eligibleAfterGeneration: record.eligibleAfterGeneration === null
-      ? null
-      : positiveInteger(record.eligibleAfterGeneration, `${path}.eligibleAfterGeneration`),
-    coverageDisposition: record.coverageDisposition === null
-      ? null
-      : enumValue(record.coverageDisposition, ['full', 'excerpted', 'omitted'], `${path}.coverageDisposition`),
-    omittedOutputBytes: nonNegativeInteger(record.omittedOutputBytes, `${path}.omittedOutputBytes`),
-    omittedOutputTokens: nonNegativeInteger(record.omittedOutputTokens, `${path}.omittedOutputTokens`),
-    generationReceipts: arrayValue(record.generationReceipts, `${path}.generationReceipts`)
-      .map((receipt, index) => decodeSubagentGenerationReceipt(
-        receipt,
-        `${path}.generationReceipts[${index}]`,
-      )),
-    notificationCutoff: enumValue(
-      record.notificationCutoff,
-      ['open', 'closing', 'closed'],
-      `${path}.notificationCutoff`,
-    ),
-    executionMode: enumValue(
-      record.executionMode,
-      ['ordinary', 'exhaustedSettlement'],
-      `${path}.executionMode`,
-    ),
-    settlementCoverage: decodeSubagentSettlementCoverage(
-      record.settlementCoverage,
-      `${path}.settlementCoverage`,
-    ),
-    executionSelectionFallback: decodeExecutionSelectionFallback(
-      record.executionSelectionFallback,
-      `${path}.executionSelectionFallback`,
-    ),
-    worktree: decodeSubagentWorktree(record.worktree, `${path}.worktree`),
-    createdAt: nonNegativeInteger(record.createdAt, `${path}.createdAt`),
-    updatedAt: nonNegativeInteger(record.updatedAt, `${path}.updatedAt`),
-  };
-}
-
-function decodeExecutionSelectionFallback(
-  value: unknown,
-  path: string,
-): SubagentExecutionProjection['executionSelectionFallback'] {
-  if (value === null || value === undefined) return null;
-  const record = recordValue(value, path);
-  exactKeys(record, [
-    'requestedModelProvider', 'requestedModel', 'requestedReasoningEffort', 'reason',
-  ], path);
-  return {
-    requestedModelProvider: record.requestedModelProvider === null
-      ? null
-      : stringValue(record.requestedModelProvider, `${path}.requestedModelProvider`, true),
-    requestedModel: record.requestedModel === null
-      ? null
-      : stringValue(record.requestedModel, `${path}.requestedModel`, true),
-    requestedReasoningEffort: record.requestedReasoningEffort === null
-      ? null
-      : stringValue(record.requestedReasoningEffort, `${path}.requestedReasoningEffort`, true),
-    reason: enumValue(record.reason, ['unavailable'], `${path}.reason`),
-  };
-}
-
-function decodeSubagentGenerationReceipt(
-  value: unknown,
-  path: string,
-): SubagentExecutionProjection['generationReceipts'][number] {
-  const record = recordValue(value, path);
-  exactKeys(record, [
-    'generation', 'turnId', 'parentItemId', 'terminalStatus', 'stopProvenance', 'durationMs', 'error',
-    'partialOutputAvailable', 'parentThreadId', 'notificationState', 'deliveryTurnId',
-  ], path);
-  return deepFreeze({
-    generation: positiveInteger(record.generation, `${path}.generation`),
-    turnId: uuidV7(record.turnId, `${path}.turnId`),
-    parentItemId: stringValue(record.parentItemId, `${path}.parentItemId`),
-    terminalStatus: enumValue(
-      record.terminalStatus,
-      ['finished', 'failed', 'interrupted', 'killed'],
-      `${path}.terminalStatus`,
-    ),
-    stopProvenance: enumValue(
-      record.stopProvenance,
-      ['none', 'model', 'user', 'budget', 'hostRestart'],
-      `${path}.stopProvenance`,
-    ),
-    durationMs: record.durationMs === null
-      ? null
-      : nonNegativeInteger(record.durationMs, `${path}.durationMs`),
-    error: decodeSubagentTerminalError(record.error, `${path}.error`),
-    partialOutputAvailable: booleanValue(record.partialOutputAvailable, `${path}.partialOutputAvailable`),
-    parentThreadId: uuidV7(record.parentThreadId, `${path}.parentThreadId`),
-    notificationState: enumValue(
-      record.notificationState,
-      ['none', 'pending', 'delivering', 'delivered'],
-      `${path}.notificationState`,
-    ),
-    deliveryTurnId: record.deliveryTurnId === null
-      ? null
-      : uuidV7(record.deliveryTurnId, `${path}.deliveryTurnId`),
-  });
-}
-
-function decodeSubagentTerminalError(
-  value: unknown,
-  path: string,
-): SubagentExecutionProjection['terminalError'] {
-  if (value === null) return null;
-  const record = recordValue(value, path);
-  exactKeys(record, ['code', 'messagePreview', 'omittedBytes'], path);
-  const code = stringValue(record.code, `${path}.code`, true);
-  const messagePreview = stringValue(record.messagePreview, `${path}.messagePreview`, true);
-  if (new TextEncoder().encode(code).byteLength > 128) fail(`${path}.code`, 'must be at most 128 UTF-8 bytes');
-  if (new TextEncoder().encode(messagePreview).byteLength > 4_096) {
-    fail(`${path}.messagePreview`, 'must be at most 4096 UTF-8 bytes');
-  }
-  return {
-    code,
-    messagePreview,
-    omittedBytes: nonNegativeInteger(record.omittedBytes, `${path}.omittedBytes`),
-  };
-}
-
-function decodeSubagentSettlementCoverage(
-  value: unknown,
-  path: string,
-): SubagentExecutionProjection['settlementCoverage'] {
-  if (value === null) return null;
-  const record = recordValue(value, path);
-  exactKeys(record, ['origin', 'full', 'excerpted', 'omitted', 'providerAttempted'], path);
-  return {
-    origin: enumValue(
-      record.origin,
-      ['budgetInterrupted', 'normalOvershoot', 'explicitAdmission'],
-      `${path}.origin`,
-    ),
-    full: nonNegativeInteger(record.full, `${path}.full`),
-    excerpted: nonNegativeInteger(record.excerpted, `${path}.excerpted`),
-    omitted: nonNegativeInteger(record.omitted, `${path}.omitted`),
-    providerAttempted: booleanValue(record.providerAttempted, `${path}.providerAttempted`),
-  };
-}
-
-function decodeSubagentWorktree(value: unknown, path: string): SubagentWorktreeSummary | null {
-  if (value === null) return null;
-  const record = recordValue(value, path);
-  exactKeys(record, ['branch', 'path'], path);
-  return {
-    branch: stringValue(record.branch, `${path}.branch`),
-    path: stringValue(record.path, `${path}.path`),
-  };
-}
 
 function decodeThreadResponse(value: unknown): AgentCoreResponseByMethod['thread/read'] {
   const record = recordValue(value, 'thread response');
@@ -2926,7 +2560,6 @@ function decodeThreadTrajectoryRecordSummary(value: unknown, path: string): Thre
     'primaryEvidence',
     'relatedEvidence',
     'availability',
-    'childThreadId',
   ], path);
   const threadId = uuidV7(record.threadId, `${path}.threadId`);
   const turnId = uuidV7(record.turnId, `${path}.turnId`);
@@ -2962,7 +2595,6 @@ function decodeThreadTrajectoryRecordSummary(value: unknown, path: string): Thre
     primaryEvidence,
     relatedEvidence,
     availability: decodeThreadTrajectoryAvailabilityList(record.availability, `${path}.availability`),
-    childThreadId: nullableUuidV7(record.childThreadId, `${path}.childThreadId`),
   };
 }
 
@@ -2977,7 +2609,6 @@ function decodeThreadTrajectoryRecordLabel(value: unknown, path: string): Thread
     'tool',
     'providerRetry',
     'contextCompaction',
-    'delegation',
   ], `${path}.type`);
   if (type === 'systemPrompt') {
     exactKeys(record, ['type', 'change'], path);
@@ -3022,16 +2653,8 @@ function decodeThreadTrajectoryRecordLabel(value: unknown, path: string): Thread
       sourceCallIndex: nonNegativeInteger(record.sourceCallIndex, `${path}.sourceCallIndex`),
     };
   }
-  if (type === 'contextCompaction') {
-    exactKeys(record, ['type', 'trigger'], path);
-    return { type, trigger: nonEmptyTrimmedString(record.trigger, `${path}.trigger`) };
-  }
-  exactKeys(record, ['type', 'action', 'name'], path);
-  return {
-    type,
-    action: enumValue(record.action, ['delegate', 'message', 'stop', 'activity', 'tool'], `${path}.action`),
-    name: nonEmptyTrimmedString(record.name, `${path}.name`),
-  };
+  exactKeys(record, ['type', 'trigger'], path);
+  return { type, trigger: nonEmptyTrimmedString(record.trigger, `${path}.trigger`) };
 }
 
 function trajectoryOrderKey(value: unknown, path: string): string {
@@ -3102,7 +2725,6 @@ function decodeThreadTrajectoryEvidenceRef(value: unknown, path: string): Thread
       'stablePrompt',
       'toolCatalog',
       'preparedContextPart',
-      'subagent',
     ],
     `${path}.type`,
   );
@@ -3176,14 +2798,7 @@ function decodeThreadTrajectoryEvidenceRef(value: unknown, path: string): Thread
       partIndex: nonNegativeInteger(record.partIndex, `${path}.partIndex`),
     };
   }
-  exactKeys(record, ['type', 'threadId', 'turnId', 'agentThreadId', 'itemId'], path);
-  return {
-    type,
-    threadId,
-    turnId,
-    agentThreadId: uuidV7(record.agentThreadId, `${path}.agentThreadId`),
-    itemId: nullableString(record.itemId, `${path}.itemId`),
-  };
+  return assertNever(type);
 }
 
 function decodeThreadTrajectoryRecordDetail(
@@ -3297,26 +2912,7 @@ function decodeThreadTrajectoryRecordDetail(
       summaryText: nullableString(record.summaryText, `${path}.summaryText`, true),
     };
   }
-  exactKeys(record, [
-    'kind', 'turn', 'item', 'diagnostics', 'activityIndex', 'executionCallId', 'input', 'outputText',
-    'schema', 'childThreadId',
-  ], path);
-  const turn = decodeTrajectoryDetailTurn(record.turn, summary, path);
-  const diagnostics = decodeThreadTrajectoryDiagnostics(record.diagnostics, `${path}.diagnostics`);
-  const activityIndex = nullableNonNegativeInteger(record.activityIndex, `${path}.activityIndex`);
-  validateTrajectoryActivityEvidence(diagnostics?.activity ?? null, activityIndex, 'toolExecutionBatch', `${path}.activityIndex`);
-  return {
-    kind,
-    turn,
-    item: record.item === null ? null : decodeThreadTrajectoryItemEvidence(record.item, `${path}.item`),
-    diagnostics,
-    activityIndex,
-    executionCallId: nullableString(record.executionCallId, `${path}.executionCallId`),
-    input: record.input === null ? null : jsonValue(record.input, `${path}.input`),
-    outputText: nullableString(record.outputText, `${path}.outputText`, true),
-    schema: record.schema === null ? null : jsonValue(record.schema, `${path}.schema`),
-    childThreadId: nullableUuidV7(record.childThreadId, `${path}.childThreadId`),
-  };
+  return assertNever(kind);
 }
 
 function decodeThreadTrajectoryModelInputPart(
@@ -3819,7 +3415,7 @@ function decodeTurnProvenance(value: unknown): TurnProvenance {
 
 function decodeTurnTrigger(value: unknown): TurnTrigger {
   const record = recordValue(value, 'turn.trigger');
-  const kind = enumValue(record.kind, ['user', 'continuation', 'subagent', 'feature'], 'turn.trigger.kind');
+  const kind = enumValue(record.kind, ['user', 'continuation', 'feature'], 'turn.trigger.kind');
   switch (kind) {
     case 'user':
       exactKeys(record, ['kind'], 'turn.trigger');
@@ -3829,13 +3425,6 @@ function decodeTurnTrigger(value: unknown): TurnTrigger {
       return deepFreeze({
         kind,
         sourceTurnId: uuidV7(record.sourceTurnId, 'turn.trigger.sourceTurnId'),
-      });
-    case 'subagent':
-      exactKeys(record, ['kind', 'parentThreadId', 'parentItemId'], 'turn.trigger');
-      return deepFreeze({
-        kind,
-        parentThreadId: uuidV7(record.parentThreadId, 'turn.trigger.parentThreadId'),
-        parentItemId: stringValue(record.parentItemId, 'turn.trigger.parentItemId'),
       });
     case 'feature':
       exactKeys(record, ['kind', 'feature', 'ref'], 'turn.trigger');
@@ -4086,7 +3675,7 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
         ),
         executionMode: enumValue(
           record.executionMode,
-          ['root', 'child', 'automation', 'memory', 'feature'],
+          ['root', 'delegation', 'automation', 'memory', 'feature'],
           'contextPayload.executionMode',
         ),
         replyIdentity: nullableString(record.replyIdentity, 'contextPayload.replyIdentity'),
@@ -4173,18 +3762,8 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
     case 'skillInvocation': {
       exactKeys(record, [
         'schemaVersion', 'kind', 'name', 'displayName', 'source', 'identity', 'resourceRoot',
-        'contentHash', 'instructions', 'arguments', 'execution', 'invocationSource',
-        'constraints', 'invokedAt',
+        'contentHash', 'instructions', 'arguments', 'invocationSource', 'invokedAt',
       ], 'contextPayload');
-      const execution = enumValue(record.execution, ['inline', 'isolated'], 'contextPayload.execution');
-      const constraints = decodeSkillInvocationConstraints(record.constraints);
-      if (execution === 'inline' && (
-        constraints.allowedTools.length > 0
-        || constraints.model !== null
-        || constraints.effort !== null
-      )) {
-        fail('contextPayload.constraints', 'inline Skills cannot widen or replace the Turn configuration');
-      }
       return deepFreeze({
         schemaVersion: 1,
         kind,
@@ -4200,34 +3779,12 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
         contentHash: sha256(record.contentHash, 'contextPayload.contentHash'),
         instructions: stringValue(record.instructions, 'contextPayload.instructions', true),
         arguments: stringValue(record.arguments, 'contextPayload.arguments', true),
-        execution,
         invocationSource: enumValue(
           record.invocationSource,
           ['user', 'model', 'runtime'],
           'contextPayload.invocationSource',
         ),
-        constraints,
         invokedAt: nonNegativeNumber(record.invokedAt, 'contextPayload.invokedAt'),
-      });
-    }
-    case 'roleCatalog': {
-      exactKeys(record, [
-        'schemaVersion', 'kind', 'mode', 'previousCatalogHash', 'catalogHash', 'entries',
-      ], 'contextPayload');
-      const mode = enumValue(record.mode, ['baseline', 'delta'], 'contextPayload.mode');
-      const previousCatalogHash = nullableSha256(record.previousCatalogHash, 'contextPayload.previousCatalogHash');
-      const catalogHash = sha256(record.catalogHash, 'contextPayload.catalogHash');
-      const entries = arrayValue(record.entries, 'contextPayload.entries')
-        .map((entry, index) => decodeRoleCatalogEntry(entry, `contextPayload.entries[${index}]`));
-      validateCatalogJournal(mode, previousCatalogHash, catalogHash, entries.map((entry) => entry.change));
-      requireUnique(entries.map((entry) => entry.name), 'contextPayload.entries', 'Role names');
-      return deepFreeze({
-        schemaVersion: 1,
-        kind,
-        mode,
-        previousCatalogHash,
-        catalogHash,
-        entries,
       });
     }
     case 'toolOutputProjection':
@@ -4280,8 +3837,7 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
     case 'compactionRestoredState':
       exactKeys(record, [
         'schemaVersion', 'kind', 'skillCatalogHash', 'announcedSkills', 'activeSkills',
-        'roleCatalogHash', 'announcedRoles', 'userViewBaselineRef',
-        'additionalContextBaselineRef', 'activeObservations', 'degradations',
+        'userViewBaselineRef', 'additionalContextBaselineRef', 'activeObservations', 'degradations',
       ], 'contextPayload');
       return decodeCompactionRestoredState(record, kind);
     case 'compactionInstructions': {
@@ -4341,8 +3897,6 @@ function decodeCompactionRestoredState(
     .map((entry, index) => decodeCatalogCheckpoint(entry, `contextPayload.announcedSkills[${index}]`));
   const activeSkills = arrayValue(record.activeSkills, 'contextPayload.activeSkills')
     .map((entry, index) => decodeActiveSkillCheckpoint(entry, `contextPayload.activeSkills[${index}]`));
-  const announcedRoles = arrayValue(record.announcedRoles, 'contextPayload.announcedRoles')
-    .map((entry, index) => decodeCatalogCheckpoint(entry, `contextPayload.announcedRoles[${index}]`));
   const activeObservations = arrayValue(record.activeObservations, 'contextPayload.activeObservations')
     .map((entry, index) => decodeActiveObservationCheckpoint(
       entry,
@@ -4355,7 +3909,6 @@ function decodeCompactionRestoredState(
     ));
   requireUnique(announcedSkills.map((entry) => entry.name), 'contextPayload.announcedSkills', 'Skill names');
   requireUnique(activeSkills.map((entry) => entry.name), 'contextPayload.activeSkills', 'Skill names');
-  requireUnique(announcedRoles.map((entry) => entry.name), 'contextPayload.announcedRoles', 'Role names');
   requireUnique(activeObservations.map((entry) => entry.key), 'contextPayload.activeObservations', 'keys');
   requireUnique(
     degradations.map((entry) => JSON.stringify([entry.code, entry.source, entry.reference])),
@@ -4368,8 +3921,6 @@ function decodeCompactionRestoredState(
     skillCatalogHash: nullableSha256(record.skillCatalogHash, 'contextPayload.skillCatalogHash'),
     announcedSkills,
     activeSkills,
-    roleCatalogHash: nullableSha256(record.roleCatalogHash, 'contextPayload.roleCatalogHash'),
-    announcedRoles,
     userViewBaselineRef: record.userViewBaselineRef === null
       ? null
       : expectContextPayloadKind(
@@ -4602,22 +4153,6 @@ function decodeSkillCatalogEntry(value: unknown, path: string) {
   };
 }
 
-function decodeRoleCatalogEntry(value: unknown, path: string) {
-  const record = recordValue(value, path);
-  exactKeys(record, [
-    'change', 'name', 'displayName', 'source', 'identity', 'contentHash', 'description',
-  ], path);
-  return {
-    change: enumValue(record.change, ['available', 'added', 'changed', 'removed'], `${path}.change`),
-    name: nonEmptyTrimmedString(record.name, `${path}.name`),
-    displayName: nonEmptyTrimmedString(record.displayName, `${path}.displayName`),
-    source: enumValue(record.source, ['built-in', 'user', 'project'], `${path}.source`),
-    identity: nonEmptyTrimmedString(record.identity, `${path}.identity`),
-    contentHash: sha256(record.contentHash, `${path}.contentHash`),
-    description: stringValue(record.description, `${path}.description`, true),
-  };
-}
-
 function validateCatalogJournal(
   mode: 'baseline' | 'delta',
   previousCatalogHash: string | null,
@@ -4639,17 +4174,6 @@ function validateCatalogJournal(
   if (mode === 'delta' && (previousCatalogHash === catalogHash || changes.length === 0)) {
     fail('contextPayload', 'a delta must describe a real catalog change');
   }
-}
-
-function decodeSkillInvocationConstraints(value: unknown) {
-  const record = recordValue(value, 'contextPayload.constraints');
-  exactKeys(record, ['allowedTools', 'model', 'effort'], 'contextPayload.constraints');
-  return {
-    allowedTools: stringArray(record.allowedTools, 'contextPayload.constraints.allowedTools')
-      .map((tool, index) => nonEmptyTrimmedString(tool, `contextPayload.constraints.allowedTools[${index}]`)),
-    model: nullableString(record.model, 'contextPayload.constraints.model'),
-    effort: nullableString(record.effort, 'contextPayload.constraints.effort'),
-  };
 }
 
 function decodeToolOutputProjection(value: unknown) {

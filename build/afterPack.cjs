@@ -19,6 +19,14 @@ function ensureOutlineExecutable(appPath) {
 
 exports.ensureOutlineExecutable = ensureOutlineExecutable;
 
+function ensureDelegateExecutable(appPath) {
+  const launcherPath = path.join(appPath, 'Contents', 'Resources', 'delegate', 'bin', 'delegate');
+  chmodSync(launcherPath, 0o755);
+  return launcherPath;
+}
+
+exports.ensureDelegateExecutable = ensureDelegateExecutable;
+
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
   const appName = `${context.packager.appInfo.productFilename}.app`;
@@ -32,6 +40,7 @@ exports.default = async function afterPack(context) {
     }
   }
   ensureOutlineExecutable(appPath);
+  ensureDelegateExecutable(appPath);
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], {
     stdio: 'inherit',
   });

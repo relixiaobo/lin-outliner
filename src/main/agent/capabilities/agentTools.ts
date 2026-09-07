@@ -16,6 +16,7 @@ import {
   createLocalTools,
   type AgentFileReadImageNormalizer,
   type AgentLocalWorkspaceContext,
+  type DelegateCommandRuntime,
 } from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
 import { normalizeAgentToolNames } from './agentToolRules';
@@ -228,6 +229,7 @@ export interface AgentToolsOptions {
   artifactSink?: ToolArtifactSink;
   toolTaskService?: ToolTaskService;
   turnId?: string;
+  delegateCommandRuntime?: DelegateCommandRuntime;
 }
 
 interface AgentToolCatalogEntry {
@@ -252,6 +254,7 @@ function buildAgentToolCatalog(options: AgentToolsOptions): AgentToolCatalogEntr
       artifactSink: options.artifactSink,
       toolTaskService: options.toolTaskService,
       turnId: options.turnId,
+      delegateCommandRuntime: options.delegateCommandRuntime,
     }),
   }, {
     precondition: true,

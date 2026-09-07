@@ -15,10 +15,6 @@ import {
   type ThreadSnapshotSource,
   type ThreadStoreSnapshot,
 } from '../../src/renderer/agent/store/threadStore';
-import {
-  EMPTY_SUBAGENT_PROJECTION,
-  emptyTurnAnchors,
-} from '../../src/renderer/agent/subagentPresentation';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { reduceProjection } from '../../src/renderer/state/document';
 import { DocumentIndexStore } from '../../src/renderer/state/documentIndexStore';
@@ -77,7 +73,7 @@ describe('Thread document subscriptions', () => {
     };
     const turn = completedTurn([item]);
 
-    await render(root, <ThreadTurnView {...turnProps(store)} anchors={emptyTurnAnchors(turn)} turn={turn} />);
+    await render(root, <ThreadTurnView {...turnProps(store)} turn={turn} />);
     const readsAfterMount = contentReads;
     const next = patchState(state, [{ ...unrelated, content: richText('After'), updatedAt: 2 }]);
     await act(async () => {
@@ -108,7 +104,7 @@ describe('Thread document subscriptions', () => {
     const store = new DocumentIndexStore(state.index);
     const turn = completedTurn([userMessage([{ type: 'nodeReference', nodeId: target.id }])]);
 
-    await render(root, <ThreadTurnView {...turnProps(store)} anchors={emptyTurnAnchors(turn)} turn={turn} />);
+    await render(root, <ThreadTurnView {...turnProps(store)} turn={turn} />);
     const chip = () => document.querySelector<HTMLElement>('.thread-message-inline-ref');
     expect(chip()?.textContent).toBe('Alpha');
     expect(chip()?.getAttribute('style')).toContain('var(--identity-tint-0)');
@@ -138,7 +134,7 @@ describe('Thread document subscriptions', () => {
     const turn = completedTurn([userMessage([{ type: 'nodeReference', nodeId: target.id }])]);
     const props = turnProps(store);
 
-    await render(root, <ThreadTurnView {...props} active={false} anchors={emptyTurnAnchors(turn)} turn={turn} />);
+    await render(root, <ThreadTurnView {...props} active={false} turn={turn} />);
     const renamed = patchState(state, [{ ...target, content: richText('Beta'), updatedAt: 2 }]);
     await act(async () => {
       store.commit(renamed.index);
@@ -154,7 +150,7 @@ describe('Thread document subscriptions', () => {
     });
     expect(clipboardWrites).toEqual(['Beta']);
 
-    await render(root, <ThreadTurnView {...props} active anchors={emptyTurnAnchors(turn)} turn={turn} />);
+    await render(root, <ThreadTurnView {...props} active turn={turn} />);
     expect(document.querySelector('.thread-message-inline-ref')?.textContent).toBe('Beta');
     await act(async () => root.unmount());
   });
@@ -290,8 +286,6 @@ function threadSnapshot(loading: boolean): ThreadStoreSnapshot {
 function turnProps(indexStore: DocumentIndexStore) {
   return {
     active: true,
-    agentEntries: new Map(),
-    agentTranscript: false,
     canEditUserMessage: false,
     composerEnabled: true,
     expandState: {
@@ -314,14 +308,12 @@ function turnProps(indexStore: DocumentIndexStore) {
     indexStore,
     isLastTurn: true,
     latchedReasoning: new Set<string>(),
-    latestTurnByThread: new Map(),
     liveReasoningSeen: new Set<string>(),
     onContinueTurn: async () => undefined,
     onContinueInNewChat: async () => undefined,
     onEditUserMessage: async () => undefined,
-    onInterruptThread: async () => undefined,
     onOpenNodeReference: () => undefined,
-    onOpenThread: async () => undefined,
+    onOpenThreadReference: async () => undefined,
     onOpenTurnDetails: () => undefined,
     onReadToolArguments: async () => null,
     onReadToolOutput: async () => null,
@@ -332,12 +324,10 @@ function turnProps(indexStore: DocumentIndexStore) {
     }),
     onRerunTurn: async () => undefined,
     providerRetry: null,
-    // No delegation in these Turns: their own Items, no anchors, no delivery.
-    delivery: null,
     selfSpeaker: { participantId: 'main', avatarKey: 'main', name: 'main' },
     threadCwd: '/workspace',
     threadId: 'thread',
-    threadsById: new Map(),
+    threadReferences: new Map(),
     waitingOnUserInput: false,
   } as const;
 }
@@ -352,16 +342,14 @@ function threadViewProps(indexStore: DocumentIndexStore) {
     goal: null,
     indexStore,
     inputRequest: null,
-    latestTurnByThread: new Map(),
     onConfigurationChange: async () => undefined,
     onContinueTurn: async () => undefined,
     onContinueInNewChat: async () => undefined,
     onCreateThread: async () => false,
     onEditUserMessage: async () => undefined,
     onInterrupt: async () => undefined,
-    onInterruptThread: async () => undefined,
     onOpenNodeReference: () => undefined,
-    onOpenThread: async () => undefined,
+    onOpenThreadReference: async () => undefined,
     onOpenTurnDetails: () => undefined,
     onReadToolArguments: async () => null,
     onReadToolOutput: async () => null,
@@ -385,7 +373,6 @@ function threadViewProps(indexStore: DocumentIndexStore) {
     threadModelProvider: 'openai',
     threadsById: new Map(),
     selfSpeaker: { participantId: 'main', avatarKey: 'main', name: 'main' },
-    subagentProjection: EMPTY_SUBAGENT_PROJECTION,
     turns: [],
     waitingOnUserInput: false,
   } as const;

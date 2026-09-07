@@ -63,6 +63,7 @@ export class OutlineAssetStore {
   private readonly hooks: NonNullable<OutlineAssetStoreOptions['hooks']>;
   private namespaceChain: Promise<unknown> = Promise.resolve();
   private metadataByAssetId = new Map<string, AssetMetadata>();
+  private metadataRevisionValue = 0;
 
   constructor(
     readonly content: ContentStore,
@@ -101,6 +102,10 @@ export class OutlineAssetStore {
       assetId,
       structuredClone(metadata),
     ]));
+  }
+
+  get metadataRevision(): number {
+    return this.metadataRevisionValue;
   }
 
   async verify(assetId: string): Promise<OutlineVerifiedAsset> {
@@ -162,6 +167,7 @@ export class OutlineAssetStore {
     return this.withNamespaceBarrier(async () => {
       const removed = await this.transactions.collectUnprotectedAssetRecords(liveAssetRecordIds, this.now());
       for (const stored of removed) this.metadataByAssetId.delete(stored.record.assetId);
+      if (removed.length > 0) this.metadataRevisionValue += 1;
       await this.hooks.afterAssetRecordsRemoved?.(removed);
       for (const stored of removed) {
         await this.content.releaseAnchor(stored.exactRevision.anchorId).catch(() => undefined);
@@ -196,6 +202,7 @@ export class OutlineAssetStore {
         record.assetId,
         structuredClone(record.metadata),
       ]));
+      this.metadataRevisionValue += 1;
       return released;
     });
   }
@@ -291,6 +298,7 @@ export class OutlineAssetStore {
       };
       await this.settleAssetStage(record, lease, admission);
       this.metadataByAssetId.set(record.assetId, structuredClone(record.metadata));
+      this.metadataRevisionValue += 1;
       return lease;
     } catch (error) {
       await this.content.releaseAdmissionLease(admission.leaseId).catch(() => undefined);

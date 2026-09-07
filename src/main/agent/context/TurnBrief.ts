@@ -4,7 +4,6 @@ import type {
   ContextPurpose,
   ContextTextEntry,
   ReferencedResourcesContextPayload,
-  RoleCatalogContextPayload,
   SkillCatalogContextPayload,
   SkillInvocationContextPayload,
   TurnEnvironmentContextPayload,
@@ -110,27 +109,13 @@ export function skillCatalogBrief(payload: SkillCatalogContextPayload): TurnBrie
   return observation('application', catalogBrief('Skills', payload.mode, payload.entries));
 }
 
-export function roleCatalogBrief(payload: RoleCatalogContextPayload): TurnBriefBlock {
-  return observation('application', catalogBrief('Agent types', payload.mode, payload.entries));
-}
-
 export function skillInvocationBrief(payload: SkillInvocationContextPayload): readonly TurnBriefBlock[] {
-  const constraints = [
-    payload.execution !== 'inline' ? `Execution: ${payload.execution}.` : null,
-    payload.constraints.allowedTools.length > 0
-      ? `Allowed tools: ${payload.constraints.allowedTools.join(', ')}.`
-      : null,
-    payload.constraints.model ? `Model: ${payload.constraints.model}.` : null,
-    payload.constraints.effort ? `Reasoning effort: ${payload.constraints.effort}.` : null,
-  ].filter((entry): entry is string => entry !== null);
   const label = payload.displayName === payload.name
     ? payload.name
     : `${payload.displayName} (${payload.name})`;
   return [
-    observation('application', [`Active Skill: ${label}.`, ...constraints].join('\n')),
-    ...(payload.execution === 'inline'
-      ? [instruction(payload.instructions)]
-      : []),
+    observation('application', `Active Skill: ${label}.`),
+    instruction(payload.instructions),
   ];
 }
 
@@ -390,7 +375,7 @@ function executionDescription(payload: TurnEnvironmentContextPayload): string | 
   switch (payload.executionMode) {
     case 'automation': return 'headless Automation';
     case 'memory': return 'headless Memory consolidation';
-    case 'child': return 'delegated child Agent';
+    case 'delegation': return 'delegated Agent Session';
     case 'feature': return 'Host feature execution';
     case 'root': return 'headless root Agent';
   }

@@ -34,10 +34,12 @@ For each admitted Tool Task, resolve:
 
 ```text
 ExecutionAddress
-  requestedCwd + resolvedCwd + canonical root/worktree identity
+  requestedCwd + resolvedCwd + canonical targets/scope anchors
+  root/worktree identity per admitted scope
 
 ContextSnapshot
   instruction/profile sources + Git observations + checks
+  target-to-source applicability + scope completeness
   content hashes + generation + capture time + degradation reasons
 ```
 
@@ -49,11 +51,34 @@ truth. Non-Git directories are valid and can have degraded or empty profiles.
 
 ### Collection
 
-Collection walks the lexical ancestors of the resolved cwd, discovers bounded
-instruction files and profile candidates, and captures Git/worktree facts when
-available. Every source records canonical path, scope, content hash,
-provenance, and generation. Detection produces candidates; required checks
-become active only through explicit user choice or a trusted project source.
+Collection uses an ordered set of canonical scope anchors chosen by the
+capability, not one universal cwd:
+
+| Capability | Instruction/profile scope anchor |
+| --- | --- |
+| Bash or native launcher | Admitted `resolvedCwd`; internal `cd`, absolute command operands, and vendor tool calls do not silently replace this scope. |
+| File read/edit/write | Parent directory of each canonical file target, even when its absolute path is outside cwd. A new file records the nearest existing canonical ancestor and intended suffix. |
+| Directory read or recursive search | Canonical directory argument; glob/grep uses the non-pattern search root. Per-file observations retain deeper applicable scopes when discovered. |
+| Delete or rename | Directory entry actually mutated: parent of each source/destination. Deleting a symlink scopes the link entry, not the untouched referent; a content edit following a symlink scopes the referent. |
+
+For each anchor, walk its canonical ancestors from outermost to innermost and
+record applicable instructions/profiles in that order. Nested rules apply only
+to their descendants; sibling scopes do not override each other. A recursive
+search does not assert it loaded every descendant's instructions. A later edit
+admits the exact target scope again. Snapshot payloads map each canonical target
+to its applicable sources, source hashes, and scope completeness; shared source
+bytes may be deduplicated, but their applicability cannot be flattened away.
+Git observations use the same target roots. Detection produces candidates;
+required checks become active only through explicit user choice or a trusted
+project source.
+
+For `file_edit(/repo-b/src/file)` from cwd A, the snapshot records B and its
+nested `src` scope, not A's instructions. Cwd remains path-resolution metadata.
+Cache/reuse identity includes capability scope semantics and the complete
+canonical anchor set; snapshots for different targets in one cwd cannot alias.
+Bounded or failed collection reports unknown scopes explicitly, including in
+S0. An unresolved target needed for admission fails before mutation. Merely
+selecting a Project does not substitute its root for a file's instruction scope.
 
 A failed inspection records a degradation reason and returns the task result.
 It does not fabricate a complete context and does not block ordinary
@@ -127,7 +152,8 @@ context evidence -> ContextProjector -> add/replace/clear reminder -> provider
 
 The reminder is a projection, not authority or history. Each contribution is
 keyed by `contextSlotKey = { turnId, toolTaskId, contextSnapshotRef }` and
-contains source, generation, resolved cwd, degradation, and contribution kind
+contains source, generation, resolved cwd, canonical scope mappings, degradation,
+and contribution kind
 `admission` or `observation`. `upsert` replaces
 only that slot; `clear` removes only that slot; a later task cannot clear an
 earlier task's evidence. The provider projection includes an ordered bounded
@@ -190,7 +216,7 @@ No compatibility reader or silent fallback remains. A fresh userData tree is
 the only supported format.
 
 The cut includes [local tools](../spec/agent-tool-design.md#local-files-and-commands),
-[child isolation](../spec/agent-subagent-threads.md#worktree-isolation), and
+[delegation context](../spec/agent-delegation.md#task-execution-context), and
 [Automation](../spec/agent-automations.md), alongside Agent Core, permissions,
 model runtime, and the active delegation plan. Unit A delivers the durable S0
 admission, receipt, and keyed projection contract as a complete execution
@@ -213,6 +239,8 @@ working mechanism. It must not defer mandatory snapshot persistence to Unit B.
 - **FR-7:** The clean cut removes old cwd/workspace readers and writers.
 - **FR-8:** Discovery publishes immutable successors as later observations;
   it never revises the initiating task's admission context or receipt.
+- **FR-9:** File contexts follow canonical target scopes, with per-target
+  applicability and nested rules; Bash contexts follow the admitted cwd.
 
 ## Acceptance criteria
 
@@ -236,6 +264,9 @@ working mechanism. It must not defer mandatory snapshot persistence to Unit B.
   the next provider boundary labels S1 as later evidence, and Task B may use S1.
 - **AC-9:** Discovery failure or restart never mutates S0, substitutes a
   snapshot during replay, or reruns Task A to reconstruct missing facts.
+- **AC-10:** Editing an absolute path in B while cwd is A collects B's enclosing
+  and nested rules only. New files, symlink content edits, symlink deletion,
+  sibling targets, and recursive-search-then-edit retain their distinct scopes.
 
 ## Tests and evidence
 
@@ -254,10 +285,12 @@ fixtures:
 | Duplicate collector callback | At most one successor event for the same predecessor. |
 | Replay after files change or Project deletion | Original S0/S1 references, kinds, publication order, and boundary slot selection remain exact; missing bytes show unavailable. |
 | Local tools and delegated isolation | Relative/absolute targets use task addresses; a mismatched isolated resource fails admission without ancestor fallback. |
+| File targets outside cwd and in nested scopes | Canonical target-to-source mappings survive replay; A/B and sibling contexts cannot share a cache entry solely because cwd matches. |
 
 Unit A adds codec fixtures rejecting retired Thread/start-request fields and a
 production-source guard covering `ThreadMetadataStore`, `ThreadCatalogOps`,
-`SubagentCollaboration` (or its replacement), `agentLocalTools`, Automation
+`DelegationCoordinator`, `InternalDelegationSessionRuntime`,
+`ExternalAgentCliLauncher`, `agentLocalTools`, Automation
 dispatch, configuration/identity lookup, and restart readers. Combine type
 checks that remove the old fields with a source guard against old metadata
 accessors and ancestor worktree fallback; a text-only search for `thread.cwd`

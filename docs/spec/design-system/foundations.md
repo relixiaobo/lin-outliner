@@ -130,7 +130,9 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   `@media (prefers-color-scheme: dark)` block. The in-app light/dark/system control
   (Settings › General › Theme) drives it through `nativeTheme.themeSource` (which
   sets the renderer's `prefers-color-scheme`), so the CSS needs no extra wiring; the
-  choice persists in `app-preferences.json` and is reapplied before first paint.
+  choice persists in `config/settings.jsonc` under `appearance.theme` and is
+  reapplied before first paint. The Host also watches that source, so a valid
+  external edit updates the native theme during a running session.
   Scoped `@media (prefers-color-scheme: dark)` rules are allowed only for
   third-party / generated colour streams that cannot be expressed as foundation
   tokens (for example Shiki's `--shiki-light` / `--shiki-dark`) or for a documented

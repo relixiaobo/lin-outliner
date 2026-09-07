@@ -16,7 +16,6 @@ import type {
   TurnId,
   TurnStatus,
 } from '../../../../core/agent/protocol';
-import { isSubagentBudgetExhaustedError } from '../../SubagentBudgetExhaustedError';
 import { uuidV7 } from '../../uuid';
 import { AgentToolFailure } from '../../AgentToolFailure';
 import {
@@ -206,9 +205,7 @@ export class GoalExtension implements AgentCoreExtension {
     } catch (error) {
       this.releaseContinuation(thread, record.generation, reservation.turnId);
       this.recordAdmissionDeferral(thread, record, reservation.kind, error);
-      if (!isSubagentBudgetExhaustedError(error)) {
-        console.error(`[agent] Goal continuation admission failed for Thread ${thread.id}`, error);
-      }
+      console.error(`[agent] Goal continuation admission failed for Thread ${thread.id}`, error);
       return;
     }
     if (!turn) {

@@ -306,7 +306,6 @@ export function contextPayloadDependencies(payload: ThreadContextPayload): Conte
     case 'additionalContext':
     case 'skillCatalog':
     case 'skillInvocation':
-    case 'roleCatalog':
     case 'compactionSummary':
     case 'compactionInstructions':
     case 'toolCallArguments':

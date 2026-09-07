@@ -40,6 +40,14 @@ sandboxed | unsandboxed | unavailable | rejected
 does not start. Electron sandboxing, read-only capability, worktree identity,
 and OS sandbox enforcement remain separate receipt properties.
 
+The existing delegation/native-launcher policy still requires a dedicated
+worktree for effective writable access and disposable worktrees for external
+read-only execution. This unit does not make those resources optional. A
+worktree redirects normal relative work but is not an OS boundary around an
+arbitrary native CLI. Address claims likewise coordinate declared scopes only;
+neither property can justify a `sandboxed` receipt. Platform enforcement must
+be measured before promising containment of absolute-path shell effects.
+
 ### Interactive process experiment
 
 The development Skill uses a unique session name derived from the Thread,

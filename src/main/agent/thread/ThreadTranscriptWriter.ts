@@ -16,7 +16,6 @@
 import type { Thread, ThreadId, Turn, TurnId } from '../../../core/agent/protocol';
 import {
   appendThreadTranscript,
-  reclaimLegacyTranscriptDirectory,
   rebuildThreadTranscript,
   removeThreadTranscript,
   threadTranscriptPath,
@@ -70,11 +69,10 @@ export class ThreadTranscriptWriter {
    * guard, and this is deliberately not awaited by the Turn that produced it.
    *
    * THIS IS CALLED ON THE TURN-COMPLETION PATH, SYNCHRONOUSLY. `resolveSubject`
-   * reads a store (a delegated subject is a spawn-edge lookup), so it has to be
+   * reads a store, so it has to be
    * guarded HERE and not only inside the chain: a throw escaping this call would
-   * abandon the rest of the completion tail — the parent-visible activity row and
-   * the idle notification — and a parent waiting on that child would park until
-   * its own deadline. A12 exactly: the account is inspection-only and degrades,
+   * abandon the rest of the completion tail and the idle notification. A12
+   * exactly: the account is inspection-only and degrades,
    * the user's Turn does not die for it.
    */
   enqueueTurn(thread: Thread, turn: Turn): void {
@@ -230,21 +228,6 @@ export class ThreadTranscriptWriter {
   }
 
   /**
-   * Reclaim the pre-rename directory at startup, BEFORE the sweep: a relocated
-   * artifact whose Thread is gone should be reclaimed on this launch rather than
-   * waiting for the next one. For the same A12 reason as the sweep, it can only
-   * log — startup does not fail over retention.
-   */
-  async reclaimLegacyDirectory(): Promise<readonly string[]> {
-    try {
-      return await reclaimLegacyTranscriptDirectory(this.options.transcriptRoot);
-    } catch (error) {
-      console.warn('[agent] Legacy transcript directory was not reclaimed', error);
-      return [];
-    }
-  }
-
-  /**
    * Drop the in-session cursor during coordination teardown. The append chain is
    * deliberately NOT dropped here: deletion drains it afterwards, and a chain
    * removed early cannot be drained. The chain removes its own entry when it
@@ -260,7 +243,7 @@ export class ThreadTranscriptWriter {
   }
 
   /**
-   * Best-effort production drain before terminal collaboration settlement.
+   * Best-effort production drain before terminal account settlement.
    * Transcript I/O is inspection-only, so a wedged append may delay this
    * boundary only up to the account-layer deadline; notification and deletion
    * settlement must still continue under A12.

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import {
   type AgentSkillContentTarget,
-  parseSkillExecutionContract,
+  assertNoRetiredSkillExecutionContract,
   parseSkillMarkdown,
   skillContentHash,
 } from './agentSkills';
@@ -140,12 +140,12 @@ function validateSkillMarkdown(content: string): void {
     );
   }
   try {
-    parseSkillExecutionContract(parsed.frontmatter, parsed.body);
+    assertNoRetiredSkillExecutionContract(parsed.frontmatter, parsed.body);
   } catch (error) {
     throw new AgentSkillAuthoringError(
       'invalid_skill_execution_contract',
       error instanceof Error ? error.message : String(error),
-      'Keep inline Skills instruction-only, or set execution: isolated for shell expansion, allowed-tools, model, or effort overrides.',
+      'Keep Skills instruction-only. Use the delegate CLI for Agent execution.',
     );
   }
 }

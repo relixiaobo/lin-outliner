@@ -672,17 +672,14 @@ export function useWorkspaceKeyboard({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     appendTypedCharToRow,
-    index,
     onGoToRoot,
     onNavigateBack,
     onNavigateForward,
     onOpenPanel,
     panelId,
     requestEditFocus,
-    rootId,
     run,
     setError,
     setUi,
-    ui,
   ]);
 }

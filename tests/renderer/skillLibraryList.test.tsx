@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import type { ManagedSkillView, SkillDefinition } from '../../src/core/types';
+import type {
+  AgentSkillCurationReport,
+  AgentSkillSourceMode,
+  ManagedSkillView,
+  SkillDefinition,
+} from '../../src/core/types';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { SettingsSkillLibrarySection } from '../../src/renderer/ui/agent/SettingsSkillLibrarySection';
 
@@ -113,6 +118,61 @@ describe('skill library list', () => {
     ]);
     // A single list group holds them all.
     expect(rendered.document.querySelectorAll('.inset-group').length).toBeGreaterThan(0);
+  });
+
+  test('runs a read-only curation report and exposes no apply action', async () => {
+    const report: AgentSkillCurationReport = {
+      schemaVersion: 1,
+      generatedAt: 1,
+      registryFingerprint: 'a'.repeat(64),
+      rows: [
+        {
+          name: 'agent-authored',
+          identity: 'agent-authored-id',
+          source: 'user',
+          rootDir: '/fixtures/agent-authored',
+          currentHash: 'b'.repeat(64),
+          included: true,
+          exclusionReason: null,
+          findings: [{
+            kind: 'stale_tool',
+            severity: 'warning',
+            message: 'Use `bash` instead.',
+            evidence: 'run_shell',
+          }],
+        },
+        {
+          name: 'hand-authored',
+          identity: 'hand-authored-id',
+          source: 'project',
+          rootDir: '/fixtures/hand-authored',
+          currentHash: 'c'.repeat(64),
+          included: false,
+          exclusionReason: 'No reliable Agent-write provenance is recorded.',
+          findings: [],
+        },
+      ],
+      includedCount: 1,
+      excludedCount: 1,
+      findingCount: 1,
+    };
+    const rendered = await render({
+      skills: [localSkill('agent-authored', 'user')],
+      managed: [],
+      curationReport: report,
+    });
+    const review = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.getAttribute('aria-label') === 'Review Skills');
+    if (!review) throw new Error('Missing Review Skills control');
+    await act(async () => {
+      review.click();
+      await Promise.resolve();
+    });
+    expect(rendered.calls.map((call) => call.command)).toContain('agent_skill_curation_report');
+    expect(rendered.document.body.textContent).toContain('Skill curation report');
+    expect(rendered.document.body.textContent).toContain('Use `bash` instead.');
+    expect(rendered.document.body.textContent).toContain('No reliable Agent-write provenance is recorded.');
+    expect([...rendered.document.querySelectorAll('button')].some((button) => /apply|fix|write/i.test(button.textContent ?? ''))).toBe(false);
   });
 
   test('shows an installed-but-deactivated managed skill as a row that is off', async () => {
@@ -700,79 +760,50 @@ describe('skill library list', () => {
     expect(rendered.document.body.textContent).toContain('No skills found in this directory.');
   });
 
-  test('asks before binding the parent of a chosen skill folder', async () => {
-    // Binding the parent is the useful thing to do, but it is a WIDER scope
-    // than the user picked — every sibling folder under it becomes a putative
-    // Skill root. Telling them afterwards is notification, not consent.
-    const changes: string[][] = [];
+  test('binds a chosen skill folder as the skill it is', async () => {
+    const changes: Array<{ paths: string[]; mode?: AgentSkillSourceMode }> = [];
     const rendered = await render({
       skills: [],
       managed: [],
       pickedDirectory: '/work/skills/my-pdf-skill',
-      pickedIsSkillFolder: true,
-      onDirectoriesChange: async (next) => { changes.push(next); return next; },
+      pickedMode: 'skill',
+      onDirectoriesChange: async (paths, mode) => { changes.push({ paths, mode }); return paths; },
     });
 
     await openAddMenu(rendered, 'Add Local Directory…');
 
-    expect(changes).toEqual([]);
-    const dialog = rendered.document.querySelector('.confirm-dialog');
-    expect(dialog?.textContent).toContain('/work/skills/my-pdf-skill');
-    expect(dialog?.textContent).toContain('/work/skills');
-
-    const confirm = [...(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
-      .find((button) => button.textContent?.trim() === 'Add Containing Folder');
-    if (!confirm) throw new Error('Missing confirm button');
-    await act(async () => {
-      confirm.click();
-      await settle();
-    });
-
-    expect(changes).toEqual([['/work/skills']]);
+    expect(changes).toEqual([{ paths: ['/work/skills/my-pdf-skill'], mode: 'skill' }]);
   });
 
-  test('cancelling the parent prompt binds nothing', async () => {
-    const changes: string[][] = [];
+  test('does not require a parent confirmation for a chosen skill folder', async () => {
+    const changes: Array<{ paths: string[]; mode?: AgentSkillSourceMode }> = [];
     const rendered = await render({
       skills: [],
       managed: [],
       pickedDirectory: '/work/skills/my-pdf-skill',
-      pickedIsSkillFolder: true,
-      onDirectoriesChange: async (next) => { changes.push(next); return next; },
+      pickedMode: 'skill',
+      onDirectoriesChange: async (paths, mode) => { changes.push({ paths, mode }); return paths; },
     });
 
     await openAddMenu(rendered, 'Add Local Directory…');
 
-    const cancel = [...(rendered.document.querySelectorAll<HTMLButtonElement>('.confirm-dialog button') ?? [])]
-      .find((button) => button.textContent?.trim() === 'Cancel');
-    if (!cancel) throw new Error('Missing cancel button');
-    await act(async () => {
-      cancel.click();
-      await settle();
-    });
-
-    expect(changes).toEqual([]);
+    expect(changes).toEqual([{ paths: ['/work/skills/my-pdf-skill'], mode: 'skill' }]);
     expect(rendered.document.querySelector('.confirm-dialog')).toBeNull();
   });
 
-  test('refuses a skill folder whose name cannot be a skill name, and says why', async () => {
-    // Silently binding it would list nothing and explain nothing — the dead end
-    // one level over.
-    const changes: string[][] = [];
+  test('treats a skill-marked folder with an invalid name as a container', async () => {
+    const changes: Array<{ paths: string[]; mode?: AgentSkillSourceMode }> = [];
     const rendered = await render({
       skills: [],
       managed: [],
       pickedDirectory: '/work/skills/My Skill',
-      pickedIsSkillFolder: true,
-      pickedNameValid: false,
-      onDirectoriesChange: async (next) => { changes.push(next); return next; },
-      onError: (message) => { errors.push(message); },
+      pickedMode: 'container',
+      onDirectoriesChange: async (paths, mode) => { changes.push({ paths, mode }); return paths; },
     });
 
     await openAddMenu(rendered, 'Add Local Directory…');
 
-    expect(changes).toEqual([]);
-    expect(errors.at(-1)).toContain('My Skill');
+    expect(changes).toEqual([{ paths: ['/work/skills/My Skill'], mode: 'container' }]);
   });
 
   test('binds an ordinary folder as the container it is', async () => {
@@ -912,15 +943,15 @@ async function render(input: {
   managed: ManagedSkillView[];
   disabledSkills?: string[];
   directories?: string[];
-  onDirectoriesChange?: (next: string[]) => Promise<readonly string[]>;
+  onDirectoriesChange?: (next: string[], mode?: AgentSkillSourceMode) => Promise<readonly string[]>;
   onPersistSkillDisabled?: (skillName: string, disabled: boolean) => Promise<boolean>;
   onToggleSkill?: (skillName: string) => void;
   onSkillCountChange?: (count: number) => void;
   onUpdateCountChange?: (count: number) => void;
   catalogEntries?: unknown[];
+  curationReport?: AgentSkillCurationReport;
   pickedDirectory?: string;
-  pickedIsSkillFolder?: boolean;
-  pickedNameValid?: boolean;
+  pickedMode?: AgentSkillSourceMode;
   managedSetEnabledFails?: boolean;
   onManagedSetEnabled?: (
     args: Record<string, unknown> | undefined,
@@ -938,6 +969,15 @@ async function render(input: {
       invoke: async (command: string, args?: Record<string, unknown>) => {
         calls.push({ command, ...(args ? { args } : {}) });
         if (command === 'agent_list_all_skills') return input.skills;
+        if (command === 'agent_skill_curation_report') return input.curationReport ?? {
+          schemaVersion: 1,
+          generatedAt: 1,
+          registryFingerprint: '0'.repeat(64),
+          rows: [],
+          includedCount: 0,
+          excludedCount: 0,
+          findingCount: 0,
+        } satisfies AgentSkillCurationReport;
         if (command === 'agent_managed_skill_list') return { ok: true, value: managed };
         if (command === 'agent_managed_skill_check_updates') return { ok: true, value: managed };
         if (command === 'agent_reveal_skill_directory') return { revealed: true };
@@ -959,8 +999,7 @@ async function render(input: {
         if (command === 'agent_pick_skill_directory') {
           return {
             path: input.pickedDirectory ?? null,
-            isSkillFolder: input.pickedIsSkillFolder ?? false,
-            nameValid: input.pickedNameValid ?? true,
+            mode: input.pickedMode,
           };
         }
         if (command === 'agent_managed_skill_catalog') {

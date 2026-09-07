@@ -1,7 +1,7 @@
 import { decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createThreadHistoryRollbackContext,type AgentCoreExtension,type ThreadHistoryRollbackContext } from '../../../core/agent/extensions';
-import { HOST_RESTART_ERROR_CODE,type AgentCoreRecordedNotification,type AgentCoreRequestByMethod,type ContextCursor,type Thread,type ThreadConfigurationResponse,type ThreadConfigurationSetRequest,type ThreadConfigurationSummary,type ThreadDescendantsRequest,type ThreadDescendantsResponse,type ThreadForkRequest,type ThreadId,type ThreadItem,type ThreadItemEntry,type ThreadItemsListRequest,type ThreadItemsListResponse,type ThreadListRequest,type ThreadListResponse,type ThreadReadRequest,type ThreadReadResponse,type ThreadRollbackRequest,type ThreadStartRequest,type ThreadStartResponse,type ThreadTurnsListRequest,type ThreadTurnsListResponse,type Turn,type TurnDiagnosticsPayload } from '../../../core/agent/protocol';
+import { HOST_RESTART_ERROR_CODE,type AgentCoreRecordedNotification,type AgentCoreRequestByMethod,type ContextCursor,type Thread,type ThreadConfigurationResponse,type ThreadConfigurationSetRequest,type ThreadConfigurationSummary,type ThreadForkRequest,type ThreadId,type ThreadItem,type ThreadItemEntry,type ThreadItemsListRequest,type ThreadItemsListResponse,type ThreadListRequest,type ThreadListResponse,type ThreadReadRequest,type ThreadReadResponse,type ThreadRollbackRequest,type ThreadStartRequest,type ThreadStartResponse,type ThreadTurnsListRequest,type ThreadTurnsListResponse,type Turn,type TurnDiagnosticsPayload } from '../../../core/agent/protocol';
 import {
   assertContextPayloadDependencies,
   contextPayloadReferenceKey,
@@ -29,32 +29,6 @@ interface PendingThreadNameGeneration {
   readonly completion: Promise<void>;
 }
 
-interface PendingDelegatedThreadStart {
-  readonly thread: Thread;
-  attempted: boolean;
-  error: Error | null;
-}
-
-export interface DelegatedThreadStartPublication {
-  readonly published: boolean;
-  readonly error: Error | null;
-}
-
-export interface ThreadCatalogCollaboration {
-  recordEphemeralSpawnEdge(threadId: ThreadId, edge: {
-    readonly sessionId: string;
-    readonly parentThreadId: ThreadId;
-    readonly taskPath: string;
-    readonly createdAt: number;
-  }): void;
-  deleteEphemeralSpawnEdge(threadId: ThreadId): void;
-  ephemeralChildThreadIds(parentThreadId: ThreadId): readonly ThreadId[];
-  clearThreadCoordinationState(threadIds: readonly ThreadId[]): void;
-  beginThreadDeletion(threadIds: readonly ThreadId[]): void;
-  drainTerminalSettlements(threadIds: readonly ThreadId[]): Promise<void>;
-  finishThreadDeletion(threadIds: readonly ThreadId[]): void;
-}
-
 /** What the catalog's descendant cascade owes the account layer. */
 export interface ThreadCatalogTranscripts {
   delete(threadId: ThreadId): Promise<void>;
@@ -64,7 +38,6 @@ export interface ThreadCatalogTranscripts {
 
 export class ThreadCatalogOps {
   private readonly pendingThreadNames = new Map<ThreadId, PendingThreadNameGeneration>();
-  private readonly pendingDelegatedThreadStarts = new Map<ThreadId, PendingDelegatedThreadStart>();
   constructor(
     private readonly core: ThreadCore,
     private readonly resourceOps: ThreadResourceOps,
@@ -83,12 +56,9 @@ export class ThreadCatalogOps {
     private readonly now: () => number,
     private readonly isClosing: () => boolean,
     private readonly turnLifecycle: TurnLifecycle,
-    private readonly collaboration: ThreadCatalogCollaboration,
     private readonly hasUndeliveredWork: (threadId: ThreadId) => boolean,
     private readonly transcripts: ThreadCatalogTranscripts,
     private readonly clearGoal: (threadId: ThreadId) => Promise<void>,
-    private readonly clearSubagentBudget: (threadId: ThreadId) => void,
-    private readonly clearSubagentExecutions: (threadIds: readonly ThreadId[]) => void,
     private readonly clearAgentStartupContexts: (sessionIds: readonly string[]) => void,
     private readonly freezeAgentStartupContext: (
       thread: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
@@ -150,8 +120,6 @@ export class ThreadCatalogOps {
           sessionId: input.id,
           parentThreadId: null,
           forkedFromId: null,
-          agentRole: null,
-          agentNickname: null,
           configuration: input.configuration,
           nameOrigin: 'derived',
         });
@@ -187,7 +155,7 @@ export class ThreadCatalogOps {
       return pageEphemeralItems(entries, request);
     }
   /**
-   * Root conversations only. A child Thread is an execution artifact of a Turn,
+   * Root conversations only. A non-root Thread is a feature-owned execution record,
    * not a conversation the user had; it is reachable from the parent transcript
    * and from parent Thread Details. Filtering in SQL rather than after the page
    * is load-bearing — a post-filter would shrink pages and let children keep
@@ -217,24 +185,6 @@ export class ThreadCatalogOps {
         nextCursor: hasNext && last
           ? encodeThreadListCursor({ updatedAt: last.updatedAt, id: last.id }, direction)
           : null,
-      };
-    }
-  /**
-   * The parent-side browse surface for children, now that they are not list
-   * rows. Ordered newest activity first, the whole subtree rather than direct
-   * children only, so a grandchild is reachable in one place.
-   */
-  listThreadDescendants(request: ThreadDescendantsRequest): ThreadDescendantsResponse {
-      const data = this.threadSubtreeIds(request.threadId)
-        .filter((threadId) => threadId !== request.threadId)
-        .filter((threadId) => !this.core.hiddenEphemeralThreads.has(threadId))
-        .map((threadId) => this.core.requireThread(threadId).thread)
-        .sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id));
-      return {
-        data,
-        queuedWorkThreadIds: data
-          .filter((thread) => this.hasUndeliveredWork(thread.id))
-          .map((thread) => thread.id),
       };
     }
   readThread(request: ThreadReadRequest): ThreadReadResponse {
@@ -326,8 +276,6 @@ export class ThreadCatalogOps {
           sessionId: uuidV7(this.now()),
           parentThreadId: null,
           forkedFromId: null,
-          agentRole: null,
-          agentNickname: null,
           ...(configuration ? { configuration } : {}),
         });
         return { thread };
@@ -365,8 +313,6 @@ export class ThreadCatalogOps {
           sessionId: uuidV7(now),
           parentThreadId: null,
           forkedFromId: source.id,
-          agentRole: null,
-          agentNickname: null,
           configuration: sourceRecord.configuration,
           nameOrigin: request.name === undefined ? 'derived' : 'manual',
         });
@@ -680,7 +626,6 @@ export class ThreadCatalogOps {
         });
         for (const record of [...subtree.records].reverse()) {
           if (this.core.hiddenEphemeralThreads.has(record.thread.id)) continue;
-          if (this.pendingDelegatedThreadStarts.has(record.thread.id)) continue;
           await this.extensions.threadStopped(record.thread);
         }
       } finally {
@@ -691,11 +636,9 @@ export class ThreadCatalogOps {
       const subtree = await this.beginThreadSubtreeStop(threadId, true);
       try {
         await this.stopThreadSubtree(subtree.threadIds);
-        await this.collaboration.drainTerminalSettlements(subtree.threadIds);
         for (const descendantId of [...subtree.threadIds].reverse()) {
           await this.flushThreadNotificationsBestEffort(descendantId);
           await this.clearGoal(descendantId);
-          this.clearSubagentBudget(descendantId);
           this.core.history.deleteThread(descendantId);
           await this.core.rollout.delete(descendantId);
           await this.core.payloads.deleteThread(descendantId);
@@ -703,32 +646,21 @@ export class ThreadCatalogOps {
         }
         for (const record of [...subtree.records].reverse()) {
           if (this.core.hiddenEphemeralThreads.has(record.thread.id)) continue;
-          if (this.pendingDelegatedThreadStarts.has(record.thread.id)) continue;
           await this.extensions.threadStopped(record.thread);
         }
         await this.core.threadTreeMutex.run(async () => {
           if (subtree.records[0]?.thread.ephemeral) {
             for (const descendantId of [...subtree.threadIds].reverse()) {
-              this.collaboration.deleteEphemeralSpawnEdge(descendantId);
               this.core.ephemeral.delete(descendantId);
               this.core.hiddenEphemeralThreads.delete(descendantId);
             }
           } else {
             this.core.metadata.delete(threadId);
           }
-          // Metadata is the deletion commit point. Retire Agent identities only
-          // after it succeeds; durable ledger cleanup may retry at startup and
-          // must not turn an already-committed Thread deletion into an error.
-          try {
-            this.clearSubagentExecutions(subtree.threadIds);
-          } catch (error) {
-            console.warn('[agent] Agent ledger cleanup deferred after Thread deletion', error);
-          }
           this.clearThreadCoordinationState(subtree.threadIds);
-          for (const descendantId of subtree.threadIds) this.pendingDelegatedThreadStarts.delete(descendantId);
-          // A session snapshot belongs to its root. Deleting one child must not
+          // A session snapshot belongs to its root. Deleting one descendant must not
           // invalidate startup inputs still used by the surviving parent and
-          // sibling Agents in the same session.
+          // sibling Threads in the same session.
           this.clearAgentStartupContexts(subtree.records
             .filter((record) => record.thread.parentThreadId === null)
             .map((record) => record.thread.sessionId));
@@ -755,7 +687,6 @@ export class ThreadCatalogOps {
         }
         await this.transcripts.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));
       } finally {
-        this.collaboration.finishThreadDeletion(subtree.threadIds);
         this.finishThreadSubtreeStop(subtree.threadIds);
       }
     }
@@ -771,7 +702,6 @@ export class ThreadCatalogOps {
         }
         const records = threadIds.map((id) => this.core.requireThread(id));
         for (const id of threadIds) this.core.stoppingThreads.add(id);
-        if (deleting) this.collaboration.beginThreadDeletion(threadIds);
         return { threadIds, records };
       });
     }
@@ -794,7 +724,7 @@ export class ThreadCatalogOps {
     }
   /**
    * The Threads a records decision applies to: the addressed Thread and every
-   * delegated descendant. Persistent members only — an ephemeral child never had
+   * owned descendant. Persistent members only — an ephemeral Thread never had
    * an artifact to remove or restore.
    */
   recordedSessionThreads(threadId: ThreadId): readonly Thread[] {
@@ -802,7 +732,7 @@ export class ThreadCatalogOps {
         .map((id) => this.core.metadata.read(id)?.thread ?? null)
         .filter((thread): thread is Thread => thread !== null && !thread.ephemeral);
     }
-  /** The addressed Thread and every delegated descendant, as one conversation. */
+  /** The addressed Thread and every owned descendant, as one conversation. */
   subtreeThreadIds(threadId: ThreadId): readonly ThreadId[] {
       return this.threadSubtreeIds(threadId);
     }
@@ -811,12 +741,7 @@ export class ThreadCatalogOps {
       if (!root.ephemeral) {
         return [threadId, ...this.core.metadata.childEdges(threadId, true).map((edge) => edge.childThreadId)];
       }
-      const ids = [threadId];
-      for (let index = 0; index < ids.length; index += 1) {
-        const parentId = ids[index]!;
-        ids.push(...this.collaboration.ephemeralChildThreadIds(parentId));
-      }
-      return ids;
+      return [threadId];
     }
   private updateThreadArchived(threadId: ThreadId, archived: boolean): void {
       const state = this.core.ephemeral.get(threadId);
@@ -832,7 +757,6 @@ export class ThreadCatalogOps {
       }
     }
   private clearThreadCoordinationState(threadIds: readonly ThreadId[]): void {
-      this.collaboration.clearThreadCoordinationState(threadIds);
       this.core.clearThreadAdmissionBarriers(threadIds);
     }
   async createThread(
@@ -841,8 +765,6 @@ export class ThreadCatalogOps {
         sessionId: string;
         parentThreadId: ThreadId | null;
         forkedFromId: ThreadId | null;
-        agentRole: string | null;
-        agentNickname: string | null;
         configuration?: EffectiveThreadConfiguration;
         toolCeiling?: readonly string[] | null;
         taskPath?: string;
@@ -857,8 +779,6 @@ export class ThreadCatalogOps {
         sessionId: lineage.sessionId,
         parentThreadId: lineage.parentThreadId,
         forkedFromId: lineage.forkedFromId,
-        agentNickname: lineage.agentNickname,
-        agentRole: lineage.agentRole,
         name: request.name ?? null,
         preview: '',
         ephemeral: request.ephemeral ?? false,
@@ -882,14 +802,6 @@ export class ThreadCatalogOps {
       if (thread.ephemeral) {
         this.core.ephemeral.set(thread.id, { record, turns: [], completedItemIds: new Set() });
         if (lineage.hidden) this.core.hiddenEphemeralThreads.add(thread.id);
-        if (thread.parentThreadId) {
-          this.collaboration.recordEphemeralSpawnEdge(thread.id, {
-            sessionId: thread.sessionId,
-            parentThreadId: thread.parentThreadId,
-            taskPath: lineage.taskPath ?? `/root/${thread.id}`,
-            createdAt: now,
-          });
-        }
       } else if (thread.parentThreadId) {
         this.core.metadata.createChild(record, {
           sessionId: thread.sessionId,
@@ -904,50 +816,11 @@ export class ThreadCatalogOps {
       if (thread.parentThreadId === null && !lineage.hidden) {
         await this.freezeAgentStartupContext(thread);
       }
-      const delegatedAdmission = thread.threadSource === 'subagent';
-      if (delegatedAdmission) {
-        this.pendingDelegatedThreadStarts.set(thread.id, { thread, attempted: false, error: null });
-      }
-      await this.core.recordNotification(
-        { type: 'thread/started', threadId: thread.id, thread },
-        { deferObservers: delegatedAdmission },
-      );
-      if (!delegatedAdmission && !this.core.hiddenEphemeralThreads.has(thread.id)) {
+      await this.core.recordNotification({ type: 'thread/started', threadId: thread.id, thread });
+      if (!this.core.hiddenEphemeralThreads.has(thread.id)) {
         await this.extensions.threadStarted(thread);
       }
       return thread;
-    }
-  hasPendingDelegatedThreadStart(threadId: ThreadId): boolean {
-      return this.pendingDelegatedThreadStarts.has(threadId);
-    }
-  async publishDelegatedThreadStart(threadId: ThreadId): Promise<DelegatedThreadStartPublication> {
-      const pending = this.pendingDelegatedThreadStarts.get(threadId);
-      if (!pending) return { published: true, error: null };
-      if (pending.attempted) {
-        return {
-          published: false,
-          error: pending.error ?? new Error(`Delegated Thread start publication is unavailable: ${threadId}`),
-        };
-      }
-      pending.attempted = true;
-      try {
-        await this.core.publishRecordedNotification({ type: 'thread/started', threadId, thread: pending.thread });
-      } catch (error) {
-        pending.error = error instanceof Error ? error : new Error(String(error));
-        return { published: false, error: pending.error };
-      }
-      let lifecycleError: Error | null = null;
-      try {
-        if (!this.core.hiddenEphemeralThreads.has(threadId)) await this.extensions.threadStarted(pending.thread);
-      } catch (error) {
-        lifecycleError = error instanceof Error ? error : new Error(String(error));
-      } finally {
-        // Start hooks are attempted once. A post-commit hook failure belongs to
-        // the admitted Turn; it must not turn later deletion into a staged
-        // rollback or replay an already-published notification.
-        this.pendingDelegatedThreadStarts.delete(threadId);
-      }
-      return { published: true, error: lifecycleError };
     }
   private requireRendererConfigurableThread(threadId: ThreadId): ThreadCatalogRecord {
       const record = this.core.requireThread(threadId);
@@ -1105,22 +978,11 @@ export class ThreadCatalogOps {
         cursor = page.nextCursor;
       } while (cursor);
       const latest = this.core.history.listTurns({ threadId, limit: 1, sortDirection: 'desc', itemsView: 'full' }).data[0];
-      let resumedCommittedSettlement = false;
       if (latest?.status === 'inProgress') {
         this.core.history.restoreOpenItemsFromRollout(threadId, latest.id, entries);
         const recovered = this.core.history.readTurn(threadId, latest.id, 'full');
         if (!recovered) throw new Error(`Recovered Turn is missing from history: ${latest.id}`);
-        resumedCommittedSettlement = this.turnLifecycle.recoverCommittedExhaustedSettlementTurn(
-          threadId,
-          recovered,
-        );
-        if (!resumedCommittedSettlement) {
-          await this.finishCrashedTurn(
-            threadId,
-            recovered,
-            this.turnLifecycle.crashedTurnRecoveryError(threadId, recovered.id),
-          );
-        }
+        await this.finishCrashedTurn(threadId, recovered);
       }
       const record = this.core.metadata.require(threadId);
       if (record.nameOrigin === 'automatic' && this.core.allTurns(threadId).length === 0) {
@@ -1132,8 +994,7 @@ export class ThreadCatalogOps {
       // `idle`, so the conversation stayed dead across restarts. Healing it here
       // is what gives those Threads back — nothing writes the status any more.
       if (
-        !resumedCommittedSettlement
-        && (record.thread.status.type === 'active' || record.thread.status.type === 'systemError')
+        record.thread.status.type === 'active' || record.thread.status.type === 'systemError'
       ) {
         await this.turnLifecycle.setStatus(threadId, { type: 'idle' });
       }
