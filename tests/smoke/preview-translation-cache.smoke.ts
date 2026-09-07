@@ -11,7 +11,13 @@ interface TranslationBatch {
 
 const ARTICLE_HTML = `<!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><title>Persistent translation article</title></head>
+  <head><meta charset="utf-8"><title>Persistent translation article</title>
+    <style>
+      html { color-scheme: light dark; }
+      body { margin: 24px; color: CanvasText; background: Canvas; font: 16px/1.5 system-ui; overflow-wrap: anywhere; }
+      h1 { font-size: 24px; }
+    </style>
+  </head>
   <body><main><h1>Persistent article heading</h1><p>Persistent source paragraph.</p></main></body>
 </html>`;
 
@@ -345,11 +351,10 @@ test.describe('persistent preview translation cache', () => {
     const agent = async (name: string, input: unknown) => {
       nextAgentTool = { name, input };
       const previous = agentToolOutputs.length;
-      const threadId = await main.evaluate(async (cwd) => {
+      const threadId = await main.evaluate(async () => {
         const { thread } = await window.lin!.agentCoreRequest('thread/start', {
           name: 'Preview operation fixture',
           modelProvider: 'groq',
-          cwd,
         });
         await window.lin!.agentCoreRequest('turn/submit', {
           threadId: thread.id,
@@ -357,7 +362,7 @@ test.describe('persistent preview translation cache', () => {
           clientUserMessageId: crypto.randomUUID(),
         });
         return thread.id;
-      }, smoke.userDataDir);
+      });
       await expect
         .poll(
           async () => {
@@ -469,12 +474,21 @@ test.describe('persistent preview translation cache', () => {
     expect(await guestOrNull<string>(first, visibleTranslation)).toContain('Cached:');
 
     for (const theme of ['light', 'dark'] as const) {
+      await main.emulateMedia({ colorScheme: theme });
       await main.evaluate((theme) => window.lin!.setTheme(theme), theme);
-      await expect.poll(() => main.evaluate(() => window.matchMedia('(prefers-color-scheme: dark)').matches)).toBe(theme === 'dark');
+      expect(await smoke.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe(theme);
+      await expect
+        .poll(() => main.evaluate(() => window.matchMedia('(prefers-color-scheme: dark)').matches))
+        .toBe(theme === 'dark');
       await main.locator('.file-preview-translation-toggle').last().click();
       const popover = main.locator('.file-preview-translation-popover');
       await expect(popover).toBeVisible();
-      await main.screenshot({ path: testInfo.outputPath(`preview-local-${theme}.png`) });
+      const visualDir = process.env.LIN_TRANSLATION_CACHE_VISUAL_DIR;
+      await main.screenshot({
+        path: visualDir
+          ? `${visualDir}/preview-local-${theme}.png`
+          : testInfo.outputPath(`preview-local-${theme}.png`),
+      });
       const overflowing = await popover.evaluate((element) =>
         [element, ...element.querySelectorAll('*')]
           .filter((node) => node.clientWidth && node.scrollWidth > node.clientWidth + 1)

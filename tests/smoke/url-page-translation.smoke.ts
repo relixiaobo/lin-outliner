@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { VISIBLE_TRANSLATION_BATCH_LIMITS } from '../../src/renderer/ui/preview/previewTranslationScheduling';
 import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
 
 interface TranslationBatch {
@@ -229,7 +230,7 @@ test.describe('URL page translation', () => {
     await expect.poll(() => batches.length).toBeGreaterThanOrEqual(initialTranslationStart + 3);
     expect(batches.slice(initialTranslationStart, initialTranslationStart + 3)
       .map((batch) => batch.blocks.length)
-      .sort((left, right) => left - right)).toEqual([2, 4, 4]);
+      .sort((left, right) => left - right)).toEqual([1, 2, 8]);
     const loaderMetrics = await guest<Array<{
       controlHeight: number;
       controlWidth: number;
@@ -391,21 +392,21 @@ test.describe('URL page translation', () => {
     expect(Date.now() - upwardScrollStartedAt).toBeLessThan(700);
     await expect.poll(() => batches.slice(preemptionStart + 1).filter((batch) => (
       batch.blocks.some((block) => block.text.startsWith('Visible source paragraph'))
-    )).length).toBeGreaterThanOrEqual(2);
-    expect(batches.slice(preemptionStart + 1).every((batch) => batch.blocks.length <= 4)).toBe(true);
+    )).length).toBeGreaterThanOrEqual(1);
+    expect(batches.slice(preemptionStart + 1).every((batch) => batch.blocks.length <= VISIBLE_TRANSLATION_BATCH_LIMITS.maxBlocks)).toBe(true);
     expect(await guest(webview, `
-      document.querySelector('#far [data-tenon-bilingual-status]') === null
-    `)).toBe(true);
+      document.querySelector('#far [data-tenon-bilingual-status]')?.getAttribute('data-tenon-bilingual-status')
+    `)).toBe('loading');
     await expect.poll(() => guest<string | null>(webview, `
       document.querySelector('#heading [data-tenon-bilingual-translation="true"]')?.textContent ?? null
     `)).toBe('ZH: Article heading');
     expect(await guest(webview, `
       document.querySelector('#far [data-tenon-bilingual-translation="true"]')?.textContent ?? null
     `)).toBeNull();
-    await smoke.window.waitForTimeout(1_100);
-    expect(await guest(webview, `
+    // Spare slots in the shared pool retain offscreen work without blocking visible work.
+    await expect.poll(() => guest(webview, `
       document.querySelector('#far [data-tenon-bilingual-translation="true"]')?.textContent ?? null
-    `)).toBeNull();
+    `)).toBe('ZH: Far source paragraph.');
     responseDelayForBatch = null;
 
     await toggle.click();
