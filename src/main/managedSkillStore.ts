@@ -21,7 +21,7 @@ import {
   type ValidatedManagedSkill,
 } from './managedSkillValidation';
 
-const INDEX_SCHEMA_VERSION = 2;
+const INDEX_SCHEMA_VERSION = 3;
 const DEFAULT_POLICY_SCHEMA_VERSION = 1;
 const PRIVATE_DIRECTORY_MODE = process.platform === 'win32' ? undefined : 0o700;
 const PRIVATE_FILE_MODE = process.platform === 'win32' ? undefined : 0o600;
@@ -46,6 +46,7 @@ export interface ManagedSkillStoredVersion {
 
 export interface ManagedSkillRecord {
   id: string;
+  revision: string;
   name: string;
   origin: {
     owner: string;
@@ -57,7 +58,6 @@ export interface ManagedSkillRecord {
   recommended: boolean;
   catalogId?: string;
   catalogCompatibilityRange?: string;
-  enabled: boolean;
   active: ManagedSkillStoredVersion;
   previous?: ManagedSkillStoredVersion;
   updateCommit?: string;
@@ -72,7 +72,7 @@ export interface ManagedSkillRecord {
 }
 
 export interface ManagedSkillIndex {
-  schemaVersion: 2;
+  schemaVersion: 3;
   skills: ManagedSkillRecord[];
 }
 
@@ -108,6 +108,7 @@ export class ManagedSkillStore {
     await ensureNormalDirectory(this.contentRoot, PRIVATE_DIRECTORY_MODE);
     await ensureNormalDirectory(this.stagingRoot, PRIVATE_DIRECTORY_MODE);
     await this.healUnreadableIndex();
+    await this.readIndex();
     await this.healUnreadableDefaultPolicy();
     await this.pruneStaging();
     await this.pruneOrphanVersions();
@@ -120,10 +121,9 @@ export class ManagedSkillStore {
    * half-read one must not enter it — but that verdict used to be permanent: every
    * later read threw the same error, so the runtime roots, the Skill library, and
    * every install stayed broken with no way back short of deleting the file by
-   * hand. Pre-release we do not migrate formats (AGENTS.md), so the heal is to
-   * quarantine and start empty: `pruneOrphanVersions` then reaps the content, and
-   * the skills are reinstallable. Renamed rather than deleted, so a schema break
-   * never destroys the record of what was installed.
+   * hand. Quarantine malformed current-format data; unsupported formats remain
+   * untouched and fail admission before pruning. A format change requires the
+   * explicit pre-release reset, never an automatic migration or wipe.
    */
   private async healUnreadableIndex(): Promise<void> {
     let raw: string;
@@ -135,7 +135,11 @@ export class ManagedSkillStore {
       return;
     }
     try {
-      parseManagedSkillIndex(JSON.parse(raw));
+      const decoded: unknown = JSON.parse(raw);
+      if (isRecord(decoded) && typeof decoded.schemaVersion === 'number' && decoded.schemaVersion !== INDEX_SCHEMA_VERSION) {
+        return;
+      }
+      parseManagedSkillIndex(decoded);
     } catch (error) {
       const quarantinePath = `${this.indexPath}.unreadable-${Date.now()}`;
       await rename(this.indexPath, quarantinePath);
@@ -478,6 +482,7 @@ function parseManagedSkillRecord(value: unknown): ManagedSkillRecord {
     : undefined;
   return {
     id,
+    revision: requiredString(value.revision, 'revision'),
     name,
     origin,
     recommended: value.recommended === true,
@@ -485,7 +490,6 @@ function parseManagedSkillRecord(value: unknown): ManagedSkillRecord {
     ...(typeof value.catalogCompatibilityRange === 'string' && value.catalogCompatibilityRange
       ? { catalogCompatibilityRange: value.catalogCompatibilityRange }
       : {}),
-    enabled: value.enabled === true,
     active: parseStoredVersion(value.active),
     ...(value.previous === undefined ? {} : { previous: parseStoredVersion(value.previous) }),
     ...(typeof value.updateCommit === 'string' && SAFE_COMMIT.test(value.updateCommit) ? { updateCommit: value.updateCommit } : {}),

@@ -67,8 +67,8 @@ function managedSkill(overrides: Partial<ManagedSkillView> = {}): ManagedSkillVi
     subdirectory: 'pdf',
     trackingRef: 'main',
     recommended: true,
-    enabled: true,
-    status: 'enabled',
+    revision: 'managed-revision',
+    status: 'installed',
     compatibility: { status: 'compatible', appVersion: '0.1.0' },
     active: {
       commit: '0'.repeat(40),
@@ -175,13 +175,11 @@ describe('skill library list', () => {
     expect([...rendered.document.querySelectorAll('button')].some((button) => /apply|fix|write/i.test(button.textContent ?? ''))).toBe(false);
   });
 
-  test('shows an installed-but-deactivated managed skill as a row that is off', async () => {
-    // It is absent from the loaded catalog by design, so only the managed index
-    // can report it. If the library read the catalog alone, the user would have
-    // no way to see or reverse an install they turned off.
+  test('keeps a configured-disabled managed Skill visible and off', async () => {
     const rendered = await render({
       skills: [],
-      managed: [managedSkill({ enabled: false, status: 'installed-disabled' })],
+      managed: [managedSkill()],
+      disabledSkills: ['pdf'],
     });
 
     expect(rendered.document.body.textContent).toContain('/pdf');
@@ -199,9 +197,7 @@ describe('skill library list', () => {
     expect(label).toContain('pdf');
   });
 
-  test('an activated managed skill named in disabledSkills reads as off', async () => {
-    // The row applies the same predicate main does. Reporting the activation
-    // flag alone would show "on" for a skill the model cannot see.
+  test('a managed skill named in disabledSkills reads as off', async () => {
     const rendered = await render({
       skills: [],
       managed: [managedSkill()],
@@ -231,18 +227,12 @@ describe('skill library list', () => {
     expect(rendered.document.querySelector('.inset-group-header-action button[aria-haspopup="menu"]')).not.toBeNull();
   });
 
-  test('enabling a suppressed managed skill persists both halves, not one', async () => {
-    // Activation goes to the managed index immediately. If clearing the
-    // disabledSkills entry were only a draft, Cancel would leave the Skill
-    // activated on disk but still suppressed by the predicate — invisible to
-    // the model, and back to off with no explanation on reopen.
-    const persisted: Array<[string, boolean]> = [];
+  test('a managed toggle uses the same file-backed callback as local Skills', async () => {
     const drafted: string[] = [];
     const rendered = await render({
       skills: [],
       managed: [managedSkill()],
       disabledSkills: ['pdf'],
-      onPersistSkillDisabled: async (name, disabled) => { persisted.push([name, disabled]); return true; },
       onToggleSkill: (name) => { drafted.push(name); },
     });
 
@@ -253,22 +243,15 @@ describe('skill library list', () => {
       await Promise.resolve();
     });
 
-    expect(persisted).toEqual([['pdf', false]]);
-    expect(drafted).toEqual([]);
+    expect(drafted).toEqual(['pdf']);
+    expect(rendered.calls.every((call) => !/set_enabled|skill_manage/.test(call.command))).toBe(true);
   });
 
-  // The premise of this case changed rather than its selectors: a non-managed
-  // toggle used to stage into a draft that a footer Save committed, while the
-  // managed toggle beside it wrote immediately — two identical switches, two
-  // meanings. Both now commit on the row; the library still routes them through
-  // different callbacks, and this asserts that routing.
   test('a non-managed toggle reports through onToggleSkill, which commits it', async () => {
-    const persisted: Array<[string, boolean]> = [];
     const drafted: string[] = [];
     const rendered = await render({
       skills: [localSkill('user-notes', 'user')],
       managed: [],
-      onPersistSkillDisabled: async (name, disabled) => { persisted.push([name, disabled]); return true; },
       onToggleSkill: (name) => { drafted.push(name); },
     });
 
@@ -278,7 +261,6 @@ describe('skill library list', () => {
     });
 
     expect(drafted).toEqual(['user-notes']);
-    expect(persisted).toEqual([]);
   });
 
   test('a failed update check keeps the description and still says why', async () => {
@@ -362,7 +344,6 @@ describe('skill library list', () => {
     const incompatible = managedSkill({
       id: 'managed-incompatible',
       name: 'incompatible',
-      enabled: false,
       status: 'failed',
       compatibility: { status: 'incompatible', appVersion: '0.1.0' },
     });
@@ -388,16 +369,11 @@ describe('skill library list', () => {
   });
 
   test('enabling a managed skill keeps other pending toggles', async () => {
-    // The immediate-persist path must adjust the draft by its own single
-    // change. Overwriting it with the persisted list threw away the user's
-    // unsaved work: an unrelated row that had been switched off snapped back
-    // on and the footer Save vanished, with no error and no notice.
     const drafted: string[] = [];
     const rendered = await render({
       skills: [localSkill('notes', 'user')],
       managed: [managedSkill()],
       disabledSkills: ['pdf', 'notes'],
-      onPersistSkillDisabled: async () => true,
       onToggleSkill: (name) => { drafted.push(name); },
     });
 
@@ -410,109 +386,6 @@ describe('skill library list', () => {
     });
 
     expect(switchFor(rendered.document, 'Toggle notes').getAttribute('aria-checked')).toBe('false');
-  });
-
-  test('a successful enable keeps its notice', async () => {
-    // The control case the failure test needs in order to mean anything: if
-    // setEnabled's notice never appeared, asserting its absence proves nothing.
-    const rendered = await render({
-      skills: [],
-      managed: [managedSkill()],
-      disabledSkills: ['pdf'],
-      onPersistSkillDisabled: async () => true,
-    });
-
-    await act(async () => {
-      switchFor(rendered.document, 'Enable pdf').click();
-      await settle();
-    });
-
-    expect(rendered.document.querySelector('.agent-settings-notice')?.textContent)
-      .toContain('pdf');
-  });
-
-  test('a failed disabledSkills write clears the notice the toggle just set', async () => {
-    const rendered = await render({
-      skills: [],
-      managed: [managedSkill()],
-      disabledSkills: ['pdf'],
-      onPersistSkillDisabled: async () => false,
-    });
-
-    await act(async () => {
-      switchFor(rendered.document, 'Enable pdf').click();
-      await settle();
-    });
-
-    // setEnabled's own "pdf enabled" notice must not survive the other half
-    // failing — a green success above a switch that snapped back off.
-    expect(rendered.document.querySelector('.agent-settings-notice')).toBeNull();
-  });
-
-  test('does not change disabledSkills when managed activation fails', async () => {
-    const persisted: Array<[string, boolean]> = [];
-    const rendered = await render({
-      skills: [],
-      managed: [managedSkill()],
-      disabledSkills: ['pdf'],
-      managedSetEnabledFails: true,
-      onPersistSkillDisabled: async (name, disabled) => {
-        persisted.push([name, disabled]);
-        return true;
-      },
-    });
-
-    await act(async () => {
-      switchFor(rendered.document, 'Enable pdf').click();
-      await settle();
-    });
-
-    expect(persisted).toEqual([]);
-    expect(rendered.document.querySelector('.inset-row-feedback [role="alert"]')?.textContent)
-      .toContain('could not complete');
-  });
-
-  test('keeps a managed switch live and optimistic while its write is pending', async () => {
-    const pending = deferred<{ ok: true; value: ManagedSkillView }>();
-    const rendered = await render({
-      skills: [],
-      managed: [managedSkill()],
-      onManagedSetEnabled: async () => pending.promise,
-    });
-    const control = switchFor(rendered.document, 'Enable pdf');
-
-    await act(async () => {
-      control.click();
-      await Promise.resolve();
-    });
-
-    expect(control.disabled).toBe(false);
-    expect(control.getAttribute('aria-checked')).toBe('false');
-
-    await act(async () => {
-      pending.resolve({
-        ok: true,
-        value: managedSkill({ enabled: false, status: 'installed-disabled' }),
-      });
-      await settle();
-    });
-  });
-
-  test('serializes two fast managed toggles as off then on', async () => {
-    const rendered = await render({ skills: [], managed: [managedSkill()] });
-    const control = switchFor(rendered.document, 'Enable pdf');
-
-    await act(async () => {
-      control.click();
-      control.click();
-      await settle();
-    });
-
-    const writes = rendered.calls
-      .filter((entry) => entry.command === 'agent_managed_skill_set_enabled')
-      .map((entry) => entry.args?.enabled);
-    expect(writes).toEqual([false, true]);
-    expect(control.getAttribute('aria-checked')).toBe('true');
   });
 
   test('a healthy skill carries no diagnostic line', async () => {
@@ -944,7 +817,6 @@ async function render(input: {
   disabledSkills?: string[];
   directories?: string[];
   onDirectoriesChange?: (next: string[], mode?: AgentSkillSourceMode) => Promise<readonly string[]>;
-  onPersistSkillDisabled?: (skillName: string, disabled: boolean) => Promise<boolean>;
   onToggleSkill?: (skillName: string) => void;
   onSkillCountChange?: (count: number) => void;
   onUpdateCountChange?: (count: number) => void;
@@ -952,10 +824,6 @@ async function render(input: {
   curationReport?: AgentSkillCurationReport;
   pickedDirectory?: string;
   pickedMode?: AgentSkillSourceMode;
-  managedSetEnabledFails?: boolean;
-  onManagedSetEnabled?: (
-    args: Record<string, unknown> | undefined,
-  ) => Promise<{ ok: true; value: ManagedSkillView } | { ok: false; error: { code: string } }>;
   onNotice?: (message: string | null) => void;
   onError?: (message: string | null) => void;
 }): Promise<Rendered> {
@@ -981,21 +849,6 @@ async function render(input: {
         if (command === 'agent_managed_skill_list') return { ok: true, value: managed };
         if (command === 'agent_managed_skill_check_updates') return { ok: true, value: managed };
         if (command === 'agent_reveal_skill_directory') return { revealed: true };
-        if (command === 'agent_managed_skill_set_enabled') {
-          if (input.onManagedSetEnabled) return input.onManagedSetEnabled(args);
-          if (input.managedSetEnabledFails) {
-            return { ok: false, error: { code: 'unexpected_error' } };
-          }
-          const enabled = args?.enabled === true;
-          const current = managed.find((skill) => skill.id === args?.skillId) ?? input.managed[0];
-          const next = {
-            ...(current ?? {}),
-            enabled,
-            status: enabled ? 'enabled' : 'installed-disabled',
-          } as ManagedSkillView;
-          managed = managed.map((skill) => skill.id === next.id ? next : skill);
-          return { ok: true, value: next };
-        }
         if (command === 'agent_pick_skill_directory') {
           return {
             path: input.pickedDirectory ?? null,
@@ -1023,7 +876,6 @@ async function render(input: {
           onApplied={async () => undefined}
           onError={input.onError ?? (() => undefined)}
           onNotice={input.onNotice ?? (() => undefined)}
-          onPersistSkillDisabled={input.onPersistSkillDisabled ?? (async () => true)}
           onSkillCountChange={input.onSkillCountChange ?? (() => undefined)}
           onToggleSkill={input.onToggleSkill ?? (() => undefined)}
           onUpdateCountChange={input.onUpdateCountChange ?? (() => undefined)}

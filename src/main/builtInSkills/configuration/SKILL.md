@@ -11,6 +11,21 @@ provider login, credential reveal, model connection tests, Skill installation,
 memory reset, data deletion, diagnostics export, or other domain operations;
 route those requests to the owning operation.
 
+For Skills, `skill_inspect` provides live library identities, provenance, source
+discovery, update previews, and supported next actions. Use `skill_manage` for
+install, update, rollback, uninstall, or undoing a recorded Agent edit. Follow
+the available tool schema and exact targets from inspection; do not reconstruct
+private paths or copy a remembered schema. If the required tool is absent,
+report that limitation instead of editing an installation index or provenance
+store. Human review is owned by the operation, not an `approved` argument or
+a `request_user_input` prompt.
+
+Enable/disable and source bind/unbind remain configuration file edits, never
+lifecycle commands. Installation does not change `agent.skills.disabled`: an
+explicitly disabled identity stays disabled across uninstall/reinstall. A
+committed installation is not proof that its instructions are invocable; report
+the operation's observed availability and runtime refresh separately.
+
 1. Read `TENON_CONFIG_DIR` (the directory containing `settings.jsonc`,
    `settings.schema.json`, and `status.json`) for application/delegation policy.
    For root Profiles, read the user `agent/config.json` or project

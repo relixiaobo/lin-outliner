@@ -27,8 +27,6 @@ import {
 } from './ManagedSkillsSettings';
 import { useManagedSkills } from './useManagedSkills';
 import { cx } from '../primitives/cx';
-import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
-import { createKeyedSerialMutationQueue } from '../../../core/serialMutationQueue';
 import { skillLibraryCount } from './skillLibraryCount';
 
 /** A fault in the Skill's own bytes or identity, as opposed to a failed check. */
@@ -44,11 +42,6 @@ interface SettingsSkillLibrarySectionProps {
   onDirectoriesChange: (next: string[], mode?: AgentSkillSourceMode) => Promise<readonly string[]>;
   onToggleSkill: (skillName: string) => void;
   toggleErrors?: ReadonlyMap<string, string>;
-  /**
-   * Persists one name's `disabledSkills` membership immediately. Used by the
-   * managed toggle, whose activation half is already immediate.
-   */
-  onPersistSkillDisabled: (skillName: string, disabled: boolean) => Promise<boolean>;
   /** Reports the actual unified row count back to the Agent category. */
   onSkillCountChange: (count: number) => void;
   /**
@@ -83,13 +76,6 @@ function directoryContaining(
 interface LibraryRow {
   key: string;
   name: string;
-  /**
-   * The managed index's id for this row, absent on every other source. Managed
-   * per-row state — override, target, queue, generation, error — is keyed by it,
-   * because a name is not an identity here: the `name_conflict` state this pane
-   * surfaces is precisely a name held by more than one Skill.
-   */
-  managedId?: string;
   displayName: string;
   /** Whether typing `/name` in the composer actually invokes it. */
   userInvocable: boolean;
@@ -126,7 +112,6 @@ export function SettingsSkillLibrarySection({
   onDirectoriesChange,
   onToggleSkill,
   toggleErrors = EMPTY_STRING_MAP,
-  onPersistSkillDisabled,
   onSkillCountChange,
   onUpdateCountChange,
   onError,
@@ -137,7 +122,7 @@ export function SettingsSkillLibrarySection({
   const [allSkills, setAllSkills] = useState<SkillDefinition[]>([]);
   const [skillsLoaded, setSkillsLoaded] = useState(false);
   const [loadingSkills, setLoadingSkills] = useState(false);
-  // Undo round-trips through main and returns the refreshed skill list; its own
+  // Undo round-trips through the lifecycle owner, then refreshes the list; its own
   // menu action is disabled while that provenance mutation is in flight.
   const [provenanceActionBusy, setProvenanceActionBusy] = useState(false);
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
@@ -149,20 +134,10 @@ export function SettingsSkillLibrarySection({
   // action is offered on EVERY row that came from the directory, and one click
   // removes all of them at once. The confirmation exists to say how many.
   const [pendingUnbind, setPendingUnbind] = useState<{ directory: string; skillCount: number } | null>(null);
-  const [managedToggleOverrides, setManagedToggleOverrides] = useState<Map<string, boolean>>(new Map());
-  const [managedToggleErrors, setManagedToggleErrors] = useState<Map<string, string>>(new Map());
   const addAnchorRef = useRef<HTMLButtonElement | null>(null);
   const mountedRef = useRef(false);
   const sectionRequestRef = useRef(0);
-  const disabledSkillsRef = useRef(disabledSkills);
-  disabledSkillsRef.current = disabledSkills;
-  const managedToggleTargetsRef = useRef(new Map<string, boolean>());
-  const managedToggleQueuesRef = useRef(createKeyedSerialMutationQueue());
-  const managedToggleGenerationsRef = useRef(new Map<string, number>());
-  const managed = useManagedSkills(onApplied, async (installed) => {
-    if (!disabledSkillsRef.current.includes(installed.name)) return true;
-    return onPersistSkillDisabled(installed.name, false);
-  });
+  const managed = useManagedSkills(onApplied);
 
   // A local directory is POINTED AT, never copied in: Tenon stores the path, so
   // the user's edits are live and there is no snapshot to drift.
@@ -277,6 +252,7 @@ export function SettingsSkillLibrarySection({
     onError(null);
     onNotice(null);
     void reloadSkills();
+    return window.lin?.onSkillLibraryChanged?.(() => { void reloadSkills(); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -354,82 +330,24 @@ export function SettingsSkillLibrarySection({
     return t.settings.skills.sourceUser;
   };
 
-  function toggleManagedSkill(skill: ManagedSkillView) {
-    const persistedEnabled = skill.enabled && !disabledSkillsRef.current.includes(skill.name);
-    const enabled = !(managedToggleTargetsRef.current.get(skill.id) ?? persistedEnabled);
-    const generation = beginKeyedMutation(managedToggleGenerationsRef.current, skill.id);
-    managedToggleTargetsRef.current.set(skill.id, enabled);
-    setManagedToggleOverrides((current) => withMapValue(current, skill.id, enabled));
-    setManagedToggleErrors((current) => withoutMapKey(current, skill.id));
-    managed.clearFeedback();
-
-    void managedToggleQueuesRef.current.run(skill.id, async () => {
-      const result = await managed.setEnabled(skill, enabled);
-      if (!result.ok) {
-        if (isCurrentManagedToggle(skill.id, generation)) {
-          managedToggleTargetsRef.current.delete(skill.id);
-          setManagedToggleOverrides((current) => withoutMapKey(current, skill.id));
-          setManagedToggleErrors((current) => withMapValue(
-            current,
-            skill.id,
-            managedSkillErrorMessage(result.error, t),
-          ));
-        }
-        return;
-      }
-
-      // The managed index and disabledSkills are deliberately separate stores.
-      // Keep the optimistic override visible across both writes so the one switch
-      // still behaves as one control.
-      if (enabled && disabledSkillsRef.current.includes(skill.name)) {
-        if (!(await onPersistSkillDisabled(skill.name, false))) {
-          if (isCurrentManagedToggle(skill.id, generation)) {
-            managedToggleTargetsRef.current.delete(skill.id);
-            setManagedToggleOverrides((current) => withoutMapKey(current, skill.id));
-            managed.clearFeedback();
-          }
-          return;
-        }
-      }
-
-      if (isCurrentManagedToggle(skill.id, generation)) {
-        managedToggleTargetsRef.current.delete(skill.id);
-        setManagedToggleOverrides((current) => withoutMapKey(current, skill.id));
-        setManagedToggleErrors((current) => withoutMapKey(current, skill.id));
-        managed.showEnabledNotice(skill.name, enabled);
-      }
-    });
-  }
-
-  function isCurrentManagedToggle(skillId: string, generation: number): boolean {
-    return mountedRef.current
-      && isCurrentKeyedMutation(managedToggleGenerationsRef.current, skillId, generation);
-  }
-
-  // Two stores, two keys: the shell's disabledSkills errors are per Skill name
-  // (that list IS a set of names), the managed ones per managed id.
   function rowToggleError(row: LibraryRow): string | undefined {
-    return toggleErrors.get(row.name)
-      ?? (row.managedId === undefined ? undefined : managedToggleErrors.get(row.managedId));
+    return toggleErrors.get(row.name);
   }
 
   /**
    * Managed rows come from the managed index rather than the loaded catalog,
-   * because a Skill that is installed but not activated is absent from the
+   * because a Skill that is installed but unavailable is absent from the
    * catalog and still has to appear here — installed-but-off is a state the user
    * owns and must be able to see and reverse.
    */
   const managedRows: LibraryRow[] = useMemo(() => managed.skills.map((skill) => {
-    // The row reflects the same predicate main applies, so the list can never
-    // claim a Skill is on while the model cannot see it.
-    const persistedEnabled = skill.enabled && !disabledSkills.includes(skill.name);
-    const enabled = managedToggleOverrides.get(skill.id) ?? persistedEnabled;
+    // Desired availability stays independent of integrity and compatibility.
+    const enabled = !disabledSkills.includes(skill.name);
     const busy = managed.busy !== null;
     const attention = managedSkillAttentionLabel(skill, t);
     return {
       key: `managed:${skill.id}`,
       name: skill.name,
-      managedId: skill.id,
       displayName: skill.name,
       userInvocable: skill.userInvocable,
       // The description always survives. A failed update check is produced for
@@ -457,7 +375,7 @@ export function SettingsSkillLibrarySection({
       enabled,
       dimmed: !enabled || skill.status === 'modified',
       toggleLabel: t.settings.skills.managedEnableToggle({ name: skill.name }),
-      onToggle: () => toggleManagedSkill(skill),
+      onToggle: () => onToggleSkill(skill.name),
       actions: [...managedRevealAction, ...managedSkillActions(skill, {
         check: () => void managed.checkUpdates(skill.id),
         preview: () => void managed.previewUpdate(skill),
@@ -466,26 +384,23 @@ export function SettingsSkillLibrarySection({
       }, t, busy)],
       actionsLabel: t.settings.skills.rowActionsAriaLabel({ name: skill.name }),
     } satisfies LibraryRow;
-    // skillRoots is read through revealAction. Omitting it memoized every
-    // managed row against an empty map — agent_list_all_skills resolves after
-    // agent_managed_skill_list — so managed rows lost "Show in Finder" for the
-    // life of the pane whenever nothing later replaced managed.skills.
-    // Data only. The controller object and its methods are rebuilt on every
-    // render, so depending on them would recompute every row every time and
-    // defeat the memo outright. skillRoots is absent because managed rows no
-    // longer resolve a folder to reveal.
-  }), [disabledSkills, managed.busy, managed.skills, managedToggleOverrides, t]);
+    // Depend on controller data rather than its rebuilt object; managed rows
+    // never resolve an editable folder.
+  }), [disabledSkills, managed.busy, managed.skills, onToggleSkill, t]);
 
   const localRows: LibraryRow[] = useMemo(() => allSkills
     .filter((skill) => skill.source !== 'managed')
     .map((skill) => {
       const disabled = disabledSkills.includes(skill.name);
       const actions: RowMenuAction[] = [...revealAction(skill.name)];
-      if (skill.canUndoLastAgentEdit) {
+      if (skill.undoTarget) {
         actions.push({
           label: t.settings.skills.undoAgentEdit,
           disabled: provenanceActionBusy,
-          onSelect: () => runSkillProvenanceAction(() => api.agentUndoSkillAgentEdit(skill.name)),
+          onSelect: () => runSkillProvenanceAction(async () => {
+            await api.agentSkillManage({ operation: 'undo_edit', ...skill.undoTarget! });
+            return api.agentListAllSkills();
+          }),
         });
       }
       const chips: string[] = [];
@@ -783,16 +698,3 @@ export function SettingsSkillLibrarySection({
 }
 
 const EMPTY_STRING_MAP: ReadonlyMap<string, string> = new Map();
-
-function withMapValue<K, V>(current: ReadonlyMap<K, V>, key: K, value: V): Map<K, V> {
-  const next = new Map(current);
-  next.set(key, value);
-  return next;
-}
-
-function withoutMapKey<K, V>(current: ReadonlyMap<K, V>, key: K): Map<K, V> {
-  if (!current.has(key)) return current as Map<K, V>;
-  const next = new Map(current);
-  next.delete(key);
-  return next;
-}

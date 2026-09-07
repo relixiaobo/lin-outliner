@@ -23,6 +23,7 @@ import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { createReadStream, createWriteStream, lstatSync, realpathSync, statSync } from 'node:fs';
 import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { acquireSkillWriteGuard } from './agentSkillWriteGuard';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -1400,9 +1401,11 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
     execute: async (_toolCallId, rawParams: unknown) => {
       const started = Date.now();
       let filePath: string | undefined;
+      let release: (() => void) | undefined;
       try {
         const params = normalizeFileEditParams(rawParams);
         filePath = resolveWorkspacePath(workspace, params.file_path);
+        release = await acquireSkillWriteGuard(filePath);
         assertWorkspaceWritePath(workspace, filePath);
         if (path.extname(filePath).toLowerCase() === '.ipynb') {
           throw new LocalToolFailure(
@@ -1480,6 +1483,8 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         });
       } catch (error) {
         return localErrorResult('file_edit', error, started, filePath);
+      } finally {
+        release?.();
       }
     },
   };
@@ -1500,9 +1505,11 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
     execute: async (_toolCallId, rawParams: unknown) => {
       const started = Date.now();
       let filePath: string | undefined;
+      let release: (() => void) | undefined;
       try {
         const params = normalizeFileWriteParams(rawParams);
         filePath = resolveWorkspacePath(workspace, params.file_path);
+        release = await acquireSkillWriteGuard(filePath);
         assertWorkspaceWritePath(workspace, filePath);
         let original: TextFileRead | null = null;
         try {
@@ -1555,6 +1562,8 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
         });
       } catch (error) {
         return localErrorResult('file_write', error, started, filePath);
+      } finally {
+        release?.();
       }
     },
   };

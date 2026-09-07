@@ -1,4 +1,3 @@
-import { app } from 'electron';
 import { join } from 'node:path';
 import type {
   AgentSkillPreviousVersion,
@@ -15,14 +14,15 @@ const AGENT_SKILL_PROVENANCE_FILE = 'agent-skill-provenance.json';
  * version for single-step Undo. Unsupported legacy values are dropped on load;
  * pre-release, no migration.
  */
-export function createAgentSkillProvenanceStore(): AgentSkillProvenanceStore {
+export function createAgentSkillProvenanceStore(userDataDir: string): AgentSkillProvenanceStore {
+  const provenancePath = join(userDataDir, AGENT_SKILL_PROVENANCE_FILE);
   return {
     async load(): Promise<Record<string, AgentSkillProvenanceRecord>> {
-      return readJsonOrDefault(provenancePath(), {}, parseProvenanceEntries);
+      return readJsonOrDefault(provenancePath, {}, parseProvenanceEntries);
     },
     async save(skillFile: string, record: AgentSkillProvenanceRecord | null): Promise<void> {
       await updateJsonFile(
-        provenancePath(),
+        provenancePath,
         {},
         parseProvenanceEntries,
         (entries) => {
@@ -67,8 +67,4 @@ function parsePreviousVersion(value: unknown): AgentSkillPreviousVersion | null 
     content: raw.content,
     ...(typeof raw.agentHash === 'string' ? { agentHash: raw.agentHash } : {}),
   };
-}
-
-function provenancePath() {
-  return join(app.getPath('userData'), AGENT_SKILL_PROVENANCE_FILE);
 }

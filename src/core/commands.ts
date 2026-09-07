@@ -130,17 +130,12 @@ export const AGENT_COMMANDS = [
   // directory from the execution record, so the renderer never names a path.
   'agent_worktree_changes',
   'agent_reveal_worktree',
-  'agent_undo_skill_agent_edit',
+  'agent_skill_manage',
   'agent_managed_skill_catalog',
   'agent_managed_skill_discover',
-  'agent_managed_skill_install',
   'agent_managed_skill_list',
   'agent_managed_skill_check_updates',
   'agent_managed_skill_preview_update',
-  'agent_managed_skill_apply_update',
-  'agent_managed_skill_set_enabled',
-  'agent_managed_skill_rollback',
-  'agent_managed_skill_uninstall',
   // Main Agent editor. Configuration file IO belongs to main (A2).
   'agent_identity_catalog',
   'agent_write_profile',

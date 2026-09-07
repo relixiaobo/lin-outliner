@@ -2,6 +2,7 @@ import { pruneAgentScratch } from '../agent/capabilities/agentAttachmentMaterial
 import { createAgentSkillProvenanceStore } from '../agent/capabilities/agentSkillProvenanceStore';
 import {
   AgentSkillRuntime,
+  skillLifecycleIdentity,
   resolvePreloadedSkillInvocations,
   resolveUserSkillInvocation,
   type SkillLoadOptions,
@@ -18,21 +19,27 @@ import { DEFAULT_MANAGED_SKILLS } from '../managedSkillDefaults';
 import { ManagedSkillService } from '../managedSkillService';
 import { ManagedSkillShellEnvironmentRegistry } from '../managedSkillShellEnvironment';
 import { ManagedSkillStore } from '../managedSkillStore';
+import { createSkillLifecycle, type ReviewSkillOperation, type SkillLifecycle, type SkillOperationCaller } from './skillLifecycle';
 
 export interface ManagedSkillsHostOptions {
   readonly userDataDir: string;
   readonly localRoot: string;
   readonly scratchRoot: string;
   readonly appVersion: string;
+  readonly reviewSkillOperation: ReviewSkillOperation;
+  readonly onLibraryChanged: () => void;
   readonly loadRuntimeSettings: () => Promise<{
     readonly additionalSkillDirectories: readonly string[];
     readonly additionalSkillSourceModes?: Readonly<Record<string, 'skill' | 'container'>>;
     readonly disabledSkills?: readonly string[];
+    readonly disabledTools?: readonly string[];
     readonly delegation?: { readonly enabled: boolean };
   }>;
 }
 
 interface ManagedSkillsHost {
+  readonly lifecycle: SkillLifecycle;
+  manageForWindow(input: unknown, caller: Pick<SkillOperationCaller, 'origin' | 'authorize' | 'signal'>): Promise<unknown>;
   processEnvironment: ManagedSkillShellEnvironmentRegistry['processEnvironment'];
   updateRuntimeSettings(settings: {
     readonly additionalSkillDirectories: readonly string[];
@@ -57,18 +64,12 @@ interface ManagedSkillsHost {
   clearTurn(turnId: string): void;
   listPrimarySkills(userInvocableOnly: boolean): ReturnType<AgentSkillRuntime['listAllSkills']>;
   listPrimaryCurationCandidates(): ReturnType<AgentSkillRuntime['listCurationCandidates']>;
-  undoPrimarySkillEdit(skillName: string): ReturnType<AgentSkillRuntime['listAllSkills']>;
   readonly catalog: {
     load: ManagedSkillService['loadCatalog'];
     discover: ManagedSkillService['discover'];
-    install: ManagedSkillService['install'];
     list: ManagedSkillService['list'];
     checkUpdates: ManagedSkillService['checkUpdates'];
     previewUpdate: ManagedSkillService['previewUpdate'];
-    applyUpdate: ManagedSkillService['applyUpdate'];
-    setEnabled: ManagedSkillService['setEnabled'];
-    rollback: ManagedSkillService['rollback'];
-    uninstall: ManagedSkillService['uninstall'];
   };
 }
 
@@ -81,6 +82,7 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
   const runtimeReference = assignOnce<AgentSkillRuntime>('primary AgentSkillRuntime');
   const shellReference = assignOnce<ManagedSkillShellEnvironmentRegistry>('ManagedSkillShellEnvironmentRegistry');
   const turnRuntimes = new Map<string, AgentSkillRuntime>();
+  const skillInvocationTurns = new Set<string>();
   const turnRuntimeInitializations = new Map<string, Promise<AgentSkillRuntime>>();
   const service = new ManagedSkillService({
     appVersion: options.appVersion,
@@ -103,9 +105,17 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
     },
   });
   const shellEnvironment = new ManagedSkillShellEnvironmentRegistry({
-    activeSkillIds: async () => new Set(
-      (await service.activeRuntimeRoots()).map((root) => root.id),
-    ),
+    activeSkillIds: async (_threadId, turnId) => {
+      const settings = await options.loadRuntimeSettings();
+      const runtime = turnRuntimes.get(turnId);
+      if (!runtime || !skillInvocationTurns.has(turnId) || settings.disabledTools?.includes('skill')) return new Set();
+      const eligible = await Promise.all((await service.activeRuntimeRoots()).map(async (root) => {
+        const definition = await runtime.getSkill(root.name);
+        return definition?.source === 'managed' && (await runtime.lifecycleAvailability(definition)).available
+          && !settings.disabledSkills?.includes(root.name) ? root.id : null;
+      }));
+      return new Set(eligible.filter((id): id is string => id !== null));
+    },
     outputRootBoundary: options.scratchRoot,
     contributors: [{
       skillId: BROWSER_PILOT_MANAGED_SKILL_ID,
@@ -117,7 +127,7 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
   shellReference.set(shellEnvironment);
   const primaryRuntime = new AgentSkillRuntime({
     localRoot: options.localRoot,
-    provenanceStore: createAgentSkillProvenanceStore(),
+    provenanceStore: createAgentSkillProvenanceStore(options.userDataDir),
     managedSkillRoots: () => service.activeRuntimeRoots(),
     managedSkillContentRoot: service.contentRoot,
     assertManagedSkillInvocable: (skillId, expectedContentHash) => (
@@ -144,22 +154,31 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
     }
   }).catch((error) => console.error('[agent] failed to load skill settings', error));
 
+  const lifecycle = createSkillLifecycle({ service, review: options.reviewSkillOperation,
+      refreshProvenance: async () => {
+        await Promise.all([primaryRuntime, ...turnRuntimes.values()].map((runtime) => runtime.refreshProvenanceRecords()));
+      }, changed: options.onLibraryChanged });
   return {
+    lifecycle,
+    manageForWindow: (input, caller) => lifecycle.manage(input, {
+      ...caller, key: JSON.stringify(caller.origin), runtime: primaryRuntime,
+    }),
     processEnvironment: (threadId, turnId, context) => (
       shellEnvironment.processEnvironment(threadId, turnId, context)
     ),
     updateRuntimeSettings: (settings) => {
+      shellEnvironment.invalidate();
       for (const runtime of [primaryRuntime, ...turnRuntimes.values()]) {
         applyRuntimeSettings(runtime, settings);
       }
     },
     resolveAdmission: async (input, runtimeOptions) => {
-      const hasSkillTool = input.configuration.tools.includes('skill');
+      const settings = await options.loadRuntimeSettings();
+      const hasSkillTool = input.configuration.tools.includes('skill') && !settings.disabledTools?.includes('skill');
       if (!hasSkillTool) {
         return { catalogSnapshot: null, preloadedInvocations: [], invocation: null };
       }
       const runtime = createRuntime(runtimeOptions);
-      const settings = await options.loadRuntimeSettings();
       applyRuntimeSettings(runtime, settings);
       await runtime.notifyFileTouched([...input.observedFilePaths]);
       const preloaded = await resolvePreloadedSkillInvocations(
@@ -183,6 +202,7 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
     },
     prepareTurnRuntime: async (context, runtimeOptions) => {
       const turnId = context.turn.id;
+      if (context.configuration.tools.includes('skill')) skillInvocationTurns.add(turnId);
       const existingInitialization = turnRuntimeInitializations.get(turnId);
       if (existingInitialization) return existingInitialization;
       const runtime = turnRuntimes.get(turnId) ?? createRuntime(runtimeOptions);
@@ -202,6 +222,7 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
         if (turnRuntimeInitializations.get(turnId) === initialization) {
           turnRuntimeInitializations.delete(turnId);
           turnRuntimes.delete(turnId);
+          skillInvocationTurns.delete(turnId);
           shellEnvironment.clearTurn(turnId);
         }
         throw error;
@@ -214,31 +235,24 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
     },
     clearTurn: (turnId) => {
       turnRuntimes.delete(turnId);
+      skillInvocationTurns.delete(turnId);
       turnRuntimeInitializations.delete(turnId);
       shellEnvironment.clearTurn(turnId);
     },
-    listPrimarySkills: (userInvocableOnly) => userInvocableOnly
-      ? primaryRuntime.listUserInvocableSkills()
-      : primaryRuntime.listAllSkills(),
-    listPrimaryCurationCandidates: () => primaryRuntime.listCurationCandidates(),
-    undoPrimarySkillEdit: async (skillName) => {
-      await primaryRuntime.undoLastAgentSkillEdit(skillName);
-      await Promise.all(
-        [...turnRuntimes.values()].map((runtime) => runtime.refreshProvenanceRecords()),
-      );
-      return primaryRuntime.listAllSkills();
+    listPrimarySkills: async (userInvocableOnly) => {
+      const skills = await (userInvocableOnly ? primaryRuntime.listUserInvocableSkills() : primaryRuntime.listAllSkills());
+      return Promise.all(skills.map(async (skill) => ({ ...skill,
+        undoTarget: skill.canUndoLastAgentEdit
+          ? await primaryRuntime.inspectUndoTarget(skillLifecycleIdentity(skill)).catch(() => undefined) : undefined,
+      })));
     },
+    listPrimaryCurationCandidates: () => primaryRuntime.listCurationCandidates(),
     catalog: {
       load: () => service.loadCatalog(),
       discover: (input) => service.discover(input),
-      install: (input) => service.install(input),
       list: () => service.list(),
       checkUpdates: (skillId, checkOptions) => service.checkUpdates(skillId, checkOptions),
       previewUpdate: (input) => service.previewUpdate(input),
-      applyUpdate: (input) => service.applyUpdate(input),
-      setEnabled: (input) => service.setEnabled(input),
-      rollback: (input) => service.rollback(input),
-      uninstall: (input) => service.uninstall(input),
     },
   };
 
@@ -250,7 +264,7 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
   ): AgentSkillRuntime {
     return new AgentSkillRuntime({
       ...runtimeOptions,
-      provenanceStore: createAgentSkillProvenanceStore(),
+      provenanceStore: createAgentSkillProvenanceStore(options.userDataDir),
       managedSkillRoots: () => service.activeRuntimeRoots(),
       managedSkillContentRoot: service.contentRoot,
       assertManagedSkillInvocable: (skillId, expectedContentHash) => (

@@ -179,8 +179,8 @@ const MANAGED_SKILLS: ManagedSkillView[] = [
     subdirectory: 'pdf',
     trackingRef: 'main',
     recommended: true,
-    enabled: true,
-    status: 'enabled',
+    revision: 'fixture-revision',
+    status: 'installed',
     compatibility: { status: 'compatible', appVersion: '0.1.0', declaredRange: '>=0.1.0 <1.0.0' },
     active: {
       commit: '0'.repeat(40),

@@ -150,10 +150,10 @@ describe('agent runtime settings limits', () => {
   });
 
   test('keeps far more than twenty disabled skills', async () => {
-    const { getAgentRuntimeSettings, updateAgentRuntimeSettings } = await settingsModule();
+    const { getAgentRuntimeSettings, updateAgentSkillSettings } = await settingsModule();
     const names = Array.from({ length: 120 }, (_, index) => `skill-${index}`);
 
-    await updateAgentRuntimeSettings({ disabledSkills: names });
+    await updateAgentSkillSettings({ disabledSkills: names });
 
     expect((await getAgentRuntimeSettings()).disabledSkills).toEqual(names);
   });
@@ -174,41 +174,41 @@ describe('agent runtime settings limits', () => {
   test('preserves relative source paths and exact modes through a canonical round-trip', () => {
     const input = preserveStoredSkillDirectoryForms(
       {
-        additionalSkillSourceBindings: [
+        sourceBindings: [
           { path: '/workspace/skills', mode: 'skill' },
           { path: '/extra-skills', mode: 'container' },
         ],
       },
       {
-        additionalSkillDirectories: ['./skills'],
-        additionalSkillSourceModes: { './skills': 'skill' },
-      } as AgentRuntimeSettings,
+        sourceBindings: [{ path: './skills', mode: 'skill' }],
+        disabledSkills: [],
+      },
       '/workspace',
     );
 
-    expect(input.additionalSkillSourceBindings).toEqual([
+    expect(input.sourceBindings).toEqual([
       { path: './skills', mode: 'skill' },
       { path: '/extra-skills', mode: 'container' },
     ]);
   });
 
   test('keeps a disable appended past the twentieth entry', async () => {
-    const { getAgentRuntimeSettings, updateAgentRuntimeSettings } = await settingsModule();
+    const { getAgentRuntimeSettings, updateAgentSkillSettings } = await settingsModule();
     const existing = Array.from({ length: 20 }, (_, index) => `skill-${index}`);
-    await updateAgentRuntimeSettings({ disabledSkills: existing });
+    await updateAgentSkillSettings({ disabledSkills: existing });
 
     // The library appends the newly disabled name at the end, which is exactly
     // the position a 20-entry cap discarded.
-    await updateAgentRuntimeSettings({ disabledSkills: [...existing, 'twenty-first'] });
+    await updateAgentSkillSettings({ disabledSkills: [...existing, 'twenty-first'] });
 
     expect((await getAgentRuntimeSettings()).disabledSkills).toContain('twenty-first');
   });
 
   test('still bounds the directories the loader has to scan', async () => {
-    const { getAgentRuntimeSettings, updateAgentRuntimeSettings } = await settingsModule();
+    const { getAgentRuntimeSettings, updateAgentSkillSettings } = await settingsModule();
     const directories = Array.from({ length: 40 }, (_, index) => `/tmp/skills-${index}`);
 
-    await updateAgentRuntimeSettings({ additionalSkillDirectories: directories });
+    await updateAgentSkillSettings({ sourceBindings: directories.map((path) => ({ path, mode: 'container' })) });
 
     // Each bound directory is scanned on every registry refresh, so this list
     // stays deliberately small — unlike disabledSkills.
@@ -216,13 +216,13 @@ describe('agent runtime settings limits', () => {
   });
 
   test('a partial update leaves the other lists intact', async () => {
-    const { getAgentRuntimeSettings, updateAgentRuntimeSettings } = await settingsModule();
-    await updateAgentRuntimeSettings({
-      additionalSkillDirectories: ['/tmp/skills'],
+    const { getAgentRuntimeSettings, updateAgentSkillSettings } = await settingsModule();
+    await updateAgentSkillSettings({
+      sourceBindings: [{ path: '/tmp/skills', mode: 'container' }],
       disabledSkills: ['alpha'],
     });
 
-    await updateAgentRuntimeSettings({ disabledSkills: ['alpha', 'beta'] });
+    await updateAgentSkillSettings({ disabledSkills: ['alpha', 'beta'] });
 
     const settings = await getAgentRuntimeSettings();
     expect(settings.additionalSkillDirectories).toEqual(['/tmp/skills']);

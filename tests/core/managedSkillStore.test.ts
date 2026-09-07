@@ -76,6 +76,7 @@ describe('managed skill store', () => {
     await store.updateIndex((index) => ({
       ...index,
       skills: [{
+        revision: 'fixture-revision',
         id: skill.name,
         name: skill.name,
         origin: {
@@ -86,7 +87,7 @@ describe('managed skill store', () => {
           trackingRef: 'main',
         },
         recommended: false,
-        enabled: false,
+
         active: version,
       }],
     }));
@@ -152,9 +153,10 @@ describe('managed skill store', () => {
     await store.installValidatedContent(previousSkill.name, previousSkill);
     await store.installValidatedContent(orphanSkill.name, orphanSkill);
     await store.replaceIndex({
-      schemaVersion: 2,
+      schemaVersion: 3,
       skills: [{
         id: activeSkill.name,
+        revision: 'fixture-revision',
         name: activeSkill.name,
         origin: {
           owner: 'owner',
@@ -164,7 +166,7 @@ describe('managed skill store', () => {
           trackingRef: 'main',
         },
         recommended: false,
-        enabled: true,
+
         active,
         previous,
       }],
@@ -178,7 +180,7 @@ describe('managed skill store', () => {
       .toMatchObject({ ok: false });
   });
 
-  test('initialization quarantines an index this build cannot decode and starts empty', async () => {
+  test('leaves an old index untouched and requires an explicit development-store reset', async () => {
     const root = await temporaryRoot();
     const store = new ManagedSkillStore(root);
     // An index written by an older schema. Decoding stays fail-closed, but that
@@ -187,15 +189,13 @@ describe('managed skill store', () => {
     await mkdir(path.dirname(store.indexPath), { recursive: true });
     await writeFile(store.indexPath, JSON.stringify({ schemaVersion: 1, skills: [] }), 'utf8');
 
-    await store.initialize();
-
-    expect(await store.readIndex()).toEqual({ schemaVersion: 2, skills: [] });
+    await expect(store.initialize()).rejects.toThrow('unsupported or corrupt schema');
     const quarantined = (await readdir(path.dirname(store.indexPath)))
       .filter((entry) => entry.startsWith('index.json.unreadable-'));
-    expect(quarantined).toHaveLength(1);
+    expect(quarantined).toHaveLength(0);
     // Renamed, never deleted: a schema break must not destroy the record of what
     // was installed.
-    expect(JSON.parse(await readFile(path.join(path.dirname(store.indexPath), quarantined[0]!), 'utf8')))
+    expect(JSON.parse(await readFile(store.indexPath, 'utf8')))
       .toEqual({ schemaVersion: 1, skills: [] });
   });
 });

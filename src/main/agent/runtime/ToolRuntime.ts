@@ -39,6 +39,8 @@ import {
   type DelegatedToolPolicy,
 } from '../delegation/delegatedToolPolicy';
 
+export type DeferredToolAuthority = (toolName: string, args: unknown, signal?: AbortSignal, fileWritePath?: string) => Promise<void>;
+
 export interface ToolRuntimeOptions {
   readonly localWorkspace?: AgentLocalWorkspaceContext | ((context: TurnExecutionContext) => AgentLocalWorkspaceContext);
   readonly imageNormalizer?: AgentFileReadImageNormalizer;
@@ -51,7 +53,7 @@ export interface ToolRuntimeOptions {
   ) => readonly AgentTool[];
   /** Test/custom host seam; production always assembles the canonical registry. */
   readonly assembleRegistry?: boolean;
-  readonly dynamicTools?: (context: TurnExecutionContext) => readonly AgentTool[] | Promise<readonly AgentTool[]>;
+  readonly dynamicTools?: (context: TurnExecutionContext, authorize: DeferredToolAuthority) => readonly AgentTool[] | Promise<readonly AgentTool[]>;
   readonly capabilityConfig?: AgentCapabilityConfig | (() => AgentCapabilityConfig | Promise<AgentCapabilityConfig>);
   readonly delegateCommandRuntime?: (
     context: TurnExecutionContext,
@@ -101,7 +103,7 @@ export class ToolRuntime {
           turnId: context.turn.id,
           ...(delegateCommandRuntime === undefined ? {} : { delegateCommandRuntime }),
         });
-    const dynamicTools = await this.options.dynamicTools?.(context) ?? [];
+    const dynamicTools = await this.options.dynamicTools?.(context, (name, args, signal, fileWritePath) => this.authorizeDeferredTool(context, name, args, signal, fileWritePath)) ?? [];
     const dynamicToolSet = new Set(dynamicTools);
     const tools = [
       ...capabilityTools,
@@ -205,7 +207,7 @@ export class ToolRuntime {
   }
 
   async prepareProviderContext(context: TurnExecutionContext): Promise<void> {
-    if (!context.configuration.tools.includes('skill')) return;
+    if (!context.configuration.tools.includes('skill') || (await this.options.disabledTools?.() ?? []).includes('skill')) return;
     const runtime = await this.skillRuntime(context);
     const checkpoint = runtime?.catalogRefreshCheckpoint() ?? null;
     if (!runtime || checkpoint === null) return;
@@ -346,6 +348,24 @@ export class ToolRuntime {
     ];
   }
 
+  private async authorizeDeferredTool(context: TurnExecutionContext, name: string, args: unknown, signal?: AbortSignal, fileWritePath?: string): Promise<void> {
+    signal?.throwIfAborted();
+    const contract = modelToolContract(name);
+    const turn = this.service.readTurnForHost(context.thread.id, context.turn.id);
+    if (!contract || !context.configuration.tools.includes(name)
+      || (await this.options.disabledTools?.() ?? []).includes(name)
+      || (contract.scope === 'rootThread' && (context.thread.parentThreadId !== null || context.thread.threadSource !== 'user'))
+      || !turn || turn.status !== 'inProgress') {
+      throw new AgentToolFailure('operation_unavailable', 'This Skill operation is no longer available in the initiating Turn.', 'Inspect the current configuration before retrying.');
+    }
+    const decision = evaluateAgentToolCapability({ toolName: name, args, fileWritePath, policy: {
+      workspaceRoot: context.thread.cwd, capabilityConfig: await this.capabilityConfig(),
+    } });
+    if (decision.behavior === 'unavailable') {
+      throw new AgentToolFailure('operation_unavailable', decision.reason, 'Respect the current action blocks.');
+    }
+  }
+
   private instrumentTool(
     context: TurnExecutionContext,
     tool: AgentTool,
@@ -424,6 +444,9 @@ export class ToolRuntime {
           });
         }
         try {
+          if (canonicalIdentity === 'skill') {
+            await this.authorizeDeferredTool(context, canonicalIdentity, args, signal);
+          }
           const rawResult = await tool.execute(itemId, params, signal, onUpdate);
           const result = withCapabilityAudit(rawResult, capabilityAudit(capability));
           await this.service.notifyToolCompleted(
