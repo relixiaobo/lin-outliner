@@ -108,6 +108,12 @@ Agent Core. It is a contract checklist, not project status.
   current root Turn authority, and operation-specific blocks at delayed commit.
   Keep sender-bound human review distinct from permission policy and separate
   saved content, observed invocation availability, and runtime refresh results.
+- Keep Memory management in the shared `memory_inspect` / `memory_manage` owner,
+  distinct from file-backed global enablement and ordinary Outline content.
+  Exercise exact native-reviewed Reset targets and recovery, retained exclusions,
+  root-only late authority checks, Thread revisions, sender isolation, truthful
+  navigation/settlement, and event-driven local UI together. No scaffold release
+  or Settings CLI is a substitute for the complete workflow.
 
 ## Extension Contract
 

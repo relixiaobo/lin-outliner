@@ -675,12 +675,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       blocks: [...(options.capabilityBlocks ?? [])] as string[],
       diagnostics: [] as Array<{ ruleValue: string; code: string; message: string }>,
     };
-    // The Memory group polls `memory_settings_get` on an interval for as long as
-    // its pane is mounted. Without a branch for it the mock's unhandled-invoke
-    // throw became a red alert on the pane every few seconds — including in the
-    // design-system probes, which were photographing that banner rather than the
-    // pane. Deterministic: no timers, no worker, and the counters only move when
-    // a spec drives them.
+    // Deterministic owner status: no timers or worker; only test actions change it.
     const memorySettings = {
       status: {
         featureMode: options.memoryFeatureMode ?? 'enabled',
@@ -5339,25 +5334,22 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_get_capability_settings') {
           return clone(agentCapabilities) as T;
         }
-        if (cmd === 'memory_settings_get') {
-          return clone(memorySettings) as T;
+        if (cmd === 'memory_inspect') {
+          return clone({ operation: 'status', ...memorySettings }) as T;
         }
-        if (cmd === 'memory_feature_mode_set') {
-          memorySettings.status.featureMode = String(args.mode ?? 'enabled');
+        if (cmd === 'memory_enabled_update') {
+          memorySettings.status.featureMode = args.enabled ? 'enabled' : 'disabled';
           memorySettings.status.featureModeGeneration += 1;
-          return clone(memorySettings) as T;
+          return undefined as T;
         }
-        if (cmd === 'memory_open') {
-          memorySettings.status.memoryVisibilityGeneration += 1;
-          return clone(memorySettings) as T;
-        }
-        if (cmd === 'memory_reset') {
-          memorySettings.status.resetEpoch += 1;
-          memorySettings.status.lastSuccessfulRunAt = null;
-          memorySettings.status.lastError = null;
-          memorySettings.status.pendingJobs = 0;
-          memorySettings.status.strayTaggedNodeCount = 0;
-          return clone(memorySettings) as T;
+        if (cmd === 'memory_manage') {
+          const request = args.request as { operation: string };
+          if (request.operation === 'open') return { operation: 'open', nodeId: 'search:memory', navigation: 'opened' } as T;
+          if (request.operation === 'reset') {
+            memorySettings.status.resetEpoch += 1;
+            return { operation: 'reset', reset: { operationId: `memory:reset:${memorySettings.status.resetEpoch}`, state: 'finalized', admittedAt: Date.now(), targetEpoch: memorySettings.status.resetEpoch } } as T;
+          }
+          throw new Error(`Unsupported Memory mock operation: ${request.operation}`);
         }
         // Managed-Skill channels. `managedCommand` unwraps an { ok, value } /
         // { ok, error } envelope, so these return that shape rather than the view

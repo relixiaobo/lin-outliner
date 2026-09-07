@@ -356,7 +356,7 @@ export class ToolRuntime {
       || (await this.options.disabledTools?.() ?? []).includes(name)
       || (contract.scope === 'rootThread' && (context.thread.parentThreadId !== null || context.thread.threadSource !== 'user'))
       || !turn || turn.status !== 'inProgress') {
-      throw new AgentToolFailure('operation_unavailable', 'This Skill operation is no longer available in the initiating Turn.', 'Inspect the current configuration before retrying.');
+      throw new AgentToolFailure('operation_unavailable', 'This operation is no longer available in the initiating Turn.', 'Inspect the current configuration before retrying.');
     }
     const decision = evaluateAgentToolCapability({ toolName: name, args, fileWritePath, policy: {
       workspaceRoot: context.thread.cwd, capabilityConfig: await this.capabilityConfig(),

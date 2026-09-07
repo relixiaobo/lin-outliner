@@ -276,8 +276,10 @@ export class TimelineMemoryStore {
     generation: number,
     digest: string,
     containerIds: readonly string[],
+    beforeCommit?: (projection: DocumentProjection) => void | Promise<void>,
   ): Promise<void> {
-    await this.applyPublication(operationId, generation, digest, (projection) => {
+    await this.applyPublication(operationId, generation, digest, async (projection) => {
+      await beforeCommit?.(projection);
       const canonicalContainers = new Set(canonicalMemoryGraph(projection).containers.map((entry) => entry.node.id));
       const targets = containerIds.filter((nodeId) => canonicalContainers.has(nodeId));
       return [

@@ -472,10 +472,11 @@ async function fixtureCommand(command: string): Promise<unknown> {
   if (command === 'agent_managed_skill_catalog') {
     return { ok: true, value: { status: 'fresh', entries: [] } };
   }
-  if (command === 'memory_settings_get') {
+  if (command === 'memory_inspect') {
     return {
+      operation: 'status',
       status: {
-        featureMode: 'off',
+        featureMode: 'disabled',
         featureModeGeneration: 1,
         resetEpoch: 0,
         memoryVisibilityGeneration: 1,

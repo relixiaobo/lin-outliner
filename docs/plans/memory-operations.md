@@ -150,20 +150,23 @@ self-interruption on global disable, and treating committed work as failed after
 refresh failure. Exact-target, recovery, and outcome tests are part of this PR.
 
 PR #646 claims tool composition, capability checks, Thread execution-context
-consumers, and related specs. This overlaps E1 at scope level; that Draft has no
-file diff yet. Order overlapping E1 runtime edits after #646, recheck its final
-diff, and preserve task-owned execution context and Skill lifecycle contracts.
-Owner-local design/tests can be prepared without changing its mechanism. No edit
+consumers, and related specs. This is a collision to coordinate, not an E1
+feature dependency. E1 uses existing Memory admission and publication owners;
+it does not change task context, receipts, cwd, delegation, or Automation. Keep
+shared edits limited to Memory tool registration, capability contributions,
+Host/preload transport, and the Memory section of Thread Details. Sequence only
+a concretely identified interface replacement, inspect both final diffs before
+integration, and preserve task-owned context and Skill lifecycle contracts.
+Main owns merge order; neither PR ships a scaffold or temporary adapter. No edit
 to `src/core/commands.ts`, `src/core/types.ts`, dependencies, build configuration,
 the spec index, task board, or changelog is planned; an unexpected need requires
 separate coordination, not implied permission.
 
 ## Open questions
 
-Ratify the E1 scope, tool contracts, reviewed-target conflict/recovery behavior,
-and collision order before implementation. Memory content and privacy semantics
-are otherwise unchanged. E2 and E3 remain independent features under the
-aggregate design, not unfinished dependencies of this PR.
+None for E1. Memory content and privacy semantics remain unchanged. E2 and E3
+are independent features under the aggregate design, not unfinished dependencies
+of this PR.
 
 ## Verification
 

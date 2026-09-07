@@ -61,6 +61,7 @@ export class MemoryPipeline {
     this.started = true;
     if (this.control.featureMode() !== 'enabled') {
       this.suspended = true;
+      this.wake();
       return;
     }
     this.scanEligibleThreads();
@@ -72,6 +73,7 @@ export class MemoryPipeline {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.activeController?.abort();
+    this.wake();
   }
 
   resume(): void {
@@ -119,7 +121,7 @@ export class MemoryPipeline {
   }
 
   private wake(): void {
-    if (this.stopped || this.suspended || this.running) return;
+    if (this.stopped || this.running) return;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.running = this.drain().finally(() => {
@@ -129,8 +131,8 @@ export class MemoryPipeline {
   }
 
   private async drain(): Promise<void> {
-    while (!this.stopped && !this.suspended) {
-      const job = this.control.nextJob(this.now());
+    while (!this.stopped) {
+      const job = this.control.nextJob(this.now(), this.suspended);
       if (!job) return;
       try {
         await this.runJob(job);
@@ -171,9 +173,9 @@ export class MemoryPipeline {
       if (job.kind === 'reset') {
         const publicationId = payloadString(job.payload, 'publicationId');
         const publication = this.control.publication(publicationId);
-        if (!publication || publication.status === 'finalized') return;
+        if (!publication || publication.status !== 'prepared') return;
         if (publication.kind !== 'reset') throw new Error(`Memory reset job targets ${publication.kind} publication`);
-        await this.options.recoverResetPublication?.(publication, false);
+        await this.options.recoverResetPublication?.(publication, await this.timeline.hasPublication(publication.id, publication.digest));
         return;
       }
       throw new Error(`Unknown Memory job kind: ${job.kind}`);
@@ -206,8 +208,8 @@ export class MemoryPipeline {
   }
 
   private scheduleNextWake(): void {
-    if (this.stopped || this.suspended || this.running || this.retryTimer) return;
-    const availableAt = this.control.nextJobAvailableAt();
+    if (this.stopped || this.running || this.retryTimer) return;
+    const availableAt = this.control.nextJobAvailableAt(this.suspended);
     if (availableAt === null) return;
     const delay = Math.max(0, Math.min(60_000, availableAt - this.now()));
     this.retryTimer = setTimeout(() => {

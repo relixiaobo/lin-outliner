@@ -10,7 +10,7 @@ import type {
 import {
   MEMORY_EXTENSION_ID,
   type MemoryFeatureMode,
-  type MemorySettingsView,
+  type MemoryView,
   type ThreadMemoryMode,
 } from '../../../../core/agent/memory';
 import type {
@@ -30,6 +30,10 @@ import {
 } from '../../../../outline/contract';
 import { directOutlineShellInvocation } from '../../capabilities/agentCapabilities';
 import { uuidV7 } from '../../uuid';
+import { AgentToolFailure } from '../../AgentToolFailure';
+import { OutlineContractError } from '../../../../outline/contract/errors';
+import { MEMORY_ERROR_MAX_CHARS, type MemoryResetView, type MemoryThreadView } from '../../../../core/agent/memoryOperations';
+import { captureMemoryResetTarget, decodeMemoryResetTarget, requireMatchingMemoryResetTarget, type MemoryResetTarget } from './MemoryResetTarget';
 import {
   MemoryControlStore,
   type MemoryPublicationRecord,
@@ -60,7 +64,7 @@ const MAX_TRACKED_MEMORY_READS = 8;
 interface ResetPublicationPayload {
   readonly epoch: number;
   readonly excludedTurnIds: readonly TurnId[];
-  readonly containerIds: readonly string[];
+  readonly target: MemoryResetTarget;
 }
 
 interface TurnMemoryUsage {
@@ -237,17 +241,32 @@ export class MemoryExtension implements AgentCoreExtension {
     this.storeClosed = true;
   }
 
-  settings(threadId: ThreadId | null = null): MemorySettingsView {
+  view(threadId: ThreadId | null = null): MemoryView {
+    if (!this.mutationIndex) this.initializeMutationIndex(this.timeline.projection());
+    const status = this.control.status();
     return {
       status: {
-        ...this.control.status(),
-        strayTaggedNodeCount: this.timeline.graph().strayTaggedNodeIds.length,
+        ...status,
+        lastError: status.lastError?.slice(0, MEMORY_ERROR_MAX_CHARS) ?? null,
+        strayTaggedNodeCount: this.mutationIndex!.strayTaggedNodeCount(),
       },
-      thread: threadId ? { threadId, mode: this.control.threadMode(threadId) } : null,
+      thread: threadId ? this.threadView(threadId) : null,
     };
   }
 
-  async setFeatureMode(mode: MemoryFeatureMode): Promise<MemorySettingsView> {
+  subscribe(listener: () => void): () => void { return this.control.subscribe(listener); }
+
+  threadView(threadId: ThreadId): MemoryThreadView {
+    const host = this.requireHost();
+    if (!host.isThreadNavigable(threadId)) throw memoryFailure('memory_thread_unavailable', 'The Thread is unavailable.');
+    const thread = host.readThread({ threadId }).thread;
+    if (thread.ephemeral || thread.parentThreadId !== null || thread.threadSource !== 'user') {
+      throw memoryFailure('memory_thread_ineligible', 'Memory mode is only available for persistent root user Threads.');
+    }
+    return { threadId, mode: this.control.threadMode(threadId), revision: this.control.threadModeRevision(threadId), appliesAt: 'subsequent_admissions' };
+  }
+
+  async setFeatureMode(mode: MemoryFeatureMode): Promise<MemoryView> {
     const host = this.requireHost();
     await host.withHostRootTurnAdmissionBarrier(async () => {
       const active = host.activeRootUserTurns();
@@ -264,61 +283,89 @@ export class MemoryExtension implements AgentCoreExtension {
       this.requirePipeline().scanEligibleThreads();
       this.requirePipeline().wakeGlobal('feature-enabled');
     }
-    return this.settings();
+    return this.view();
   }
 
-  async setThreadMode(threadId: ThreadId, mode: ThreadMemoryMode): Promise<MemorySettingsView> {
+  async setThreadMode(threadId: ThreadId, mode: ThreadMemoryMode, expectedRevision: number, authorize: () => Promise<void>): Promise<MemoryThreadView> {
     const host = this.requireHost();
+    let result!: MemoryThreadView;
     await host.withThreadAdmissionBarrier(threadId, async () => {
       await this.timeline.withWriteGate(async () => {
-        const thread = host.readThread({ threadId, includeTurns: true }).thread;
-        if (thread.ephemeral || thread.parentThreadId !== null || thread.threadSource !== 'user') {
-          throw new Error('Memory mode is available only for persistent root user Threads');
-        }
+        await authorize();
+        const current = this.threadView(threadId);
+        if (current.revision !== expectedRevision) throw memoryFailure('stale_memory_thread', 'The Thread Memory mode changed. Inspect it again.');
         this.control.setThreadMode(threadId, mode);
+        result = this.threadView(threadId);
       });
     });
     if (mode === 'enabled') {
-      this.requirePipeline().wakeThread(host.readThread({ threadId, includeTurns: true }).thread);
+      try { this.requirePipeline().wakeThread(host.readThread({ threadId, includeTurns: true }).thread); }
+      catch (error) { console.warn('[memory] mode saved but worker wake failed', error); }
     }
-    return this.settings(threadId);
+    return result;
   }
 
-  async reset(): Promise<MemorySettingsView> {
+  reviewReset(): MemoryResetTarget {
+    return captureMemoryResetTarget(this.timeline.projection(), this.control.status().resetEpoch);
+  }
+
+  inspectReset(operationId: string): MemoryResetView {
+    const record = this.control.publication(operationId);
+    if (!record || record.kind !== 'reset') return { operationId, state: 'unknown', admittedAt: null, targetEpoch: null };
+    return { operationId, state: record.status, admittedAt: record.createdAt, targetEpoch: resetPublicationPayload(record.payload).epoch };
+  }
+
+  async reset(target: MemoryResetTarget, authorize: () => Promise<void>): Promise<MemoryResetView> {
     const host = this.requireHost();
+    const operationId = `memory:reset:${uuidV7()}`;
+    return host.withHostRootTurnAdmissionBarrier(() => this.timeline.withWriteGate(async () => {
+      await authorize();
+      if (this.control.preparedPublications().some((entry) => entry.kind === 'reset')) {
+        throw memoryFailure('memory_reset_pending', 'An earlier Memory Reset is still awaiting settlement.');
+      }
+      return this.commitReviewedReset(target, authorize, operationId);
+    }));
+  }
+
+  private async commitReviewedReset(target: MemoryResetTarget, authorize: () => Promise<void>, operationId: string): Promise<MemoryResetView> {
+    const host = this.requireHost();
+    let record: MemoryPublicationRecord<ResetPublicationPayload> | undefined;
+    const generation = this.control.allocatePublicationGeneration();
+    const status = this.control.status();
+    const payload: ResetPublicationPayload = {
+      epoch: status.resetEpoch + 1,
+      excludedTurnIds: host.activeRootUserTurns().map((entry) => entry.turnId),
+      target: decodeMemoryResetTarget(target),
+    };
+    const digest = timelineDigest({ operationId, generation, payload });
     try {
-      await host.withHostRootTurnAdmissionBarrier(async () => {
-        await this.timeline.withWriteGate(async () => {
-          const status = this.control.status();
-          const epoch = status.resetEpoch + 1;
-          const active = host.activeRootUserTurns();
-          const excludedTurnIds = active.map((entry) => entry.turnId);
-          const containerIds = this.timeline.graph().containers.map((entry) => entry.node.id);
-          const operationId = `memory:reset:${uuidV7()}`;
-          const generation = this.control.allocatePublicationGeneration();
-          const payload: ResetPublicationPayload = { epoch, excludedTurnIds, containerIds };
-          const digest = timelineDigest({ operationId, generation, payload });
-          const publication: MemoryPublicationRecord<ResetPublicationPayload> = {
-            id: operationId,
-            kind: 'reset',
-            status: 'prepared',
-            generation,
-            featureGeneration: status.featureModeGeneration,
-            resetEpoch: status.resetEpoch,
-            digest,
-            payload,
-            createdAt: Date.now(),
-          };
-          this.control.prepareReset(publication);
-          await this.timeline.resetWithinWriteGate(operationId, generation, digest, containerIds);
-          this.control.finalizeReset(operationId, epoch, excludedTurnIds);
-        });
+      await this.timeline.resetWithinWriteGate(operationId, generation, digest, target.containerIds, async (projection) => {
+        await authorize();
+        requireMatchingMemoryResetTarget(projection, this.control.status().resetEpoch, target);
+        const prepared: MemoryPublicationRecord<ResetPublicationPayload> = {
+          id: operationId, kind: 'reset', status: 'prepared', generation,
+          featureGeneration: status.featureModeGeneration, resetEpoch: status.resetEpoch,
+          digest, payload, createdAt: Date.now(),
+        };
+        this.control.prepareReset(prepared);
+        record = prepared;
       });
+      this.control.finalizeReset(operationId, payload.epoch, payload.excludedTurnIds);
     } catch (error) {
-      this.requirePipeline().wakePending();
-      throw error;
+      if (!record) throw error;
+      try {
+        if (await this.timeline.hasPublication(operationId, digest)) {
+          this.control.finalizeReset(operationId, payload.epoch, payload.excludedTurnIds);
+        } else if (definitiveResetRejection(error)) {
+          this.control.conflictReset(operationId);
+        }
+      } catch {
+        return { operationId, state: 'unknown', admittedAt: record.createdAt, targetEpoch: payload.epoch };
+      } finally {
+        try { this.requirePipeline().wakePending(); } catch (wakeError) { console.warn('[memory] Reset wake failed', wakeError); }
+      }
     }
-    return this.settings();
+    return this.inspectReset(operationId);
   }
 
   contributeTurnAdmission(context: TurnAdmissionContext): TurnAdmissionContribution {
@@ -480,7 +527,9 @@ export class MemoryExtension implements AgentCoreExtension {
   projectionChanged(delivery: { readonly update: ProjectionUpdate; readonly operation?: Operation }): void {
     const update = delivery.update;
     if (update.kind === 'delta' && update.changedNodes.length === 0 && update.removedIds.length === 0) return;
+    const previousStrayCount = this.mutationIndex?.strayTaggedNodeCount();
     const indexUpdate = this.applyProjectionUpdate(update);
+    if (indexUpdate.fullRebuild || previousStrayCount !== this.mutationIndex?.strayTaggedNodeCount()) this.control.changed();
     if (isMemoryPublication(delivery.operation)) return;
     const affected = new Set(indexUpdate.affectedCanonicalNodeIds);
     if (indexUpdate.fullRebuild) {
@@ -624,13 +673,25 @@ export class MemoryExtension implements AgentCoreExtension {
   private async recoverPreparedReset(record: MemoryPublicationRecord, receiptMatches: boolean): Promise<void> {
     const payload = resetPublicationPayload(record.payload);
     await this.timeline.withWriteGate(async () => {
-      if (!receiptMatches) {
-        await this.timeline.resetWithinWriteGate(
-          record.id,
-          record.generation,
-          record.digest,
-          payload.containerIds,
-        );
+      if (this.control.publication(record.id)?.status !== 'prepared') return;
+      if (!receiptMatches && !(await this.timeline.hasPublication(record.id, record.digest))) {
+        try {
+          await this.timeline.resetWithinWriteGate(
+            record.id,
+            record.generation,
+            record.digest,
+            payload.target.containerIds,
+            (projection) => requireMatchingMemoryResetTarget(projection, this.control.status().resetEpoch, payload.target),
+          );
+        } catch (error) {
+          if (await this.timeline.hasPublication(record.id, record.digest)) {
+            this.control.finalizeReset(record.id, payload.epoch, payload.excludedTurnIds);
+            return;
+          }
+          if (!definitiveResetRejection(error)) throw error;
+          this.control.conflictReset(record.id);
+          return;
+        }
       }
       this.control.finalizeReset(record.id, payload.epoch, payload.excludedTurnIds);
     });
@@ -748,19 +809,26 @@ function resetPublicationPayload(value: unknown): ResetPublicationPayload {
   const record = value as Record<string, unknown>;
   const epoch = record.epoch;
   const excludedTurnIds = record.excludedTurnIds;
-  const containerIds = record.containerIds;
+  const target = decodeMemoryResetTarget(record.target);
   if (!Number.isSafeInteger(epoch) || Number(epoch) < 1) throw new Error('Memory Reset epoch is invalid');
   if (!Array.isArray(excludedTurnIds) || excludedTurnIds.some((turnId) => typeof turnId !== 'string' || !turnId)) {
     throw new Error('Memory Reset exclusions are invalid');
   }
-  if (!Array.isArray(containerIds) || containerIds.some((nodeId) => typeof nodeId !== 'string' || !nodeId)) {
-    throw new Error('Memory Reset container IDs are invalid');
-  }
+  if (target.resetEpoch + 1 !== epoch) throw new Error('Memory Reset target epoch is invalid');
   return {
     epoch: Number(epoch),
     excludedTurnIds: Object.freeze([...new Set(excludedTurnIds as string[])]),
-    containerIds: Object.freeze([...new Set(containerIds as string[])]),
+    target,
   };
 }
 
 export type { ResetPublicationPayload };
+
+function memoryFailure(code: string, message: string): AgentToolFailure {
+  return new AgentToolFailure(code, message, 'Inspect Memory again before retrying. Never edit the private Memory store.');
+}
+
+function definitiveResetRejection(error: unknown): boolean {
+  return error instanceof AgentToolFailure
+    || (error instanceof OutlineContractError && ['invalid_input', 'not_found', 'precondition_failed', 'stale_revision', 'diff_mismatch', 'idempotency_conflict', 'confirmation_required'].includes(error.outlineError.code));
+}

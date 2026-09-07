@@ -10,10 +10,7 @@ export type MemoryManageRequest =
   | { readonly operation: 'set_thread_mode'; readonly threadId?: string; readonly mode: ThreadMemoryMode; readonly expectedRevision: number }
   | { readonly operation: 'reset' };
 
-export interface MemoryThreadView extends ThreadMemoryStatus {
-  readonly revision: number;
-  readonly appliesAt: 'subsequent_admissions';
-}
+export type MemoryThreadView = ThreadMemoryStatus;
 
 export interface MemoryResetReview {
   readonly resetEpoch: number;

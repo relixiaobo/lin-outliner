@@ -43,6 +43,15 @@ delegated caller cannot reach this facade through a dynamic factory bypass.
 Without a usable review window, reviewed operations return unavailable rather
 than approving silently. Invocation still requires the independent `skill` gate.
 
+`memory_inspect` and `memory_manage` are independently admitted root-only domain
+tools. Their owner rechecks the active caller, selection, global tool disablement,
+and operation blocks after review and after gate waits. Reset additionally checks
+`outline.delete`; Open checks `outline.edit` for saved-search creation. A delete
+block does not prevent status inspection or Thread mode changes. No descendant
+can bypass these checks through raw dynamic contributions. Global Memory mode
+remains a public file preference, not a management-tool setter. Native Reset
+review binds destructive intent to an exact target, not execution permission.
+
 Default availability does not widen execution authority. Browser Pilot remains
 subject to the effective Configuration Profile and Skill ceiling, the
 ordinary tool ceiling, `disabledSkills`, and explicit capability blocks. Its

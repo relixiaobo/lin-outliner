@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { mkdirSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createAssistantMessageEventStream, type AssistantMessage, type Model } from '@earendil-works/pi-ai';
 import {
   decodeMemoryConsolidationOutput,
   decodeMemoryStage1Output,
@@ -48,6 +53,24 @@ import {
 import { closeAgentServices } from '../../src/main/agent/closeAgentServices';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
+import { createMemoryOperations, type MemoryOperationCaller } from '../../src/main/hostDomain/memoryOperations';
+import { captureMemoryResetTarget } from '../../src/main/agent/extensions/memory/MemoryResetTarget';
+import { AgentToolFailure } from '../../src/main/agent/AgentToolFailure';
+import { ThreadService, type ThreadServiceStores } from '../../src/main/agent/ThreadService';
+import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentConfigurationLoader';
+import { ExtensionRegistry } from '../../src/main/agent/ExtensionRegistry';
+import { PiTurnExecutor } from '../../src/main/agent/runtime/PiTurnExecutor';
+import { PiModelGateway } from '../../src/main/agent/runtime/kernel/ModelGateway';
+import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
+import { createMemoryTools } from '../../src/main/agent/capabilities/memoryTools';
+import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
+import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
+import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
+import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
+import { AgentResourceStore } from '../../src/main/agent/persistence/AgentResourceStore';
+import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
+import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
+import { AgentStartupContextStore } from '../../src/main/agent/context/AgentStartupContext';
 
 const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc';
 const TURN_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd';
@@ -167,7 +190,7 @@ describe('Codex Memory contracts', () => {
     const resetPublication = publication('reset', {
       epoch: 1,
       excludedTurnIds: [TURN_ID],
-      containerIds: [],
+      target: captureMemoryResetTarget(memoryProjection(), 0),
     });
     store.preparePublication(resetPublication);
     store.finalizeReset(resetPublication.id, 1, [TURN_ID]);
@@ -314,7 +337,7 @@ describe('Codex Memory contracts', () => {
 
     const store = memoryStore();
     const extension = new MemoryExtension(store, new TimelineMemoryStore(readOnlyTimelineHost(projection)));
-    expect(extension.settings().status.strayTaggedNodeCount).toBe(1);
+    expect(extension.view().status.strayTaggedNodeCount).toBe(1);
   });
 
   test('routes Memory lookup without injecting prose and counts only an inline citation of an exact get', () => {
@@ -1257,7 +1280,7 @@ describe('Codex Memory contracts', () => {
     const resetPublication = publication('reset', {
       epoch: 1,
       excludedTurnIds: [TURN_ID],
-      containerIds: [MEMORY_NODE_ID],
+      target: captureMemoryResetTarget(memoryProjection(), 0),
     });
     store.prepareReset(resetPublication, 20);
     expect(store.isTurnExcluded(TURN_ID)).toBe(true);
@@ -1496,7 +1519,7 @@ describe('Codex Memory contracts', () => {
     });
     await entered;
     let completed = false;
-    const disabling = extension.setThreadMode(thread.id, 'disabled').then(() => { completed = true; });
+    const disabling = extension.setThreadMode(thread.id, 'disabled', 0, async () => {}).then(() => { completed = true; });
     await Promise.resolve();
     expect(completed).toBe(false);
     expect(store.threadMode(thread.id)).toBe('enabled');
@@ -1573,28 +1596,13 @@ describe('Codex Memory contracts', () => {
     const resetPublication = publication('reset', {
       epoch: 1,
       excludedTurnIds: [TURN_ID],
-      containerIds: [MEMORY_NODE_ID],
+      target: captureMemoryResetTarget(timelineState.projection(), 0),
     });
     store.prepareReset(resetPublication, 20);
-    const pipeline = new MemoryPipeline(
-      store,
-      timeline,
-      {} as Phase1,
-      {} as Phase2,
-      { persistentRootThreads: () => [], readSource: () => null },
-      {
-        minThreadIdleMs: 0,
-        recoverResetPublication: async (record, receiptMatches) => {
-          expect(receiptMatches).toBe(false);
-          const payload = record.payload as typeof resetPublication.payload;
-          await timeline.reset(record.id, record.generation, record.digest, payload.containerIds);
-          store.finalizeReset(record.id, payload.epoch, payload.excludedTurnIds);
-        },
-      },
-    );
-
-    await pipeline.start();
-    await pipeline.close();
+    const memory = new MemoryExtension(store, timeline);
+    memory.bindHost(memoryThreadHost(rootThread([])));
+    await memory.startWorker();
+    await memory.stopWorker();
     expect(timelineState.deletedNodeIds).toEqual([MEMORY_NODE_ID]);
     expect(timelineState.projection().nodes.some((entry) => entry.id === 'stray:1')).toBe(true);
     expect(store.status().resetEpoch).toBe(1);
@@ -1608,7 +1616,7 @@ describe('Codex Memory contracts', () => {
     const resetPublication = publication('reset', {
       epoch: 1,
       excludedTurnIds: [TURN_ID],
-      containerIds: [MEMORY_NODE_ID],
+      target: captureMemoryResetTarget(timelineState.projection(), 0),
     });
     store.prepareReset(resetPublication, 20);
     await timeline.reset(
@@ -1618,23 +1626,10 @@ describe('Codex Memory contracts', () => {
       [MEMORY_NODE_ID],
     );
     expect(timelineState.deletedNodeIds).toEqual([MEMORY_NODE_ID]);
-    const pipeline = new MemoryPipeline(
-      store,
-      timeline,
-      {} as Phase1,
-      {} as Phase2,
-      { persistentRootThreads: () => [], readSource: () => null },
-      {
-        minThreadIdleMs: 0,
-        recoverResetPublication: async (record, receiptMatches) => {
-          expect(receiptMatches).toBe(true);
-          const payload = record.payload as typeof resetPublication.payload;
-          store.finalizeReset(record.id, payload.epoch, payload.excludedTurnIds);
-        },
-      },
-    );
-    await pipeline.start();
-    await pipeline.close();
+    const memory = new MemoryExtension(store, timeline);
+    memory.bindHost(memoryThreadHost(rootThread([])));
+    await memory.startWorker();
+    await memory.stopWorker();
     expect(timelineState.deletedNodeIds).toEqual([MEMORY_NODE_ID]);
     expect(store.publication(resetPublication.id)?.status).toBe('finalized');
   });
@@ -1681,6 +1676,350 @@ describe('Codex Memory contracts', () => {
     expect(timelineState.calls).toHaveLength(1);
   });
 });
+
+describe('Memory human and Agent operations', () => {
+  function fixture(behavior: { failAfterCommitOnce?: boolean } = {}) {
+    const store = memoryStore();
+    const state = mutableTimelineHost(memoryProjection(), behavior);
+    const timeline = new TimelineMemoryStore(state.host);
+    const memory = new MemoryExtension(store, timeline);
+    const host = memoryThreadHost(rootThread([]));
+    memory.bindHost(host);
+    const caller: MemoryOperationCaller = {
+      origin: { kind: 'agent', threadId: THREAD_ID, turnId: TURN_ID, itemId: ITEM_ID },
+      authorize: async () => {},
+    };
+    const operations = createMemoryOperations({ memory, review: async () => true,
+      open: async (authorize) => { await authorize(); return { operation: 'open', nodeId: 'search', navigation: 'unknown' }; } });
+    return { store, state, timeline, memory, host, caller, operations };
+  }
+
+  test('shares exact Thread identity and revision checks without requiring global enablement', async () => {
+    const { store, operations, caller } = fixture();
+    store.setFeatureMode('disabled', []);
+    expect(await operations.inspect({ request: { operation: 'status' } }, caller)).toMatchObject({ thread: { threadId: THREAD_ID, mode: 'enabled', revision: 0 } });
+    expect(await operations.manage({ request: { operation: 'set_thread_mode', mode: 'disabled', expectedRevision: 0 } }, caller)).toMatchObject({ thread: { revision: 1, appliesAt: 'subsequent_admissions' } });
+    await expect(operations.manage({ request: { operation: 'set_thread_mode', mode: 'enabled', expectedRevision: 0 } }, caller)).rejects.toMatchObject({ code: 'stale_memory_thread' });
+    expect(store.threadMode(THREAD_ID)).toBe('disabled');
+    await expect(operations.inspect({ request: { operation: 'status', threadId: 'missing' } }, caller)).rejects.toMatchObject({ code: 'memory_thread_unavailable' });
+  });
+
+  test('rejects ineligible callers and never accepts model-supplied confirmation or private targets', async () => {
+    const { operations, caller, host } = fixture();
+    for (const request of [{ operation: 'reset', approved: true }, { operation: 'reset', target: {} }, { operation: 'set_feature_mode', mode: 'disabled' }]) {
+      await expect(operations.manage({ request }, caller)).rejects.toMatchObject({ code: 'invalid_request' });
+    }
+    const read = host.readThread;
+    host.readThread = () => ({ thread: { ...read({ threadId: THREAD_ID }).thread, parentThreadId: 'parent' } });
+    await expect(operations.manage({ request: { operation: 'open' } }, caller)).rejects.toMatchObject({ code: 'memory_thread_ineligible' });
+  });
+
+  test('cancellation admits no Reset and changed reviewed content is never deleted', async () => {
+    const { memory, state, store, caller } = fixture();
+    for (const accept of [false, true]) {
+      const operations = createMemoryOperations({ memory, open: async () => { throw new Error('unused'); }, review: async () => {
+        if (accept) state.projection().nodes.find((node) => node.id === BELIEF_NODE_ID)!.content.text = 'Edited during review';
+        return accept;
+      } });
+      await expect(operations.manage({ request: { operation: 'reset' } }, caller)).rejects.toMatchObject({ code: accept ? 'stale_memory_reset' : 'cancelled' });
+      expect(store.preparedPublications()).toEqual([]);
+      expect(state.deletedNodeIds).toEqual([]);
+      expect(store.status().resetEpoch).toBe(0);
+    }
+  });
+
+  test('rechecks revoked authority after native review and after waiting for the write gate', async () => {
+    const { memory, timeline, state, store, caller } = fixture();
+    let allowed = true;
+    const authorize = async () => { if (!allowed) throw new AgentToolFailure('operation_unavailable', 'Revoked', 'Inspect again'); };
+    const reviewed = createMemoryOperations({ memory, open: async () => { throw new Error('unused'); }, review: async () => { allowed = false; return true; } });
+    await expect(reviewed.manage({ request: { operation: 'reset' } }, { ...caller, authorize })).rejects.toMatchObject({ code: 'operation_unavailable' });
+    allowed = true;
+    let release!: () => void;
+    let entered!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = timeline.withWriteGate(async () => { entered(); await new Promise<void>((resolve) => { release = resolve; }); });
+    await ready;
+    const pending = memory.reset(memory.reviewReset(), authorize);
+    allowed = false;
+    release();
+    await gate;
+    await expect(pending).rejects.toMatchObject({ code: 'operation_unavailable' });
+    expect(store.preparedPublications()).toEqual([]);
+    expect(state.deletedNodeIds).toEqual([]);
+  });
+
+  test('purges reviewed ordinary descendants, preserves outside notes/modes, and reports durable settlement', async () => {
+    const { memory, state, store, operations, caller } = fixture();
+    state.projection().nodes.push(node('ordinary:child', BELIEF_NODE_ID, [], [], 'Ordinary note'));
+    state.projection().nodes.find((node) => node.id === BELIEF_NODE_ID)!.children.push('ordinary:child');
+    store.setThreadMode(THREAD_ID, 'disabled');
+    const result = await operations.manage({ request: { operation: 'reset' } }, caller);
+    expect(result).toMatchObject({ operation: 'reset', reset: { state: 'finalized', targetEpoch: 1 } });
+    if (result.operation !== 'reset') throw new Error('Expected Reset');
+    expect(memory.inspectReset(result.reset.operationId)).toEqual(result.reset);
+    expect(state.projection().nodes.some((node) => node.id === 'ordinary:child')).toBe(false);
+    expect(state.projection().nodes.some((node) => node.id === 'stray:1')).toBe(true);
+    expect(store.threadMode(THREAD_ID)).toBe('disabled');
+    expect(state.calls[0]?.options).toMatchObject({ settlement: 'durable', acknowledgeDestructive: true });
+  });
+
+  test('settles a lost commit acknowledgement without a second deletion', async () => {
+    const { memory, state } = fixture({ failAfterCommitOnce: true });
+    const result = await memory.reset(memory.reviewReset(), async () => {});
+    expect(result.state).toBe('finalized');
+    expect(state.deletedNodeIds).toEqual([MEMORY_NODE_ID]);
+  });
+
+  for (const edited of [false, true]) test(`recovers the exact journaled Reset target, changed=${edited}`, async () => {
+    const { memory, state, store, host, timeline } = fixture();
+    const target = memory.reviewReset();
+    const record = publication('reset', { epoch: 1, excludedTurnIds: [TURN_ID], target });
+    store.prepareReset(record);
+    if (edited) state.projection().nodes.find((node) => node.id === BELIEF_NODE_ID)!.content.text = 'Survive restart';
+    const restored = new MemoryExtension(store, timeline);
+    restored.bindHost(host);
+    await restored.prepareForTurnAdmission();
+    expect(store.publication(record.id)?.status).toBe(edited ? 'conflicted' : 'finalized');
+    expect(state.deletedNodeIds).toEqual(edited ? [] : [MEMORY_NODE_ID]);
+    expect(store.status().resetEpoch).toBe(edited ? 0 : 1);
+    expect(store.isTurnExcluded(TURN_ID)).toBe(true);
+    expect(store.preparedPublications()).toEqual([]);
+    expect(store.nextJob(Date.now() + 100_000, true)).toBeNull();
+  });
+
+  test('keeps conflicted Reset evidence after a later successful Reset', async () => {
+    const { memory, store } = fixture();
+    const previous = publication('reset', { epoch: 1, excludedTurnIds: [TURN_ID], target: memory.reviewReset() });
+    store.prepareReset(previous);
+    store.conflictReset(previous.id);
+    await memory.reset(memory.reviewReset(), async () => {});
+    expect(memory.inspectReset(previous.id).state).toBe('conflicted');
+  });
+
+  test('preserves unknown settlement and recovers it while learning is disabled', async () => {
+    const { memory, state, store, host } = fixture();
+    await memory.startWorker();
+    const plan = state.host.runPlannedChanges;
+    state.host.runPlannedChanges = async (build, options) => {
+      await plan(build, options);
+      throw new OutlineContractError(outlineError('operation_settlement_unknown', 'durability', 'Acknowledgement lost'));
+    };
+    const readReceipt = state.host.log;
+    state.host.log = async () => { throw new Error('Runtime lookup unavailable'); };
+    let modelCalls = 0;
+    host.runInternalMemoryTurn = async () => { modelCalls++; return ''; };
+    const result = await memory.reset(memory.reviewReset(), async () => {});
+    expect(result.state).toBe('unknown');
+    expect(result.admittedAt).not.toBeNull();
+    expect(memory.inspectReset(result.operationId).state).toBe('prepared');
+    expect(store.status().resetEpoch).toBe(0);
+    await expect(memory.reset(memory.reviewReset(), async () => {})).rejects.toMatchObject({ code: 'memory_reset_pending' });
+    await waitFor(() => store.status().lastError !== null);
+    store.enqueueJob('phase2:global', 'phase2', { reason: 'test' });
+    store.enqueueJob(`reset:${result.operationId}`, 'reset', { publicationId: result.operationId });
+    state.host.log = readReceipt;
+    await memory.setFeatureMode('disabled');
+    await waitFor(() => memory.inspectReset(result.operationId).state === 'finalized');
+    await memory.stopWorker();
+    expect(store.featureMode()).toBe('disabled');
+    expect(modelCalls).toBe(0);
+    expect(state.deletedNodeIds).toEqual([MEMORY_NODE_ID]);
+    expect(store.status().resetEpoch).toBe(1);
+  });
+
+  test('serializes concurrent reviewed Resets without deleting twice', async () => {
+    const { memory, state, store } = fixture();
+    const target = memory.reviewReset();
+    const results = await Promise.allSettled([
+      memory.reset(target, async () => {}), memory.reset(target, async () => {}),
+    ]);
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'rejected']);
+    expect(results[1]).toMatchObject({ reason: { code: 'stale_memory_reset' } });
+    expect(state.deletedNodeIds).toEqual([MEMORY_NODE_ID]);
+    expect(store.status().resetEpoch).toBe(1);
+  });
+
+  test('rechecks the reviewed target inside the document planning queue before admission', async () => {
+    const { memory, state, store } = fixture();
+    const plan = state.host.runPlannedChanges;
+    state.host.runPlannedChanges = async (build, options) => {
+      state.projection().nodes.find((node) => node.id === BELIEF_NODE_ID)!.content.text = 'Edited before planning';
+      return plan(build, options);
+    };
+    await expect(memory.reset(memory.reviewReset(), async () => {})).rejects.toMatchObject({ code: 'stale_memory_reset' });
+    expect(store.preparedPublications()).toEqual([]);
+    expect(state.deletedNodeIds).toEqual([]);
+  });
+
+  test('records definitive Runtime rejection as conflicted and retains admitted exclusions', async () => {
+    const { memory, state, host, store } = fixture();
+    host.activeRootUserTurns = () => [{ threadId: THREAD_ID, turnId: TURN_ID }];
+    state.host.runPlannedChanges = async (build) => {
+      await build(state.projection());
+      throw new OutlineContractError(outlineError('stale_revision', 'conflict', 'Another Runtime client committed.'));
+    };
+    const result = await memory.reset(memory.reviewReset(), async () => {});
+    expect(result.state).toBe('conflicted');
+    expect(store.status().resetEpoch).toBe(0);
+    expect(store.isTurnExcluded(TURN_ID)).toBe(true);
+    expect(state.deletedNodeIds).toEqual([]);
+  });
+
+  test('bounds redacted status and releases failure-contained owner subscriptions', async () => {
+    const { memory, store } = fixture();
+    let count = 0;
+    const stop = memory.subscribe(() => { count += 1; });
+    store.failJob('missing', 'x'.repeat(2_000));
+    await Promise.resolve();
+    expect(memory.view().status.lastError?.length).toBe(512);
+    expect(count).toBe(1);
+    stop();
+    store.recordSuccess();
+    await Promise.resolve();
+    expect(count).toBe(1);
+  });
+
+  test('invalidates indexed stray status without notifying for unrelated Outline edits', async () => {
+    const { memory, state } = fixture();
+    memory.initializeMutationIndex(state.projection());
+    await Promise.resolve();
+    let events = 0;
+    const stop = memory.subscribe(() => { events++; });
+    memory.projectionChanged({ update: { kind: 'delta', revision: 1, todayId: 'day', removedIds: [],
+      changedNodes: [patchProjectionNode(state.projection(), 'ordinary:1', { content: { text: 'Unrelated edit', spans: [] } })] } });
+    await Promise.resolve();
+    expect(events).toBe(0);
+    expect(memory.view().status.strayTaggedNodeCount).toBe(1);
+    memory.projectionChanged({ update: { kind: 'delta', revision: 2, todayId: 'day', removedIds: [],
+      changedNodes: [patchProjectionNode(state.projection(), 'stray:1', { tags: [] })] } });
+    await Promise.resolve();
+    expect(events).toBe(1);
+    expect(memory.view().status.strayTaggedNodeCount).toBe(0);
+    stop();
+    await memory.stopWorker();
+  });
+
+  test('a provider-driven root Turn inspects, changes mode, opens and settles Reset through the real owner', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-memory-turn-'));
+    const store = memoryStore();
+    const state = mutableTimelineHost(memoryProjection());
+    const memory = new MemoryExtension(store, new TimelineMemoryStore(state.host));
+    const extensions = new ExtensionRegistry();
+    extensions.register(memory, { applicationInstructions: true });
+    let toolRuntime!: ToolRuntime;
+    let index = 0;
+    let reviews = 0;
+    const outcomes: any[] = [];
+    const inspect = (request: object) => ({ name: 'memory_inspect', args: { request } });
+    const manage = (request: object) => ({ name: 'memory_manage', args: { request } });
+    const steps = [
+      () => inspect({ operation: 'status' }),
+      () => manage({ operation: 'set_thread_mode', mode: 'disabled', expectedRevision: outcomes[0].thread.revision }),
+      () => inspect({ operation: 'status' }),
+      () => manage({ operation: 'set_thread_mode', mode: 'enabled', expectedRevision: outcomes[2].thread.revision }),
+      () => manage({ operation: 'open' }),
+      () => manage({ operation: 'reset' }),
+      () => inspect({ operation: 'reset', operationId: outcomes[5].reset.operationId }),
+      () => inspect({ operation: 'status' }),
+    ];
+    const model: Model<'openai-responses'> = {
+      id: 'fixture-model', name: 'Fixture', api: 'openai-responses', provider: 'openai',
+      baseUrl: 'https://provider.invalid', reasoning: false, input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128_000, maxTokens: 8_192,
+    };
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => ({ model, thinkingLevel: 'off', getApiKey: async () => undefined }),
+      resolveRuntimeSettings: async () => ({ additionalSkillDirectories: [], disabledSkills: [],
+        providerTimeoutMs: null, providerMaxRetries: 0, providerMaxRetryDelayMs: 1, providerCacheRetention: 'short' }),
+      createTools: (context) => toolRuntime.createTools(context),
+      beforeProviderContext: (context) => toolRuntime.prepareProviderContext(context),
+      createGateway: (hooks) => new PiModelGateway({ ...hooks, streamSimple: (_model, context) => {
+        if (index > 0) {
+          const result = context.messages.findLast((message) => message.role === 'toolResult');
+          if (!result || result.role !== 'toolResult') throw new Error('Missing tool result');
+          const header = JSON.parse((result.content[0] as { text: string }).text.split('\n', 1)[0]!);
+          expect(header).not.toHaveProperty('error');
+          expect(result.isError).toBe(false);
+          outcomes.push(header.data.result);
+        }
+        const next = steps[index++]?.();
+        const message: AssistantMessage = {
+          role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(),
+          content: next ? [{ type: 'toolCall', id: `memory-fixture-${index}`, name: next.name, arguments: next.args }]
+            : [{ type: 'text', text: 'Memory operations completed.' }],
+          stopReason: next ? 'toolUse' : 'stop',
+          usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        };
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => { stream.push({ type: 'done', reason: next ? 'toolUse' : 'stop', message }); stream.end(message); });
+        return stream;
+      } }),
+    });
+    const service = new ThreadService({ stores: memoryTurnStores(root), executor, extensions,
+      attachmentScratchRoot: join(root, 'scratch'), transcriptRoot: join(root, 'transcripts'),
+      resolveConfiguration: () => ({ ...defaultEffectiveThreadConfiguration(), tools: ['memory_inspect', 'memory_manage'] }),
+    });
+    memory.bindHost(service);
+    const operations = createMemoryOperations({ memory,
+      review: async (review, caller) => { expect(caller.origin.kind).toBe('agent'); expect(review.nodeCount).toBe(3); reviews++; return true; },
+      open: async (authorize) => { await authorize(); return { operation: 'open', nodeId: 'node:search', navigation: 'unknown' }; },
+    });
+    toolRuntime = new ToolRuntime(service, { capabilityTools: () => [], capabilityConfig: { blocks: [] },
+      dynamicTools: (context, authorize) => createMemoryTools(operations, (itemId, signal) => ({
+        origin: { kind: 'agent', threadId: context.thread.id, turnId: context.turn.id, itemId }, authorize, signal,
+      })),
+    });
+    try {
+      await service.initialize();
+      await memory.prepareForTurnAdmission();
+      const { thread } = await service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', cwd: root });
+      const completed = Promise.withResolvers<Turn>();
+      const unsubscribe = service.subscribe((notification) => {
+        if (notification.type === 'turn/completed') completed.resolve(notification.turn);
+      });
+      await service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Inspect Memory, change this Thread mode, open Memory, then request Reset.' }] });
+      const turn = await completed.promise;
+      unsubscribe();
+      expect(turn.error).toBeNull();
+      expect(turn.status).toBe('completed');
+      expect(outcomes).toHaveLength(steps.length);
+      expect(outcomes[0].thread.threadId).toBe(thread.id);
+      expect(outcomes[2].thread).toMatchObject({ mode: 'disabled', revision: 1 });
+      expect(outcomes[4].navigation).toBe('unknown');
+      expect(outcomes[5].reset).toMatchObject({ state: 'finalized', targetEpoch: 1 });
+      expect(outcomes[6].reset).toEqual(outcomes[5].reset);
+      expect(outcomes[7].status.resetEpoch).toBe(1);
+      expect(store.isTurnExcluded(turn.id)).toBe(true);
+      expect(state.deletedNodeIds).toEqual([MEMORY_NODE_ID]);
+      expect(reviews).toBe(1);
+      const calls = turn.items.filter((item) => item.type === 'dynamicToolCall');
+      expect(calls).toHaveLength(steps.length);
+      expect(calls.every((item) => item.status === 'completed' && item.modelCall?.disposition === 'replayable')).toBe(true);
+    } finally {
+      await memory.stopWorker();
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+});
+
+function memoryTurnStores(root: string): ThreadServiceStores {
+  const directory = join(root, 'agent');
+  mkdirSync(directory, { recursive: true });
+  const database = (name: string) => new Database(join(directory, name), { create: true }) as unknown as SqliteDatabase;
+  const goals = database('goals.sqlite');
+  return {
+    metadata: new ThreadMetadataStore(join(directory, 'state.sqlite'), database('state.sqlite')),
+    history: new ThreadHistoryProjectionStore(join(directory, 'history.sqlite'), database('history.sqlite')),
+    rollout: new RolloutStore(join(directory, 'rollouts')),
+    goals: new GoalStore(join(directory, 'goals.sqlite'), goals), toolTasks: new ToolTaskStore(goals),
+    agentStartupContexts: new AgentStartupContextStore(goals), payloads: new ToolPayloadStore(join(directory, 'payloads')),
+    resources: new AgentResourceStore(join(directory, 'resources.sqlite'), join(root, 'content'),
+      join(root, 'scratch'), Date.now, database('resources.sqlite')),
+  };
+}
 
 function memoryStore(): MemoryControlStore {
   const store = new MemoryControlStore(
