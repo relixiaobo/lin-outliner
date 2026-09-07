@@ -2,7 +2,7 @@
 
 ## Goal
 
-Deliver Unit E2 of [File-First Settings](settings-control-plane.md) as **one
+Deliver Unit E2 of [File-First Settings](../settings-control-plane.md) as **one
 complete feature in one PR**: people and root Agents control a live preview's
 translation, clear saved translations for its content, and inspect or clear
 Tenon's preview data. Include runtime, Host/preload, UI, tools, retirement,
