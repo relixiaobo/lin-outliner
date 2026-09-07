@@ -103,11 +103,6 @@ defaultEffectiveThreadConfiguration,
 type AgentConfigurationReadFailureReporter,
 } from './AgentConfigurationLoader';
 import type { ReferencedAssetResolution } from './capabilities/agentReferencedAssets';
-import {
-  AgentStartupContextResolver,
-  AgentStartupContextStore,
-  type AgentStartupContextSnapshot,
-} from './context/AgentStartupContext';
 import { ExtensionRegistry } from './ExtensionRegistry';
 import { GoalExtension } from './extensions/goal/GoalExtension';
 import { GoalStore } from './extensions/goal/GoalStore';
@@ -181,7 +176,6 @@ export interface ThreadServiceStores {
   readonly history: ThreadHistoryProjectionStore;
   readonly rollout: RolloutStore;
   readonly goals: GoalStore;
-  readonly agentStartupContexts: AgentStartupContextStore;
   readonly payloads: ToolPayloadStore;
   readonly resources: AgentResourceStore;
   readonly toolTasks: ToolTaskStore;
@@ -191,14 +185,7 @@ export interface ThreadServiceOptions {
   readonly stores: ThreadServiceStores;
   readonly executor: TurnExecutor;
   readonly attachmentScratchRoot: string;
-  readonly resolveRootWorkspace?: (
-    threadId: ThreadId,
-  ) => string | Promise<string>;
-  readonly cleanupRootWorkspace?: (
-    threadId: ThreadId,
-    cwd: string,
-  ) => void | Promise<void>;
-  readonly ownsRootWorkspace?: (threadId: ThreadId, cwd: string) => boolean;
+  readonly defaultExecutionDirectory?: string;
   /** App-owned root for Thread transcript artifacts. Never a workspace path. */
   readonly transcriptRoot: string;
   readonly nameGenerator?: ThreadNameGenerator;
@@ -227,7 +214,7 @@ export interface ThreadServiceOptions {
     input: SkillAdmissionResolutionInput,
   ) => SkillAdmissionResolution | Promise<SkillAdmissionResolution>;
   readonly resolveIdentityCatalog?: (
-    cwd: string,
+    configurationRoot: string | undefined,
     reportFailure?: AgentConfigurationReadFailureReporter,
   ) => readonly AgentIdentityEntry[];
   /**
@@ -238,9 +225,6 @@ export interface ThreadServiceOptions {
     thread: Thread,
     reportFailure?: AgentConfigurationReadFailureReporter,
   ) => string;
-  readonly resolveAgentStartupContext?: (
-    parent: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
-  ) => AgentStartupContextSnapshot | null | Promise<AgentStartupContextSnapshot | null>;
   readonly reportError?: (report: ErrorReport) => void | Promise<void>;
   readonly normalizeOutputImage?: OutputImageObservationNormalizer;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
@@ -269,19 +253,12 @@ export interface SkillAdmissionResolution {
 export type RendererThreadStartDefaults =
   | {
       readonly modelProvider: string;
-      readonly cwd: string;
       readonly executionSelection?: never;
     }
   | {
       readonly modelProvider?: never;
-      readonly cwd: string;
       readonly executionSelection: ThreadConfigurationSummary;
     };
-
-const EMPTY_AGENT_STARTUP_CONTEXT: AgentStartupContextSnapshot = Object.freeze({
-  repositoryInstructions: Object.freeze([]),
-  gitStatus: null,
-});
 
 export interface ThreadUserContentResolutionContext {
   readonly threadId: ThreadId;
@@ -316,7 +293,7 @@ export interface FeatureRootThreadInput {
   readonly source: string;
   readonly threadSource: ThreadFeatureSource;
   readonly modelProvider: string;
-  readonly cwd: string;
+  readonly configurationSource?: import('../../core/agent/protocol').ThreadConfigurationSource;
   readonly configuration: EffectiveThreadConfiguration;
 }
 
@@ -326,6 +303,13 @@ export interface PersistentThreadExecutionContext {
 }
 
 export class ThreadService implements ThreadServiceExtensionHost {
+  defaultExecutionDirectory(): string { return this.hostDefaultDirectory; }
+  writeFeatureContext(ownerId: string, payload: import('../../core/agent/protocol').ThreadContextPayload) {
+    return this.core.payloads.writeContext(ownerId, payload);
+  }
+  readFeatureContext(ownerId: string, ref: import('../../core/agent/protocol').ThreadContextPayloadReference) {
+    return this.core.payloads.readContext(ownerId, ref);
+  }
   private readonly core: ThreadCore;
   private readonly executor: TurnExecutor;
   private readonly extensions: ExtensionRegistry;
@@ -334,11 +318,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly resolveSkillAdmission: (
     input: SkillAdmissionResolutionInput,
   ) => Promise<SkillAdmissionResolution>;
-  private readonly resolveIdentityCatalog: (cwd: string) => readonly AgentIdentityEntry[];
+  private readonly resolveIdentityCatalog: (configurationRoot: string | undefined) => readonly AgentIdentityEntry[];
   private readonly resolvePersona: (thread: Thread) => string | null;
-  private readonly resolveAgentStartupContext: (
-    parent: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
-  ) => Promise<AgentStartupContextSnapshot | null>;
+  private readonly hostDefaultDirectory: string;
   private readonly beforeInitialTurnAdmission: () => void | Promise<void>;
   private readonly now: () => number;
   private readonly goals: GoalExtension;
@@ -402,42 +384,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.resolvePersona = (thread) => (
       options.resolvePersona?.(thread, reportConfigurationReadFailure) ?? null
     );
-    const configuredStartupContextResolver = options.resolveAgentStartupContext;
-    this.resolveAgentStartupContext = async (parent) => {
-      if (!configuredStartupContextResolver) return null;
-      try {
-        const stored = options.stores.agentStartupContexts.read(parent.sessionId);
-        if (stored) return nonEmptyAgentStartupContext(stored);
-      } catch (error) {
-        console.warn(`[agent] startup context unavailable for session ${parent.sessionId}`, error);
-        try {
-          options.stores.agentStartupContexts.delete([parent.sessionId]);
-        } catch (deleteError) {
-          console.warn(`[agent] startup context cleanup failed for session ${parent.sessionId}`, deleteError);
-        }
-      }
-      try {
-        const resolved = await configuredStartupContextResolver(parent);
-        const frozen = options.stores.agentStartupContexts.writeOnce(
-          parent.sessionId,
-          resolved ?? EMPTY_AGENT_STARTUP_CONTEXT,
-          this.now(),
-        );
-        return nonEmptyAgentStartupContext(frozen);
-      } catch (error) {
-        console.warn(`[agent] startup context unavailable for session ${parent.sessionId}`, error);
-        try {
-          options.stores.agentStartupContexts.writeOnce(
-            parent.sessionId,
-            EMPTY_AGENT_STARTUP_CONTEXT,
-            this.now(),
-          );
-        } catch (writeError) {
-          console.warn(`[agent] startup context tombstone failed for session ${parent.sessionId}`, writeError);
-        }
-        return null;
-      }
-    };
+    this.hostDefaultDirectory = options.defaultExecutionDirectory ?? homedir();
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
     this.delegationCoordinator = options.delegationCoordinator ?? (() => null);
@@ -452,6 +399,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.core,
       options.stores.resources,
       options.attachmentScratchRoot,
+      this.hostDefaultDirectory,
       options.resolveUserContent ?? ((content) => content),
     );
     this.historyReferences = new ThreadHistoryReferenceService(
@@ -523,9 +471,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.nameGenerator ?? null,
       options.resolveConfiguration ?? defaultConfiguration,
       options.resolveRendererStartDefaults ?? missingRendererStartDefaults,
-      options.resolveRootWorkspace,
-      options.cleanupRootWorkspace,
-      options.ownsRootWorkspace,
       options.validateRendererConfiguration ?? (() => undefined),
       options.onRendererConfigurationCommitted,
       this.now,
@@ -537,8 +482,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
         forgetExclusions: (sessionIds) => this.transcriptExclusions.forget(sessionIds),
       },
       (threadId) => this.goals.clear(threadId),
-      (sessionIds) => { options.stores.agentStartupContexts.delete(sessionIds); },
-      async (thread) => { await this.resolveAgentStartupContext(thread); },
       (message) => new ThreadBusyError(message),
     );
     this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification));
@@ -550,6 +493,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.extensions.register(this.goals, { applicationInstructions: true });
     this.toolTasks.bindHost({
       ownerExists: (threadId) => this.core.metadata.read(threadId) !== null || this.core.ephemeral.has(threadId),
+      canInheritClaim: (ownerThreadId, task) => {
+        if (task.producer === 'delegate_execution' && task.ownerThreadId === ownerThreadId && task.inheritedClaimTaskId) {
+          const launcher = this.toolTasks.store.read(task.inheritedClaimTaskId);
+          return Boolean(launcher && this.delegationCoordinator()?.ownsExecutionClaim(ownerThreadId, launcher.taskId, launcher.ownerThreadId));
+        }
+        return this.delegationCoordinator()?.ownsExecutionClaim(ownerThreadId, task.taskId, task.ownerThreadId) === true;
+      },
       readDeliveryAdmission: async (threadId, turnId) => {
         const rollout = await this.core.rollout.read(threadId);
         for (const entry of [...rollout].reverse()) {
@@ -707,17 +657,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const paths = agentCorePaths(userDataPath);
     const metadata = new ThreadMetadataStore(paths.state);
     const goalsDatabase = openSqlite(paths.goals);
-    const agentStartupContexts = new AgentStartupContextStore(goalsDatabase);
-    const startupContextResolver = new AgentStartupContextResolver(
-      agentStartupContexts,
-      undefined,
-      options.now ?? Date.now,
-    );
     return new ThreadService({
       executor,
       ...options,
-      resolveAgentStartupContext: options.resolveAgentStartupContext
-        ?? ((parent) => startupContextResolver.resolve(parent)),
       transcriptRoot: paths.transcripts,
       stores: {
         metadata,
@@ -725,7 +667,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
         rollout: new RolloutStore(paths.rollouts),
         goals: new GoalStore(paths.goals, goalsDatabase),
         toolTasks: new ToolTaskStore(goalsDatabase),
-        agentStartupContexts,
         payloads: new ToolPayloadStore(paths.payloads),
         resources: new AgentResourceStore(
           paths.resourceReferences,
@@ -1068,13 +1009,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return revision || null;
   }
   async ensureDelegationThread(session: DelegationSessionBinding): Promise<Thread> {
-    const cwd = delegationSessionCwd(session);
     const existing = this.core.metadata.read(session.sessionId);
     if (existing) {
       if (existing.archived
         || existing.thread.parentThreadId !== session.ownerThreadId
-        || existing.thread.threadSource !== 'delegation'
-        || existing.thread.cwd !== cwd) {
+        || existing.thread.threadSource !== 'delegation') {
         throw new Error(`Existing Thread does not match the Delegation Session: ${session.sessionId}`);
       }
       return existing.thread;
@@ -1093,7 +1032,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       source: 'agent.delegation',
       threadSource: 'delegation',
       modelProvider: session.policy.modelProvider ?? owner.thread.modelProvider,
-      cwd,
+      configurationSource: owner.thread.configurationSource,
     }, {
       sessionId: session.sessionId,
       parentThreadId: session.ownerThreadId,
@@ -1231,11 +1170,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         // Thread is not an error here: the user layer alone is a complete
         // answer, and a dock that cannot name its participants is worse than
         // one that names them from built-ins.
-        const cwd = request.threadId === null
-          ? null
-          : this.core.metadata.read(request.threadId)?.thread.cwd ?? null;
+        const source = request.threadId === null ? undefined
+          : this.core.metadata.read(request.threadId)?.thread.configurationSource;
         return {
-          entries: this.resolveIdentityCatalog(cwd ?? homedir()),
+          entries: this.resolveIdentityCatalog(source?.kind === 'project' ? source.root : undefined),
         } as AgentCoreResponseByMethod[Method];
       }
       case 'thread/records/set': {
@@ -1575,9 +1513,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private assertRendererSubmissionOpen(): void {
     if (this.closing) throw new ThreadBusyError('Agent service is shutting down');
   }
-  async startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse> {
+  async startPrivilegedTurn(request: PrivilegedTurnStartRequest, executor?: TurnExecutor): Promise<TurnStartResponse> {
     this.assertStartupThreadAvailable(request.threadId);
-    return this.turnLifecycle.startPrivilegedTurn(request);
+    return this.turnLifecycle.startPrivilegedTurn(request, executor);
   }
   async readTurnRecovery(request: TurnRecoveryReadRequest): Promise<TurnRecoveryReadResponse> {
     this.assertStartupThreadAvailable(request.threadId);
@@ -1910,15 +1848,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
 
 }
 
-function delegationSessionCwd(session: DelegationSessionBinding): string {
-  if (session.policy.worktreePolicy === 'none') return session.policy.cwd;
-  if (session.worktree.kind === 'active' || session.worktree.kind === 'unchanged'
-    || session.worktree.kind === 'changed' || session.worktree.kind === 'retained') {
-    return session.worktree.metadata.path;
-  }
-  throw new Error(`Delegation Session has no usable worktree: ${session.sessionId}`);
-}
-
 function rendererRequestThreadId(value: unknown): ThreadId | null {
   if (!value || typeof value !== 'object' || !('threadId' in value)) return null;
   const threadId = (value as { readonly threadId?: unknown }).threadId;
@@ -1970,15 +1899,7 @@ function defaultConfiguration(request: ThreadStartRequest): EffectiveThreadConfi
 }
 
 function missingRendererStartDefaults(): never {
-  throw new Error('Thread start requires a model provider and working directory.');
-}
-
-function nonEmptyAgentStartupContext(
-  snapshot: AgentStartupContextSnapshot,
-): AgentStartupContextSnapshot | null {
-  return snapshot.repositoryInstructions.length === 0 && snapshot.gitStatus === null
-    ? null
-    : snapshot;
+  throw new Error('Thread start requires a configured model provider.');
 }
 
 function emptyResponse(): EmptyAgentCoreResponse {

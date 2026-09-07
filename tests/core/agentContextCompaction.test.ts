@@ -334,6 +334,7 @@ describe('context compaction reducer', () => {
       text: 'Prior summary',
     });
     const restoredStateRef = store.put({
+      executionContext: { entries: [], text: '', omitted: 0 },
       schemaVersion: 1,
       kind: 'compactionRestoredState',
       skillCatalogHash: null,
@@ -404,6 +405,7 @@ describe('context compaction reducer', () => {
     const newItem = contextEvidence(store, newSkill, 'new-skill');
     const first = turn(10, [catalogItem, oldItem]);
     const restoredStateRef = store.put({
+      executionContext: { entries: [], text: '', omitted: 0 },
       schemaVersion: 1,
       kind: 'compactionRestoredState',
       skillCatalogHash: catalog.catalogHash,

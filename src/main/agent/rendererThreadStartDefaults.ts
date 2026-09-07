@@ -9,7 +9,6 @@ export interface RendererThreadStartDefaultsInput {
   readonly request: AgentCoreRequestByMethod['thread/start'];
   readonly remembered: ThreadConfigurationSummary | null;
   readonly getConfiguredDefaultSelection?: () => Promise<ThreadConfigurationSummary | null>;
-  readonly cwd: string;
   readonly getProviderRuntimeConfig: (
     providerId: string,
   ) => Promise<AgentProviderRuntimeConfig | null>;
@@ -24,12 +23,12 @@ export async function resolveRendererThreadStartDefaults(
   input: RendererThreadStartDefaultsInput,
 ): Promise<RendererThreadStartDefaults> {
   if (input.request.modelProvider !== undefined) {
-    return { modelProvider: input.request.modelProvider, cwd: input.cwd };
+    return { modelProvider: input.request.modelProvider };
   }
 
   if (input.request.configurationProfile === undefined && input.getConfiguredDefaultSelection) {
     const configured = await input.getConfiguredDefaultSelection();
-    if (configured) return { cwd: input.cwd, executionSelection: configured };
+    if (configured) return { executionSelection: configured };
   }
 
   if (input.request.configurationProfile === undefined && input.remembered) {
@@ -37,7 +36,7 @@ export async function resolveRendererThreadStartDefaults(
       const provider = await input.getProviderRuntimeConfig(input.remembered.modelProvider);
       if (provider) {
         input.validateRememberedSelection(input.remembered, provider);
-        return { cwd: input.cwd, executionSelection: input.remembered };
+        return { executionSelection: input.remembered };
       }
     } catch {
       // A stale or temporarily unreadable remembered provider must not block a
@@ -47,5 +46,5 @@ export async function resolveRendererThreadStartDefaults(
 
   const provider = await input.getActiveProviderRuntimeConfig();
   if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
-  return { modelProvider: provider.providerId, cwd: input.cwd };
+  return { modelProvider: provider.providerId };
 }

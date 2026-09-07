@@ -36,9 +36,9 @@ const context = {
   thread: {
     id: '00000000-0000-7000-8000-000000000001',
     parentThreadId: null,
-    cwd: '/representative/project',
+    configurationSource: { kind: 'user' },
   },
-  turn: { id: '00000000-0000-7000-8000-000000000002' },
+  turn: { id: '00000000-0000-7000-8000-000000000002', provenance: { trigger: { kind: 'user' } } },
   configuration,
 } as TurnExecutionContext;
 
@@ -54,10 +54,11 @@ describe('canonical provider tool catalog', () => {
       import('../../src/main/agent/runtime/ToolRuntime'),
     ]);
     const service = {
+      defaultExecutionDirectory: () => '/representative/project',
       extensionToolContributions: async () => [],
     } as unknown as ThreadService;
     const skillRuntime = new AgentSkillRuntime({
-      localRoot: context.thread.cwd,
+      localRoot: '/representative/project',
       includeUserSkills: false,
       builtInSkillDirectories: [],
       builtInSkills: [],

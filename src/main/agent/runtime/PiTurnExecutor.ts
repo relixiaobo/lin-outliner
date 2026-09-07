@@ -1,4 +1,5 @@
 import { NativeAgentRuntime } from './kernel/NativeAgentRuntime';
+import { planExecutionContextPublication } from '../context/ExecutionContextPublication';
 import {
   PiModelGateway,
   type ModelGateway,
@@ -185,7 +186,6 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           configuration: context.configuration,
           availableToolNames: tools.map((tool) => tool.name),
           transcriptIndexPath: this.options.transcriptIndexPath ?? null,
-          startupContext: context.startupContext ?? null,
           persona: this.options.resolvePersona?.(context.thread) ?? null,
         });
     const systemPrompt = stablePrompt?.text
@@ -252,7 +252,6 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
             configuration: context.configuration,
             availableToolNames: tools.map((tool) => tool.name),
             transcriptIndexPath: this.options.transcriptIndexPath ?? null,
-            startupContext: context.startupContext ?? null,
             persona: this.options.resolvePersona?.(context.thread) ?? null,
           });
       const systemPrompt = stablePrompt?.text
@@ -362,6 +361,10 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
                 onActiveOutputKeys: turnScopedReads.retainOutputReads,
               });
               const sidecar = context.carryForwardSidecar;
+              const publication = await planExecutionContextPublication([
+                ...context.historyBeforeTurn, { ...context.turn, items: currentTurnItems(context) },
+              ], projectionContext.readContext);
+              if (publication) await context.persistContextEvidence(publication, 'Published execution context boundary');
               const omitSidecar = sidecar?.isDetached() === true;
               const projected = await projectCanonicalProviderContext(
                 projectionContext,
@@ -1156,7 +1159,7 @@ function startedToolItem(
       description: typeof input.description === 'string' && input.description.trim()
         ? boundedText(input.description.trim(), MAX_PERSISTED_TOOL_STRING_CHARS)
         : null,
-      cwd: boundedText(context.thread.cwd, MAX_PERSISTED_TOOL_STRING_CHARS),
+      cwd: null,
       processId: null,
       status: 'inProgress',
       commandActions: [],
@@ -1230,6 +1233,10 @@ async function completedToolItem(
   const status = isError ? 'failed' : 'completed';
   const outputRef = await persistFullToolOutput(context, item, result, isError);
   const resourceRefs = toolResultResourceReferences(result);
+  if ('modelCall' in item && isRecord(result) && isRecord(result.executionContext)
+    && isRecord(result.executionContext.address) && typeof result.executionContext.address.cwd === 'string') {
+    item = { ...item, cwd: result.executionContext.address.cwd };
+  }
   switch (item.type) {
     case 'commandExecution': {
       const details = toolDetails(result);

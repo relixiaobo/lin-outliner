@@ -15,7 +15,7 @@ import {
   AUTOMATION_IDENTIFIER_MAX_LENGTH,
   AUTOMATION_NAME_MAX_LENGTH,
   AUTOMATION_PATH_MAX_LENGTH,
-  AUTOMATION_PROJECT_BINDINGS_MAX_COUNT,
+  AUTOMATION_CONTEXT_HINTS_MAX_COUNT,
   AUTOMATION_PROMPT_MAX_LENGTH,
   AUTOMATION_RRULE_MAX_LENGTH,
   AUTOMATION_TIMEZONE_MAX_LENGTH,
@@ -563,11 +563,14 @@ const automationDestinationSchema: JsonSchema = {
   ],
 };
 
-const automationProjectBindingSchema = objectSchema({
-  id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH, 'Stable project binding identity.'),
-  cwd: boundedStringSchema(AUTOMATION_PATH_MAX_LENGTH, 'Absolute local project path.'),
+const automationContextHintSchema = objectSchema({
+  contextHintId: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH, 'Existing context hint identity. Omit for a new hint; the Host allocates it.'),
+  source: { anyOf: [
+    objectSchema({ kind: enumSchema(['directory']), rootHint: boundedStringSchema(AUTOMATION_PATH_MAX_LENGTH, 'Absolute directory lookup hint.') }, ['kind', 'rootHint']),
+    objectSchema({ kind: enumSchema(['project']), projectId: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH) }, ['kind', 'projectId']),
+  ] },
   executionMode: enumSchema(['local', 'worktree']),
-}, ['id', 'cwd', 'executionMode']);
+}, ['source', 'executionMode']);
 
 const nullableStringSchema: JsonSchema = {
   anyOf: [boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH), { type: 'null' }],
@@ -583,7 +586,7 @@ const automationDefinitionProperties = {
   prompt: boundedStringSchema(AUTOMATION_PROMPT_MAX_LENGTH, 'Durable prompt for each occurrence.'),
   schedule: automationScheduleSchema,
   destination: automationDestinationSchema,
-  projectBindings: boundedArraySchema(automationProjectBindingSchema, AUTOMATION_PROJECT_BINDINGS_MAX_COUNT),
+  contextHints: boundedArraySchema(automationContextHintSchema, AUTOMATION_CONTEXT_HINTS_MAX_COUNT),
   configuration: automationConfigurationSchema,
 };
 const automationMutableProperties = {
@@ -597,7 +600,7 @@ const automationOutputSchema = objectSchema({
   prompt: boundedStringSchema(AUTOMATION_PROMPT_MAX_LENGTH),
   schedule: automationScheduleSchema,
   destination: automationDestinationSchema,
-  projectBindings: boundedArraySchema(automationProjectBindingSchema, AUTOMATION_PROJECT_BINDINGS_MAX_COUNT),
+  contextHints: boundedArraySchema(automationContextHintSchema, AUTOMATION_CONTEXT_HINTS_MAX_COUNT),
   configuration: objectSchema({
     modelProvider: nullableStringSchema,
     model: nullableStringSchema,
@@ -614,7 +617,7 @@ const automationOutputSchema = objectSchema({
   'prompt',
   'schedule',
   'destination',
-  'projectBindings',
+  'contextHints',
   'configuration',
   'status',
   'revision',

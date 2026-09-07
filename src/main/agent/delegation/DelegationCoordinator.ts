@@ -126,6 +126,11 @@ export class DelegationCoordinator {
     this.now = options.now ?? Date.now;
   }
 
+  ownsExecutionClaim(sessionId: ThreadId, taskId: string, rootThreadId: ThreadId): boolean {
+    const session = this.options.store.readSession(sessionId);
+    return session?.currentTaskId === taskId && session.ownerThreadId === rootThreadId;
+  }
+
   async initialize(): Promise<void> {
     const expiring = new Set(
       this.options.store.idleSessionsUpdatedBefore(this.now() - DELEGATION_SESSION_IDLE_TTL_MS)

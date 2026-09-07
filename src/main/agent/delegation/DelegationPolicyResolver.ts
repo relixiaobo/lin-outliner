@@ -35,6 +35,13 @@ export interface DelegationRunnerAdapter {
     readonly prompt: string;
     readonly messages: readonly DelegationRootMessage[];
     readonly signal: AbortSignal;
+    readonly executeProcess: (input: {
+      readonly executable: string; readonly args: readonly string[];
+      readonly env: NodeJS.ProcessEnv; readonly stdin: string;
+    }) => Promise<{
+      readonly stdout: string; readonly stderr: string; readonly truncated: boolean;
+      readonly outcome: 'succeeded' | 'failed' | 'cancelled'; readonly error: string | null;
+    }>;
   }) => Promise<DelegateExecutionResult>;
 }
 

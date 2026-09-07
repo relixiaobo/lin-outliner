@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -27,6 +27,28 @@ async function workspaceFixture() {
 }
 
 describe('agent capabilities', () => {
+  test('applies path blocks to the actual per-call cwd and the operation target', async () => {
+    const { workspace, outside } = await workspaceFixture();
+    const sensitive = path.join(await realpath(outside), '.ssh');
+    await mkdir(sensitive);
+    await writeFile(path.join(sensitive, 'config'), 'private');
+    await symlink(sensitive, path.join(workspace, 'alias'));
+    const policy = { workspaceRoot: workspace, capabilityConfig: {
+      blocks: ['Action(file.read.sensitive_local_path)', 'Action(file.write.sensitive_local_path)'],
+    } };
+    for (const cwd of [sensitive, '../outside/.ssh', 'alias']) {
+      for (const toolName of ['file_read', 'file_write', 'file_edit']) {
+        expect(evaluateAgentToolCapability({ toolName, args: { cwd, file_path: 'config' }, policy }))
+          .toMatchObject({ behavior: 'unavailable', descriptor: { targetPath: path.join(sensitive, 'config') } });
+      }
+      expect(evaluateAgentToolCapability({ toolName: 'file_glob', args: { cwd, pattern: '*' }, policy }))
+        .toMatchObject({ behavior: 'unavailable', descriptor: { targetPath: sensitive } });
+    }
+    expect(evaluateAgentToolCapability({ toolName: 'file_delete', args: { file_path: 'alias' }, policy }))
+      .toMatchObject({ behavior: 'allow', descriptor: { targetPath: path.join(await realpath(workspace), 'alias') } });
+    expect(evaluateAgentToolCapability({ toolName: 'file_read', args: { file_path: 'config' }, policy }).behavior).toBe('allow');
+  });
+
   test('classifies stdin consumers from command structure without inspecting payload text', async () => {
     expect(classifyBashStdinConsumer('printf input', false)).toBe('absent');
     for (const command of [

@@ -91,7 +91,6 @@ export interface TranscriptSubject {
   readonly parentThreadId?: string | null;
   readonly role?: string | null;
   readonly nickname?: string | null;
-  readonly cwd?: string | null;
 }
 
 export interface RenderTurnOptions {
@@ -125,7 +124,6 @@ export function renderTranscriptHeader(
     ['parentThreadId', subject?.parentThreadId],
     ['role', subject?.role],
     ['nickname', subject?.nickname],
-    ['cwd', subject?.cwd],
   ];
   return `${[
     '# Agent Thread transcript',

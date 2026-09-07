@@ -85,6 +85,8 @@ describe('Tool Task strip', () => {
     });
     expect(stopped).toEqual(['running']);
     expect(read).toEqual(['terminal']);
+    expect(document.querySelector('.thread-tool-task-context')?.textContent).toContain('/actual/task-directory');
+    expect(document.querySelector('.thread-tool-task-context')?.textContent).toContain('unsandboxed');
     expect(document.querySelector('.thread-tool-task-output')?.textContent).toBe('bounded output');
     expect(document.querySelector('.thread-tool-task-artifacts')?.textContent).toContain('Rendered clip');
     expect(document.querySelector('.thread-tool-task-error')?.textContent).toBe('Renderer failed.');
@@ -166,6 +168,12 @@ function task(
 ): ToolTaskProjection {
   return {
     taskId,
+    executionContext: {
+      addressRef: 'a'.repeat(64), policyRef: 'b'.repeat(64), snapshotRef: 'c'.repeat(64),
+      address: { requestedCwd: null, cwd: '/actual/task-directory', targets: [], targetMode: 'follow', coverage: 'cwd-only', scopes: [] },
+      policy: { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [], mutation: true },
+      snapshot: { generation: 0, predecessorRef: null, discovery: 'pending', degradation: 'Not inspected', facts: [] },
+    },
     ownerThreadId: OWNER_ID,
     sourceTurnId: 'turn-source',
     sourceItemId: 'item-source',

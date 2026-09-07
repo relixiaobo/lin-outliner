@@ -20,18 +20,14 @@ export class AutomationWorktree {
     this.snapshotRoot = join(userDataPath, 'agent', 'automation-worktree-snapshots');
   }
 
-  async prepare(run: AutomationRun): Promise<AutomationWorkspace> {
-    const binding = run.snapshot.projectBinding;
-    if (!binding) return { cwd: '', worktree: null };
-    const cwd = await directoryRealpath(binding.cwd);
-    if (cwd !== binding.cwd) {
-      throw new Error(`Automation project path changed before dispatch: ${binding.cwd}`);
-    }
-    if (binding.executionMode === 'local') return { cwd, worktree: null };
+  async prepare(run: AutomationRun, sourceDirectory: string, onIntent: (metadata: AutomationWorktreeMetadata) => Promise<void>): Promise<AutomationWorkspace> {
+    const binding = run.snapshot.contextHint;
+    const cwd = await directoryRealpath(sourceDirectory);
+    if (!binding || binding.executionMode === 'local') return { cwd, worktree: null };
 
     const sourceCwd = await directoryRealpath(await gitOutput(['-C', cwd, 'rev-parse', '--show-toplevel']));
-    if (sourceCwd !== binding.cwd) {
-      throw new Error(`Automation Git root changed before dispatch: ${binding.cwd}`);
+    if (sourceCwd !== cwd) {
+      throw new Error(`Automation isolation requires the source Git root: ${cwd}`);
     }
     await mkdir(this.managedRoot, { recursive: true });
     const managedRoot = await realpath(this.managedRoot);
@@ -42,33 +38,14 @@ export class AutomationWorktree {
     }
 
     await mkdir(resolve(worktreePath, '..'), { recursive: true });
-    let baseCommit: string;
-    try {
-      await stat(worktreePath);
-      const existingSource = await gitOutput(['-C', worktreePath, 'rev-parse', '--show-toplevel']);
-      if (resolve(existingSource) !== worktreePath) {
-        throw new Error(`Managed Automation worktree has unexpected root: ${worktreePath}`);
-      }
-      await assertRegisteredDetachedWorktree(sourceCwd, worktreePath);
-      baseCommit = await gitOutput(['-C', worktreePath, 'rev-parse', 'HEAD']);
-      await gitOutput(['-C', sourceCwd, 'cat-file', '-e', `${baseCommit}^{commit}`]);
-    } catch (error) {
-      if (!isMissing(error)) throw error;
-      baseCommit = await gitOutput(['-C', sourceCwd, 'rev-parse', 'HEAD']);
-      await git(['-C', sourceCwd, 'worktree', 'add', '--detach', worktreePath, baseCommit]);
-      await assertRegisteredDetachedWorktree(sourceCwd, worktreePath);
-    }
-    return {
-      cwd: worktreePath,
-      worktree: Object.freeze({
-        sourceCwd,
-        path: worktreePath,
-        baseCommit,
-        snapshotPath: null,
-        removedAt: null,
-        managed: true,
-      }),
-    };
+    await assertAbsentWorktree(sourceCwd, worktreePath);
+    const intent: AutomationWorktreeMetadata = Object.freeze({
+      sourceCwd, gitCommonDir: await gitCommonDirectory(sourceCwd), path: worktreePath,
+      baseCommit: await gitOutput(['-C', sourceCwd, 'rev-parse', 'HEAD']),
+      snapshotPath: null, removedAt: null, managed: true,
+    });
+    await onIntent(intent);
+    return this.resumePrepared(intent, sourceCwd, worktreePath);
   }
 
   private async resumePrepared(
@@ -81,6 +58,12 @@ export class AutomationWorktree {
     }
     if (await directoryRealpath(metadata.sourceCwd) !== sourceCwd) {
       throw new Error(`Automation worktree source changed before dispatch: ${metadata.path}`);
+    }
+    await assertSourceIdentity(metadata);
+    if (metadata.path !== expectedPath) throw new Error(`Managed Automation worktree has unexpected path: ${metadata.path}`);
+    if (!await pathExists(metadata.path)) {
+      await assertAbsentWorktree(sourceCwd, expectedPath);
+      await git(['-C', sourceCwd, 'worktree', 'add', '--detach', expectedPath, metadata.baseCommit]);
     }
     const worktreePath = await directoryRealpath(metadata.path);
     if (worktreePath !== expectedPath) {
@@ -110,27 +93,26 @@ export class AutomationWorktree {
     const path = resolve(metadata.path);
     const managedRoot = await directoryRealpath(this.managedRoot);
     assertContained(managedRoot, path);
+    await assertSourceIdentity(metadata);
     let prepared = metadata;
     if (!prepared.snapshotPath) {
       const sourceCwd = await directoryRealpath(metadata.sourceCwd);
-      await assertRegisteredDetachedWorktree(sourceCwd, path);
+      const exists = await pathExists(path);
+      if (exists) await assertRegisteredDetachedWorktree(sourceCwd, path);
+      else await assertAbsentWorktree(sourceCwd, path);
       await gitOutput(['-C', sourceCwd, 'cat-file', '-e', `${metadata.baseCommit}^{commit}`]);
       await mkdir(this.snapshotRoot, { recursive: true });
       const snapshotRoot = await realpath(this.snapshotRoot);
       const snapshotPath = resolve(snapshotRoot, `${path.split(sep).at(-1)}.patch`);
       assertContained(snapshotRoot, snapshotPath);
-      const patch = await recoverablePatch(path, metadata.baseCommit);
+      const patch = exists ? await recoverablePatch(path, metadata.baseCommit) : '';
       await durableWrite(snapshotPath, patch);
       prepared = Object.freeze({ ...metadata, snapshotPath });
       await onSnapshot?.(prepared);
     } else {
       await assertSnapshotExists(this.snapshotRoot, prepared.snapshotPath);
     }
-    const pathExists = await stat(path).then(() => true, (error) => {
-      if (isMissing(error)) return false;
-      throw error;
-    });
-    if (pathExists) {
+    if (await pathExists(path)) {
       const sourceCwd = await directoryRealpath(prepared.sourceCwd);
       await assertRegisteredDetachedWorktree(sourceCwd, path);
       await gitOutput(['-C', sourceCwd, 'cat-file', '-e', `${prepared.baseCommit}^{commit}`]);
@@ -138,6 +120,32 @@ export class AutomationWorktree {
       await git(['-C', sourceCwd, 'worktree', 'remove', '--force', path]);
     }
     return Object.freeze({ ...prepared, removedAt: Date.now() });
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  return stat(path).then(() => true, (error) => {
+    if (isMissing(error)) return false;
+    throw error;
+  });
+}
+
+async function gitCommonDirectory(sourceCwd: string): Promise<string> {
+  return directoryRealpath(resolve(sourceCwd, await gitOutput(['-C', sourceCwd, 'rev-parse', '--git-common-dir'])));
+}
+
+async function assertSourceIdentity(metadata: AutomationWorktreeMetadata): Promise<void> {
+  if (await directoryRealpath(metadata.sourceCwd) !== metadata.sourceCwd
+    || await gitCommonDirectory(metadata.sourceCwd) !== metadata.gitCommonDir) {
+    throw new Error(`Automation worktree source identity changed: ${metadata.sourceCwd}`);
+  }
+  await gitOutput(['-C', metadata.sourceCwd, 'cat-file', '-e', `${metadata.baseCommit}^{commit}`]);
+}
+
+async function assertAbsentWorktree(sourceCwd: string, path: string): Promise<void> {
+  const list = await gitRawOutput(['-C', sourceCwd, '-c', 'core.quotePath=false', 'worktree', 'list', '--porcelain', '-z']);
+  if (await pathExists(path) || list.split('\0').includes(`worktree ${path}`)) {
+    throw new Error(`Automation worktree path or registration exists without recoverable directory evidence: ${path}`);
   }
 }
 

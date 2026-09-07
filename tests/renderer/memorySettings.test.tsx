@@ -194,6 +194,6 @@ function status(enabled: boolean, threadId?: string, threadEnabled = true, stray
 }
 function rootThread(id: string): Thread {
   return { id, sessionId: id, parentThreadId: null, forkedFromId: null, name: 'Memory test', preview: '', ephemeral: false,
-    source: 'app', threadSource: 'user', modelProvider: 'test', cwd: '/tmp', createdAt: 1, updatedAt: 1,
+    source: 'app', threadSource: 'user', modelProvider: 'test', configurationSource: { kind: 'user' }, cwd: '/tmp', createdAt: 1, updatedAt: 1,
     status: { type: 'idle' }, historyMode: 'full', turns: [] };
 }

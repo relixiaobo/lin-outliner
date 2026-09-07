@@ -5,6 +5,7 @@ import { clipboardText, commandCalls, ids, openMockedApp, rowBody, rowEditor } f
 import { ATTACHMENT_UPLOAD_CHUNK_BYTES } from '../../src/core/agentAttachmentLimits';
 import { en } from '../../src/core/i18n/messages/en';
 import { zhHans } from '../../src/core/i18n/messages/zh-Hans';
+import { pendingExecutionContext } from '../../src/main/agent/tasks/ExecutionContext';
 import {
   TRANSCRIPT_VIRTUAL_MIN_TURNS,
   TRANSCRIPT_VIRTUAL_OVERSCAN_PX,
@@ -2718,6 +2719,7 @@ test.describe('canonical agent Thread surface', () => {
           kind: 'compactionSummary',
         };
         const restoredStateRef = {
+      executionContext: { entries: [], text: '', omitted: 0 },
           id: 'b'.repeat(64),
           mimeType: 'application/vnd.tenon.agent-context+json',
           byteLength: 100,
@@ -3027,9 +3029,14 @@ test.describe('canonical agent Thread surface', () => {
     await expect(composer).toHaveText('Keep this draft.');
   });
 
-  test('presents, stops, inspects, and clears generic background Tool Tasks', async ({ page }) => {
+  test('presents, stops, inspects, and clears generic background Tool Tasks', async ({ page }, testInfo) => {
     await createNewThread(page);
-    const fixture = await page.evaluate(async () => {
+    const directory = '/Users/developer/Projects/second-project/packages/application';
+    const executionContext = pendingExecutionContext({
+      requestedCwd: directory, cwd: directory, targets: [], targetMode: 'follow', coverage: 'cwd-only',
+      scopes: [{ key: `directory:${directory}`, directory, worktree: null, gitDirectory: null }],
+    }, { capability: 'full-access', isolation: 'unsandboxed', mutation: true, writablePaths: [] });
+    const fixture = await page.evaluate(async (executionContext) => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
         __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
@@ -3039,6 +3046,7 @@ test.describe('canonical agent Thread surface', () => {
       if (!threadId) throw new Error('Mock root Thread not found');
       const now = Date.now();
       const task = (input: Record<string, unknown>) => ({
+        executionContext,
         taskId: input.taskId,
         ownerThreadId: threadId,
         sourceTurnId: '01910000-0000-7000-8000-00000000ed01',
@@ -3069,8 +3077,8 @@ test.describe('canonical agent Thread surface', () => {
         progress: { phase: 'render', message: 'Frame 12', fraction: 0.5, updatedAt: now },
       });
       target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'toolTask/changed', threadId, task: running });
-      return { threadId, now };
-    });
+      return { threadId, now, executionContext };
+    }, executionContext);
 
     const pill = page.locator('.thread-work-strip-pill');
     await expect(pill).toHaveText('1 running');
@@ -3079,17 +3087,30 @@ test.describe('canonical agent Thread surface', () => {
     await expect(runningRow).toContainText('Frame 12');
     await runningRow.locator('.thread-work-strip-open').click();
     await expect(runningRow.locator('.thread-tool-task-output')).toHaveText('Mock background output');
+    await expect(runningRow.locator('.thread-tool-task-context dd').first()).toHaveText(directory);
+    for (const width of [280, 400]) {
+      await page.locator('.app').evaluate((element, width) => {
+        (element as HTMLElement).style.setProperty('--agent-width', `${width}px`);
+      }, width);
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await emulateVisualMedia(page, { colorScheme, reducedTransparency: 'no-preference' });
+        const context = runningRow.locator('.thread-tool-task-context');
+        expect(await context.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+        await page.screenshot({ path: testInfo.outputPath(`task-context-${width}-${colorScheme}.png`) });
+      }
+    }
     await runningRow.getByRole('button', { name: 'Stop Render preview' }).click();
     await expect.poll(async () => (
       (await commandCalls(page)).filter((call) => call.cmd === 'task/stop').at(-1)?.args
     )).toEqual({ threadId: fixture.threadId, taskId: 'task-e2e-running' });
     await expect(runningRow).toContainText('Cancelled');
 
-    await page.evaluate(({ threadId, now }) => {
+    await page.evaluate(({ threadId, now, executionContext }) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
       };
       const base = {
+        executionContext,
         ownerThreadId: threadId,
         sourceTurnId: '01910000-0000-7000-8000-00000000ed01',
         producer: 'video',
@@ -3214,6 +3235,7 @@ test.describe('canonical agent Thread surface', () => {
             namespace: null,
             tool: 'file_read',
             arguments: { file_path: 'notes with spaces.md' },
+            cwd: '/mock/project-b',
             modelCall: {
               disposition: 'replayable',
               identity: { namespace: null, name: 'file_read' },
@@ -3362,9 +3384,9 @@ test.describe('canonical agent Thread surface', () => {
     const nodeTool = page.getByRole('button', { name: /^Read / });
     await nodeTool.click();
     const relativePath = nodeTool.locator('xpath=..').locator('.thread-tool-path-reference');
-    await expect(relativePath).toHaveAttribute('data-tool-path', '/mock/workspace/notes with spaces.md');
+    await expect(relativePath).toHaveAttribute('data-tool-path', '/mock/project-b/notes with spaces.md');
     await expect(relativePath).toHaveAttribute('data-inline-ref-kind', 'local-file');
-    await expect(relativePath).toHaveAttribute('data-inline-ref-path', '/mock/workspace/notes with spaces.md');
+    await expect(relativePath).toHaveAttribute('data-inline-ref-path', '/mock/project-b/notes with spaces.md');
     await expect(relativePath).toHaveAttribute('data-inline-ref-entry-kind', 'file');
     await expect(relativePath).toHaveAttribute('title', 'notes with spaces.md');
     await expect(relativePath).not.toHaveAttribute('aria-label', /.+/);

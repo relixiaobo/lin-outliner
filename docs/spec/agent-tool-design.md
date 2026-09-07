@@ -168,7 +168,7 @@ settlement contract.
 
 Every local file/process call uses its Tool Task's admitted `ExecutionAddress`.
 The Host resolves an optional task-scoped `cwd` against its documented default,
-then resolves relative file paths from that address's `resolvedCwd`. An explicit
+then resolves relative file paths from that address's `cwd`. An explicit
 absolute file path is canonicalized as the task's target independently of cwd.
 File instruction/profile collection follows that canonical target's parent and
 ancestors, with nested applicability retained per target. Directory searches
@@ -176,6 +176,10 @@ use their canonical search root and label deeper uninspected scopes as unknown;
 later file edits admit those exact target scopes. Following a symlink for a
 content edit uses its referent; deleting the link uses the link's parent.
 New files resolve through the nearest existing canonical parent plus suffix.
+Deletion admission records both the source entry and the reserved trash
+destination. Isolated calls keep `.agent-trash` under the validated writable
+resource even when cwd is elsewhere, reject redirected trash ancestors, and
+cannot delete the resource root. Moving a symlink affects its entry only.
 Bash instruction scope remains its admitted cwd. Neither an unrelated cwd nor
 Project membership supplies the rules for an absolute file target.
 Full Access permits absolute host paths unless an explicit block removes the
@@ -183,15 +187,39 @@ capability. Thread metadata, Project membership, and ancestor lookup supply no
 execution directory. Receipts retain the resolved address, canonical targets,
 `ExecutionPolicy`, and immutable `ContextSnapshot` reference used at admission.
 File tools return bounded content and persist oversized output in app-owned
-scratch space.
+scratch space. Relative attachment paths resolve from the same Host default;
+per-Thread attachment edit copies and observations remain in managed scratch
+storage with their own deletion lifecycle.
+
+`resolveExecutionAddress` captures canonical targets and Git/directory scope
+identities. `pendingExecutionContext` creates a frozen generation-0 snapshot
+with unknown discovery; SHA-256 references cover the encoded address, policy
+and snapshot. `ToolTaskStore` stores that complete context with the task before
+execution. File operations use `ToolTaskService.runHostOperation`; Bash and native
+launchers use supervised process tasks. Both retain the same immutable context
+through terminal settlement and recovery. S1 instruction/profile discovery is
+defined by the context plan and is not inferred from successful file access.
+
+The Kernel's Host-only deferred-start callback lets local tools publish their
+execution-start event after admission evidence commits. Receipt context stays in
+private result metadata; the provider receives the ordinary tool result plus
+later canonical execution-context publications, never the private digest tuple.
+Relative renderer links use the completed Item's admitted cwd. Before admission,
+relative paths have no invented base; absolute file links remain usable.
 
 Task address claims cover typed file targets and the admitted cwd for Bash.
 They coordinate matching declared scopes only. Arbitrary Full Access shell
 effects or native CLI calls outside that cwd are not inferred, contained, or
 serialized by the claim; the receipt marks that coverage as `cwd-only`.
+Claims are acquired transactionally for all known scope keys and collide with
+`worktree_busy`. A child may inherit only its active Session owner's covered
+claim; extra scopes require new claims. Settlement, cancellation and restart
+drain covered child work before releasing the owner. A Host operation recovered
+without terminal evidence becomes `lost` and is never replayed by assumption.
 
-Inherited worktree isolation is an explicit resource reference in the admitted
-`ExecutionPolicy`. The Host validates its registration and identity against the
+Inherited worktree isolation comes from the explicit Host-owned Session or run
+worktree metadata; the admitted `ExecutionPolicy` records the applied write
+boundary. The Host validates the resource's registration and identity against the
 task address before any file or shell mutation, including calls inside a
 delegated Session that carry no isolation override. Containment uses that validated
 resource's writable root; it is not derived from a Thread directory or a

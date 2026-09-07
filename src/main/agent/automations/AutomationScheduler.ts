@@ -1,7 +1,7 @@
 import type { Automation, AutomationRun } from '../../../core/agent/automation';
 import { Mutex } from '../Mutex';
 import { automationOccurrencesBetween, nextAutomationOccurrence } from './AutomationSchedule';
-import { AutomationDispatcher, projectBindingForRun } from './AutomationDispatcher';
+import { AutomationDispatcher, contextHintForRun } from './AutomationDispatcher';
 import { AutomationStore } from './AutomationStore';
 
 const MAX_TIMER_DELAY_MS = 60 * 60 * 1_000;
@@ -80,12 +80,12 @@ export class AutomationScheduler {
   ): Promise<{ readonly truncated: boolean }> {
     let truncated = false;
     for (const cursor of this.options.store.bindingCursors(automation)) {
-      const binding = projectBindingForRun(automation, cursor.bindingKey);
-      const unsettled = this.options.store.latestUnsettledRun(automation.id, cursor.bindingKey);
+      const binding = contextHintForRun(automation, cursor.contextHintKey);
+      const unsettled = this.options.store.latestUnsettledRun(automation.id, cursor.contextHintKey);
       if (unsettled && this.options.dispatcher.isRunActive(unsettled)) {
         const next = nextAutomationOccurrence(automation.schedule, cursor.evaluatedThrough);
         if (next !== null && next <= through) {
-          this.options.store.markOverlapDeferred(automation.id, cursor.bindingKey);
+          this.options.store.markOverlapDeferred(automation.id, cursor.contextHintKey);
         }
         continue;
       }

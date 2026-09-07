@@ -470,7 +470,6 @@ export const ThreadDock = memo(function ThreadDock({
               slashCommands={slashCommands}
               threadCreationBlocked={providerBlocksCreation}
               threadCreationPending={creating}
-              threadCwd={thread.cwd}
               threadId={thread.id}
               threadModelProvider={thread.modelProvider}
               threadsById={threadsById}

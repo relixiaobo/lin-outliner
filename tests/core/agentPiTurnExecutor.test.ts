@@ -307,7 +307,7 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'tool_execution_end',
       toolCallId: 'call-bash-valid',
       toolName: 'bash',
-      result: { content: [{ type: 'text', text: fixture.context.thread.cwd }], details: { data: { exitCode: 0 } } },
+      result: { content: [{ type: 'text', text: '/admitted' }], details: { data: { exitCode: 0 } }, executionContext: { address: { cwd: '/admitted' } } },
       isError: false,
     });
     normalizer.handle({
@@ -344,7 +344,7 @@ describe('PiTurnExecutor event normalization', () => {
         id: 'call-bash-valid',
         command: 'pwd',
         description: 'Print the working directory',
-        cwd: fixture.context.thread.cwd,
+        cwd: '/admitted',
         status: 'completed',
         modelCall: {
           disposition: 'replayable',
@@ -358,7 +358,7 @@ describe('PiTurnExecutor event normalization', () => {
         type: 'commandExecution',
         id: 'call-bash-invalid',
         command: 'pwd',
-        cwd: fixture.context.thread.cwd,
+        cwd: null,
         status: 'failed',
         modelCall: {
           disposition: 'evidenceOnly',
@@ -1298,8 +1298,9 @@ describe('PiTurnExecutor event normalization', () => {
       ...fixture.context,
       historyBeforeTurn: [history],
       readContext: async (ref) => {
+        if (ref.id !== payloadRef.id) return fixture.context.readContext(ref);
         payloadReads += 1;
-        return ref.id === payloadRef.id ? payload : null;
+        return payload;
       },
     })).resolves.toMatchObject({ status: 'completed' });
 
@@ -1844,6 +1845,66 @@ describe('PiTurnExecutor event normalization', () => {
     ]));
   });
 
+  test('preserves serialized provider prefixes across retries and A-B-A execution observations', async () => {
+    const fixture = createContext();
+    const { pendingExecutionContext } = await import('../../src/main/agent/tasks/ExecutionContext');
+    const requests: unknown[][] = [];
+    const observe = async (directory: string, id: string) => {
+      await fixture.context.persistContextEvidence({
+        schemaVersion: 1, kind: 'taskExecutionContext', taskId: id,
+        sourceTurnId: fixture.context.turn.id, sourceItemId: id,
+        executionContext: pendingExecutionContext({
+          requestedCwd: directory, cwd: directory, targets: [], targetMode: 'follow', coverage: 'cwd-only',
+          scopes: [{ key: `directory:${directory}`, directory, worktree: null, gitDirectory: null }],
+        }, { capability: 'full-access', isolation: 'unsandboxed', mutation: false, writablePaths: [] }),
+      }, 'Execution observation');
+    };
+    let failPublication = true;
+    const context: TurnExecutionContext = {
+      ...fixture.context,
+      persistContextEvidence: async (payload, summary) => {
+        if (payload.kind === 'executionContextPublication' && failPublication) {
+          failPublication = false;
+          throw new Error('Publication commit unavailable');
+        }
+        return fixture.context.persistContextEvidence(payload, summary);
+      },
+    };
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createAgent: (options) => ({
+        state: { errorMessage: undefined }, subscribe: () => () => undefined,
+        abort: () => undefined, steer: () => undefined,
+        prompt: async () => {
+          for (const [index, directory] of ['/project-a', '/project-b', '/project-a'].entries()) {
+            await observe(directory, `task-${index}`);
+            if (index === 0) {
+              await expect(options.transformContext!([])).rejects.toThrow('Publication commit unavailable');
+              expect(fixture.recorder.orderedItems().filter((item) => (
+                item.type === 'contextEvidence' && item.kind === 'executionContextPublication'
+              ))).toHaveLength(0);
+            }
+            for (let retry = 0; retry < 2; retry += 1) {
+              const messages = await options.transformContext!([]);
+              requests.push(convertResponsesMessages(testModel, { messages }, new Set([testModel.provider]), { includeSystemPrompt: false }));
+            }
+          }
+        },
+      }),
+    });
+    await expect(executor.execute(context)).resolves.toMatchObject({ status: 'completed' });
+    expect(requests).toHaveLength(6);
+    for (let index = 1; index < requests.length; index += 1) {
+      expect(requests[index]!.slice(0, requests[index - 1]!.length)).toEqual(requests[index - 1]);
+    }
+    expect(requests[0]).toEqual(requests[1]);
+    expect(requests[2]).toEqual(requests[3]);
+    expect(requests[3]).toEqual(requests[4]);
+    expect(JSON.stringify(requests.at(-1)).match(/\/project-a/g)).toHaveLength(1);
+    expect(JSON.stringify(requests.at(-1))).not.toContain('task-');
+  });
+
   test('rebuilds every provider boundary from durable canonical Items', async () => {
     const fixture = createContext();
     const providerContexts: Message[][] = [];
@@ -2120,6 +2181,7 @@ describe('PiTurnExecutor event normalization', () => {
       text: 'COMPACTED HISTORY SUMMARY',
     });
     const restoredStateRef = put({
+      executionContext: { entries: [], text: '', omitted: 0 },
       schemaVersion: 1,
       kind: 'compactionRestoredState',
       skillCatalogHash: skillCatalog.catalogHash,
@@ -2172,7 +2234,7 @@ describe('PiTurnExecutor event normalization', () => {
       timeZone: 'Asia/Shanghai',
       utcOffsetMinutes: 480,
       locale: 'zh-CN',
-      workingDirectory: '/workspace',
+
       conversationMode: 'interactive',
       executionMode: 'root',
       replyIdentity: null,
@@ -2379,6 +2441,7 @@ describe('PiTurnExecutor event normalization', () => {
           text: 'COMPACTED OLD HISTORY',
         });
         const restoredStateRef = writePayload({
+      executionContext: { entries: [], text: '', omitted: 0 },
           schemaVersion: 1,
           kind: 'compactionRestoredState',
           skillCatalogHash: null,
@@ -4697,7 +4760,7 @@ function createContext(): {
     source: 'app',
     threadSource: 'user',
     modelProvider: 'openai',
-    cwd: '/workspace',
+    configurationSource: { kind: 'user' },
     createdAt: 1_720_000_000_000,
     updatedAt: 1_720_000_000_000,
     status: { type: 'active', activeFlags: [] },
@@ -4826,7 +4889,7 @@ function createContext(): {
           kind: payload.kind,
         },
         summary,
-        contextRefs: [],
+        contextRefs: payload.kind === 'executionContextPublication' ? payload.evidenceRefs : [],
         internalTextRefs: [],
         resourceRefs: [],
         outputRefs: payload.kind === 'toolOutputProjection' ? [payload.outputRef] : [],

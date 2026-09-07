@@ -1448,6 +1448,8 @@ export const en = {
       rerunConfirmMessage: 'This turn already ran actions. Rerunning starts from the beginning and may repeat them.',
       stopUnavailable: 'That work already finished.',
       tasks: {
+        directory: 'Directory',
+        executionPolicy: 'Execution policy',
         backgroundWork: 'Background tasks',
         running: ({ count }: { count: number }) => `${count} running`,
         justFinished: 'Just finished',

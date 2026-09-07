@@ -4,7 +4,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
 "[
   {
     "name": "bash",
-    "description": "Executes a shell command in the Thread working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nSet run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.\\nYou do not need to append \\"&\\"; use task_stop if a background task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
+    "description": "Executes a shell command in the call working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nSet run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.\\nYou do not need to append \\"&\\"; use task_stop if a background task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
     "parameters": {
       "type": "object",
       "additionalProperties": false,
@@ -34,6 +34,11 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "run_in_background": {
           "type": "boolean",
           "description": "Set to true only when the next useful action does not depend on this command result. Otherwise leave it false and wait for completion regardless of expected duration. You do not need to append \\"&\\"; use task_stop to finalize durable background output."
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls."
         }
       }
     }
@@ -61,7 +66,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "file_delete",
-    "description": "Moves a local file or directory to agent trash instead of permanently deleting it.\\nUse this for reversible cleanup. It cannot delete the Thread working directory root.\\nThe result includes the trash path so the item can be recovered if needed.",
+    "description": "Moves a local file or directory to agent trash instead of permanently deleting it.\\nUse this for reversible cleanup. It cannot delete the call working directory root.\\nThe result includes the trash path so the item can be recovered if needed.",
     "parameters": {
       "type": "object",
       "additionalProperties": false,
@@ -72,7 +77,12 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "file_path": {
           "type": "string",
           "minLength": 1,
-          "description": "An absolute path or a path relative to the Thread working directory to move to agent trash."
+          "description": "An absolute path or a path relative to the call working directory to move to agent trash."
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls."
         }
       }
     }
@@ -92,7 +102,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "file_path": {
           "type": "string",
           "minLength": 1,
-          "description": "An absolute path or a path relative to the Thread working directory."
+          "description": "An absolute path or a path relative to the call working directory."
         },
         "old_string": {
           "type": "string",
@@ -105,6 +115,11 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "replace_all": {
           "type": "boolean",
           "description": "Replace all occurrences of old_string. Defaults to false."
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls."
         }
       }
     }
@@ -127,7 +142,12 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "path": {
           "type": "string",
           "minLength": 1,
-          "description": "An absolute directory or one relative to the Thread working directory. Omit it to search the Thread working directory."
+          "description": "An absolute directory or one relative to the call working directory. Omit it to search the call working directory."
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls."
         }
       }
     }
@@ -150,7 +170,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "path": {
           "type": "string",
           "minLength": 1,
-          "description": "An absolute file or directory, or one relative to the Thread working directory. Defaults to the Thread working directory."
+          "description": "An absolute file or directory, or one relative to the call working directory. Defaults to the call working directory."
         },
         "glob": {
           "type": "string",
@@ -212,13 +232,18 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "multiline": {
           "type": "boolean",
           "description": "Enable multiline mode where patterns can span lines. Default false."
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls."
         }
       }
     }
   },
   {
     "name": "file_read",
-    "description": "Reads a local file.\\nUse an absolute file_path when known; relative paths resolve from the Thread working directory.\\nBy default, it reads up to 2000 lines starting from the beginning of the file.\\nYou can optionally specify a line offset and limit, especially for long files.\\nThis tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. It can only read files, not directories.\\nPDFs are read as extracted text by default. For PDF files only, use pages when page images or layout inspection are needed.\\nFor text pagination, use offset and limit. A pages value on a non-PDF file is ignored with a route-specific warning.\\nUse this before file_edit or before rewriting an existing file with file_write.",
+    "description": "Reads a local file.\\nUse an absolute file_path when known; relative paths resolve from the call working directory.\\nBy default, it reads up to 2000 lines starting from the beginning of the file.\\nYou can optionally specify a line offset and limit, especially for long files.\\nThis tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. It can only read files, not directories.\\nPDFs are read as extracted text by default. For PDF files only, use pages when page images or layout inspection are needed.\\nFor text pagination, use offset and limit. A pages value on a non-PDF file is ignored with a route-specific warning.\\nUse this before file_edit or before rewriting an existing file with file_write.",
     "parameters": {
       "type": "object",
       "additionalProperties": false,
@@ -229,7 +254,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "file_path": {
           "type": "string",
           "minLength": 1,
-          "description": "An absolute path or a path relative to the Thread working directory."
+          "description": "An absolute path or a path relative to the call working directory."
         },
         "offset": {
           "type": "integer",
@@ -246,6 +271,11 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
           "type": "string",
           "minLength": 1,
           "description": "PDF FILES ONLY. Omit pages to extract text from the entire PDF by default. Provide a page range for PDF layout inspection, for example \\"1-5\\", \\"3\\", or \\"10-20\\". Never use for text, images, Office documents, notebooks, or other non-PDF files. Maximum 20 pages per request."
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls."
         }
       }
     }
@@ -264,11 +294,16 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "file_path": {
           "type": "string",
           "minLength": 1,
-          "description": "An absolute path or a path relative to the Thread working directory."
+          "description": "An absolute path or a path relative to the call working directory."
         },
         "content": {
           "type": "string",
           "description": "The content to write to the file."
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls."
         }
       }
     }

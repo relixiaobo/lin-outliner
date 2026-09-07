@@ -174,7 +174,7 @@ export class AutomationRendererStore {
   }
 
   async startNow(automation: Automation): Promise<readonly AutomationRun[]> {
-    const response = await this.client.automationRequest('startNow', { id: automation.id });
+    const response = await this.client.automationRequest('startNow', { id: automation.id, requestId: crypto.randomUUID() });
     for (const run of response.runs) this.upsertRun(run);
     return response.runs;
   }

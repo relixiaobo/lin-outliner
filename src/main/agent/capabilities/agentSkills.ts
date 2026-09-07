@@ -691,6 +691,7 @@ interface LoadedSkillAdmission {
 
 class SkillRegistry {
   private readonly root: string;
+  private readonly includeProjectSkills: boolean;
   private readonly includeUserSkills: boolean;
   private readonly builtInSkillDirectories: string[];
   private readonly builtInSkillRoots: string[];
@@ -719,7 +720,8 @@ class SkillRegistry {
   private provenanceLoaded = false;
 
   constructor(options: SkillLoadOptions) {
-    this.root = path.resolve(options.localRoot ?? process.cwd());
+    this.root = path.resolve(options.localRoot ?? homedir());
+    this.includeProjectSkills = options.localRoot !== undefined;
     this.includeUserSkills = options.includeUserSkills ?? true;
     this.builtInSkillDirectories = normalizeBuiltInSkillDirectories(
       options.builtInSkillDirectories ?? [resolveBuiltInSkillResourceRoot()],
@@ -908,6 +910,7 @@ class SkillRegistry {
       const generation = this.loadGeneration;
       const target = await resolveSkillContentTarget(filePath, {
         root: this.root,
+        includeProjectSkills: this.includeProjectSkills,
         includeUserSkills: this.includeUserSkills,
         additionalSkillDirectories: [...this.additionalSkillDirectories],
         additionalSkillSourceModes: { ...this.additionalSkillSourceModes },
@@ -1073,6 +1076,7 @@ class SkillRegistry {
         this.includeUserSkills,
         this.additionalSkillDirectories,
         this.additionalSkillSourceModes,
+        this.includeProjectSkills,
       );
       for (const root of roots) {
         const { dir, source, policy, mode } = root;
@@ -1173,6 +1177,7 @@ class SkillRegistry {
   }
 
   private async discoverSkillDirsForPaths(filePaths: string[]): Promise<string[]> {
+    if (!this.includeProjectSkills) return [];
     const discovered: string[] = [];
     for (const filePath of filePaths) {
       const absolute = path.resolve(filePath);
@@ -1249,15 +1254,16 @@ async function skillSearchDirs(
   includeUserSkills: boolean,
   additionalSkillDirectories: readonly string[] = [],
   additionalSkillSourceModes: Readonly<Record<string, 'skill' | 'container'>> = {},
+  includeProjectSkills = true,
 ): Promise<SkillSearchDirectory[]> {
   const dirs: Array<Omit<SkillSearchDirectory, 'identity' | 'aliases'>> = [
     ...(includeUserSkills ? [
       { dir: path.join(homedir(), '.agents', 'skills'), source: 'user', policy: 'convention', mode: 'container' },
     ] as Array<Omit<SkillSearchDirectory, 'identity' | 'aliases'>> : []),
-    { dir: path.join(root, '.agents', 'skills'), source: 'project', policy: 'convention', mode: 'container' },
+    ...(includeProjectSkills ? [{ dir: path.join(root, '.agents', 'skills'), source: 'project', policy: 'convention', mode: 'container' }] as Array<Omit<SkillSearchDirectory, 'identity' | 'aliases'>> : []),
     ...additionalSkillDirectories.map((dir): Omit<SkillSearchDirectory, 'identity' | 'aliases'> => ({
       dir,
-      source: isPathInside(dir, root) ? 'project' : 'user',
+      source: includeProjectSkills && isPathInside(dir, root) ? 'project' : 'user',
       policy: 'bound',
       mode: additionalSkillSourceModes[dir] ?? 'container',
     })),
@@ -1307,6 +1313,7 @@ export interface LoadedBoundSkillRoot {
 /** Config that defines convention namespaces and the last admitted bound roots. */
 export interface SkillDirConfig {
   root: string;
+  includeProjectSkills?: boolean;
   includeUserSkills: boolean;
   additionalSkillDirectories: readonly string[];
   additionalSkillSourceModes?: Readonly<Record<string, 'skill' | 'container'>>;
@@ -1389,6 +1396,7 @@ export async function resolveSkillContentTarget(
       config.includeUserSkills,
       config.additionalSkillDirectories,
       config.additionalSkillSourceModes,
+      config.includeProjectSkills,
     );
   const candidates: AgentSkillContentTarget[] = [];
 
@@ -1450,7 +1458,7 @@ export async function resolveSkillContentTarget(
   // 4. Nested .agents/skills under the work root (project) — matched by path so a
   //    brand-new nested skill dir is still governed on its first write.
   const root = path.resolve(config.root);
-  if (isPathInside(filePath, root)) {
+  if (config.includeProjectSkills !== false && isPathInside(filePath, root)) {
     const parts = filePath.split(path.sep);
     for (let index = parts.length - 3; index >= 0; index -= 1) {
       if (parts[index] !== '.agents' || parts[index + 1] !== 'skills') continue;

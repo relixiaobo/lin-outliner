@@ -67,7 +67,7 @@ export interface ThreadStoreSnapshot {
   readonly toolTasksById: ReadonlyMap<string, ToolTaskProjection>;
   /**
    * How each visible Thread's conversation Agent looks, keyed by Thread and the
-   * stable `main` presentation key. The Thread cwd resolves its project override.
+   * stable `main` presentation key. The explicit configuration source resolves its project override.
    */
   readonly identityCatalogByThread: ReadonlyMap<ThreadId, AgentIdentityCatalog>;
   readonly loading: boolean;

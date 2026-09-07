@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   Automation,
   AutomationCreateInput,
+  AutomationContextHintInput,
   AutomationUpdateInput,
 } from '../../../core/agent/automation';
 import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../../../core/agentModelId';
@@ -27,8 +28,9 @@ import {
 } from './AutomationScheduleDraft';
 
 type ProjectMode = 'none' | 'local' | 'worktree';
-type ProjectBindingDraft = {
+type ContextHintDraft = {
   readonly id: string;
+  readonly contextHintId?: string;
   readonly cwd: string;
   readonly executionMode: Exclude<ProjectMode, 'none'>;
 };
@@ -113,11 +115,10 @@ export function AutomationEditor(props: AutomationEditorProps) {
       const destination = state.destination === 'standalone'
         ? { kind: 'standalone' as const }
         : { kind: 'existingThread' as const, threadId: required(state.threadId, t.fieldRequired({ field: t.thread })) };
-      const projectBindings = state.projectBindings.map((binding) => ({
-        ...binding,
-        id: binding.id || crypto.randomUUID(),
-        cwd: required(binding.cwd, t.fieldRequired({ field: t.cwd })),
-      }));
+      const contextHints = state.contextHints.map((binding) => toAutomationContextHintInput(
+        binding,
+        required(binding.cwd, t.fieldRequired({ field: t.cwd })),
+      ));
       const definition: AutomationCreateInput = {
         name: state.name.trim(),
         prompt: state.prompt.trim(),
@@ -126,7 +127,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
           timezone: required(state.timezone, t.fieldRequired({ field: t.timezone })),
         },
         destination,
-        projectBindings,
+        contextHints,
         configuration: {
           modelProvider: nullable(state.modelProvider),
           model: nullable(state.model),
@@ -192,12 +193,9 @@ export function AutomationEditor(props: AutomationEditorProps) {
                   setState({
                     ...state,
                     destination,
-                    projectBindings: destination === 'existingThread'
-                      ? state.projectBindings.slice(0, 1).map((binding) => ({
-                          ...binding,
-                          executionMode: 'local' as const,
-                        }))
-                      : state.projectBindings,
+                    contextHints: destination === 'existingThread'
+                      ? state.contextHints.slice(0, 1)
+                      : state.contextHints,
                   });
                 }}
                 value={state.destination}
@@ -235,23 +233,21 @@ export function AutomationEditor(props: AutomationEditorProps) {
                   const projectMode = event.target.value as ProjectMode;
                   setState({
                     ...state,
-                    projectBindings: projectMode === 'none'
+                    contextHints: projectMode === 'none'
                       ? []
-                      : state.projectBindings.length === 0
+                      : state.contextHints.length === 0
                         ? [{ id: crypto.randomUUID(), cwd: '', executionMode: projectMode }]
-                        : state.projectBindings.map((binding, index) => (
+                        : state.contextHints.map((binding, index) => (
                             index === 0 ? { ...binding, executionMode: projectMode } : binding
                           )),
                   });
                 }}
-                value={state.projectBindings[0]?.executionMode ?? 'none'}
+                value={state.contextHints[0]?.executionMode ?? 'none'}
                 variant="popup"
               >
                 <option value="none">{t.projects.none}</option>
                 <option value="local">{t.projects.local}</option>
-                {state.destination === 'standalone' ? (
-                  <option value="worktree">{t.projects.worktree}</option>
-                ) : null}
+                <option value="worktree">{t.projects.worktree}</option>
               </SelectControl>
             </Field>
             <Field className="automation-setting-row" label={t.model} labelClassName="automation-setting-label">
@@ -303,9 +299,9 @@ export function AutomationEditor(props: AutomationEditorProps) {
             </Field>
           </div>
 
-          {state.projectBindings.length > 0 ? (
+          {state.contextHints.length > 0 ? (
             <div className="automation-project-details">
-              {state.projectBindings.map((binding, index) => (
+              {state.contextHints.map((binding, index) => (
                 <div className={`automation-project-binding${index === 0 ? ' is-primary' : ''}`} key={binding.id || index}>
                   {index > 0 ? (
                     <SelectControl
@@ -313,9 +309,9 @@ export function AutomationEditor(props: AutomationEditorProps) {
                       label={t.projectMode({ index: index + 1 })}
                       onChange={(event) => setState({
                         ...state,
-                        projectBindings: replaceBinding(state.projectBindings, index, {
+                        contextHints: replaceBinding(state.contextHints, index, {
                           ...binding,
-                          executionMode: event.target.value as ProjectBindingDraft['executionMode'],
+                          executionMode: event.target.value as ContextHintDraft['executionMode'],
                         }),
                       })}
                       value={binding.executionMode}
@@ -331,7 +327,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
                       label={t.projectPath({ index: index + 1 })}
                       onChange={(event) => setState({
                         ...state,
-                        projectBindings: replaceBinding(state.projectBindings, index, {
+                        contextHints: replaceBinding(state.contextHints, index, {
                           ...binding,
                           cwd: event.target.value,
                         }),
@@ -346,7 +342,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
                       label={t.removeProject({ index: index + 1 })}
                       onClick={() => setState({
                         ...state,
-                        projectBindings: state.projectBindings.filter((_, candidate) => candidate !== index),
+                        contextHints: state.contextHints.filter((_, candidate) => candidate !== index),
                       })}
                       variant="message"
                     />
@@ -358,7 +354,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
                   disabled={props.busy}
                   onClick={() => setState({
                     ...state,
-                    projectBindings: [...state.projectBindings, {
+                    contextHints: [...state.contextHints, {
                       id: crypto.randomUUID(),
                       cwd: '',
                       executionMode: 'local',
@@ -413,7 +409,7 @@ interface EditorState {
   readonly timezone: string;
   readonly destination: 'standalone' | 'existingThread';
   readonly threadId: string;
-  readonly projectBindings: readonly ProjectBindingDraft[];
+  readonly contextHints: readonly ContextHintDraft[];
   readonly modelProvider: string;
   readonly model: string;
   readonly reasoningEffort: ReasoningEffort | '';
@@ -452,7 +448,11 @@ function editorState(automation: Automation | null): EditorState {
     timezone: automation?.schedule.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
     destination: automation?.destination.kind ?? 'standalone',
     threadId: automation?.destination.kind === 'existingThread' ? automation.destination.threadId : '',
-    projectBindings: automation?.projectBindings.map((binding) => ({ ...binding })) ?? [],
+    contextHints: automation?.contextHints.map((binding) => ({
+      id: binding.contextHintId, contextHintId: binding.contextHintId,
+      cwd: binding.source.kind === 'directory' ? binding.source.rootHint : '',
+      executionMode: binding.executionMode,
+    })) ?? [],
     modelProvider: automation?.configuration.modelProvider ?? '',
     model: automation?.configuration.model ?? '',
     reasoningEffort: automation?.configuration.reasoningEffort ?? '',
@@ -464,11 +464,23 @@ function stateSignature(state: EditorState): string {
 }
 
 function replaceBinding(
-  bindings: readonly ProjectBindingDraft[],
+  bindings: readonly ContextHintDraft[],
   index: number,
-  value: ProjectBindingDraft,
-): readonly ProjectBindingDraft[] {
+  value: ContextHintDraft,
+): readonly ContextHintDraft[] {
   return bindings.map((binding, candidate) => candidate === index ? value : binding);
+}
+
+/** Convert editor state to the closed Core contract; UI row ids never cross this boundary. */
+export function toAutomationContextHintInput(
+  binding: Pick<ContextHintDraft, 'id' | 'contextHintId' | 'executionMode'>,
+  rootHint: string,
+): AutomationContextHintInput {
+  return {
+    ...(binding.contextHintId ? { contextHintId: binding.contextHintId } : {}),
+    source: { kind: 'directory', rootHint },
+    executionMode: binding.executionMode,
+  };
 }
 
 function nullable(value: string): string | null {

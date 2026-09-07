@@ -58,7 +58,7 @@ export function selectEffectiveContext(turns: readonly Turn[]): EffectiveContext
   for (let index = 0; index < epoch.length; index += 1) {
     if (index < coveredFrom || index >= preservedFrom) retained.add(entryKey(epoch[index]!));
   }
-  const ordered = epoch.filter((entry) => retained.has(entryKey(entry)) && entry.item.id !== latestCompaction.id);
+  const ordered = epoch.filter((entry) => retained.has(entryKey(entry)) && entry.item.type !== 'contextCompaction');
   const compactionEntry = epoch[compactionIndex]!;
   const epochOrder = new Map(epoch.map((entry, index) => [entryKey(entry), index]));
   const insertion = latestCompaction.preservedFrom

@@ -108,7 +108,7 @@ const privateThread: Thread = {
   source: 'app',
   threadSource: 'user',
   modelProvider: 'openai',
-  cwd: '/tmp/project',
+  configurationSource: { kind: 'user' },
   createdAt: 100,
   updatedAt: 110,
   status: { type: 'idle' },

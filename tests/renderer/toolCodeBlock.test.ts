@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { toolPathRanges } from '../../src/renderer/agent/components/ToolCodeBlock';
 
 describe('tool code block file paths', () => {
-  test('resolves JSON path fields against the Thread working directory', () => {
+  test('resolves JSON path fields against the admitted task directory', () => {
     const code = JSON.stringify({
       file_path: 'src/main.ts',
       paths: ['./docs/spec.md', '../shared/types.ts'],
@@ -27,11 +27,18 @@ describe('tool code block file paths', () => {
     ]);
   });
 
-  test('resolves home-relative paths from a macOS Thread working directory', () => {
+  test('resolves home-relative paths from a macOS task directory', () => {
     const code = '{"path":"~/Desktop/report.pdf"}';
     const ranges = toolPathRanges(code, 'json', '/Users/dev/project');
     expect(pathRanges(code, ranges)).toEqual([
       { text: '~/Desktop/report.pdf', path: '/Users/dev/Desktop/report.pdf' },
+    ]);
+  });
+
+  test('does not invent a base for relative paths before task admission', () => {
+    const code = '{"file_path":"src/main.ts","path":"/absolute/file.ts"}';
+    expect(pathRanges(code, toolPathRanges(code, 'json', ''))).toEqual([
+      { text: '/absolute/file.ts', path: '/absolute/file.ts' },
     ]);
   });
 

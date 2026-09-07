@@ -2115,7 +2115,7 @@ function rootThread(turns: readonly Turn[]): Thread {
     source: 'app',
     threadSource: 'user',
     modelProvider: 'test',
-    cwd: '/tmp',
+    configurationSource: { kind: 'user' },
     createdAt: 1,
     updatedAt: 1,
     status: { type: 'idle' },

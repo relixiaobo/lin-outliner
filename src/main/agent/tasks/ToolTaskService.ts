@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { TaskExecutionContext } from '../../../core/agent/executionContext';
+import { ExecutionAdmissionError, pendingExecutionContext, resolveExecutionAddress, revalidateExecutionContext } from './ExecutionContext';
 import type { ChildProcess } from 'node:child_process';
 import { link, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -66,6 +68,7 @@ export const DEFAULT_TOOL_TASK_LIMITS: ToolTaskServiceLimits = Object.freeze({
 
 export interface ToolTaskHost {
   ownerExists(threadId: ThreadId): boolean;
+  canInheritClaim?(ownerThreadId: ThreadId, task: ToolTaskRecord): boolean;
   readDeliveryAdmission(
     threadId: ThreadId,
     turnId: TurnId,
@@ -106,6 +109,9 @@ export interface StartToolTaskInput {
     context: ToolTaskProcessPreparationContext,
   ) => Promise<PreparedToolTaskProcess>;
   readonly cwd: string;
+  readonly executionContext?: TaskExecutionContext;
+  readonly inheritedClaimTaskId?: string;
+  readonly onAdmitted?: (task: ToolTaskRecord) => Promise<void>;
   readonly stdin?: string;
   readonly timeoutMs: number;
   readonly env: NodeJS.ProcessEnv;
@@ -144,6 +150,7 @@ export interface ToolTaskPreparedResult {
 }
 
 export class ToolTaskService {
+  private readonly hostOperations = new Map<string, { readonly operation: Promise<unknown>; readonly controller: AbortController }>();
   private readonly monitors = new Map<string, ReturnType<typeof setInterval>>();
   private readonly startRuns = new Set<Promise<ToolTaskRecord>>();
   private readonly reconciliationRuns = new Map<string, Promise<void>>();
@@ -219,6 +226,7 @@ export class ToolTaskService {
       .map((task) => rm(task.detailPath, { recursive: true, force: true })));
     for (const task of this.store.allTerminalByAge()) this.store.releaseLease(task.taskId, this.now());
     for (const task of this.store.nonterminal()) {
+      if (task.operationKind === 'host') continue;
       this.store.ensureRecoveryLease(task, schedulingPolicy(task.producer), this.now());
     }
     for (const ownerThreadId of this.store.ownerIds()) {
@@ -247,7 +255,21 @@ export class ToolTaskService {
     if (!this.initialized) throw new Error('Tool Task recovery has not completed');
     if (!this.host?.ownerExists(input.ownerThreadId)) throw new Error('Tool Task owner does not exist');
     validateProcessInput(input);
-    const run = this.startAccepted(input);
+    this.validateClaimInheritance(input.ownerThreadId, input.inheritedClaimTaskId);
+    if (input.sandbox && process.platform !== 'darwin') {
+      throw new ExecutionAdmissionError('isolation_unavailable', 'Required process isolation is unavailable on this platform.');
+    }
+    const executionContext = input.executionContext
+      ? await revalidateExecutionContext(input.executionContext)
+      : pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: input.cwd }), {
+        capability: 'full-access', mutation: true,
+        isolation: input.sandbox ? 'macos-write-sandbox' : 'unsandboxed',
+        writablePaths: input.sandbox?.writablePaths ?? [],
+      });
+    if (executionContext.policy.isolation === 'macos-write-sandbox' && !input.sandbox) {
+      throw new ExecutionAdmissionError('isolation_unavailable', 'The admitted process policy requires an enforced write sandbox.');
+    }
+    const run = this.startAccepted({ ...input, cwd: executionContext.address.cwd, executionContext });
     this.startRuns.add(run);
     try {
       return await run;
@@ -256,13 +278,12 @@ export class ToolTaskService {
     }
   }
 
-  private async startAccepted(input: StartToolTaskInput): Promise<ToolTaskRecord> {
+  private async startAccepted(input: StartToolTaskInput & { readonly executionContext: TaskExecutionContext }): Promise<ToolTaskRecord> {
     const taskId = `task_${randomUUID()}`;
     const nonce = randomUUID();
     const detailPath = path.join(this.detailRoot, taskId);
     const startedAt = this.now();
     const paths = taskPaths(detailPath);
-    await mkdir(detailPath, { recursive: false, mode: 0o700 });
     const task = this.store.create({
       taskId,
       ownerThreadId: input.ownerThreadId,
@@ -272,6 +293,9 @@ export class ToolTaskService {
       description: normalizedLabel(input.description, 'Background command'),
       commandDigest: digestText(input.command),
       cwd: path.resolve(input.cwd),
+      executionContext: input.executionContext,
+      operationKind: 'process',
+      inheritedClaimTaskId: input.inheritedClaimTaskId ?? null,
       nonce,
       detailPath,
       backgroundEnabled: input.backgroundEnabled ?? true,
@@ -279,6 +303,8 @@ export class ToolTaskService {
       startedAt,
     });
     try {
+      await mkdir(detailPath, { recursive: false, mode: 0o700 });
+      await input.onAdmitted?.(task);
       await Promise.all([
         writeFile(paths.stdin, input.stdin ?? '', { encoding: 'utf8', mode: 0o600 }),
         writeFile(paths.stdout, '', { encoding: 'utf8', mode: 0o600 }),
@@ -360,6 +386,60 @@ export class ToolTaskService {
       await atomicJsonWrite(paths.receipt, receipt).catch(() => undefined);
       await this.reconcileTask(current);
       return this.store.read(taskId)!;
+    }
+  }
+
+  async runHostOperation<T>(input: {
+    readonly ownerThreadId: ThreadId;
+    readonly sourceTurnId: TurnId;
+    readonly sourceItemId: string;
+    readonly producer: string;
+    readonly executionContext: TaskExecutionContext;
+    readonly inheritedClaimTaskId?: string;
+    readonly onAdmitted: (task: ToolTaskRecord) => Promise<void>;
+    readonly execute: (signal: AbortSignal) => Promise<{ readonly result: T; readonly success: boolean }>;
+    readonly signal?: AbortSignal;
+  }): Promise<T> {
+    if (this.closing || !this.initialized) throw new Error('Tool Task admission is unavailable');
+    if (!this.host?.ownerExists(input.ownerThreadId)) throw new Error('Tool Task owner does not exist');
+    this.validateClaimInheritance(input.ownerThreadId, input.inheritedClaimTaskId);
+    await revalidateExecutionContext(input.executionContext);
+    const taskId = `task_${randomUUID()}`;
+    const task = this.store.create({
+      taskId, ownerThreadId: input.ownerThreadId, sourceTurnId: input.sourceTurnId,
+      sourceItemId: input.sourceItemId, producer: input.producer, description: input.producer,
+      commandDigest: digestText(input.producer), cwd: input.executionContext.address.cwd,
+      executionContext: input.executionContext, operationKind: 'host',
+      inheritedClaimTaskId: input.inheritedClaimTaskId ?? null,
+      nonce: randomUUID(), detailPath: path.join(this.detailRoot, taskId),
+      backgroundEnabled: false, timeoutMs: 600_000, startedAt: this.now(),
+    });
+    const controller = new AbortController();
+    const signal = input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal;
+    const operation = (async () => {
+      try {
+        await mkdir(task.detailPath, { recursive: false, mode: 0o700 });
+        await input.onAdmitted(task);
+        if (signal.aborted || this.closing) throw new Error('Host operation cancelled before execution');
+        const { result, success } = await input.execute(signal);
+        await this.settleWithoutProcess(task, success ? 'succeeded' : 'failed', 'host_operation_completed', null);
+        return result;
+      } catch (error) {
+        await this.settleWithoutProcess(task, signal.aborted ? 'cancelled' : 'failed',
+          signal.aborted ? 'host_operation_cancelled' : 'host_operation_failed', errorMessage(error));
+        throw error;
+      }
+    })();
+    this.hostOperations.set(taskId, { operation, controller });
+    try { return await operation; }
+    finally { this.hostOperations.delete(taskId); }
+  }
+
+  private validateClaimInheritance(ownerThreadId: ThreadId, taskId: string | undefined): void {
+    if (!taskId) return;
+    const owner = this.store.read(taskId);
+    if (!owner || isToolTaskTerminal(owner.state) || !this.host?.canInheritClaim?.(ownerThreadId, owner)) {
+      throw new ExecutionAdmissionError('invalid_target', 'The requested execution claim does not belong to this active Delegation Session.');
     }
   }
 
@@ -529,13 +609,15 @@ export class ToolTaskService {
     return this.store.list(ownerThreadId).map(projectToolTask);
   }
 
-  async output(taskId: string, ownerThreadId: ThreadId): Promise<ToolTaskOutput | null> {
+  async output(taskId: string, ownerThreadId: ThreadId, maxBytes = TASK_OUTPUT_PREVIEW_BYTES): Promise<ToolTaskOutput | null> {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error('Invalid Tool Task output budget');
+    maxBytes = Math.min(maxBytes, this.limits.taskDetailBytes);
     const task = this.store.owned(taskId, ownerThreadId);
     if (!task || !isToolTaskTerminal(task.state) || task.detailState !== 'available') return null;
     const paths = taskPaths(task.detailPath);
     const [stdout, stderr] = await Promise.all([
-      readPreview(paths.stdout, TASK_OUTPUT_PREVIEW_BYTES),
-      readPreview(paths.stderr, TASK_OUTPUT_PREVIEW_BYTES),
+      readPreview(paths.stdout, maxBytes),
+      readPreview(paths.stderr, maxBytes),
     ]);
     return {
       stdout: stdout.text,
@@ -550,6 +632,7 @@ export class ToolTaskService {
     if (!task) return null;
     if (isToolTaskTerminal(task.state)) return task;
     await this.host?.beforeStop?.(task, sourceTurnId ?? task.sourceTurnId);
+    this.hostOperations.get(taskId)?.controller.abort();
     if (this.store.readLease(taskId)?.state === 'queued') {
       return this.settleWithoutProcess(task, 'cancelled', 'user_stop', null);
     }
@@ -643,6 +726,7 @@ export class ToolTaskService {
 
   async close(drainTimeoutMs: number): Promise<void> {
     this.closing = true;
+    for (const operation of this.hostOperations.values()) operation.controller.abort();
     for (const timer of this.monitors.values()) clearInterval(timer);
     this.monitors.clear();
     await Promise.allSettled(this.store.nonterminal().map(async (task) => {
@@ -667,6 +751,7 @@ export class ToolTaskService {
         reason: 'application_quit',
       }).catch(() => undefined);
     }));
+    await Promise.allSettled([...this.hostOperations.values()].map(({ operation }) => operation));
     const deadline = Date.now() + Math.max(0, drainTimeoutMs);
     while (Date.now() < deadline && this.store.nonterminal().length > 0) {
       await Promise.all(this.store.nonterminal().map((task) => this.reconcileTask(task)));
@@ -744,6 +829,7 @@ export class ToolTaskService {
   }
 
   private async reconcileTaskOnce(task: ToolTaskRecord): Promise<void> {
+    if (this.hostOperations.has(task.taskId)) return;
     if (isToolTaskTerminal(task.state)) {
       this.clearMonitor(task.taskId);
       return;
@@ -758,6 +844,7 @@ export class ToolTaskService {
     });
     if (receipt) {
       try {
+        await this.settleCoveredChildren(task.taskId);
         await verifyPreparedResult(
           paths.preparedResult,
           receipt,
@@ -789,6 +876,10 @@ export class ToolTaskService {
         ));
         this.monitor(task.taskId);
       }
+      return;
+    }
+    if (task.operationKind === 'host' && !receiptInvalid) {
+      await this.settleWithoutProcess(task, 'lost', 'host_operation_interrupted', 'The Host restarted without terminal operation evidence. Do not replay the operation by assumption.');
       return;
     }
     if (receiptInvalid) {
@@ -850,6 +941,7 @@ export class ToolTaskService {
     const lost = await this.createLostReceipt(task, 'supervisor_missing');
     await atomicJsonWrite(paths.receipt, lost).catch(() => undefined);
     try {
+      await this.settleCoveredChildren(task.taskId);
       const terminalReceipt = await this.reconcileProducer(task, lost);
       const stabilized = await stabilizeOutput(paths, task, terminalReceipt, this.limits.taskDetailBytes);
       await this.settleArtifacts(
@@ -1078,7 +1170,7 @@ export class ToolTaskService {
 
   private async settleWithoutProcess(
     task: ToolTaskRecord,
-    state: 'failed' | 'cancelled',
+    state: 'failed' | 'cancelled' | 'succeeded' | 'lost',
     reason: string,
     error: string | null,
   ): Promise<ToolTaskRecord> {
@@ -1095,12 +1187,13 @@ export class ToolTaskService {
 
   private async settleWithoutProcessOnce(
     task: ToolTaskRecord,
-    state: 'failed' | 'cancelled',
+    state: 'failed' | 'cancelled' | 'succeeded' | 'lost',
     reason: string,
     error: string | null,
   ): Promise<ToolTaskRecord> {
     const current = this.store.read(task.taskId)!;
     if (isToolTaskTerminal(current.state)) return current;
+    await this.settleCoveredChildren(task.taskId);
     this.store.markSettling(task.taskId, this.now(), state === 'cancelled');
     const paths = taskPaths(task.detailPath);
     const unsigned = {
@@ -1132,6 +1225,19 @@ export class ToolTaskService {
     this.publish(terminal);
     if (terminal.backgroundEnabled) this.wakeDelivery(terminal.ownerThreadId);
     return terminal;
+  }
+
+  private async settleCoveredChildren(taskId: string): Promise<void> {
+    for (const child of this.store.coveredChildren(taskId)) {
+      const operation = this.hostOperations.get(child.taskId);
+      if (operation) {
+        operation.controller.abort();
+        await operation.operation.catch(() => undefined);
+      }
+      else if (child.operationKind === 'host') await this.reconcileTask(child);
+      else await this.stop(child.taskId, child.ownerThreadId);
+    }
+    if (this.store.coveredChildren(taskId).length > 0) throw new Error('Covered child execution is still settling');
   }
 
   private async waitForLease(

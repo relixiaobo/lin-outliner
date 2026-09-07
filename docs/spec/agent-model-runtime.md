@@ -309,10 +309,10 @@ authority.
 
 ## Execution Context Publication
 
-This is the shared contract for the execution-context refactor and its discovery,
-verification, Git, process, delegation, and Automation consumers. Unit A implements
-the common publication and restore mechanism with pending snapshots; Unit B adds
-discovery. These intended contracts do not claim that either unit has shipped.
+This is the shared contract for execution context and its discovery, verification,
+Git, process, delegation, and Automation consumers. The runtime implements common
+publication and restore with pending generation-0 snapshots. Later discovery
+generations follow this same contract; their collectors belong to Unit B.
 
 ### Evidence And Effective State
 
@@ -357,7 +357,14 @@ context-evidence projection contract. The record owns the selected evidence
 dependencies, consuming Turn/Item position, source causation, semantic operations,
 and frozen bounded text/bundle decisions. It contains no second provider transcript.
 Diagnostics observes the resulting request but is not a publication or replay owner.
-An evidence commit after the selection belongs to a later boundary. Publication
+`planExecutionContextPublication` compares committed scoped facts only. The
+`executionContextPublication` payload freezes its ordered evidence dependencies,
+operations and rendered text. Even an unchanged admission closes an empty boundary;
+`CanonicalContextProjector` flushes contiguous reminder bundles there. Thus a later
+observation cannot alter a previous bundle when no assistant text intervenes.
+Only the publication's explicit evidence dependencies are consumed. An evidence
+commit after selection remains pending even if it precedes the publication Item
+in durable append order, and belongs to a later boundary. Publication
 failure cannot expose uncommitted text or mark that contribution delivered; mandatory
 task admission still fails before side effects, while optional discovery is deferred
 or represented as unavailable under the existing degradation contract.
@@ -405,6 +412,14 @@ evidence resources with bounded decision-relevant projections, not repeated full
 state dumps. Unknown or omitted rules/scopes remain explicit, never reported as a
 complete instruction set. A task counter is not a provider token budget.
 
+An execution publication has a 16,000-character projection cap inside the existing
+global provider-input budget. An oversized initial observation is omitted without
+advancing its announced baseline. If a replacement cannot fit, the publication
+explicitly invalidates the prior execution baseline so obsolete guidance is not
+silently retained. Later admissions can announce that state again. Checkpoints
+retain only the scoped bodies actually restored, with omission counts and original
+publication dependencies; missing newer evidence never revives an older baseline.
+
 Physical removal of covered historical text uses canonical compaction or reset.
 Compaction extends the existing restored-state payload and dependency graph with
 the effective scoped context, original evidence references, applicability and
@@ -417,6 +432,10 @@ baseline, so later use can publish it again. References alone cannot restore mod
 visibility. Missing inspection dependencies degrade to unavailable without reviving
 older instructions or re-running discovery. Repeated compaction, inherited context,
 restart, and fork use the same reducer rules.
+Repeated compaction computes coverage in canonical history order, even when the
+previous checkpoint is projected ahead of its preserved tail. Its restored state
+uses the effective prefix, and superseded checkpoint Items cannot return in that
+tail. Both complete and partial repeated compaction preserve forward cursors.
 
 The current complete-active-Turn protection remains in force. This refactor does
 not authorize mid-Turn history pruning. An oversized active Turn reports capacity
@@ -682,7 +701,7 @@ resources include opaque ID/MIME/length/file name, and outputs include
 digest/MIME/length/summary. Resource digest and retention-anchor equality remain private
 ContentStore facts and never replace the opaque Agent reference.
 Forked Items retain origin provenance while copying referenced payloads under
-the fork's own Thread directory. Resource dependencies link the same Agent reference and
+the fork's own payload storage directory. Resource dependencies link the same Agent reference and
 exact revision into the fork; no byte or inode copy is created. Payload and resource
 reads resolve through the requested Thread's canonical dependency set, so deleting the
 source Thread cannot invalidate inherited text or image results. Payload reads never become provider history

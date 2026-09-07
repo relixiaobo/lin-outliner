@@ -21,7 +21,6 @@ import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadSt
 import { AgentResourceStore } from '../../src/main/agent/persistence/AgentResourceStore';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
-import { AgentStartupContextStore } from '../../src/main/agent/context/AgentStartupContext';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import type { Turn } from '../../src/core/agent/protocol';
 
@@ -102,13 +101,14 @@ test('a provider-driven root Turn completes the real Skill lifecycle and canonic
     } }),
   });
   const service = new ThreadService({ stores: createStores(f.root), executor,
+    defaultExecutionDirectory: f.workspace,
     attachmentScratchRoot: join(f.root, 'scratch'), transcriptRoot: join(f.root, 'transcripts'),
     extensions: new ExtensionRegistry(), resolveConfiguration: () => ({ ...defaultEffectiveThreadConfiguration(),
       tools: ['skill_inspect', 'skill_manage', 'skill', 'file_read', 'file_edit'], skills: ['*'],
     }),
   });
   toolRuntime = new ToolRuntime(service, {
-    capabilityTools: () => [...createLocalTools({ localFileRoot: f.workspace, skillRuntime: f.runtime }), createSkillTool(f.runtime)],
+    capabilityTools: () => [...createLocalTools({ localRoot: f.workspace, skillRuntime: f.runtime }), createSkillTool(f.runtime)],
     skillRuntime: f.runtime, capabilityConfig: { blocks: [] },
     dynamicTools: (context, authorize) => createSkillLifecycleTools(f.lifecycle, (itemId, signal) => ({
       ...f.caller, key: context.thread.id, runtime: f.runtime, signal, authorize,
@@ -117,7 +117,7 @@ test('a provider-driven root Turn completes the real Skill lifecycle and canonic
   });
   try {
     await service.initialize();
-    const { thread } = await service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', cwd: f.workspace });
+    const { thread } = await service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'project', root: f.workspace } });
     let resolve!: (turn: Turn) => void;
     const completed = new Promise<Turn>((settle) => { resolve = settle; });
     const unsubscribe = service.subscribe((notification) => {
@@ -155,7 +155,7 @@ function createStores(root: string): ThreadServiceStores {
     history: new ThreadHistoryProjectionStore(join(directory, 'history.sqlite'), database('history.sqlite')),
     rollout: new RolloutStore(join(directory, 'rollouts')),
     goals: new GoalStore(join(directory, 'goals.sqlite'), goals), toolTasks: new ToolTaskStore(goals),
-    agentStartupContexts: new AgentStartupContextStore(goals), payloads: new ToolPayloadStore(join(directory, 'payloads')),
+    payloads: new ToolPayloadStore(join(directory, 'payloads')),
     resources: new AgentResourceStore(join(directory, 'resources.sqlite'), join(root, 'content'),
       join(root, 'scratch'), Date.now, database('resources.sqlite')),
   };

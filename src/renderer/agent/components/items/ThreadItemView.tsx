@@ -88,7 +88,6 @@ interface ThreadItemViewProps {
   readonly streaming: boolean;
   readonly threadId: string;
   readonly threadReferences: ReadonlyMap<string, ThreadReferenceView>;
-  readonly threadCwd: string;
   /** False while this Turn is blocked or recovering. The same phrases remain
    *  mounted as static text, but must not claim that work is advancing. */
   readonly workingTextEnabled: boolean;
@@ -203,7 +202,6 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           onReadArguments={props.onReadToolArguments}
           onReadOutput={props.onReadToolOutput}
           threadId={props.threadId}
-          threadCwd={props.threadCwd}
           workingTextEnabled={props.workingTextEnabled}
         />
       );
@@ -251,7 +249,6 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
   onReadToolOutput,
   onReadToolArguments,
   threadId,
-  threadCwd,
   workingTextEnabled,
 }: {
   readonly expandState: ThreadDisclosureState;
@@ -260,7 +257,6 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly threadId: string;
-  readonly threadCwd: string;
   readonly workingTextEnabled: boolean;
 }) {
   const t = useT();
@@ -303,7 +299,6 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
               onReadArguments={onReadToolArguments}
               onReadOutput={onReadToolOutput}
               threadId={threadId}
-              threadCwd={threadCwd}
               workingTextEnabled={workingTextEnabled}
             />
           ))}
@@ -817,7 +812,6 @@ function ToolItemDisclosure({
   onReadArguments,
   onReadOutput,
   threadId,
-  threadCwd,
   workingTextEnabled,
 }: {
   readonly expandState: ThreadDisclosureState;
@@ -826,7 +820,6 @@ function ToolItemDisclosure({
   readonly onReadArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly threadId: string;
-  readonly threadCwd: string;
   readonly workingTextEnabled: boolean;
 }) {
   const t = useT();
@@ -940,7 +933,7 @@ function ToolItemDisclosure({
               <ToolCodeBlock
                 code={detailInput}
                 copyLabel={t.agent.thread.item.copyArguments}
-                cwd={threadCwd}
+                cwd={item.cwd ?? ''}
                 language={detail.inputLanguage}
               />
             </ToolDetailSection>
@@ -963,7 +956,7 @@ function ToolItemDisclosure({
               <ToolCodeBlock
                 code={output}
                 copyLabel={t.agent.thread.item.copyOutput}
-                cwd={threadCwd}
+                cwd={item.cwd ?? ''}
                 language={outputLoaded && loadedOutput.text
                   ? outputLanguage(loadedOutput.text)
                   : detail.outputLanguage}
@@ -1270,7 +1263,7 @@ function toolItemAct(
       // The caller's own description is the only thing that can tell three
       // `python3 - <<'PY'` heredocs apart; the shell text stays one expand away.
       if (item.description) return item.description;
-      const command = quoteSubject(commandDisplayText(item.command, item.cwd));
+      const command = quoteSubject(commandDisplayText(item.command, item.cwd ?? ''));
       return running ? labels.runningCommand({ command }) : labels.ranCommand({ command });
     }
     case 'fileChange': {
@@ -2108,7 +2101,7 @@ function commandDisplayText(command: string, cwd: string): string {
   // A leading `cd X &&` is scaffolding for the command that follows it.
   const chained = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*&&\s*(.+)$/.exec(text);
   if (chained?.[1]) text = chained[1].trim();
-  // Shorten paths inside the Thread's own working directory. A root cwd has no
+  // Shorten paths inside this task's admitted directory. A root cwd has no
   // prefix worth stripping — doing it anyway would delete every slash.
   const prefix = cwd.endsWith('/') ? cwd : `${cwd}/`;
   return prefix.length > 1 ? text.split(prefix).join('') : text;

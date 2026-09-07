@@ -28,7 +28,6 @@ function defaultsInput(
   return {
     request: {},
     remembered,
-    cwd: '/tmp/agent-workdir',
     getProviderRuntimeConfig: async () => anthropicProvider,
     getActiveProviderRuntimeConfig: async () => activeProvider,
     validateRememberedSelection: () => undefined,
@@ -52,7 +51,6 @@ describe('renderer Thread start defaults', () => {
     }));
 
     expect(result).toEqual({
-      cwd: '/tmp/agent-workdir',
       executionSelection: remembered,
     });
     expect(validated).toEqual(['anthropic:anthropic/claude-sonnet-4:high']);
@@ -68,7 +66,6 @@ describe('renderer Thread start defaults', () => {
     await expect(resolveRendererThreadStartDefaults(defaultsInput({
       getConfiguredDefaultSelection: async () => configured,
     }))).resolves.toEqual({
-      cwd: '/tmp/agent-workdir',
       executionSelection: configured,
     });
   });
@@ -78,7 +75,6 @@ describe('renderer Thread start defaults', () => {
       getProviderRuntimeConfig: async () => null,
     }))).resolves.toEqual({
       modelProvider: 'openai',
-      cwd: '/tmp/agent-workdir',
     });
   });
 
@@ -89,7 +85,6 @@ describe('renderer Thread start defaults', () => {
       },
     }))).resolves.toEqual({
       modelProvider: 'openai',
-      cwd: '/tmp/agent-workdir',
     });
   });
 
@@ -100,7 +95,6 @@ describe('renderer Thread start defaults', () => {
       },
     }))).resolves.toEqual({
       modelProvider: 'openai',
-      cwd: '/tmp/agent-workdir',
     });
   });
 
@@ -117,7 +111,6 @@ describe('renderer Thread start defaults', () => {
 
     expect(result).toEqual({
       modelProvider: 'openai',
-      cwd: '/tmp/agent-workdir',
     });
     expect(rememberedProviderCalls).toBe(0);
   });
@@ -139,7 +132,6 @@ describe('renderer Thread start defaults', () => {
 
     expect(result).toEqual({
       modelProvider: 'custom-provider',
-      cwd: '/tmp/agent-workdir',
     });
     expect(providerReads).toBe(0);
   });

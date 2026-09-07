@@ -80,7 +80,7 @@ function thread(id: string, updatedAt: number, overrides: Partial<Thread> = {}):
     source: 'app',
     threadSource: 'user',
     modelProvider: 'openai',
-    cwd: '/tmp/project',
+    configurationSource: { kind: 'user' },
     createdAt: updatedAt,
     updatedAt,
     status: { type: 'idle' },
@@ -235,8 +235,6 @@ describe('Agent Core persistence', () => {
     expect(cached.thread).toMatchObject({ preview: 'Preview', updatedAt: 710 });
     mutate('setStatus', () => store.setStatus(threadId, { type: 'active', activeFlags: [] }, 720));
     expect(cached.thread).toMatchObject({ status: { type: 'active', activeFlags: [] }, updatedAt: 720 });
-    mutate('setCwd', () => store.setCwd(threadId, '/tmp/next', 730));
-    expect(cached.thread).toMatchObject({ cwd: '/tmp/next', updatedAt: 730 });
     const nextConfiguration = { ...configuration, model: 'next-model' };
     mutate('setConfiguration', () => store.setConfiguration(threadId, nextConfiguration));
     expect(cached.configuration.model).toBe('next-model');

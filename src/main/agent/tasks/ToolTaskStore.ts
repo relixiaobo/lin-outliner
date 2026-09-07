@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ExecutionAdmissionError, validateExecutionContext } from './ExecutionContext';
 import type { ThreadId, ThreadResourceReference, TurnId } from '../../../core/agent/protocol';
 import type { SqliteDatabase } from '../persistence/sqlite';
 import {
@@ -27,6 +28,9 @@ interface ToolTaskRow {
   description: string;
   command_digest: string;
   cwd: string;
+  execution_context_json: string;
+  operation_kind: 'process' | 'host';
+  inherited_claim_task_id: string | null;
   nonce: string;
   detail_path: string;
   background_enabled: number;
@@ -115,6 +119,9 @@ export class ToolTaskStore {
         description TEXT NOT NULL,
         command_digest TEXT NOT NULL,
         cwd TEXT NOT NULL,
+        execution_context_json TEXT NOT NULL,
+        operation_kind TEXT NOT NULL CHECK (operation_kind IN ('process', 'host')),
+        inherited_claim_task_id TEXT,
         nonce TEXT NOT NULL,
         detail_path TEXT NOT NULL,
         background_enabled INTEGER NOT NULL CHECK (background_enabled IN (0, 1)),
@@ -159,6 +166,15 @@ export class ToolTaskStore {
         ON tool_tasks(state, updated_at, task_id);
       CREATE INDEX IF NOT EXISTS tool_tasks_delivery_idx
         ON tool_tasks(owner_thread_id, delivery_state, completed_at, task_id);
+
+      CREATE TABLE IF NOT EXISTS tool_task_address_claims (
+        task_id TEXT NOT NULL REFERENCES tool_tasks(task_id) ON DELETE CASCADE,
+        scope_key TEXT NOT NULL,
+        active INTEGER NOT NULL CHECK (active IN (0, 1)),
+        PRIMARY KEY(task_id, scope_key)
+      ) STRICT;
+      CREATE UNIQUE INDEX IF NOT EXISTS tool_task_active_address_claim
+        ON tool_task_address_claims(scope_key) WHERE active = 1;
 
       CREATE TABLE IF NOT EXISTS tool_task_delivery_batches (
         batch_id TEXT PRIMARY KEY,
@@ -335,18 +351,38 @@ export class ToolTaskStore {
     | 'artifacts' | 'artifactWarnings' | 'artifactsSettled' | 'reservationBytes' | 'deliveredAt'
     | 'detailBytes' | 'storagePressure'
   >): ToolTaskRecord {
-    this.db.prepare(`
+    validateExecutionContext(input.executionContext);
+    if (input.cwd !== input.executionContext.address.cwd) throw new Error('Task cwd differs from admitted address');
+    return this.transaction(() => {
+      if (input.inheritedClaimTaskId) {
+        const owner = this.read(input.inheritedClaimTaskId);
+        if (!owner || isToolTaskTerminal(owner.state)) throw new Error('Execution claim owner is unavailable');
+      }
+      this.db.prepare(`
       INSERT INTO tool_tasks(
         task_id, owner_thread_id, source_turn_id, source_item_id, producer, description,
-        command_digest, cwd, nonce, detail_path, background_enabled, state, delivery_state, detail_state,
+        command_digest, cwd, execution_context_json, operation_kind, inherited_claim_task_id,
+        nonce, detail_path, background_enabled, state, delivery_state, detail_state,
         timeout_ms, started_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', 'pending', 'available', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', 'pending', 'available', ?, ?, ?)
     `).run(
       input.taskId, input.ownerThreadId, input.sourceTurnId, input.sourceItemId,
-      input.producer, input.description, input.commandDigest, input.cwd, input.nonce,
+      input.producer, input.description, input.commandDigest, input.cwd,
+      JSON.stringify(input.executionContext), input.operationKind, input.inheritedClaimTaskId, input.nonce,
       input.detailPath, input.backgroundEnabled ? 1 : 0, input.timeoutMs, input.startedAt, input.startedAt,
     );
-    return this.read(input.taskId)!;
+      if (input.executionContext.policy.mutation) {
+        for (const scope of input.executionContext.address.scopes) {
+          const held = this.db.prepare('SELECT task_id FROM tool_task_address_claims WHERE scope_key = ? AND active = 1')
+            .get(scope.key) as { task_id: string } | undefined;
+          if (held && (held.task_id === input.inheritedClaimTaskId || held.task_id === input.taskId)) continue;
+          if (held) throw new ExecutionAdmissionError('worktree_busy', `Execution scope is busy: ${scope.directory}. Use an isolated worktree or wait for the owning task.`);
+          this.db.prepare('INSERT INTO tool_task_address_claims(task_id, scope_key, active) VALUES (?, ?, 1)')
+            .run(input.taskId, scope.key);
+        }
+      }
+      return this.read(input.taskId)!;
+    });
   }
 
   reserveDetail(
@@ -413,6 +449,21 @@ export class ToolTaskStore {
     `).all() as ToolTaskRow[]).map(taskFromRow);
   }
 
+  coveredChildren(taskId: string): readonly ToolTaskRecord[] {
+    return (this.db.prepare(`
+      SELECT * FROM tool_tasks WHERE inherited_claim_task_id = ? AND state IN ('running', 'settling')
+      ORDER BY started_at DESC, task_id
+    `).all(taskId) as ToolTaskRow[]).map(taskFromRow);
+  }
+
+  sessionExecution(sessionId: ThreadId): ToolTaskRecord | null {
+    const row = this.db.prepare(`
+      SELECT * FROM tool_tasks WHERE owner_thread_id = ? AND producer = 'delegate_execution'
+      AND state IN ('running', 'settling') ORDER BY started_at DESC, task_id LIMIT 1
+    `).get(sessionId) as ToolTaskRow | undefined;
+    return row ? taskFromRow(row) : null;
+  }
+
   setSupervisor(taskId: string, supervisorPid: number, childPid: number | null, now: number): ToolTaskRecord {
     this.db.prepare(`
       UPDATE tool_tasks SET supervisor_pid = ?, child_pid = COALESCE(?, child_pid), updated_at = ?
@@ -460,6 +511,7 @@ export class ToolTaskStore {
     if (!current.artifactsSettled) {
       throw new Error(`Tool Task artifacts must settle before terminal commit: ${taskId}`);
     }
+    if (this.coveredChildren(taskId).length > 0) throw new Error('Covered child execution must settle before releasing its owner claim');
     if (receipt.taskId !== taskId || receipt.nonce !== current.nonce) {
       throw new Error(`Tool Task receipt identity mismatch: ${taskId}`);
     }
@@ -485,6 +537,7 @@ export class ToolTaskStore {
         receipt.quiescedAt, receipt.quiescedAt, now, taskId,
       );
       this.releaseLease(taskId, now);
+      this.db.prepare('UPDATE tool_task_address_claims SET active = 0 WHERE task_id = ?').run(taskId);
     });
     return this.require(taskId);
   }
@@ -849,6 +902,9 @@ function taskFromRow(row: ToolTaskRow): ToolTaskRecord {
     description: row.description,
     commandDigest: row.command_digest,
     cwd: row.cwd,
+    executionContext: validateExecutionContext(JSON.parse(row.execution_context_json)),
+    operationKind: row.operation_kind,
+    inheritedClaimTaskId: row.inherited_claim_task_id,
     nonce: row.nonce,
     detailPath: row.detail_path,
     backgroundEnabled: row.background_enabled === 1,
@@ -888,6 +944,8 @@ export function projectToolTask(task: ToolTaskRecord): ToolTaskProjection {
     backgroundEnabled: _backgroundEnabled,
     commandDigest: _commandDigest,
     cwd: _cwd,
+    operationKind: _operationKind,
+    inheritedClaimTaskId: _inheritedClaimTaskId,
     nonce: _nonce,
     detailPath: _detailPath,
     supervisorPid: _supervisorPid,
@@ -986,7 +1044,7 @@ function assertFinalReceipt(task: ToolTaskRecord, receipt: ToolTaskFinalReceipt)
         && /^[0-9a-f]{64}$/u.test(receipt.preparedResultDigest)))
     || !Number.isSafeInteger(receipt.preparedResultBytes) || receipt.preparedResultBytes < 0
     || ((receipt.preparedResultDigest === null) !== (receipt.preparedResultBytes === 0))
-    || (receipt.state === 'succeeded'
+    || (receipt.state === 'succeeded' && task.operationKind === 'process'
       && (receipt.exitCode !== 0 || receipt.signal !== null || receipt.error !== null
         || receipt.supervisorPid === null || receipt.childPid === null))) {
     throw new Error(`Invalid Tool Task terminal receipt: ${task.taskId}`);

@@ -63,6 +63,8 @@ export const EMPTY_USAGE: Usage = {
 };
 
 interface AgentToolResultBase<T> {
+  /** Host evidence; never serialized as model-facing tool content. */
+  readonly executionContext?: import('../../../../core/agent/executionContext').TaskExecutionContext;
   content: (TextContent | ImageContent)[];
   details: T;
   terminate?: boolean;
@@ -120,11 +122,14 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
   readonly canonicalIdentity?: ModelToolIdentity;
   prepareArguments?: (args: unknown) => Static<TParameters>;
   readonly largeTextArguments?: AgentToolLargeTextArguments;
+  /** Local tasks acknowledge start only after durable address/policy admission. */
+  readonly deferredExecutionStart?: boolean;
   execute: (
     toolCallId: string,
     params: Static<TParameters>,
     signal?: AbortSignal,
     onUpdate?: AgentToolUpdateCallback<TDetails>,
+    onExecutionStart?: () => Promise<void>,
   ) => Promise<AgentToolResult<TDetails>>;
   executionMode?: ToolExecutionMode;
 }

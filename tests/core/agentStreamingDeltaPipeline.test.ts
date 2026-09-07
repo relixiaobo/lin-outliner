@@ -520,7 +520,7 @@ function thread(id: string, now: number): Thread {
     source: 'app',
     threadSource: 'user',
     modelProvider: 'openai',
-    cwd: '/tmp/project',
+    configurationSource: { kind: 'user' },
     createdAt: now,
     updatedAt: now,
     status: { type: 'idle' },

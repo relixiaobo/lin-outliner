@@ -446,7 +446,7 @@ async function executeToolCallsSequential(
     const admitted = preparation.kind === 'prepared' && admission.decision.execute;
     let finalized: FinalizedToolCall;
     if (preparation.kind === 'prepared' && admission.decision.execute) {
-      if (!signal.aborted) await emitToolExecutionStart(preparation.toolCall, emit);
+      if (!signal.aborted && !preparation.tool.deferredExecutionStart) await emitToolExecutionStart(preparation.toolCall, emit);
       finalized = signal.aborted
         ? abortedPreparedToolCall(preparation)
         : {
@@ -515,7 +515,7 @@ async function executeToolCallsParallel(
       await emitToolExecutionEnd(finalized, emit);
       entries.push({ entry: finalized, includeInHistory: true });
     } else {
-      await emitToolExecutionStart(preparation.toolCall, emit);
+      if (!preparation.tool.deferredExecutionStart) await emitToolExecutionStart(preparation.toolCall, emit);
       entries.push({ includeInHistory: true, entry: async () => {
         const finalized = signal.aborted
           ? abortedPreparedToolCall(preparation)
@@ -663,6 +663,7 @@ async function executePreparedToolCall(
 ): Promise<ExecutedToolCall> {
   const updates: Promise<void>[] = [];
   let acceptingUpdates = true;
+  let started = false;
   try {
     const result = await prepared.tool.execute(prepared.toolCall.id, prepared.args, signal, (partialResult) => {
       if (!acceptingUpdates) return;
@@ -672,6 +673,11 @@ async function executePreparedToolCall(
         toolName: prepared.toolCall.name,
         partialResult,
       })));
+    }, async () => {
+      if (!prepared.tool.deferredExecutionStart || started) return;
+      signal.throwIfAborted();
+      started = true;
+      await emitToolExecutionStart(prepared.toolCall, emit);
     });
     acceptingUpdates = false;
     await Promise.all(updates);
@@ -783,6 +789,7 @@ function tenonResultShapeIssue(result: TenonAgentToolResult<unknown>): string | 
     'warnings',
     'content',
     'details',
+    'executionContext',
     'terminate',
     'resourceRefs',
     'persistedTextReplacements',
@@ -877,6 +884,7 @@ function compileTenonToolResult(
     kind: 'native',
     content: [{ type: 'text', text: redacted }, ...result.content],
     details: result.details,
+    ...(result.executionContext === undefined ? {} : { executionContext: result.executionContext }),
     ...(result.terminate === undefined ? {} : { terminate: result.terminate }),
     ...(result.resourceRefs === undefined ? {} : { resourceRefs: result.resourceRefs }),
     ...(result.persistedTextReplacements === undefined

@@ -1355,6 +1355,8 @@ export const zhHans: PartialMessages = {
       rerunConfirmMessage: '本轮已经执行过操作。重新运行会从头开始，并可能重复这些操作。',
       stopUnavailable: '该工作已经结束。',
       tasks: {
+        directory: '执行目录',
+        executionPolicy: '执行策略',
         backgroundWork: '后台任务',
         running: ({ count }: { count: number }) => `${count} 个进行中`,
         justFinished: '刚刚完成',
