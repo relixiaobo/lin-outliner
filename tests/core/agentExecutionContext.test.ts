@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { decodeTaskExecutionContext } from '../../src/core/agent/executionContext';
@@ -197,5 +197,35 @@ describe('task execution context', () => {
     expect(b.executionContext?.address.targets).toEqual([join(root, 'b', 'file')]);
     const invalid = await tool.execute('invalid', { file_path: 'file' });
     expect((invalid.details as { ok: boolean }).ok).toBe(false);
+  });
+
+  test('isolated deletion admits both entry addresses and keeps trash inside the resource when cwd is elsewhere', async () => {
+    const root = await fixture();
+    const source = join(root, 'a', 'source');
+    const link = join(root, 'b', 'link');
+    await writeFile(source, 'preserved');
+    await symlink(source, link);
+    const tool = createLocalTools({ workspace: {
+      root: join(root, 'a'), scratchRoot: join(root, 'scratch'), readFileState: new Map(),
+      writeBoundary: { root: join(root, 'b') },
+    } }).find((tool) => tool.name === 'file_delete')!;
+    const deleted = await tool.execute('delete', { file_path: link });
+    expect(deleted.details.ok).toBe(true);
+    const data = deleted.details.data as { trashPath: string };
+    expect(data.trashPath).toStartWith(join(root, 'b', '.agent-trash'));
+    expect(deleted.executionContext?.address.targets).toContain(link);
+    expect(deleted.executionContext?.address.targets).toContain(data.trashPath);
+    expect((await lstat(data.trashPath)).isSymbolicLink()).toBe(true);
+    expect(await readFile(source, 'utf8')).toBe('preserved');
+    await expect(lstat(link)).rejects.toThrow();
+    const rootDelete = await tool.execute('root', { file_path: join(root, 'b') });
+    expect(rootDelete.details).toMatchObject({ ok: false, error: { code: 'root_delete_forbidden' } });
+
+    await rm(join(root, 'b', '.agent-trash'), { recursive: true });
+    await symlink(join(root, 'a'), join(root, 'b', '.agent-trash'));
+    await writeFile(join(root, 'b', 'keep'), 'keep');
+    const escaped = await tool.execute('escape', { file_path: join(root, 'b', 'keep') });
+    expect(escaped.details).toMatchObject({ ok: false, error: { code: 'write_outside_isolated_workspace' } });
+    expect(await readFile(join(root, 'b', 'keep'), 'utf8')).toBe('keep');
   });
 });

@@ -176,6 +176,10 @@ use their canonical search root and label deeper uninspected scopes as unknown;
 later file edits admit those exact target scopes. Following a symlink for a
 content edit uses its referent; deleting the link uses the link's parent.
 New files resolve through the nearest existing canonical parent plus suffix.
+Deletion admission records both the source entry and the reserved trash
+destination. Isolated calls keep `.agent-trash` under the validated writable
+resource even when cwd is elsewhere, reject redirected trash ancestors, and
+cannot delete the resource root. Moving a symlink affects its entry only.
 Bash instruction scope remains its admitted cwd. Neither an unrelated cwd nor
 Project membership supplies the rules for an absolute file target.
 Full Access permits absolute host paths unless an explicit block removes the
