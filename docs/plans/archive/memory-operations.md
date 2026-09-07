@@ -2,7 +2,7 @@
 
 ## Goal
 
-Complete Unit E1 of [File-First Settings](settings-control-plane.md) in one PR:
+Complete Unit E1 of [File-First Settings](../settings-control-plane.md) in one PR:
 people and root Agents can inspect Memory, open the real Memory Nodes, change
 one persistent root user Thread's mode, and request the same confirmed Reset.
 Ship the owner, human and Agent routes, recovery, tests, and spec changes
@@ -79,7 +79,7 @@ Search creation and acknowledged navigation have separate outcomes. Missing
 renderer acknowledgement is unknown navigation, not successful opening and not
 a reason to repeat a committed search mutation.
 
-Reset retains [Agent Memory](../spec/agent-memory.md) semantics: purge canonical
+Reset retains [Agent Memory](../../spec/agent-memory.md) semantics: purge canonical
 Memory containers and all descendants, including ordinary notes; retain stray
 and outside content, protected definitions, and modes; exclude active Turns and
 learn only from future admissions. It neither clears Thread history nor
