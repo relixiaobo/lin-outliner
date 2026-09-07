@@ -46,6 +46,9 @@ describe('Agent Host delegation composition', () => {
       import('../../src/main/hostDomain/agentHost'),
     ]);
     const host = createAgentHost({
+      reviewMemoryReset: async () => false,
+      openMemory: async () => { throw new Error('Not used by composition smoke'); },
+      onMemoryChanged: () => {},
       userDataDir,
       scratchRoot,
       defaultCwd: cwd,

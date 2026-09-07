@@ -26,6 +26,19 @@ explicitly disabled identity stays disabled across uninstall/reinstall. A
 committed installation is not proof that its instructions are invocable; report
 the operation's observed availability and runtime refresh separately.
 
+For Memory, edit `agent.memory.enabled` for global enablement. Use
+`memory_inspect` for live status, exact Thread mode/revision, and Reset
+settlement; use `memory_manage` to open Memory, change one Thread mode, or
+request Reset. Omitted Thread identity means the calling Thread, never the
+focused Thread. Reset requires the Host's native review and deletes canonical
+containers with all descendants, including ordinary notes. Only `finalized`
+means Reset completed; inspect the returned operation identity after a pending
+or unknown result instead of issuing another Reset. A conflicted target needs
+fresh review. Navigation acknowledgement is separate from saved-search creation.
+Memory content remains ordinary Outline data, not management-tool arguments.
+Global disable can interrupt the calling Turn; do not claim application from
+the file-write result alone. No Settings or Configuration CLI exists.
+
 1. Read `TENON_CONFIG_DIR` (the directory containing `settings.jsonc`,
    `settings.schema.json`, and `status.json`) for application/delegation policy.
    For root Profiles, read the user `agent/config.json` or project

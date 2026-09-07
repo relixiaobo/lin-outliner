@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { MEMORY_CHANGED_CHANNEL } from '../core/agent/memoryOperations';
 import { SKILL_LIBRARY_CHANGED_CHANNEL, SKILL_REVIEW_DECIDE_CHANNEL, SKILL_REVIEW_GET_CHANNEL, SKILL_REVIEW_PRELOAD_ARG } from '../core/agent/skillOperations';
 import {
   STARTUP_GET_CHANNEL, STARTUP_QUIT_CHANNEL, STARTUP_RETRY_CHANNEL, STARTUP_STATE_CHANNEL,
@@ -306,6 +307,11 @@ function readInitialUrlPageTranslationPreferences(): UrlPageTranslationPreferenc
 }
 
 const api = {
+  onMemoryChanged: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on(MEMORY_CHANGED_CHANNEL, handler);
+    return () => { ipcRenderer.removeListener(MEMORY_CHANGED_CHANNEL, handler); };
+  },
   skillReview: {
     get: () => ipcRenderer.invoke(SKILL_REVIEW_GET_CHANNEL) as Promise<import('../core/agent/skillOperations').SkillReview>,
     decide: (approved: boolean) => ipcRenderer.invoke(SKILL_REVIEW_DECIDE_CHANNEL, approved) as Promise<void>,

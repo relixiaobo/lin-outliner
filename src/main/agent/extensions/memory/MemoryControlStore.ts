@@ -75,7 +75,7 @@ export interface MemorySourceRecord {
 export interface MemoryPublicationRecord<T = unknown> {
   readonly id: string;
   readonly kind: 'stage1' | 'stage2' | 'reset';
-  readonly status: 'prepared' | 'finalized';
+  readonly status: 'prepared' | 'finalized' | 'conflicted';
   readonly generation: number;
   readonly featureGeneration: number;
   readonly resetEpoch: number;
@@ -138,6 +138,8 @@ export interface MemoryStage2Finalization {
 }
 
 export class MemoryControlStore {
+  private readonly listeners = new Set<() => void>();
+  private changeQueued = false;
   private generatedNodesCache: readonly MemoryGeneratedNodeRecord[] | null = null;
   private generatedNodeIdsCache: ReadonlySet<string> | null = null;
   private generatedNodesByIdCache: ReadonlyMap<string, MemoryGeneratedNodeRecord> | null = null;
@@ -157,6 +159,7 @@ export class MemoryControlStore {
       CREATE TABLE IF NOT EXISTS thread_modes (
         thread_id TEXT PRIMARY KEY,
         mode TEXT NOT NULL CHECK (mode IN ('enabled', 'disabled')),
+        revision INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS turn_admissions (
@@ -218,7 +221,7 @@ export class MemoryControlStore {
       CREATE TABLE IF NOT EXISTS publications (
         id TEXT PRIMARY KEY,
         kind TEXT NOT NULL CHECK (kind IN ('stage1', 'stage2', 'reset')),
-        status TEXT NOT NULL CHECK (status IN ('prepared', 'finalized')),
+        status TEXT NOT NULL CHECK (status IN ('prepared', 'finalized', 'conflicted')),
         generation INTEGER NOT NULL,
         feature_generation INTEGER NOT NULL,
         reset_epoch INTEGER NOT NULL,
@@ -256,7 +259,24 @@ export class MemoryControlStore {
   }
 
   close(): void {
+    this.listeners.clear();
     this.db.close();
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  changed(): void {
+    if (this.changeQueued) return;
+    this.changeQueued = true;
+    queueMicrotask(() => {
+      this.changeQueued = false;
+      for (const listener of this.listeners) {
+        try { listener(); } catch (error) { console.warn('[memory] notification failed', error); }
+      }
+    });
   }
 
   filteringRevision(): number {
@@ -310,10 +330,17 @@ export class MemoryControlStore {
   }
 
   setThreadMode(threadId: ThreadId, mode: ThreadMemoryMode, now = Date.now()): void {
+    if (this.threadMode(threadId) === mode) return;
     this.db.prepare(`
-      INSERT INTO thread_modes(thread_id, mode, updated_at) VALUES (?, ?, ?)
-      ON CONFLICT(thread_id) DO UPDATE SET mode = excluded.mode, updated_at = excluded.updated_at
+      INSERT INTO thread_modes(thread_id, mode, revision, updated_at) VALUES (?, ?, 1, ?)
+      ON CONFLICT(thread_id) DO UPDATE SET mode = excluded.mode, revision = thread_modes.revision + 1, updated_at = excluded.updated_at
     `).run(threadId, mode, now);
+    this.changed();
+  }
+
+  threadModeRevision(threadId: ThreadId): number {
+    const row = this.db.prepare('SELECT revision FROM thread_modes WHERE thread_id = ?').get(threadId) as { revision: number } | undefined;
+    return row?.revision ?? 0;
   }
 
   writeAdmission(snapshot: MemoryAdmissionSnapshot): void {
@@ -504,6 +531,13 @@ export class MemoryControlStore {
   preparedPublications(): readonly MemoryPublicationRecord[] {
     return (this.db.prepare(`SELECT * FROM publications WHERE status = 'prepared' ORDER BY created_at, id`).all() as PublicationRow[])
       .map((row) => publicationFromRow(row));
+  }
+
+  conflictReset(id: string): void {
+    this.transaction(() => {
+      this.db.prepare("UPDATE publications SET status = 'conflicted' WHERE id = ? AND kind = 'reset' AND status = 'prepared'").run(id);
+      this.completeJob(`reset:${id}`);
+    });
   }
 
   finalizePublication(id: string): void {
@@ -773,6 +807,7 @@ export class MemoryControlStore {
         available_at = MIN(dirty_jobs.available_at, excluded.available_at),
         updated_at = excluded.updated_at
     `).run(key, kind, JSON.stringify(payload), now, now);
+    this.changed();
   }
 
   scheduleJob(key: string, kind: string, payload: unknown, availableAt: number, now = Date.now()): void {
@@ -785,18 +820,19 @@ export class MemoryControlStore {
         available_at = MAX(dirty_jobs.available_at, excluded.available_at),
         updated_at = excluded.updated_at
     `).run(key, kind, JSON.stringify(payload), availableAt, now);
+    this.changed();
   }
 
-  nextJob(now = Date.now()): MemoryDirtyJob | null {
+  nextJob(now = Date.now(), resetOnly = false): MemoryDirtyJob | null {
     const row = this.db.prepare(`
       SELECT key, kind, payload_json, attempt, available_at
-      FROM dirty_jobs WHERE available_at <= ? ORDER BY available_at, updated_at, key LIMIT 1
-    `).get(now) as JobRow | undefined;
+      FROM dirty_jobs WHERE available_at <= ? AND (? = 0 OR kind = 'reset') ORDER BY available_at, updated_at, key LIMIT 1
+    `).get(now, resetOnly ? 1 : 0) as JobRow | undefined;
     return row ? { key: row.key, kind: row.kind, payload: JSON.parse(row.payload_json), attempt: row.attempt } : null;
   }
 
-  nextJobAvailableAt(): number | null {
-    const row = this.db.prepare('SELECT MIN(available_at) AS available_at FROM dirty_jobs').get() as {
+  nextJobAvailableAt(resetOnly = false): number | null {
+    const row = this.db.prepare("SELECT MIN(available_at) AS available_at FROM dirty_jobs WHERE ? = 0 OR kind = 'reset'").get(resetOnly ? 1 : 0) as {
       available_at: number | null;
     };
     return row.available_at;
@@ -804,6 +840,7 @@ export class MemoryControlStore {
 
   completeJob(key: string): void {
     this.db.prepare('DELETE FROM dirty_jobs WHERE key = ?').run(key);
+    this.changed();
   }
 
   failJob(key: string, error: string, now = Date.now()): void {
@@ -854,6 +891,10 @@ export class MemoryControlStore {
     excludedTurnIds: readonly TurnId[],
   ): void {
     this.transaction(() => {
+      const publication = this.publication(publicationId);
+      if (!publication || publication.kind !== 'reset') throw new Error(`Memory Reset not found: ${publicationId}`);
+      if (publication.status === 'finalized') return;
+      if (publication.status !== 'prepared') throw new Error('Cannot finalize a conflicted Memory Reset');
       for (const turnId of new Set(excludedTurnIds)) {
         this.db.prepare(`
           INSERT OR IGNORE INTO turn_exclusions(turn_id, reason, epoch, created_at) VALUES (?, 'reset', ?, ?)
@@ -870,9 +911,8 @@ export class MemoryControlStore {
         'rollback_invalidations',
         'dirty_jobs',
       ]) this.db.exec(`DELETE FROM ${table}`);
-      this.db.prepare(`DELETE FROM publications WHERE id != ?`).run(publicationId);
-      const publication = this.publication(publicationId);
-      if (!publication) throw new Error(`Memory publication not found: ${publicationId}`);
+      this.db.prepare(`DELETE FROM publications WHERE kind != 'reset'`).run();
+      this.db.prepare(`UPDATE publications SET status = 'conflicted' WHERE kind = 'reset' AND status = 'prepared' AND id != ?`).run(publicationId);
       this.db.prepare(`UPDATE publications SET status = 'finalized' WHERE id = ?`).run(publicationId);
       this.putSetting('publicationGeneration', String(Math.max(
         this.numberSetting('publicationGeneration'),
@@ -903,6 +943,7 @@ export class MemoryControlStore {
       INSERT INTO settings(key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(key, value);
+    this.changed();
   }
 
   private incrementSetting(key: string): number {
@@ -972,6 +1013,7 @@ export class MemoryControlStore {
     try {
       const result = operation();
       this.db.exec('COMMIT');
+      this.changed();
       return result;
     } catch (error) {
       this.db.exec('ROLLBACK');

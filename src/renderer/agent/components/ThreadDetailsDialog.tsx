@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { ThreadMemoryMode } from '../../../core/agent/memory';
+import { useMemoryView } from '../useMemoryView';
 import type { Thread, Turn } from '../projectionTypes';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
@@ -18,51 +18,7 @@ interface ThreadDetailsDialogProps {
 export function ThreadDetailsDialog({ thread, turns, onClose }: ThreadDetailsDialogProps) {
   const t = useT();
   const titleId = useId();
-  const [memoryMode, setMemoryMode] = useState<ThreadMemoryMode | null>(null);
-  const [memoryBusy, setMemoryBusy] = useState(false);
-  const [memoryError, setMemoryError] = useState<string | null>(null);
-  const memoryBusyRef = useRef(false);
-  const memoryRequestGenerationRef = useRef(0);
   const supportsMemory = !thread.ephemeral && thread.parentThreadId === null && thread.threadSource === 'user';
-
-  useEffect(() => {
-    const generation = ++memoryRequestGenerationRef.current;
-    memoryBusyRef.current = false;
-    setMemoryBusy(false);
-    setMemoryMode(null);
-    setMemoryError(null);
-    if (!supportsMemory) return;
-    let active = true;
-    void api.memorySettings(thread.id)
-      .then((settings) => {
-        if (active && generation === memoryRequestGenerationRef.current) {
-          setMemoryMode(settings.thread?.mode ?? null);
-        }
-      })
-      .catch((error) => {
-        if (active && generation === memoryRequestGenerationRef.current) setMemoryError(errorMessage(error));
-      });
-    return () => { active = false; };
-  }, [supportsMemory, thread.id]);
-
-  async function changeMemoryMode(enabled: boolean) {
-    if (memoryBusyRef.current) return;
-    memoryBusyRef.current = true;
-    setMemoryBusy(true);
-    setMemoryError(null);
-    const generation = ++memoryRequestGenerationRef.current;
-    try {
-      const settings = await api.memorySetThreadMode(thread.id, enabled ? 'enabled' : 'disabled');
-      if (generation === memoryRequestGenerationRef.current) setMemoryMode(settings.thread?.mode ?? null);
-    } catch (error) {
-      if (generation === memoryRequestGenerationRef.current) setMemoryError(errorMessage(error));
-    } finally {
-      if (generation === memoryRequestGenerationRef.current) {
-        memoryBusyRef.current = false;
-        setMemoryBusy(false);
-      }
-    }
-  }
   return (
     <Dialog
       backdropClassName="confirm-dialog-backdrop"
@@ -86,17 +42,7 @@ export function ThreadDetailsDialog({ thread, turns, onClose }: ThreadDetailsDia
             <div>
               <dt>{t.agent.thread.memory}</dt>
               <dd className="thread-details-memory-control">
-                <SwitchControl
-                  checked={memoryMode === 'enabled'}
-                  disabled={memoryBusy || memoryMode === null}
-                  label={t.agent.thread.memory}
-                  onCheckedChange={(enabled) => void changeMemoryMode(enabled)}
-                >
-                  <SwitchMark checked={memoryMode === 'enabled'} />
-                </SwitchControl>
-                {memoryError ? (
-                  <span className="thread-details-memory-error" role="alert">{memoryError}</span>
-                ) : null}
+                <ThreadMemoryControl key={thread.id} threadId={thread.id} />
               </dd>
             </div>
           ) : null}
@@ -127,8 +73,35 @@ export function ThreadDetailsDialog({ thread, turns, onClose }: ThreadDetailsDia
   );
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function ThreadMemoryControl({ threadId }: { readonly threadId: string }) {
+  const t = useT();
+  const { view, error: readError, refresh } = useMemoryView(threadId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const busyRef = useRef(false);
+  const active = useRef(false);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const current = view?.thread;
+  const enabled = current?.mode === 'enabled';
+  async function change(enabled: boolean) {
+    if (busyRef.current || !current || current.threadId !== threadId) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.memoryManage({ operation: 'set_thread_mode', threadId, mode: enabled ? 'enabled' : 'disabled', expectedRevision: current.revision });
+    } catch (caught) {
+      if (active.current) setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      busyRef.current = false;
+      if (active.current) { setBusy(false); refresh(); }
+    }
+  }
+  return <>
+    <SwitchControl checked={enabled} disabled={busy || !current || current.threadId !== threadId} label={t.agent.thread.memory}
+      onCheckedChange={(value) => void change(value)}><SwitchMark checked={enabled} /></SwitchControl>
+    {error || readError ? <span className="thread-details-memory-error" role="alert">{error ?? readError}</span> : null}
+  </>;
 }
 
 function Detail({ label, value }: { readonly label: string; readonly value: string }) {

@@ -97,7 +97,7 @@ export function SettingsAgentSection({
 
       <SettingsDelegationGroup onChange={onDelegationChange} settings={settings} />
 
-      <MemorySettingsGroup onError={onError} onNotice={onNotice} />
+      <MemorySettingsGroup />
 
       <SettingsSecuritySection blockErrors={blockErrors} blocks={blocks} onRemoveBlock={onRemoveBlock} />
     </section>

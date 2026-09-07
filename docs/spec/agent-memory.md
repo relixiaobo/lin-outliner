@@ -208,7 +208,8 @@ rollback suppression remains pipeline control state: suppressed generated Nodes
 are not selected as implicit Memory support and are eventually reconciled, but
 the public Projection contract itself is unchanged.
 
-There are no model-callable Memory-specific tools. An eligible foreground root
+There are no model-callable Memory-content tools. Management uses the separate
+domain operations below; an eligible foreground root
 Turn may use the public Outline workflow to remember, update, or forget only
 when the user explicitly requests it. Renderer-authored edits remain ordinary
 user mutations. Runtime capability is actor-neutral; Memory eligibility does
@@ -265,8 +266,14 @@ Core retries a failed idempotent commit hook in-process; startup matches any
 stranded preparation against the complete durable marker before admitting new
 Turns.
 
-Reset means "forget current Memory and learn only from future Turns." Under the
-host admission barrier and Memory write gate it advances the reset epoch and
+Reset means "forget current Memory and learn only from future Turns." A native
+review names the exact canonical container/descendant counts, including ordinary
+notes. Host-private fingerprints bind the workspace, root, ancestry, source date,
+ordered descendants and all persisted Node fields to the reviewed reset epoch.
+No lock is held while waiting for the person. After confirmation, recheck caller
+authority and the exact target inside the Memory gates and document planning
+queue; a changed target requires fresh review and creates no deletion intent.
+Under the host admission barrier and Memory write gate it advances the reset epoch and
 retains every active Turn ID as an indivisible exclusion. Phase 1 accepts only
 Turns whose immutable admission snapshot carries the current epoch, so rollback
 or replacement cannot move an Item across a positional boundary. One destructive
@@ -300,8 +307,13 @@ preparation promise so an explicit Host startup retry can recover cleanly.
 A matching Runtime Operation found by idempotency key and source fingerprint
 finalizes SQLite without rerunning the model. A non-Reset preparation without a
 settled Operation is discarded and retried from a fresh snapshot. A Reset
-without settlement idempotently reapplies the same destructive ChangeSet before
-finalization. Publication generations are atomically reserved and may have gaps
+without settlement can reapply only its still-matching reviewed target before
+finalization. A changed target or definitive Runtime rejection marks the existing
+journal `conflicted` and retires its Reset job without advancing the epoch or
+discarding admitted exclusions. Conflicted and finalized Reset evidence survives
+later Resets. An unavailable receipt lookup stays unresolved, not proof of
+non-commit. Pending Reset recovery remains active when global Memory is disabled;
+extraction and consolidation remain suspended. Publication generations may have gaps
 but never duplicates.
 
 The Runtime serializes renderer, Agent, and Memory mutations. Memory holds its
@@ -322,6 +334,38 @@ Open Memory, and confirmed Reset. Open Memory reuses the canonical saved tag
 search for `#d-memory`, so selecting a result opens the real Daily Notes context.
 The Thread Details dialog exposes the per-Thread switch only for persistent root
 user Threads.
+
+Both human and root Agent operations call the Memory-owned Host facade:
+
+- `memory_inspect` returns bounded status, an exact Thread mode/revision, or
+  settlement for one Reset operation identity. No prose, private paths, or Node
+  inventory is exposed. Stray counts use the incremental mutation index.
+- `memory_manage` opens the ordinary saved Memory search, changes one Thread
+  mode using its observed revision, or requests native-confirmed Reset. An
+  omitted Thread ID means the calling Agent's persistent root user Thread; a
+  window must name its Thread Details target. Missing, hidden, ephemeral, child,
+  or non-user targets are unavailable, never synthesized as enabled.
+- Global enablement remains `agent.memory.enabled` in `config/settings.jsonc`.
+  The UI uses the existing comment-preserving file writer; only the file watcher
+  applies it to Memory. A saved file is not yet proof of application. There is
+  no Settings/Configuration CLI, universal setter, or private-store edit route.
+
+Mode revisions increase on actual changes and are rechecked under admission and
+publication gates. Re-enabling never overrides provenance exclusions. Reset
+results are `prepared`, `finalized`, `conflicted`, or `unknown`; only finalized
+means complete. Saved-search creation and acknowledged main-window navigation
+have separate outcomes, with no fallback to Daily Notes or success on a missing
+acknowledgement. Native review cancellation, caller loss, or shutdown before
+admission creates no Reset intent. Cancellation after admission does not erase
+recovery obligations.
+
+Memory owns loading, errors, busy state, and completion feedback locally. An
+initial read and narrow owner invalidations replace five-second polling; stale
+responses cannot replace newer state or another Thread's view, and closing a
+surface releases its subscription. Notifications are non-authoritative and
+cannot turn a committed operation into failure. Main and Settings windows are
+the only renderer callers; child/provider/review windows and subframes cannot
+reuse their Memory IPC authority.
 
 Memory used by a response appears only as ordinary inline Node references near
 the claims they support. Outline shell calls remain inspectable in the process

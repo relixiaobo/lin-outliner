@@ -2,291 +2,198 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import type { MemorySettingsView } from '../../src/core/agent/memory';
+import type { MemoryInspectResult, MemoryResetView } from '../../src/core/agent/memoryOperations';
 import type { Thread } from '../../src/core/agent/protocol';
 import { ThreadDetailsDialog } from '../../src/renderer/agent/components/ThreadDetailsDialog';
 import { MemorySettingsGroup } from '../../src/renderer/ui/agent/MemorySettingsGroup';
 
-interface Rendered {
-  cleanup: () => void;
-  document: Document;
-  rerender: (element: React.ReactNode) => void;
-}
-
-const mounted: Rendered[] = [];
-const GLOBAL_KEYS = ['document', 'window', 'navigator', 'Event', 'HTMLElement', 'MouseEvent', 'Node'] as const;
-let savedGlobals: Array<[string, PropertyDescriptor | undefined]> = [];
-
+const cleanups: Array<() => void> = [];
+const savedGlobals: Array<[string, PropertyDescriptor | undefined]> = [];
 afterEach(() => {
-  while (mounted.length) mounted.pop()?.cleanup();
-  for (const [key, descriptor] of savedGlobals.reverse()) {
+  while (cleanups.length) cleanups.pop()!();
+  for (const [key, descriptor] of savedGlobals.splice(0).reverse()) {
     if (descriptor) Object.defineProperty(globalThis, key, descriptor);
     else delete (globalThis as Record<string, unknown>)[key];
   }
-  savedGlobals = [];
 });
 
-describe('Memory settings', () => {
-  test('loads and changes the global privacy mode without replacing the settings rows', async () => {
-    const commands: Array<{ name: string; args?: Record<string, unknown> }> = [];
-    const errors: Array<string | null> = [];
-    const notices: Array<string | null> = [];
-    const rendered = renderWithBridge(async (name, args) => {
-      commands.push({ name, args });
-      if (name === 'memory_settings_get') return settings('enabled');
-      if (name === 'memory_feature_mode_set') return settings(String(args?.mode) as 'enabled' | 'disabled');
-      throw new Error(`Unexpected command: ${name}`);
-    }, (
-      <MemorySettingsGroup
-        onError={(message) => errors.push(message)}
-        onNotice={(message) => notices.push(message)}
-      />
-    ));
-    await flushEffects();
-
-    const toggle = rendered.document.querySelector<HTMLButtonElement>('[role="switch"]');
-    if (!toggle) throw new Error('Missing Memory switch');
+describe('Memory owner UI', () => {
+  test('writes the file-backed preference and waits for owner application', async () => {
+    let enabled = true;
+    const writes: unknown[] = [];
+    const rendered = render(async (name, args) => {
+      if (name === 'memory_inspect') return status(enabled);
+      if (name === 'memory_enabled_update') { writes.push(args); return; }
+      throw new Error(name);
+    }, <MemorySettingsGroup />);
+    await flush();
+    const toggle = rendered.button('Use Memory');
+    await act(async () => toggle.click());
+    expect(writes).toEqual([{ enabled: false }]);
     expect(toggle.getAttribute('aria-checked')).toBe('true');
+    expect(rendered.document.body.textContent).toContain('Application is pending');
+    enabled = false;
+    rendered.changed();
+    await flush();
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    expect(rendered.document.body.textContent).toContain('Memory disabled.');
     expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(3);
-
-    await act(async () => {
-      toggle.click();
-      await Promise.resolve();
-    });
-
-    expect(commands.at(-1)).toEqual({ name: 'memory_feature_mode_set', args: { mode: 'disabled' } });
-    expect(toggle.getAttribute('aria-checked')).toBe('false');
-    expect(errors).toEqual([null]);
-    expect(notices).toEqual([null, 'Memory disabled. Activity while disabled will not be remembered later.']);
+    enabled = true;
+    rendered.changed();
+    await flush();
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    expect(rendered.document.body.textContent).not.toContain('Application is pending');
   });
 
-  test('requires confirmation before Reset and reports the completed operation', async () => {
-    const commands: string[] = [];
-    const notices: Array<string | null> = [];
-    const rendered = renderWithBridge(async (name) => {
-      commands.push(name);
-      if (name === 'memory_settings_get' || name === 'memory_reset') return settings('enabled');
-      throw new Error(`Unexpected command: ${name}`);
-    }, (
-      <MemorySettingsGroup onError={() => undefined} onNotice={(message) => notices.push(message)} />
-    ));
-    await flushEffects();
-
-    const resetButton = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.textContent === 'Reset Memory');
-    if (!resetButton) throw new Error('Missing Reset button');
-    act(() => resetButton.click());
-    expect(commands).toEqual(['memory_settings_get']);
-
-    const confirm = rendered.document.querySelector<HTMLButtonElement>('.confirm-dialog .button-danger');
-    if (!confirm) throw new Error('Missing Reset confirmation');
-    expect(rendered.document.querySelector('.confirm-dialog')?.textContent)
-      .toContain('including untagged ordinary notes');
-    expect(rendered.document.querySelector('.confirm-dialog')?.textContent)
-      .toContain('Notes outside those containers are preserved');
-    await act(async () => {
-      confirm.click();
-      await Promise.resolve();
-    });
-
-    expect(commands).toEqual(['memory_settings_get', 'memory_reset']);
-    expect(notices.at(-1)).toBe('Memory reset.');
+  test('Reset uses the native owner decision and only reports finalized as complete', async () => {
+    let reset: MemoryResetView = { operationId: 'memory:reset:test', state: 'prepared', admittedAt: 1, targetEpoch: 1 };
+    const rendered = render(async (name, args) => {
+      const request = args?.request as { operation: string };
+      if (name === 'memory_inspect') return request.operation === 'reset' ? { operation: 'reset', reset } : status(true);
+      if (name === 'memory_manage') return { operation: 'reset', reset };
+      throw new Error(name);
+    }, <MemorySettingsGroup />);
+    await flush();
+    await act(async () => rendered.button('Reset Memory').click());
     expect(rendered.document.querySelector('.confirm-dialog')).toBeNull();
+    expect(rendered.document.body.textContent).toContain('Reset is awaiting settlement.');
+    expect(rendered.document.body.textContent).not.toContain('Memory reset.');
+    expect(rendered.button('Reset Memory').disabled).toBe(true);
+    reset = { ...reset, state: 'finalized' };
+    rendered.changed();
+    await flush();
+    expect(rendered.document.body.textContent).toContain('Memory reset.');
+    expect(rendered.button('Reset Memory').disabled).toBe(false);
   });
 
-  test('surfaces stray reserved-tagged Nodes without exposing their identities', async () => {
-    const rendered = renderWithBridge(async (name) => {
-      if (name === 'memory_settings_get') return settings('enabled', undefined, 'enabled', 2);
-      throw new Error(`Unexpected command: ${name}`);
-    }, <MemorySettingsGroup onError={() => undefined} onNotice={() => undefined} />);
-    await flushEffects();
-
-    const status = [...rendered.document.querySelectorAll('.inset-row')]
-      .find((row) => row.textContent?.includes('Timeline Memory'));
-    expect(status?.textContent).toContain('2 reserved-tagged Nodes are outside the Memory timeline');
-    expect(status?.textContent).not.toContain('stray:');
+  test('keeps cancellation, failure and navigation outcomes local', async () => {
+    const rendered = render(async (name, args) => {
+      if (name === 'memory_inspect') return status(true);
+      if ((args?.request as { operation: string }).operation === 'reset') throw new Error('Memory Reset was cancelled.');
+      return { operation: 'open', nodeId: 'search', navigation: 'unknown' };
+    }, <MemorySettingsGroup />);
+    await flush();
+    await act(async () => rendered.button('Reset Memory').click());
+    expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('cancelled');
+    await act(async () => rendered.button('Open Memory').click());
+    expect(rendered.document.querySelector('[role="alert"]')).toBeNull();
+    expect(rendered.document.querySelector('[role="status"]')?.textContent).toContain('navigation was not confirmed');
   });
 
-  test('shows Thread Memory only for persistent root user Threads and persists its mode', async () => {
-    const commands: Array<{ name: string; args?: Record<string, unknown> }> = [];
-    const thread = rootThread();
-    const rendered = renderWithBridge(async (name, args) => {
-      commands.push({ name, args });
-      if (name === 'memory_settings_get') return settings('enabled', thread.id, 'enabled');
-      if (name === 'memory_thread_mode_set') return settings('enabled', thread.id, 'disabled');
-      throw new Error(`Unexpected command: ${name}`);
-    }, <ThreadDetailsDialog onClose={() => undefined} thread={thread} turns={[]} />);
-    await flushEffects();
-
-    const toggle = rendered.document.querySelector<HTMLButtonElement>('[role="switch"]');
-    if (!toggle) throw new Error('Missing Thread Memory switch');
-    await act(async () => {
-      toggle.click();
-      await Promise.resolve();
-    });
-    expect(commands.at(-1)).toEqual({
-      name: 'memory_thread_mode_set',
-      args: { threadId: thread.id, mode: 'disabled' },
-    });
-    expect(toggle.getAttribute('aria-checked')).toBe('false');
-
+  test('owner events refresh without parent callback churn and release on close', async () => {
+    let reads = 0;
+    const rendered = render(async () => { reads++; return status(true, undefined, true, 2); }, <MemorySettingsGroup />);
+    await flush();
+    expect(rendered.document.body.textContent).toContain('2 reserved-tagged Nodes');
+    rendered.rerender(<MemorySettingsGroup />);
+    await flush();
+    expect(reads).toBe(1);
+    rendered.changed();
+    await flush();
+    expect(reads).toBe(2);
     rendered.cleanup();
-    const child = { ...thread, parentThreadId: '018f0f24-7b2e-7a3f-8a4b-123456789000' };
-    const childRendered = renderWithBridge(async () => {
-      throw new Error('Child Thread must not query Memory settings');
-    }, <ThreadDetailsDialog onClose={() => undefined} thread={child} turns={[]} />);
-    await flushEffects();
-    expect(childRendered.document.querySelector('[role="switch"]')).toBeNull();
+    expect(rendered.listeners.size).toBe(0);
+    rendered.changed();
+    expect(reads).toBe(2);
   });
 
-  test('does not let an older settings refresh overwrite a completed mode change', async () => {
-    const staleRefresh = deferred<MemorySettingsView>();
-    let settingsReads = 0;
-    const invoke = async (name: string, args?: Record<string, unknown>) => {
-      if (name === 'memory_settings_get') {
-        settingsReads += 1;
-        return settingsReads === 1 ? settings('enabled') : staleRefresh.promise;
-      }
-      if (name === 'memory_feature_mode_set') {
-        return settings(String(args?.mode) as 'enabled' | 'disabled');
-      }
-      throw new Error(`Unexpected command: ${name}`);
-    };
-    const rendered = renderWithBridge(invoke, (
-      <MemorySettingsGroup onError={() => undefined} onNotice={() => undefined} />
-    ));
-    await flushEffects();
-    rendered.rerender(<MemorySettingsGroup onError={(_message) => undefined} onNotice={() => undefined} />);
-    await flushEffects();
-
-    const toggle = rendered.document.querySelector<HTMLButtonElement>('[role="switch"]');
-    if (!toggle) throw new Error('Missing Memory switch');
-    await act(async () => {
-      toggle.click();
-      await Promise.resolve();
-    });
-    expect(toggle.getAttribute('aria-checked')).toBe('false');
-
-    staleRefresh.resolve(settings('enabled'));
-    await flushEffects();
-    expect(toggle.getAttribute('aria-checked')).toBe('false');
+  test('ignores an older status request after a newer owner invalidation', async () => {
+    const stale = deferred<MemoryInspectResult>();
+    let reads = 0;
+    const rendered = render(async () => ++reads === 2 ? stale.promise : status(reads === 1), <MemorySettingsGroup />);
+    await flush();
+    rendered.changed();
+    await flush();
+    rendered.changed();
+    await flush();
+    expect(rendered.button('Use Memory').getAttribute('aria-checked')).toBe('false');
+    stale.resolve(status(true));
+    await flush();
+    expect(rendered.button('Use Memory').getAttribute('aria-checked')).toBe('false');
   });
 
-  test('does not let a previous Thread response replace the current Thread mode', async () => {
-    const firstResponse = deferred<MemorySettingsView>();
-    const secondResponse = deferred<MemorySettingsView>();
-    const first = rootThread();
-    const second = { ...rootThread(), id: '018f0f24-7b2e-7a3f-8a4b-123456789def', name: 'Second Thread' };
-    const rendered = renderWithBridge(async (name, args) => {
-      if (name !== 'memory_settings_get') throw new Error(`Unexpected command: ${name}`);
-      return args?.threadId === first.id ? firstResponse.promise : secondResponse.promise;
-    }, <ThreadDetailsDialog onClose={() => undefined} thread={first} turns={[]} />);
-    await flushEffects();
-    rendered.rerender(<ThreadDetailsDialog onClose={() => undefined} thread={second} turns={[]} />);
-    await flushEffects();
+  test('Thread mode writes the inspected revision and refreshes after conflict', async () => {
+    const thread = rootThread('thread:first');
+    let enabled = true;
+    let revision = 4;
+    const writes: unknown[] = [];
+    const rendered = render(async (name, args) => {
+      if (name === 'memory_inspect') {
+        const result = status(true, thread.id, enabled);
+        if (result.operation === 'status' && result.thread) return { ...result, thread: { ...result.thread, revision } };
+      }
+      writes.push(args?.request);
+      enabled = false;
+      revision++;
+      throw new Error('The Thread Memory mode changed. Inspect it again.');
+    }, <ThreadDetailsDialog onClose={() => {}} thread={thread} turns={[]} />);
+    await flush();
+    await act(async () => rendered.button('Memory for this Thread').click());
+    expect(writes).toEqual([{ operation: 'set_thread_mode', threadId: thread.id, mode: 'disabled', expectedRevision: 4 }]);
+    expect(rendered.button('Memory for this Thread').getAttribute('aria-checked')).toBe('false');
+    expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('mode changed');
+  });
 
-    secondResponse.resolve(settings('enabled', second.id, 'disabled'));
-    await flushEffects();
-    const toggle = rendered.document.querySelector<HTMLButtonElement>('[role="switch"]');
-    if (!toggle) throw new Error('Missing Thread Memory switch');
-    expect(toggle.getAttribute('aria-checked')).toBe('false');
+  test('previous Thread responses cannot replace the current target', async () => {
+    const old = deferred<MemoryInspectResult>();
+    const first = rootThread('thread:first');
+    const second = rootThread('thread:second');
+    const rendered = render(async (_name, args) => (args?.request as { threadId: string }).threadId === first.id
+      ? old.promise : status(true, second.id, false), <ThreadDetailsDialog onClose={() => {}} thread={first} turns={[]} />);
+    rendered.rerender(<ThreadDetailsDialog onClose={() => {}} thread={second} turns={[]} />);
+    await flush();
+    old.resolve(status(true, first.id, true));
+    await flush();
+    expect(rendered.button('Memory for this Thread').getAttribute('aria-checked')).toBe('false');
+  });
 
-    firstResponse.resolve(settings('enabled', first.id, 'enabled'));
-    await flushEffects();
-    expect(toggle.getAttribute('aria-checked')).toBe('false');
+  test('ineligible Threads expose no mode control or subscription', async () => {
+    const thread = { ...rootThread('child'), parentThreadId: 'parent' };
+    const rendered = render(async () => { throw new Error('Must not read Memory'); }, <ThreadDetailsDialog onClose={() => {}} thread={thread} turns={[]} />);
+    await flush();
+    expect(rendered.document.querySelector('[role="switch"]')).toBeNull();
+    expect(rendered.listeners.size).toBe(0);
   });
 });
 
-function renderWithBridge(
-  invoke: (name: string, args?: Record<string, unknown>) => Promise<unknown>,
-  element: React.ReactNode,
-): Rendered {
+function render(invoke: (name: string, args?: Record<string, unknown>) => Promise<unknown>, element: React.ReactNode) {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
-  installDomGlobals(window);
-  Object.assign(window, { lin: { invoke } });
-  const container = document.getElementById('root');
-  if (!container) throw new Error('Missing root container');
-  const root = createRoot(container);
+  for (const key of ['document', 'window', 'navigator', 'Event', 'HTMLElement', 'MouseEvent', 'Node', 'IS_REACT_ACT_ENVIRONMENT']) {
+    savedGlobals.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value: key === 'window' ? window : key === 'IS_REACT_ACT_ENVIRONMENT' ? true : window[key] });
+  }
+  const listeners = new Set<() => void>();
+  Object.assign(window, { lin: { invoke, onMemoryChanged: (listener: () => void) => {
+    listeners.add(listener); return () => { listeners.delete(listener); };
+  } } });
+  const root = createRoot(document.getElementById('root')!);
   act(() => root.render(element));
   let cleaned = false;
-  const rendered = {
-    cleanup: () => {
-      if (cleaned) return;
-      cleaned = true;
-      act(() => root.unmount());
+  const cleanup = () => { if (!cleaned) { cleaned = true; act(() => root.unmount()); } };
+  cleanups.push(cleanup);
+  return { document, cleanup, listeners,
+    changed: () => act(() => { for (const listener of listeners) listener(); }),
+    rerender: (element: React.ReactNode) => act(() => root.render(element)),
+    button: (name: string) => {
+      const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find((entry) => entry.textContent === name || entry.getAttribute('aria-label') === name);
+      if (!button) throw new Error(`Missing button: ${name}`);
+      return button;
     },
-    document,
-    rerender: (next: React.ReactNode) => act(() => root.render(next)),
   };
-  mounted.push(rendered);
-  return rendered;
 }
-
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((settle) => { resolve = settle; });
-  return { promise, resolve };
+  return { resolve, promise };
 }
-
-async function flushEffects(): Promise<void> {
-  await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-  });
+async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
+function status(enabled: boolean, threadId?: string, threadEnabled = true, strayTaggedNodeCount = 0): MemoryInspectResult {
+  return { operation: 'status', status: { featureMode: enabled ? 'enabled' : 'disabled', featureModeGeneration: 0,
+    resetEpoch: 0, memoryVisibilityGeneration: 0, lastSuccessfulRunAt: null, lastError: null, pendingJobs: 0, strayTaggedNodeCount },
+    thread: threadId ? { threadId, mode: threadEnabled ? 'enabled' : 'disabled', revision: 0, appliesAt: 'subsequent_admissions' } : null };
 }
-
-function installDomGlobals(window: Window): void {
-  for (const key of GLOBAL_KEYS) savedGlobals.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]);
-  Object.assign(globalThis, {
-    document: window.document,
-    window,
-    Event: window.Event,
-    HTMLElement: window.HTMLElement,
-    MouseEvent: window.MouseEvent,
-    Node: window.Node,
-  });
-  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: window.navigator });
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-}
-
-function settings(
-  featureMode: 'enabled' | 'disabled',
-  threadId?: string,
-  threadMode: 'enabled' | 'disabled' = 'enabled',
-  strayTaggedNodeCount = 0,
-): MemorySettingsView {
-  return {
-    status: {
-      featureMode,
-      featureModeGeneration: 0,
-      resetEpoch: 0,
-      memoryVisibilityGeneration: 0,
-      lastSuccessfulRunAt: null,
-      lastError: null,
-      pendingJobs: 0,
-      strayTaggedNodeCount,
-    },
-    thread: threadId ? { threadId, mode: threadMode } : null,
-  };
-}
-
-function rootThread(): Thread {
-  return {
-    id: '018f0f24-7b2e-7a3f-8a4b-123456789abc',
-    sessionId: '018f0f24-7b2e-7a3f-8a4b-123456789abc',
-    parentThreadId: null,
-    forkedFromId: null,
-    name: 'Memory test',
-    preview: '',
-    ephemeral: false,
-    source: 'app',
-    threadSource: 'user',
-    modelProvider: 'test',
-    cwd: '/tmp',
-    createdAt: 1,
-    updatedAt: 1,
-    status: { type: 'idle' },
-    historyMode: 'full',
-    turns: [],
-  };
+function rootThread(id: string): Thread {
+  return { id, sessionId: id, parentThreadId: null, forkedFromId: null, name: 'Memory test', preview: '', ephemeral: false,
+    source: 'app', threadSource: 'user', modelProvider: 'test', cwd: '/tmp', createdAt: 1, updatedAt: 1,
+    status: { type: 'idle' }, historyMode: 'full', turns: [] };
 }

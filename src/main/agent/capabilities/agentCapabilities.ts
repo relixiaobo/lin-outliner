@@ -144,6 +144,19 @@ export function deriveAgentToolActionDescriptors(input: {
   access: AgentCapabilityAccess;
 }): ToolActionDescriptor[] {
   const toolName = normalizeToolName(input.toolName);
+  if (toolName === 'memory_inspect' || toolName === 'memory_manage') {
+    const operation = getStringArg(getUnknownArg(input.args, 'request'), 'operation') ?? '';
+    const result = [simpleDescriptor(toolName, input.args,
+      toolName === 'memory_inspect' ? 'agent.memory.inspect' : 'agent.memory.manage',
+      'Memory operations', `Memory ${operation}.`)];
+    if (toolName === 'memory_manage' && (operation === 'open' || operation === 'reset')) {
+      result.push(descriptor(toolName, operation === 'open' ? 'outline.edit' : 'outline.delete', {
+        accessScope: 'none', title: 'Memory document operation', summary: `Memory ${operation}.`,
+        consequence: operation === 'open' ? 'Ensure the Memory saved search.' : 'Delete the exact reviewed Memory containers and descendants.',
+      }));
+    }
+    return result;
+  }
   if (toolName === 'bash') return deriveBashCapability(getStringArg(input.args, 'command'), input.args).descriptors;
   if (toolName === 'skill_inspect' || toolName === 'skill_manage') {
     const request = getUnknownArg(input.args, 'request');
