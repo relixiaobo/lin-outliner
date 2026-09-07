@@ -681,6 +681,17 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Workbench context publication and cache contract revised (PR #645)** -
+  separates immutable task evidence, scoped effective state, and frozen
+  model-facing publications across seven plans and six specs. Late observations
+  append at the consuming boundary; compaction restores the context actually
+  announced to the model. Configuration-source selection, Session baselines,
+  Automation admission payloads, and Goal capacity stops use the same contract.
+  Unit A owns common publication/restore and prefix fixtures; runtime behavior
+  remains unimplemented. The design review found no reportable issues.
+  Typecheck, docs/diff checks, and 80 existing focused tests passed; new behavior
+  and provider cache-hit rates remain implementation verification work.
+
 - **Capability-first development workbench design approved (PR #639)** - merged
   the plans for task-scoped execution addresses, immutable context snapshots,
   optional Project organization, source-state-bound verification, explicit Git

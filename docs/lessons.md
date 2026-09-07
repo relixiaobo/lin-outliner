@@ -2637,3 +2637,16 @@ publish later discovery separately. Bind reusable checks and publication
 admission to the source state and Git baseline they actually verified. A
 cooperative address claim must report its coverage; it cannot imply filesystem
 containment or exclusion of external writers.
+
+## Immutable evidence does not freeze its model-facing publication
+
+PR #645 revised the workbench design because immutable task snapshots alone
+still allowed projection to rebuild an earlier reminder when discovery finished
+or a live slot was evicted, changing the provider's previously sent prefix.
+
+**Persist publication boundaries and their frozen content decisions alongside
+canonical evidence.** Reduce announced state from what the consuming context
+actually received, not everything the Host collected. Append later facts;
+restore omitted instructions explicitly after compaction. Verify prepared and
+post-adapter message prefixes, including retries with no intervening assistant
+output; stable prompt hashes and cache affinity alone cannot prove preservation.

@@ -16,12 +16,15 @@ the latest published train is `v0.7.0`.
 
 ## In Flight
 
-PR #639 approved the capability-first development workbench design. Runtime
-implementation has not shipped. Unit A is eligible now as one complete
+PR #639 approved the capability-first development workbench design; #645 revised
+its cache/publication contract. Runtime implementation has not shipped.
+Unit A is eligible under the live collision check as one complete
 execution-context refactor over the shipped delegation/native-launcher and
-Settings mechanisms. Its development owner opens a new scoped Draft PR from
-current main before implementation; the design PR is not an implementation
-claim. Units B, D, and E follow Unit A; verification Unit C follows Unit B's
+Settings mechanisms, including frozen publication boundaries, scoped reduction,
+and compaction restore. Its development owner opens a new scoped Draft PR from
+current main and coordinates overlapping Agent/Skill files with #644 before
+implementation; the design PRs are not implementation claims.
+Units B, D, and E follow Unit A; verification Unit C follows Unit B's
 context/profile mechanism. All five plans remain active until their respective
 implementation, spec reconciliation, and archive gate complete.
 
@@ -117,7 +120,7 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P1 | [project-development-workbench](plans/project-development-workbench.md) | `draft` | Design approved in #639. Unit A is eligible now: one complete task-context protocol/admission refactor including local tools, delegation/native launchers, Automation, evidence, recovery, and all consumers. Open a new scoped Draft PR; preserve #643's Skill settings mechanism. The aggregate remains active for Units A-E. |
+| P1 | [project-development-workbench](plans/project-development-workbench.md) | `draft` | Design approved in #639 and revised in #645. Unit A includes the complete task-context refactor, scoped publication/restore, all consumers, and generic prefix fixtures. Open a new scoped Draft PR and coordinate Agent/Skill overlaps with #644; preserve the final Skill settings/lifecycle owners. The aggregate remains active for Units A-E. |
 | P1 | [project-context-runtime](plans/project-context-runtime.md) | `draft` | Unit B follows merged Unit A: bounded target-scoped discovery, immutable successor observations, and optional Project catalog/lifecycle. |
 | P1 | [verification-self-iteration](plans/verification-self-iteration.md) | `draft` | Unit C follows Units A and B: source-state-bound checks and bounded correction through the final Tool Task/context mechanisms. |
 | P2 | [git-review-publication](plans/git-review-publication.md) | `draft` | Unit D follows Unit A; mandatory Git baselines are independent of optional context discovery. Recheck Tool Task/renderer collisions before claiming. |
@@ -241,6 +244,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **workbench context-publication design gate** (`done`, #645, 2026-09-07) - approved immutable model-facing publications, scoped baselines, and compaction recovery across the plan series; runtime implementation remains pending.
 - **project-development-workbench design gate** (`done`, #639, 2026-09-07) - approved task-scoped execution, context, verification, publication, and process designs; Unit A is eligible for implementation and the five workbench plans remain active.
 - **skill-declarative-settings** (`done`, #643, 2026-09-07) - Skill-owned file-backed read/update routes preserve source spelling and queued toggle state; Unit D's Agent-facing lifecycle/provenance work remains in the active Settings plan.
 - **agent-skill-curation-report** (`done`, #642, 2026-09-06) - Settings now offers an opt-in, read-only report over the loaded Skill registry; unchanged user/project Skills with reliable Agent-write provenance are analyzed for broken or root-escaping Markdown resources, exact content duplicates, and retired tool names, while excluded sources and hashes remain visible; [plan archived](plans/archive/agent-skill-curation-report.md).
