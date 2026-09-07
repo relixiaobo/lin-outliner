@@ -5,11 +5,6 @@ import { decodeThreadConfigurationSummary } from '../core/agent/codec';
 import type { ThreadConfigurationSummary } from '../core/agent/protocol';
 import type { ThemeMode } from '../core/theme';
 import { isLocale, type Locale } from '../core/locale';
-import { isTranslationLanguage, type TranslationLanguage } from '../core/translationLanguage';
-import {
-  isUrlPageTranslationModel,
-  type UrlPageTranslationPreferences,
-} from '../core/urlPageTranslation';
 import { loadFilePreferences, updateFilePreferences } from './configuration/filePreferences';
 import { writeJsonFileSync } from './jsonFileStore';
 
@@ -18,15 +13,6 @@ import { writeJsonFileSync } from './jsonFileStore';
 // the agent settings store (provider/runtime configuration and credentials).
 
 interface PersistedAppPreferences {
-  // null follows the effective UI language until the user explicitly chooses a
-  // webpage translation target.
-  translationLanguage: TranslationLanguage | null;
-  // null dynamically follows the model selected by the built-in Agent.
-  translationModel: string | null;
-  // Automatic URL translation is an explicit global opt-in.
-  autoTranslateUrls: boolean;
-  // Local EPUB text has an independent explicit provider-sharing opt-in.
-  autoTranslateEpubs: boolean;
   // The last root Thread selection the user saved in the Agent composer.
   lastAgentThreadConfiguration: ThreadConfigurationSummary | null;
 }
@@ -37,10 +23,6 @@ export interface AppPreferences extends PersistedAppPreferences {
 }
 
 const DEFAULTS: PersistedAppPreferences = {
-  translationLanguage: null,
-  translationModel: null,
-  autoTranslateUrls: false,
-  autoTranslateEpubs: false,
   lastAgentThreadConfiguration: null,
 };
 
@@ -64,12 +46,6 @@ export function loadAppPreferences(): AppPreferences {
   try {
     const parsed = JSON.parse(readFileSync(preferencesFilePath(), 'utf8')) as Partial<PersistedAppPreferences>;
     loaded = {
-      translationLanguage: isTranslationLanguage(parsed.translationLanguage)
-        ? parsed.translationLanguage
-        : DEFAULTS.translationLanguage,
-      translationModel: normalizeTranslationModel(parsed.translationModel),
-      autoTranslateUrls: parsed.autoTranslateUrls === true,
-      autoTranslateEpubs: parsed.autoTranslateEpubs === true,
       lastAgentThreadConfiguration: normalizeAgentThreadConfiguration(
         parsed.lastAgentThreadConfiguration,
       ),
@@ -95,14 +71,6 @@ export function saveAutomaticChecksPreference(enabled: boolean): void {
   updateFilePreferences(app.getPath('userData'), [{ path: ['updates', 'checkAutomatically'], value: enabled }]);
 }
 
-export function saveTranslationLanguagePreference(translationLanguage: TranslationLanguage): void {
-  savePreferences({ translationLanguage });
-}
-
-export function saveUrlPageTranslationPreferences(preferences: UrlPageTranslationPreferences): void {
-  savePreferences(preferences);
-}
-
 export function saveLastAgentThreadConfiguration(
   configuration: ThreadConfigurationSummary,
 ): void {
@@ -126,10 +94,6 @@ export function resetAppPreferencesForTests(): void {
 function savePreferences(patch: Partial<PersistedAppPreferences>): void {
   const current = currentPreferences ?? loadAppPreferences();
   const persisted: PersistedAppPreferences = {
-    translationLanguage: current.translationLanguage,
-    translationModel: current.translationModel,
-    autoTranslateUrls: current.autoTranslateUrls,
-    autoTranslateEpubs: current.autoTranslateEpubs,
     lastAgentThreadConfiguration: current.lastAgentThreadConfiguration,
   };
   const next: PersistedAppPreferences = { ...persisted, ...patch };
@@ -139,10 +103,6 @@ function savePreferences(patch: Partial<PersistedAppPreferences>): void {
   } catch {
     // ignore — see note above
   }
-}
-
-function normalizeTranslationModel(value: unknown): string | null {
-  return isUrlPageTranslationModel(value) ? value : null;
 }
 
 function normalizeAgentThreadConfiguration(value: unknown): ThreadConfigurationSummary | null {

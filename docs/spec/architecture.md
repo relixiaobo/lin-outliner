@@ -173,8 +173,13 @@ the stored scalar.
 Preview translation persistence is a separate local-derived-data boundary, not
 an asset or workspace fact. Electron main owns a bounded cache under `userData`;
 the renderer can only submit validated translation batches through the existing
-translation command, and the preload exposes only a Settings-window clear action,
-not arbitrary cache reads. Webpage, prerecorded-caption, and reflowable-EPUB
+translation command. `PreviewOperations` provides revision-bound live preview
+controls, content-scoped saved-cache clearing, and aggregate Data inspection and
+maintenance to admitted windows and canonical root tools. It exposes no arbitrary
+cache reads. Renderer-owned preview intent is mirrored by opaque Host-issued
+lifetime IDs; controller acknowledgement, not message dispatch, proves application.
+Cache clearing retains live displays and pending results while invalidating
+outstanding write tickets, acquired before model resolution. Webpage, prerecorded-caption, and reflowable-EPUB
 source/configuration identities are hashed before persistence. Cache shards store
 opaque digests, validated translated text or explicit unchanged-output sentinels,
 and recency metadata, never source text, URLs, local paths, readable model
@@ -266,7 +271,7 @@ scans, terminates and detaches active children, and awaits their settlement.
 
 `createWindowApplicationHost` owns the Main, Settings, Provider Config, and
 Launcher windows; app-update and action-invocation services; locale, theme, and
-translation preferences; application menus; launcher context and global hotkey;
+application preferences; application menus; launcher context and global hotkey;
 activation; and window-scoped navigation and acknowledgement state. Global app
 effects have an explicit idempotent release path. Window and WebContents
 listeners remain bounded by the lifetime of the surface that created them.

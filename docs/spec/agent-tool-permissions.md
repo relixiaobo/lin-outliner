@@ -52,6 +52,17 @@ can bypass these checks through raw dynamic contributions. Global Memory mode
 remains a public file preference, not a management-tool setter. Native Reset
 review binds destructive intent to an exact target, not execution permission.
 
+Preview/Data inspection and management are separately selected root-only tools,
+unavailable to child or ephemeral Threads. Canonical descriptors distinguish
+`preview.inspect`, `preview.control`, `preview.data.inspect`, and
+`preview.data.clear`; `preview_manage` derives the descriptor from its operation.
+Lifetime, tool exposure, global disablement, capability ceilings and operation
+blocks are rechecked after native review and immediately before deletion in the
+cache queue. Guest renderers cannot register preview lifetimes, acknowledge
+controls or call Data operations. Main-window frames own preview controls;
+the live Settings window can inspect/maintain Data but cannot impersonate a pane.
+Neither an `approved` field nor Agent-authored confirmation bypasses native review.
+
 Default availability does not widen execution authority. Browser Pilot remains
 subject to the effective Configuration Profile and Skill ceiling, the
 ordinary tool ceiling, `disabledSkills`, and explicit capability blocks. Its

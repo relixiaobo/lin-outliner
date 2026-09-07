@@ -43,6 +43,7 @@ let fallbackId = 1;
 export type UrlPageTranslationStatus = 'error' | 'idle' | 'off' | 'on' | 'starting';
 
 interface UrlPageTranslationControllerOptions {
+  onSourceChange?: (sourceId: string | undefined) => void;
   autoTranslate?: boolean;
   model?: string | null;
   targetLanguage: TranslationLanguage;
@@ -101,6 +102,7 @@ export class UrlPageTranslationController {
   private readonly latency = new PreviewTranslationLatencyTracker();
   private lastReportedCompletion = false;
   private manualSuppressed = false;
+  private displayIntent: 'automatic' | 'translated' | 'original' = 'automatic';
   private model: string | null;
   private pageIdentity: string;
   private pendingFailureUpdates = 0;
@@ -132,6 +134,7 @@ export class UrlPageTranslationController {
     this.targetLanguage = options.targetLanguage;
     this.pageIdentity = urlPageIdentity(readWebviewUrl(webview));
     this.domReady = webviewIsReady(webview);
+    this.reportSource();
     webview.addEventListener('did-start-navigation', this.handleDidStartNavigation);
     webview.addEventListener('did-navigate-in-page', this.handleDidNavigateInPage);
     webview.addEventListener('dom-ready', this.handleDomReady);
@@ -152,6 +155,21 @@ export class UrlPageTranslationController {
   toggle(): void {
     if (this.status === 'off') this.enable();
     else this.disable();
+  }
+
+  setDisplayIntent(intent: 'automatic' | 'translated' | 'original'): void {
+    if (this.displayIntent === intent) return;
+    this.displayIntent = intent;
+    if (intent === 'translated') this.enable();
+    else if (intent === 'original' || !this.autoTranslate) this.disable();
+    else {
+      this.manualSuppressed = false;
+      if (!this.enabled && this.domReady) void this.evaluateAutoTranslation(this.generation);
+    }
+  }
+
+  private reportSource(): void {
+    this.options.onSourceChange?.(this.pageIdentity ? previewTranslationCacheSourceId('url', [this.pageIdentity]) : undefined);
   }
 
   enable(): void {
@@ -288,15 +306,16 @@ export class UrlPageTranslationController {
     }
     if (this.destroyed) return;
     this.pageIdentity = urlPageIdentity(event.url);
+    this.reportSource();
     this.domReady = false;
-    this.enabled = false;
+    this.enabled = this.displayIntent === 'translated';
     this.autoActivated = false;
     this.blockedForConfiguration = false;
     this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.initialized = false;
     this.cancelAllActiveRequests();
     this.hasStartedCaptionBatch = false;
-    this.manualSuppressed = false;
+    this.manualSuppressed = this.displayIntent === 'original';
     this.failedIds.clear();
     this.resetCompletionState();
     this.generation += 1;
@@ -304,7 +323,7 @@ export class UrlPageTranslationController {
     this.clearWorkWatcher();
     this.clearAutoTimer();
     void this.runGuest(() => this.guest.destroy()).catch(() => undefined);
-    this.setStatus('off');
+    this.setStatus(this.enabled ? 'starting' : 'off');
   };
 
   private readonly handleDidNavigateInPage = (event: Electron.DidNavigateInPageEvent) => {
@@ -317,11 +336,12 @@ export class UrlPageTranslationController {
     const identity = urlPageIdentity(url);
     if (!identity || identity === this.pageIdentity) return;
     this.pageIdentity = identity;
+    this.reportSource();
     const shouldRestart = this.enabled && !this.autoActivated;
     const shouldReevaluateAuto = this.autoTranslate && (this.autoActivated || !this.enabled);
     this.enabled = false;
     this.autoActivated = false;
-    this.manualSuppressed = false;
+    this.manualSuppressed = this.displayIntent === 'original';
     this.blockedForConfiguration = false;
     this.currentConcurrencyLimit = this.maxConcurrentRequests;
     this.initialized = false;

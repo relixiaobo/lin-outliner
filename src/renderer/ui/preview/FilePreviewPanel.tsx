@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -10,12 +11,12 @@ import {
   type SetStateAction,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { composeProviderQualifiedModel } from '../../../core/agentModelId';
 import type { PreviewTarget } from '../../../core/preview';
 import { TRANSLATION_LANGUAGES, type TranslationLanguage } from '../../../core/translationLanguage';
 import { api } from '../../api/client';
 import type { AgentProviderSettingsView, NodeId } from '../../api/types';
-import { useT } from '../../i18n/I18nProvider';
+import { useI18n, useT } from '../../i18n/I18nProvider';
+import type { PreviewControls } from '../../../core/previewOperations';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { BacklinksSection } from '../BacklinksSection';
@@ -68,17 +69,13 @@ import {
 import { useEpubTranslation } from './useEpubTranslation';
 import { epubPreviewTranslationCacheSourceId } from './previewTranslationCache';
 import { useUrlPageTranslation } from './useUrlPageTranslation';
-import { useTranslationLanguagePreference } from './translationLanguagePreference';
-import { useUrlPageTranslationPreferences } from './urlPageTranslationPreferences';
-import { reportPreviewPreferenceWriteError } from './previewPreferenceErrors';
+import { usePreviewContext } from './previewContext';
 import {
   translationModelGroups,
   translationModelName,
   translationProviderName,
 } from './translationModelChoices';
 import type { UrlPageTranslationStatus } from './urlPageTranslationController';
-import { isProviderUsable } from '../agent/providerUsability';
-import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
 
 const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 'compact' as const;
 
@@ -121,6 +118,10 @@ interface LooseBreadcrumbSegment {
  */
 export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const t = useT();
+  const { locale } = useI18n();
+  const { context: translationContext, observation } = usePreviewContext(props.panelId, locale);
+  const controls = observation.controls;
+  const targetLanguage = controls.language ?? locale;
   const previewLabels = t.shell.filePreview;
   const state = usePreviewSource(props.target);
   const rootNode = props.nodeId ? props.index.byId.get(props.nodeId) : undefined;
@@ -138,51 +139,64 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     ? epubPreviewTranslationCacheSourceId(epubTranslationSource)
     : undefined;
   const [epubTranslationAvailable, setEpubTranslationAvailable] = useState(false);
-  const translationLanguage = useTranslationLanguagePreference();
-  const translationPreferences = useUrlPageTranslationPreferences();
   const [translationPopoverOpen, setTranslationPopoverOpen] = useState(false);
   const translationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const translationDismissRefs = useMemo(() => [translationTriggerRef], []);
-  const preferenceMutationGenerationsRef = useRef(new Map<string, number>());
   const closeTranslationPopover = useCallback(() => setTranslationPopoverOpen(false), []);
   const handleTranslationError = useCallback((error: 'invalid-response' | 'not-configured' | 'provider-error') => {
     props.onError?.(error === 'not-configured'
       ? previewLabels.translationNotConfigured
       : previewLabels.translationFailed);
   }, [previewLabels.translationFailed, previewLabels.translationNotConfigured, props.onError]);
-  const persistPreference = useCallback((preference: string, action: () => Promise<void>) => {
-    const generation = beginKeyedMutation(preferenceMutationGenerationsRef.current, preference);
+  const [translationError, setTranslationError] = useState<string | null>(null);
+  const translationOperation = useRef(0);
+  useEffect(() => () => { translationOperation.current++; }, []);
+  const runTranslationOperation = useCallback((action: () => Promise<void>, onApplied?: () => void) => {
+    const operation = ++translationOperation.current;
     props.onError?.(null);
-    void action().catch((error) => {
-      reportPreviewPreferenceWriteError(preference, error);
-      if (isCurrentKeyedMutation(
-        preferenceMutationGenerationsRef.current,
-        preference,
-        generation,
-      )) {
-        props.onError?.(previewLabels.preferenceSaveFailed);
-      }
+    setTranslationError(null);
+    void action().then(() => {
+      if (operation === translationOperation.current) onApplied?.();
+    }).catch((error) => {
+      if (operation !== translationOperation.current) return;
+      setTranslationError(previewLabels.translationFailed);
+      setTranslationPopoverOpen(true);
+      console.warn('[preview] operation failed', error instanceof Error ? error.name : 'Error');
     });
-  }, [previewLabels.preferenceSaveFailed, props.onError]);
+  }, [previewLabels.translationFailed, props.onError]);
+  const configureTranslation = useCallback((changes: Parameters<typeof translationContext.configure>[0]) => {
+    runTranslationOperation(() => translationContext.configure(changes));
+  }, [runTranslationOperation, translationContext]);
+  const onTranslationDisplayToggle = useCallback(() => configureTranslation((current) => ({
+    display: current.status === 'off' ? 'translated' : 'original',
+  })), [configureTranslation]);
+  const onTranslationSourceChange = useCallback((sourceId: string | undefined) => {
+    translationContext.observe({ sourceId: sourceId ?? null }, true);
+  }, [translationContext]);
   const urlTranslation = useUrlPageTranslation({
     active: looseUrlPreview,
-    autoTranslate: translationPreferences.autoTranslateUrls,
+    autoTranslate: controls.automatic,
+    display: controls.display,
+    onDisplayToggle: onTranslationDisplayToggle,
+    onSourceChange: onTranslationSourceChange,
     labels: {
       retry: previewLabels.retryBlockTranslation,
       translating: previewLabels.translatingBlock,
     },
     shortcutActive: props.activePanel,
-    model: translationPreferences.translationModel,
-    targetLanguage: translationLanguage.language,
+    model: controls.model,
+    targetLanguage,
     onError: handleTranslationError,
   });
   const epubTranslation = useEpubTranslation({
     active: epubPreviewSource,
-    autoTranslate: translationPreferences.autoTranslateEpubs,
+    autoTranslate: controls.automatic,
+    display: controls.display,
+    onDisplayToggle: onTranslationDisplayToggle,
     ...(epubCacheSourceId ? { cacheSourceId: epubCacheSourceId } : {}),
     shortcutActive: props.activePanel,
-    model: translationPreferences.translationModel,
-    targetLanguage: translationLanguage.language,
+    model: controls.model,
+    targetLanguage,
     onError: handleTranslationError,
   });
   const handleEpubTranslationSurfaceChange = useCallback((surface: Parameters<typeof epubTranslation.attachSurface>[0]) => {
@@ -195,6 +209,18 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     ? urlTranslation
     : epubPreview ? epubTranslation : null;
   const translationStatus = activeTranslation?.status ?? 'off';
+  useLayoutEffect(() => {
+    translationContext.bindControls((next) => {
+      const effectiveLanguage = next.language ?? locale;
+      const status = activeTranslation?.applyControls(next, effectiveLanguage);
+      return status == null ? null : { effectiveLanguage, status };
+    });
+    translationContext.observe({
+      kind: looseUrlPreview ? 'page' : epubPreview ? 'document' : 'unavailable',
+      ...(!looseUrlPreview ? { sourceId: epubCacheSourceId ?? null } : {}),
+      effectiveLanguage: targetLanguage, status: translationStatus,
+    });
+  }, [translationContext, looseUrlPreview, epubPreview, epubCacheSourceId, locale, targetLanguage, translationStatus, activeTranslation?.applyControls]);
   const translationEnabled = translationStatus !== 'off';
   const translationCompleted = translationEnabled && (activeTranslation?.completed ?? false);
   const translationStatusLabel = translationStatus === 'off'
@@ -410,15 +436,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const looseBreadcrumbSegments = !fileRoot && !readerMode
     ? looseBreadcrumbFor(props.target, state, previewLabels)
     : [];
-  const automaticTranslationEnabled = looseUrlPreview
-    ? translationPreferences.autoTranslateUrls
-    : translationPreferences.autoTranslateEpubs;
-  const automaticTranslationIntentRef = useRef(automaticTranslationEnabled);
-  automaticTranslationIntentRef.current = automaticTranslationEnabled;
-  const setAutomaticTranslation = looseUrlPreview
-    ? translationPreferences.setAutoTranslateUrls
-    : translationPreferences.setAutoTranslateEpubs;
-  const automaticTranslationPreference = looseUrlPreview ? 'auto-translate-urls' : 'auto-translate-epubs';
   const translationControl = activeTranslation ? (
     <>
       <ButtonControl
@@ -448,30 +465,26 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
       {translationPopoverOpen ? (
         <TranslationPopover
           anchorRef={translationTriggerRef}
-          autoTranslate={automaticTranslationEnabled}
+          autoTranslate={controls.automatic}
           dismissIgnoreRefs={translationDismissRefs}
-          language={translationLanguage.language}
-          model={translationPreferences.translationModel}
-          onAutoTranslateChange={() => {
-            const enabled = !automaticTranslationIntentRef.current;
-            automaticTranslationIntentRef.current = enabled;
-            persistPreference(
-              automaticTranslationPreference,
-              () => setAutomaticTranslation(enabled),
-            );
-          }}
+          language={controls.language}
+          model={controls.model}
+          onAutoTranslateChange={() => configureTranslation((current) => ({ automatic: !current.controls.automatic, display: 'automatic' }))}
           onClose={closeTranslationPopover}
           onLanguageChange={(language) => {
-            persistPreference('translation-language', () => translationLanguage.setLanguage(language));
+            configureTranslation({ language });
           }}
           onModelChange={(model) => {
-            persistPreference('translation-model', () => translationPreferences.setTranslationModel(model));
+            configureTranslation({ model });
           }}
           onToggle={() => {
-            activeTranslation.toggle();
-            setTranslationPopoverOpen(false);
+            runTranslationOperation(() => translationContext.configure((current) => ({
+              display: current.status === 'off' ? 'translated' : 'original',
+            })), closeTranslationPopover);
           }}
           status={translationStatus}
+          error={translationError}
+          onClearCache={() => runTranslationOperation(() => translationContext.clearCache())}
         />
       ) : null}
     </>
@@ -685,6 +698,8 @@ function collapsePathSegments(path: string): LooseBreadcrumbSegment[] {
 }
 
 function TranslationPopover({
+  error,
+  onClearCache,
   anchorRef,
   autoTranslate,
   dismissIgnoreRefs,
@@ -700,16 +715,19 @@ function TranslationPopover({
   anchorRef: RefObject<HTMLElement | null>;
   autoTranslate: boolean;
   dismissIgnoreRefs: Array<RefObject<HTMLElement | null>>;
-  language: TranslationLanguage;
+  language: TranslationLanguage | null;
   model: string | null;
   onAutoTranslateChange: (enabled: boolean) => void;
   onClose: () => void;
-  onLanguageChange: (language: TranslationLanguage) => void;
+  onLanguageChange: (language: TranslationLanguage | null) => void;
   onModelChange: (model: string | null) => void;
   onToggle: () => void;
   status: UrlPageTranslationStatus;
+  error: string | null;
+  onClearCache: () => void;
 }) {
-  const labels = useT().shell.filePreview;
+  const t = useT();
+  const labels = t.shell.filePreview;
   const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -764,10 +782,11 @@ function TranslationPopover({
           <span>{labels.targetLanguage}</span>
           <SelectControl
             label={labels.targetLanguage}
-            onChange={(event) => onLanguageChange(event.target.value as TranslationLanguage)}
-            value={language}
+            onChange={(event) => onLanguageChange((event.target.value || null) as TranslationLanguage | null)}
+            value={language ?? ''}
             variant="popup"
           >
+            <option value="">{labels.followUiLanguage}</option>
             {TRANSLATION_LANGUAGES.map((entry) => (
               <option key={entry.code} value={entry.code}>{entry.nativeName}</option>
             ))}
@@ -822,6 +841,8 @@ function TranslationPopover({
             ))}
           </SelectControl>
         </label>
+        <Button className="file-preview-translation-clear" variant="secondary" onClick={onClearCache}>{t.settings.general.translationContentClearAction}</Button>
+        {error ? <p role="alert">{error}</p> : null}
       </MenuSurface>
     </>,
     document.body,

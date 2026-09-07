@@ -2721,18 +2721,16 @@ test.describe('file attachments', () => {
     }).toBe(true);
   });
 
-  test('EPUB readers translate in place without inheriting website automatic consent', async ({ page }) => {
+  test('EPUB readers start with local defaults and translate in place', async ({ page }) => {
     await page.setViewportSize({ width: 1500, height: 900 });
     await configurePreviewTranslationMock(page, {
       delayMs: 150,
-      language: 'zh-Hans',
-      preferences: {
-        translationModel: null,
-        autoTranslateEpubs: false,
-        autoTranslateUrls: true,
-      },
     });
     const { chapter, readerPane } = await openEpubSplitReader(page, 'translated-book.epub');
+    await readerPane.locator('.file-preview-translation-toggle').click();
+    await page.getByRole('dialog', { name: 'Translation settings' }).getByLabel('Translate to').selectOption('zh-Hans');
+    await expect(page.getByRole('dialog', { name: 'Translation settings' }).getByLabel('Translate to')).toHaveValue('zh-Hans');
+    await page.keyboard.press('Escape');
     const translationToggle = readerPane.locator('.file-preview-translation-toggle');
     await expect(translationToggle).toHaveAttribute('aria-label', 'Translation settings: Translation off');
     const headerActions = readerPane.locator('.panel-breadcrumb-actions .file-preview-reader-actions');
@@ -2820,12 +2818,6 @@ test.describe('file attachments', () => {
     await page.setViewportSize({ width: 1500, height: 900 });
     await configurePreviewTranslationMock(page, {
       delayMs: 30,
-      language: 'en',
-      preferences: {
-        translationModel: null,
-        autoTranslateEpubs: false,
-        autoTranslateUrls: false,
-      },
     });
     const { chapter, readerPane } = await openEpubSplitReader(page, 'same-language-book.epub');
     const translationToggle = readerPane.locator('.file-preview-translation-toggle');

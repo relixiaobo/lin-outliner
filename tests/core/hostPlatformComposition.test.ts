@@ -52,7 +52,10 @@ describe('Host platform composition', () => {
     expect(RESOURCE_HOST_SRC).toContain('localFiles.close(),');
     expect(RESOURCE_HOST_SRC).toContain('streams.close()');
     expect(RESOURCE_HOST_SRC).toContain('if (closePromise) return closePromise;');
-    expect(RESOURCE_HOST_SRC).toContain('closePromise = Promise.all([');
+    const close = RESOURCE_HOST_SRC.slice(RESOURCE_HOST_SRC.indexOf('const close = ():'), RESOURCE_HOST_SRC.indexOf('const host: ResourcePreviewHost'));
+    expect(close).toContain('closePromise = (async () => {');
+    expect(close).toContain('await operations.settle();');
+    expect(close.indexOf('await operations.settle();')).toBeLessThan(close.indexOf('await Promise.all(['));
     expect(LOCAL_FILE_HOST_SRC).toContain('searchLocalFilePaths(query, limit * 6, processTracker.spawn)');
     expect(LOCAL_FILE_HOST_SRC).toContain('recentLocalFilePaths(limit * 12, processTracker.spawn)');
     expect(LOCAL_FILE_HOST_SRC).toContain('closePromise = processTracker.close();');

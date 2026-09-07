@@ -153,4 +153,26 @@ describe('URL Preview persistent session', () => {
 
     expect(calls).toEqual(['storage', 'cookies']);
   });
+
+  test('reports partial deletion and still attempts every stage on only the supplied session', async () => {
+    const calls: string[] = [];
+    const session = (name: string) => ({
+      closeAllConnections: async () => { calls.push(`${name}:connections`); },
+      clearAuthCache: async () => { calls.push(`${name}:auth`); throw new Error('private detail'); },
+      clearCache: async () => { calls.push(`${name}:cache`); },
+      clearStorageData: async () => { calls.push(`${name}:storage`); },
+      cookies: { flushStore: async () => { calls.push(`${name}:cookies`); } },
+    }) as unknown as PreviewSession;
+    const preview = session('preview');
+    session('default');
+    const result = await clearUrlPreviewSessionData(preview);
+    expect(calls).toEqual(['preview:connections', 'preview:auth', 'preview:cache', 'preview:storage', 'preview:cookies']);
+    expect(result).toEqual([
+      { name: 'close_connections', state: 'completed' },
+      { name: 'http_auth', state: 'failed' },
+      { name: 'browser_cache', state: 'completed' },
+      { name: 'site_storage', state: 'completed' },
+      { name: 'flush_cookies', state: 'completed' },
+    ]);
+  });
 });

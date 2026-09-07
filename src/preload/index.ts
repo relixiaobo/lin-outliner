@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { MEMORY_CHANGED_CHANNEL } from '../core/agent/memoryOperations';
+import { DATA_CHANGED_CHANNEL, PREVIEW_ACTION_CHANNEL, PREVIEW_ACTION_ACK_CHANNEL, PREVIEW_CONTEXT_CHANNEL, PREVIEW_OPERATIONS_CHANNEL,
+  type PreviewAction, type PreviewActionAck, type PreviewObservation, type PreviewOperationName, type PreviewOperationResult } from '../core/previewOperations';
 import { SKILL_LIBRARY_CHANGED_CHANNEL, SKILL_REVIEW_DECIDE_CHANNEL, SKILL_REVIEW_GET_CHANNEL, SKILL_REVIEW_PRELOAD_ARG } from '../core/agent/skillOperations';
 import {
   STARTUP_GET_CHANNEL, STARTUP_QUIT_CHANNEL, STARTUP_RETRY_CHANNEL, STARTUP_STATE_CHANNEL,
@@ -68,11 +70,6 @@ import {
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../core/windowActivity';
 import type { ThemeMode } from '../core/theme';
 import { DEFAULT_LOCALE, isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, type Locale } from '../core/locale';
-import {
-  isTranslationLanguage,
-  LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL,
-  type TranslationLanguage,
-} from '../core/translationLanguage';
 import { LAUNCHER_NAVIGATE_TO_NODE_CHANNEL } from '../core/launcher/commands';
 import {
   LIN_APP_INFO_CHANNEL,
@@ -84,21 +81,12 @@ import {
   type ErrorReport,
 } from '../core/errorObservability';
 import {
-  LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL,
-  isUrlPageTranslationPreferences,
-  LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL,
   LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL,
-  type ClearPreviewTranslationCacheResult,
-  type UrlPageTranslationPreferences,
 } from '../core/urlPageTranslation';
 import {
   LIN_URL_PAGE_TRANSLATION_GUEST_CHANNEL,
   type UrlPageTranslationGuestRequest,
 } from '../core/urlPageTranslationGuest';
-import {
-  LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL,
-  type ClearUrlPreviewDataResult,
-} from '../core/urlPreviewSession';
 import {
   LIN_APP_UPDATE_CHANGED_CHANNEL,
   LIN_APP_UPDATE_CHECK_CHANNEL,
@@ -287,25 +275,6 @@ function readInitialLanguage(): Locale {
   }
 }
 
-function readInitialTranslationLanguage(): TranslationLanguage {
-  try {
-    const value = ipcRenderer.sendSync('lin:get-translation-language-sync');
-    return isTranslationLanguage(value) ? value : DEFAULT_LOCALE;
-  } catch {
-    return DEFAULT_LOCALE;
-  }
-}
-
-function readInitialUrlPageTranslationPreferences(): UrlPageTranslationPreferences {
-  try {
-    const value = ipcRenderer.sendSync('lin:get-url-page-translation-preferences-sync');
-    if (isUrlPageTranslationPreferences(value)) return value;
-  } catch {
-    // Fall through to the opt-in defaults.
-  }
-  return { translationModel: null, autoTranslateEpubs: false, autoTranslateUrls: false };
-}
-
 const api = {
   onMemoryChanged: (listener: () => void) => {
     const handler = () => listener();
@@ -431,10 +400,21 @@ const api = {
   getLauncherHotkey: () => ipcRenderer.invoke('lin:launcher-hotkey') as Promise<string | null>,
   /** Summon the command surface from an in-app entry point. */
   showLauncher: () => ipcRenderer.invoke('lin:show-launcher') as Promise<void>,
-  clearUrlPreviewData: () =>
-    ipcRenderer.invoke(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL) as Promise<ClearUrlPreviewDataResult>,
-  clearPreviewTranslationCache: () =>
-    ipcRenderer.invoke(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL) as Promise<ClearPreviewTranslationCacheResult>,
+  registerPreview: (observation: PreviewObservation) => ipcRenderer.invoke(PREVIEW_CONTEXT_CHANNEL, 'register', null, observation) as Promise<string>,
+  observePreview: (previewId: string, observation: PreviewObservation) => ipcRenderer.invoke(PREVIEW_CONTEXT_CHANNEL, 'observe', previewId, observation) as Promise<void>,
+  unregisterPreview: (previewId: string) => ipcRenderer.invoke(PREVIEW_CONTEXT_CHANNEL, 'unregister', previewId) as Promise<void>,
+  acknowledgePreview: (ack: PreviewActionAck) => ipcRenderer.invoke(PREVIEW_ACTION_ACK_CHANNEL, ack) as Promise<void>,
+  previewOperation: (name: PreviewOperationName, input: unknown) => ipcRenderer.invoke(PREVIEW_OPERATIONS_CHANNEL, name, input) as Promise<PreviewOperationResult>,
+  onPreviewAction: (listener: (action: PreviewAction) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, action: PreviewAction) => listener(action);
+    ipcRenderer.on(PREVIEW_ACTION_CHANNEL, handler);
+    return () => { ipcRenderer.removeListener(PREVIEW_ACTION_CHANNEL, handler); };
+  },
+  onPreviewDataChanged: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on(DATA_CHANGED_CHANNEL, handler);
+    return () => { ipcRenderer.removeListener(DATA_CHANGED_CHANNEL, handler); };
+  },
   // Language preference. initialLanguage is the synchronously-resolved effective
   // locale for first paint; setLanguage applies immediately across all windows (the
   // main process broadcasts it + rebuilds the native menu) and persists;
@@ -446,28 +426,6 @@ const api = {
     ipcRenderer.on(LIN_LANGUAGE_CHANGED_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(LIN_LANGUAGE_CHANGED_CHANNEL, handler);
-    };
-  },
-  initialTranslationLanguage: readInitialTranslationLanguage(),
-  setTranslationLanguage: (language: TranslationLanguage) =>
-    ipcRenderer.invoke('lin:set-translation-language', language) as Promise<void>,
-  onTranslationLanguageChanged: (listener: (language: TranslationLanguage) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, language: TranslationLanguage) => listener(language);
-    ipcRenderer.on(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, handler);
-    return () => {
-      ipcRenderer.removeListener(LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL, handler);
-    };
-  },
-  initialUrlPageTranslationPreferences: readInitialUrlPageTranslationPreferences(),
-  setUrlPageTranslationPreferences: (preferences: UrlPageTranslationPreferences) =>
-    ipcRenderer.invoke('lin:set-url-page-translation-preferences', preferences) as Promise<UrlPageTranslationPreferences>,
-  onUrlPageTranslationPreferencesChanged: (listener: (preferences: UrlPageTranslationPreferences) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, preferences: unknown) => {
-      if (isUrlPageTranslationPreferences(preferences)) listener(preferences);
-    };
-    ipcRenderer.on(LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL, handler);
-    return () => {
-      ipcRenderer.removeListener(LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL, handler);
     };
   },
   onUrlPageTranslationShortcut: (listener: (webContentsId: number) => void) => {

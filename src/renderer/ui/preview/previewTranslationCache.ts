@@ -45,11 +45,13 @@ export function previewTranslationCacheSourceId(
 }
 
 export function epubPreviewTranslationCacheSourceId(
-  source: Pick<PreviewFileSource, 'id' | 'lastModified' | 'sizeBytes'>,
+  source: Pick<PreviewFileSource, 'id' | 'sourceKind' | 'lastModified' | 'sizeBytes'>,
 ): string | undefined {
+  // Asset records are immutable; their temporary exported file has a new mtime
+  // on every materialization, which must not change the content's cache identity.
   return previewTranslationCacheSourceId('epub', [
     source.id,
     source.sizeBytes,
-    source.lastModified,
+    source.sourceKind === 'asset' ? null : source.lastModified,
   ]);
 }

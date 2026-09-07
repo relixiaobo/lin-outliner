@@ -118,6 +118,15 @@ export class EpubTranslationController {
     else this.disable();
   }
 
+  setDisplayIntent(intent: 'automatic' | 'translated' | 'original'): void {
+    if (intent === 'translated') this.enable();
+    else if (intent === 'original') { if (this.enabled || !this.manualSuppressed) this.disable(); }
+    else if (this.manualSuppressed) {
+      this.manualSuppressed = false;
+      if (this.autoTranslate) this.evaluateAutoTranslation(this.generation);
+    }
+  }
+
   enable(): void {
     if (this.destroyed || this.enabled) return;
     this.manualSuppressed = false;

@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TranslationLanguage } from '../../../core/translationLanguage';
 import type { UrlPageTranslationFailureCode } from '../../../core/urlPageTranslation';
+import type { PreviewControls } from '../../../core/previewOperations';
 import { EpubTranslationController } from './epubTranslationController';
 import type { EpubTranslationDomAdapter } from './epubTranslationDom';
 import { subscribeUrlPageTranslationShortcut } from './urlPageTranslationShortcut';
 import type { UrlPageTranslationStatus } from './urlPageTranslationController';
 
 interface UseEpubTranslationOptions {
+  display?: PreviewControls['display'];
+  onDisplayToggle?: () => void;
   active: boolean;
   autoTranslate: boolean;
   cacheSourceId?: string;
@@ -17,6 +20,7 @@ interface UseEpubTranslationOptions {
 }
 
 export function useEpubTranslation({
+  display = 'automatic', onDisplayToggle,
   active,
   autoTranslate,
   cacheSourceId,
@@ -29,6 +33,7 @@ export function useEpubTranslation({
   completed: boolean;
   status: UrlPageTranslationStatus;
   toggle: () => void;
+  applyControls: (controls: PreviewControls, language: TranslationLanguage) => UrlPageTranslationStatus | null;
 } {
   const [completed, setCompleted] = useState(false);
   const [status, setStatus] = useState<UrlPageTranslationStatus>('off');
@@ -42,6 +47,10 @@ export function useEpubTranslation({
   const shortcutActiveRef = useRef(shortcutActive);
   const surfaceRef = useRef<EpubTranslationDomAdapter | null>(null);
   const targetLanguageRef = useRef(targetLanguage);
+  const displayRef = useRef(display);
+  const onDisplayToggleRef = useRef(onDisplayToggle);
+  displayRef.current = display;
+  onDisplayToggleRef.current = onDisplayToggle;
   activeRef.current = active;
   autoTranslateRef.current = autoTranslate;
   cacheSourceIdRef.current = cacheSourceId;
@@ -52,7 +61,7 @@ export function useEpubTranslation({
 
   const installController = useCallback((surface: EpubTranslationDomAdapter) => {
     const controller = new EpubTranslationController(surface, {
-      autoTranslate: autoTranslateRef.current,
+      autoTranslate: autoTranslateRef.current && displayRef.current === 'automatic',
       ...(cacheSourceIdRef.current ? { cacheSourceId: cacheSourceIdRef.current } : {}),
       model: modelRef.current,
       targetLanguage: targetLanguageRef.current,
@@ -65,10 +74,12 @@ export function useEpubTranslation({
     });
     surface.setShortcutHandler(() => {
       if (!activeRef.current || !shortcutActiveRef.current) return false;
-      controller.toggle();
+      if (onDisplayToggleRef.current) onDisplayToggleRef.current();
+      else controller.toggle();
       return true;
     });
     controllerRef.current = controller;
+    controller.setDisplayIntent(displayRef.current);
     if (pendingEnableRef.current && controller.currentStatus === 'off') controller.enable();
   }, []);
 
@@ -112,8 +123,9 @@ export function useEpubTranslation({
   }, [cacheSourceId]);
 
   useEffect(() => {
-    controllerRef.current?.setAutoTranslate(autoTranslate);
-  }, [autoTranslate]);
+    controllerRef.current?.setAutoTranslate(autoTranslate && display === 'automatic');
+    controllerRef.current?.setDisplayIntent(display);
+  }, [autoTranslate, display]);
 
   useEffect(() => () => {
     controllerRef.current?.destroy();
@@ -123,6 +135,10 @@ export function useEpubTranslation({
 
   const toggle = useCallback(() => {
     const controller = controllerRef.current;
+    if (controller && onDisplayToggleRef.current) {
+      onDisplayToggleRef.current();
+      return;
+    }
     if (controller) {
       controller.toggle();
       return;
@@ -130,6 +146,16 @@ export function useEpubTranslation({
     if (!activeRef.current) return;
     pendingEnableRef.current = !pendingEnableRef.current;
     setStatus(pendingEnableRef.current ? 'starting' : 'off');
+  }, []);
+
+  const applyControls = useCallback((controls: PreviewControls, language: TranslationLanguage): UrlPageTranslationStatus | null => {
+    const controller = controllerRef.current;
+    if (!controller) return null;
+    controller.setAutoTranslate(controls.automatic && controls.display === 'automatic');
+    controller.setTargetLanguage(language);
+    controller.setTranslationModel(controls.model);
+    controller.setDisplayIntent(controls.display);
+    return controller.currentStatus;
   }, []);
 
   useEffect(() => {
@@ -142,10 +168,10 @@ export function useEpubTranslation({
       ) return false;
       const controller = controllerRef.current;
       if (!controller) return false;
-      controller.toggle();
+      toggle();
       return true;
     });
-  }, [active]);
+  }, [active, toggle]);
 
-  return { attachSurface, completed, status, toggle };
+  return { attachSurface, completed, status, toggle, applyControls };
 }

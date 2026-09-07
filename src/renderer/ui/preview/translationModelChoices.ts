@@ -2,12 +2,7 @@ import type { AgentProviderSettingsView } from '../../api/types';
 import { composeProviderQualifiedModel } from '../../../core/agentModelId';
 import { isProviderUsable } from '../agent/providerUsability';
 
-// Which models may translate a page, derived once and rendered by both surfaces
-// that offer the choice: the preview's Languages popover, where the user acts in
-// context, and Settings → Preview → Translation, where the same preference is
-// managed away from a page. They read and write one store, so two menus built
-// from two derivations would be a way for them to disagree about what is on
-// offer while agreeing about what is chosen.
+// Preview model choices derive from the Models owner, never a second catalog.
 
 export interface TranslationModelGroup {
   providerId: string;

@@ -4,13 +4,20 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  PreviewTranslationCacheStore,
+  PreviewTranslationCacheStore as CacheStore,
   type PreviewTranslationCacheBlock,
   type PreviewTranslationCacheScope,
   type PreviewTranslationCacheOperation,
 } from '../../src/main/previewTranslationCacheStore';
 
 let tempDir: string | null = null;
+
+class PreviewTranslationCacheStore extends CacheStore {
+  override async lookup(...args: Parameters<CacheStore['lookup']>) {
+    const ticket = this.beginWrite(args[0].sourceId);
+    return { ...await super.lookup(...args), ticket };
+  }
+}
 
 const block = (overrides: Partial<PreviewTranslationCacheBlock> = {}): PreviewTranslationCacheBlock => ({
   cacheKey: 'page:block:1',
@@ -40,6 +47,82 @@ afterEach(async () => {
 });
 
 describe('PreviewTranslationCacheStore', () => {
+  test('rejects mismatched persisted source metadata instead of returning its translations', async () => {
+    const root = await makeRoot();
+    const store = new CacheStore(root, { flushDelayMs: 60_000 });
+    const ticket = store.beginWrite(scope().sourceId);
+    await store.record(scope(), [block()], [{ id: 'b1', translation: 'Saved' }], ticket);
+    store.releaseWrite(ticket);
+    await store.flushNow();
+    const shardName = (await readdir(root)).find((name) => name.endsWith('.json') && name !== 'index.json')!;
+    const shardPath = path.join(root, shardName);
+    const shard = JSON.parse(await readFile(shardPath, 'utf8'));
+    shard.sourceDigest = '0'.repeat(64);
+    await writeFile(shardPath, JSON.stringify(shard));
+    const reopened = new CacheStore(root, { flushDelayMs: 60_000 });
+    expect((await reopened.lookup(scope(), [block()])).hits).toEqual([]);
+    await reopened.flushNow();
+    expect((await reopened.inspect()).entries.page).toBe(0);
+  });
+
+  test('content deletion failure is reported and still fences old writes', async () => {
+    const root = await makeRoot();
+    const store = new CacheStore(root, { flushDelayMs: 60_000 });
+    const ticket = store.beginWrite(scope().sourceId);
+    await store.record(scope(), [block()], [{ id: 'b1', translation: 'Saved' }], ticket);
+    await store.flushNow();
+    const shardName = (await readdir(root)).find((name) => name.endsWith('.json') && name !== 'index.json')!;
+    const shardPath = path.join(root, shardName);
+    await rm(shardPath);
+    await mkdir(shardPath);
+    await expect(store.clearSource(scope().sourceId)).rejects.toThrow('clear failed');
+    expect(await store.record(scope(), [block()], [{ id: 'b1', translation: 'Late' }], ticket)).toBe(false);
+    store.releaseWrite(ticket);
+    await store.clear();
+    expect((await store.inspect()).entries.page).toBe(0);
+  });
+
+  test('clears every cold variant of one content source without evicting another source', async () => {
+    const root = await makeRoot();
+    const first = new CacheStore(root, { flushDelayMs: 60_000 });
+    for (const contentKind of ['page', 'caption', 'document'] as const) {
+      for (const sourceId of ['selected', 'other']) {
+        const selected = scope({ contentKind, sourceId });
+        const ticket = first.beginWrite(sourceId);
+        await first.record(selected, [block()], [{ id: 'b1', translation: 'Saved output' }], ticket);
+        first.releaseWrite(ticket);
+      }
+    }
+    await first.flushNow();
+    const reloaded = new CacheStore(root, { flushDelayMs: 60_000 });
+    const oldSelected = reloaded.beginWrite('selected');
+    const oldOther = reloaded.beginWrite('other');
+    await reloaded.clearSource('selected');
+    expect((await reloaded.inspect()).entries).toEqual({ page: 1, caption: 1, document: 1 });
+    expect(await reloaded.record(scope({ sourceId: 'selected' }), [block()], [{ id: 'b1', translation: 'Late' }], oldSelected)).toBe(false);
+    expect(await reloaded.record(scope({ sourceId: 'other' }), [block()], [{ id: 'b1', translation: 'Still current' }], oldOther)).toBe(true);
+    reloaded.releaseWrite(oldSelected);
+    reloaded.releaseWrite(oldOther);
+    await reloaded.flushNow();
+    const restarted = new CacheStore(root, { flushDelayMs: 60_000 });
+    for (const contentKind of ['page', 'caption', 'document'] as const) {
+      expect((await restarted.lookup(scope({ contentKind, sourceId: 'selected' }), [block()])).hits).toEqual([]);
+      expect((await restarted.lookup(scope({ contentKind, sourceId: 'other' }), [block()])).hits).toHaveLength(1);
+    }
+    await restarted.clear();
+    expect((await restarted.inspect()).entries).toEqual({ page: 0, caption: 0, document: 0 });
+  });
+
+  test('rechecks authority in the serialized clear queue and rejects released or foreign tickets', async () => {
+    const store = new CacheStore(await makeRoot(), { flushDelayMs: 60_000 });
+    const ticket = store.beginWrite(scope().sourceId);
+    await store.record(scope(), [block()], [{ id: 'b1', translation: 'Saved' }], ticket);
+    await expect(store.clearSource(scope().sourceId, async () => { throw new Error('Revoked'); })).rejects.toThrow('Revoked');
+    expect((await store.lookup(scope(), [block()])).hits).toHaveLength(1);
+    store.releaseWrite(ticket);
+    expect(await store.record(scope(), [block()], [{ id: 'b1', translation: 'Late' }], ticket)).toBe(false);
+    expect(await store.record(scope(), [block()], [{ id: 'b1', translation: 'Forged' }], { sourceDigest: ticket.sourceDigest })).toBe(false);
+  });
   test('round-trips private opaque cache shards without persisting source identity or text', async () => {
     const root = await makeRoot();
     const store = new PreviewTranslationCacheStore(root, { flushDelayMs: 60_000 });
@@ -50,7 +133,7 @@ describe('PreviewTranslationCacheStore', () => {
       scope(),
       [block()],
       [{ id: 'b1', translation: '私密译文。' }],
-      first.epoch,
+      first.ticket,
     )).toBe(true);
     await store.flushNow();
 
@@ -80,7 +163,7 @@ describe('PreviewTranslationCacheStore', () => {
     const root = await makeRoot();
     const store = new PreviewTranslationCacheStore(root, { flushDelayMs: 60_000 });
     const initial = await store.lookup(scope(), [block()]);
-    await store.record(scope(), [block()], [{ id: 'b1', translation: '命中' }], initial.epoch);
+    await store.record(scope(), [block()], [{ id: 'b1', translation: '命中' }], initial.ticket);
 
     expect((await store.lookup(scope(), [block()])).hits).toHaveLength(1);
     for (const [changedScope, changedBlock] of [
@@ -104,7 +187,7 @@ describe('PreviewTranslationCacheStore', () => {
       scope(),
       [block()],
       [{ id: 'b1', translation: 'Private source phrase.' }],
-      lookup.epoch,
+      lookup.ticket,
     );
     await store.flushNow();
 
@@ -124,7 +207,7 @@ describe('PreviewTranslationCacheStore', () => {
     const root = await makeRoot();
     const store = new PreviewTranslationCacheStore(root, { flushDelayMs: 60_000 });
     const initial = await store.lookup(scope(), [block()]);
-    await store.record(scope(), [block()], [{ id: 'b1', translation: '缓存译文' }], initial.epoch);
+    await store.record(scope(), [block()], [{ id: 'b1', translation: '缓存译文' }], initial.ticket);
     await store.flushNow();
 
     const shardName = (await readdir(root)).find((name) => name !== 'index.json');
@@ -159,7 +242,7 @@ describe('PreviewTranslationCacheStore', () => {
     for (const name of ['a', 'b'] as const) {
       const selectedScope = scope({ sourceId: `https://example.test/${name}` });
       const lookup = await store.lookup(selectedScope, [block()]);
-      await store.record(selectedScope, [block()], [{ id: 'b1', translation: `Translation ${name}` }], lookup.epoch);
+      await store.record(selectedScope, [block()], [{ id: 'b1', translation: `Translation ${name}` }], lookup.ticket);
       now += 1;
     }
     await store.flushNow();
@@ -169,7 +252,7 @@ describe('PreviewTranslationCacheStore', () => {
     now += 1;
     const scopeC = scope({ sourceId: 'https://example.test/c' });
     const lookupC = await store.lookup(scopeC, [block()]);
-    await store.record(scopeC, [block()], [{ id: 'b1', translation: 'Translation c' }], lookupC.epoch);
+    await store.record(scopeC, [block()], [{ id: 'b1', translation: 'Translation c' }], lookupC.ticket);
     await store.flushNow();
 
     const reloaded = new PreviewTranslationCacheStore(root, { flushDelayMs: 60_000, maxEntries: 2 });
@@ -192,13 +275,13 @@ describe('PreviewTranslationCacheStore', () => {
     const initialA = await store.lookup(scopeA, [aOld, aNew]);
     const initialB = await store.lookup(scopeB, [bFirst, bSecond]);
 
-    await store.record(scopeA, [aOld], [{ id: aOld.id, translation: 'A old translation' }], initialA.epoch);
+    await store.record(scopeA, [aOld], [{ id: aOld.id, translation: 'A old translation' }], initialA.ticket);
     now = 2;
-    await store.record(scopeB, [bFirst], [{ id: bFirst.id, translation: 'B first translation' }], initialB.epoch);
+    await store.record(scopeB, [bFirst], [{ id: bFirst.id, translation: 'B first translation' }], initialB.ticket);
     now = 3;
-    await store.record(scopeB, [bSecond], [{ id: bSecond.id, translation: 'B second translation' }], initialB.epoch);
+    await store.record(scopeB, [bSecond], [{ id: bSecond.id, translation: 'B second translation' }], initialB.ticket);
     now = 4;
-    await store.record(scopeA, [aNew], [{ id: aNew.id, translation: 'A new translation' }], initialA.epoch);
+    await store.record(scopeA, [aNew], [{ id: aNew.id, translation: 'A new translation' }], initialA.ticket);
     await store.flushNow();
 
     const reloaded = new PreviewTranslationCacheStore(root, options);
@@ -224,9 +307,9 @@ describe('PreviewTranslationCacheStore', () => {
       block({ cacheKey: 'second', id: 'b2', text: 'Second source' }),
     ];
     const lookup = await store.lookup(scope(), blocks);
-    await store.record(scope(), [blocks[0]!], [{ id: 'b1', translation: 'A'.repeat(100) }], lookup.epoch);
+    await store.record(scope(), [blocks[0]!], [{ id: 'b1', translation: 'A'.repeat(100) }], lookup.ticket);
     now += 1;
-    await store.record(scope(), [blocks[1]!], [{ id: 'b2', translation: 'B'.repeat(100) }], lookup.epoch);
+    await store.record(scope(), [blocks[1]!], [{ id: 'b2', translation: 'B'.repeat(100) }], lookup.ticket);
     await store.flushNow();
 
     const reloaded = new PreviewTranslationCacheStore(root, { flushDelayMs: 60_000, maxBytes: 260 });
@@ -257,7 +340,7 @@ describe('PreviewTranslationCacheStore', () => {
         scope(),
         [selectedBlock!],
         [{ id: selectedBlock!.id, translation: `Translation ${index + 1}` }],
-        lookup.epoch,
+        lookup.ticket,
       );
     }
     await store.flushNow();
@@ -276,7 +359,7 @@ describe('PreviewTranslationCacheStore', () => {
     const store = new PreviewTranslationCacheStore(root, options);
     const scopeB = scope({ sourceId: 'scope:b' });
     const lookupB = await store.lookup(scopeB, [block()]);
-    await store.record(scopeB, [block()], [{ id: 'b1', translation: 'Translation b' }], lookupB.epoch);
+    await store.record(scopeB, [block()], [{ id: 'b1', translation: 'Translation b' }], lookupB.ticket);
     await store.flushNow();
     const firstShard = (await readdir(root)).find((name) => name !== 'index.json');
     if (!firstShard) throw new Error('Missing first cache shard');
@@ -284,7 +367,7 @@ describe('PreviewTranslationCacheStore', () => {
     now += 1;
     const scopeA = scope({ sourceId: 'scope:a-missing' });
     const lookupA = await store.lookup(scopeA, [block()]);
-    await store.record(scopeA, [block()], [{ id: 'b1', translation: 'Translation a' }], lookupA.epoch);
+    await store.record(scopeA, [block()], [{ id: 'b1', translation: 'Translation a' }], lookupA.ticket);
     await store.flushNow();
     const secondShard = (await readdir(root)).find((name) => name !== 'index.json' && name !== firstShard);
     if (!secondShard) throw new Error('Missing second cache shard');
@@ -295,7 +378,7 @@ describe('PreviewTranslationCacheStore', () => {
     expect((await reloaded.lookup(scopeA, [block()])).hits).toEqual([]);
     const scopeC = scope({ sourceId: 'scope:c' });
     const lookupC = await reloaded.lookup(scopeC, [block()]);
-    await reloaded.record(scopeC, [block()], [{ id: 'b1', translation: 'Translation c' }], lookupC.epoch);
+    await reloaded.record(scopeC, [block()], [{ id: 'b1', translation: 'Translation c' }], lookupC.ticket);
     await reloaded.flushNow();
 
     const finalStore = new PreviewTranslationCacheStore(root, options);
@@ -307,7 +390,7 @@ describe('PreviewTranslationCacheStore', () => {
     const root = await makeRoot();
     const store = new PreviewTranslationCacheStore(root, { flushDelayMs: 60_000 });
     const initial = await store.lookup(scope(), [block()]);
-    await store.record(scope(), [block()], [{ id: 'b1', translation: 'Translation' }], initial.epoch);
+    await store.record(scope(), [block()], [{ id: 'b1', translation: 'Translation' }], initial.ticket);
     await store.flushNow();
 
     const shardName = (await readdir(root)).find((name) => name !== 'index.json');
@@ -330,14 +413,14 @@ describe('PreviewTranslationCacheStore', () => {
     for (const name of ['a', 'b'] as const) {
       const selectedScope = scope({ sourceId: `scope:${name}` });
       const lookup = await store.lookup(selectedScope, [block()]);
-      await store.record(selectedScope, [block()], [{ id: 'b1', translation: `Translation ${name}` }], lookup.epoch);
+      await store.record(selectedScope, [block()], [{ id: 'b1', translation: `Translation ${name}` }], lookup.ticket);
       now += 1;
     }
     await store.flushNow();
 
     const scopeC = scope({ sourceId: 'scope:c' });
     const lookupC = await store.lookup(scopeC, [block()]);
-    await store.record(scopeC, [block()], [{ id: 'b1', translation: 'Translation c' }], lookupC.epoch);
+    await store.record(scopeC, [block()], [{ id: 'b1', translation: 'Translation c' }], lookupC.ticket);
     const blockedShardPath = path.join(root, `${scopeDigest(scopeC)}.json`);
     await mkdir(blockedShardPath);
     try {
@@ -355,7 +438,7 @@ describe('PreviewTranslationCacheStore', () => {
     expect((await readdir(root)).filter((name) => name !== 'index.json')).toHaveLength(2);
   });
 
-  test('uses a clear epoch so pre-clear provider results cannot repopulate the cache', async () => {
+  test('uses write tickets so pre-clear provider results cannot repopulate the cache', async () => {
     const root = await makeRoot();
     const store = new PreviewTranslationCacheStore(root, { flushDelayMs: 60_000 });
     const beforeClear = await store.lookup(scope(), [block()]);
@@ -365,7 +448,7 @@ describe('PreviewTranslationCacheStore', () => {
       scope(),
       [block()],
       [{ id: 'b1', translation: 'Late result' }],
-      beforeClear.epoch,
+      beforeClear.ticket,
     )).toBe(false);
     expect((await store.lookup(scope(), [block()])).hits).toEqual([]);
 
@@ -374,7 +457,7 @@ describe('PreviewTranslationCacheStore', () => {
       scope(),
       [block()],
       [{ id: 'b1', translation: 'Fresh result' }],
-      afterClear.epoch,
+      afterClear.ticket,
     )).toBe(true);
     expect((await store.lookup(scope(), [block()])).hits).toEqual([
       { id: 'b1', translation: 'Fresh result' },
@@ -402,7 +485,7 @@ describe('PreviewTranslationCacheStore', () => {
       onError: (operation) => errors.push(operation),
     });
     const lookup = await store.lookup(scope(), [block()]);
-    await store.record(scope(), [block()], [{ id: 'b1', translation: 'Memory result' }], lookup.epoch);
+    await store.record(scope(), [block()], [{ id: 'b1', translation: 'Memory result' }], lookup.ticket);
 
     await expect(store.flushNow()).rejects.toThrow();
     expect((await store.lookup(scope(), [block()])).hits).toEqual([
@@ -414,7 +497,7 @@ describe('PreviewTranslationCacheStore', () => {
 
 function scopeDigest(value: PreviewTranslationCacheScope): string {
   return createHash('sha256').update(JSON.stringify([
-    2,
+    3,
     value.promptRevision,
     value.sourceId,
     value.targetLanguage,

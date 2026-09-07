@@ -4,14 +4,14 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { Locale } from '../../src/core/locale';
 import type { PreviewFileSource, PreviewResolveSourceResult } from '../../src/core/preview';
-import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
+import type { PreviewControls } from '../../src/core/previewOperations';
+import { previewOperationsBridge } from '../helpers/previewOperationsBridge';
 import type { NodeProjection } from '../../src/core/types';
 import type { TranslationLanguage } from '../../src/core/translationLanguage';
 import type { DocumentIndex, UiState } from '../../src/renderer/state/document';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { FilePreviewPanel } from '../../src/renderer/ui/preview/FilePreviewPanel';
 import { epubPreviewTranslationCacheSourceId } from '../../src/renderer/ui/preview/previewTranslationCache';
-import { resetUrlPageTranslationPreferencesForTests } from '../../src/renderer/ui/preview/urlPageTranslationPreferences';
 
 const makeBookInputs: unknown[] = [];
 const originalFetch = globalThis.fetch;
@@ -44,13 +44,13 @@ afterEach(() => {
   intersectionRootMargins.length = 0;
   resizeObserverStubs.length = 0;
   intersectionsAutoVisible = true;
-  resetUrlPageTranslationPreferencesForTests();
 });
 
 describe('FilePreviewPanel EPUB translation chrome', () => {
   test('changes the persistent translation scope when the resolved EPUB changes', () => {
     const source = {
       id: 'epub:test',
+      sourceKind: 'local-file' as const,
       lastModified: 1_000,
       sizeBytes: 1_024,
     };
@@ -61,15 +61,15 @@ describe('FilePreviewPanel EPUB translation chrome', () => {
     expect(epubPreviewTranslationCacheSourceId({ ...source, id: 'epub:replacement' })).not.toBe(identity);
     expect(epubPreviewTranslationCacheSourceId({ ...source, sizeBytes: 2_048 })).not.toBe(identity);
     expect(epubPreviewTranslationCacheSourceId({ ...source, lastModified: 2_000 })).not.toBe(identity);
+    const asset = { ...source, sourceKind: 'asset' as const };
+    expect(epubPreviewTranslationCacheSourceId(asset)).toBe(epubPreviewTranslationCacheSourceId({ ...asset, lastModified: 9_000 }));
+    expect(epubPreviewTranslationCacheSourceId(asset)).not.toBe(epubPreviewTranslationCacheSourceId({ ...asset, id: 'asset:replacement' }));
   });
 
-  test('shows the shared control while keeping local automatic translation independent', async () => {
-    const rendered = renderEpubPanel({
-      translationModel: null,
-      autoTranslateEpubs: false,
-      autoTranslateUrls: true,
-    });
+  test('starts a preview with automatic translation off and changes only its local controls', async () => {
+    const rendered = renderEpubPanel();
     await waitFor(() => rendered.document.querySelector('.file-preview-translation-toggle') !== null);
+    await act(async () => { await rendered.configure({ language: 'zh-Hans' }); });
     const toggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
     expect(toggle?.getAttribute('aria-label')).toBe('Translation settings: Translation off');
     expect(rendered.document.querySelector('.file-preview-reader-title')?.textContent).toContain('book.epub');
@@ -89,11 +89,7 @@ describe('FilePreviewPanel EPUB translation chrome', () => {
       autoSwitch?.click();
       await Promise.resolve();
     });
-    expect(rendered.savedPreferences.at(-1)).toEqual({
-      translationModel: null,
-      autoTranslateEpubs: true,
-      autoTranslateUrls: true,
-    });
+    expect(rendered.configuredControls.at(-1)).toMatchObject({ model: null, automatic: true, language: 'zh-Hans' });
     await waitFor(() => (
       rendered.document.querySelector('.file-preview-translation-toggle')?.getAttribute('aria-label')
       === 'Translation settings: Translation on'
@@ -101,12 +97,9 @@ describe('FilePreviewPanel EPUB translation chrome', () => {
   });
 
   test('keeps an active translation session when localized status labels change', async () => {
-    const rendered = renderEpubPanel({
-      translationModel: null,
-      autoTranslateEpubs: false,
-      autoTranslateUrls: false,
-    });
+    const rendered = renderEpubPanel();
     await waitFor(() => rendered.document.querySelector('.file-preview-translation-toggle') !== null);
+    await act(async () => { await rendered.configure({ language: 'zh-Hans' }); });
 
     await act(async () => {
       rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle')?.click();
@@ -132,11 +125,7 @@ describe('FilePreviewPanel EPUB translation chrome', () => {
 
   test('keeps the translation lazy-mount window aligned with the live reader height', async () => {
     intersectionsAutoVisible = false;
-    const rendered = renderEpubPanel({
-      translationModel: null,
-      autoTranslateEpubs: false,
-      autoTranslateUrls: false,
-    });
+    const rendered = renderEpubPanel();
     await waitFor(() => rendered.document.querySelector('.file-preview-translation-toggle') !== null);
     const scrollRoot = rendered.document.querySelector<HTMLElement>('.file-preview-epub-host');
     if (!scrollRoot) throw new Error('Missing EPUB reader');
@@ -198,10 +187,6 @@ describe('FilePreviewPanel EPUB translation chrome', () => {
     }) as typeof fetch;
 
     const rendered = renderEpubPanel({
-      translationModel: null,
-      autoTranslateEpubs: false,
-      autoTranslateUrls: false,
-    }, {
       sizeBytes: 29 * 1024 * 1024,
       streamUrl,
     });
@@ -233,10 +218,6 @@ describe('FilePreviewPanel EPUB translation chrome', () => {
     })) as typeof fetch;
 
     const rendered = renderEpubPanel({
-      translationModel: null,
-      autoTranslateEpubs: false,
-      autoTranslateUrls: false,
-    }, {
       sizeBytes: 29 * 1024 * 1024,
       streamUrl: 'preview-local://changed-large-epub',
     });
@@ -252,18 +233,18 @@ describe('FilePreviewPanel EPUB translation chrome', () => {
 });
 
 function renderEpubPanel(
-  initialPreferences: UrlPageTranslationPreferences,
   sourceOverrides: Partial<PreviewFileSource> = {},
 ): {
   changeUiLanguage: (locale: Locale) => void;
   document: Document;
   invokedCommands: string[];
-  savedPreferences: UrlPageTranslationPreferences[];
+  configuredControls: PreviewControls[];
+  configure: ReturnType<typeof previewOperationsBridge>['configure'];
 } {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window as unknown as Window);
   const invokedCommands: string[] = [];
-  const savedPreferences: UrlPageTranslationPreferences[] = [];
+  const fixture = previewOperationsBridge();
   let languageListener: ((locale: Locale) => void) | null = null;
   const target = { kind: 'local-file' as const, path: '/tmp/book.epub', entryKind: 'file' as const };
   const previewSource: PreviewFileSource = {
@@ -282,21 +263,14 @@ function renderEpubPanel(
   (window as unknown as {
     lin: {
       initialLanguage: Locale;
-      initialTranslationLanguage: TranslationLanguage;
-      initialUrlPageTranslationPreferences: UrlPageTranslationPreferences;
       invoke: (command: string) => Promise<unknown>;
       onLanguageChanged: (listener: (locale: Locale) => void) => () => void;
-      onTranslationLanguageChanged: () => () => void;
-      onUrlPageTranslationPreferencesChanged: () => () => void;
       onUrlPageTranslationShortcut: () => () => void;
       setLanguage: () => Promise<void>;
-      setTranslationLanguage: () => Promise<void>;
-      setUrlPageTranslationPreferences: (preferences: UrlPageTranslationPreferences) => Promise<UrlPageTranslationPreferences>;
     };
   }).lin = {
     initialLanguage: 'en',
-    initialTranslationLanguage: 'zh-Hans',
-    initialUrlPageTranslationPreferences: initialPreferences,
+    ...fixture.bridge,
     invoke: async (command) => {
       invokedCommands.push(command);
       if (command === 'preview_resolve_source') {
@@ -316,15 +290,8 @@ function renderEpubPanel(
         if (languageListener === listener) languageListener = null;
       };
     },
-    onTranslationLanguageChanged: () => () => undefined,
-    onUrlPageTranslationPreferencesChanged: () => () => undefined,
     onUrlPageTranslationShortcut: () => () => undefined,
     setLanguage: async () => undefined,
-    setTranslationLanguage: async () => undefined,
-    setUrlPageTranslationPreferences: async (preferences) => {
-      savedPreferences.push(preferences);
-      return preferences;
-    },
   };
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root');
@@ -367,7 +334,8 @@ function renderEpubPanel(
     changeUiLanguage: (locale) => languageListener?.(locale),
     document,
     invokedCommands,
-    savedPreferences,
+    configuredControls: fixture.controls,
+    configure: fixture.configure,
   };
 }
 

@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test';
-import type { TranslationLanguage } from '../../src/core/translationLanguage';
-import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
+import type { PreviewAction, PreviewActionAck, PreviewObservation, PreviewView, PreviewManageRequest, PreviewControlResult } from '../../src/core/previewOperations';
+import type { LinApi } from '../../src/preload';
 import type { ManagedSkillCatalogEntryView, ManagedSkillView } from '../../src/core/types';
 import type { AppInfo } from '../../src/core/errorObservability';
 import type { AppUpdateView } from '../../src/core/appUpdate';
@@ -65,10 +65,6 @@ interface MockFixtureOptions {
   providerSettingsDelayMs?: number;
   /** Delays only the first automatic Thread creation request. */
   initialThreadStartDelayMs?: number;
-  /** Seeds the shared preview-translation target language. */
-  translationLanguage?: TranslationLanguage;
-  /** Seeds URL/EPUB automatic translation and model preferences. */
-  translationPreferences?: UrlPageTranslationPreferences;
   /** Keeps translated blocks pending long enough for loader assertions. */
   translationDelayMs?: number;
   /** Completes mock Agent Turns as failed without an assistant message. */
@@ -123,12 +119,8 @@ type E2EWindow = Window & {
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
     setTranslationDelayMs: (delayMs: number) => void;
-    setTranslationLanguage: (language: TranslationLanguage) => void;
-    setTranslationPreferences: (preferences: UrlPageTranslationPreferences) => void;
   };
-  lin?: {
-    initialTranslationLanguage?: TranslationLanguage;
-    initialUrlPageTranslationPreferences?: UrlPageTranslationPreferences;
+  lin?: Pick<LinApi, 'registerPreview' | 'observePreview' | 'unregisterPreview' | 'acknowledgePreview' | 'onPreviewAction' | 'previewOperation' | 'onPreviewDataChanged'> & {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
     agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T>;
     automationRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T>;
@@ -158,11 +150,7 @@ type E2EWindow = Window & {
       ) => () => void;
     };
     onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
-    onTranslationLanguageChanged?: (listener: (language: TranslationLanguage) => void) => () => void;
-    onUrlPageTranslationPreferencesChanged?: (listener: (preferences: UrlPageTranslationPreferences) => void) => () => void;
     onUrlPageTranslationShortcut?: (listener: (webContentsId: number) => void) => () => void;
-    setTranslationLanguage?: (language: TranslationLanguage) => Promise<void>;
-    setUrlPageTranslationPreferences?: (preferences: UrlPageTranslationPreferences) => Promise<UrlPageTranslationPreferences>;
     openProviderConfig?: (params: { providerId: string; mode: string }) => Promise<void>;
     openSettings?: (target?: unknown) => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
@@ -472,13 +460,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const oauthListeners: Array<(envelope: unknown) => void> = [];
     const settingsChangedListeners: Array<() => void> = [];
     const appUpdateListeners: Array<(view: AppUpdateView) => void> = [];
-    const translationLanguageListeners: Array<(language: TranslationLanguage) => void> = [];
-    const translationPreferenceListeners: Array<(preferences: UrlPageTranslationPreferences) => void> = [];
-    let translationLanguage = options.translationLanguage ?? 'en';
-    let translationPreferences: UrlPageTranslationPreferences = options.translationPreferences ?? {
-      translationModel: null,
-      autoTranslateEpubs: false,
-      autoTranslateUrls: false,
+    const previews = new Map<string, PreviewObservation>();
+    const previewListeners = new Set<(action: PreviewAction) => void>();
+    const previewAcks = new Map<string, (ack: PreviewActionAck) => void>();
+    const previewView = (id: string, observation: PreviewObservation): PreviewView => {
+      const { sourceId, ...rest } = observation;
+      return { ...clone(rest), previewId: id, cacheAvailable: sourceId !== null };
     };
     let translationDelayMs = options.translationDelayMs ?? 80;
     const providerApiKeys = new Map<string, string>(
@@ -3552,18 +3539,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       if (pending) { oauthPending.delete(providerId); pending.resolve(clone(agentSettings)); }
     };
 
-    const setMockTranslationLanguage = (language: TranslationLanguage) => {
-      translationLanguage = language;
-      if (win.lin) win.lin.initialTranslationLanguage = language;
-      for (const listener of translationLanguageListeners) listener(language);
-    };
-
-    const setMockTranslationPreferences = (preferences: UrlPageTranslationPreferences) => {
-      translationPreferences = clone(preferences);
-      if (win.lin) win.lin.initialUrlPageTranslationPreferences = clone(translationPreferences);
-      for (const listener of translationPreferenceListeners) listener(clone(translationPreferences));
-    };
-
     win.__LIN_E2E__ = {
       calls,
       projection,
@@ -3588,14 +3563,53 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       emitOAuthEvent,
       resolveOAuthLogin,
       setTranslationDelayMs: (delayMs) => { translationDelayMs = Math.max(0, delayMs); },
-      setTranslationLanguage: setMockTranslationLanguage,
-      setTranslationPreferences: setMockTranslationPreferences,
     };
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
 
     win.lin = {
-      initialTranslationLanguage: translationLanguage,
-      initialUrlPageTranslationPreferences: clone(translationPreferences),
+      registerPreview: async (observation) => {
+        for (const [id, entry] of previews) if (entry.paneId === observation.paneId) previews.delete(id);
+        const id = crypto.randomUUID();
+        previews.set(id, clone(observation));
+        return id;
+      },
+      observePreview: async (id, observation) => {
+        if (!previews.has(id)) throw new Error('Unavailable preview');
+        if (observation.revision < previews.get(id)!.revision) throw new Error('Stale preview');
+        previews.set(id, clone(observation));
+      },
+      unregisterPreview: async (id) => { previews.delete(id); },
+      acknowledgePreview: async (ack) => { previewAcks.get(ack.actionId)?.(ack); },
+      onPreviewAction: (listener) => { previewListeners.add(listener); return () => { previewListeners.delete(listener); }; },
+      onPreviewDataChanged: () => () => {},
+      previewOperation: async (name, input) => {
+        if (name === 'data_inspect') return {
+          translations: { entries: { page: 0, caption: 0, document: 0 }, logicalBytes: 0, maxBytes: 1000000, maxEntries: 1000 },
+          websites: { available: true, cacheBytes: 0, activeGuests: 0 }, operations: [],
+        };
+        const request = (input as { request: PreviewManageRequest }).request;
+        if (name === 'preview_inspect') return { previews: [...previews].filter(([id]) => !request.previewId || request.previewId === id).map(([id, observation]) => previewView(id, observation)) };
+        if (name === 'data_manage') return { operationId: crypto.randomUUID(), scope: 'translations', state: 'canceled', liveDisplays: 'retained', steps: [] };
+        const candidates = [...previews].filter(([id, observation]) => (!request.previewId || request.previewId === id) && observation.kind !== 'unavailable');
+        if (candidates.length !== 1) throw new Error('Select exactly one preview');
+        const [id, observation] = candidates[0]!;
+        if (observation.revision !== request.expectedRevision) throw new Error('Stale preview');
+        if (request.operation === 'clear_cache') return { operationId: crypto.randomUUID(), scope: 'content', state: 'canceled', liveDisplays: 'retained', steps: [] };
+        return new Promise<PreviewControlResult>((resolve) => {
+          const actionId = crypto.randomUUID();
+          const timer = setTimeout(() => {
+            previewAcks.delete(actionId);
+            resolve({ state: 'unknown', preview: previewView(id, previews.get(id) ?? observation) });
+          }, 3000);
+          previewAcks.set(actionId, (ack) => {
+            clearTimeout(timer);
+            previewAcks.delete(actionId);
+            if (previews.has(id)) previews.set(id, clone(ack.observation));
+            resolve({ state: ack.state, preview: previewView(id, ack.observation) });
+          });
+          for (const listener of previewListeners) listener({ actionId, previewId: id, expectedRevision: request.expectedRevision, changes: request.changes });
+        });
+      },
       outline: {
         commit: async (request) => {
           const before = projection();
@@ -5000,27 +5014,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         return () => {
           const index = automationListeners.indexOf(listener);
           if (index >= 0) automationListeners.splice(index, 1);
-        };
-      },
-      setTranslationLanguage: async (language) => {
-        setMockTranslationLanguage(language);
-      },
-      onTranslationLanguageChanged: (listener) => {
-        translationLanguageListeners.push(listener);
-        return () => {
-          const index = translationLanguageListeners.indexOf(listener);
-          if (index >= 0) translationLanguageListeners.splice(index, 1);
-        };
-      },
-      setUrlPageTranslationPreferences: async (preferences) => {
-        setMockTranslationPreferences(preferences);
-        return clone(translationPreferences);
-      },
-      onUrlPageTranslationPreferencesChanged: (listener) => {
-        translationPreferenceListeners.push(listener);
-        return () => {
-          const index = translationPreferenceListeners.indexOf(listener);
-          if (index >= 0) translationPreferenceListeners.splice(index, 1);
         };
       },
       onUrlPageTranslationShortcut: () => () => undefined,
@@ -6543,16 +6536,12 @@ export async function configurePreviewTranslationMock(
   page: Page,
   options: {
     delayMs?: number;
-    language?: TranslationLanguage;
-    preferences?: UrlPageTranslationPreferences;
   },
 ) {
   await page.evaluate((input) => {
     const mock = (window as E2EWindow).__LIN_E2E__;
     if (!mock) throw new Error('Missing E2E fixture');
     if (input.delayMs !== undefined) mock.setTranslationDelayMs(input.delayMs);
-    if (input.language) mock.setTranslationLanguage(input.language);
-    if (input.preferences) mock.setTranslationPreferences(input.preferences);
   }, options);
 }
 

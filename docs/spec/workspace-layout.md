@@ -513,15 +513,18 @@ external browser profile, expose cookies to the renderer, provide
 password/autofill storage, or claim passkey-only authentication. Main configures
 the partition once, allows only fullscreen and sanitized clipboard writes,
 flushes DOM storage and cookies inside the bounded before-quit drain, and rejects
-a guest attached to any other session. Settings > General provides one
+a guest attached to any other session. Settings > Preview provides one
 native-confirmed **Clear website data** action that closes live connections,
 removes auth/cache/cookies/site storage for only this partition, and reloads
-attached Preview guests.
+attached Preview guests. The same native-confirmed operation is available to
+root Agents through `data_manage`. Per-stage deletion and guest reload outcomes
+are separate; partial failure never claims rollback or external-browser logout.
 
 URL previews also expose one neutral `Languages` icon immediately before the
 header actions menu. It opens a compact, task-first popover: target language and
 the full-width Translate / Show original command come first; a separator
-then groups the globally remembered automatic-translation and model preferences.
+then groups that preview's automatic-translation and model choices, followed by
+**Clear cached translations for this content**. No global translation form remains.
 Translate uses the shared high-contrast neutral primary-button treatment,
 while the active page's Show original reversal uses the quieter secondary-button
 treatment. Both commands retain the matching semantic icon and shortcut. At
@@ -536,36 +539,40 @@ translations without discarding the current page's in-memory cache. `Option+A`
 on macOS and `Alt+A` elsewhere toggles translation only for the active URL
 preview, including while its webview has focus, and never changes the automatic
 preference. Navigation and reload cancel pending work, clear mounted page state,
-and re-evaluate automatic translation; target/model change, pane close, or
+and re-apply the preview's display intent; target/model change, pane close, or
 webview replacement also cancels pending work and clears mounted results. These
 lifecycle resets do not delete matching translations from the local persistent
 preview cache described below.
 
 The common target-language catalog is independent of Tenon's display locales
 and uses language autonyms. Until the user chooses a target it follows Tenon's
-effective UI locale; an explicit choice is remembered across pages and launches.
+effective UI locale; an explicit choice survives navigation inside that preview,
+but closing/reopening or restart resets it. `Follow UI Language` restores the
+dynamic default. Two previews of the same content own independent choices.
 Descendant blocks whose nearest declared language already matches the selected
 target are excluded without showing progress or calling the provider. Source
 language otherwise remains automatic.
 
 The translation model defaults to `Follow Agent`, which resolves Neva's current
-model dynamically for every request. The selector otherwise lists enabled,
-authenticated, runnable models grouped by provider and persists a
-provider-qualified explicit choice globally. Returning to `Follow Agent` clears
+application model dynamically for every request, not a focused or caller-named
+Thread. The selector otherwise lists enabled, authenticated, runnable models from
+the Models owner, grouped by provider, and retains a provider-qualified explicit
+choice only in this preview. Returning to `Follow Agent` clears
 that override. If an explicit model becomes unavailable, it remains identified
 as unavailable and requests fail with a recoverable configuration error instead
 of silently falling back. Changing model while translation is on cancels the
 active request, clears mounted results, and restores or retranslates the current
 viewport under the newly resolved cache namespace.
 
-Automatic translation is a globally remembered opt-in switch. Turning it on
+Automatic translation is one preview-local opt-in switch, initially off. Turning it on
 immediately checks the current document and detected media captions. Translation
 activates when either a valid top-level `<html lang>` or a detected caption
 language differs from the target. When both language signals are missing,
 invalid, or match the target, the page remains manual. Turning the switch off
 does not hide visible translations. Manually choosing Show original suppresses
-auto translation for only the current page; the next top-level navigation clears
-the suppression and evaluates the new page again. Changing the target also
+auto translation across navigation until the display intent is changed. Explicit
+Translate likewise survives navigation. Changing the automatic switch returns
+display intent to automatic evaluation. Changing the target also
 re-runs the language rule for an auto-activated page and turns translation off
 only when neither valid language signal differs from the target.
 
@@ -681,12 +688,15 @@ still translate normally but do not persist those cues. EPUB scope binds the
 resolved source id, byte size, and modified time; its block key binds the section
 index, semantic ordinal, and source-text fingerprint. Source, target, model,
 track, prompt, or text changes miss safely, while returning to a prior matching
-configuration can reuse its earlier translation.
+configuration can reuse its earlier translation. Managed EPUBs use their stable
+immutable AssetRecord identity, not the mtime of a temporary exported file;
+local-file EPUBs additionally include file size and modification time.
 
 The cache lives under Electron's isolated `userData` directory and is disposable
 local derived data, outside the workspace document, replication, portable assets,
 exports, and diagnostics. Main hashes each complete scope and block identity with
-SHA-256 before persistence. Disk shards contain only opaque digests, validated
+SHA-256 before persistence. The manifest includes source digests and content
+kinds for bounded cold-cache inspection and scoped deletion. Disk shards contain only opaque digests, validated
 translated text or unchanged-output sentinels, and access times; they contain no
 source text, URL, local path, or readable model configuration. Private
 directory/file modes and atomic JSON
@@ -699,15 +709,26 @@ Retention has no fixed expiry. Least-recently-used entries are bounded globally
 to 64 MiB of logical data and 50,000 entries, with small per-scope shards loaded
 on demand; one scope is additionally capped at 4 MiB and 4,000 entries so an
 exceptionally large book or page cannot turn each recency update into a large
-main-thread rewrite. Settings > General > Translation Data exposes one secondary
-**Clear** action. Its native, cancel-safe confirmation explains that pages,
+main-thread rewrite. Settings > Preview > Translation Data exposes aggregate
+passage counts, logical bytes and one secondary **Clear** action. Its native,
+cancel-default confirmation explains that pages,
 captions, and books will need translation again while current visible translations
-and source documents remain untouched. Only the live Settings window may invoke
-the clear.
-A successful clear removes both memory and disk state and increments a cache
-epoch, so provider work started before the clear cannot repopulate it; work
-started afterward may cache normally. A failed clear reports a localized,
-recoverable settings error and does not expose storage details.
+and source documents remain untouched. The contextual Languages action clears
+saved entries for its current content across languages, models, and page/caption/
+document variants. It does not clear previously visited content. Saved entries
+are shared across same-source previews, but live controls, displayed translations,
+and pending results belong to each preview and remain intact for both clear scopes.
+Neither clear cancels provider work, reloads, hides, or retranslates a preview.
+Other-source cache entries survive content clearing.
+
+Both operations use `PreviewOperations`, also reached by root Agent domain tools.
+Native confirmation, caller authority and exact content lifetime/revision are
+checked again immediately before serialized deletion. Outstanding write tickets
+are captured at request admission before model resolution and invalidated by
+source or globally. Late results can still display but cannot repopulate saved
+cache; newly admitted requests may cache normally. Physical deletion failures
+are reported honestly. Data inspection exposes bounded in-memory operation
+receipts; no durable maintenance ledger or settings CLI is introduced.
 
 Prerecorded video captions participate in that same URL-translation session.
 The target language, `Follow Agent` or explicit model, automatic-translation
@@ -783,8 +804,9 @@ no translation capability. Model output is inserted as inert plain text after
 the source block, marked with the target language for assistive technology;
 source text always remains visible.
 
-EPUB automatic translation is a separate globally remembered opt-in that
-defaults off. It never inherits website automatic translation consent. When
+EPUB automatic translation uses the mounted preview's local choice, which
+defaults off for every new preview. Navigation within a preview retains its
+choices; another preview's website or book controls do not affect it. When
 enabled, a valid differing book-metadata or loaded-section language activates
 translation; missing, invalid, or same-target metadata leaves the book manual.
 Turning the preference off does not hide an already active book session. Manual

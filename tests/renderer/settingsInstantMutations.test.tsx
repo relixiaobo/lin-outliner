@@ -9,9 +9,7 @@ import type {
   SkillDefinition,
 } from '../../src/renderer/api/types';
 import type { SettingsOpenTarget } from '../../src/core/settingsWindow';
-import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
-import { resetTranslationLanguagePreferenceForTests } from '../../src/renderer/ui/preview/translationLanguagePreference';
-import { resetUrlPageTranslationPreferencesForTests } from '../../src/renderer/ui/preview/urlPageTranslationPreferences';
+import { previewOperationsBridge } from '../helpers/previewOperationsBridge';
 
 mock.module('../../src/renderer/ui/agent/providerIcon', () => ({
   providerIconSvg: () => '<svg></svg>',
@@ -40,8 +38,6 @@ let savedGlobals: Array<[string, PropertyDescriptor | undefined]> = [];
 
 afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
-  resetTranslationLanguagePreferenceForTests();
-  resetUrlPageTranslationPreferencesForTests();
   for (const [key, descriptor] of savedGlobals) {
     if (descriptor) Object.defineProperty(globalThis, key, descriptor);
     else delete (globalThis as Record<string, unknown>)[key];
@@ -381,54 +377,17 @@ test('a failed concurrent capability removal restores only its own rule', async 
     .toBe('Could not remove this block. Try again.');
 });
 
-test('a stale Preview switch failure cannot override the latest click', async () => {
-  resetTranslationLanguagePreferenceForTests();
-  resetUrlPageTranslationPreferencesForTests();
-  const initial: UrlPageTranslationPreferences = {
-    translationModel: null,
-    autoTranslateEpubs: false,
-    autoTranslateUrls: false,
-  };
-  const writes = [deferred<UrlPageTranslationPreferences>(), deferred<UrlPageTranslationPreferences>()];
-  const payloads: UrlPageTranslationPreferences[] = [];
+test('Preview settings contains data maintenance without global translation controls', async () => {
   const rendered = await renderSettings(
     { category: 'preview' },
     async (command) => fixtureCommand(command),
-    {
-      initialTranslationLanguage: 'en',
-      initialUrlPageTranslationPreferences: initial,
-      onTranslationLanguageChanged: () => () => undefined,
-      onUrlPageTranslationPreferencesChanged: () => () => undefined,
-      setUrlPageTranslationPreferences: (preferences: UrlPageTranslationPreferences) => {
-        const index = payloads.push(preferences) - 1;
-        return writes[index]!.promise;
-      },
-    },
+    previewOperationsBridge().bridge,
   );
-  const control = switchFor(rendered.document, 'Translate webpages automatically');
-
-  await act(async () => {
-    control.click();
-    control.click();
-    await Promise.resolve();
-  });
-  expect(control.getAttribute('aria-checked')).toBe('false');
-  expect(payloads).toEqual([{ ...initial, autoTranslateUrls: true }]);
-
-  await act(async () => {
-    writes[0]!.reject(new Error('stale write failed'));
-    await settle();
-  });
-  expect(payloads[1]).toEqual(initial);
-  expect(control.getAttribute('aria-checked')).toBe('false');
-  expect(rendered.document.querySelector('.inset-row-feedback [role="alert"]')).toBeNull();
-
-  await act(async () => {
-    writes[1]!.resolve(initial);
-    await settle();
-  });
-  expect(control.getAttribute('aria-checked')).toBe('false');
-  expect(rendered.document.querySelector('.inset-row-feedback [role="alert"]')).toBeNull();
+  const section = rendered.document.querySelector('.agent-settings-section')!;
+  expect(section.textContent).toContain('Translation data');
+  expect(section.textContent).toContain('Website data');
+  expect(section.querySelector('[role="switch"]')).toBeNull();
+  expect(section.querySelector('select')).toBeNull();
 });
 
 async function renderSettings(

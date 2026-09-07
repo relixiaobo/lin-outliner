@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { VISIBLE_TRANSLATION_BATCH_LIMITS } from '../../src/renderer/ui/preview/previewTranslationScheduling';
 import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
 
 interface TranslationBatch {
@@ -164,7 +165,7 @@ test.describe('URL page translation', () => {
     await expect(popover).toBeVisible();
     const languageSelect = popover.getByLabel('Translate to');
     const modelSelect = popover.getByLabel('Model');
-    await expect(languageSelect).toHaveValue('en');
+    await expect(languageSelect).toHaveValue('');
     await expect(modelSelect).toHaveValue('');
     await expect(modelSelect.locator('option[value="groq/llama-3.1-8b-instant"]')).toHaveCount(1);
     if (visualDir) {
@@ -178,7 +179,7 @@ test.describe('URL page translation', () => {
     await expect(popover).toBeHidden();
     await toggle.click();
     await expect(popover).toBeVisible();
-    await popover.getByRole('button', { name: 'Translate page' }).click();
+    await popover.getByRole('button', { name: /^Translate\b/ }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
     await smoke.window.waitForTimeout(600);
     expect(batches).toHaveLength(0);
@@ -219,7 +220,7 @@ test.describe('URL page translation', () => {
       return true;
     })()`);
     const initialTranslationStart = batches.length;
-    await popover.getByRole('button', { name: 'Translate page' }).click();
+    await popover.getByRole('button', { name: /^Translate\b/ }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
     await expect.poll(() => guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-status="loading"]').length
@@ -229,7 +230,7 @@ test.describe('URL page translation', () => {
     await expect.poll(() => batches.length).toBeGreaterThanOrEqual(initialTranslationStart + 3);
     expect(batches.slice(initialTranslationStart, initialTranslationStart + 3)
       .map((batch) => batch.blocks.length)
-      .sort((left, right) => left - right)).toEqual([2, 4, 4]);
+      .sort((left, right) => left - right)).toEqual([1, 2, 8]);
     const loaderMetrics = await guest<Array<{
       controlHeight: number;
       controlWidth: number;
@@ -324,7 +325,7 @@ test.describe('URL page translation', () => {
 
     await toggle.click();
     await expect(languageSelect).toHaveValue('zh-Hans');
-    await popover.getByRole('button', { name: 'Translate page' }).click();
+    await popover.getByRole('button', { name: /^Translate\b/ }).click();
     await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
     await expect.poll(() => guest(webview, `
       document.documentElement.hasAttribute('data-tenon-bilingual-hidden')
@@ -333,11 +334,18 @@ test.describe('URL page translation', () => {
     await smoke.window.waitForTimeout(600);
     expect(batches).toHaveLength(completedRequestCount);
 
-    await webview.evaluate((element) => (element as Electron.WebviewTag).reload());
-    await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
+    await webview.evaluate((element) => new Promise<void>((resolve) => {
+      element.addEventListener('dom-ready', () => resolve(), { once: true });
+      (element as Electron.WebviewTag).reload();
+    }));
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'true');
     await expect.poll(() => guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-translation="true"]').length
-    `)).toBe(0);
+    `)).toBeGreaterThan(0);
+
+    await toggle.click();
+    await popover.getByRole('button', { name: 'Show original' }).click();
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
 
     await toggle.click();
     await expect(popover).toBeVisible();
@@ -371,7 +379,7 @@ test.describe('URL page translation', () => {
     await guest(webview, `document.getElementById('far').scrollIntoView({ block: 'center', behavior: 'instant' }); true`);
 
     await toggle.click();
-    await popover.getByRole('button', { name: 'Translate page' }).click();
+    await popover.getByRole('button', { name: /^Translate\b/ }).click();
     await expect.poll(() => batches.length).toBeGreaterThan(preemptionStart);
     expect(batches[preemptionStart]?.blocks.map((block) => block.text))
       .toContain('Far source paragraph.');
@@ -384,22 +392,26 @@ test.describe('URL page translation', () => {
     expect(Date.now() - upwardScrollStartedAt).toBeLessThan(700);
     await expect.poll(() => batches.slice(preemptionStart + 1).filter((batch) => (
       batch.blocks.some((block) => block.text.startsWith('Visible source paragraph'))
-    )).length).toBeGreaterThanOrEqual(2);
-    expect(batches.slice(preemptionStart + 1).every((batch) => batch.blocks.length <= 4)).toBe(true);
+    )).length).toBeGreaterThanOrEqual(1);
+    expect(batches.slice(preemptionStart + 1).every((batch) => batch.blocks.length <= VISIBLE_TRANSLATION_BATCH_LIMITS.maxBlocks)).toBe(true);
     expect(await guest(webview, `
-      document.querySelector('#far [data-tenon-bilingual-status]') === null
-    `)).toBe(true);
+      document.querySelector('#far [data-tenon-bilingual-status]')?.getAttribute('data-tenon-bilingual-status')
+    `)).toBe('loading');
     await expect.poll(() => guest<string | null>(webview, `
       document.querySelector('#heading [data-tenon-bilingual-translation="true"]')?.textContent ?? null
     `)).toBe('ZH: Article heading');
     expect(await guest(webview, `
       document.querySelector('#far [data-tenon-bilingual-translation="true"]')?.textContent ?? null
     `)).toBeNull();
-    await smoke.window.waitForTimeout(1_100);
-    expect(await guest(webview, `
+    // Spare slots in the shared pool retain offscreen work without blocking visible work.
+    await expect.poll(() => guest(webview, `
       document.querySelector('#far [data-tenon-bilingual-translation="true"]')?.textContent ?? null
-    `)).toBeNull();
+    `)).toBe('ZH: Far source paragraph.');
     responseDelayForBatch = null;
+
+    await toggle.click();
+    await popover.getByRole('button', { name: 'Show original' }).click();
+    await expect(toggle).toHaveAttribute('data-translation-enabled', 'false');
 
     await smoke.window.evaluate((url) => {
       window.dispatchEvent(new CustomEvent('lin:preview-target-open', {
@@ -413,7 +425,7 @@ test.describe('URL page translation', () => {
 
     failNextRequest = true;
     await toggle.click();
-    await popover.getByRole('button', { name: 'Translate page' }).click();
+    await popover.getByRole('button', { name: /^Translate\b/ }).click();
     await expect.poll(() => guest<number>(webview, `
       document.querySelectorAll('[data-tenon-bilingual-status="error"]').length
     `)).toBeGreaterThan(0);
