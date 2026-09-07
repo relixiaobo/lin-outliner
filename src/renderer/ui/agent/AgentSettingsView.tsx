@@ -187,6 +187,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   const skillDraftRef = useRef<SkillDraft>(EMPTY_SKILL_DRAFT);
   const skillDisabledTargetsRef = useRef(new Map<string, boolean>());
   const skillDisableQueueRef = useRef(createSerialMutationQueue());
+  const skillSettingsEpochRef = useRef(0);
   // Every provider command returns a complete settings snapshot. Serialize those
   // responses as one family so an older Set active / Remove / Refresh response
   // cannot land after a newer enable toggle and replace that row with stale state.
@@ -346,7 +347,8 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     settingsInitializedRef.current = true;
   }
 
-  function applyLoadedSkillSettings(next: AgentSkillSettingsView) {
+  function applyLoadedSkillSettings(next: AgentSkillSettingsView, expectedEpoch?: number): void {
+    if (expectedEpoch !== undefined && expectedEpoch !== skillSettingsEpochRef.current) return;
     latestDisabledSkillsRef.current = [...next.disabledSkills];
     const nextSkillDraft: SkillDraft = { disabledSkills: [...next.disabledSkills] };
     skillDraftRef.current = nextSkillDraft;
@@ -373,7 +375,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
         if (!isCurrentSettingsRequest(requestId)) return;
         setCapabilitySettings(nextCapabilities);
         applyLoadedSettings(next, false);
-        applyLoadedSkillSettings(nextSkills);
+        applyLoadedSkillSettings(nextSkills, 0);
       })
       .catch((caught) => {
         if (isCurrentSettingsRequest(requestId)) setError(caught instanceof Error ? caught.message : String(caught));
@@ -389,6 +391,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   useEffect(() => {
     const off = window.lin?.onSettingsChanged?.(() => {
       const refreshId = ++providerRefreshRequestRef.current;
+      const skillEpoch = skillSettingsEpochRef.current;
       void Promise.all([
         api.agentGetProviderSettings(),
         api.agentGetCapabilitySettings(),
@@ -402,7 +405,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
           beginSettingsRequest();
           setCapabilitySettings(nextCapabilities);
           applyLoadedSettings(next, false);
-          applyLoadedSkillSettings(nextSkills);
+          applyLoadedSkillSettings(nextSkills, skillEpoch);
           setLoading(false);
         })
         .catch(() => { /* a refetch failure leaves the prior list in place */ });
@@ -470,6 +473,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   async function changeSkillDirectories(next: string[], mode?: AgentSkillSourceMode): Promise<readonly string[]> {
     const mutationKey = 'skill-directories';
     const generation = beginMutation(mutationKey);
+    skillSettingsEpochRef.current += 1;
     const currentModes = settings?.agent.additionalSkillSourceModes ?? {};
     const additionalSkillSourceBindings = mode === undefined
       ? undefined
@@ -542,6 +546,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     // Allocate the generation when intent is expressed, not when this queued step
     // eventually starts. A second click must supersede the first immediately.
     const generation = beginMutation(mutationKey);
+    skillSettingsEpochRef.current += 1;
     skillDisabledTargetsRef.current.set(skillName, disabled);
     applySkillDisabledToView(skillName, disabled);
     setSkillToggleErrors((current) => withoutMapKey(current, skillName));

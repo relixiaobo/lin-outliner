@@ -26,6 +26,7 @@ import { Mutex } from './agent/Mutex';
 import { resolveToolTaskSupervisorRuntime } from './agent/tasks/toolTaskRuntime';
 import { resolveDelegateCliRuntime } from './delegateRuntime';
 import { expandSkillDirectory } from './agent/capabilities/agentSkills';
+import { preserveStoredSkillDirectoryForms } from './agent/capabilities/skillSettingsPaths';
 import { isValidSkillName } from './agent/capabilities/agentSkillAuthoring';
 import { analyzeAgentSkills } from './agent/capabilities/agentSkillCuration';
 import {
@@ -156,6 +157,7 @@ import type {
   AgentRuntimeSettingsInput,
   AgentRuntimeSettings,
   AgentSkillSettingsInput,
+  AgentSkillSettingsView,
   AgentProviderSettingsView,
   ManagedSkillCommandResult,
 } from '../core/types';
@@ -2076,40 +2078,6 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
  * directory's Skills would lose their local chip and their unbind action while
  * the directory itself rendered, two rows down, as empty.
  */
-/**
- * Keeps the user's own spelling of a directory they did not touch.
- *
- * The renderer only ever sees expanded paths, so it necessarily sends expanded
- * ones back — which would rewrite a stored `~/skills` or `./skills` into an
- * absolute path the first time anything is bound or unbound. `./skills` is the
- * costly one: frozen to whatever the agent workdir was at that moment, it stops
- * following the workspace, and the Skills in the next workspace's ./skills
- * quietly stop loading while the stale row lists as empty.
- */
-function preserveStoredDirectoryForms(
-  input: AgentRuntimeSettingsInput,
-  stored: AgentRuntimeSettings,
-): AgentRuntimeSettingsInput {
-  const byExpanded = new Map(stored.additionalSkillDirectories.map((dir) => (
-    [expandSkillDirectory(dir, agentLocalFileRoot), dir]
-  )));
-  const preserve = (dir: string) => byExpanded.get(expandSkillDirectory(dir, agentLocalFileRoot)) ?? dir;
-  if (input.additionalSkillSourceBindings) {
-    return {
-      ...input,
-      additionalSkillSourceBindings: input.additionalSkillSourceBindings.map((binding) => ({
-        ...binding,
-        path: preserve(binding.path),
-      })),
-    };
-  }
-  if (!input.additionalSkillDirectories) return input;
-  return {
-    ...input,
-    additionalSkillDirectories: input.additionalSkillDirectories.map(preserve),
-  };
-}
-
 function withCanonicalSkillDirectories(settings: AgentProviderSettingsView): AgentProviderSettingsView {
   // Applied to EVERY handler that returns this view, not just the two that look
   // skill-related. The renderer stores all of them into one settings state, so a
@@ -2132,6 +2100,16 @@ function withCanonicalSkillDirectories(settings: AgentProviderSettingsView): Age
       additionalSkillDirectories: expanded,
       additionalSkillSourceModes,
     },
+  };
+}
+
+function withCanonicalSkillSettings(settings: AgentSkillSettingsView): AgentSkillSettingsView {
+  return {
+    ...settings,
+    sourceBindings: settings.sourceBindings.map((binding) => ({
+      ...binding,
+      path: expandSkillDirectory(binding.path, agentLocalFileRoot),
+    })),
   };
 }
 
@@ -2181,7 +2159,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_get_provider_settings':
       return withDelegationRunners(await getProviderSettings());
     case 'agent_get_skill_settings':
-      return getAgentSkillSettings();
+      return withCanonicalSkillSettings(await getAgentSkillSettings());
     case 'agent_refresh_provider_models':
       return withDelegationRunners(await refreshProviderModels(String(args.providerId)));
     case 'agent_pick_skill_directory': {
@@ -2239,16 +2217,32 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     }
     case 'agent_update_runtime_settings': {
       const settings = await updateAgentRuntimeSettings(
-        preserveStoredDirectoryForms(args.settings as AgentRuntimeSettingsInput, await getAgentRuntimeSettings()),
+        preserveStoredSkillDirectoryForms(
+          args.settings as AgentRuntimeSettingsInput,
+          await getAgentRuntimeSettings(),
+          agentLocalFileRoot,
+        ),
       );
       agentHost.skills.updateRuntimeSettings(settings.agent);
       return withDelegationRunners(settings);
     }
     case 'agent_update_skill_settings': {
-      const next = await updateAgentSkillSettings(args.settings as AgentSkillSettingsInput);
+      const stored = await getAgentRuntimeSettings();
+      const requested = args.settings as AgentSkillSettingsInput;
+      const preserved = requested.sourceBindings === undefined
+        ? requested
+        : {
+          ...requested,
+          sourceBindings: preserveStoredSkillDirectoryForms(
+            { additionalSkillSourceBindings: [...requested.sourceBindings] },
+            stored,
+            agentLocalFileRoot,
+          ).additionalSkillSourceBindings,
+        };
+      const next = await updateAgentSkillSettings(preserved);
       agentHost.skills.updateRuntimeSettings(await getAgentRuntimeSettings());
       notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
-      return next;
+      return withCanonicalSkillSettings(next);
     }
     case 'agent_update_image_generation_settings':
       return withDelegationRunners(await updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput));
