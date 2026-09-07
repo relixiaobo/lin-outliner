@@ -197,7 +197,7 @@ patch evidence.
 
 ### Task Execution Context
 
-Under the execution-context refactor, each initial or continued launcher Tool
+Each initial or continued launcher Tool
 Task validates the continuity resource and captures immutable `ExecutionAddress`,
 `ExecutionPolicy`, and `ContextSnapshot` references before spawn. The launch
 capability binds that task's resolved address, not a hidden Thread directory.
@@ -205,6 +205,16 @@ Internal file/process tasks use the same address admission; configured external
 launchers receive the admitted cwd through their native process invocation.
 Tenon records their process/worktree evidence without reconstructing vendor
 tools, configuration, or per-call history it cannot observe.
+
+`InternalDelegationSessionRuntime` admits a Host operation for each Session
+execution. Internal calls inherit its covered claims; native CLI processes run
+through the same `ToolTaskService` supervisor. `NativeAgentProcess` passes only
+the launcher's selected environment to the native child and retains bounded
+stdout/stderr. A Host-only executor override in `TurnLifecycle` records native
+completion as a canonical delegated Turn and answer before result settlement.
+It does not run Tenon's provider executor for the external CLI or fabricate its
+internal tool history. Cancellation reaches both the canonical Turn and its
+supervised child; the owning claim cannot settle while covered children run.
 
 Writable continuation requires the same canonical worktree resource, validated
 against its recorded source/base/registration. Missing, removed, or mismatched

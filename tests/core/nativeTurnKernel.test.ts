@@ -26,6 +26,10 @@ import {
   type ToolEnvelope,
 } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { createLocalTools } from '../../src/main/agent/capabilities/agentLocalTools';
+import { Database } from 'bun:sqlite';
+import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
+import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
+import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import { createAutomationTool } from '../../src/main/agent/automations/AutomationTool';
 import type { AutomationService } from '../../src/main/agent/automations/AutomationService';
 import { AgentToolFailure } from '../../src/main/agent/AgentToolFailure';
@@ -341,6 +345,44 @@ describe('native turn kernel parity', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  test('publishes execution start only after durable S0 and never starts an invalid directory', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-admission-'));
+    const database = new Database(':memory:');
+    const store = new ToolTaskStore(database as unknown as SqliteDatabase);
+    const tasks = new ToolTaskService(store, path.join(root, 'tasks'));
+    tasks.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+      startCompletionTurn: async () => false, taskChanged: () => {} });
+    await tasks.initialize();
+    let persisted = false;
+    try {
+      await writeFile(path.join(root, 'file'), 'observed');
+      const tools = createLocalTools({ workspace: { root, scratchRoot: root, readFileState: new Map(),
+        threadId: '00000000-0000-7000-8000-000000000001', onTaskAdmitted: async (task) => {
+          expect(store.read(task.taskId)?.executionContext.snapshot.generation).toBe(0);
+          persisted = true;
+        } }, toolTaskService: tasks, turnId: '00000000-0000-7000-8000-000000000002' });
+      for (const cwd of ['missing', '.']) {
+        const gateway = new ScriptedGateway([
+          () => terminalStream(assistant([{ type: 'toolCall', id: `call-${cwd}`, name: 'file_read',
+            arguments: { cwd, file_path: 'file' } }], 'toolUse')),
+          () => terminalStream(assistant([{ type: 'text', text: 'complete' }])),
+        ]);
+        const runtime = createRuntime(gateway, { tools });
+        const starts: AgentEvent[] = [];
+        let resultContext: unknown;
+        runtime.subscribe((event) => {
+          if (event.type === 'tool_execution_start') { expect(persisted).toBe(true); starts.push(event); }
+          if (event.type === 'tool_execution_end') resultContext = event.result.executionContext;
+        });
+        await runtime.prompt(USER);
+        expect(starts).toHaveLength(cwd === 'missing' ? 0 : 1);
+        if (cwd === '.') expect(resultContext).toMatchObject({ snapshot: { generation: 0 } });
+        expect(JSON.stringify(gateway.requests[1]!.context.messages)).not.toContain('addressRef');
+        expect(store.nonterminal()).toHaveLength(0);
+      }
+    } finally { await tasks.close(2_000); database.close(); await rm(root, { recursive: true, force: true }); }
   });
 
   test('keeps expected adapter failures semantic while unexpected exceptions remain Kernel failures', async () => {
@@ -1556,9 +1598,9 @@ function toolRuntimeContext(): TurnExecutionContext {
     thread: {
       id: '00000000-0000-7000-8000-000000000001',
       parentThreadId: null,
-      cwd: process.cwd(),
+      configurationSource: { kind: 'user' },
     },
-    turn: { id: '00000000-0000-7000-8000-000000000002' },
+    turn: { id: '00000000-0000-7000-8000-000000000002', provenance: { trigger: { kind: 'user' } } },
     configuration: {
       profileName: 'kernel-tool-adapter-test',
       developerInstructions: [],
@@ -1575,6 +1617,7 @@ function toolRuntimeContext(): TurnExecutionContext {
 
 function toolRuntimeService(overrides: Partial<ThreadService>): ThreadService {
   return {
+    defaultExecutionDirectory: () => process.cwd(),
     collaborationToolContributions: async () => [],
     extensionToolContributions: async () => [],
     notifyToolStarted: async () => undefined,

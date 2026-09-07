@@ -117,6 +117,7 @@ describe('Skill context reducer', () => {
     const baselineItem = store.evidence(baseline);
     const activeItem = store.evidence(active);
     const restoredState: CompactionRestoredStateContextPayload = {
+      executionContext: { entries: [], text: '', omitted: 0 },
       schemaVersion: 1,
       kind: 'compactionRestoredState',
       skillCatalogHash: baseline.catalogHash,

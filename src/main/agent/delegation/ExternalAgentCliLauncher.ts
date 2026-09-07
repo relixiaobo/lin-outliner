@@ -1,11 +1,9 @@
-import { spawn } from 'node:child_process';
 import { accessSync, constants, statSync } from 'node:fs';
 import { delimiter, resolve } from 'node:path';
 import type { AgentReasoningLevel } from '../../../core/types';
 import type { DelegateExecutionResult, DelegateUsage } from '../../../delegate/contract';
 import type { DelegationRunnerAdapter } from './DelegationPolicyResolver';
 
-const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const MAX_RESULT_TEXT_BYTES = 1024 * 1024;
 const REASONING_LEVELS: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const COMMON_EXTERNAL_CLI_ENV_KEYS = new Set([
@@ -99,59 +97,23 @@ async function runExternalAgentCli(
   const prompt = input.messages.length === 0
     ? input.prompt
     : input.messages.map((message) => message.text).filter((text): text is string => text !== null).join('\n\n');
-  const child = spawn(executable, definition.args, {
-    cwd: resolveLauncherCwd(input.session),
-    env,
-    shell: false,
-    detached: process.platform !== 'win32',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  const output: Buffer[] = [];
-  const diagnostics: Buffer[] = [];
-  let bytes = 0;
-  let truncated = false;
-  const append = (target: Buffer[], chunk: Buffer) => {
-    if (bytes >= MAX_OUTPUT_BYTES) {
-      truncated = true;
-      return;
-    }
-    const remaining = MAX_OUTPUT_BYTES - bytes;
-    const value = chunk.byteLength > remaining ? chunk.subarray(0, remaining) : chunk;
-    target.push(value);
-    bytes += value.byteLength;
-    if (value.byteLength < chunk.byteLength) truncated = true;
-  };
-  child.stdout.on('data', (chunk: Buffer) => append(output, chunk));
-  child.stderr.on('data', (chunk: Buffer) => append(diagnostics, chunk));
-  const terminate = () => terminateProcess(child);
-  input.signal.addEventListener('abort', terminate, { once: true });
-  if (input.signal.aborted) terminate();
-  child.stdin.on('error', () => undefined);
-  child.stdin.end(prompt);
-  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
-    child.once('close', (code, signal) => resolveExit({ code, signal }));
-    child.once('error', () => resolveExit({ code: null, signal: null }));
-  });
-  input.signal.removeEventListener('abort', terminate);
-  const boundedText = truncateUtf8WithMarker(Buffer.concat(output).toString('utf8'), MAX_RESULT_TEXT_BYTES);
+  const processResult = await input.executeProcess({ executable, args: definition.args, env, stdin: prompt });
+  const { truncated } = processResult;
+  const boundedText = truncateUtf8WithMarker(processResult.stdout, MAX_RESULT_TEXT_BYTES);
   const text = boundedText.value;
-  const errorText = truncateUtf8(Buffer.concat(diagnostics).toString('utf8').trim(), 64 * 1024);
+  const errorText = truncateUtf8(processResult.stderr.trim(), 64 * 1024);
   const outcome = input.signal.aborted
     ? 'cancelled'
     : truncated
       ? 'failed'
-      : exit.code === 0
-      ? 'succeeded'
-      : exit.signal === 'SIGTERM' || exit.signal === 'SIGKILL'
-        ? 'cancelled'
-        : 'failed';
+      : processResult.outcome;
   return executionResult(
     input,
     startedAt,
     Date.now(),
     outcome,
     text || null,
-    errorText || (truncated ? 'Agent CLI output exceeded the supported limit.' : `Agent CLI exited with code ${String(exit.code)}.`),
+    errorText || (truncated ? 'Agent CLI output exceeded the supported limit.' : processResult.error),
     definition.id,
     null,
     truncated || boundedText.truncated,
@@ -191,14 +153,6 @@ function executionResult(
   };
 }
 
-function resolveLauncherCwd(session: Parameters<NonNullable<DelegationRunnerAdapter['run']>>[0]['session']): string {
-  if (session.worktree.kind === 'active' || session.worktree.kind === 'unchanged'
-    || session.worktree.kind === 'changed' || session.worktree.kind === 'retained') {
-    return resolve(session.worktree.metadata.path);
-  }
-  return resolve(session.policy.cwd);
-}
-
 function findExecutable(name: string, env: NodeJS.ProcessEnv): string | null {
   for (const directory of (env.PATH ?? '').split(delimiter)) {
     const candidate = resolve(directory || process.cwd(), name);
@@ -221,15 +175,6 @@ function sanitizeExternalCliEnvironment(source: NodeJS.ProcessEnv, providerKeys:
       value !== undefined && allowed.has(key.toUpperCase())
     )),
   );
-}
-
-function terminateProcess(child: ReturnType<typeof spawn>): void {
-  if (!child.pid) return;
-  if (process.platform === 'win32') {
-    child.kill('SIGTERM');
-    return;
-  }
-  try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
 }
 
 function truncateUtf8WithMarker(value: string, maxBytes: number): { value: string; truncated: boolean } {

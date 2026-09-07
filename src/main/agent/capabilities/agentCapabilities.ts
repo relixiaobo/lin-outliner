@@ -287,7 +287,7 @@ function derivePathToolActionDescriptor(
   access: AgentCapabilityAccess,
   pathArgName: string,
 ): ToolActionDescriptor {
-  const rawPath = getStringArg(args, pathArgName);
+  const rawPath = getStringArg(args, pathArgName) ?? (pathArgName === 'path' ? '.' : null);
   const write = access === 'write';
   const fallback = fileActionKind(toolName, write, 'local_path');
   if (!rawPath) {
@@ -299,7 +299,11 @@ function derivePathToolActionDescriptor(
     });
   }
 
-  const targetPath = canonicalPathPreservingSuffix(resolveCapabilityPath(policy.workspaceRoot, rawPath));
+  const callRoot = resolveCapabilityPath(policy.workspaceRoot, getStringArg(args, 'cwd') ?? '.');
+  const resolvedPath = resolveCapabilityPath(callRoot, rawPath);
+  const targetPath = toolName === 'file_delete'
+    ? path.join(canonicalPathPreservingSuffix(path.dirname(resolvedPath)), path.basename(resolvedPath))
+    : canonicalPathPreservingSuffix(resolvedPath);
   const sensitive = isSensitivePath(targetPath);
   const scope: ToolAccessScope = 'local_system';
   const actionKind = fileActionKind(toolName, write, sensitive ? 'sensitive_local_path' : 'local_path');

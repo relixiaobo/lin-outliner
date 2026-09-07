@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import type { Message } from '@earendil-works/pi-ai';
 import { mkdirSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -51,7 +52,6 @@ import {
 } from '../../src/main/agent/AgentConfigurationLoader';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
-import { AgentStartupContextStore } from '../../src/main/agent/context/AgentStartupContext';
 import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { AgentResourceStore } from '../../src/main/agent/persistence/AgentResourceStore';
@@ -61,6 +61,8 @@ import type {
   DelegationCoordinator,
   DelegationSessionBinding,
 } from '../../src/main/agent/delegation';
+import { DelegationSessionStore, DelegationRunnerRegistry, InternalDelegationSessionRuntime } from '../../src/main/agent/delegation';
+import { AgentWorktree } from '../../src/main/agent/worktree/AgentWorktree';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import type {
   ThreadNameGenerationContext,
@@ -647,7 +649,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
       timeZone: 'UTC',
       utcOffsetMinutes: 0,
       locale: 'en-US',
-      workingDirectory: context.thread.cwd,
+
       conversationMode: 'interactive',
       executionMode: 'root',
       replyIdentity: null,
@@ -668,6 +670,7 @@ class ContextPayloadExecutor extends ControlledExecutor {
       text: 'Compacted context summary',
     });
     const restoredStateRef = await this.payloads.writeContext(context.thread.id, {
+      executionContext: { entries: [], text: '', omitted: 0 },
       schemaVersion: 1,
       kind: 'compactionRestoredState',
       skillCatalogHash: null,
@@ -850,7 +853,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -890,7 +893,7 @@ describe('ThreadService', () => {
     const thread = (await fixture.service.startThread({ name: 'Host defaults' })).thread;
 
     expect(thread.modelProvider).toBe('openai');
-    expect(thread.cwd).toBe('/tmp/agent-workdir');
+    expect(thread.configurationSource).toEqual({ kind: 'user' });
     expect(fixture.service.readThread({ threadId: thread.id }).thread).toEqual(thread);
     await fixture.service.close();
   });
@@ -926,7 +929,7 @@ describe('ThreadService', () => {
 
     expect(thread).toMatchObject({
       modelProvider: 'anthropic',
-      cwd: '/tmp/agent-workdir',
+      configurationSource: { kind: 'user' },
     });
     expect(resolvedProviders).toEqual(['anthropic']);
     expect(fixture.service.getThreadConfiguration(thread.id).configuration).toEqual({
@@ -945,15 +948,15 @@ describe('ThreadService', () => {
       mcpServers: ['fresh-mcp'],
     });
 
-    const cwdPinned = (await fixture.service.startThread({
-      name: 'Remembered selection with cwd',
-      cwd: '/tmp/explicit-workdir',
+    const configured = (await fixture.service.startThread({
+      name: 'Remembered selection with configuration source',
+      configurationSource: { kind: 'project', root: '/tmp/explicit-workdir' },
     })).thread;
-    expect(cwdPinned).toMatchObject({
+    expect(configured).toMatchObject({
       modelProvider: 'anthropic',
-      cwd: '/tmp/explicit-workdir',
+      configurationSource: { kind: 'project', root: '/tmp/explicit-workdir' },
     });
-    expect(fixture.service.getThreadConfiguration(cwdPinned.id).configuration).toEqual({
+    expect(fixture.service.getThreadConfiguration(configured.id).configuration).toEqual({
       modelProvider: 'anthropic',
       model: 'anthropic/claude-sonnet-4',
       reasoningEffort: 'high',
@@ -1007,7 +1010,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: persistent.id,
@@ -1023,7 +1026,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
       ephemeral: true,
     })).thread;
     await fixture.service.startRendererTurn({
@@ -1060,7 +1063,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await fixture.service.startRendererTurn({
@@ -1096,7 +1099,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     fixture.service.subscribe((notification) => {
       if (notification.type === 'thread/name/updated') throw new Error('listener delivery failed');
@@ -1143,7 +1146,7 @@ describe('ThreadService', () => {
         source: 'app',
         threadSource: 'user',
         modelProvider: 'openai',
-        cwd: root,
+        configurationSource: { kind: 'user' },
       })).thread;
       await opened.service.startRendererTurn({
         threadId: thread.id,
@@ -1186,7 +1189,7 @@ describe('ThreadService', () => {
         source: 'app',
         threadSource: 'user',
         modelProvider: 'openai',
-        cwd: root,
+        configurationSource: { kind: 'user' },
         name,
       })).thread;
       threadIds.push(thread.id);
@@ -1278,7 +1281,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
       name: 'Two Turns',
     })).thread;
     for (const index of [0, 1]) {
@@ -1329,7 +1332,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await opened.service.startRendererTurn({
       threadId: thread.id,
@@ -1356,7 +1359,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -1383,7 +1386,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -1406,7 +1409,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await opened.service.startRendererTurn({
       threadId: thread.id,
@@ -1439,7 +1442,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const submitted = fixture.service.submitRendererInput({
       threadId: thread.id,
@@ -1466,7 +1469,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -1495,7 +1498,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.setThreadName(thread.id, null);
     await fixture.service.close();
@@ -1522,7 +1525,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -1557,7 +1560,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const sourceTurn = await fixture.service.startRendererTurn({
       threadId: source.id,
@@ -1603,7 +1606,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const sourceTurn = await fixture.service.startRendererTurn({
       threadId: source.id,
@@ -1642,7 +1645,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     const updated = await fixture.service.request('thread/configuration/set', {
@@ -1705,7 +1708,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await fixture.service.request('thread/configuration/set', {
@@ -1734,7 +1737,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await expect(fixture.service.request('thread/configuration/set', {
@@ -1767,13 +1770,13 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const ephemeral = (await fixture.service.startThread({
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
       ephemeral: true,
     })).thread;
 
@@ -1811,7 +1814,7 @@ describe('ThreadService', () => {
       source: 'memory-host',
       threadSource: 'memory_consolidation',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     expect(() => fixture.service.getThreadConfiguration(featureThread.id)).toThrow('root user Threads');
@@ -1824,13 +1827,57 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('settles a native launcher result through a real canonical delegated Turn', async () => {
+    const fixture = await createFixture();
+    const source = join(fixture.root, 'repository');
+    await mkdir(source);
+    execFileSync('git', ['init', '-q', source]);
+    await writeFile(join(source, 'tracked.txt'), 'original');
+    execFileSync('git', ['-C', source, 'add', '.']);
+    execFileSync('git', ['-C', source, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'Initial']);
+    const owner = (await fixture.service.startThread({ source: 'app', threadSource: 'user',
+      modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
+    const database = new Database(':memory:');
+    const sessions = new DelegationSessionStore(database as unknown as SqliteDatabase);
+    const session = sessions.createSession({ sessionId: uuidV7(), ownerThreadId: owner.id, now: fixture.clock(),
+      policy: { runnerId: 'codex', runnerVersion: 'native', modelProvider: null, modelId: null, effort: null,
+        profile: 'explore', access: 'read-only', capabilityCeilingDigest: 'a'.repeat(64),
+        schedulingPolicyDigest: 'b'.repeat(64), configurationRevision: 'test', cwd: source, worktreePolicy: 'dedicated' } });
+    const runtime = new InternalDelegationSessionRuntime(fixture.service, sessions, new AgentWorktree(fixture.root), fixture.clock,
+      new DelegationRunnerRegistry([{ id: 'codex', version: 'native', detected: true, ready: true, enabled: true, diagnostic: null,
+        resolveExplicitModel: async () => ({ providerId: 'external', modelId: 'native', effort: 'medium', supportedEfforts: ['medium'] }),
+        run: async (input) => {
+          expect(fixture.service.readTurnForHost(session.sessionId, input.turnId)?.status).toBe('inProgress');
+          expect(fixture.service.toolTaskService().store.sessionExecution(session.sessionId)?.executionContext.snapshot.generation).toBe(0);
+          return { version: 1, kind: 'delegate.execution-result', sessionId: session.sessionId, turnId: input.turnId,
+            outcome: 'succeeded', runner: { id: 'codex', version: 'native' }, model: 'external/native', durationMs: 1,
+            text: 'Native result', error: null, partialEvidence: false, committedMessageSequence: 0,
+            continuation: 'available', usage: { state: 'unknown' }, artifacts: [], worktree: { disposition: 'none' } };
+        } }]));
+    try {
+      await runtime.ensureSession(session);
+      const turnId = uuidV7();
+      const active = sessions.readSession(session.sessionId)!;
+      const result = await runtime.run({ session: active, turnId, prompt: 'Inspect', messages: [], signal: new AbortController().signal });
+      expect(result.outcome).toBe('succeeded');
+      const turn = fixture.service.readTurnForHost(session.sessionId, turnId)!;
+      expect(turn.status).toBe('completed');
+      expect(turnTerminalAnswer(turn.items)).toBe('Native result');
+      expect(turn.items.some((item) => item.type === 'contextEvidence' && item.kind === 'taskExecutionContext')).toBe(true);
+      expect(fixture.executor.contexts).toHaveLength(0);
+      await expect(runtime.commitResult({ session: active, turnId } as Parameters<typeof runtime.commitResult>[0])).resolves.toBeUndefined();
+      expect(fixture.service.toolTaskService().store.nonterminal()).toHaveLength(0);
+      expect(sessions.readSession(session.sessionId)?.worktree.kind).toBe('cleaned');
+    } finally { database.close(); await fixture.service.close(); }
+  });
+
   test('keeps Delegation Session Threads behind privileged Host operations', async () => {
     const fixture = await createFixture();
     const owner = (await fixture.service.startThread({
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const rendererNotifications: AgentCoreNotification[] = [];
     const unsubscribe = fixture.service.subscribeRenderer((notification) => {
@@ -1882,7 +1929,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'delegation',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).rejects.toThrow('only user Threads');
 
     unsubscribe();
@@ -1918,7 +1965,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     extensionEvents.length = 0;
     const notifications: AgentCoreNotification[] = [];
@@ -1961,6 +2008,7 @@ describe('ThreadService', () => {
   test('normalizes attachment content before start and steer Items become authoritative', async () => {
     const resolvedPaths: string[] = [];
     const fixture = await createFixture(undefined, {
+      defaultExecutionDirectory: '/host-default',
       resolveUserContent: (content, context) => content.map((part) => {
         if (part.type !== 'attachment') return part;
         const path = join(context.cwd, 'resolved', part.name);
@@ -1972,7 +2020,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -2004,8 +2052,8 @@ describe('ThreadService', () => {
     const userItems = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.[0]?.items
       .filter((item) => item.type === 'userMessage') ?? [];
     expect(userItems.map((item) => item.content[0])).toMatchObject([
-      { source: { kind: 'localFile', path: join(fixture.root, 'resolved', 'start.pdf') } },
-      { source: { kind: 'localFile', path: join(fixture.root, 'resolved', 'steer.txt') } },
+      { source: { kind: 'localFile', path: '/host-default/resolved/start.pdf' } },
+      { source: { kind: 'localFile', path: '/host-default/resolved/steer.txt' } },
     ]);
     expect(userItems.map((item) => item.author)).toEqual([{ kind: 'reader' }, { kind: 'reader' }]);
     expect(resolvedPaths).toHaveLength(2);
@@ -2021,7 +2069,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     const request = {
@@ -2078,7 +2126,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -2159,7 +2207,7 @@ describe('ThreadService', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await opened.service.startRendererTurn({
@@ -2189,6 +2237,7 @@ describe('ThreadService', () => {
       text: expect.stringContaining('Retain the original implementation decision.'),
     });
     expect(await opened.stores.payloads.readContext(thread.id, compaction.restoredStateRef)).toMatchObject({
+      executionContext: { entries: [], text: '', omitted: 0 },
       kind: 'compactionRestoredState',
       activeSkills: [],
       activeObservations: [],
@@ -2219,7 +2268,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -2278,7 +2327,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -2317,7 +2366,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const request = {
       threadId: thread.id,
@@ -2375,7 +2424,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -2452,7 +2501,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -2517,7 +2566,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -2558,7 +2607,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -2611,7 +2660,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -2679,7 +2728,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const first = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -2735,7 +2784,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -2785,7 +2834,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const payloadRoot = join(fixture.root, 'agent', 'payloads');
     mkdirSync(payloadRoot, { recursive: true });
@@ -2836,7 +2885,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const append = fixture.stores.rollout.append.bind(fixture.stores.rollout);
     let rejectActiveStatus = true;
@@ -2908,7 +2957,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await fixture.service.startRendererTurn({
@@ -2944,7 +2993,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     // The state that version wrote and never cleared. It persists, so the
     // conversation stayed dead across restarts — this is what gives it back.
@@ -2983,7 +3032,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     const failed = await fixture.service.startRendererTurn({
@@ -3032,7 +3081,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     const loggedErrors: unknown[][] = [];
@@ -3109,7 +3158,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     const malformed = {
@@ -3250,7 +3299,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'automation',
       threadSource: 'automation',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await fixture.service.startPrivilegedTurn({
@@ -3322,7 +3371,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await fixture.service.startRendererTurn({
@@ -3366,7 +3415,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await fixture.service.startRendererTurn({
@@ -3408,7 +3457,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -3456,7 +3505,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await opened.service.startRendererTurn({
@@ -3507,22 +3556,17 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
     await opened.service.close();
   });
 
-  test('removes a managed conversation workspace when its root Thread is deleted', async () => {
+  test('creates a projectless Chat without allocating a conversation workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-thread-workspace-'));
     roots.push(root);
     const workspaceRoot = join(root, 'agent', 'workspaces');
+    let admissionDirectory: string | undefined;
     const opened = await openFixture(root, new FinalCitationExecutor('Done'), () => Date.now(), undefined, {
-      resolveRootWorkspace: async (threadId) => {
-        const workspace = join(workspaceRoot, threadId);
-        await mkdir(workspace, { recursive: true });
-        return workspace;
+      defaultExecutionDirectory: root,
+      resolveUserContent: (content, context) => {
+        admissionDirectory = context.cwd;
+        return content;
       },
-      cleanupRootWorkspace: async (threadId, cwd) => {
-        const expected = join(workspaceRoot, threadId);
-        if (cwd !== expected) throw new Error('Managed workspace path mismatch.');
-        await rm(expected, { recursive: true, force: true });
-      },
-      ownsRootWorkspace: (threadId, cwd) => cwd === join(workspaceRoot, threadId),
     });
     await opened.service.initialize();
     const thread = (await opened.service.startThread({
@@ -3530,33 +3574,32 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       threadSource: 'user',
       modelProvider: 'openai',
     })).thread;
-    await writeFile(join(thread.cwd, 'draft.txt'), 'workspace content');
+    expect(thread).not.toHaveProperty('cwd');
+    expect(opened.service.defaultExecutionDirectory()).toBe(root);
+    await expect(stat(workspaceRoot)).rejects.toThrow();
+    await writeFile(join(root, 'draft.txt'), 'user content');
+    await opened.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Hello' }] });
+    expect(admissionDirectory).toBe(root);
 
     await opened.service.deleteThread(thread.id);
 
-    await expect(readFile(join(thread.cwd, 'draft.txt'), 'utf8')).rejects.toThrow();
+    expect(await readFile(join(root, 'draft.txt'), 'utf8')).toBe('user content');
     await opened.service.close();
   });
 
-  test('preserves an explicit-cwd root when its Thread is deleted', async () => {
-    const cleanupCalls: string[] = [];
-    const fixture = await createFixture(undefined, {
-      resolveRootWorkspace: (threadId) => join('/managed', threadId),
-      cleanupRootWorkspace: (_threadId, cwd) => { cleanupCalls.push(cwd); },
-      ownsRootWorkspace: (threadId, cwd) => cwd === join('/managed', threadId),
-    });
+  test('preserves project files when a configured Thread is deleted', async () => {
+    const fixture = await createFixture();
     const externalFile = join(fixture.root, 'external-project-file.txt');
     await writeFile(externalFile, 'user-owned');
     const thread = (await fixture.service.startThread({
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await fixture.service.deleteThread(thread.id);
 
-    expect(cleanupCalls).toEqual([]);
     expect(await readFile(externalFile, 'utf8')).toBe('user-owned');
     expect(fixture.stores.metadata.read(thread.id)).toBeNull();
     await fixture.service.close();
@@ -3576,7 +3619,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await fixture.service.setThreadArchived(thread.id, true);
@@ -3605,34 +3648,12 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await expect(fixture.service.deleteThread(thread.id)).rejects.toThrow('retained workspace changes');
 
     expect(fixture.stores.metadata.read(thread.id)?.thread.id).toBe(thread.id);
-    await fixture.service.close();
-  });
-
-  test('does not report a committed Thread deletion as failed when managed workspace cleanup defers', async () => {
-    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
-    const fixture = await createFixture(undefined, {
-      resolveRootWorkspace: (threadId) => join('/managed', threadId),
-      cleanupRootWorkspace: () => { throw new Error('simulated workspace cleanup failure'); },
-      ownsRootWorkspace: () => true,
-    });
-    const thread = (await fixture.service.startThread({
-      source: 'app',
-      threadSource: 'user',
-      modelProvider: 'openai',
-    })).thread;
-
-    await expect(fixture.service.deleteThread(thread.id)).resolves.toBeUndefined();
-
-    expect(fixture.stores.metadata.read(thread.id)).toBeNull();
-    expect(warning.mock.calls.some((call) => String(call[0]).includes('workspace cleanup deferred')))
-      .toBe(true);
-    warning.mockRestore();
     await fixture.service.close();
   });
 
@@ -3642,7 +3663,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -3663,7 +3684,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.close();
 
@@ -3743,7 +3764,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: source.id,
@@ -3779,7 +3800,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: source.id,
@@ -3840,7 +3861,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: source.id,
@@ -3897,7 +3918,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await service.startRendererTurn({
       threadId: source.id,
@@ -4036,7 +4057,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: source.id,
@@ -4104,7 +4125,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await opened.service.startRendererTurn({
       threadId: source.id,
@@ -4251,7 +4272,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await opened.service.startRendererTurn({
       threadId: source.id,
@@ -4301,7 +4322,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const completed = await fixture.service.startRendererTurn({
       threadId: root.id,
@@ -4321,7 +4342,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       timeZone: 'Asia/Shanghai',
       utcOffsetMinutes: 480,
       locale: 'zh-CN',
-      workingDirectory: root.cwd,
+
       conversationMode: 'interactive',
       executionMode: 'root',
       replyIdentity: null,
@@ -4365,7 +4386,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const completed = await fixture.service.startRendererTurn({
       threadId: root.id,
@@ -4433,7 +4454,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: rootPath,
+      configurationSource: { kind: 'user' },
     })).thread;
     const generated = await opened.service.startRendererTurn({
       threadId: source.id,
@@ -4482,7 +4503,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await opened.service.startRendererTurn({
       threadId: source.id,
@@ -4527,7 +4548,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -4562,7 +4583,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await opened.service.startRendererTurn({
       threadId: source.id,
@@ -4599,7 +4620,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: source.id,
@@ -4668,7 +4689,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await opened.service.startRendererTurn({
@@ -4699,7 +4720,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await service.startRendererTurn({
@@ -4719,7 +4740,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const sourceRef = await fixture.service.writeThreadResource(
       source.id,
@@ -4773,7 +4794,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const ref = await fixture.service.writeThreadResource(
       thread.id,
@@ -4829,7 +4850,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const attachment = {
       type: 'attachment' as const,
@@ -4860,7 +4881,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const discarded = await fixture.service.writeThreadResource(
       thread.id,
@@ -4925,7 +4946,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: source.id,
@@ -5016,7 +5037,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     const sent = await service.startRendererTurn({
@@ -5098,7 +5119,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     await expect(service.startRendererTurn({
@@ -5130,7 +5151,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5179,7 +5200,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5235,7 +5256,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.request('goal/create', {
       threadId: thread.id,
@@ -5308,7 +5329,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5338,7 +5359,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5401,7 +5422,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5493,7 +5514,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5542,7 +5563,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5579,7 +5600,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5616,7 +5637,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const first = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5676,7 +5697,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5736,7 +5757,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: rollbackTarget.id,
@@ -5749,7 +5770,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const core = (fixture.service as unknown as {
       core: { flushThreadNotifications(threadId: string): Promise<void> };
@@ -5784,7 +5805,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const first = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5828,13 +5849,13 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const healthy = (await fixture.service.startThread({
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     for (const [index, thread] of [corrupt, healthy].entries()) {
       await fixture.service.startRendererTurn({
@@ -5881,7 +5902,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     });
     await fixture.service.close();
 
@@ -5913,7 +5934,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await expect(fixture.service.request('thread/rollback', { threadId: root.id, numTurns: 1 }))
       .rejects.toThrow('exceeds');
@@ -5922,7 +5943,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
       ephemeral: true,
     })).thread;
     await expect(fixture.service.request('thread/rollback', { threadId: ephemeral.id, numTurns: 1 }))
@@ -5932,7 +5953,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'memory-host',
       threadSource: 'memory_consolidation',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await expect(fixture.service.request('thread/rollback', { threadId: feature.id, numTurns: 1 }))
       .rejects.toThrow('persistent root user Threads');
@@ -5950,7 +5971,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -5976,7 +5997,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: source.id,
@@ -6023,7 +6044,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.withHostRootTurnAdmissionBarrier(async () => undefined);
     await fixture.service.withThreadAdmissionBarrier(thread.id, async () => undefined);
@@ -6048,7 +6069,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const turn = await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -6090,7 +6111,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     for (const [index, prompt] of ['One', 'Two'].entries()) {
       await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: prompt }] });
@@ -6119,7 +6140,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
         source: 'app',
         threadSource: 'user',
         modelProvider: 'openai',
-        cwd: fixture.root,
+        configurationSource: { kind: 'user' },
         name: `Persistent ${index + 1}`,
       })).thread.id);
     }
@@ -6128,7 +6149,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
       name: 'Ephemeral',
     })).thread.id;
 
@@ -6162,7 +6183,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
 
     const accepted = await fixture.service.startRendererTurn({
@@ -6195,7 +6216,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -6240,7 +6261,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -6279,7 +6300,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -6340,7 +6361,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.request('goal/create', {
       threadId: thread.id,
@@ -6421,7 +6442,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.request('goal/create', {
       threadId: thread.id,
@@ -6473,7 +6494,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     fixture.stores.goals.create(thread.id, 'Legacy exhausted work', 1, fixture.clock());
     fixture.stores.goals.addUsage(thread.id, 1, 0, fixture.clock(), 'completed');
@@ -6498,7 +6519,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.request('goal/create', {
       threadId: thread.id,
@@ -6531,7 +6552,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.request('goal/create', {
       threadId: source.id,
@@ -6585,7 +6606,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.request('goal/create', {
       threadId: thread.id,
@@ -6628,7 +6649,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     fixture.stores.goals.create(thread.id, 'Retry the wrap-up admission', 1, fixture.clock());
     fixture.stores.goals.addUsage(thread.id, 1, 0, fixture.clock(), 'completed');
@@ -6675,7 +6696,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.request('goal/create', {
       threadId: thread.id,
@@ -6730,7 +6751,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.request('goal/create', {
       threadId: thread.id,
@@ -6766,7 +6787,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.request('goal/create', {
       threadId: thread.id,
@@ -6797,7 +6818,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       resolveSkillAdmission: async ({ thread, turnId, content, acceptedAt }) => {
         admittedTurnId = turnId;
         const runtime = new AgentSkillRuntime({
-          localRoot: thread.cwd,
+          ...(thread.configurationSource.kind === 'project' ? { localRoot: thread.configurationSource.root } : {}),
           threadId: thread.id,
           includeUserSkills: false,
         });
@@ -6814,7 +6835,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     const input = '/skillify turn this workflow into a reusable Skill';
     await fixture.service.startRendererTurn({
@@ -6877,7 +6898,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -7058,7 +7079,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       source: 'app',
       threadSource: 'user',
       modelProvider: 'test',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: thread.id,
@@ -7402,7 +7423,6 @@ async function createFixture(
     | 'getRecentDocumentOperations'
     | 'resolveReferencedAsset'
     | 'resolveRendererStartDefaults'
-    | 'resolveAgentStartupContext'
     | 'resolveIdentityCatalog'
     | 'resolvePersona'
     | 'resolveSkillAdmission'
@@ -7411,9 +7431,7 @@ async function createFixture(
     | 'onRendererConfigurationCommitted'
     | 'nameGenerator'
     | 'normalizeOutputImage'
-    | 'resolveRootWorkspace'
-    | 'cleanupRootWorkspace'
-    | 'ownsRootWorkspace'
+    | 'defaultExecutionDirectory'
     | 'beforeInitialTurnAdmission'
     | 'reportError'
     | 'delegationCoordinator'
@@ -7442,7 +7460,6 @@ async function openFixture(
     | 'getRecentDocumentOperations'
     | 'resolveReferencedAsset'
     | 'resolveRendererStartDefaults'
-    | 'resolveAgentStartupContext'
     | 'resolveIdentityCatalog'
     | 'resolvePersona'
     | 'resolveSkillAdmission'
@@ -7451,9 +7468,7 @@ async function openFixture(
     | 'onRendererConfigurationCommitted'
     | 'nameGenerator'
     | 'normalizeOutputImage'
-    | 'resolveRootWorkspace'
-    | 'cleanupRootWorkspace'
-    | 'ownsRootWorkspace'
+    | 'defaultExecutionDirectory'
     | 'beforeInitialTurnAdmission'
     | 'reportError'
     | 'delegationCoordinator'
@@ -7529,7 +7544,6 @@ function createStores(
     rollout: new RolloutStore(join(root, 'agent', 'rollouts')),
     goals: new GoalStore(goalsPath, goalsDatabase),
     toolTasks: new ToolTaskStore(goalsDatabase),
-    agentStartupContexts: new AgentStartupContextStore(goalsDatabase),
     payloads: new ToolPayloadStore(join(root, 'agent', 'payloads'), payloadOptions),
     resources: new AgentResourceStore(
       join(root, 'agent', 'resource_references.sqlite'),
@@ -7676,7 +7690,7 @@ describe('Thread transcript artifact', () => {
       source: 'agent.automation',
       threadSource: threadFeatureSource('automation'),
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
       configuration: defaultEffectiveThreadConfiguration(),
     });
     const automationTurn = await fixture.service.tryStartTurnIfIdle({
@@ -7711,7 +7725,7 @@ describe('Thread transcript artifact', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
     })).thread;
     await fixture.service.startRendererTurn({
       threadId: user.id,
@@ -7747,13 +7761,10 @@ describe('Thread transcript artifact', () => {
     expect(lines[1]!.split('\t')[0]).toBe(first.id);
     // Fixed column order is the contract a `file_grep` extraction rests on.
     const columns = lines[0]!.split('\t');
-    expect(columns).toHaveLength(8);
+    expect(columns).toHaveLength(7);
     expect(columns[1]).toBe('user');
-    // The cwd column is what lets a reader tell its own project's sessions from
-    // an unrelated one's, since the index spans the whole install.
-    expect(columns[2]).toBe(fixture.root);
-    expect(columns[7]).toBe(threadTranscriptPath(transcriptRootFor(fixture), second.id));
-    expect(index).toContain('# columns: threadId\tsource\tcwd\tcreatedAt\tupdatedAt\tstatus\tname\ttranscriptPath');
+    expect(columns[6]).toBe(threadTranscriptPath(transcriptRootFor(fixture), second.id));
+    expect(index).toContain('# columns: threadId\tsource\tcreatedAt\tupdatedAt\tstatus\tname\ttranscriptPath');
 
     await fixture.service.deleteThread(first.id);
     await fixture.service.flushThreadTranscriptIndex();
@@ -7779,7 +7790,7 @@ describe('Thread transcript artifact', () => {
     const rows = index.trimEnd().split('\n').filter((line) => !line.startsWith('#'));
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.split('\t')).toHaveLength(8);
+    expect(rows[0]!.split('\t')).toHaveLength(7);
     expect(rows[0]).toContain('Weekly review 019fb2da-0000-7000-8000-00000000beef user forged row');
     await fixture.service.close();
   });
@@ -7922,7 +7933,7 @@ describe('Thread transcript artifact', () => {
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
       ephemeral: true,
     })).thread;
     const turn = await fixture.service.startRendererTurn({
@@ -7949,7 +7960,7 @@ describe('Thread transcript artifact', () => {
       source: 'agent.automation',
       threadSource: threadFeatureSource('automation'),
       modelProvider: 'openai',
-      cwd: fixture.root,
+      configurationSource: { kind: 'user' },
       configuration: defaultEffectiveThreadConfiguration(),
     });
     await fixture.service.tryStartTurnIfIdle({
@@ -8035,7 +8046,7 @@ function threadStub(id: string): Thread {
     source: 'app',
     threadSource: 'user',
     modelProvider: 'openai',
-    cwd: '/tmp/project',
+    configurationSource: { kind: 'user' },
     createdAt: 1,
     updatedAt: 2,
     status: { type: 'idle' },
@@ -8087,7 +8098,7 @@ async function recordedUserThread(fixture: Fixture, executorIndex: number, text:
     source: 'app',
     threadSource: 'user',
     modelProvider: 'openai',
-    cwd: fixture.root,
+    configurationSource: { kind: 'user' },
   })).thread;
   await recordedUserTurn(fixture, thread.id, executorIndex, text);
   return thread;

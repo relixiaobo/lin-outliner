@@ -528,24 +528,33 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       ? delegationSession.worktree.metadata
       : null;
     const delegationSandbox = delegationMetadata ? worktree.sandboxPaths(delegationMetadata) : null;
+    if (delegationSession?.policy.worktreePolicy === 'dedicated' && !delegationMetadata) {
+      throw new Error('Delegation execution requires its admitted worktree resource.');
+    }
     const processEnvironment = context.thread.threadSource === 'user'
       && context.thread.parentThreadId === null
       ? withDelegateCliEnvironment(workspaceOptions.processEnvironment, options.delegateCliRuntime)
       : workspaceOptions.processEnvironment;
-    return createAgentLocalWorkspaceContext(
-      context.thread.cwd,
-      options.scratchRoot,
-      managedSkills.runtimeForTurn(context.turn.id),
-      processEnvironment,
-      delegationSandbox
-        ? {
-            root: delegationMetadata!.path,
-            shellWritablePaths: delegationSandbox.writablePaths,
-            protectedGitObjectStores: delegationSandbox.protectedGitObjectStores,
-          }
-        : workspaceOptions.writeBoundary,
-      context.thread.id,
-    );
+    return {
+      ...createAgentLocalWorkspaceContext(
+        threadService.defaultExecutionDirectory(),
+        options.scratchRoot,
+        managedSkills.runtimeForTurn(context.turn.id),
+        processEnvironment,
+        delegationSandbox
+          ? {
+              root: delegationMetadata!.path,
+              shellWritablePaths: delegationSandbox.writablePaths,
+              protectedGitObjectStores: delegationSandbox.protectedGitObjectStores,
+            }
+          : workspaceOptions.writeBoundary,
+        context.thread.id,
+      ),
+      ...(delegationSession ? {
+        inheritedClaimTaskId: threadService.toolTaskService().store.sessionExecution(delegationSession.sessionId)?.taskId,
+      } : {}),
+      ...(delegationMetadata ? { validateIsolation: () => worktree.validate(delegationMetadata) } : {}),
+    };
   };
   const toolRuntime = new ToolRuntime(threadService, {
     ...options.createToolOptions(composition),

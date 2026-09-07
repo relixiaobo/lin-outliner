@@ -846,7 +846,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       prompt: string;
       schedule: { rrule: string; timezone: string };
       destination: { kind: 'standalone' } | { kind: 'existingThread'; threadId: string };
-      projectBindings: Array<{ id: string; cwd: string; executionMode: 'local' | 'worktree' }>;
+      contextHints: Array<{ id: string; cwd: string; executionMode: 'local' | 'worktree' }>;
       configuration: {
         modelProvider: string | null;
         model: string | null;
@@ -864,13 +864,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       automationRevision: number;
       eventSequence: number;
       scheduledFor: number;
-      projectBindingKey: string;
+      contextHintId: string;
       snapshot: {
         automationName: string;
         prompt: string;
         schedule: MockAutomation['schedule'];
         destination: MockAutomation['destination'];
-        projectBinding: MockAutomation['projectBindings'][number] | null;
+        contextHint: MockAutomation['contextHints'][number] | null;
         configuration: MockAutomation['configuration'];
       };
       state: 'pending' | 'dispatched' | 'failed' | 'omitted';
@@ -961,7 +961,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         source: 'app',
         threadSource: 'user',
         modelProvider: typeof input.modelProvider === 'string' ? input.modelProvider : 'openai',
-        cwd: typeof input.cwd === 'string' ? input.cwd : '/mock/workspace',
+        configurationSource: { kind: 'user' },
         createdAt: timestamp,
         updatedAt: timestamp,
         status: { type: 'idle' },
@@ -3726,7 +3726,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             prompt: String(input.prompt),
             schedule,
             destination: clone(input.destination) as MockAutomation['destination'],
-            projectBindings: clone(input.projectBindings ?? []) as MockAutomation['projectBindings'],
+            contextHints: clone(input.contextHints ?? []) as MockAutomation['contextHints'],
             configuration: {
               modelProvider: null,
               model: null,
@@ -3843,13 +3843,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             automationRevision: automation.revision,
             eventSequence: ++automationRunEventSequence,
             scheduledFor: timestamp,
-            projectBindingKey: 'no-project',
+            contextHintId: 'no-project',
             snapshot: {
               automationName: automation.name,
               prompt: automation.prompt,
               schedule: automation.schedule,
               destination: automation.destination,
-              projectBinding: null,
+              contextHint: null,
               configuration: automation.configuration,
             },
             state: 'dispatched',

@@ -266,7 +266,10 @@ or compatibility readers.
 
 A named `ConfigurationProfile` supplies root Thread defaults. User definitions
 load from `<userData>/agent/config.json`; project definitions load from
-`<cwd>/.tenon/agent.json` and replace same-name user definitions. Both exact-key
+`<configurationSource.root>/.tenon/agent.json` only for an explicitly selected
+`{ kind: project, root }` source, and replace same-name user definitions.
+`{ kind: user }` loads only user definitions. Tool execution addresses never
+select configuration, persona, model, tool catalogs, or project Skill directories. Both exact-key
 JSONC files may define `defaultProfile`, `profiles`, and
 `presentationOverrides`. Invalid JSONC, unknown fields,
 invalid names, duplicate capability identities, mismatched provider-qualified
@@ -316,6 +319,16 @@ scratch and isolated worktrees are Tool Task/Goal resources with explicit
 cleanup ownership. Deleting a Thread or Project does not delete a user-managed
 external directory or invalidate a settled Tool Task receipt; cleanup occurs
 only after the owning resource reaches its terminal fence.
+
+`Thread.configurationSource` records configuration lookup ownership, not Project
+membership or an execution default. Root creation defaults to `user`; forks and
+delegated Sessions retain the selected source. The desktop Host default is
+`LIN_AGENT_LOCAL_ROOT` when explicitly configured, otherwise
+`<userData>/agent/workspaces`. This directory is shared Host storage, never a
+per-Thread allocation. New Chat needs no directory selection. Task calls resolve
+relative `cwd` against that default without remembering another call's directory.
+Generation-1 discovery and the optional Project catalog are separate features;
+the current execution runtime supplies immutable pending generation 0.
 
 Transcript headers and `ThreadTranscriptIndex` retain conversation identity and
 timestamps without a synthetic single Thread cwd. Directory facts are read from
@@ -620,9 +633,10 @@ agent/
       turn-diagnostics/
         <content-hash>.json
   workspaces/
-    <root-thread-id>/
   scratch/
     uploads/
+    edits/
+      <thread-id>/
 content/
 thread-transcripts/
   <thread-id>.md

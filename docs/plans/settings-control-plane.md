@@ -80,8 +80,9 @@ Reference patterns, rather than requirements to copy:
   one definition supplies validation, completion, descriptions, and UI metadata.
 - [Zed](https://zed.dev/docs/configuring-zed): searchable UI saves to configuration;
   advanced structured values remain editable in the file.
-- [Zed providers](https://zed.dev/docs/ai/use-api-access): non-secret connection
-  definitions can be configuration; auth has its own owner.
+- [Zed providers](https://zed.dev/docs/ai/use-api-access) and
+  [Zed configuration](https://zed.dev/docs/configuring-zed): non-secret resource
+  definitions and model/tool choices can be configuration; auth has its own owner.
 
 These sources establish feasible patterns, not measured Tenon usability.
 Acceptance exercises both human discovery and real Agent task completion.

@@ -350,7 +350,6 @@ export function rootTranscriptSubject(thread: Thread): TranscriptSubject | null 
     threadId: thread.id,
     source: thread.threadSource,
     name: thread.name,
-    cwd: thread.cwd,
   };
 }
 

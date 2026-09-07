@@ -24,6 +24,7 @@ import { uuidV7 } from '../uuid';
 import { RecordedNotificationProjectionError,ThreadCore } from './ThreadCore';
 import type { ThreadResourceOps } from './ThreadResourceOps';
 interface ActiveTurn {
+  executor: TurnExecutor;
   readonly threadId: ThreadId; readonly turnId: string;
   readonly initialTurn: Turn;
   readonly controller: AbortController; readonly recorder: ItemRecorder;
@@ -190,7 +191,7 @@ export class TurnLifecycle {
         source: 'agent.memory',
         threadSource: 'memory_consolidation',
         modelProvider: source.thread.modelProvider,
-        cwd: source.thread.cwd,
+        configurationSource: source.thread.configurationSource,
       }, {
         sessionId: id,
         parentThreadId: null,
@@ -393,8 +394,8 @@ export class TurnLifecycle {
           throw error;
         }
       }); }
-  async startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse> {
-      return (await this.acceptAndLaunch(decodePrivilegedTurnStartRequest(request))).response;
+  async startPrivilegedTurn(request: PrivilegedTurnStartRequest, executor?: TurnExecutor): Promise<TurnStartResponse> {
+      return (await this.acceptAndLaunch(decodePrivilegedTurnStartRequest(request), false, undefined, executor)).response;
     }
   async startRerunRootTurnWithHostLock(
       request: CanonicalTurnRerunAdmission,
@@ -436,7 +437,6 @@ export class TurnLifecycle {
       const context: TurnExecutionContext = {
         thread: record.thread,
         turn,
-        startupContext: null,
         historyBeforeTurn: this.core.allTurns(record.thread.id).filter((candidate) => candidate.id !== turn.id),
         configuration: record.configuration,
         signal: new AbortController().signal,
@@ -706,6 +706,7 @@ export class TurnLifecycle {
       request: InternalTurnStartRequest,
       onlyIfIdle = false,
       admissionGuard?: () => void,
+      executor?: TurnExecutor,
     ): Promise<AcceptedTurn> {
       const record = this.core.requireThread(request.threadId);
       if (onlyIfIdle && record.thread.parentThreadId === null && this.core.isHostRootAdmissionBarrierActive()) {
@@ -718,6 +719,7 @@ export class TurnLifecycle {
       const accepted = record.thread.parentThreadId === null
         ? await this.core.hostRootMutex.run(accept)
         : await accept();
+      if (accepted.active && executor) accepted.active.executor = executor;
       this.scheduleAcceptedTurn(accepted);
       return accepted;
     }
@@ -860,7 +862,27 @@ export class TurnLifecycle {
           return stagedItem;
         })
       );
-      const stagedItems = materializeStagedEvidence(request.stagedContextEvidence ?? []);
+      const featureEvidence: StagedContextEvidence[] = [];
+      for (const ref of request.initialContext?.refs ?? []) {
+        const owner = request.initialContext!.storageOwner;
+        const payload = await this.core.payloads.readContext(owner, ref);
+        const automation = payload?.kind === 'automationDispatch' && request.trigger.kind === 'feature'
+          && request.trigger.feature === 'automation' && payload.automationRunId === request.trigger.ref && payload.automationRunId === owner;
+        const delegation = payload?.kind === 'taskExecutionContext' && request.trigger.kind === 'feature'
+          && request.trigger.feature === 'delegation' && record.thread.threadSource === 'delegation'
+          && owner === request.threadId && payload.sourceTurnId === turnId;
+        if (!payload || (!automation && !delegation)) throw new Error('Initial execution context does not match its canonical owner');
+        if (!await this.core.payloads.copyContextToThread(owner, request.threadId, ref)) {
+          throw new Error('Initial execution context is unavailable');
+        }
+        const dependencies = contextPayloadDependencies(payload);
+        featureEvidence.push({
+          payload, payloadRef: ref, summary: automation ? 'Automation dispatch context' : 'Delegated execution context',
+          contextRefs: dependencies.contexts, resourceRefs: dependencies.resources,
+          internalTextRefs: dependencies.internalTexts, outputRefs: dependencies.outputs,
+        });
+      }
+      const stagedItems = materializeStagedEvidence([...(request.stagedContextEvidence ?? []), ...featureEvidence]);
       const replayedInputs = rerunInputBatches.slice(1).map((batch) => {
         const replayedUser = userMessage(
           request.threadId,
@@ -966,6 +988,7 @@ export class TurnLifecycle {
         resolveCompletion = resolve;
       });
       const active: ActiveTurn = {
+        executor: this.executor,
         threadId: request.threadId,
         turnId,
         initialTurn: turn,
@@ -1069,10 +1092,9 @@ export class TurnLifecycle {
       const createdOutputResources: ThreadResourceReference[] = [];
       try {
         if (active.fatalError) throw active.fatalError;
-        result = await this.executor.execute({
+        result = await active.executor.execute({
           thread,
           turn: initialTurn,
-          startupContext: null,
           historyBeforeTurn: this.core.allTurns(active.threadId).filter((turn) => turn.id !== active.turnId),
           configuration: active.configuration,
           signal: active.controller.signal,

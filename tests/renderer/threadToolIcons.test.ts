@@ -23,14 +23,6 @@ function changes(...kinds: Array<'add' | 'update' | 'delete' | 'move'>): ThreadT
   return { ...base, type: 'fileChange', changes: kinds.map((kind, index) => ({ kind, path: `/file-${index}` })) };
 }
 
-function collab(tool: 'agent' | 'agent_message' | 'task_status' | 'task_stop'): ThreadToolItem {
-  return {
-    ...base, type: 'collabAgentToolCall', tool, senderThreadId: 'thread',
-    receiverThreadIds: ['child'], prompt: null, summary: null, model: null,
-    reasoningEffort: null, agentsStates: {},
-  };
-}
-
 function glyph(presentation: ReturnType<typeof toolPresentation>): string {
   return renderToStaticMarkup(createElement(presentation.Icon, { size: 'menu' }));
 }
@@ -70,14 +62,13 @@ describe('tool operation presentation used by rows and groups', () => {
   });
 
   test.each([
-    ['agent', 'Agent'], ['agent_message', 'MessageAgent'],
     ['task_status', 'Info'], ['task_stop', 'Stop'],
   ] as const)('%s retains its verb independently of status', (tool, expected) => {
-    expect(glyph(toolPresentation(collab(tool)))).toContain(`data-icon="${expected}"`);
-    expect(glyph(toolPresentation({ ...collab(tool), status: 'interrupted' }))).toContain(`data-icon="${expected}"`);
+    expect(glyph(toolPresentation(dynamic(tool)))).toContain(`data-icon="${expected}"`);
+    expect(glyph(toolPresentation({ ...dynamic(tool), status: 'interrupted' }))).toContain(`data-icon="${expected}"`);
   });
 
-  test('different collaboration verbs produce a mixed group', () => {
-    expect(glyph(toolGroupPresentation([collab('agent_message'), collab('task_status')]))).toContain('data-icon="GenericTool"');
+  test('different task control verbs produce a mixed group', () => {
+    expect(glyph(toolGroupPresentation([dynamic('task_stop'), dynamic('task_status')]))).toContain('data-icon="GenericTool"');
   });
 });

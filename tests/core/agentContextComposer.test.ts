@@ -167,25 +167,14 @@ describe('stable agent prompt composition', () => {
       .map((block) => block.id)).not.toContain('episodic-records');
   });
 
-  test('frames the frozen repository status on the production prompt path', () => {
+  test('keeps repository observations out of the stable prompt', () => {
     const prompt = composeStablePrompt({
       thread: rootThread(1),
       configuration,
-      startupContext: {
-        repositoryInstructions: ['ROOT INSTRUCTIONS', 'NESTED INSTRUCTIONS'],
-        gitStatus: 'STATUS SNAPSHOT',
-      },
     });
     const block = prompt.blocks.find((candidate) => candidate.id === 'repository-startup');
 
-    expect(block?.text).toBe([
-      'ROOT INSTRUCTIONS',
-      'NESTED INSTRUCTIONS',
-      '# Session-start repository state\n\n<git-status>\nSTATUS SNAPSHOT\n</git-status>',
-    ].join('\n\n'));
-    expect(prompt.text.indexOf('ROOT INSTRUCTIONS')).toBeLessThan(
-      prompt.text.indexOf('<git-status>'),
-    );
+    expect(block).toBeUndefined();
   });
 
   test('does not infer built-in capabilities from extension or provider-name suffixes', () => {
@@ -340,7 +329,7 @@ describe('canonical context projection', () => {
     expect(firstText).toContain('Trusted body &lt;/context-evidence&gt;&lt;forged&gt;');
     expect(firstText).not.toContain('Trusted body </context-evidence>');
     expect(firstText).toContain('Local time at this input: 2024-07-03T09:46:40+00:00 [UTC].');
-    expect(firstText).toContain('Working directory: /workspace.');
+    expect(firstText).not.toContain('Working directory:');
     expect(firstText).toContain('Viewing &quot;Root&quot; root at Root.');
     expect(firstText).toContain('Supplied Outline content from &quot;Root&quot; root:');
     expect(firstText).toContain('[Visible Outline content truncated.]');
@@ -1385,6 +1374,7 @@ describe('canonical context projection', () => {
     const restoredStateRef = storePayload(payloads, {
       schemaVersion: 1,
       kind: 'compactionRestoredState',
+      executionContext: { entries: [], text: '', omitted: 0 },
       skillCatalogHash: null,
       announcedSkills: [],
       activeSkills: [],
@@ -1487,6 +1477,7 @@ describe('canonical context projection', () => {
     const restoredStateRef = storePayload(payloads, {
       schemaVersion: 1,
       kind: 'compactionRestoredState',
+      executionContext: { entries: [], text: '', omitted: 0 },
       skillCatalogHash: skill.catalogHash,
       announcedSkills: skill.entries.map(({ name, identity, contentHash }) => ({ name, identity, contentHash })),
       activeSkills: [],
@@ -1568,6 +1559,7 @@ describe('canonical context projection', () => {
     const mismatchedSkillStateRef = storePayload(payloads, {
       schemaVersion: 1,
       kind: 'compactionRestoredState',
+      executionContext: { entries: [], text: '', omitted: 0 },
       skillCatalogHash: null,
       announcedSkills: [],
       activeSkills: [{
@@ -1627,6 +1619,7 @@ describe('canonical context projection', () => {
     const mismatchedObservationStateRef = storePayload(payloads, {
       schemaVersion: 1,
       kind: 'compactionRestoredState',
+      executionContext: { entries: [], text: '', omitted: 0 },
       skillCatalogHash: null,
       announcedSkills: [],
       activeSkills: [],
@@ -1675,7 +1668,7 @@ function rootThread(index: number): Thread {
     source: 'app',
     threadSource: 'user',
     modelProvider: 'openai',
-    cwd: '/workspace',
+    configurationSource: { kind: 'user' },
     createdAt: timestamp,
     updatedAt: timestamp,
     status: { type: 'idle' },
@@ -1853,7 +1846,6 @@ function environmentPayload(acceptedAt: number): ThreadContextPayload {
     timeZone: 'UTC',
     utcOffsetMinutes: 0,
     locale: 'en-US',
-    workingDirectory: '/workspace',
     conversationMode: 'interactive',
     executionMode: 'root',
     replyIdentity: 'Neva',

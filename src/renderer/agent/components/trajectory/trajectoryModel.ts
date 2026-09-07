@@ -363,6 +363,9 @@ export function trajectoryRecordContent(
 
 function contextKindLabel(kind: ContextPayloadKind, labels: TrajectoryLabels): string {
   switch (kind) {
+    case 'automationDispatch': return labels.record.context.additionalContext;
+    case 'taskExecutionContext': return labels.record.context.turnEnvironment;
+    case 'executionContextPublication': return labels.record.context.additionalContext;
     case 'turnEnvironment': return labels.record.context.turnEnvironment;
     case 'userView': return labels.record.context.userView;
     case 'additionalContext': return labels.record.context.additionalContext;

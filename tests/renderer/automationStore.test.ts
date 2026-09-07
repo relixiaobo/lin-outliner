@@ -381,7 +381,7 @@ function createInput(): AutomationCreateInput {
     prompt: 'Review the project.',
     schedule: { rrule: 'DTSTART:20260724T090000\nRRULE:FREQ=DAILY', timezone: 'UTC' },
     destination: { kind: 'standalone' },
-    projectBindings: [],
+    contextHints: [],
   };
 }
 
@@ -392,7 +392,7 @@ function automation(id: string, updatedAt: number): Automation {
     prompt: 'Review the project.',
     schedule: { rrule: 'DTSTART:20260724T090000\nRRULE:FREQ=DAILY', timezone: 'UTC' },
     destination: { kind: 'standalone' },
-    projectBindings: [],
+    contextHints: [],
     configuration: {
       modelProvider: null,
       model: null,
@@ -413,13 +413,13 @@ function run(owner: Automation, id: string, scheduledFor: number): AutomationRun
     automationRevision: owner.revision,
     eventSequence: scheduledFor,
     scheduledFor,
-    projectBindingKey: 'no-project',
+    contextHintId: 'no-project',
     snapshot: {
       automationName: owner.name,
       prompt: owner.prompt,
       schedule: owner.schedule,
       destination: owner.destination,
-      projectBinding: null,
+      contextHint: null,
       configuration: owner.configuration,
     },
     state: 'pending',

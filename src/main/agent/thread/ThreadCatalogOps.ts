@@ -47,9 +47,6 @@ export class ThreadCatalogOps {
     private readonly resolveRendererStartDefaults: (
       request: AgentCoreRequestByMethod['thread/start'],
     ) => RendererThreadStartDefaults | Promise<RendererThreadStartDefaults>,
-    private readonly resolveRootWorkspace: ((threadId: ThreadId) => string | Promise<string>) | undefined,
-    private readonly cleanupRootWorkspace: ((threadId: ThreadId, cwd: string) => void | Promise<void>) | undefined,
-    private readonly ownsRootWorkspace: ((threadId: ThreadId, cwd: string) => boolean) | undefined,
     private readonly validateRendererConfiguration: (configuration: ThreadConfigurationSummary) => void | Promise<void>,
     private readonly onRendererConfigurationCommitted:
       ((configuration: ThreadConfigurationSummary) => void | Promise<void>) | undefined,
@@ -59,10 +56,6 @@ export class ThreadCatalogOps {
     private readonly hasUndeliveredWork: (threadId: ThreadId) => boolean,
     private readonly transcripts: ThreadCatalogTranscripts,
     private readonly clearGoal: (threadId: ThreadId) => Promise<void>,
-    private readonly clearAgentStartupContexts: (sessionIds: readonly string[]) => void,
-    private readonly freezeAgentStartupContext: (
-      thread: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
-    ) => Promise<void>,
     private readonly createThreadBusyError: (message: string) => Error,
   ) {}
   pendingNameShutdownHandles(): readonly { abort: () => void; completion: Promise<void> }[] {
@@ -100,7 +93,7 @@ export class ThreadCatalogOps {
             || thread.ephemeral
             || thread.parentThreadId !== null
             || thread.threadSource !== input.threadSource
-            || thread.cwd !== input.cwd
+            || JSON.stringify(thread.configurationSource) !== JSON.stringify(input.configurationSource ?? { kind: 'user' })
             || thread.modelProvider !== input.modelProvider
             || JSON.stringify(existing.configuration) !== JSON.stringify(input.configuration)
           ) {
@@ -115,7 +108,7 @@ export class ThreadCatalogOps {
           source: input.source,
           threadSource: input.threadSource,
           modelProvider: input.modelProvider,
-          cwd: input.cwd,
+          configurationSource: input.configurationSource,
         }, {
           sessionId: input.id,
           parentThreadId: null,
@@ -246,10 +239,7 @@ export class ThreadCatalogOps {
     }
   async startThread(requestInput: AgentCoreRequestByMethod['thread/start']): Promise<ThreadStartResponse> {
       const rootThreadId = requestInput.id ?? uuidV7(this.now());
-      const managedCwd = requestInput.cwd === undefined
-        ? await this.resolveRootWorkspace?.(rootThreadId)
-        : undefined;
-      const defaults = requestInput.modelProvider !== undefined && (requestInput.cwd !== undefined || managedCwd)
+      const defaults = requestInput.modelProvider !== undefined
         ? null
         : await this.resolveRendererStartDefaults({ ...requestInput, id: rootThreadId });
       const executionSelection = defaults?.executionSelection;
@@ -262,7 +252,6 @@ export class ThreadCatalogOps {
           ?? executionSelection?.modelProvider
           ?? defaults?.modelProvider
           ?? '',
-        cwd: requestInput.cwd ?? managedCwd ?? defaults?.cwd ?? '',
       };
       return this.core.hostRootMutex.run(async () => {
         const configuration = executionSelection
@@ -300,7 +289,6 @@ export class ThreadCatalogOps {
         const now = this.now();
         const name = request.name ?? this.nextForkName(source);
         const forkId = uuidV7(now);
-        const forkCwd = await this.resolveRootWorkspace?.(forkId) ?? source.cwd;
         const thread = await this.createThread({
           id: forkId,
           name,
@@ -308,7 +296,7 @@ export class ThreadCatalogOps {
           source: 'app',
           threadSource: 'user',
           modelProvider: source.modelProvider,
-          cwd: forkCwd,
+          configurationSource: source.configurationSource,
         }, {
           sessionId: uuidV7(now),
           parentThreadId: null,
@@ -643,6 +631,7 @@ export class ThreadCatalogOps {
           await this.core.rollout.delete(descendantId);
           await this.core.payloads.deleteThread(descendantId);
           await this.core.resources.deleteThread(descendantId);
+          await this.resourceOps.deleteThreadScratch(descendantId);
         }
         for (const record of [...subtree.records].reverse()) {
           if (this.core.hiddenEphemeralThreads.has(record.thread.id)) continue;
@@ -658,32 +647,11 @@ export class ThreadCatalogOps {
             this.core.metadata.delete(threadId);
           }
           this.clearThreadCoordinationState(subtree.threadIds);
-          // A session snapshot belongs to its root. Deleting one descendant must not
-          // invalidate startup inputs still used by the surviving parent and
-          // sibling Threads in the same session.
-          this.clearAgentStartupContexts(subtree.records
-            .filter((record) => record.thread.parentThreadId === null)
-            .map((record) => record.thread.sessionId));
         });
         // After coordination-state teardown, so no append the cascade raced can
         // land behind the removal and resurrect a transcript the user deleted.
         for (const descendantId of [...subtree.threadIds].reverse()) {
           await this.transcripts.delete(descendantId);
-        }
-        for (const record of subtree.records) {
-          if (
-            record.thread.parentThreadId === null
-            && this.cleanupRootWorkspace
-            && (this.ownsRootWorkspace?.(record.thread.id, record.thread.cwd) ?? true)
-          ) {
-            try {
-              await this.cleanupRootWorkspace(record.thread.id, record.thread.cwd);
-            } catch (error) {
-              // Metadata deletion already committed. Workspace cleanup is
-              // retryable maintenance and must not report a false failed delete.
-              console.warn(`[agent] Managed workspace cleanup deferred for ${record.thread.id}`, error);
-            }
-          }
         }
         await this.transcripts.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));
       } finally {
@@ -785,7 +753,7 @@ export class ThreadCatalogOps {
         source: request.source,
         threadSource: request.threadSource,
         modelProvider: request.modelProvider,
-        cwd: request.cwd,
+        configurationSource: request.configurationSource ?? { kind: 'user' },
         createdAt: now,
         updatedAt: now,
         status: { type: 'idle' },
@@ -812,9 +780,6 @@ export class ThreadCatalogOps {
         });
       } else {
         this.core.metadata.create(record);
-      }
-      if (thread.parentThreadId === null && !lineage.hidden) {
-        await this.freezeAgentStartupContext(thread);
       }
       await this.core.recordNotification({ type: 'thread/started', threadId: thread.id, thread });
       if (!this.core.hiddenEphemeralThreads.has(thread.id)) {

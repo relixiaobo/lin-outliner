@@ -1,10 +1,13 @@
 import { realpath } from 'node:fs/promises';
+import { automationDirectoryHint } from '../../../core/agent/automation';
+import type { AutomationDispatchContextPayload } from '../../../core/agent/protocol';
+import { pendingExecutionContext, resolveExecutionAddress, validateExecutionContext } from '../tasks/ExecutionContext';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { threadFeatureSource, type AdditionalContext, type Thread } from '../../../core/agent/protocol';
 import type {
   Automation,
   AutomationConfiguration,
-  AutomationProjectBinding,
+  AutomationContextHint,
   AutomationRun,
 } from '../../../core/agent/automation';
 import type { ThreadService } from '../ThreadService';
@@ -53,7 +56,7 @@ export class AutomationDispatcher {
    */
   private get continuity(): AutomationRunContinuityReader {
     return {
-      recentRunsForBinding: (...args) => this.options.store.recentRunsForBinding(...args),
+      recentRunsForContextHint: (...args) => this.options.store.recentRunsForContextHint(...args),
       readTurn: (threadId, turnId) => this.options.threads.readTurnForHost(threadId, turnId),
       transcriptPath: (threadId) => this.options.threads.threadTranscriptPath(threadId),
     };
@@ -92,22 +95,61 @@ export class AutomationDispatcher {
     let featureThreadCreated = false;
     let acceptedTurn = false;
     try {
-      const workspace = await this.options.worktrees.prepare(current);
       let prepared = current;
-      if (workspace.worktree && !current.worktree) {
-        prepared = this.options.store.setWorktree(current.id, workspace.worktree, this.now());
+      const snapshot = prepared.snapshot;
+      let dispatchContext: AutomationDispatchContextPayload;
+      if (prepared.dispatchSnapshotRef) {
+        const stored = await this.options.threads.readFeatureContext(prepared.id, prepared.dispatchSnapshotRef);
+        if (stored?.kind !== 'automationDispatch' || stored.automationRunId !== prepared.id) throw new Error('Prepared Automation dispatch context is unavailable');
+        dispatchContext = stored;
+        for (const captured of [stored.sourceContext, stored.executionContext]) {
+          validateExecutionContext(captured);
+          const address = await resolveExecutionAddress({ defaultCwd: captured.address.cwd });
+          if (address.cwd !== captured.address.cwd || JSON.stringify(address.scopes) !== JSON.stringify(captured.address.scopes)) {
+            throw new Error('Prepared Automation execution identity changed before admission');
+          }
+        }
+        if (prepared.worktree) await this.options.worktrees.prepare(prepared, stored.sourceContext.address.cwd, async () => {
+          throw new Error('Prepared dispatch cannot allocate a new worktree');
+        });
+      } else {
+        const sourceAddress = await resolveExecutionAddress({
+          defaultCwd: prepared.worktree?.sourceCwd ?? this.options.defaultCwd,
+          ...(prepared.worktree || !snapshot.contextHint ? {} : { cwd: automationDirectoryHint(snapshot.contextHint) }),
+        });
+        const sourceContext = pendingExecutionContext(sourceAddress, {
+          capability: 'full-access', isolation: 'unsandboxed', writablePaths: [], mutation: false,
+        });
+        const workspace = await this.options.worktrees.prepare(prepared, sourceAddress.cwd, async (intent) => {
+          prepared = this.options.store.setWorktree(prepared.id, intent, this.now());
+          await this.changed(prepared);
+        });
+        if (workspace.worktree && !prepared.worktree) prepared = this.options.store.setWorktree(prepared.id, workspace.worktree, this.now());
+        const executionContext = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: workspace.cwd }), {
+          capability: 'full-access', mutation: false,
+          isolation: workspace.worktree ? 'macos-write-sandbox' : 'unsandboxed',
+          writablePaths: workspace.worktree ? [workspace.cwd] : [],
+        });
+        const resolved = snapshot.destination.kind === 'existingThread'
+          ? (() => {
+            const context = this.options.threads.persistentThreadExecutionContext(snapshot.destination.threadId);
+            return { modelProvider: context.thread.modelProvider, configuration: context.configuration };
+          })()
+          : await this.options.resolveConfiguration(snapshot.configuration, this.options.defaultCwd);
+        const info = await automationContext(prepared, executionContext.address.cwd, this.continuity);
+        dispatchContext = {
+          schemaVersion: 1, kind: 'automationDispatch', automationRunId: prepared.id,
+          sourceContext, executionContext, ...resolved, info: String(info.automation_info!.value),
+        };
+        const ref = await this.options.threads.writeFeatureContext(prepared.id, dispatchContext);
+        prepared = this.options.store.setDispatchSnapshot(prepared.id, ref, this.now());
         await this.changed(prepared);
       }
-      const snapshot = prepared.snapshot;
       let thread: Thread;
-      let executionCwd: string;
       if (snapshot.destination.kind === 'existingThread') {
         const context = this.options.threads.persistentThreadExecutionContext(snapshot.destination.threadId);
         if (context.thread.threadSource !== 'user') {
           throw new Error('An existing-Thread Automation must target a user root Thread');
-        }
-        if (snapshot.projectBinding && await realpath(context.thread.cwd) !== workspace.cwd) {
-          throw new Error('Automation project does not match the destination Thread workspace');
         }
         assertAutomationConfigurationMatchesThread(
           snapshot.configuration,
@@ -119,21 +161,19 @@ export class AutomationDispatcher {
           context.configuration,
         );
         thread = context.thread;
-        executionCwd = context.thread.cwd;
+        if (JSON.stringify(context.configuration) !== JSON.stringify(dispatchContext.configuration)
+          || context.thread.modelProvider !== dispatchContext.modelProvider) throw new Error('Destination configuration changed after dispatch preparation');
       } else {
-        const cwd = workspace.cwd || this.options.defaultCwd;
-        const resolved = await this.options.resolveConfiguration(snapshot.configuration, cwd);
+        await this.options.validateEffectiveConfiguration(dispatchContext.modelProvider, dispatchContext.configuration);
         thread = await this.options.threads.ensureFeatureRootThread({
           id: requireThreadId(prepared),
           name: snapshot.automationName,
           source: 'agent.automation',
           threadSource: threadFeatureSource('automation'),
-          modelProvider: resolved.modelProvider,
-          cwd,
-          configuration: resolved.configuration,
+          modelProvider: dispatchContext.modelProvider,
+          configuration: dispatchContext.configuration,
         });
         featureThreadCreated = true;
-        executionCwd = cwd;
       }
       if (prepared.threadId !== thread.id) {
         prepared = this.options.store.setThread(prepared.id, thread.id, this.now());
@@ -143,7 +183,7 @@ export class AutomationDispatcher {
         threadId: thread.id,
         input: [{ type: 'text', text: snapshot.prompt }],
         clientUserMessageId: prepared.id,
-        additionalContext: await automationContext(prepared, executionCwd, this.continuity),
+        initialContext: { storageOwner: prepared.id, refs: [prepared.dispatchSnapshotRef!] },
         author: { kind: 'feature', feature: 'automation', ref: prepared.id },
         trigger: { kind: 'feature', feature: 'automation', ref: prepared.id },
       });
@@ -279,10 +319,11 @@ async function automationContext(
         automationRevision: run.automationRevision,
         scheduledFor: new Date(run.scheduledFor).toISOString(),
         destination: run.snapshot.destination.kind,
-        projectBindingKey: run.projectBindingKey,
-        projectCwd: run.snapshot.projectBinding?.cwd ?? null,
+        contextHintId: run.contextHintId,
+        source: run.snapshot.contextHint?.source ?? null,
+        occurrenceKey: run.occurrenceKey,
         cwd,
-        executionMode: run.snapshot.projectBinding?.executionMode ?? null,
+        executionMode: run.snapshot.contextHint?.executionMode ?? null,
         worktree: run.worktree
           ? {
               sourceCwd: run.worktree.sourceCwd,
@@ -335,13 +376,13 @@ function requireThreadId(run: AutomationRun): string {
   return run.threadId;
 }
 
-export function projectBindingForRun(
+export function contextHintForRun(
   automation: Automation,
-  bindingKey: string,
-): AutomationProjectBinding | null {
-  if (automation.projectBindings.length === 0) return null;
-  const binding = automation.projectBindings.find((candidate) => candidate.id === bindingKey);
-  if (!binding) throw new Error(`Automation project binding not found: ${bindingKey}`);
+  contextHintKey: string,
+): AutomationContextHint | null {
+  if (automation.contextHints.length === 0) return null;
+  const binding = automation.contextHints.find((candidate) => candidate.contextHintId === contextHintKey);
+  if (!binding) throw new Error(`Automation context hint not found: ${contextHintKey}`);
   return binding;
 }
 

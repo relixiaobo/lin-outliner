@@ -242,6 +242,7 @@ export class CanonicalContextProjector {
             content.push(part.content);
           }
         }
+        if (item.kind === 'executionContextPublication') flushContextBlocks();
       } else if (item.type === 'userMessage') {
         if (this.options.omitUserItemIds?.has(item.id)) continue;
         flushContextBlocks();
@@ -384,6 +385,10 @@ export class CanonicalContextProjector {
           item.kind,
           contextDegradation('payloadUnavailable', item.kind, item.payloadRef.id),
         )));
+        if (item.kind === 'executionContextPublication') {
+          if (pendingUserContent.length > 0 || pendingContextBlocks.length > 0) flushPendingUser(turn.startedAt);
+          else flushAssistant();
+        }
         continue;
       }
       if (item.type === 'userMessage') {
@@ -517,6 +522,9 @@ export class CanonicalContextProjector {
     }
     for (const degradation of restored.degradations) {
       pushDegradation('compactionRestoredState', degradation);
+    }
+    if (restored.executionContext.text) {
+      content.push(contextBlock('compactionRestoredState', restored.executionContext.text, 'application', 'observation'));
     }
 
     const skillCatalog = await restoreSkillCatalogCheckpoint(
@@ -677,6 +685,15 @@ export class CanonicalContextProjector {
   ): Promise<ProjectedContextPart[]> {
     const payload = await this.readEvidencePayload(item);
     switch (payload.kind) {
+      case 'automationDispatch':
+        return [contextBlock(payload.kind, payload.info, 'application', 'observation')];
+      case 'taskExecutionContext':
+        return [];
+      case 'executionContextPublication':
+        return payload.text ? [briefContextBlock(payload.kind, {
+          authority: 'application',
+          purpose: 'observation', body: payload.text,
+        })] : [];
       case 'turnEnvironment':
       {
         const rendered = environmentBrief(this.previousEnvironment, payload);

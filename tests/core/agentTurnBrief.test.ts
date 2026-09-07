@@ -222,19 +222,16 @@ describe('Agent Turn brief language', () => {
     expect(text).not.toContain('javascript:');
   });
 
-  test('publishes compact local time every admission and working directory only on baseline or change', () => {
+  test('publishes local time without attributing an execution directory to the Turn', () => {
     const first = environment();
     const later = { ...first, acceptedAt: 2, localTime: '11:15:00' };
-    const moved = { ...later, acceptedAt: 3, localTime: '11:16:00', workingDirectory: '/workspace/next' };
-
-    expect(environmentBrief(null, first).body).toBe([
+    expect(environmentBrief(null, first).body).toBe(
       'Local time at this input: 2026-09-01T11:14:11+08:00 [Asia/Shanghai].',
-      'Working directory: /workspace.',
-    ].join('\n'));
+    );
     expect(environmentBrief(first, later).body).toBe(
       'Local time at this input: 2026-09-01T11:15:00+08:00 [Asia/Shanghai].',
     );
-    expect(environmentBrief(later, moved).body).toContain('Working directory: /workspace/next.');
+    expect(environmentBrief(first, later).body).not.toContain('directory');
   });
 
   test('is materially denser than the renderer-shaped baseline for the same facts', () => {
@@ -349,9 +346,9 @@ describe('Agent Turn brief language', () => {
       additionalContext: { characters: 53, estimatedTokens: 14 },
       compaction: { characters: 54, estimatedTokens: 14 },
       degradation: { characters: 100, estimatedTokens: 25 },
-      environment: { characters: 99, estimatedTokens: 25 },
+      environment: { characters: 68, estimatedTokens: 17 },
       historicalOutput: { characters: 170, estimatedTokens: 43 },
-      multiTurn: { characters: 600, estimatedTokens: 150 },
+      multiTurn: { characters: 569, estimatedTokens: 143 },
       referencedResource: { characters: 137, estimatedTokens: 35 },
       revocation: { characters: 40, estimatedTokens: 10 },
       skillCatalog: { characters: 70, estimatedTokens: 18 },
@@ -419,7 +416,7 @@ function environment(): TurnEnvironmentContextPayload {
     timeZone: 'Asia/Shanghai',
     utcOffsetMinutes: 480,
     locale: 'en-US',
-    workingDirectory: '/workspace',
+
     conversationMode: 'interactive',
     executionMode: 'root',
     replyIdentity: null,
