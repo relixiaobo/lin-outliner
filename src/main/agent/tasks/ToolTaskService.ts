@@ -404,7 +404,8 @@ export class ToolTaskService {
   private discoverTaskContext(task: ToolTaskRecord): void {
     const evidence = this.host?.contextEvidence;
     const key = task.executionContext.snapshotRef;
-    if (!evidence || this.closing || this.discoveryRuns.has(key) || this.store.contextSuccessor(task.taskId)) return;
+    if (!evidence || this.closing || !this.host?.ownerExists(task.ownerThreadId)
+      || this.discoveryRuns.has(key) || this.store.contextSuccessor(task.taskId)) return;
     const controller = new AbortController();
     const run = (async () => {
       const admissionPayload = { schemaVersion: 1 as const, kind: 'taskExecutionContext' as const,
