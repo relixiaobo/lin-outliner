@@ -593,6 +593,16 @@ identity publication or private-control transfer, so a fast exit cannot silently
 drain output needed for failure comparison. Checks initially run sequentially.
 Child/delegated tasks keep their own admitted context and capability ceiling;
 an ancestor's active verification Goal can bind a matching check.
+Such a check may execute inside its own live `delegate` launcher and
+`delegate_execution` Host containers. The exception follows immutable inherited
+claim edges validated at Task admission, the matching child Turn, and direct
+Thread ancestry; producer labels alone grant no exception. Nested coordinating
+pairs follow the same rule. Actual child writes, native processes and unrelated
+unfinished work remain fenced. Inspection preserves the check's applicability
+while its containers finish, but reports verification as running and waits for
+their settlement before completing the Goal. Unsuccessful coordinating
+settlement stops verification. Historical claim ancestry remains evidence after
+the Session stops admitting new inherited claims.
 
 `get_goal` revalidates source evidence and returns `verification` with the run
 and revision, attempts used/limit, current check list, required/optional flags,
@@ -631,10 +641,12 @@ Capture runs at baseline admission, before/after each check, and aggregation.
 Known typed writes invalidate overlapping revisions before side effects.
 Unclassified processes in a workflow invalidate it even with another cwd.
 Unfinished workflow processes and overlapping typed mutations fence new
-baselines and completion until their canonical Tool Tasks settle. This fence is
-derived from nonterminal Task records across revisions and coordinator restart,
-including Tasks admitted before the first check. Their settlement also
-invalidates the latest revision, even if they were never bound to a check.
+baselines and completion until their canonical Tool Tasks settle. A check's own
+validated coordinating containers permit check admission as described above.
+This fence is derived from nonterminal Task records across revisions and
+coordinator restart, including Tasks admitted before the first check.
+Independent mutation settlement also invalidates the latest revision, even if
+the Task was never bound to a check.
 Observed writes followed by restoration cannot revive a revision. A check that
 changes included source invalidates itself. Any source/profile change,
 invalidation or repeated settled check starts a fresh bounded attempt and

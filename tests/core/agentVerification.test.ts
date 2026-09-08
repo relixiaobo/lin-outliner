@@ -10,9 +10,11 @@ import { VerificationCoordinator } from '../../src/main/agent/verification/Verif
 import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
 import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
 import { pendingExecutionContext, resolveExecutionAddress } from '../../src/main/agent/tasks/ExecutionContext';
+import type { ToolTaskRecord } from '../../src/main/agent/tasks/toolTaskTypes';
 
 const OWNER = '00000000-0000-7000-8000-000000000001';
 const CHILD = '00000000-0000-7000-8000-000000000002';
+const GRANDCHILD = '00000000-0000-7000-8000-000000000004';
 const TURN = '00000000-0000-7000-8000-000000000003';
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); });
@@ -38,14 +40,21 @@ async function fixture(checks = [A, B], maxAttempts = 4, configure = true) {
   const payloads = new ToolPayloadStore(path.join(root, 'payloads'));
   let tasks: ToolTaskService;
   let verification: VerificationCoordinator;
+  const delegationClaims = new Map<string, string>();
+  const ancestors = (owner: string) => owner === GRANDCHILD ? [CHILD, OWNER] : owner === CHILD ? [OWNER] : [];
   const createVerification = () => new VerificationCoordinator(goals, tasks, {
     write: (owner, payload) => payloads.writeContext(owner, payload),
     read: (owner, ref) => payloads.readContext(owner, ref),
-    ancestors: (owner) => owner === CHILD ? [OWNER] : [],
+    ancestors,
     deleteEvidence: (prefix) => payloads.deleteContextOwnersWithPrefix(prefix),
   });
   const reloadVerification = async () => {
     verification = createVerification();
+    await verification.initialize();
+  };
+  const recoverVerification = async (reconcileTasks: () => Promise<void>) => {
+    verification = createVerification();
+    await reconcileTasks();
     await verification.initialize();
   };
   const restart = async () => {
@@ -53,6 +62,11 @@ async function fixture(checks = [A, B], maxAttempts = 4, configure = true) {
     tasks = new ToolTaskService(taskStore, path.join(root, 'tasks'));
     verification = createVerification();
     tasks.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+      canInheritClaim: (owner, task) => {
+        const launcher = task.producer === 'delegate_execution' && task.ownerThreadId === owner && task.inheritedClaimTaskId
+          ? taskStore.read(task.inheritedClaimTaskId) : task;
+        return Boolean(launcher && delegationClaims.get(owner) === launcher.taskId && ancestors(owner)[0] === launcher.ownerThreadId);
+      },
       startCompletionTurn: async () => false, taskChanged: () => undefined,
       admissionFailed: (owner, error) => verification.admissionFailed(owner, error),
       beforeTask: (task) => verification.beforeTask(task), afterTask: (task) => verification.afterTask(task) });
@@ -83,7 +97,49 @@ async function fixture(checks = [A, B], maxAttempts = 4, configure = true) {
         return { result: undefined, success: true };
       } });
   };
-  return { root, source, goals, payloads, taskStore, run, edit, profile, restart, reloadVerification,
+  const delegate = async (writable: boolean, ownerThreadId = OWNER, sessionId = CHILD, inheritedClaimTaskId?: string) => {
+    const worker = path.join(root, `launcher-${sessionId}`);
+    await mkdir(worker);
+    const readOnly = { capability: 'read-only' as const, mutation: false, isolation: 'unsandboxed' as const, writablePaths: [] };
+    const launcher = await tasks.start({ ownerThreadId, sourceTurnId: TURN, sourceItemId: 'delegate', producer: 'delegate',
+      command: 'while [ ! -f release ]; do sleep 0.02; done', cwd: worker,
+      executionContext: pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: worker }), readOnly),
+      ...(inheritedClaimTaskId ? { inheritedClaimTaskId } : {}), description: 'Waiting for delegated session',
+      timeoutMs: 20_000, env: process.env, backgroundEnabled: true });
+    delegationClaims.set(sessionId, launcher.taskId);
+    const ready = Promise.withResolvers<ToolTaskRecord>();
+    const finished = Promise.withResolvers<void>();
+    const executionContext = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: source }), {
+      ...readOnly, capability: writable ? 'full-access' : 'read-only', mutation: writable,
+    });
+    const operation = tasks.runHostOperation({ ownerThreadId: sessionId, sourceTurnId: TURN,
+      sourceItemId: 'delegate_execution', producer: 'delegate_execution', inheritedClaimTaskId: launcher.taskId,
+      executionContext, onAdmitted: async (task) => { ready.resolve(task); },
+      execute: async (signal) => {
+        await Promise.race([finished.promise, new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))]);
+        return { result: undefined, success: !signal.aborted };
+      } });
+    void operation.catch((error) => ready.reject(error));
+    const execution = await ready.promise;
+    const runCheck = async () => {
+      const task = await tasks.start({ ownerThreadId: sessionId, sourceTurnId: TURN, sourceItemId: 'delegated-check', producer: 'bash',
+        command: A.command, cwd: source, executionContext: pendingExecutionContext(executionContext.address, readOnly),
+        inheritedClaimTaskId: execution.taskId, description: 'Declared delegated check', timeoutMs: 5_000,
+        env: process.env, backgroundEnabled: false });
+      return tasks.waitForTerminal(task.taskId, sessionId, 6_000);
+    };
+    const finish = async () => {
+      finished.resolve();
+      await operation;
+      // A completed Session no longer admits new inherited claims. Historical
+      // verification must still recognize its canonical coordinating containers.
+      delegationClaims.delete(sessionId);
+      await writeFile(path.join(worker, 'release'), 'go');
+      await tasks.waitForTerminal(launcher.taskId, ownerThreadId, 6_000);
+    };
+    return { launcher, execution, runCheck, finish };
+  };
+  return { root, source, goals, payloads, taskStore, run, edit, profile, restart, reloadVerification, recoverVerification, delegate,
     corruptMetadata: () => goalDatabase.prepare('UPDATE goal_verifications SET state_json = ? WHERE thread_id = ?').run('{}', OWNER),
     verification: () => verification, tasks: () => tasks, view: () => verification.inspect(OWNER) };
 }
@@ -179,6 +235,104 @@ describe('source-bound verification using real Tool Tasks', () => {
     await f.run(A.command);
     expect(await f.view()).toMatchObject({ state: 'passed', revision: 0 });
   }, 20_000);
+
+  for (const writable of [false, true]) {
+    test(`declared checks run inside their own live ${writable ? 'writable' : 'read-only'} delegation containers`, async () => {
+      const f = await fixture([A]);
+      const delegated = await f.delegate(writable);
+      try {
+        expect(await delegated.runCheck()).toMatchObject({ state: 'succeeded', outcomeReason: 'exit_zero' });
+        await f.reloadVerification();
+        expect((await f.view())?.checks[0]).toMatchObject({ state: 'passed', applicability: 'current' });
+        expect((await f.view())?.state).toBe('running');
+        await expect(f.verification().completeGoal(OWNER)).rejects.toThrow('All required checks');
+      } finally { await delegated.finish(); }
+      expect(await f.view()).toMatchObject({ state: 'passed', revision: 0 });
+      expect(await f.verification().completeGoal(OWNER)).toBe(true);
+    }, 20_000);
+  }
+
+  test('nested delegation checks retain only their own coordinating claim ancestry', async () => {
+    const f = await fixture([A]);
+    const parent = await f.delegate(false);
+    try {
+      const nested = await f.delegate(false, CHILD, GRANDCHILD, parent.execution.taskId);
+      try {
+        expect((await nested.runCheck())?.state).toBe('succeeded');
+        expect((await f.view())?.checks[0]?.applicability).toBe('current');
+      } finally { await nested.finish(); }
+      expect((await f.view())?.state).toBe('running');
+    } finally { await parent.finish(); }
+    expect((await f.view())?.state).toBe('passed');
+  }, 20_000);
+
+  test('actual child writes remain fenced inside a coordinating delegation', async () => {
+    const f = await fixture([A]);
+    const delegated = await f.delegate(true);
+    try {
+      expect((await delegated.runCheck())?.state).toBe('succeeded');
+      const gate = Promise.withResolvers<void>();
+      const ready = Promise.withResolvers<void>();
+      const write = f.tasks().runHostOperation({ ownerThreadId: CHILD, sourceTurnId: TURN, sourceItemId: 'actual-write',
+        producer: 'file_write', executionContext: delegated.execution.executionContext, inheritedClaimTaskId: delegated.execution.taskId,
+        onAdmitted: async () => { ready.resolve(); }, execute: async () => {
+          await gate.promise;
+          await writeFile(path.join(f.source, 'source.txt'), 'transient');
+          await writeFile(path.join(f.source, 'source.txt'), 'broken');
+          return { result: undefined, success: true };
+        } });
+      try {
+        await ready.promise;
+        expect(await delegated.runCheck()).toMatchObject({ state: 'failed', error: expect.stringContaining('unfinished mutation') });
+        expect((await f.view())?.checks[0]?.applicability).toBe('stale');
+        expect((await f.view())?.attemptsUsed).toBe(1);
+      } finally { gate.resolve(); await write; }
+      expect((await delegated.runCheck())?.state).toBe('succeeded');
+      expect((await f.view())?.revision).toBe(1);
+    } finally { await delegated.finish(); }
+    expect((await f.view())?.state).toBe('passed');
+  }, 20_000);
+
+  test('a delegate producer label without the candidate claim ancestry remains fenced', async () => {
+    const f = await fixture([A]);
+    const own = await f.delegate(false);
+    const worker = path.join(f.root, 'independent');
+    await mkdir(worker);
+    const independent = await f.tasks().start({ ownerThreadId: OWNER, sourceTurnId: TURN, sourceItemId: 'independent', producer: 'delegate',
+      command: 'while [ ! -f release ]; do sleep 0.02; done', cwd: worker,
+      executionContext: pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: worker }), {
+        capability: 'read-only', mutation: false, isolation: 'unsandboxed', writablePaths: [],
+      }), description: 'Independent process', timeoutMs: 10_000, env: process.env, backgroundEnabled: true });
+    try {
+      expect(await own.runCheck()).toMatchObject({ state: 'failed', error: expect.stringContaining('unfinished mutation') });
+      expect((await f.view())?.attemptsUsed).toBe(0);
+      await writeFile(path.join(worker, 'release'), 'go');
+      await f.tasks().waitForTerminal(independent.taskId, OWNER, 6_000);
+      expect((await own.runCheck())?.state).toBe('succeeded');
+    } finally { await writeFile(path.join(worker, 'release'), 'go'); await own.finish(); }
+    expect((await f.view())?.state).toBe('passed');
+  }, 20_000);
+
+  for (const recovery of [false, true]) {
+    test(`interrupted coordinating delegation cannot complete its Goal${recovery ? ' when Tasks reconcile before verification recovery' : ''}`, async () => {
+      const f = await fixture([A]);
+      const delegated = await f.delegate(false);
+      try {
+        expect((await delegated.runCheck())?.state).toBe('succeeded');
+        const interrupt = async () => { await f.tasks().stop(delegated.launcher.taskId, OWNER); };
+        if (recovery) await f.recoverVerification(interrupt);
+        else await interrupt();
+      } finally { await delegated.finish(); }
+      expect((await f.view())?.state).toBe('stopped');
+      await expect(f.verification().completeGoal(OWNER)).rejects.toThrow('All required checks');
+      const stoppedAt = f.goals.readVerification(OWNER)!.stopped!.at;
+      await f.verification().resume(OWNER, { roots: [f.source], maxAttempts: 4 }, {
+        id: 'resume-after-delegation-stop', startedAt: stoppedAt + 1, provenance: { trigger: { kind: 'user' } },
+      });
+      expect((await f.run(A.command)).state).toBe('succeeded');
+      expect(await f.view()).toMatchObject({ state: 'passed', revision: 1, attemptsUsed: 2 });
+    }, 20_000);
+  }
 
   test('repeated equivalent failures stop without spending the full budget', async () => {
     const f = await fixture([B], 5);

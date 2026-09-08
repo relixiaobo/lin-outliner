@@ -204,7 +204,10 @@ export class VerificationCoordinator {
         const attempt = state.attempts.find((attempt) => attempt.checks.some((check) => check.toolTaskId === task.taskId));
         const check = attempt?.checks.find((check) => check.toolTaskId === task.taskId);
         if (!attempt || !check) {
-          if (this.mayMutate(state, task, await this.measuredRoots(state))) {
+          const coordinating = this.coordinatingTasks(state);
+          if (coordinating.has(task.taskId) && task.state !== 'succeeded') {
+            this.goals.stopVerification(owner, `Coordinating delegation ${task.state}: ${task.outcomeReason ?? 'terminal evidence unavailable'}`);
+          } else if (this.mayMutate(state, task, await this.measuredRoots(state), coordinating)) {
             this.invalidate(state, 'A mutation or unclassified process settled; verify a fresh source revision.', task.taskId);
           }
           continue;
@@ -292,6 +295,15 @@ export class VerificationCoordinator {
       }
     } catch (error) { unavailable = message(error); this.goals.stopVerification(state.threadId, unavailable); state = this.current(state.threadId)!; }
     const unfinished = this.unfinishedMutations(state, manifest?.roots.map((root) => root.path) ?? state.configuration.roots);
+    const coordinating = this.coordinatingTasks(state);
+    const failedCoordination = [...coordinating].map((taskId) => this.tasks.store.read(taskId))
+      .find((task) => task && isToolTaskTerminal(task.state) && task.state !== 'succeeded');
+    if (failedCoordination) {
+      unavailable = `Coordinating delegation ${failedCoordination.state}: ${failedCoordination.outcomeReason ?? 'terminal evidence unavailable'}`;
+      this.goals.stopVerification(state.threadId, unavailable);
+      state = this.current(state.threadId)!;
+    }
+    const awaitingDelegation = this.tasks.store.nonterminal().some((task) => coordinating.has(task.taskId));
     if (unfinished.length) state = this.invalidate(state, 'An unfinished mutation or unclassified process fences source verification.', unfinished[0]!.taskId);
     attempt = state.attempts.at(-1);
     const applicability = unavailable ? 'unavailable' : attempt && this.invalidated(state, attempt) ? 'stale' : 'current';
@@ -328,12 +340,14 @@ export class VerificationCoordinator {
     }
     state = this.current(state.threadId) ?? state;
     const required = checks.filter((check) => check.required);
-    const passed = !state.stopped && !unfinished.length && required.length > 0 && required.every((check) => check.state === 'passed' && check.applicability === 'current');
+    const passed = !state.stopped && !unfinished.length && !awaitingDelegation && required.length > 0 && required.every((check) => check.state === 'passed' && check.applicability === 'current');
     return { verificationRunId: state.verificationRunId, revision: attempt?.revision ?? null, attemptsUsed: state.attempts.length, maxAttempts: state.configuration.maxAttempts,
-      state: state.stopped ? 'stopped' : unavailable ? 'unavailable' : passed ? 'passed' : checks.some((check) => check.state === 'running') ? 'running'
+      state: state.stopped ? 'stopped' : unavailable ? 'unavailable' : passed ? 'passed' : awaitingDelegation || checks.some((check) => check.state === 'running') ? 'running'
         : checks.some((check) => check.state === 'failed' || check.state === 'lost' || check.applicability === 'stale') ? 'failed' : 'pending',
       stopReason: state.stopped?.reason ?? unavailable, changedPaths: attempt?.changedPaths.slice(0, 64) ?? [], checks,
-      sourceStateRef: attempt?.baselineRef ?? null, limitations: [...(manifest?.limitations ?? []), ...(attempt && attempt.changedPaths.length > 64 ? ['Changed-path preview is limited to 64 entries; full source evidence remains referenced.'] : [])] };
+      sourceStateRef: attempt?.baselineRef ?? null, limitations: [...(manifest?.limitations ?? []),
+        ...(awaitingDelegation ? ['Checks retain their applicability while their coordinating delegation finishes; Goal completion waits for its settlement.'] : []),
+        ...(attempt && attempt.changedPaths.length > 64 ? ['Changed-path preview is limited to 64 entries; full source evidence remains referenced.'] : [])] };
   }
 
   private current(threadId: string): VerificationState | null {
@@ -361,8 +375,8 @@ export class VerificationCoordinator {
     return attempt ? (await this.manifest(state, attempt.baselineRef).catch(() => null))?.roots.map((root) => root.path)
       ?? state.configuration.roots : state.configuration.roots;
   }
-  private mayMutate(state: VerificationState, task: ToolTaskRecord, roots: readonly string[]): boolean {
-    if (state.attempts.some((attempt) => attempt.checks.some((check) => check.toolTaskId === task.taskId))) return false;
+  private mayMutate(state: VerificationState, task: ToolTaskRecord, roots: readonly string[], coordinating?: ReadonlySet<string>): boolean {
+    if (coordinating?.has(task.taskId) || state.attempts.some((attempt) => attempt.checks.some((check) => check.toolTaskId === task.taskId))) return false;
     const withinWorkflow = task.operationKind === 'process'
       && (task.ownerThreadId === state.threadId || this.host.ancestors(task.ownerThreadId).includes(state.threadId));
     return withinWorkflow || (task.executionContext.policy.mutation && roots.some((root) =>
@@ -371,7 +385,38 @@ export class VerificationCoordinator {
   private unfinishedMutations(state: VerificationState, roots: readonly string[], candidateId?: string): readonly ToolTaskRecord[] {
     // Canonical nonterminal Tasks retain the fence across revisions, coordinator
     // reconstruction and mutations admitted before the first verification check.
-    return this.tasks.store.nonterminal().filter((task) => task.taskId !== candidateId && this.mayMutate(state, task, roots));
+    const coordinating = this.coordinatingTasks(state, candidateId);
+    return this.tasks.store.nonterminal().filter((task) => task.taskId !== candidateId && this.mayMutate(state, task, roots, coordinating));
+  }
+  private coordinatingTasks(state: VerificationState, candidateId?: string): ReadonlySet<string> {
+    const result = new Set<string>();
+    const attempt = state.attempts.at(-1);
+    if (!candidateId && (!attempt || (state.resumptions.at(-1)?.afterRevision ?? -1) >= attempt.revision)) return result;
+    // Admission exempts only the candidate's own containers. Inspection and
+    // settlement preserve the latest checks while those same containers unwind.
+    const checks = candidateId ? [candidateId] : attempt?.checks.map((check) => check.toolTaskId) ?? [];
+    for (const taskId of checks) {
+      let child = this.tasks.store.read(taskId);
+      const visited = new Set([taskId]);
+      while (child?.inheritedClaimTaskId && visited.size < 128) {
+        const execution = this.tasks.store.read(child.inheritedClaimTaskId);
+        if (!execution || execution.producer !== 'delegate_execution' || execution.operationKind !== 'host'
+          || execution.ownerThreadId !== child.ownerThreadId || execution.sourceTurnId !== child.sourceTurnId
+          || !execution.inheritedClaimTaskId || visited.has(execution.taskId)) break;
+        const launcher = this.tasks.store.read(execution.inheritedClaimTaskId);
+        if (!launcher || launcher.producer !== 'delegate' || launcher.operationKind !== 'process'
+          || this.host.ancestors(execution.ownerThreadId)[0] !== launcher.ownerThreadId || visited.has(launcher.taskId)) break;
+        // These immutable claim edges passed ToolTaskService's Host delegation
+        // authorization before persistence. Read historical edges, not a renewed
+        // claim admission: the Session may already have cleared currentTaskId.
+        result.add(execution.taskId);
+        result.add(launcher.taskId);
+        visited.add(execution.taskId);
+        visited.add(launcher.taskId);
+        child = launcher;
+      }
+    }
+    return result;
   }
   private assertMutationsSettled(state: VerificationState, roots: readonly string[], candidateId: string): void {
     if (this.unfinishedMutations(state, roots, candidateId).length) {
