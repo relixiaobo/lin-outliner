@@ -699,6 +699,20 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Recovery and session-record plans integrated for execution (PRs #653 and #654)** -
+  separated recoverable startup, unified file-readable session records, and
+  targeted conversation recovery into three complete implementation contracts.
+  The original recovery aggregate is archived as provenance; the board owns
+  selected Host/runtime collision order and preserves independent verification,
+  Git publication, Settings and process-isolation work. Review corrected the
+  no-new-resource-link rule so publication cannot retain historical originals
+  while actual image/PDF reads retain their own replayable observations.
+  Discovery scope remains an explicit product decision before record
+  implementation. This is documentation integration only; no runtime behavior,
+  storage format or userData changed. Integration typecheck, 20 focused existing
+  startup/history tests, docs/diff checks, and all three product-spec structural
+  checks passed; proposed runtime acceptance remains with the implementation PRs.
+
 - **Workbench context publication and cache contract revised (PR #645)** -
   separates immutable task evidence, scoped effective state, and frozen
   model-facing publications across seven plans and six specs. Late observations

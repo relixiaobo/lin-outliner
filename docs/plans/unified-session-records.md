@@ -12,7 +12,7 @@ No second history ledger, new Work model, separate diagnostic tool, generated fa
 
 ## Design
 
-**Shape:** (a) ONE complete feature in one PR. Source resolution, file publication, long-content access, reference integration, lifecycle handling, and retirement land together. The build order below is internal to that PR.
+**Shape:** (a) ONE complete feature in one PR. Source resolution, file publication, long-content access, reference integration, lifecycle handling, and retirement land together. The build order below is internal to that PR. This file is its complete execution contract; status and selected merge order live in `docs/TASKS.md`.
 
 ### Decision and constraints
 
@@ -148,17 +148,26 @@ Expected source scope:
 
 Build on the Project catalog and lifecycle mechanism merged in PR #651, including its shared Thread metadata database and deletion ownership, and the Host/configuration contracts merged in PR #652. Their affected surface includes `ThreadService`, `ThreadMetadataStore`, `ThreadCatalogOps`, model tools/protocol/codec, capability descriptors, Agent Host composition, and Agent specifications. Avoid unrelated UI/preload changes.
 
-PR #655 claims Verification C's ThreadService, Tool Task, execution-context, and runtime integration; PR #656 claims Settings G's Host/preload and domain contracts. These overlap potential implementation consumers, with no direct conflict in the submitted plan files. Consume their final owner contracts and refresh exact overlaps at implementation claim time.
-
 ### Cross-plan ownership and order
 
-Use the selected implementation order **#653-A -> this feature -> #653-B**. A -> B is a real dependency in the startup recovery design; the other ordering follows A7 to settle shared mechanisms before their consumers, rather than establishing a universal technical prerequisite.
+Consume [startup fault isolation](startup-fault-isolation.md) first under the selected A7 order. It owns recoverable startup, capability availability, issue/action identity, and owner retry/producer fencing. Publication failure must use those owner boundaries without disabling healthy document work or creating another startup coordinator.
 
-- #653-A owns recoverable startup and scoped availability, using the final Host/configuration contracts. It preserves healthy Outline work while fencing actual Agent entry routes and producers when their owners are unavailable.
-- This feature owns shared exact-source resolution (FR-1), durable recovered-history provenance (BR-4), and record publication invalidation/cleanup (BR-5), integrated with existing Thread lifecycle owners.
-- #653-B owns verified, targeted conversation rebuild/removal. It consumes those same source, provenance, and publication lifecycle mechanisms while preserving the only surviving projection and unrelated resources. It adds no separate interpretation of history sources or independent publication cleanup coordinator.
+This feature owns shared exact-source resolution (FR-1), durable recovered-history provenance (BR-4), and record publication invalidation/cleanup (BR-5), integrated with existing Thread lifecycle owners. [Targeted conversation recovery](targeted-thread-recovery.md) follows and consumes these final mechanisms for verified rebuild/removal, preserving the only surviving projection and unrelated resources. It adds no independent source interpretation or publication cleanup coordinator. Its startup dependency is a capability prerequisite; the selected order around this record refactor follows A7.
 
-Record this ownership and order in both plans and the main-owned board before implementation claims. Verification C, Git publication D, and execution-isolation E can proceed under their own dependencies and collision checks; they do not wait for the entire sequence. CON-3 governs their relationship to readable history, and existing hidden delegated-session reference rules remain intact. Refresh exact file overlaps before coding. Do not edit the main-owned board, changelog, spec index, or infrastructure files without required coordination.
+Verification C owns check/attempt evidence under Tool Tasks and execution context. Consume its final ThreadService/runtime contracts in the board's selected collision order, without building a parallel check-result reader or authority. Settings G owns final domain destinations and Host/preload projections; reuse those contracts for reference consumers. Git publication D and execution-isolation E retain their own dependencies. None waits for the entire recovery/records sequence, and CON-3 governs the relationship to readable history.
+
+The board records live claims and merge eligibility. At claim time recheck the actual ThreadService, Tool Task, context/runtime, Host/preload, and renderer overlaps; do not copy a stale open-PR list into this plan. Specs describe current behavior until implementation folds the final contracts into them.
+
+### Execution handoff and acceptance mapping
+
+| Internal build stage | Required result inside this PR | Evidence |
+| --- | --- | --- |
+| Exact sources and recovery provenance | One source resolver serves Trajectory and the file publisher, retaining semantic/source-coordinate distinctions and recovered-history origin. | FR-1, BR-2, BR-4; AC-5, AC-6 |
+| Publication and ownership | Active/completed records, full-content paths and independent resource copies publish with bounded work, generation checks, deletion fencing and retained-source cleanup. | FR-2, FR-3, FR-4, BR-3, BR-5; AC-2, AC-3, AC-6 through AC-8 |
+| Ordinary-file retrieval | Long-line search/continuation and real compaction recovery work through ordinary file tools; current/explicit Thread entry points lead to the same reading tree. | FR-5, FR-6; AC-1 through AC-4, AC-8 |
+| Complete cutover | Retire both model tools only with all replacement flows usable; preserve Composer, Trajectory, Automations, hidden-session references and current execution authorities. | FR-6, CON-1, CON-3; AC-1 through AC-8 |
+
+These stages are build order, not separate PRs. Before coding, the discovery rule in OQ-1 must have an explicit decision. The implementation must exercise a scope matrix covering same/cross Profile, user/Automation root, self, excluded, ephemeral and delegated Threads for index publication and explicit-reference resolution. A capability-disabled caller receives an unavailable read path in every otherwise eligible case.
 
 ## Open questions
 
