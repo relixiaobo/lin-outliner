@@ -1,3 +1,4 @@
+import { clickCheckbox } from './checkboxTestUtils';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -87,9 +88,9 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 8; index += 1) await Promise.resolve();
 }
 
-function switchFor(document: Document, label: string): HTMLButtonElement {
-  const control = document.querySelector<HTMLButtonElement>(`[role="switch"][aria-label="${label}"]`);
-  if (!control) throw new Error(`Missing switch: ${label}`);
+function checkboxFor(document: Document, label: string): HTMLInputElement {
+  const control = document.querySelector<HTMLInputElement>(`[type="checkbox"][aria-label="${label}"]`);
+  if (!control) throw new Error(`Missing checkbox: ${label}`);
   return control;
 }
 
@@ -183,7 +184,7 @@ describe('skill library list', () => {
     });
 
     expect(rendered.document.body.textContent).toContain('/pdf');
-    expect(switchFor(rendered.document, 'Enable pdf').getAttribute('aria-checked')).toBe('false');
+    expect(checkboxFor(rendered.document, 'Enable pdf').checked).toBe(false);
   });
 
   test('does not present a model-only managed skill as a slash command', async () => {
@@ -204,7 +205,7 @@ describe('skill library list', () => {
       disabledSkills: ['pdf'],
     });
 
-    expect(switchFor(rendered.document, 'Enable pdf').getAttribute('aria-checked')).toBe('false');
+    expect(checkboxFor(rendered.document, 'Enable pdf').checked).toBe(false);
   });
 
   test('a non-managed skill in disabledSkills reads as off', async () => {
@@ -214,7 +215,7 @@ describe('skill library list', () => {
       disabledSkills: ['user-notes'],
     });
 
-    expect(switchFor(rendered.document, 'Toggle user-notes').getAttribute('aria-checked')).toBe('false');
+    expect(checkboxFor(rendered.document, 'Toggle user-notes').checked).toBe(false);
   });
 
   test('the empty state is one list-level state, not one per source', async () => {
@@ -236,10 +237,10 @@ describe('skill library list', () => {
       onToggleSkill: (name) => { drafted.push(name); },
     });
 
-    const control = switchFor(rendered.document, 'Enable pdf');
-    expect(control.getAttribute('aria-checked')).toBe('false');
+    const control = checkboxFor(rendered.document, 'Enable pdf');
+    expect(control.checked).toBe(false);
     await act(async () => {
-      control.click();
+      clickCheckbox(control);
       await Promise.resolve();
     });
 
@@ -256,7 +257,7 @@ describe('skill library list', () => {
     });
 
     await act(async () => {
-      switchFor(rendered.document, 'Toggle user-notes').click();
+      clickCheckbox(checkboxFor(rendered.document, 'Toggle user-notes'));
       await Promise.resolve();
     });
 
@@ -339,14 +340,14 @@ describe('skill library list', () => {
     });
 
     // `notes` is off in the draft and must stay off.
-    expect(switchFor(rendered.document, 'Toggle notes').getAttribute('aria-checked')).toBe('false');
+    expect(checkboxFor(rendered.document, 'Toggle notes').checked).toBe(false);
 
     await act(async () => {
-      switchFor(rendered.document, 'Enable pdf').click();
+      clickCheckbox(checkboxFor(rendered.document, 'Enable pdf'));
       await settle();
     });
 
-    expect(switchFor(rendered.document, 'Toggle notes').getAttribute('aria-checked')).toBe('false');
+    expect(checkboxFor(rendered.document, 'Toggle notes').checked).toBe(false);
   });
 
   test('a healthy skill carries no diagnostic line', async () => {

@@ -58,7 +58,7 @@ import {
   WINDOW_SURFACE_QUERY_PARAM,
   type ProviderConfigMode,
   type SettingsOpenTarget,
-  type ConfigurationDestination,
+  type ConfigurationWindowSurface,
   type ConfigurationDomain,
 } from '../../core/settingsWindow';
 import { isThemeMode, type ThemeMode } from '../../core/theme';
@@ -135,7 +135,7 @@ export interface WindowApplicationHost {
   readonly windows: {
     main(): BrowserWindow | null;
     settings(): BrowserWindow | null;
-    manager(destination: ConfigurationDestination): BrowserWindow | null;
+    about(): BrowserWindow | null;
     configuration(): readonly BrowserWindow[];
     providerConfig(): BrowserWindow | null;
     launcher(): BrowserWindow | null;
@@ -169,11 +169,11 @@ export interface WindowApplicationHost {
   closeSettingsFrom(event: IpcMainInvokeEvent): void;
   windowCommand(command: string): void;
   isMainSender(event: IpcMainInvokeEvent): boolean;
-  configurationSender(event: IpcMainInvokeEvent): ConfigurationDestination | 'main' | 'provider-config' | null;
-  isManagerSender(event: IpcMainInvokeEvent, destination: ConfigurationDestination): boolean;
+  configurationSender(event: IpcMainInvokeEvent): ConfigurationWindowSurface | 'main' | 'provider-config' | null;
+  isSettingsSender(event: IpcMainInvokeEvent): boolean;
   isProviderConfigSender(event: IpcMainInvokeEvent): boolean;
   assertMainSender(event: IpcMainInvokeEvent, capability: string): void;
-  assertConfigurationSender(event: IpcMainInvokeEvent, destinations: readonly ConfigurationDestination[], capability: string): void;
+  assertConfigurationSender(event: IpcMainInvokeEvent, destinations: readonly ConfigurationWindowSurface[], capability: string): void;
   notifyConfigurationChanged(domain: ConfigurationDomain): void;
   effectiveLocale(): Locale;
   theme(): ThemeMode;
@@ -192,7 +192,7 @@ export interface WindowApplicationHost {
 export function createWindowApplicationHost(options: WindowApplicationHostOptions): WindowApplicationHost {
   let mainWindow: BrowserWindow | null = null;
   let settingsWindow: BrowserWindow | null = null;
-  const managerWindows = new Map<ConfigurationDestination, BrowserWindow>();
+  let aboutWindow: BrowserWindow | null = null;
   let providerConfigWindow: BrowserWindow | null = null;
   let cachedLocale: Locale | null = null;
   let launcherHotkeyAccelerators: readonly string[] = Object.freeze([]);
@@ -572,39 +572,42 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     if (event.sender === liveWindow(mainWindow)?.webContents) return 'main';
     if (event.sender === liveWindow(settingsWindow)?.webContents) return 'settings';
     if (event.sender === liveWindow(providerConfigWindow)?.webContents) return 'provider-config';
-    for (const [destination, target] of managerWindows) {
-      if (event.sender === liveWindow(target)?.webContents) return destination;
-    }
+    if (event.sender === liveWindow(aboutWindow)?.webContents) return 'about';
     return null;
   };
 
   const openSettings = (raw: unknown = {}): void => {
     const openTarget = sanitizeSettingsOpenTarget(raw);
     const destination = openTarget.destination ?? 'settings';
-    const existing = liveWindow(destination === 'settings' ? settingsWindow : managerWindows.get(destination));
+    const existing = liveWindow(destination === 'about' ? aboutWindow : settingsWindow);
     if (existing) {
+      const child = destination !== 'about' ? liveWindow(providerConfigWindow) : null;
+      if (child) { child.show(); child.focus(); return; }
       if (existing.isMinimized()) existing.restore();
       existing.show();
       existing.focus();
-      if (openTarget.settingId) {
+      if (openTarget.destination || openTarget.settingId) {
         existing.webContents.send(LIN_SETTINGS_NAVIGATE_CHANNEL, openTarget);
       }
       return;
     }
     const icon = nativeImage.createFromPath(options.appIconPath);
+    const material = destination === 'about' ? null : windowMaterialKind(process.platform);
     const target = new BrowserWindow({
-      title: destination === 'settings'
+      title: destination !== 'about'
         ? getMessages(effectiveLocale()).window.settingsTitle({ app: APP_NAME })
         : getMessages(effectiveLocale()).settings.discovery.destinations[destination],
-      width: 760,
-      height: 620,
-      minWidth: 560,
+      width: destination === 'about' ? 620 : 860,
+      height: 660,
+      minWidth: destination === 'about' ? 560 : 680,
       minHeight: 480,
       minimizable: false,
       maximizable: false,
       fullscreenable: false,
       show: false,
-      backgroundColor: prePaintBackgroundColor(),
+      backgroundColor: material ? '#00000000' : prePaintBackgroundColor(),
+      ...(material === 'vibrancy' ? { vibrancy: 'under-window' as const } : {}),
+      ...(material === 'mica' ? { backgroundMaterial: 'mica' as const } : {}),
       ...(icon.isEmpty() ? {} : { icon }),
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
@@ -615,8 +618,8 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         sandbox: true,
       },
     });
-    if (destination === 'settings') settingsWindow = target;
-    else managerWindows.set(destination, target);
+    if (destination === 'about') aboutWindow = target;
+    else settingsWindow = target;
     registerRendererCapabilities(target.webContents, ['appCommands']);
     options.hardenWebContents(target.webContents);
     attachNativeContextMenu(target.webContents);
@@ -631,7 +634,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     loadRendererSurface(target, settingsWindowQuery(openTarget));
     target.on('closed', () => {
       if (settingsWindow === target) settingsWindow = null;
-      if (managerWindows.get(destination) === target) managerWindows.delete(destination);
+      if (aboutWindow === target) aboutWindow = null;
     });
   };
 
@@ -703,7 +706,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       title: getMessages(effectiveLocale()).window.providerConfigTitle,
       width: 460,
       height: 384,
-      parent: liveWindow(managerWindows.get('models')),
+      parent: liveWindow(settingsWindow),
       query: {
         [WINDOW_SURFACE_QUERY_PARAM]: 'provider-config',
         [PROVIDER_CONFIG_PROVIDER_PARAM]: providerId,
@@ -820,7 +823,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     defaultAutomaticChecksEnabled: app.isPackaged,
     store: appUpdateStore,
     openExternal: (url) => shell.openExternal(url),
-    onChanged: (view) => liveWindow(managerWindows.get('about'))?.webContents.send(LIN_APP_UPDATE_CHANGED_CHANNEL, view),
+    onChanged: (view) => liveWindow(aboutWindow)?.webContents.send(LIN_APP_UPDATE_CHANGED_CHANNEL, view),
     onError: (error, operation) => options.reportError({
       domain: 'app-update',
       severity: 'warn',
@@ -939,12 +942,12 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     windows: {
       main: () => liveWindow(mainWindow) ?? null,
       settings: () => liveWindow(settingsWindow) ?? null,
-      manager: (destination) => liveWindow(managerWindows.get(destination)) ?? null,
-      configuration: () => [settingsWindow, ...managerWindows.values()].filter(isLiveWindow),
+      about: () => liveWindow(aboutWindow) ?? null,
+      configuration: () => [settingsWindow, aboutWindow].filter(isLiveWindow),
       providerConfig: () => liveWindow(providerConfigWindow) ?? null,
       launcher: () => liveWindow(getLauncherWindow()) ?? null,
       focusedOrMain: () => BrowserWindow.getFocusedWindow() ?? liveWindow(mainWindow) ?? null,
-      settingsOrMain: () => liveWindow(managerWindows.get('diagnostics')) ?? liveWindow(mainWindow) ?? null,
+      settingsOrMain: () => liveWindow(settingsWindow) ?? liveWindow(mainWindow) ?? null,
     },
     updates: {
       view: () => appUpdateService.view(),
@@ -982,7 +985,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     openProviderConfig,
     closeProviderConfig: () => liveWindow(providerConfigWindow)?.close(),
     closeSettingsFrom: (event) => {
-      const target = [settingsWindow, ...managerWindows.values()].find((window) => isLiveWindow(window) && event.sender === window.webContents);
+      const target = [settingsWindow, aboutWindow].find((window) => isLiveWindow(window) && event.sender === window.webContents);
       if (target && event.senderFrame === event.sender.mainFrame) target.close();
     },
     windowCommand: (command) => {
@@ -994,7 +997,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     },
     isMainSender: (event) => event.sender === liveWindow(mainWindow)?.webContents,
     configurationSender,
-    isManagerSender: (event, destination) => configurationSender(event) === destination,
+    isSettingsSender: (event) => configurationSender(event) === 'settings',
     isProviderConfigSender: (event) => event.sender === liveWindow(providerConfigWindow)?.webContents,
     assertMainSender: (event, capability) => {
       if (event.sender !== liveWindow(mainWindow)?.webContents) {
@@ -1009,7 +1012,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     },
     notifyConfigurationChanged: (domain) => {
       // Publication belongs to the Host after a write, never to an arbitrary renderer.
-      for (const target of [mainWindow, settingsWindow, ...managerWindows.values(), providerConfigWindow]) {
+      for (const target of [mainWindow, settingsWindow, aboutWindow, providerConfigWindow]) {
         if (isLiveWindow(target) && !target.webContents.isDestroyed()) target.webContents.send(CONFIGURATION_CHANGED_CHANNEL, domain);
       }
     },
@@ -1034,9 +1037,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       const messages = getMessages(raw);
       liveWindow(settingsWindow)?.setTitle(messages.window.settingsTitle({ app: APP_NAME }));
       liveWindow(providerConfigWindow)?.setTitle(messages.window.providerConfigTitle);
-      for (const [destination, target] of managerWindows) {
-        if (isLiveWindow(target)) target.setTitle(messages.settings.discovery.destinations[destination]);
-      }
+      liveWindow(aboutWindow)?.setTitle(messages.settings.discovery.destinations.about);
     },
     launcherHotkey: () => launcherHotkeyAccelerators[0] ?? null,
     launcherHotkeys: () => launcherHotkeyAccelerators,

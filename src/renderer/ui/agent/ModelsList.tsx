@@ -5,8 +5,7 @@ import { AddIcon, ICON_SIZE } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { SelectControl } from '../primitives/SelectControl';
-import { SwitchControl } from '../primitives/SwitchControl';
-import { SwitchMark } from '../primitives/SwitchMark';
+import { CheckboxControl } from '../primitives/CheckboxControl';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { ProviderAvatar, formatProviderName } from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
@@ -20,10 +19,10 @@ import {
 import { providerStatusSentence, resolveProviderStatus } from './providerStatus';
 
 // A single provider row in the inset grouped list. Configured rows expose an
-// enable switch plus details/removal actions. Unconfigured catalog rows usually
+// enable checkbox plus details/removal actions. Unconfigured catalog rows usually
 // open the config sheet, except detected external providers such as CC Switch:
 // those are already configured by their own app, so the row is a direct enable
-// switch that materializes Tenon's connection.
+// checkbox that materializes Tenon's connection.
 const SettingsProviderRow = memo(function SettingsProviderRow({
   provider,
   menuOpen,
@@ -51,47 +50,16 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
   if (provider.configured) {
     actions.push({ label: t.settings.providers.removeProvider, danger: true, onSelect: () => handlers.onRemove(provider.providerId) });
   }
-  const trailing = provider.configured ? (
-    <div className="settings-provider-row-actions">
-      <SwitchControl
-        checked={provider.enabled}
-        label={t.settings.providers.enabledToggleNamed({ name })}
-        onCheckedChange={(enabled) => handlers.onToggleEnabled(provider.providerId, enabled)}
-      >
-        <SwitchMark checked={provider.enabled} />
-      </SwitchControl>
-      <SettingsRowMenu
-        actions={actions}
-        ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
-        onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
-        open={menuOpen}
-      />
-    </div>
-  ) : quickEnable ? (
-    <SwitchControl
-      checked={provider.enabled}
-      label={t.settings.providers.enabledToggleNamed({ name })}
-      onCheckedChange={(enabled) => handlers.onToggleEnabled(provider.providerId, enabled)}
-    >
-      <SwitchMark checked={provider.enabled} />
-    </SwitchControl>
-  ) : actions.length > 1 ? (
-    <SettingsRowMenu
-      actions={actions}
-      ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
-      onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
-      open={menuOpen}
-    />
-  ) : (
-    <Button
-      aria-label={t.settings.providers.configureNamed({ name })}
-      className="settings-provider-configure"
-      onClick={() => handlers.onConfigure(provider.providerId)}
-      size="sm"
-      variant="secondary"
-    >
-      {t.settings.providers.configure}
-    </Button>
+  const enabledControl = provider.configured || quickEnable ? <CheckboxControl
+    className="settings-row-checkbox" checked={provider.enabled}
+    aria-label={t.settings.providers.enabledToggleNamed({ name })}
+    onCheckedChange={(enabled) => handlers.onToggleEnabled(provider.providerId, enabled)}>{null}</CheckboxControl> : null;
+  const trailing = actions.length > 1 ? (
+    <SettingsRowMenu actions={actions} ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
+      onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)} open={menuOpen} />
+  ) : quickEnable ? null : (
+    <Button aria-label={t.settings.providers.configureNamed({ name })} className="settings-provider-configure"
+      onClick={() => handlers.onConfigure(provider.providerId)} size="sm" variant="secondary">{t.settings.providers.configure}</Button>
   );
   const status = resolveProviderStatus(provider);
   const statusSentence = providerStatusSentence(status, t);
@@ -109,6 +77,7 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
       feedback={toggleError ? <span role="alert">{toggleError}</span> : undefined}
       label={name}
       leading={<ProviderAvatar providerId={provider.providerId} />}
+      leadingControl={enabledControl}
       onSelect={quickEnable
         ? () => handlers.onToggleEnabled(provider.providerId, true)
         : () => handlers.onConfigure(provider.providerId)}
@@ -273,7 +242,7 @@ export function ModelsList({
           the pane. Custom providers are added from the last row of the
           add-provider list (no separate floating add control). */}
       <div className="settings-provider-groups">
-        <InsetGroup ariaLabel={t.settings.providers.defaultModelLabel} label={t.settings.providers.defaultModelLabel}>
+        <InsetGroup ariaLabel={t.settings.providers.defaultModelsGroup} label={t.settings.providers.defaultModelsGroup}>
           <InsetRow
             label={t.settings.providers.defaultModelLabel}
             sublabel={languageModelMenu.defaultUnavailable
@@ -304,11 +273,6 @@ export function ModelsList({
             )}
             wrap
           />
-        </InsetGroup>
-        <InsetGroup
-          ariaLabel={t.settings.providers.imageGenerationAriaLabel}
-          label={t.settings.providers.imageGenerationGroup}
-        >
           <InsetRow
             label={t.settings.providers.defaultImageModelLabel}
             sublabel={imageModelMenu.defaultUnavailable

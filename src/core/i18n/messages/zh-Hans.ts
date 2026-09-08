@@ -81,6 +81,14 @@ export const zhHans: PartialMessages = {
   },
   settings: {
     discovery: {
+      navigation: "设置分类",
+      searchResults: "搜索结果",
+      appearanceGroup: "外观",
+      updatesGroup: "软件更新",
+      requestOptions: "请求选项",
+      sourceOptions: "配置文件",
+      customizedOptions: "高级偏好设置",
+
       openSource: '打开文件…',
   "search": "搜索设置",
   "clearSearch": "清除搜索",
@@ -110,7 +118,7 @@ export const zhHans: PartialMessages = {
   "short": "短期",
   "long": "长期",
   "destinations": {
-    "settings": "设置",
+    "settings": "通用",
     "models": "模型",
     "agents": "Agent",
     "skills": "技能",
@@ -119,7 +127,7 @@ export const zhHans: PartialMessages = {
     "data": "数据",
     "shortcuts": "键盘快捷键",
     "about": "关于 Tenon",
-    "diagnostics": "诊断"
+    "diagnostics": "高级"
   },
   "descriptions": {
     "models": "连接模型服务并选择默认模型。",
@@ -200,6 +208,7 @@ export const zhHans: PartialMessages = {
   }
 },
     providers: {
+      defaultModelsGroup: '默认模型',
       connectedGroup: '已配置',
       connectedAriaLabel: '已配置的提供方',
       availableGroup: '添加提供方',
@@ -207,12 +216,12 @@ export const zhHans: PartialMessages = {
       imageGenerationGroup: '图片生成',
       imageGenerationAriaLabel: '图片生成设置',
       defaultModelLabel: '默认文本模型',
-      defaultModelSublabel: '用于未明确指定模型的新 Thread。',
+      defaultModelSublabel: '用于未选择模型的新对话。',
       defaultModelUnavailable: '已保存的默认模型不可用；新 Thread 不会使用它。',
       defaultModelSavedNotice: '已保存默认模型',
       modelAuto: '自动',
-      defaultImageModelLabel: '默认模型',
-      defaultImageModelSublabel: '当 generate_image 没有指定模型时使用。',
+      defaultImageModelLabel: '默认图片模型',
+      defaultImageModelSublabel: '用于未选择模型的图片生成请求。',
       defaultImageModelUnavailable: '已保存的默认模型不可用；generate_image 会使用自动选择。',
       imageModelAuto: '自动',
       imageModelUnavailableOption: ({ model }) => `${model}（不可用）`,
@@ -679,9 +688,13 @@ export const zhHans: PartialMessages = {
       diagnosticsExportedNotice: '已导出诊断。',
     },
     shortcuts: {
+      options: '快捷键选项',
+      actions: ({ name }: { name: string }) => `${name}操作`,
+      editHint: '点按快捷键，然后按下新的组合键。按 Esc 取消。',
+
       search: '搜索快捷键',
       openFile: '打开快捷键文件',
-      resetAll: '全部重置',
+      resetAll: '恢复默认设置',
       systemGroup: '系统级',
       applicationGroup: '应用',
       previewGroup: '预览',

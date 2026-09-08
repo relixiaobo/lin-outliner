@@ -119,12 +119,16 @@ hover, focus, or open state, but it does not gain decorative background chrome.
 ### Preference Window
 
 Preference/configuration windows use native macOS window behavior and Tenon's
-neutral controls. Settings is a flat searchable discovery window; independent
-domain managers own collections and maintenance. Its title and trailing search
-stay in the toolbar, with filters and labeled controls in the scrollable body.
-There is no category rail or back stack. Preference windows retain real traffic
-lights, dim minimize/zoom, and disable fullscreen; resizing accommodates larger
-text. Credential forms open as modal native children of the owning Models window.
+neutral controls. Settings uses one native window with category navigation and a
+persistent search field. General leads with common choices; domain panes own
+collections and maintenance, with technical options disclosed in context. A
+category switch preserves its pane state and never opens a new native window.
+The container structure matches the main app: one inset floating left rail,
+a separate toolbar above the right column, and its own opaque content viewport.
+Spacing, corners, chrome material, and elevation reuse the shared rail tokens.
+Preference windows retain real traffic lights, dim minimize/zoom, and disable
+fullscreen; resizing accommodates larger text. Credential forms are modal native
+children of Settings; About keeps its App-menu window.
 
 Rows are text-led, controls trail, and inset lists organize related preferences.
 Direct choices apply immediately; editors preserve invalid input for correction.

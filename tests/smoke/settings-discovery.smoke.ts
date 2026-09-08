@@ -16,12 +16,14 @@ test('Settings edits and resets the real source, tracks external errors, and kee
   const smoke = await launchSmokeApp({ userDataDir: fixture() });
   try {
     const page = await open(smoke, 'settings');
-    await expect(page.getByRole('heading', { name: 'Tenon Settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
     const native = await smoke.app.evaluate(({ BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows().find((window) => window.getTitle() === 'Tenon Settings')!;
       return { minimizable: window.isMinimizable(), maximizable: window.isMaximizable(), fullscreenable: window.isFullScreenable(), resizable: window.isResizable() };
     });
     expect(native).toEqual({ minimizable: false, maximizable: false, fullscreenable: false, resizable: true });
+    await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
+    await page.getByText('Advanced Preferences', { exact: true }).click();
     await page.getByRole('radio', { name: 'Modified', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Reset Appearance', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'Reset Appearance', exact: true }).click();
@@ -54,12 +56,13 @@ test('Settings edits and resets the real source, tracks external errors, and kee
     await expect(page.getByRole('alert')).toContainText('last accepted values');
     writeFileSync(path, '{"appearance":{"language":"en","theme":"system"}}');
     await search.fill('');
+    await page.getByRole('tab', { name: 'General', exact: true }).click();
     await expect(page.getByRole('alert')).toHaveCount(0);
     const cdp = await page.context().newCDPSession(page);
     for (const locale of ['en', 'zh-Hans'] as const) {
       if (locale === 'zh-Hans') await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption(locale);
       await expect(page.getByRole('searchbox')).toHaveAttribute('aria-label', locale === 'en' ? 'Search Settings' : '搜索设置');
-      for (const [scheme, width, scale] of [['light', 760, '100%'], ['dark', 760, '100%'], ['light', 560, '200%'], ['dark', 900, '200%']] as const) {
+      for (const [scheme, width, scale] of [['light', 760, '100%'], ['dark', 760, '100%'], ['light', 680, '200%'], ['dark', 900, '200%']] as const) {
         await cdp.send('Emulation.setEmulatedMedia', { features: [
           { name: 'prefers-color-scheme', value: scheme }, { name: 'prefers-reduced-motion', value: 'reduce' },
           { name: 'prefers-contrast', value: 'more' }, { name: 'prefers-reduced-transparency', value: 'reduce' },
@@ -67,11 +70,14 @@ test('Settings edits and resets the real source, tracks external errors, and kee
         await smoke.app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().includes('destination=settings'))!.setSize(width, 760), width);
         await page.evaluate((scale) => {
           document.documentElement.style.setProperty('--font-scale', scale);
-          document.querySelector('.configuration-content')!.scrollTop = 0;
+          document.querySelector('#settings-pane-settings')!.scrollTop = 0;
         }, scale);
-        expect(await page.evaluate(() => [...document.querySelectorAll('.configuration-content, .preference-row, .configuration-toolbar')]
+        expect(await page.evaluate(() => [...document.querySelectorAll('#settings-pane-settings, #settings-pane-settings .preference-row, .configuration-toolbar, .settings-sidebar')]
           .every((element) => element.scrollWidth <= element.clientWidth))).toBe(true);
         expect(await page.evaluate(() => matchMedia('(prefers-reduced-transparency: reduce)').matches)).toBe(true);
+        // Theme changes must repaint the new chrome as well as the content.
+        await expect(page.getByRole('tab').nth(1)).toHaveCSS('color', scheme === 'dark' ? 'rgba(255, 255, 255, 0.72)' : 'rgba(0, 0, 0, 0.72)');
+        await expect(page.locator('.configuration-search')).toHaveCSS('color', scheme === 'dark' ? 'rgba(255, 255, 255, 0.72)' : 'rgba(0, 0, 0, 0.72)');
         await page.screenshot({ path: testInfo.outputPath(`settings-${locale}-${scheme}-${width}-${scale}.png`) });
       }
       const tree = await cdp.send('Accessibility.getFullAXTree');
@@ -82,20 +88,22 @@ test('Settings edits and resets the real source, tracks external errors, and kee
   } finally { await closeSmokeApp(smoke); }
 });
 
-test('managers are independent singletons with exact operation admission and an owned credential sheet', async ({}) => {
+test('all Settings destinations reuse one native window with bounded admission and an owned credential sheet', async ({}, testInfo) => {
   const smoke = await launchSmokeApp({ userDataDir: fixture() });
   try {
     const settings = await open(smoke, 'settings');
     const models = await open(smoke, 'models');
     await expect(models.getByRole('list', { name: 'Providers to add' })).toBeVisible();
-    await open(smoke, 'models');
+    expect(models).toBe(settings);
+    expect(await open(smoke, 'models')).toBe(settings);
     expect(smoke.app.windows().filter((page) => new URL(page.url()).searchParams.get('destination') === 'models')).toHaveLength(1);
     const admission = await models.evaluate(async () => {
-      const commands = ['memory_manage', 'agent_get_skill_settings', 'agent_set_provider_api_key'];
+      const commands = ['delete_node', 'agent_future_command', 'agent_set_provider_api_key'];
       return Promise.all(commands.map((command) => window.lin!.invoke(command, {}).then(() => 'allowed', () => 'denied')));
     });
     expect(admission).toEqual(['denied', 'denied', 'denied']);
-    expect(await settings.evaluate(() => window.lin!.invoke('agent_get_provider_settings', {}).then(() => 'allowed', () => 'denied'))).toBe('denied');
+    expect(await settings.evaluate(() => window.lin!.invoke('agent_get_provider_settings', {}).then(() => 'allowed', () => 'denied'))).toBe('allowed');
+    await models.getByRole('searchbox').focus();
     await models.evaluate(() => window.lin!.openProviderConfig({ providerId: 'openai', mode: 'configure' }));
     await expect.poll(() => smoke.app.windows().some((page) => page.url().includes('surface=provider-config'))).toBe(true);
     const ownership = await smoke.app.evaluate(({ BrowserWindow }) => {
@@ -103,16 +111,37 @@ test('managers are independent singletons with exact operation admission and an 
       return { modal: child.isModal(), parent: child.getParentWindow()?.webContents.getURL() };
     });
     expect(ownership.modal).toBe(true);
+    expect(ownership.parent).toContain('surface=settings');
     expect(ownership.parent).toContain('destination=models');
+    await smoke.window.evaluate(() => window.lin!.openSettings({ destination: 'shortcuts' }));
+    expect(new URL(settings.url()).searchParams.get('destination')).toBe('models');
     const child = smoke.app.windows().find((page) => page.url().includes('surface=provider-config'))!;
     const closed = child.waitForEvent('close');
-    await child.evaluate(() => { void window.lin!.closeProviderConfig(); });
+    await child.getByRole('button', { name: 'Cancel', exact: true }).click();
     await closed;
+    await expect(models.getByRole('searchbox')).toBeFocused();
+    const agents = await open(smoke, 'agents');
+    await agents.getByRole('list', { name: 'Built-in agents' }).getByRole('button').first().click();
+    const dialog = agents.getByRole('dialog');
+    await dialog.getByRole('textbox', { name: 'Instructions' }).fill('Preserve this draft.');
+    await smoke.window.evaluate(() => window.lin!.openSettings({ destination: 'shortcuts' }));
+    await expect(dialog.getByRole('textbox', { name: 'Instructions' })).toHaveValue('Preserve this draft.');
+    expect(new URL(agents.url()).searchParams.get('destination')).toBe('agents');
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
     for (const destination of ['agents', 'skills', 'memory', 'access', 'data', 'shortcuts', 'about', 'diagnostics'] as const) {
       const page = await open(smoke, destination);
-      await expect(page.locator('.configuration-content')).not.toBeEmpty();
-      await expect(page.locator('.settings-rail')).toHaveCount(0);
+      if (destination !== 'about') expect(page).toBe(settings);
+      await expect(page.locator('.configuration-content:visible')).not.toBeEmpty();
+      expect(smoke.app.windows().filter((window) => new URL(window.url()).searchParams.get('surface') === 'settings')).toHaveLength(1);
       await expect(page.getByRole('button', { name: 'Back', exact: true })).toHaveCount(0);
+      if (destination === 'shortcuts') {
+        await expect(page.getByRole('checkbox', { name: 'Enable Go to Today' })).toBeVisible();
+        await expect(page.getByRole('switch')).toHaveCount(0);
+        for (const colorScheme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme });
+          await page.screenshot({ path: testInfo.outputPath(`shortcuts-${colorScheme}.png`) });
+        }
+      }
     }
   } finally { await closeSmokeApp(smoke); }
 });

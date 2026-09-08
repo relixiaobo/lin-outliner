@@ -10,6 +10,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
+import { CheckboxControl } from '../primitives/CheckboxControl';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { buildModelChoices, flattenModelChoices, modelChoiceAvailable } from './modelChoices';
 
@@ -140,18 +141,10 @@ export function DelegationPreferences({
                   key={runner.id}
                   label={runnerLabel(runner.id, t)}
                   sublabel={status}
-                  trailing={(
-                    <SwitchControl
-                      checked={isEnabled}
-                      disabled={saving || (!runner.ready && runner.id !== 'internal')}
-                      label={`${runnerLabel(runner.id, t)} ${t.settings.agent.delegation.runnerEnabled}`}
-                      onCheckedChange={(checked) => {
-                        void update({ runners: { [runner.id]: { enabled: checked } } });
-                      }}
-                    >
-                      <SwitchMark checked={isEnabled} />
-                    </SwitchControl>
-                  )}
+                  leadingControl={<CheckboxControl className="settings-row-checkbox" checked={isEnabled}
+                    disabled={saving || (!runner.ready && runner.id !== 'internal')}
+                    aria-label={`${runnerLabel(runner.id, t)} ${t.settings.agent.delegation.runnerEnabled}`}
+                    onCheckedChange={(checked) => { void update({ runners: { [runner.id]: { enabled: checked } } }); }}>{null}</CheckboxControl>}
                 />
               );
             })}
@@ -247,7 +240,9 @@ export function DelegationPreferences({
       </InsetGroup>
 
       {enabled ? (
-        <InsetGroup ariaLabel={t.settings.agent.delegation.advanced} label={t.settings.agent.delegation.advanced}>
+        <details className="settings-disclosure">
+          <summary>{t.settings.agent.delegation.advanced}</summary>
+        <InsetGroup ariaLabel={t.settings.agent.delegation.advanced}>
           <LimitRow
             disabled={saving}
             label={t.settings.agent.delegation.globalConcurrent}
@@ -287,6 +282,7 @@ export function DelegationPreferences({
             value={delegation?.maxQueuedThread ?? 8}
           />
         </InsetGroup>
+        </details>
       ) : null}
     </>
   );

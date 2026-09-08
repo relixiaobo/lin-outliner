@@ -15,8 +15,7 @@ import { EmptyState } from '../primitives/FeedbackState';
 import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { Dialog } from '../primitives/Dialog';
 import { IconButton } from '../primitives/IconButton';
-import { SwitchControl } from '../primitives/SwitchControl';
-import { SwitchMark } from '../primitives/SwitchMark';
+import { CheckboxControl } from '../primitives/CheckboxControl';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import {
@@ -582,6 +581,8 @@ export function SkillLibrary({
                 <span role="alert">{rowToggleError(row)}</span>
               ) : undefined}
               key={row.key}
+              leadingControl={<CheckboxControl className="settings-row-checkbox" checked={row.enabled}
+                onCheckedChange={row.onToggle} aria-label={row.toggleLabel}>{null}</CheckboxControl>}
               label={(
                 <>
                   {/* The slash form only where typing it does something. A Skill
@@ -619,13 +620,7 @@ export function SkillLibrary({
                       open={openRowMenu === row.key}
                     />
                   ) : null}
-                  <SwitchControl
-                    checked={row.enabled}
-                    onCheckedChange={row.onToggle}
-                    label={row.toggleLabel}
-                  >
-                    <SwitchMark checked={row.enabled} />
-                  </SwitchControl>
+
                 </>
               )}
               wrap

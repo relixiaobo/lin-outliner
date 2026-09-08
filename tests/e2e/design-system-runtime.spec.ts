@@ -508,12 +508,12 @@ const surfaces: SurfaceCase[] = [
   },
   {
     name: 'settings model services',
-    path: '/?surface=manager&destination=models',
+    path: '/?surface=settings&destination=models',
     waitFor: '.configuration-window .inset-row',
   },
   {
     name: 'settings provider row menu',
-    path: '/?surface=manager&destination=models',
+    path: '/?surface=settings&destination=models',
     waitFor: '.configuration-window .inset-row',
     beforeProbe: async (page) => {
       await page.getByRole('button', { name: 'OpenAI actions' }).click();
@@ -524,17 +524,17 @@ const surfaces: SurfaceCase[] = [
   },
   {
     name: 'settings agent',
-    path: '/?surface=manager&destination=access',
+    path: '/?surface=settings&destination=access',
     waitFor: '.configuration-window .inset-row',
   },
   {
     name: 'settings preview',
-    path: '/?surface=manager&destination=data',
+    path: '/?surface=settings&destination=data',
     waitFor: '.configuration-window .inset-row',
   },
   {
     name: 'settings skills',
-    path: '/?surface=manager&destination=skills',
+    path: '/?surface=settings&destination=skills',
     waitFor: '.configuration-window .inset-row',
     beforeProbe: async (page) => {
       await page.locator('.inset-row', { hasText: '/workspace-review' }).waitFor({ state: 'visible' });
@@ -542,7 +542,7 @@ const surfaces: SurfaceCase[] = [
   },
   {
     name: 'settings about',
-    path: '/?surface=manager&destination=about',
+    path: '/?surface=about&destination=about',
     waitFor: '.configuration-window .inset-row',
   },
   {

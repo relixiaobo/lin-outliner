@@ -103,6 +103,14 @@ export const en = {
   // The settings window: rail chrome, categories, and the General pane.
   settings: {
     discovery: {
+      navigation: "Settings categories",
+      searchResults: "Search Results",
+      appearanceGroup: "Appearance",
+      updatesGroup: "Software Updates",
+      requestOptions: "Request Options",
+      sourceOptions: "Configuration Files",
+      customizedOptions: "Advanced Preferences",
+
       openSource: 'Open File…',
   "search": "Search Settings",
   "clearSearch": "Clear Search",
@@ -132,7 +140,7 @@ export const en = {
   "short": "Short",
   "long": "Long",
   "destinations": {
-    "settings": "Settings",
+    "settings": "General",
     "models": "Models",
     "agents": "Agents",
     "skills": "Skills",
@@ -141,7 +149,7 @@ export const en = {
     "data": "Data",
     "shortcuts": "Keyboard Shortcuts",
     "about": "About Tenon",
-    "diagnostics": "Diagnostics"
+    "diagnostics": "Advanced"
   },
   "descriptions": {
     "models": "Connect providers and choose default models.",
@@ -222,6 +230,7 @@ export const en = {
   }
 },
     providers: {
+      defaultModelsGroup: 'Default models',
       connectedGroup: 'Configured',
       connectedAriaLabel: 'Configured providers',
       availableGroup: 'Add providers',
@@ -229,12 +238,12 @@ export const en = {
       imageGenerationGroup: 'Image generation',
       imageGenerationAriaLabel: 'Image generation settings',
       defaultModelLabel: 'Default text model',
-      defaultModelSublabel: 'Used for new Threads without an explicit model.',
+      defaultModelSublabel: 'For new conversations without a model selection.',
       defaultModelUnavailable: 'The saved default is unavailable; new Threads will not use it.',
       defaultModelSavedNotice: 'Default model saved',
       modelAuto: 'Auto',
-      defaultImageModelLabel: 'Default model',
-      defaultImageModelSublabel: 'Used when generate_image does not name a model.',
+      defaultImageModelLabel: 'Default image model',
+      defaultImageModelSublabel: 'For image requests without a model selection.',
       defaultImageModelUnavailable: 'The saved default is unavailable; generate_image will use Auto.',
       imageModelAuto: 'Auto',
       imageModelUnavailableOption: ({ model }: { model: string }) => `${model} (unavailable)`,
@@ -719,9 +728,13 @@ export const en = {
       diagnosticsExportedNotice: 'Diagnostics exported.',
     },
     shortcuts: {
+      options: 'Shortcut options',
+      actions: ({ name }: { name: string }) => `${name} actions`,
+      editHint: 'Click a shortcut, then press a new key combination. Press Esc to cancel.',
+
       search: 'Search shortcuts',
       openFile: 'Open Keybindings File',
-      resetAll: 'Reset All',
+      resetAll: 'Restore Defaults',
       systemGroup: 'System-wide',
       applicationGroup: 'Application',
       previewGroup: 'Preview',

@@ -640,8 +640,8 @@ absent, not disabled, when no managed Skill is installed.
 
 There is no periodic polling, no background download, and no auto-apply.
 
-Availability is shown inside the independent Skills manager. Settings discovery
-does not load Skills or maintain an update-count badge.
+Availability is shown inside the Skills pane. General and settings search do not
+load an unvisited Skills pane or maintain an update-count badge.
 
 A failed check records an `update_failed` diagnostic on that record and does
 nothing else (A12): it never blocks launch, raises an alert, or changes any

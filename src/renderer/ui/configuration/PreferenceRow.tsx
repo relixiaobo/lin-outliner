@@ -82,8 +82,8 @@ export function PreferenceRow({ entry, sourceDigest, disabled, edit }: {
             setDraft(String(entry.value ?? '')); setError(null);
           }
         }} />}
-      <Button size="sm" variant="ghost" className="preference-reset" aria-label={`${copy.resetLabel} ${text.label}`}
-        disabled={unavailable || !entry.modified} onClick={() => void commit('reset')}>{copy.reset}</Button>
+      {entry.modified ? <Button size="sm" variant="ghost" className="preference-reset" aria-label={`${copy.resetLabel} ${text.label}`}
+        disabled={unavailable} onClick={() => void commit('reset')}>{copy.reset}</Button> : null}
     </div>
     {entry.application?.status === 'failed' ? <p className="preference-error" role="status">{copy.applyFailed} {entry.application.error}</p> : null}
     {error ? <p id={errorId} className="preference-error" role="alert">{error}</p> : null}

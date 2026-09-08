@@ -37,15 +37,29 @@ async function install(page: Page) {
   }, { entries: PREFERENCE_DEFINITIONS.map(({ id }) => ({ id, value: preferenceDefault(id), modified: id === 'appearance.theme' })),
     defaults: Object.fromEntries(PREFERENCE_DEFINITIONS.map(({ id }) => [id, preferenceDefault(id)])) });
   await page.goto('/?surface=settings');
-  await expect(page.getByRole('heading', { name: 'Tenon Settings' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
 }
 
-test('discovery loads no catalogs and opens the Shortcut Manager directly', async ({ page }) => {
+test('General loads no catalogs and sidebar navigation stays in the same window', async ({ page }) => {
   await install(page);
   expect(await page.evaluate(() => (window as any).__settingsTest.calls)).toEqual([]);
-  await expect(page.locator('.settings-rail')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Open… Keyboard Shortcuts' }).click();
-  expect(await page.evaluate(() => (window as any).__settingsTest.destinations)).toEqual([{ destination: 'shortcuts' }]);
+  await expect(page.locator('[data-preference-id]:visible')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: 'Open Settings File…' })).toHaveCount(0);
+  await page.getByRole('tab', { name: 'General', exact: true }).focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('tab', { name: 'Models', exact: true })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Models', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__settingsTest.destinations)).toEqual([]);
+  await page.getByText('Request Options', { exact: true }).click();
+  const number = page.getByRole('textbox', { name: 'Request timeout (ms)' });
+  await number.fill('3.5');
+  await number.press('Enter');
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
+  await page.getByRole('tab', { name: 'Models', exact: true }).click();
+  await expect(number).toHaveValue('3.5');
+  await expect(page.locator('.preference-error')).toContainText('whole number');
+  await expect.poll(() => page.evaluate(() => (window as any).__settingsTest.calls.length)).toBe(2);
+  expect(await page.evaluate(() => (window as any).__settingsTest.calls)).toEqual(['agent_get_provider_settings', 'agent_get_provider_settings']);
   await page.keyboard.press('Control+f');
   await expect(page.getByRole('searchbox')).toBeFocused();
 });
@@ -56,13 +70,15 @@ test('search finds aliases and IDs and Modified includes explicit defaults', asy
   await search.fill('backoff');
   await expect(page.getByRole('textbox', { name: 'Maximum retry delay (ms)' })).toBeVisible();
   await search.press('Escape');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
+  await page.getByText('Advanced Preferences', { exact: true }).click();
   await page.getByRole('radio', { name: 'Modified', exact: true }).click();
-  await expect(page.locator('[data-preference-id]')).toHaveCount(1);
+  await expect(page.locator('[data-preference-id]:visible')).toHaveCount(1);
   await expect(page.getByRole('radiogroup', { name: 'Appearance' })).toBeVisible();
   await page.getByRole('button', { name: 'Reset Appearance', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('No matching settings');
   expect(await page.evaluate(() => (window as any).__settingsTest.edits)).toEqual([{ id: 'appearance.theme', operation: 'reset', expectedDigest: 'one' }]);
-  await page.getByRole('button', { name: 'Show All' }).click();
+  await page.getByRole('radio', { name: 'All', exact: true }).click();
   await search.fill('agent.provider.timeoutMs');
   await expect(page.getByRole('textbox', { name: 'Request timeout (ms)' })).toBeVisible();
 });
@@ -91,7 +107,7 @@ test('number edits preserve failed drafts, Escape cancels, and source errors sur
   await search.fill('no match');
   await expect(page.getByRole('alert')).toContainText('last accepted values');
   await expect(page.getByRole('button', { name: 'Open Settings File…' })).toBeVisible();
-  await page.getByRole('radio', { name: 'Modified', exact: true }).click();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Invalid JSONC');
 });
 
@@ -115,7 +131,7 @@ test('a numeric draft refuses an intervening source revision and retries only af
   expect(await page.evaluate(() => (window as any).__settingsTest.edits.at(-1).expectedDigest)).toBe('external');
 });
 
-test('root and shortcut source observations participate in discovery independently', async ({ page }) => {
+test('source errors remain visible across search and pane navigation', async ({ page }) => {
   await install(page);
   await page.evaluate(() => {
     const state = (window as any).__settingsTest;
@@ -124,13 +140,13 @@ test('root and shortcut source observations participate in discovery independent
       { destination: 'agents', path: '/agent/config.json', status: 'rejected', digest: 'root', modified: false, error: 'Invalid Agent source' }];
     state.notify('preferences');
   });
-  await page.getByRole('radio', { name: 'Modified', exact: true }).click();
+  await page.getByRole('searchbox').fill('Keyboard Shortcuts');
   await expect(page.getByRole('button', { name: 'Open… Keyboard Shortcuts' })).toBeVisible();
   await page.getByRole('searchbox').fill('not found');
   await expect(page.getByRole('alert')).toContainText('Invalid Agent source');
 });
 
-for (const [colorScheme, width] of [['light', 560], ['dark', 900]] as const) {
+for (const [colorScheme, width] of [['light', 680], ['dark', 900]] as const) {
   test(`discovery remains usable at 200% text and ${width}px in ${colorScheme}`, async ({ page }, testInfo) => {
     await install(page);
     await page.emulateMedia({ colorScheme, contrast: 'more', reducedMotion: 'reduce' });

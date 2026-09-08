@@ -57,3 +57,88 @@
 .preference-error { flex-basis: 100%; color: var(--status-danger); margin: 0; overflow-wrap: anywhere; }
 .configuration-source-error { padding: var(--space-6); background: var(--fill-1); border-radius: var(--radius-md); overflow-wrap: anywhere; }
 .configuration-empty { padding-block: var(--space-lg); display: flex; align-items: center; gap: var(--space-6); flex-wrap: wrap; }
+
+.settings-window { padding: var(--layout-gap); }
+.settings-layout { display: flex; flex: 1; min-height: 0; gap: var(--layout-gap); }
+.settings-rail {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 calc(var(--space-8) * 12);
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--panel-radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--rail-surface-shadow);
+}
+.settings-rail-chrome { flex: 0 0 calc(var(--chrome-height) - var(--layout-gap)); -webkit-app-region: drag; }
+.settings-sidebar { flex: 1; min-height: 0; overflow-y: auto; padding: var(--rail-pad); }
+.settings-column { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; gap: var(--layout-gap); }
+.settings-window .configuration-toolbar {
+  padding: var(--space-4) var(--space-8);
+  min-height: calc(var(--chrome-height) - var(--layout-gap));
+  border: 0;
+  border-radius: var(--panel-radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--rail-surface-shadow);
+}
+:root[data-window-material] .settings-rail,
+:root[data-window-material] .settings-window .configuration-toolbar {
+  background: var(--material-sidebar);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+}
+.settings-window .configuration-content { padding: var(--space-8); }
+.settings-sidebar [role="tab"] {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-4);
+  margin-block: var(--space-1);
+  color: var(--text-secondary);
+  background: none;
+  font: inherit;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.settings-sidebar [role="tab"]:hover { background: var(--fill-2); color: var(--text-primary); }
+.settings-sidebar [role="tab"][aria-selected="true"] { background: var(--fill-3); color: var(--text-primary); }
+.settings-sidebar .app-icon { flex-shrink: 0; }
+.settings-body { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; border-radius: var(--panel-radius); background: var(--bg-content); }
+.settings-pane { flex: 1; }
+.settings-pane[hidden] { display: none; }
+.settings-feedback:not(:empty) { padding: var(--space-4) var(--space-lg); max-height: 40%; overflow: auto; }
+.settings-pane > section:first-child > .configuration-group-title { margin-top: 0; }
+.settings-pane > .agent-settings-section + .inset-group { margin-top: var(--space-lg); }
+.settings-disclosure { margin-top: var(--space-lg); }
+.settings-disclosure > summary { padding-block: var(--space-4); color: var(--text-secondary); }
+.settings-disclosure > summary:hover { color: var(--text-primary); }
+.settings-disclosure[open] > summary { margin-bottom: var(--space-4); }
+
+
+.settings-source-list { margin-top: var(--space-6); }
+
+/* Settings uses the same compact form rows across domain editors and preferences. */
+.settings-window .inset-card, .settings-window .preference-list { border-radius: var(--radius-md); background: var(--fill-1); }
+.settings-window .inset-group-header, .settings-window .configuration-group-title { font-size: var(--font-ui-sm); font-weight: 500; color: var(--text-secondary); }
+.settings-window .inset-row-label { font-weight: 500; }
+.settings-window .select-popup { min-width: 0; max-width: 100%; }
+.settings-window .select-popup-input {
+  field-sizing: content;
+  max-width: min(18em, 28vw);
+  text-align: end;
+  font-size: var(--font-ui-sm);
+  font-weight: 400;
+  border-radius: var(--radius-xs);
+  background: var(--fill-1);
+  box-shadow: var(--inset-hairline);
+}
+.settings-window .select-popup-input:hover:not(:disabled) { background: var(--fill-2); }
+.inset-row:has(> .inset-row-leading-control) { grid-template-columns: auto minmax(0, 1fr) auto; }
+.inset-row-leading-control { display: flex; align-items: center; padding-inline-start: var(--space-5); }
+.inset-row-leading-control + .inset-row-main { padding-inline-start: var(--space-3); }
+.settings-row-checkbox { display: inline-flex; align-items: center; justify-content: center; position: relative; min-width: var(--control-size-md); min-height: var(--control-size-md); }
+.settings-row-checkbox > input { position: absolute; opacity: 0; width: var(--checkbox-mark-size); height: var(--checkbox-mark-size); margin: 0; }
+.settings-row-checkbox > input:focus-visible + .checkbox-mark { box-shadow: var(--focus-ring-shadow); }

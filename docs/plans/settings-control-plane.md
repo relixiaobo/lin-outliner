@@ -205,31 +205,19 @@ change or explicit retry; a failed remote probe never causes a tight loop.
 
 ### Human Interaction
 
-`Settings...` and `Cmd+,` open a flat searchable surface with common controls,
-a modified-values filter, per-setting Reset, source errors, and Open File.
-Search matches labels, descriptions, and stable IDs. A setting can deep-link to
-its row or its domain editor. Models, Agents, Skills, Memory, Access, and Data
-are discoverable from this entry and directly from their relevant application
-surfaces; discovery does not eagerly load every domain. About and Help keep
-their platform homes. Keyboard Shortcuts opens its dedicated searchable editor.
+`Settings...` and `Cmd+,` open one searchable Settings window with category
+navigation. General holds common preferences; advanced scalar controls live with
+their owners or in the Advanced inspector. Search matches labels, descriptions,
+and stable IDs. Modified/reset and source repair remain available without making
+technical configuration the landing page. Category and application destinations
+select panes in the same native window; unvisited domains do not load eagerly.
+About and Help keep their platform homes; credentials use an owned modal child.
 
-Scalar values use direct controls; connections, root Profiles, Skill
-bindings, and shortcuts use purpose-built editors over the same sources.
-Managers may be views or auxiliary windows. They share no cross-domain draft,
-save transaction, polling loop, failure state, or aggregate Settings DTO.
-
-Main performs typed structural edits using a real syntax tree and an observed
-source digest. Reset removes an override. Preserve comments, ordering,
-whitespace, and unrelated values. Serialize Tenon-originated edits, recheck the
-source before replacement, and return a conflict for stale input. Arbitrary
-external editors do not participate in that serialization: do not promise a
-cross-process transaction or silently overwrite a detected concurrent save.
-
-Malformed source disables structured edits for that source and shows the error,
-Open File, and the preceding effective values. Other sources and unrelated
-operations remain usable. UI edits pass through the same admission/status path
-as manual and Agent edits. A control cannot claim success merely because its
-write completed. Main sends narrow projections; renderers have no file access.
+Scalar values use direct controls; connections, root Profiles, Skill bindings,
+and shortcuts use purpose-built editors over the same sources. Visited panes
+stay mounted to preserve drafts, scroll, and accepted operations. They share no
+cross-domain draft, save transaction, polling loop, failure state, or aggregate
+Settings DTO. Navigation is presentation, not a domain ownership boundary.
 
 ### Effective Status And Agent Workflow
 
@@ -504,7 +492,7 @@ Protected shared interfaces still follow the repository's coordination rule.
 | E2. [Preview translation and data operations](archive/preview-translation-data-operations.md) | Preview-local translation controls and scoped clearing, plus website/session and global translation-cache inspection/clearing | A; preview, session, and cache owners; FR-5 through FR-7 |
 | E3. Application and diagnostic operations | Shared human/Agent version/build/release information, update checking/opening, Help/license destinations, and local diagnostics reveal/export | A; application, Updates, and diagnostics owners; FR-5, FR-6 |
 | F. Configurable shortcuts | Full file/UI/Agent remapping, registry/hint parity, physical recording, safe system registration | A; shortcut and launcher owners; FR-8, FR-9 |
-| G. [Unified settings discovery](settings-discovery.md) | Final flat search/modified/reset UI, direct domain destinations, no nested Settings shell or aggregate loading/state | A-F; coordinated domain-contract refactor, then complete discovery; Settings routing/components/preload and narrow owner events; FR-10, FR-11 |
+| G. [Unified settings discovery](settings-discovery.md) | Single-window categories and search/modified/reset UI, direct pane destinations, no aggregate domain loading/state | A-F; coordinated domain-contract refactor, then complete discovery; Settings routing/components/preload and narrow owner events; FR-10, FR-11 |
 
 G is one complete PR: settle the shared domain contracts before building the
 new visual consumers within the same delivery. The linked design owns G's
@@ -552,13 +540,13 @@ arbitrary URL opener, path writer, or configuration setter.
 Each E feature supplies owner-local observation and operation state. It does not
 extend the aggregate Settings DTO, broad `lin:settings-changed` notifications, or
 shared loading/error state. Its current human entry remains usable; G owns final
-flat discovery and removal of the enclosing category shell. The configuration
+single-window discovery and removal of aggregate Settings lifecycle ownership. The configuration
 Skill gains only routing for operations actually shipped in that feature.
 
 Existing human routes stay usable until their replacement ships. A-F consume
 the current UI where needed through the final source owner; no temporary second
 writer or duplicated desired values is allowed. G supplies the discoverability
-feature and removes the remaining category shell. Complete source ownership and
+feature and removes the remaining category-owned domain lifecycle. Complete source ownership and
 Agent reachability do not wait for G to become usable.
 
 Each schema exposes only groups implemented in its complete delivery unit;
@@ -571,7 +559,7 @@ Retirement is derived from remaining references, not a manual cleanup list.
 Remove migrated fields/readers from `appPreferences`, the `agentSettings`
 mega-store/DTO, managed-Skill enabled state, and update preference persistence as
 their units ship. Contextual Translation replaces the global preferences in E.
-G removes Settings-category routing, aggregate sender admission, broad
+G replaces legacy category/page routing with direct pane destinations, and removes aggregate sender admission, broad
 `lin:settings-changed` broadcasts, polling/badges/feedback coupling, and domain
 components whose names falsely imply Settings ownership. Domain-owned services
 and auxiliary-window primitives remain reusable.
@@ -600,7 +588,7 @@ replacement entity restores them.
 - **FR-8:** Shortcut source, registry, editor, runtime, and hints share semantics.
 - **FR-9:** Fixed grammar and previous effective bindings survive failed edits.
 - **FR-10:** Each ownership change deletes its old writers/readers; final
-  discovery removes the cross-domain Settings shell.
+  discovery removes cross-domain Settings lifecycle ownership.
 - **FR-11:** Searchable human controls edit real sources, preserve user text, show
   failures, and reset by removing overrides.
 - **FR-12:** Human-first model bootstrap and Agent-supplied credentials use the
@@ -652,8 +640,8 @@ replacement entity restores them.
 - **AC-14 (FR-8, FR-9):** Recording/cancel, alternate/disabled bindings, reset,
   failed registration, unchanged owned chords, and restart preserve actual
   effective bindings and matching status.
-- **AC-15 (FR-5, FR-10, FR-11):** Settings search, direct managers, bootstrap,
-  About/Help, and active-preview actions remain reachable after shell retirement.
+- **AC-15 (FR-5, FR-10, FR-11):** Settings search, category panes, bootstrap,
+  About/Help, and active-preview actions remain reachable after ownership retirement.
 - **AC-16 (FR-10):** Each unit's removed fields have no legacy readers/writers;
   final guards find no composite preference DTO, duplicate enabled flag, global
   Translation preference singleton, or category-owned domain lifecycle.

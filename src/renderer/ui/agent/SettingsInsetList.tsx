@@ -58,6 +58,8 @@ interface InsetRowProps {
    *  selectable button, so an interactive control (a switch) belongs in `trailing`
    *  (a sibling), never here. */
   leading?: ReactNode;
+  /** A checkbox beside, never inside, a selectable row button. */
+  leadingControl?: ReactNode;
   label: ReactNode;
   sublabel?: ReactNode;
   /** Trailing slot — a `⋯` menu trigger, a switch, a select, a quiet button, etc.
@@ -114,6 +116,7 @@ interface InsetRowProps {
 // the rows whose props actually changed (the render-isolation perf goal).
 export const InsetRow = memo(function InsetRow({
   leading,
+  leadingControl,
   label,
   sublabel,
   trailing,
@@ -177,6 +180,7 @@ export const InsetRow = memo(function InsetRow({
       className={cx('inset-row', selected && 'is-selected', (disabled || dimmed) && 'is-disabled', empty && 'is-empty', className)}
       role="listitem"
     >
+      {leadingControl ? <div className="inset-row-leading-control">{leadingControl}</div> : null}
       {onSelect ? (
         <ButtonControl
           aria-controls={ariaControls}

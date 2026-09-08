@@ -1,3 +1,4 @@
+import { clickCheckbox } from './checkboxTestUtils';
 import type { DelegationSettingsView } from '../../src/core/delegationSettings';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
@@ -63,14 +64,14 @@ describe('DelegationPreferences', () => {
   test('keeps launcher enablement independent and leaves native CLI model controls disabled', async () => {
     const calls: AgentDelegationSettingsInput[] = [];
     const rendered = await render(settings(true), async (input) => { calls.push(input); });
-    const codexSwitch = rendered.document.querySelector<HTMLButtonElement>('[aria-label="Codex CLI Runner enabled"]');
-    const claudeSwitch = rendered.document.querySelector<HTMLButtonElement>('[aria-label="Claude CLI Runner enabled"]');
+    const codexSwitch = rendered.document.querySelector<HTMLInputElement>('[aria-label="Codex CLI Runner enabled"]');
+    const claudeSwitch = rendered.document.querySelector<HTMLInputElement>('[aria-label="Claude CLI Runner enabled"]');
     expect(codexSwitch).not.toBeNull();
     expect(claudeSwitch).not.toBeNull();
     expect(rendered.document.querySelector<HTMLSelectElement>('[aria-label="Model"]')?.disabled).toBe(false);
 
-    await rendered.click(codexSwitch);
-    await rendered.click(claudeSwitch);
+    await act(async () => clickCheckbox(codexSwitch));
+    await act(async () => clickCheckbox(claudeSwitch));
 
     expect(calls).toEqual([
       { runners: { codex: { enabled: true } } },

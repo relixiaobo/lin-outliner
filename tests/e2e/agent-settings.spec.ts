@@ -1,11 +1,13 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { clipboardText, commandCalls, installElectronMock } from './outlinerMock';
 
-// Domain managers reuse their editors without a Settings navigation shell.
-test.describe('configuration manager windows', () => {
+// Domain editors share one Settings window and keep their own state.
+test.describe('configuration panes', () => {
   test('searches and records shortcuts in the dedicated editor', async ({ page }) => {
     const settings = await openSettings(page, '&destination=shortcuts');
     await expect(settings.getByRole('heading', { name: 'Keyboard Shortcuts' })).toBeVisible();
+    await expect(settings.getByRole('switch')).toHaveCount(0);
+    await expect(settings.locator('.settings-chip, .inset-row-code')).toHaveCount(0);
     await expect(settings.getByRole('list', { name: 'System-wide' })).toBeVisible();
 
     const search = settings.getByRole('searchbox', { name: 'Search shortcuts' });
@@ -15,12 +17,25 @@ test.describe('configuration manager windows', () => {
 
     await search.fill('global.open_page_in_pane');
     await expect(settings.getByText('Open page in new pane', { exact: true })).toBeVisible();
-    await settings.getByRole('button', { name: 'Add an alternate for Open page in new pane' }).click();
+    await settings.getByRole('button', { name: 'Open page in new pane actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Add an alternate for Open page in new pane' }).click();
     await page.keyboard.press('Control+P');
     await expect(settings.getByRole('button', { name: 'Change Control+P' })).toBeVisible();
 
-    await settings.getByRole('switch', { name: 'Enable Open page in new pane' }).click();
+    await settings.getByRole('checkbox', { name: 'Enable Open page in new pane' }).click();
     await expect(settings.getByText('Disabled', { exact: true })).toBeVisible();
+  });
+
+  test('leaving the shortcut recorder releases keys to the current pane', async ({ page }) => {
+    const settings = await openSettings(page, '&destination=shortcuts');
+    await settings.getByRole('button', { name: 'Change CommandOrControl+M', exact: true }).click();
+    await expect(settings.locator('.settings-shortcut-key.is-recording')).toBeFocused();
+    await settings.getByRole('tab', { name: 'General', exact: true }).click();
+    await settings.getByRole('searchbox', { name: 'Search Settings' }).fill('appearance');
+    await expect(settings.getByRole('searchbox', { name: 'Search Settings' })).toHaveValue('appearance');
+    await settings.getByRole('tab', { name: 'Keyboard Shortcuts', exact: true }).click();
+    await expect(settings.locator('.settings-shortcut-key.is-recording')).toHaveCount(0);
+    await expect(settings.getByRole('button', { name: 'Change CommandOrControl+M', exact: true })).toBeVisible();
   });
 
   for (const [colorScheme, width] of [['light', 560], ['dark', 900]] as const) {
@@ -29,7 +44,7 @@ test.describe('configuration manager windows', () => {
       await page.setViewportSize({ width, height: 720 });
       const settings = await openSettings(page, '&destination=shortcuts');
       await expect(settings.getByRole('list', { name: 'Application' })).toBeVisible();
-      expect(await settings.locator('.configuration-content').evaluate(
+      expect(await settings.locator('.configuration-content:visible').evaluate(
         (element) => element.scrollWidth <= element.clientWidth,
       )).toBe(true);
       await settings.screenshot({ path: testInfo.outputPath(`keyboard-shortcuts-${colorScheme}-${width}.png`) });
@@ -78,15 +93,15 @@ test.describe('configuration manager windows', () => {
   test('keeps scrolled content below the fixed toolbar chrome', async ({ page }) => {
     const settings = await openSettings(page);
     const toolbarBox = await settings.locator('.configuration-toolbar').boundingBox();
-    const contentBox = await settings.locator('.configuration-content').boundingBox();
+    const contentBox = await settings.locator('.configuration-content:visible').boundingBox();
     expect(toolbarBox).not.toBeNull();
     expect(contentBox).not.toBeNull();
     expect(contentBox!.y).toBeGreaterThanOrEqual(toolbarBox!.y + toolbarBox!.height);
 
-    await settings.locator('.configuration-content').evaluate((element) => {
+    await settings.locator('.configuration-content:visible').evaluate((element) => {
       element.scrollTop = 240;
     });
-    const scrolledContentBox = await settings.locator('.configuration-content').boundingBox();
+    const scrolledContentBox = await settings.locator('.configuration-content:visible').boundingBox();
     expect(scrolledContentBox!.y).toBeCloseTo(contentBox!.y, 1);
   });
 
@@ -147,10 +162,10 @@ test.describe('configuration manager windows', () => {
 
 
   for (const colorScheme of ['light', 'dark'] as const) {
-    test(`shows passive diagnostics actions in General settings in ${colorScheme} mode`, async ({ page }) => {
+    test(`shows passive diagnostics actions in Advanced settings in ${colorScheme} mode`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       const settings = await openSettings(page);
-      await settings.page().goto('/?surface=manager&destination=diagnostics');
+      await settings.page().goto('/?surface=settings&destination=diagnostics');
       await expect(settings.getByRole('list', { name: 'Diagnostics' })).toBeVisible();
       const revealButton = settings.getByRole('button', { name: 'Reveal' });
       const exportButton = settings.getByRole('button', { name: 'Export…' });
@@ -180,7 +195,7 @@ test.describe('configuration manager windows', () => {
       await expect(row.locator('.settings-chip', { hasText: 'project' })).toBeVisible();
       await expect(row.getByRole('button', { name: /Accept/ })).toHaveCount(0);
 
-      const toggle = row.getByRole('switch');
+      const toggle = row.getByRole('checkbox');
       await expect(toggle).toBeVisible();
       const rowBox = await row.boundingBox();
       const toggleBox = await toggle.boundingBox();
@@ -192,7 +207,7 @@ test.describe('configuration manager windows', () => {
 
   test('defaults to Full Access with truthful host and credential scope', async ({ page }) => {
     const settings = await openSettings(page);
-    await settings.page().goto('/?surface=manager&destination=access');
+    await settings.page().goto('/?surface=settings&destination=access');
     const filesystemRow = settings.locator('.inset-row', { hasText: 'Filesystem' }).first();
     await expect(filesystemRow.locator('.inset-row-trailing')).toHaveText('Full Access');
     // The boundary is a footnote under the row it explains, not a group of its
@@ -218,7 +233,7 @@ test.describe('configuration manager windows', () => {
     test(`keeps the Full Access status contained without overlap in ${colorScheme} mode`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       const settings = await openSettings(page);
-      await settings.page().goto('/?surface=manager&destination=access');
+      await settings.page().goto('/?surface=settings&destination=access');
       const row = settings.locator('.inset-row', { hasText: 'Filesystem' }).first();
       const status = row.locator('.inset-row-trailing');
       await expect(status).toHaveText('Full Access');
@@ -247,7 +262,7 @@ test.describe('configuration manager windows', () => {
     const settings = await openSettings(page, '', {
       capabilityBlocks: ['Command(git push origin main)', 'Action(git.publish_remote)'],
     });
-    await settings.page().goto('/?surface=manager&destination=access');
+    await settings.page().goto('/?surface=settings&destination=access');
     const blocks = settings.getByRole('list', { name: 'Your blocks' });
     await expect(blocks).toContainText('Command(git push origin main)');
 
@@ -300,8 +315,8 @@ test.describe('configuration manager windows', () => {
   test('toggles a configured provider without removing the connection row', async ({ page }) => {
     const settings = await openSettings(page);
     await openServicesPage(settings);
-    const openaiSwitch = settings.getByRole('switch', { name: 'Enable or disable OpenAI' });
-    await expect(openaiSwitch).toHaveAttribute('aria-checked', 'true');
+    const openaiSwitch = settings.getByRole('checkbox', { name: 'Enable or disable OpenAI' });
+    await expect(openaiSwitch).toBeChecked();
 
     await openaiSwitch.click();
 
@@ -315,7 +330,7 @@ test.describe('configuration manager windows', () => {
       },
       probeConnection: false,
     });
-    await expect(openaiSwitch).toHaveAttribute('aria-checked', 'false');
+    await expect(openaiSwitch).not.toBeChecked();
     await expect(settings.getByRole('button', { name: 'OpenAI, Disabled' })).toBeVisible();
     await expect(settings.getByText('Provider disabled')).toBeVisible();
 
@@ -331,15 +346,41 @@ test.describe('configuration manager windows', () => {
       },
       probeConnection: false,
     });
-    await expect(openaiSwitch).toHaveAttribute('aria-checked', 'true');
+    await expect(openaiSwitch).toBeChecked();
     await expect(settings.getByText('Provider enabled')).toBeVisible();
+  });
+
+  test('settles an accepted provider operation while another pane is visible and preserves scroll', async ({ page }) => {
+    await page.setViewportSize({ width: 860, height: 480 });
+    const settings = await openSettings(page);
+    await expect(settings.getByRole('checkbox', { name: 'Enable or disable OpenAI' })).toBeChecked();
+    await page.evaluate(() => {
+      const original = window.lin!.invoke;
+      window.lin!.invoke = async (command, args) => {
+        if (command === 'agent_upsert_provider_config') await new Promise<void>((resolve) => { (window as any).__releaseProviderWrite = resolve; });
+        return original(command, args);
+      };
+    });
+    await settings.getByRole('checkbox', { name: 'Enable or disable OpenAI' }).click();
+    await expect.poll(() => page.evaluate(() => typeof (window as any).__releaseProviderWrite)).toBe('function');
+    const content = page.locator('#settings-pane-models');
+    const scroll = await content.evaluate((element) => { element.scrollTop = 240; return element.scrollTop; });
+    expect(scroll).toBeGreaterThan(0);
+    await settings.getByRole('tab', { name: 'General', exact: true }).click();
+    await expect(settings.getByRole('checkbox', { name: 'Enable or disable OpenAI' })).toHaveCount(0);
+    await page.evaluate(() => (window as any).__releaseProviderWrite());
+    await expect.poll(async () => (await commandCalls(page)).some((call) => call.cmd === 'agent_upsert_provider_config')).toBe(true);
+    await settings.getByRole('tab', { name: 'Models', exact: true }).click();
+    expect(await content.evaluate((element) => element.scrollTop)).toBe(scroll);
+    await expect(settings.getByRole('checkbox', { name: 'Enable or disable OpenAI' })).not.toBeChecked();
+    await expect(settings.getByText('Provider disabled')).toBeVisible();
   });
 
   test('enables detected CC Switch directly from the provider list', async ({ page }) => {
     const settings = await openSettings(page);
     await openServicesPage(settings);
-    const ccSwitch = settings.getByRole('switch', { name: 'Enable or disable CC Switch' });
-    await expect(ccSwitch).toHaveAttribute('aria-checked', 'false');
+    const ccSwitch = settings.getByRole('checkbox', { name: 'Enable or disable CC Switch' });
+    await expect(ccSwitch).not.toBeChecked();
 
     await ccSwitch.click();
 
@@ -355,13 +396,13 @@ test.describe('configuration manager windows', () => {
       probeConnection: false,
     });
     await expect(settings.getByRole('button', { name: 'CC Switch, Ready' })).toBeVisible();
-    await expect(settings.getByRole('switch', { name: 'Enable or disable CC Switch' })).toHaveAttribute('aria-checked', 'true');
+    await expect(settings.getByRole('checkbox', { name: 'Enable or disable CC Switch' })).toBeChecked();
   });
 
   test('refreshes enabled CC Switch models from the provider row', async ({ page }) => {
     const settings = await openSettings(page);
     await openServicesPage(settings);
-    await settings.getByRole('switch', { name: 'Enable or disable CC Switch' }).click();
+    await settings.getByRole('checkbox', { name: 'Enable or disable CC Switch' }).click();
     await expect(settings.getByRole('button', { name: 'CC Switch, Ready' })).toBeVisible();
 
     await settings.getByRole('button', { name: 'CC Switch actions' }).click();
@@ -578,21 +619,21 @@ test.describe('provider config windows', () => {
 });
 
 async function openServicesPage(settings: Locator): Promise<void> {
-  await settings.page().goto('/?surface=manager&destination=models');
+  await settings.page().goto('/?surface=settings&destination=models');
   await expect(settings.getByRole('list', { name: 'Providers to add' })).toBeVisible();
 }
 async function openSkillsPage(settings: Locator): Promise<void> {
-  await settings.page().goto('/?surface=manager&destination=skills');
+  await settings.page().goto('/?surface=settings&destination=skills');
 }
 
 async function openSettings(page: Page, extraQuery = '', options: Parameters<typeof installElectronMock>[1] = {}): Promise<Locator> {
   await installElectronMock(page, options);
-  await page.goto(`/?surface=manager${extraQuery || '&destination=models'}`);
+  await page.goto(`/?surface=${extraQuery.includes('destination=about') ? 'about' : 'settings'}${extraQuery || '&destination=models'}`);
   const settings = page.locator('.configuration-window');
   await expect(settings).toBeVisible();
   // Wait for the provider-backed rows when a spec needs loaded settings data.
   // Window chrome and category navigation render before this fetch resolves.
-  await expect(settings.locator('.inset-row').first()).toBeVisible();
+  await expect(settings.getByRole('listitem').first()).toBeVisible();
   return settings;
 }
 

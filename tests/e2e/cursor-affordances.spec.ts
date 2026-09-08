@@ -1053,7 +1053,7 @@ test.describe('cursor affordances', () => {
     await installElectronMock(page);
     // The provider rows this checks live on the Model services page now, not on
     // whatever Settings happens to open with.
-    await page.goto('/?surface=manager&destination=models');
+    await page.goto('/?surface=settings&destination=models');
     const settings = page.locator('.configuration-window');
     await expect(settings.locator('.inset-row-main').first()).toBeVisible();
 

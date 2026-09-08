@@ -258,10 +258,14 @@ policy/model/delegation declarations apply at their next admission/read boundary
 A previous Host's status cannot establish current application evidence.
 
 The main frame's actual native-window identity gates each configuration operation.
-Models, Agents, Skills, Access, Memory, Data, Shortcuts, About, and Diagnostics
-cannot invoke one another's commands. Credentials are exclusive to the provider
-configuration child. The main application retains its normal command authority;
-auxiliary managers do not inherit document or action-attestation capabilities.
+One Settings renderer has a finite configuration-operation allowlist for its
+category panes. Categories and URL parameters do not grant authority. Document
+mutations, turn execution, unknown commands, and credential operations are excluded.
+Credentials are exclusive to the provider configuration child; About has only its
+application/update channels. The main application retains normal command authority;
+auxiliary configuration windows do not inherit action-attestation capabilities.
+Visited panes stay mounted on navigation, preserving their own drafts, queues,
+and subscriptions without eagerly loading unvisited domain catalogs.
 Configuration notifications are Host-authored and scoped to `preferences`,
 `models`, `agents`, `skills`, or `access`; each consumer subscribes to its owner.
 

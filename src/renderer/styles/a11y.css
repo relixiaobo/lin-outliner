@@ -81,3 +81,7 @@
     scroll-behavior: auto !important;
   }
 }
+
+@media (prefers-contrast: more) {
+  .settings-sidebar [role="tab"][aria-selected="true"] { outline: var(--space-hairline) solid var(--text-secondary); outline-offset: calc(-1 * var(--space-hairline)); }
+}

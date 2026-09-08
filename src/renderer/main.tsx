@@ -8,7 +8,7 @@ import {
 import { windowSurfaceFromSearch } from '../core/settingsWindow';
 import { App } from './ui/App';
 import { SettingsWindow } from './ui/SettingsWindow';
-import { ManagerWindow } from './ui/configuration/ManagerWindow';
+import { AboutWindow } from './ui/configuration/ManagerWindow';
 import { ProviderConfigWindow } from './ui/agent/ProviderConfigWindow';
 import { SkillReviewWindow } from './ui/agent/SkillReviewWindow';
 import { I18nProvider } from './i18n/I18nProvider';
@@ -38,11 +38,11 @@ if (surface === 'main') {
 // tokens.css / theme-dark.css — no renderer theme bridge needed.
 
 // Mark the document with the active OS window material so chrome surfaces turn
-// translucent in the first painted frame (no opaque -> frosted flash). Only the
-// main window carries a material; the settings window is an opaque Preferences
-// surface, and the browser/dev preview has no material to show through.
+// translucent in the first painted frame (no opaque -> frosted flash). Main and
+// Settings share this chrome material; their content surfaces remain opaque.
+// The browser/dev preview has no native material to show through.
 const windowMaterial = window.lin?.windowMaterial ?? null;
-if (windowMaterial && surface === 'main') {
+if (windowMaterial && (surface === 'main' || surface === 'settings')) {
   document.documentElement.dataset.windowMaterial = windowMaterial;
 }
 
@@ -66,8 +66,8 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <I18nProvider>
       {surface === 'skill-review' ? (
         <SkillReviewWindow />
-      ) : surface === 'manager' ? (
-        <ManagerWindow />
+      ) : surface === 'about' ? (
+        <AboutWindow />
       ) : surface === 'settings' ? (
         <SettingsWindow />
       ) : surface === 'provider-config' ? (

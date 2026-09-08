@@ -341,7 +341,7 @@ const resourcePreviewHost = createResourcePreviewHost({
     ? BrowserWindow.fromId(caller.origin.windowId) : windowApplicationHost.windows.main(),
   locale: () => windowApplicationHost.effectiveLocale(),
   dataChanged: () => {
-    for (const target of [windowApplicationHost.windows.main(), windowApplicationHost.windows.manager('memory')]) {
+    for (const target of [windowApplicationHost.windows.main(), windowApplicationHost.windows.settings()]) {
       if (target && !target.isDestroyed() && !target.webContents.isDestroyed()) target.webContents.send(DATA_CHANGED_CHANNEL);
     }
   },
@@ -501,7 +501,7 @@ const agentHost = createAgentHost({
   reviewProjectChange: (input) => windowApplicationHost.reviewProjectChange(input),
   reviewMemoryReset: (review, caller) => windowApplicationHost.reviewMemoryReset(review, caller),
   onMemoryChanged: () => {
-    for (const target of [windowApplicationHost.windows.main(), windowApplicationHost.windows.manager('memory')]) {
+    for (const target of [windowApplicationHost.windows.main(), windowApplicationHost.windows.settings()]) {
       try {
         if (target && !target.isDestroyed() && !target.webContents.isDestroyed()) target.webContents.send(MEMORY_CHANGED_CHANNEL);
       } catch (error) { console.warn('[memory] window notification failed', error); }
@@ -731,7 +731,7 @@ function applyKeybindings(candidate = loadKeybindings(resolvedUserDataDir)): Key
   }
   for (const target of [
     windowApplicationHost.windows.main(),
-    windowApplicationHost.windows.manager('shortcuts'),
+    windowApplicationHost.windows.settings(),
     windowApplicationHost.windows.launcher(),
   ]) {
     if (target && !target.isDestroyed() && !target.webContents.isDestroyed()) {
@@ -1128,7 +1128,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
     const authorize = async () => {
       controller.signal.throwIfAborted();
       if (closeSettlement || sender.isDestroyed() || !parent || parent.isDestroyed() || frame !== sender.mainFrame
-        || (!windowApplicationHost.isMainSender(event) && !windowApplicationHost.isManagerSender(event, 'data'))) {
+        || (!windowApplicationHost.isMainSender(event) && !windowApplicationHost.isSettingsSender(event))) {
         throw new Error('Preview operations require a live application window.');
       }
       if (name.startsWith('preview_') && !windowApplicationHost.isMainSender(event)) throw new Error('Preview controls require the main window.');
@@ -1337,16 +1337,16 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
     });
   });
   ipcMain.handle(KEYBINDINGS_GET_CHANNEL, (event): KeybindingsView => {
-    windowApplicationHost.assertConfigurationSender(event, ['shortcuts'], 'Keyboard Shortcuts');
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
     return currentKeybindingsView;
   });
   ipcMain.handle(KEYBINDINGS_UPDATE_CHANNEL, (event, raw: unknown): KeybindingsView => {
-    windowApplicationHost.assertConfigurationSender(event, ['shortcuts'], 'Keyboard Shortcuts');
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
     const loaded = updateKeybindings(resolvedUserDataDir, decodeKeybindingsUpdateInput(raw));
     return applyKeybindings(loaded);
   });
   ipcMain.handle(KEYBINDINGS_OPEN_FILE_CHANNEL, async (event): Promise<void> => {
-    windowApplicationHost.assertConfigurationSender(event, ['shortcuts'], 'Keyboard Shortcuts');
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
     const error = await shell.openPath(ensureKeybindingsFile(resolvedUserDataDir));
     if (error) throw new Error(error);
   });
@@ -1358,7 +1358,7 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle(SKILL_REVIEW_GET_CHANNEL, (event) => windowApplicationHost.readSkillReview(event));
   ipcMain.handle(SKILL_REVIEW_DECIDE_CHANNEL, (event, approved: unknown) => windowApplicationHost.decideSkillReview(event, approved));
   ipcMain.handle('lin:open-provider-config', (event, args?: { providerId?: unknown; mode?: unknown }) => {
-    windowApplicationHost.assertConfigurationSender(event, ['models'], 'Provider configuration');
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Provider configuration');
     const providerId = typeof args?.providerId === 'string' ? args.providerId : '';
     const mode: ProviderConfigMode = args?.mode === 'custom' ? 'custom' : 'configure';
     windowApplicationHost.openProviderConfig(providerId, mode);
@@ -1395,7 +1395,7 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
     if (error) throw new Error(error);
   });
   ipcMain.handle('lin:delegation/get', async (event) => {
-    windowApplicationHost.assertConfigurationSender(event, ['agents'], 'Delegation settings');
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Delegation settings');
     await lifecycle.ready('agent');
     return delegationSettingsView();
   });
@@ -1407,7 +1407,7 @@ function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
   });
 
   ipcMain.handle(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
-    windowApplicationHost.assertConfigurationSender(event, ['diagnostics'], 'Reveal diagnostics');
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Reveal diagnostics');
     const result = await windowApplicationHost.applicationOperations.diagnosticsManage(
       { request: { operation: 'reveal' } },
       { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
@@ -1442,7 +1442,7 @@ function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
   });
 
   ipcMain.handle(LIN_EXPORT_DIAGNOSTICS_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
-    windowApplicationHost.assertConfigurationSender(event, ['diagnostics'], 'Export diagnostics');
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Export diagnostics');
     return windowApplicationHost.applicationOperations.diagnosticsManage(
       { request: { operation: 'export' } },
       { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
@@ -1563,8 +1563,8 @@ async function handleMemoryCommand(event: IpcMainInvokeEvent, command: string, a
   const authorize = async () => {
     controller.signal.throwIfAborted();
     if (closeSettlement || sender.isDestroyed() || !parent || parent.isDestroyed()
-      || frame !== sender.mainFrame || (!windowApplicationHost.isMainSender(event) && !windowApplicationHost.isManagerSender(event, 'memory'))) {
-      throw new Error('Memory operations require a live main or Memory window.');
+      || frame !== sender.mainFrame || (!windowApplicationHost.isMainSender(event) && !windowApplicationHost.isSettingsSender(event))) {
+      throw new Error('Memory operations require a live main or Settings window.');
     }
   };
   await authorize();
@@ -2375,7 +2375,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return { revealed: true };
     }
     case 'agent_update_runtime_settings': {
-      if (windowApplicationHost.isManagerSender(event, 'agents') && (!isRecord(args.settings) || Object.keys(args.settings).some((key) => key !== 'delegation'))) throw new Error('Agents may update only delegation policy');
+      if (windowApplicationHost.isSettingsSender(event) && (!isRecord(args.settings) || Object.keys(args.settings).some((key) => key !== 'delegation'))) throw new Error('Settings may update only delegation policy');
       await updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
       return delegationSettingsView();
     }
@@ -2496,8 +2496,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_skill_manage': {
       const callerWindow = BrowserWindow.fromWebContents(event.sender);
       if (!callerWindow || event.senderFrame !== event.sender.mainFrame
-        || (!windowApplicationHost.isMainSender(event) && !windowApplicationHost.isManagerSender(event, 'skills'))) {
-        throw new Error('Skill operations require the main or Skills window.');
+        || (!windowApplicationHost.isMainSender(event) && !windowApplicationHost.isSettingsSender(event))) {
+        throw new Error('Skill operations require the main or Settings window.');
       }
       const controller = new AbortController();
       const cancel = () => controller.abort();

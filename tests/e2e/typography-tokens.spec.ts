@@ -82,6 +82,9 @@ const stateLayoutDeclarationAllowlist = new Map([
   ['src/renderer/styles/outliner.css|.row.selected:not(.drop-before):not(.drop-after)::before|left', 'Absolute selection overlay insets within the existing row box.'],
 ]);
 const materialSurfaceSelectors = new Map([
+  // Settings shares the app's navigation and toolbar chrome. Its separate
+  // content viewport remains opaque and is intentionally absent from this map.
+  ['src/renderer/styles/configuration.css|:root[data-window-material] .settings-rail, :root[data-window-material] .settings-window .configuration-toolbar', 'Settings navigation rail and toolbar chrome material.'],
   ['src/renderer/styles/agent-dock.css|:root[data-window-material] .agent-dock', 'Agent rail chrome material.'],
   ['src/renderer/styles/thread.css|.thread-action-menu', 'Thread action menu.'],
   // This transient navigation surface floats above the transcript viewport, so it

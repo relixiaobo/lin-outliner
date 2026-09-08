@@ -328,23 +328,35 @@ Tenon foundations, no Apple chrome copying.
 **Window shell.** `Cmd+,` and the App menu open/focus one **Tenon Settings**
 window. The Host keeps its native title stable, uses real inset traffic lights,
 and disables minimize, maximize, and fullscreen. Bounded resizing and vertical
-scrolling keep larger text reachable. The opaque content scrollport starts below
-the toolbar; the toolbar contains the title and a trailing search field with
+scrolling keep larger text reachable. The shell follows the main application's container grammar: an inset floating
+category rail at the left, a separate toolbar at the upper right, and an opaque
+content viewport below it. The three regions use `--layout-gap` and
+`--panel-radius`; rail and toolbar use `--rail-surface-shadow` and the shared
+material/fallback tokens. Content never receives a glass material. Native traffic
+lights sit over the rail's top chrome spacer. The toolbar contains the selected
+pane title and a trailing search field with
 search symbol, clear button, and localized prompt. `Cmd+F` focuses search.
-There is no category rail, nested page, history capsule, or in-content Close.
+A persistent left category list selects content within the same native window.
+There is no category back stack, in-content Close, or new window per category.
 
-**Discovery.** A flat list exposes common scalar preferences and named commands
-for Models, Agents, Skills, Memory, Access, Data, Keyboard Shortcuts, and
-Diagnostics. Local search matches labels, descriptions, aliases, and stable IDs;
-IDs are not ordinary row labels. The **All / Modified** segmented filter lives
-in content. Modified means an explicit source override, even when equal to its
-default. Public root and shortcut source observations participate without loading
-runtime catalogs. An empty result offers Clear Search and/or Show All.
+**Organization and discovery.** General contains appearance, language, and
+automatic updates. Other categories are Models, Agents, Skills, Memory, Access,
+Data, Keyboard Shortcuts, and Advanced. Models folds request policy into Request
+Options; Agents folds delegation capacity limits into its advanced disclosure.
+Advanced contains diagnostics, public configuration files, and a collapsed scalar
+inspector with **All / Modified** filtering. Modified means an explicit source
+override, even when equal to its default.
+
+Search matches localized labels, descriptions, aliases, and stable IDs; IDs are
+not ordinary row labels. Results expose matching scalar controls and category
+destinations, which navigate locally. Clearing search restores the selected pane.
+Public source observations report modified state/errors without loading runtime
+catalogs. Source repair remains visible across category and search changes.
 
 **Commit model.** Choices commit immediately. Numeric edits validate on Return
 or blur; Escape restores the uncommitted value, and failed writes preserve the
 entered value. Reset deletes only that scalar declaration. Its named action has
-a stable slot. Source rejection disables that source's structural controls while
+an accessible label and appears only for explicit overrides. Source rejection disables that source's structural controls while
 showing its retained effective values and an Open File repair action regardless
 of query/filter. Runtime application and file acceptance are separate facts;
 per-owner failures preserve only the affected owner's previous effective values.
@@ -352,24 +364,37 @@ There is no window-wide Save/Apply footer.
 
 **Controls and accessibility.** Appearance is a neutral segmented radiogroup;
 Language and other mutually exclusive choices use native pop-up selects.
-Emphasized boolean settings use the shared compact switches in content; their
-on-state follows the `--control-on` exception in Foundations. Search,
+Feature-level boolean settings use compact switches. Collection membership
+(Shortcuts, Providers, Skills, and delegation runners) uses leading checkboxes,
+outside any row button. Both follow the `--control-on` exception in Foundations.
+Settings pop-up selectors size to the selected value, cap long labels, align
+consistently at the trailing edge, and use a restrained visible control bezel.
+Domain and scalar rows share typography, inset radius, and grouping; default
+text/image model choices share one Default models group. Ordinary copy describes
+the user action rather than naming internal tool functions. Search,
 controls, and Reset remain keyboard reachable with neutral focus indicators.
 Escape belongs first to IME, an editor, or a menu/sheet; otherwise it clears a
 focused nonempty search. `Cmd+W` closes the active native window. Closing a child
 restores its invoking control. Text wraps at narrow widths and 200% text size;
 chrome is nonselectable and the hand cursor is reserved for content links.
 
-**Independent managers.** `SettingsOpenTarget.destination` directly names a
-singleton native window: `settings|models|agents|skills|memory|access|data|shortcuts|about|diagnostics`.
-An optional `settingId` filters Settings to its matching row. Untargeted reopening
-preserves search, scroll, and focus. Each manager owns its loads, errors, queues,
-and subscriptions. Provider commands share a model response queue, and Skill
-availability writes retain keyed generation guards and their own serialized
-queue. No category shell owns domain state, live counts, badges, or polling.
-The credential editor remains a modal child of **Models**. Closing a manager
-does not revoke already accepted domain work; pre-acceptance reviews retain the
-owning service's cancellation rules.
+**Navigation and domain ownership.** `SettingsOpenTarget.destination` selects
+`settings|models|agents|skills|memory|access|data|shortcuts|diagnostics` in the same
+Settings renderer; `about` opens the separate App-menu window. An optional
+`settingId` filters Settings to its matching row. Untargeted reopening preserves
+selection, search, scroll, and focus. The vertical tablist has roving keyboard
+focus with Up/Down/Home/End and Tab into content. Each visited pane stays mounted
+but hidden when inactive, preserving drafts, errors, scroll, and accepted work;
+unvisited panes never load their catalogs. Hidden panes do not enter the focus
+order or accessibility tree.
+
+Each domain owns its loads, errors, queues, and subscriptions. Provider responses
+share a model queue; Skill availability writes retain keyed generation guards and
+their own queue. The navigation shell owns no live counts, badges, or polling.
+Credential editing is a modal child of Settings. Explicit navigation cannot switch
+its owner underneath it, and an active in-app modal editor takes precedence over
+menu deep links. Closing Settings does not revoke accepted domain work;
+pre-acceptance reviews retain the owning service's cancellation rules.
 
 **Agent configuration and Access.** The root Agent editor handles the existing
 main persona, standing instructions, and capability ceiling. It does not restore
@@ -384,12 +409,18 @@ focus never expands a row. Memory and Data own their inspection and confirmed
 maintenance actions. Translation controls remain contextual in previews; Data
 owns global translation-cache and website-data cleanup.
 
-**Keyboard Shortcuts.** Its dedicated searchable editor owns the public
-keybindings source. Open File and Reset All precede grouped system, application,
-and preview rows. Each row exposes the command, description, stable ID,
-default/modified state, enable switch, alternate bindings, and Reset. Key caps
-use neutral fills and keyboard focus rings; recording changes copy inside stable
-dimensions. Source rejection and effective-binding failure stay local.
+**Keyboard Shortcuts.** The searchable pane owns the public keybindings source.
+Grouped compact rows put a labeled checkbox before the command and editable key
+combinations on the right. IDs and default badges do not appear in ordinary rows;
+IDs and descriptions remain searchable, and descriptions are accessible help.
+Alternate/removal/per-command reset actions live in the row menu. Open File lives
+in the toolbar options menu; Restore Defaults sits below the list. Error repair
+remains available even when the source is rejected.
+
+Key fields use neutral fills and keyboard focus rings. Clicking a field starts
+recording in fixed dimensions; Escape cancels. Recording captures only the focused
+field, and blur or leaving the pane ends recording. It cannot intercept typing in
+another category. Source rejection and effective-binding failure stay local.
 
 **About.** Identity/version with copy, Software Update, What's New for the running
 version, support, and legal. The native About item opens its independent window. Software

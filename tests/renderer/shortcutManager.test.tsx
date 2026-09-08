@@ -1,3 +1,4 @@
+import { clickCheckbox } from './checkboxTestUtils';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -45,10 +46,16 @@ async function renderManager(initial: KeybindingsView): Promise<Rendered> {
     window: Window & typeof globalThis;
   };
   const { document, window } = parsed;
+  const globals = ['document', 'window', 'HTMLElement', 'Element', 'KeyboardEvent', 'MouseEvent', 'Event', 'Node',
+    'requestAnimationFrame', 'cancelAnimationFrame', 'IS_REACT_ACT_ENVIRONMENT'];
+  const saved = globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   Object.assign(globalThis, {
     document: window.document,
     window,
     HTMLElement: window.HTMLElement,
+    Element: window.Element,
+    requestAnimationFrame: (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0),
+    cancelAnimationFrame: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle),
     KeyboardEvent: window.KeyboardEvent,
     MouseEvent: window.MouseEvent,
     Event: window.Event,
@@ -76,7 +83,13 @@ async function renderManager(initial: KeybindingsView): Promise<Rendered> {
   });
   await act(async () => {});
   const rendered: Rendered = {
-    cleanup: () => act(() => root.unmount()),
+    cleanup: () => {
+      act(() => root.unmount());
+      for (const [key, descriptor] of saved) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete (globalThis as Record<string, unknown>)[key];
+      }
+    },
     document,
     window,
     updates,
@@ -115,7 +128,7 @@ describe('Shortcut Manager', () => {
     expect(change).toBeDefined();
     await act(async () => change?.click());
     await act(async () => {
-      rendered.window.dispatchEvent(keydown(rendered.window, { key: 'p', code: 'KeyP', metaKey: true }));
+      rendered.document.querySelector('.settings-shortcut-key.is-recording')!.dispatchEvent(keydown(rendered.window, { key: 'p', code: 'KeyP', metaKey: true }));
     });
     expect(rendered.updates).toContainEqual({
       id: 'global.open_page_in_pane',
@@ -131,20 +144,17 @@ describe('Shortcut Manager', () => {
     );
     await act(async () => change?.click());
     await act(async () => {
-      rendered.window.dispatchEvent(keydown(rendered.window, { key: 'Escape' }));
+      rendered.document.querySelector('.settings-shortcut-key.is-recording')!.dispatchEvent(keydown(rendered.window, { key: 'Escape' }));
     });
     expect(rendered.updates).toEqual([]);
-    expect(rendered.document.body.textContent).not.toContain('Press shortcut');
+    expect(rendered.document.querySelector('.settings-shortcut-key.is-recording')).toBeNull();
   });
 
   test('adds and removes alternate bindings', async () => {
     const rendered = await renderManager(view());
-    const add = rendered.document.querySelector<HTMLButtonElement>(
-      '[aria-label="Add an alternate for Open page in new pane"]',
-    );
-    await act(async () => add?.click());
+    await clickMenu(rendered, 'Open page in new pane actions', 'Add an alternate for Open page in new pane');
     await act(async () => {
-      rendered.window.dispatchEvent(keydown(rendered.window, { key: 'p', code: 'KeyP', ctrlKey: true }));
+      rendered.document.querySelector('.settings-shortcut-key.is-recording')!.dispatchEvent(keydown(rendered.window, { key: 'p', code: 'KeyP', ctrlKey: true }));
     });
     expect(rendered.updates.at(-1)).toEqual({
       id: 'global.open_page_in_pane',
@@ -152,10 +162,7 @@ describe('Shortcut Manager', () => {
       observedDigest: '1234abcd',
     });
 
-    const remove = rendered.document.querySelector<HTMLButtonElement>(
-      '[aria-label="Remove CommandOrControl+M"]',
-    );
-    await act(async () => remove?.click());
+    await clickMenu(rendered, 'Open page in new pane actions', 'Remove ⌘M');
     expect(rendered.updates.at(-1)).toEqual({
       id: 'global.open_page_in_pane',
       value: false,
@@ -170,27 +177,24 @@ describe('Shortcut Manager', () => {
       status: 'applied',
     });
     const rendered = await renderManager(custom);
-    const enabled = rendered.document.querySelector<HTMLButtonElement>(
+    const enabled = rendered.document.querySelector<HTMLInputElement>(
       '[aria-label="Enable Open page in new pane"]',
     );
-    await act(async () => enabled?.click());
+    await act(async () => clickCheckbox(enabled));
     expect(rendered.updates.at(-1)).toEqual({
       id: 'global.open_page_in_pane',
       value: false,
       observedDigest: '1234abcd',
     });
 
-    const reset = rendered.document.querySelector<HTMLButtonElement>(
-      '[aria-label="Reset Open page in new pane"]',
-    );
-    await act(async () => reset?.click());
+    await clickMenu(rendered, 'Open page in new pane actions', 'Reset Open page in new pane');
     expect(rendered.updates.at(-1)).toEqual({
       id: 'global.open_page_in_pane',
       observedDigest: '1234abcd',
     });
 
     const resetAll = Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent?.includes('Reset All'));
+      .find((button) => button.textContent?.includes('Restore Defaults'));
     await act(async () => resetAll?.click());
     expect(rendered.updates.at(-1)).toEqual({ resetAll: true, observedDigest: '1234abcd' });
   });
@@ -207,9 +211,7 @@ describe('Shortcut Manager', () => {
 
   test('opens the public source even when structured editing is unavailable', async () => {
     const rendered = await renderManager(view('rejected'));
-    const open = Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent?.includes('Open Keybindings File'));
-    await act(async () => open?.click());
+    await clickMenu(rendered, 'Shortcut options', 'Open Keybindings File');
     expect(rendered.opened()).toBe(1);
   });
 
@@ -217,7 +219,14 @@ describe('Shortcut Manager', () => {
     const rendered = await renderManager(view('rejected'));
     expect(rendered.document.body.textContent).toContain('keybindings file is invalid');
     expect(rendered.document.querySelector<HTMLButtonElement>('[aria-label="Enable Global launcher"]')?.disabled).toBe(true);
-    expect(Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent?.includes('Open Keybindings File'))?.disabled).toBe(false);
+    await clickMenu(rendered, 'Shortcut options', 'Open Keybindings File');
+    expect(rendered.opened()).toBe(1);
   });
 });
+
+async function clickMenu(rendered: Rendered, label: string, action: string): Promise<void> {
+  await act(async () => rendered.document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click());
+  const item = [...rendered.document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent === action);
+  if (!item) throw new Error(`Missing action: ${action}`);
+  await act(async () => item.click());
+}

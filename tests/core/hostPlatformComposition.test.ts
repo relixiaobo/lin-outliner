@@ -92,8 +92,8 @@ describe('Host platform composition', () => {
     expect(WINDOW_HOST_SRC).toContain("app.removeListener('activate', handleActivate)");
   });
 
-  test('keybinding mutation channels admit only the Shortcut Manager', () => {
-    expect(DESKTOP_HOST_SRC.match(/assertConfigurationSender\(event, \['shortcuts'\], 'Keyboard Shortcuts'\)/g)).toHaveLength(3);
+  test('keybinding mutation channels admit only the Settings window', () => {
+    expect(DESKTOP_HOST_SRC.match(/assertConfigurationSender\(event, \['settings'\], 'Keyboard Shortcuts'\)/g)).toHaveLength(3);
     expect(DESKTOP_HOST_SRC).toContain('decodeKeybindingsUpdateInput(raw)');
     expect(DESKTOP_HOST_SRC).toContain('ensureKeybindingsFile(resolvedUserDataDir)');
   });

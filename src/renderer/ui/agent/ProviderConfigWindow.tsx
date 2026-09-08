@@ -53,6 +53,7 @@ export function ProviderConfigWindow() {
   // Escape closes the dialog (mirrors the native Cancel), like every other overlay.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.defaultPrevented) return;
       if (event.key === 'Escape') { event.preventDefault(); close(); }
     };
     window.addEventListener('keydown', onKeyDown);

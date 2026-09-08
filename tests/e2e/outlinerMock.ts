@@ -50,6 +50,7 @@ export const ids = {
 } as const;
 
 interface MockFixtureOptions {
+  initialLanguage?: 'en' | 'zh-Hans';
   dateField?: boolean;
   optionsField?: boolean;
   relatedField?: boolean;
@@ -129,7 +130,7 @@ type E2EWindow = Window & {
     resolveOAuthLogin: (providerId: string) => void;
     setTranslationDelayMs: (delayMs: number) => void;
   };
-  lin?: Pick<LinApi, 'registerPreview' | 'observePreview' | 'unregisterPreview' | 'acknowledgePreview' | 'onPreviewAction' | 'previewOperation' | 'onPreviewDataChanged' | 'initialKeybindings' | 'keybindings'> & {
+  lin?: Pick<LinApi, 'registerPreview' | 'observePreview' | 'unregisterPreview' | 'acknowledgePreview' | 'onPreviewAction' | 'previewOperation' | 'onPreviewDataChanged' | 'initialKeybindings' | 'keybindings' | 'initialLanguage'> & {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
     agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T>;
     automationRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T>;
@@ -3647,6 +3648,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
 
     win.lin = {
+      initialLanguage: options.initialLanguage ?? 'en',
       initialKeybindings: effectiveKeybindings(),
       keybindings: {
         get: async () => clone(keybindingsView),

@@ -2,12 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { CONFIGURATION_DESTINATIONS, sanitizeSettingsOpenTarget, settingsOpenTargetFromSearch, settingsWindowQuery, windowSurfaceFromSearch } from '../../src/core/settingsWindow';
 import { configurationCommandAllowed } from '../../src/main/configuration/windowAccess';
 
-describe('direct configuration destinations', () => {
-  test('round trips each native destination without category navigation', () => {
+describe('single-window configuration destinations', () => {
+  test('routes every Settings pane to one surface and keeps About separate', () => {
     for (const destination of CONFIGURATION_DESTINATIONS) {
       const query = new URLSearchParams(settingsWindowQuery({ destination }));
       expect(settingsOpenTargetFromSearch(`?${query}`)).toEqual({ destination });
-      expect(windowSurfaceFromSearch(`?${query}`)).toBe(destination === 'settings' ? 'settings' : 'manager');
+      expect(windowSurfaceFromSearch(`?${query}`)).toBe(destination === 'about' ? 'about' : 'settings');
     }
   });
   test('accepts bounded preference IDs and rejects unknown destinations', () => {
@@ -16,17 +16,19 @@ describe('direct configuration destinations', () => {
     expect(settingsOpenTargetFromSearch('?category=agent/skills&anchor=memory')).toEqual({});
     expect(sanitizeSettingsOpenTarget({ destination: 'private', page: 'services' })).toEqual({});
   });
-  test('admits domain operations by owner and credentials only in their child', () => {
-    expect(configurationCommandAllowed('models', 'agent_get_provider_settings')).toBe(true);
-    expect(configurationCommandAllowed('models', 'agent_upsert_provider_config')).toBe(true);
+  test('admits only configuration operations in Settings and credentials only in its child', () => {
+    for (const command of ['agent_get_provider_settings', 'agent_upsert_provider_config', 'memory_manage', 'agent_skill_manage']) {
+      expect(configurationCommandAllowed('settings', command)).toBe(true);
+      expect(configurationCommandAllowed('about', command)).toBe(false);
+    }
     expect(configurationCommandAllowed('provider-config', 'agent_set_provider_api_key')).toBe(true);
-    for (const sender of ['main', ...CONFIGURATION_DESTINATIONS] as const) expect(configurationCommandAllowed(sender, 'agent_set_provider_api_key')).toBe(false);
-    for (const sender of CONFIGURATION_DESTINATIONS) {
+    for (const sender of ['main', 'settings', 'about'] as const) expect(configurationCommandAllowed(sender, 'agent_set_provider_api_key')).toBe(false);
+    for (const sender of ['settings', 'about', 'provider-config'] as const) {
       expect(configurationCommandAllowed(sender, 'delete_node')).toBe(false);
       expect(configurationCommandAllowed(sender, 'agent_future_command')).toBe(false);
-      expect(configurationCommandAllowed(sender, 'memory_manage')).toBe(sender === 'memory');
-      expect(configurationCommandAllowed(sender, 'agent_skill_manage')).toBe(sender === 'skills');
     }
+    expect(configurationCommandAllowed('provider-config', 'memory_manage')).toBe(false);
+    expect(configurationCommandAllowed('provider-config', 'agent_skill_manage')).toBe(false);
     expect(configurationCommandAllowed(null, 'agent_get_provider_settings')).toBe(false);
   });
 });

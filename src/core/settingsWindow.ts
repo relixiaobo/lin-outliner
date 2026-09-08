@@ -1,12 +1,15 @@
-/** Direct native-window destinations. Collections never become Settings pages. */
+/** Settings destinations share one native window; About retains its standard App-menu window. */
 export const CONFIGURATION_DESTINATIONS = [
   'settings', 'models', 'agents', 'skills', 'memory', 'access', 'data', 'shortcuts', 'about', 'diagnostics',
 ] as const;
 export type ConfigurationDestination = typeof CONFIGURATION_DESTINATIONS[number];
+export const SETTINGS_PANES = CONFIGURATION_DESTINATIONS.filter((destination) => destination !== 'about');
+export type SettingsPane = Exclude<ConfigurationDestination, 'about'>;
+export type ConfigurationWindowSurface = 'settings' | 'about';
 export type ConfigurationDomain = 'preferences' | 'models' | 'agents' | 'skills' | 'access';
 export const CONFIGURATION_CHANGED_CHANNEL = 'lin:configuration-changed';
 export const WINDOW_SURFACE_QUERY_PARAM = 'surface';
-export type WindowSurface = 'main' | 'settings' | 'manager' | 'provider-config' | 'skill-review';
+export type WindowSurface = 'main' | 'settings' | 'about' | 'provider-config' | 'skill-review';
 export const CONFIGURATION_DESTINATION_PARAM = 'destination';
 export const SETTINGS_SETTING_PARAM = 'setting';
 export const LIN_SETTINGS_NAVIGATE_CHANNEL = 'lin:settings-navigate';
@@ -32,7 +35,7 @@ export function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
 
 export function windowSurfaceFromSearch(search: string): WindowSurface {
   const surface = new URLSearchParams(search).get(WINDOW_SURFACE_QUERY_PARAM);
-  return surface === 'settings' || surface === 'manager' || surface === 'provider-config' || surface === 'skill-review'
+  return surface === 'settings' || surface === 'about' || surface === 'provider-config' || surface === 'skill-review'
     ? surface : 'main';
 }
 
@@ -46,13 +49,13 @@ export function settingsOpenTargetFromSearch(search: string): SettingsOpenTarget
 export function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, string> {
   const destination = target.destination ?? 'settings';
   return {
-    [WINDOW_SURFACE_QUERY_PARAM]: destination === 'settings' ? 'settings' : 'manager',
+    [WINDOW_SURFACE_QUERY_PARAM]: destination === 'about' ? 'about' : 'settings',
     [CONFIGURATION_DESTINATION_PARAM]: destination,
     ...(target.settingId ? { [SETTINGS_SETTING_PARAM]: target.settingId } : {}),
   };
 }
 
-/** Credential editing is a modal child of Models, with its own admission. */
+/** Credential editing is a modal child of Settings, with its own admission. */
 export const PROVIDER_CONFIG_PROVIDER_PARAM = 'provider';
 export const PROVIDER_CONFIG_MODE_PARAM = 'mode';
 export type ProviderConfigMode = 'configure' | 'custom';
