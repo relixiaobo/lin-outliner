@@ -651,6 +651,11 @@ export class ToolTaskStore {
         WHERE owner_thread_id = ? AND background_enabled = 1
           AND delivery_state IN ('pending', 'delivering')
       `).run(now, ownerThreadId);
+      this.db.prepare(`
+        UPDATE tool_task_context_successors SET delivery_state = 'blocked'
+        WHERE task_id IN (SELECT task_id FROM tool_tasks WHERE owner_thread_id = ?)
+          AND delivery_state = 'pending'
+      `).run(ownerThreadId);
     });
   }
 
