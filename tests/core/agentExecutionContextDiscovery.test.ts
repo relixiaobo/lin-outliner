@@ -7,6 +7,8 @@ import { pendingExecutionContext, resolveExecutionAddress } from '../../src/main
 import { discoverExecutionContext } from '../../src/main/agent/tasks/ExecutionContextDiscovery';
 import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
 import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
+import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
+import type { ThreadContextPayload } from '../../src/core/agent/protocol';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 
 describe('execution context discovery', () => {
@@ -45,8 +47,8 @@ describe('execution context discovery', () => {
 
       expect(result.context.snapshot.discovery).toBe('unavailable');
       expect(result.context.snapshot.degradation).toContain('exceeded the discovery byte limit');
-      expect(result.context.snapshot.facts.find((fact) => fact.kind === 'instruction')?.text)
-        .toContain('[Source truncated');
+      expect(result.context.snapshot.facts.find((fact) => fact.kind === 'instruction')).toBeUndefined();
+      expect(result.sources.some((source) => source.path.endsWith('AGENTS.md') && source.state === 'unavailable')).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -57,17 +59,22 @@ describe('execution context discovery', () => {
     const database = new Database(':memory:');
     const store = new ToolTaskStore(database as unknown as SqliteDatabase);
     const service = new ToolTaskService(store, path.join(root, 'tasks'));
+    const payloads = new ToolPayloadStore(path.join(root, 'payloads'));
     let taskId: string | null = null;
     service.bindHost({
       ownerExists: () => true,
       readDeliveryAdmission: async () => null,
       startCompletionTurn: async () => false,
       taskChanged: () => {},
+      contextEvidence: {
+        write: (owner: string, payload: ThreadContextPayload) => payloads.writeContext(owner, payload),
+        read: (owner: string, ref) => payloads.readContext(owner, ref),
+      },
     });
     try {
       await service.initialize();
       await service.runHostOperation({
-        ownerThreadId: 'thread', sourceTurnId: 'turn', sourceItemId: 'item', producer: 'test',
+        ownerThreadId: 'thread', sourceTurnId: '00000000-0000-7000-8000-000000000002', sourceItemId: 'item', producer: 'test',
         executionContext: pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root }), {
           capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
         }),
@@ -78,7 +85,23 @@ describe('execution context discovery', () => {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
       const successor = store.contextSuccessor(taskId!);
-      expect(successor?.snapshot.generation).toBe(1);
+      expect(successor?.ref.kind).toBe('executionContextObservation');
+      const observation = await payloads.readContext(taskId!, successor!.ref);
+      expect(observation?.kind).toBe('executionContextObservation');
+      if (observation?.kind !== 'executionContextObservation') throw new Error('Missing discovery observation');
+      expect(observation.executionContext.snapshot.generation).toBe(1);
+      expect(observation.executionContext.snapshot.predecessorRef).toBe(
+        store.read(taskId!)!.executionContext.snapshotRef,
+      );
+      expect((await payloads.readContext(taskId!, observation.admissionRef))?.kind).toBe('taskExecutionContext');
+      expect(await payloads.copyContextToThread(taskId!, 'thread', observation.admissionRef)).toBe(true);
+      expect(await payloads.copyContextToThread(taskId!, 'thread', successor!.ref)).toBe(true);
+      expect((await payloads.readContext('thread', observation.admissionRef))?.kind).toBe('taskExecutionContext');
+      expect((await payloads.readContext('thread', successor!.ref))?.kind).toBe('executionContextObservation');
+      await payloads.pruneUnreferencedContexts(taskId!, [], []);
+      expect(await payloads.readContext(taskId!, successor!.ref)).toBeNull();
+      expect((await payloads.readContext('thread', successor!.ref))?.kind).toBe('executionContextObservation');
+      store.publishContextSuccessor(taskId!, successor.ref, Date.now());
       expect(store.contextSuccessor(taskId!)).toEqual(successor);
     } finally {
       await service.close(2_000);

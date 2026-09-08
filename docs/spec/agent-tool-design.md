@@ -199,13 +199,16 @@ execution. File operations use `ToolTaskService.runHostOperation`; Bash and nati
 launchers use supervised process tasks. Both retain the same immutable context
 through terminal settlement and recovery. After task creation, the Host performs
 bounded best-effort discovery for each admitted scope. It walks canonical
-ancestors for `AGENTS.md`, `CLAUDE.md`, `AGENT.md`, and `.tenon/agent.json`,
+ancestors for `AGENTS.md`, `CLAUDE.md`, `AGENT.md`, and `.tenon/checks.json`,
 records source hashes and Git observations, and persists one immutable generation-1
 successor keyed by the S0 snapshot reference. Missing optional sources are a
 complete empty observation; read or byte-limit failures mark the successor
 unavailable with a degradation reason and never fail the already admitted task.
 The task receipt remains pinned to S0; later provider publication consumes S1 only
-at its own boundary.
+at its own boundary. Discovery payloads are temporarily owned by the Tool Task so
+an unfinished observation survives Thread turn cleanup; once the observation is
+delivered or fenced, its admission and successor payloads are copied into the
+consuming Thread and the temporary owner is pruned.
 
 The Kernel's Host-only deferred-start callback lets local tools publish their
 execution-start event after admission evidence commits. Receipt context stays in

@@ -347,6 +347,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         ? undefined
         : async () => {
             await normalizer.flush();
+            await context.publishPendingContextObservations?.();
             await this.options.beforeProviderContext?.(context);
             turnScopedReads.beginBoundary();
             try {

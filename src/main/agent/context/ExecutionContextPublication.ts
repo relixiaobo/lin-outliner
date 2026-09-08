@@ -69,7 +69,7 @@ export async function planExecutionContextPublication(
         // Only the bundle's exact dependencies have crossed this boundary.
         const published = new Set(item.contextRefs.map((ref) => ref.id));
         pending = pending.filter((ref) => !published.has(ref.id));
-      } else if (item.kind === 'taskExecutionContext' || item.kind === 'automationDispatch') {
+      } else if (item.kind === 'taskExecutionContext' || item.kind === 'automationDispatch' || item.kind === 'executionContextObservation') {
         pending.push(item.payloadRef);
       }
     }
@@ -82,12 +82,29 @@ export async function planExecutionContextPublication(
   let omitted = 0;
   let omittedReplacement = false;
   for (const ref of pending) {
-    if (ref.kind !== 'taskExecutionContext' && ref.kind !== 'automationDispatch') continue;
+    if (ref.kind !== 'taskExecutionContext' && ref.kind !== 'automationDispatch' && ref.kind !== 'executionContextObservation') continue;
     const payload = await read(ref).catch(() => null);
-    if (payload?.kind !== 'taskExecutionContext' && payload?.kind !== 'automationDispatch') { omitted += 1; continue; }
-    for (const fact of payload.executionContext.snapshot.facts) {
+    if (payload?.kind !== 'taskExecutionContext' && payload?.kind !== 'automationDispatch' && payload?.kind !== 'executionContextObservation') { omitted += 1; continue; }
+    const facts = [...payload.executionContext.snapshot.facts];
+    if (payload.kind === 'executionContextObservation') {
+      for (const { fact } of state.values()) {
+        if (fact.authority !== 'repository' || facts.some((current) => executionFactKey(current) === executionFactKey(fact))) continue;
+        if (!payload.scopes.some((scope) => scope.directory === fact.scope || scope.directory.startsWith(`${fact.scope}/`))) continue;
+        facts.push({ ...fact, version: 'unavailable', invalidated: true, observedAt: payload.executionContext.snapshot.capturedAt,
+          text: 'The source is absent or unavailable in a later inspection; its prior guidance no longer applies.' });
+      }
+    }
+    for (const fact of facts) {
       const key = executionFactKey(fact);
-      if (JSON.stringify(state.get(key)?.fact) === JSON.stringify(fact)) continue;
+      const previous = state.get(key)?.fact;
+      if (previous?.observedAt !== undefined && fact.observedAt !== undefined && fact.observedAt < previous.observedAt) continue;
+      if (previous && sameSemanticFact(previous, fact)) {
+        if ((fact.observedAt ?? 0) > (previous.observedAt ?? 0)) {
+          operations.push(fact);
+          state.set(key, { fact, evidenceRef: ref });
+        }
+        continue;
+      }
       const body = renderExecutionFact(fact);
       if (text.length + body.length > BODY_BUDGET) {
         omitted += 1;
@@ -110,6 +127,12 @@ export async function planExecutionContextPublication(
   if (omitted) text += `${omitted} execution-context observations were unavailable or omitted from this input.\n`;
   return { schemaVersion: 1, kind: 'executionContextPublication',
     evidenceRefs: [...new Map(pending.map((ref) => [ref.id, ref])).values()], operations, text };
+}
+
+function sameSemanticFact(left: ExecutionContextFact, right: ExecutionContextFact): boolean {
+  const { observedAt: _leftTime, ...a } = left;
+  const { observedAt: _rightTime, ...b } = right;
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 export async function checkpointExecutionContext(turns: readonly Turn[], read: ReadContext): Promise<ExecutionContextCheckpoint> {

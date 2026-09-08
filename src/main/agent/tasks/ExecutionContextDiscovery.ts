@@ -1,173 +1,195 @@
-import { createHash } from 'node:crypto';
-import { readFile, stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { constants } from 'node:fs';
+import { open, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import type {
-  ExecutionContextFact,
-  ExecutionContextSnapshot,
-  TaskExecutionContext,
-} from '../../../core/agent/executionContext';
-import { validateExecutionContext } from './ExecutionContext';
+import { promisify } from 'node:util';
+import type { ExecutionContextFact, ExecutionContextSource, ExecutionContextScopeObservation,
+  ProjectCheckDeclaration, TaskExecutionContext } from '../../../core/agent/executionContext';
+import { redactSecretLikeContent } from '../capabilities/agentSecretRedaction';
+import { executionDigest, validateExecutionContext } from './ExecutionContext';
 
-const MAX_SOURCE_BYTES = 128 * 1024;
-const INSTRUCTION_FILES = ['AGENTS.md', 'CLAUDE.md', 'AGENT.md'] as const;
-const PROFILE_FILES = ['.tenon/agent.json'] as const;
+const run = promisify(execFile);
+const SOURCE_NAMES = ['AGENTS.md', 'CLAUDE.md', 'AGENT.md', '.tenon/checks.json'] as const;
+const MAX_SOURCE_BYTES = 32 * 1024;
+const MAX_TOTAL_BYTES = 128 * 1024;
+const MAX_CANDIDATES = 384;
+const MAX_SCOPES = 32;
+const MAX_DEPTH = 64;
 
 export interface ExecutionContextDiscoveryOptions {
   readonly maxSourceBytes?: number;
-  readonly readFile?: (filePath: string) => Promise<Buffer>;
+  readonly signal?: AbortSignal;
+  readonly now?: () => number;
 }
 
 export interface ExecutionContextDiscoveryResult {
   readonly context: TaskExecutionContext;
-  readonly readFiles: readonly string[];
+  readonly sources: readonly ExecutionContextSource[];
+  readonly scopes: readonly ExecutionContextScopeObservation[];
+  readonly checks: readonly ProjectCheckDeclaration[];
 }
 
-/**
- * Capture repository facts after task admission without changing the admitted
- * address or the snapshot that the task receipt references. Missing optional
- * files are an explicit empty observation; other read failures degrade the
- * successor and never turn execution into a failure.
- */
+/** Discovery captures later observations, never edits the original admission. */
 export async function discoverExecutionContext(
-  input: TaskExecutionContext,
-  options: ExecutionContextDiscoveryOptions = {},
+  input: TaskExecutionContext, options: ExecutionContextDiscoveryOptions = {},
 ): Promise<ExecutionContextDiscoveryResult> {
   const admitted = validateExecutionContext(input);
-  const maxSourceBytes = Math.max(1, options.maxSourceBytes ?? MAX_SOURCE_BYTES);
-  const read = options.readFile ?? ((filePath: string) => readFile(filePath));
+  const now = options.now ?? Date.now;
+  const capturedAt = now();
+  const deadline = Date.now() + 2_000;
+  const maxSourceBytes = Math.max(1, Math.min(MAX_SOURCE_BYTES, options.maxSourceBytes ?? MAX_SOURCE_BYTES));
   const facts: ExecutionContextFact[] = [];
-  const readFiles: string[] = [];
-  const degradationReasons: string[] = [];
-
-  for (const scope of admitted.address.scopes) {
-    for (const directory of ancestorDirectories(scope.directory)) {
-      for (const name of INSTRUCTION_FILES) {
-        await captureSource({
-          filePath: path.join(directory, name),
-          kind: 'instruction',
-          scope: directory,
-          sourceLabel: `repository:${name}`,
-          read,
-          maxSourceBytes,
-          facts,
-          readFiles,
-          degradationReasons,
-        });
-      }
-      for (const name of PROFILE_FILES) {
-        await captureSource({
-          filePath: path.join(directory, name),
-          kind: 'profile',
-          scope: directory,
-          sourceLabel: 'repository:.tenon/agent.json',
-          read,
-          maxSourceBytes,
-          facts,
-          readFiles,
-          degradationReasons,
-        });
+  const sources = new Map<string, ExecutionContextSource>();
+  const scopes: ExecutionContextScopeObservation[] = [];
+  const checks: ProjectCheckDeclaration[] = [];
+  const reasons = new Set<string>();
+  const bodies = new Set<string>();
+  let totalBytes = 0;
+  const withinBudget = () => !options.signal?.aborted && Date.now() < deadline
+    && sources.size < MAX_CANDIDATES && totalBytes < MAX_TOTAL_BYTES;
+  for (const anchor of admitted.address.scopes.slice(0, MAX_SCOPES)) {
+    const applicable: string[] = [];
+    let complete = true;
+    const ancestors = ancestorDirectories(anchor.directory);
+    if (ancestors.length > MAX_DEPTH) { complete = false; reasons.add('Ancestor depth exceeded the discovery limit.'); }
+    for (const directory of ancestors.slice(0, MAX_DEPTH)) {
+      for (const name of SOURCE_NAMES) {
+        const filePath = path.join(directory, name);
+        if (!sources.has(filePath)) {
+          if (!withinBudget()) { complete = false; reasons.add('Discovery budget exhausted or collection cancelled.'); continue; }
+          const source = await inspectSource(filePath, Math.min(maxSourceBytes, MAX_TOTAL_BYTES - totalBytes));
+          sources.set(filePath, source.observation);
+          if (source.error) reasons.add(source.error);
+          if (source.text !== null) {
+            totalBytes += Buffer.byteLength(source.text);
+            const key = JSON.stringify([source.observation.canonicalPath, directory]);
+            if (!bodies.has(key)) {
+              bodies.add(key);
+              if (name === '.tenon/checks.json') {
+                try {
+                  const declarations = decodeCheckProfile(source.text, filePath, directory);
+                  checks.push(...declarations);
+                  facts.push(fact(filePath, 'profile', directory, source.observation.digest!,
+                    `Project check declarations (not execution results):\n${JSON.stringify(declarations)}`));
+                } catch {
+                  complete = false;
+                  reasons.add(`Invalid check profile: ${filePath}`);
+                  facts.push(fact(filePath, 'profile', directory, 'unavailable', 'Check declarations are unavailable; do not rely on the previous profile.', true));
+                }
+              } else {
+                const text = await redactSecretLikeContent(source.text);
+                facts.push(fact(source.observation.canonicalPath!, 'instruction', directory,
+                  source.observation.digest!, text || 'This instruction source is explicitly empty.'));
+              }
+            }
+          }
+        }
+        const observed = sources.get(filePath);
+        if (observed?.state === 'present') applicable.push(observed.canonicalPath!);
+        else if (observed?.state === 'unavailable') complete = false;
       }
     }
-    facts.push({
-      source: 'host:git',
-      kind: 'git',
-      authority: 'host',
-      purpose: 'observation',
-      scope: scope.directory,
-      version: scope.worktree ?? scope.key,
-      text: scope.worktree
-        ? `Git worktree: ${scope.worktree}`
-        : 'No Git worktree was detected for this scope.',
-      invalidated: false,
-    });
+    scopes.push({ directory: anchor.directory, sources: [...new Set(applicable)], complete });
+    const git = withinBudget() ? await inspectGit(anchor.directory, anchor.worktree, options.signal) : null;
+    if (!git) reasons.add(`Git observations unavailable: ${anchor.directory}`);
+    facts.push({ source: 'host:git', kind: 'git', authority: 'host', purpose: 'observation',
+      scope: anchor.directory, version: executionDigest(git), text: git ?? 'Git observations are unavailable.', invalidated: git === null });
+    facts.push({ source: 'host:execution-discovery', kind: 'discovery', authority: 'host', purpose: 'observation',
+      scope: anchor.directory, version: complete ? 'inspected' : 'incomplete',
+      text: complete ? 'Enclosing instruction and check sources were inspected after task admission. Descendant scopes remain uninspected until addressed.'
+        : 'Some enclosing instruction or check sources could not be inspected. Re-inspect before relying on earlier guidance.', invalidated: false });
   }
-
-  const snapshot: ExecutionContextSnapshot = {
-    generation: admitted.snapshot.generation + 1,
-    predecessorRef: admitted.snapshotRef,
-    discovery: degradationReasons.length === 0 ? 'complete' : 'unavailable',
-    degradation: degradationReasons.length === 0 ? null : degradationReasons.join(' '),
-    facts: deduplicateFacts(facts),
-  };
-  const context = validateExecutionContext({
-    addressRef: admitted.addressRef,
-    policyRef: admitted.policyRef,
-    snapshotRef: digest(snapshot),
-    address: admitted.address,
-    policy: admitted.policy,
-    snapshot,
-  });
-  return { context, readFiles: readFiles.sort() };
+  if (admitted.address.scopes.length > MAX_SCOPES) reasons.add('Additional target scopes were not inspected at the discovery limit.');
+  // A removed/unreadable source must revoke its previous body, including a retargeted alias.
+  for (const previous of admitted.snapshot.facts) {
+    if (previous.authority !== 'repository' || facts.some((current) => factIdentity(current) === factIdentity(previous))) continue;
+    facts.push({ ...previous, invalidated: true, version: 'unavailable', text: 'This previously observed source is absent or unavailable; its earlier guidance no longer applies.' });
+  }
+  const snapshot = { seriesId: admitted.snapshot.seriesId, capturedAt,
+    generation: admitted.snapshot.generation + 1, predecessorRef: admitted.snapshotRef,
+    discovery: reasons.size ? 'unavailable' as const : 'complete' as const,
+    degradation: reasons.size ? [...reasons].slice(0, 12).join(' ') : null,
+    facts: facts.map((fact) => ({ ...fact, observedAt: capturedAt })) };
+  return { context: validateExecutionContext({ ...admitted, snapshotRef: executionDigest(snapshot), snapshot }),
+    sources: [...sources.values()], scopes, checks };
 }
 
-async function captureSource(input: {
-  readonly filePath: string;
-  readonly kind: 'instruction' | 'profile';
-  readonly scope: string;
-  readonly sourceLabel: string;
-  readonly read: (filePath: string) => Promise<Buffer>;
-  readonly maxSourceBytes: number;
-  readonly facts: ExecutionContextFact[];
-  readonly readFiles: string[];
-  readonly degradationReasons: string[];
-}): Promise<void> {
-  let bytes: Buffer;
+export async function validateDiscoveredSources(result: ExecutionContextDiscoveryResult): Promise<boolean> {
+  if (result.context.snapshot.discovery !== 'complete' || Date.now() - result.context.snapshot.capturedAt > 5_000) return false;
+  for (const source of result.sources) {
+    const current = (await inspectSource(source.path, MAX_SOURCE_BYTES)).observation;
+    if (JSON.stringify(current) !== JSON.stringify(source)) return false;
+  }
+  return true;
+}
+
+async function inspectSource(filePath: string, limit: number): Promise<{
+  observation: ExecutionContextSource; text: string | null; error: string | null;
+}> {
+  const unavailable = (error: string) => ({ observation: { path: filePath, canonicalPath: null, digest: null, state: 'unavailable' as const }, text: null, error });
+  let handle;
   try {
-    const metadata = await stat(input.filePath);
-    if (!metadata.isFile()) return;
-    bytes = await input.read(input.filePath);
+    const canonicalPath = await realpath(filePath);
+    handle = await open(canonicalPath, constants.O_RDONLY | constants.O_NONBLOCK);
+    const before = await handle.stat();
+    if (!before.isFile()) return unavailable(`Not a regular instruction source: ${filePath}`);
+    if (before.size > limit) return unavailable(`Source exceeded the discovery byte limit: ${filePath}`);
+    const bytes = Buffer.alloc(limit + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, length, bytes.length - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    const after = await handle.stat();
+    if (length > limit || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs
+      || await realpath(filePath) !== canonicalPath) return unavailable(`Source changed during inspection: ${filePath}`);
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length));
+    if (text.includes('\0')) return unavailable(`Invalid instruction source: ${filePath}`);
+    return { observation: { path: filePath, canonicalPath, digest: executionDigest(text), state: 'present' }, text, error: null };
   } catch (error) {
-    if (isMissing(error)) return;
-    input.degradationReasons.push(`Could not read ${input.filePath}: ${errorMessage(error)}.`);
-    return;
-  }
-  input.readFiles.push(input.filePath);
-  const digest = createHash('sha256').update(bytes).digest('hex');
-  const truncated = bytes.byteLength > input.maxSourceBytes;
-  const text = bytes.subarray(0, input.maxSourceBytes).toString('utf8');
-  input.facts.push({
-    source: input.sourceLabel,
-    kind: input.kind,
-    authority: 'repository',
-    purpose: 'guidance',
-    scope: input.scope,
-    version: digest,
-    text: truncated ? `${text}\n[Source truncated at the Host discovery limit.]` : text,
-    invalidated: false,
-  });
-  if (truncated) input.degradationReasons.push(`${input.filePath} exceeded the discovery byte limit.`);
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { observation: { path: filePath, canonicalPath: null, digest: null, state: 'missing' }, text: null, error: null };
+    return unavailable(`Could not inspect source: ${filePath}`);
+  } finally { await handle?.close(); }
 }
 
-function ancestorDirectories(directory: string): readonly string[] {
-  const ancestors: string[] = [];
-  let current = directory;
-  while (true) {
-    ancestors.push(current);
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
+async function inspectGit(directory: string, worktree: string | null, signal?: AbortSignal): Promise<string | null> {
+  if (!worktree) return 'No Git worktree was detected at admission.';
+  try {
+    const git = async (args: string[]) => (await run('git', ['-C', worktree, ...args], {
+      timeout: 400, maxBuffer: 16 * 1024, signal, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+    })).stdout.trim();
+    const head = await git(['rev-parse', '--verify', 'HEAD']).catch(() => 'unborn or unavailable');
+    const ref = await git(['symbolic-ref', '--quiet', 'HEAD']).catch(() => 'detached or unavailable');
+    const status = await git(['status', '--porcelain=v1', '--untracked-files=normal']);
+    return `Observed Git worktree: ${worktree}\nScope: ${directory}\nHEAD: ${head}\nRef: ${ref}\nStatus:\n${status || '(clean)'}`;
+  } catch { return null; }
+}
+
+function decodeCheckProfile(text: string, source: string, scope: string): ProjectCheckDeclaration[] {
+  const profile = JSON.parse(text) as { schemaVersion: unknown; checks: unknown };
+  if (!profile || Object.keys(profile).sort().join(',') !== 'checks,schemaVersion' || profile.schemaVersion !== 1
+    || !Array.isArray(profile.checks) || profile.checks.length > 32) throw new Error('Invalid check profile');
+  const ids = new Set<string>();
+  return profile.checks.map((value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid check');
+    const entry = value as Record<string, unknown>;
+    if (Object.keys(entry).some((key) => !['id', 'command', 'required', 'inputs', 'exclude'].includes(key))) throw new Error('Unknown check field');
+    const string = (input: unknown) => { if (typeof input !== 'string' || !input.trim() || input.includes('\0') || input.length > 4_096) throw new Error('Invalid check text'); return input; };
+    const strings = (input: unknown) => { if (!Array.isArray(input) || input.length > 64) throw new Error('Invalid check scope'); return input.map(string); };
+    const id = string(entry.id);
+    if (ids.has(id) || typeof entry.required !== 'boolean') throw new Error('Invalid check identity');
+    ids.add(id);
+    return { id, command: string(entry.command), required: entry.required, inputs: strings(entry.inputs), exclude: strings(entry.exclude), source, scope };
+  });
+}
+
+function ancestorDirectories(directory: string): string[] {
+  const ancestors = [directory];
+  while (path.dirname(directory) !== directory) { directory = path.dirname(directory); ancestors.push(directory); }
   return ancestors.reverse();
 }
-
-function deduplicateFacts(facts: readonly ExecutionContextFact[]): readonly ExecutionContextFact[] {
-  const seen = new Set<string>();
-  return facts.filter((fact) => {
-    const key = JSON.stringify([fact.source, fact.kind, fact.scope, fact.version]);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+function fact(source: string, kind: ExecutionContextFact['kind'], scope: string, version: string, text: string, invalidated = false): ExecutionContextFact {
+  return { source, kind, authority: 'repository', purpose: 'guidance', scope, version, text, invalidated };
 }
-
-function digest(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
-
-function isMissing(error: unknown): boolean {
-  return Boolean(error && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT');
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+function factIdentity(value: ExecutionContextFact): string { return JSON.stringify([value.source, value.kind, value.authority, value.purpose, value.scope]); }

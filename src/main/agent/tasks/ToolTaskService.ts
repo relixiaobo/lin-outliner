@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { TaskExecutionContext } from '../../../core/agent/executionContext';
 import { ExecutionAdmissionError, pendingExecutionContext, resolveExecutionAddress, revalidateExecutionContext } from './ExecutionContext';
-import { discoverExecutionContext } from './ExecutionContextDiscovery';
+import { discoverExecutionContext, validateDiscoveredSources } from './ExecutionContextDiscovery';
+import type { ExecutionContextObservationPayload, ThreadContextPayload, ThreadContextPayloadReference } from '../../../core/agent/protocol';
 import type { ChildProcess } from 'node:child_process';
 import { link, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -95,8 +96,11 @@ export interface ToolTaskHost {
   ): Promise<ToolTaskArtifactSettlement>;
   taskDetailsExpired?(ownerThreadId: ThreadId): Promise<void>;
   taskChanged(task: ToolTaskProjection): void;
-  /** Best-effort delivery of a committed successor at a later provider boundary. */
-  publishExecutionContextObservation?(task: ToolTaskRecord, context: TaskExecutionContext): Promise<void> | void;
+  readonly contextEvidence?: {
+    write(owner: string, payload: ThreadContextPayload): Promise<ThreadContextPayloadReference>;
+    read(owner: string, ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
+    prune?(owner: string): Promise<void>;
+  };
 }
 
 export interface StartToolTaskInput {
@@ -165,6 +169,7 @@ export class ToolTaskService {
   private recoveryIdentityDeadline = 0;
   private closing = false;
   private initialized = false;
+  private readonly discoveryRuns = new Map<string, { run: Promise<void>; controller: AbortController }>();
 
   constructor(
     readonly store: ToolTaskStore,
@@ -251,6 +256,9 @@ export class ToolTaskService {
     await this.enforceRetention();
     for (const owner of this.store.ownersWithPendingDelivery()) this.wakeDelivery(owner);
     this.initialized = true;
+    for (const owner of this.store.ownerIds()) {
+      for (const task of this.store.discoveryCandidates(owner)) this.discoverTaskContext(task);
+    }
   }
 
   async start(input: StartToolTaskInput): Promise<ToolTaskRecord> {
@@ -305,10 +313,10 @@ export class ToolTaskService {
       timeoutMs: input.timeoutMs,
       startedAt,
     });
-    this.discoverTaskContext(task);
     try {
       await mkdir(detailPath, { recursive: false, mode: 0o700 });
       await input.onAdmitted?.(task);
+      this.discoverTaskContext(task);
       await Promise.all([
         writeFile(paths.stdin, input.stdin ?? '', { encoding: 'utf8', mode: 0o600 }),
         writeFile(paths.stdout, '', { encoding: 'utf8', mode: 0o600 }),
@@ -394,15 +402,46 @@ export class ToolTaskService {
   }
 
   private discoverTaskContext(task: ToolTaskRecord): void {
-    if (this.store.contextSuccessor(task.taskId)) return;
-    void discoverExecutionContext(task.executionContext)
-      .then(({ context }) => this.store.publishContextSuccessor(task.taskId, context, this.now()))
-      .then((context) => this.host?.publishExecutionContextObservation?.(task, context))
-      .catch((error) => {
-        // Discovery is advisory evidence. Admission and the business operation
-        // have already crossed their own durable boundaries and must continue.
-        console.warn(`[agent] Execution-context discovery degraded for ${task.taskId}: ${errorMessage(error)}`);
-      });
+    const evidence = this.host?.contextEvidence;
+    const key = task.executionContext.snapshotRef;
+    if (!evidence || this.closing || this.discoveryRuns.has(key) || this.store.contextSuccessor(task.taskId)) return;
+    const controller = new AbortController();
+    const run = (async () => {
+      const admissionRef = await evidence.write(task.taskId, { schemaVersion: 1, kind: 'taskExecutionContext',
+        taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId, executionContext: task.executionContext });
+      const observed = await discoverExecutionContext(task.executionContext, { signal: controller.signal, now: this.now });
+      if (controller.signal.aborted || this.closing || !this.host?.ownerExists(task.ownerThreadId)) return;
+      const payload: ExecutionContextObservationPayload = { schemaVersion: 1, kind: 'executionContextObservation',
+        taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId,
+        admissionRef, executionContext: observed.context, sources: observed.sources, scopes: observed.scopes, checks: observed.checks };
+      const ref = await evidence.write(task.taskId, payload);
+      this.store.publishContextSuccessor(task.taskId, ref, this.now());
+    })().catch((error) => {
+      console.warn(`[agent] Execution-context discovery deferred for ${task.taskId}: ${errorMessage(error)}`);
+    }).finally(() => this.discoveryRuns.delete(key));
+    this.discoveryRuns.set(key, { run, controller });
+  }
+
+  async readContextObservation(taskId: string, ref: ThreadContextPayloadReference): Promise<ExecutionContextObservationPayload | null> {
+    const payload = await this.host?.contextEvidence?.read(taskId, ref);
+    return payload?.kind === 'executionContextObservation' ? payload : null;
+  }
+
+  async pruneContextOwner(taskId: string): Promise<void> {
+    await this.host?.contextEvidence?.prune?.(taskId);
+  }
+
+  async prepareExecutionContext(owner: string, context: TaskExecutionContext): Promise<TaskExecutionContext> {
+    if (!this.host?.contextEvidence) return context;
+    for (const previous of this.store.discoveryCandidates(owner, 8)) {
+      if (previous.executionContext.addressRef !== context.addressRef || previous.executionContext.policyRef !== context.policyRef) continue;
+      const reference = this.store.contextSuccessor(previous.taskId);
+      if (!reference) continue;
+      const payload = await this.readContextObservation(reference.taskId, reference.ref).catch(() => null);
+      if (!payload || !await validateDiscoveredSources({ context: payload.executionContext, sources: payload.sources, scopes: payload.scopes, checks: payload.checks })) continue;
+      return revalidateExecutionContext(payload.executionContext);
+    }
+    return context;
   }
 
   async runHostOperation<T>(input: {
@@ -430,13 +469,13 @@ export class ToolTaskService {
       nonce: randomUUID(), detailPath: path.join(this.detailRoot, taskId),
       backgroundEnabled: false, timeoutMs: 600_000, startedAt: this.now(),
     });
-    this.discoverTaskContext(task);
     const controller = new AbortController();
     const signal = input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal;
     const operation = (async () => {
       try {
         await mkdir(task.detailPath, { recursive: false, mode: 0o700 });
         await input.onAdmitted(task);
+        this.discoverTaskContext(task);
         if (signal.aborted || this.closing) throw new Error('Host operation cancelled before execution');
         const { result, success } = await input.execute(signal);
         await this.settleWithoutProcess(task, success ? 'succeeded' : 'failed', 'host_operation_completed', null);
@@ -716,6 +755,7 @@ export class ToolTaskService {
     }
     this.clearMonitor(taskId);
     await rm(task.detailPath, { recursive: true, force: true });
+    await this.pruneContextOwner(taskId);
     this.store.deleteTask(taskId);
   }
 
@@ -743,6 +783,8 @@ export class ToolTaskService {
 
   async close(drainTimeoutMs: number): Promise<void> {
     this.closing = true;
+    for (const discovery of this.discoveryRuns.values()) discovery.controller.abort();
+    await Promise.allSettled([...this.discoveryRuns.values()].map(({ run }) => run));
     for (const operation of this.hostOperations.values()) operation.controller.abort();
     for (const timer of this.monitors.values()) clearInterval(timer);
     this.monitors.clear();
@@ -816,6 +858,7 @@ export class ToolTaskService {
   private async orphanOwner(ownerThreadId: ThreadId): Promise<void> {
     this.store.blockOwnerDelivery(ownerThreadId, this.now());
     await Promise.all(this.store.listAll(ownerThreadId).map(async (task) => {
+      await this.pruneContextOwner(task.taskId);
       if (isToolTaskTerminal(task.state)) return;
       const settling = this.store.setCoordinationError(
         task.taskId,

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ExecutionAdmissionError, validateExecutionContext } from './ExecutionContext';
-import type { TaskExecutionContext } from '../../../core/agent/executionContext';
-import type { ThreadId, ThreadResourceReference, TurnId } from '../../../core/agent/protocol';
+import type { ThreadContextPayloadReference, ThreadId, ThreadResourceReference, TurnId } from '../../../core/agent/protocol';
+import { decodeThreadContextPayloadReference } from '../../../core/agent/codec';
 import type { SqliteDatabase } from '../persistence/sqlite';
 import {
   isToolTaskTerminal,
@@ -223,47 +223,59 @@ export class ToolTaskStore {
       CREATE TABLE IF NOT EXISTS tool_task_context_successors (
         predecessor_ref TEXT PRIMARY KEY,
         task_id TEXT NOT NULL REFERENCES tool_tasks(task_id) ON DELETE CASCADE,
-        successor_json TEXT NOT NULL,
-        created_at INTEGER NOT NULL
+        payload_ref_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        delivery_state TEXT NOT NULL CHECK (delivery_state IN ('pending', 'delivered', 'blocked'))
       ) STRICT;
       CREATE INDEX IF NOT EXISTS tool_task_context_successors_task_idx
         ON tool_task_context_successors(task_id);
     `);
   }
 
-  /** Persist one immutable discovery successor for an admitted task context. */
-  publishContextSuccessor(taskId: string, successor: TaskExecutionContext, createdAt: number): TaskExecutionContext {
-    validateExecutionContext(successor);
+  /** Bytes live in the existing context evidence store; this is delivery ownership only. */
+  publishContextSuccessor(taskId: string, ref: ThreadContextPayloadReference, createdAt: number): void {
+    if (decodeThreadContextPayloadReference(ref).kind !== 'executionContextObservation') throw new Error('Invalid discovery reference');
     return this.transaction(() => {
       const task = this.require(taskId);
-      if (task.executionContext.snapshotRef !== successor.snapshot.predecessorRef) {
-        throw new Error('Execution context successor does not follow the task snapshot');
-      }
       const existing = this.db.prepare(
-        'SELECT successor_json FROM tool_task_context_successors WHERE predecessor_ref = ?',
-      ).get(task.executionContext.snapshotRef) as { successor_json: string } | undefined;
+        'SELECT payload_ref_json FROM tool_task_context_successors WHERE predecessor_ref = ?',
+      ).get(task.executionContext.snapshotRef) as { payload_ref_json: string } | undefined;
       if (existing) {
-        const recorded = validateExecutionContext(JSON.parse(existing.successor_json) as unknown);
-        if (JSON.stringify(recorded) !== JSON.stringify(successor)) {
+        if (existing.payload_ref_json !== JSON.stringify(ref)) {
           throw new Error('Execution context successor is immutable');
         }
-        return recorded;
+        return;
       }
       this.db.prepare(`
-        INSERT INTO tool_task_context_successors(predecessor_ref, task_id, successor_json, created_at)
-        VALUES (?, ?, ?, ?)
-      `).run(task.executionContext.snapshotRef, taskId, JSON.stringify(successor), createdAt);
-      return successor;
+        INSERT INTO tool_task_context_successors(predecessor_ref, task_id, payload_ref_json, created_at, delivery_state)
+        VALUES (?, ?, ?, ?, 'pending')
+      `).run(task.executionContext.snapshotRef, taskId, JSON.stringify(ref), createdAt);
     });
   }
 
-  contextSuccessor(taskId: string): TaskExecutionContext | null {
+  contextSuccessor(taskId: string): { taskId: string; ref: ThreadContextPayloadReference } | null {
     const task = this.read(taskId);
     if (!task) return null;
     const row = this.db.prepare(
-      'SELECT successor_json FROM tool_task_context_successors WHERE predecessor_ref = ?',
-    ).get(task.executionContext.snapshotRef) as { successor_json: string } | undefined;
-    return row ? validateExecutionContext(JSON.parse(row.successor_json) as unknown) : null;
+      'SELECT task_id, payload_ref_json FROM tool_task_context_successors WHERE predecessor_ref = ?',
+    ).get(task.executionContext.snapshotRef) as { task_id: string; payload_ref_json: string } | undefined;
+    return row ? { taskId: row.task_id, ref: decodeThreadContextPayloadReference(JSON.parse(row.payload_ref_json)) } : null;
+  }
+
+  pendingContextObservations(ownerThreadId: string): readonly { taskId: string; ref: ThreadContextPayloadReference }[] {
+    return (this.db.prepare(`SELECT s.task_id, s.payload_ref_json FROM tool_task_context_successors s
+      JOIN tool_tasks t ON t.task_id = s.task_id WHERE t.owner_thread_id = ? AND s.delivery_state = 'pending'
+      ORDER BY s.created_at, s.task_id LIMIT 32`).all(ownerThreadId) as { task_id: string; payload_ref_json: string }[])
+      .map((row) => ({ taskId: row.task_id, ref: decodeThreadContextPayloadReference(JSON.parse(row.payload_ref_json)) }));
+  }
+
+  settleContextObservation(taskId: string, state: 'delivered' | 'blocked'): void {
+    this.db.prepare("UPDATE tool_task_context_successors SET delivery_state = ? WHERE task_id = ? AND delivery_state = 'pending'").run(state, taskId);
+  }
+
+  discoveryCandidates(ownerThreadId: string, limit = 32): readonly ToolTaskRecord[] {
+    return (this.db.prepare(`SELECT * FROM tool_tasks WHERE owner_thread_id = ? ORDER BY started_at DESC, task_id DESC LIMIT ?`)
+      .all(ownerThreadId, limit) as ToolTaskRow[]).map(taskFromRow);
   }
 
   admitLease(

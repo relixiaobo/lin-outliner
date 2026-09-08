@@ -124,7 +124,7 @@ const toolTask = {
     address: { requestedCwd: null, cwd: '/workspace', targets: [], targetMode: 'follow', coverage: 'cwd-only',
       scopes: [{ key: 'directory:/workspace', directory: '/workspace', worktree: null, gitDirectory: null }] },
     policy: { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [], mutation: true },
-    snapshot: { generation: 0, predecessorRef: null, discovery: 'pending', degradation: 'Discovery pending', facts: [] },
+    snapshot: { seriesId: 'fixture', capturedAt: 0, generation: 0, predecessorRef: null, discovery: 'pending', degradation: 'Discovery pending', facts: [] },
   },
   taskId: 'task-1',
   ownerThreadId: THREAD_ID,

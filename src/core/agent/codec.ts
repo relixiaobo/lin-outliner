@@ -3706,6 +3706,37 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
         sourceItemId: stringValue(record.sourceItemId, 'contextPayload.sourceItemId'),
         executionContext: decodeTaskExecutionContext(record.executionContext),
       });
+    case 'executionContextObservation': {
+      exactKeys(record, ['schemaVersion', 'kind', 'taskId', 'sourceTurnId', 'sourceItemId', 'admissionRef', 'executionContext', 'sources', 'scopes', 'checks'], 'contextPayload');
+      const admissionRef = decodeThreadContextPayloadReference(record.admissionRef, 'contextPayload.admissionRef');
+      if (admissionRef.kind !== 'taskExecutionContext') throw new Error('Discovery requires its admitted task context');
+      const executionContext = decodeTaskExecutionContext(record.executionContext);
+      if (executionContext.snapshot.generation === 0) throw new Error('Discovery requires a successor generation');
+      const sources = arrayValue(record.sources, 'contextPayload.sources').map((value) => {
+        const source = recordValue(value, 'contextPayload.source');
+        exactKeys(source, ['path', 'canonicalPath', 'digest', 'state'], 'contextPayload.source');
+        return { path: stringValue(source.path, 'source.path'), canonicalPath: nullableString(source.canonicalPath, 'source.canonicalPath'),
+          digest: nullableString(source.digest, 'source.digest'), state: enumValue(source.state, ['present', 'missing', 'unavailable'] as const, 'source.state') };
+      });
+      const scopes = arrayValue(record.scopes, 'contextPayload.scopes').map((value) => {
+        const scope = recordValue(value, 'contextPayload.scope');
+        exactKeys(scope, ['directory', 'sources', 'complete'], 'contextPayload.scope');
+        return { directory: stringValue(scope.directory, 'scope.directory'), complete: booleanValue(scope.complete, 'scope.complete'),
+          sources: arrayValue(scope.sources, 'scope.sources').map((value) => stringValue(value, 'scope.source')) };
+      });
+      const checks = arrayValue(record.checks, 'contextPayload.checks').map((value) => {
+        const check = recordValue(value, 'contextPayload.check');
+        exactKeys(check, ['id', 'command', 'required', 'inputs', 'exclude', 'source', 'scope'], 'contextPayload.check');
+        return { id: stringValue(check.id, 'check.id'), command: stringValue(check.command, 'check.command'), required: booleanValue(check.required, 'check.required'),
+          inputs: arrayValue(check.inputs, 'check.inputs').map((value) => stringValue(value, 'check.input')),
+          exclude: arrayValue(check.exclude, 'check.exclude').map((value) => stringValue(value, 'check.exclude')),
+          source: stringValue(check.source, 'check.source'), scope: stringValue(check.scope, 'check.scope') };
+      });
+      if (sources.length > 384 || scopes.length > 32 || checks.length > 1_024) throw new Error('Discovery exceeded its evidence budget');
+      return deepFreeze({ schemaVersion: 1, kind, taskId: stringValue(record.taskId, 'contextPayload.taskId'),
+        sourceTurnId: uuidV7(record.sourceTurnId, 'contextPayload.sourceTurnId'), sourceItemId: stringValue(record.sourceItemId, 'contextPayload.sourceItemId'),
+        admissionRef, executionContext, sources, scopes, checks });
+    }
     case 'executionContextPublication':
       exactKeys(record, ['schemaVersion', 'kind', 'evidenceRefs', 'operations', 'text'], 'contextPayload');
       return deepFreeze({

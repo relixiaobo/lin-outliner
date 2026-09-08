@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -61,6 +61,8 @@ export async function resolveExecutionAddress(input: {
 
 export function pendingExecutionContext(address: ExecutionAddress, policy: ExecutionPolicy): TaskExecutionContext {
   const snapshot = {
+    seriesId: randomUUID(),
+    capturedAt: Date.now(),
     generation: 0,
     predecessorRef: null,
     discovery: 'pending' as const,

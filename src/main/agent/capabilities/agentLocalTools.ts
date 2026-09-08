@@ -820,13 +820,16 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
           const delegateControl = tool.name === 'bash' && workspace.delegateCommandRuntime
             && typeof params.command === 'string' && parsePrivilegedDelegateCommand(params.command) !== null;
           const mutation = !delegateControl && capability !== 'read-only' && ['bash', 'file_edit', 'file_write', 'file_delete'].includes(tool.name);
-          const executionContext = pendingExecutionContext(address, {
+          const pendingContext = pendingExecutionContext(address, {
             capability, mutation,
             isolation: workspace.writeBoundary
               ? tool.name === 'bash' ? 'macos-write-sandbox' : 'host-write-boundary'
               : 'unsandboxed',
             writablePaths: workspace.writeBoundary?.shellWritablePaths ?? [],
           });
+          const executionContext = workspace.threadId && options.toolTaskService
+            ? await options.toolTaskService.prepareExecutionContext(workspace.threadId, pendingContext)
+            : pendingContext;
           const validateAddress = async () => {
             await workspace.validateIsolation?.();
             if (executionDigest(await resolveExecutionAddress(addressInput)) !== executionDigest(address)) {
