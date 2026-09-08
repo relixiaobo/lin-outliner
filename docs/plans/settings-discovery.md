@@ -57,8 +57,15 @@ as one system. Category headers should not repeat a single row label. Text/image
 model defaults share one group; popup menus size to the selected value with a
 bounded long-label fallback and consistent trailing alignment. List membership
 uses leading checkboxes outside selectable row buttons. Feature-level enablement
-may retain a compact switch. Use one restrained inset/type hierarchy across domain
-and scalar rows; hide ordinary technical IDs/badges and internal tool names where
+may retain a compact switch. Use low-contrast filled groups without outer strokes,
+separators inset on both sides, regular row labels, and semibold section headings
+across domain and scalar rows. Popups show their value and indicator without a
+resting bezel. Keyboard Shortcuts uses one compact alternating list with context
+headings and instructions above the rows. Key combinations read as trailing text;
+double-click or keyboard activation starts recording in stable field dimensions,
+and a single pointer click only focuses. Row menus appear on hover/focus/open
+without reflow; Restore Defaults sits below the list at the leading edge.
+Hide ordinary technical IDs/badges and internal tool names where
 they do not help a person make a choice. Keep errors and meaningful source/status
 information visible. Check every pane in English/Chinese, light/dark, and large
 text, and verify focus, popup behavior, and retained operations on the real app.

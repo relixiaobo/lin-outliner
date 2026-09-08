@@ -126,7 +126,7 @@ describe('Shortcut Manager', () => {
       '[aria-label="Change CommandOrControl+M"]',
     );
     expect(change).toBeDefined();
-    await act(async () => change?.click());
+    await act(async () => change?.dispatchEvent(new rendered.window.Event('dblclick', { bubbles: true })));
     await act(async () => {
       rendered.document.querySelector('.settings-shortcut-key.is-recording')!.dispatchEvent(keydown(rendered.window, { key: 'p', code: 'KeyP', metaKey: true }));
     });
@@ -142,7 +142,7 @@ describe('Shortcut Manager', () => {
     const change = rendered.document.querySelector<HTMLButtonElement>(
       '[aria-label="Change CommandOrControl+M"]',
     );
-    await act(async () => change?.click());
+    await act(async () => change?.dispatchEvent(new rendered.window.Event('dblclick', { bubbles: true })));
     await act(async () => {
       rendered.document.querySelector('.settings-shortcut-key.is-recording')!.dispatchEvent(keydown(rendered.window, { key: 'Escape' }));
     });

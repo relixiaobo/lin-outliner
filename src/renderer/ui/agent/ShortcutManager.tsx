@@ -170,42 +170,44 @@ export function ShortcutManager({ active = true, onError, onNotice }: ShortcutMa
       ) : null}
 
       {!view ? <InsetGroup><InsetRow empty label={t.settings.loading} /></InsetGroup> : null}
-      {view ? CONTEXTS.map((context) => {
-        const entries = view.entries.filter((entry) => entry.context === context && filteredIds.has(entry.id));
-        if (entries.length === 0) return null;
-        return (
-          <InsetGroup ariaLabel={contextLabel(context, labels)} key={context} label={contextLabel(context, labels)}>
-            {entries.map((entry) => (
-              <ShortcutRow
-                busy={busy || rejected}
-                entry={entry}
-                key={entry.id}
-                menuOpen={menu === entry.id}
-                onMenuOpenChange={(open) => setMenu(open ? entry.id : null)}
-                onCancelRecording={() => { setRecording(null); setRecordingError(null); }}
-                onRecord={(index) => {
-                  setRecording({ id: entry.id, index });
-                  setRecordingError(null);
-                }}
-                onRemove={(index) => {
-                  const next = desiredBindings(entry).filter((_binding, candidate) => candidate !== index);
-                  void update({ id: entry.id, value: overrideFromBindings(next) }, labels.saved);
-                }}
-                onReset={() => void update({ id: entry.id }, labels.resetNotice)}
-                onToggle={(enabled) => void update(
-                  enabled ? { id: entry.id } : { id: entry.id, value: false },
-                  labels.saved,
-                )}
-                recording={recording?.id === entry.id ? recording.index : null}
-                recordingError={recording?.id === entry.id ? recordingError : null}
-              />
-            ))}
-          </InsetGroup>
-        );
-      }) : null}
+      {view && hasResults ? <div className="settings-shortcuts-table">
+        <p className="settings-shortcuts-instruction">{labels.editHint}</p>
+        {CONTEXTS.map((context) => {
+          const entries = view.entries.filter((entry) => entry.context === context && filteredIds.has(entry.id));
+          if (entries.length === 0) return null;
+          return (
+            <InsetGroup ariaLabel={contextLabel(context, labels)} key={context} label={contextLabel(context, labels)}>
+              {entries.map((entry) => (
+                <ShortcutRow
+                  busy={busy || rejected}
+                  entry={entry}
+                  key={entry.id}
+                  menuOpen={menu === entry.id}
+                  onMenuOpenChange={(open) => setMenu(open ? entry.id : null)}
+                  onCancelRecording={() => { setRecording(null); setRecordingError(null); }}
+                  onRecord={(index) => {
+                    setRecording({ id: entry.id, index });
+                    setRecordingError(null);
+                  }}
+                  onRemove={(index) => {
+                    const next = desiredBindings(entry).filter((_binding, candidate) => candidate !== index);
+                    void update({ id: entry.id, value: overrideFromBindings(next) }, labels.saved);
+                  }}
+                  onReset={() => void update({ id: entry.id }, labels.resetNotice)}
+                  onToggle={(enabled) => void update(
+                    enabled ? { id: entry.id } : { id: entry.id, value: false },
+                    labels.saved,
+                  )}
+                  recording={recording?.id === entry.id ? recording.index : null}
+                  recordingError={recording?.id === entry.id ? recordingError : null}
+                />
+              ))}
+            </InsetGroup>
+          );
+        })}
+      </div> : null}
       {view && !hasResults ? <InsetGroup><InsetRow empty label={labels.noResults} /></InsetGroup> : null}
       <div className="settings-shortcuts-footer">
-        <p>{labels.editHint}</p>
         <Button disabled={!view || busy || rejected || !view.entries.some((entry) => entry.desired !== null)}
           onClick={() => void update({ resetAll: true }, labels.resetAllNotice)} size="sm" variant="secondary">{labels.resetAll}</Button>
       </div>
@@ -255,7 +257,9 @@ function ShortcutRow({ busy, entry, onRecord, onRemove, onReset, onToggle, recor
     aria-label={binding ? labels.change({ shortcut: binding }) : labels.add({ name: command.label })}
     aria-describedby={`${descriptionId}${feedback ? ` ${errorId}` : ''}`}
     className={`settings-shortcut-key${recording === index ? ' is-recording' : ''}`}
-    disabled={busy} onClick={() => onRecord(index)}
+    disabled={busy}
+    onClick={(event) => { if (event.detail === 0) onRecord(index); }}
+    onDoubleClick={() => onRecord(index)}
     onBlur={() => { if (recording === index) onCancelRecording(); }}
     title={recording === index ? labels.recording : binding ? labels.change({ shortcut: binding }) : labels.recording}>
     <kbd>{recording === index ? labels.recording : binding ? formatHotkey(binding) : labels.disabledValue}</kbd>

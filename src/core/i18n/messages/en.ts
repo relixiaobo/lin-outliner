@@ -730,7 +730,7 @@ export const en = {
     shortcuts: {
       options: 'Shortcut options',
       actions: ({ name }: { name: string }) => `${name} actions`,
-      editHint: 'Click a shortcut, then press a new key combination. Press Esc to cancel.',
+      editHint: 'To change a shortcut, double-click its key combination, then press the new keys. You can also focus it and press Return or Space. Press Esc to cancel.',
 
       search: 'Search shortcuts',
       openFile: 'Open Keybindings File',

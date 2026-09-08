@@ -144,9 +144,13 @@
 .settings-source-list { margin-top: var(--space-6); }
 
 /* Settings uses the same compact form rows across domain editors and preferences. */
-.settings-window .inset-card, .settings-window .preference-list { border-radius: var(--radius-md); background: var(--fill-1); }
-.settings-window .inset-group-header, .settings-window .configuration-group-title { font-size: var(--font-ui-sm); font-weight: 500; color: var(--text-secondary); }
-.settings-window .inset-row-label { font-weight: 500; }
+.settings-window .inset-card, .settings-window .preference-list { border: 0; border-radius: var(--radius-lg); background: var(--fill-1); box-shadow: none; }
+.settings-window .inset-row { --inset-separator-inset: var(--space-5); --inset-separator-inset-right: var(--space-5); }
+.settings-window .preference-row { position: relative; padding: var(--space-5); }
+.settings-window .preference-row + .preference-row { border: 0; }
+.settings-window .preference-row + .preference-row::before { content: ''; position: absolute; top: 0; inset-inline: var(--space-5); height: var(--space-hairline); background: var(--separator); }
+.settings-window .inset-group-header, .settings-window .configuration-group-title { font-size: var(--font-ui-sm); font-weight: 600; color: var(--text-primary); padding-inline: var(--space-5); }
+.settings-window .inset-row-label, .settings-window .preference-label { font-weight: 400; }
 .settings-window .select-popup { min-width: 0; max-width: 100%; }
 .settings-window .select-popup-input {
   field-sizing: content;
@@ -155,8 +159,8 @@
   font-size: var(--font-ui-sm);
   font-weight: 400;
   border-radius: var(--radius-xs);
-  background: var(--fill-1);
-  box-shadow: var(--inset-hairline);
+  background: transparent;
+  box-shadow: none;
 }
 .settings-window .select-popup-input:hover:not(:disabled) { background: var(--fill-2); }
 .inset-row:has(> .inset-row-leading-control) { grid-template-columns: auto minmax(0, 1fr) auto; }

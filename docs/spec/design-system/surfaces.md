@@ -372,8 +372,10 @@ Feature-level boolean settings use compact switches. Collection membership
 (Shortcuts, Providers, Skills, and delegation runners) uses leading checkboxes,
 outside any row button. Both follow the `--control-on` exception in Foundations.
 Settings pop-up selectors size to the selected value, cap long labels, align
-consistently at the trailing edge, and use a restrained visible control bezel.
-Domain and scalar rows share typography, inset radius, and grouping; default
+consistently at the trailing edge, and show a value and menu indicator without a
+resting bezel. Domain and scalar rows share low-contrast filled groups without an
+outer stroke, the large inset radius, separators inset on both sides, regular
+weight row labels, and semibold section headings; default
 text/image model choices share one Default models group. Ordinary copy describes
 the user action rather than naming internal tool functions. Search,
 controls, and Reset remain keyboard reachable with neutral focus indicators.
@@ -387,8 +389,9 @@ chrome is nonselectable and the hand cursor is reserved for content links.
 Settings renderer; `about` opens the separate App-menu window. An optional
 `settingId` filters Settings to its matching row. Untargeted reopening preserves
 selection, search, scroll, and focus. The vertical tablist has roving keyboard
-focus with Up/Down/Home/End and Tab into content. Each visited pane stays mounted
-but hidden when inactive, preserving drafts, errors, scroll, and accepted work;
+focus with Up/Down/Home/End; Tab follows the toolbar and content controls. Each
+visited pane stays mounted but hidden when inactive, preserving drafts, errors,
+scroll, and accepted work;
 unvisited panes never load their catalogs. Hidden panes do not enter the focus
 order or accessibility tree.
 
@@ -408,22 +411,27 @@ separately from Models. Access states the Full Access boundary and lists explici
 blocks; removal commits on its row. The boundary explanation is a footnote.
 
 **Skills, Memory, and Data.** Skills owns acquisition, source bindings, enabled
-state, and updates. Skill descriptions stay clamped to two lines; menu/switch
+state, and updates. Skill descriptions stay clamped to two lines; menu/checkbox
 focus never expands a row. Memory and Data own their inspection and confirmed
 maintenance actions. Translation controls remain contextual in previews; Data
 owns global translation-cache and website-data cleanup.
 
 **Keyboard Shortcuts.** The searchable pane owns the public keybindings source.
-Grouped compact rows put a labeled checkbox before the command and editable key
-combinations on the right. IDs and default badges do not appear in ordinary rows;
-IDs and descriptions remain searchable, and descriptions are accessible help.
-Alternate/removal/per-command reset actions live in the row menu. Open File lives
-in the toolbar options menu; Restore Defaults sits below the list. Error repair
-remains available even when the source is rejected.
+One filled list surface contains an editing instruction, compact context headings,
+and alternating compact rows. Each row puts a labeled checkbox before the command
+and plain, right-aligned key combinations after it. IDs and default badges do not
+appear in ordinary rows; IDs and descriptions remain searchable, and descriptions
+are accessible help.
+Alternate/removal/per-command reset actions live in the row menu, revealed on
+hover, keyboard focus, or while open without changing layout. Open File lives
+in the toolbar options menu; Restore Defaults sits below the list at the leading
+edge. Error repair remains available even when the source is rejected.
 
-Key fields use neutral fills and keyboard focus rings. Clicking a field starts
-recording in fixed dimensions; Escape cancels. Recording captures only the focused
-field, and blur or leaving the pane ends recording. It cannot intercept typing in
+Key combinations have no resting button bezel. Double-clicking starts recording
+in fixed field dimensions; keyboard and assistive activation use Return or Space.
+A single pointer click focuses without recording. Only editing adds a neutral
+field fill; keyboard focus keeps its neutral ring. Escape cancels. Recording
+captures only the focused field, and blur or leaving the pane ends recording. It cannot intercept typing in
 another category. Source rejection and effective-binding failure stay local.
 
 **About.** Identity/version with copy, Software Update, What's New for the running

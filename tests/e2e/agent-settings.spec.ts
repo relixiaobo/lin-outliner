@@ -28,7 +28,7 @@ test.describe('configuration panes', () => {
 
   test('leaving the shortcut recorder releases keys to the current pane', async ({ page }) => {
     const settings = await openSettings(page, '&destination=shortcuts');
-    await settings.getByRole('button', { name: 'Change CommandOrControl+M', exact: true }).click();
+    await settings.getByRole('button', { name: 'Change CommandOrControl+M', exact: true }).dblclick();
     await expect(settings.locator('.settings-shortcut-key.is-recording')).toBeFocused();
     await settings.getByRole('tab', { name: 'General', exact: true }).click();
     await settings.getByRole('searchbox', { name: 'Search Settings' }).fill('appearance');
@@ -36,6 +36,27 @@ test.describe('configuration panes', () => {
     await settings.getByRole('tab', { name: 'Keyboard Shortcuts', exact: true }).click();
     await expect(settings.locator('.settings-shortcut-key.is-recording')).toHaveCount(0);
     await expect(settings.getByRole('button', { name: 'Change CommandOrControl+M', exact: true })).toBeVisible();
+  });
+
+  test('shortcut text requires deliberate editing and supports keyboard activation', async ({ page }) => {
+    const settings = await openSettings(page, '&destination=shortcuts');
+    const shortcut = settings.getByRole('button', { name: 'Change CommandOrControl+M', exact: true });
+    await expect(shortcut).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(shortcut).toHaveCSS('box-shadow', 'none');
+    await shortcut.click();
+    await expect(settings.locator('.settings-shortcut-key.is-recording')).toHaveCount(0);
+    for (const activation of ['Enter', 'Space']) {
+      await shortcut.press(activation);
+      await expect(shortcut).toHaveClass(/is-recording/);
+      await expect(shortcut).toBeFocused();
+      await shortcut.press('Escape');
+      await expect(settings.locator('.settings-shortcut-key.is-recording')).toHaveCount(0);
+    }
+    await shortcut.dblclick();
+    await expect(shortcut).toHaveClass(/is-recording/);
+    await shortcut.press('Control+Alt+J');
+    await expect(settings.getByRole('button', { name: 'Change Control+Alt+J', exact: true })).toBeVisible();
+    await expect(settings.locator('.settings-shortcut-key.is-recording')).toHaveCount(0);
   });
 
   for (const [colorScheme, width] of [['light', 560], ['dark', 900]] as const) {

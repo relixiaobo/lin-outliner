@@ -40,7 +40,7 @@ test('native shortcut editor and external edits converge through the live Host',
     const page = await openShortcuts(smoke);
     const sourcePath = join(userDataDir, 'config/keybindings.jsonc');
     const row = page.locator('[data-shortcut-id="global.open_page_in_pane"]');
-    await row.getByRole('button', { name: 'Change CommandOrControl+M', exact: true }).click();
+    await row.getByRole('button', { name: 'Change CommandOrControl+M', exact: true }).dblclick();
     await page.keyboard.press('Control+Alt+J');
     await expect(row.getByRole('button', { name: 'Change Control+Alt+J', exact: true })).toBeVisible();
     expect(readFileSync(sourcePath, 'utf8')).toContain('// Preserve this comment.');

@@ -690,7 +690,7 @@ export const zhHans: PartialMessages = {
     shortcuts: {
       options: '快捷键选项',
       actions: ({ name }: { name: string }) => `${name}操作`,
-      editHint: '点按快捷键，然后按下新的组合键。按 Esc 取消。',
+      editHint: '双击快捷键组合，然后按下新的按键。也可将焦点移到快捷键后按回车或空格键开始编辑。按 Esc 取消。',
 
       search: '搜索快捷键',
       openFile: '打开快捷键文件',

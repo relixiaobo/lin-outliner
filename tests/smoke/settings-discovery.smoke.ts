@@ -139,7 +139,7 @@ test('all Settings destinations reuse one native window with bounded admission a
         await expect(page.getByRole('switch')).toHaveCount(0);
         for (const colorScheme of ['light', 'dark'] as const) {
           await page.emulateMedia({ colorScheme });
-          await page.screenshot({ path: testInfo.outputPath(`shortcuts-${colorScheme}.png`) });
+          await page.screenshot({ path: testInfo.outputPath(`shortcuts-${colorScheme}.png`), animations: 'disabled' });
         }
       }
     }
