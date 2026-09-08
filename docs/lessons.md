@@ -2706,3 +2706,15 @@ values and dependent moves.** Publish and persist the complete effective set,
 report affected entries truthfully, and verify restart plus successful retry.
 Compare external resource ownership by its semantic identity rather than source
 spelling, and make an accepted reset invalidate obsolete recovery state.
+
+## Reading retained evidence can create a separately owned observation
+
+The #654 plan review found that a blanket ban on resource links during history
+reading conflicted with durable replay of image/PDF tool results.
+
+**Separate the source's retention from the observation a new invocation records.**
+Publication, metadata browsing and reference resolution must not adopt historical
+originals into the reader. An actual model-visible image observation follows its
+own Item and Thread retention. Verify source deletion and reader replay after
+restart, plus cleanup of each owner; absence of a source link alone does not prove
+that the newly observed result can still be replayed.
