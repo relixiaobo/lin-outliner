@@ -26,6 +26,8 @@ CON-1: Preserve recorded-notification ordering and durable completion barriers. 
 
 CON-2: A format change uses the repository's explicit pre-release reset procedure, with no migration or legacy reader. No data reset happens as part of authoring this plan.
 
+CON-3: Published record files describe retained history. Current verification results, commit admission, and process liveness remain governed by Tool Tasks, execution context, and their original evidence. Preserve hidden delegated-session references and isolation; readable history does not grant execution authority or broaden delegated discovery.
+
 ### Original ownership
 
 | Information | Original owner | Reading rule |
@@ -93,9 +95,11 @@ BR-5: Deletion and exclusion first fence publication, drain or invalidate queued
 
 ### Resources and large-content reading
 
-FR-4: Use `AgentResourceStore.copyForObservation` or its shared primitive to publish independent exact-revision observations under resource identity and display name. Avoid hardlinks or write-through aliases to canonical bytes. These copies create no new canonical resource or current-Thread retention link; their lifetime follows the owning publication and retained resource. Existing source/edit resolution remains available to product consumers. Editing historical bytes through ordinary file operations starts from an explicit copy into the task's chosen output location.
+FR-4: Use `AgentResourceStore.copyForObservation` or its shared primitive to publish independent exact-revision file copies under resource identity and display name. Avoid hardlinks or write-through aliases to canonical bytes. Publication copies create no canonical resource; their lifetime follows the owning publication and retained resource. Publishing records, browsing metadata, and resolving historical references must not attach the historical original to the reading Thread or extend its retention. Existing source/edit resolution remains available to product consumers. Editing historical bytes starts from an explicit copy into the task's chosen output location.
 
-Resource observation publication is asynchronous and failure is explicit. Measure physical disk usage and materialization latency with large resources; copy-on-write support is an optimization, not a guaranteed storage budget. This deliberately accepts some disposable materialization cost to keep file access ordinary and avoid eager injection of resource contents into model context.
+An actual file read remains an ordinary recorded tool invocation. If it returns an image or rendered PDF page to the model, persist that observation through the existing `PiTurnExecutor` and `TurnLifecycle` tool-output contract, under the reading Thread. Preserve existing normalization, limits, omission reporting, and replay behavior. The saved observation represents what this invocation returned; it does not adopt the source resource or promise retention of the whole PDF or source conversation. Source deletion follows the original owner's rules; the new observation follows its own Item and reading Thread. No history-specific exception to ordinary file reading or new observation store is needed.
+
+Resource file publication is asynchronous and failure is explicit. Measure physical disk usage and materialization latency with large resources; copy-on-write support is an optimization, not a guaranteed storage budget. This deliberately accepts some disposable materialization cost to keep file access ordinary and avoid eager injection of resource contents into model context.
 
 FR-5: Extend general text-file reading with a bounded continuation that can resume inside a long line. Preserve existing line-window use. A continuation identifies the source generation, encoding, next position, and observed end; reject incompatible replacement and avoid gaps or duplicated characters. Search content mode provides an actual bounded matching region and a location usable for continued reading, rather than only an omitted-long-line marker. File-only callers must be able to reach retained data without shell byte-range workarounds.
 
@@ -123,7 +127,9 @@ AC-5: Given identical retained source coordinates, Trajectory and file detail ag
 
 AC-6: Given rollback, rerun, fork followed by source deletion, exclusion/re-inclusion, or derived-tree deletion, publication preserves source identity and lifecycle semantics. Recovered Rollout snapshots report recovery provenance; missing original information is never synthesized.
 
-AC-7: Given a changed original external file, the historical reference yields the saved version or explicit unavailability. Reading the conversation creates no new current-Thread resource link; publication copies neither mutate canonical bytes nor extend canonical retention.
+AC-7: Given a changed original external file, the historical reference yields the saved version or explicit unavailability. Publishing records, browsing metadata, and resolving historical references create no reading-Thread link to the historical original. Publication copies neither mutate canonical bytes nor extend canonical retention.
+
+AC-8: Given an image or PDF in source Thread A, Thread B reads the published image or selected PDF page through ordinary file tools and records the returned model observation under the existing tool-output contract. After deleting A and restarting, B replays its retained observation without A's source or publication files. Assert that the original resource follows A's lifecycle, B has not adopted the original image/PDF, and the new observation follows B's Item retention and cleanup. Preserve explicit omission/unavailability when normal tool-output limits prevent retention; do not claim the returned rendition is the original file.
 
 EVD-2: Existing deterministic file tests establish the active-publication, missing-locator, and long-line gaps. Existing source and lifecycle tests establish mechanisms to preserve. They do not establish the proposed Agent workflow, publication performance, or post-compaction behavior. Verify those with the completed feature using synthetic histories and recorded tool traces.
 
@@ -140,13 +146,23 @@ Expected source scope:
 - External consumers: `AutomationDispatcher`, the Agent Host facade, and exact Thread-reference renderer consumers if the resolved-reference contract changes.
 - Specifications: Agent Core, model runtime, tool design, integration, and relevant Thread rendering/delegation contracts; focused existing/new tests for each contract.
 
-Build on the Project catalog and lifecycle mechanism merged in PR #651, including its shared Thread metadata database and deletion ownership. Its affected surface includes `ThreadService`, `ThreadMetadataStore`, `ThreadCatalogOps`, model tools/protocol/codec, capability descriptors, Agent Host composition, and Agent specifications. PR #652 shares `agent-integration.md` and potentially Host/preload composition if reference DTOs change; avoid unrelated UI/preload changes.
+Build on the Project catalog and lifecycle mechanism merged in PR #651, including its shared Thread metadata database and deletion ownership, and the Host/configuration contracts merged in PR #652. Their affected surface includes `ThreadService`, `ThreadMetadataStore`, `ThreadCatalogOps`, model tools/protocol/codec, capability descriptors, Agent Host composition, and Agent specifications. Avoid unrelated UI/preload changes.
 
-PR #653 proposes startup fault isolation and targeted conversation recovery. Its recovery-source validation, writer fencing, and resource-preservation rules overlap BR-4/BR-5 and the existing Thread lifecycle owners. Main review should reconcile these contracts together: preserve the only surviving projection, label reconstructed history, and invalidate publication through the same lifecycle owner. Do not introduce an independent recovery coordinator in this feature. The plan files have no direct conflict; refresh implementation claims before coding. Do not edit the main-owned board, changelog, spec index, or infrastructure files without required coordination.
+PR #655 claims Verification C's ThreadService, Tool Task, execution-context, and runtime integration; PR #656 claims Settings G's Host/preload and domain contracts. These overlap potential implementation consumers, with no direct conflict in the submitted plan files. Consume their final owner contracts and refresh exact overlaps at implementation claim time.
+
+### Cross-plan ownership and order
+
+Use the selected implementation order **#653-A -> this feature -> #653-B**. A -> B is a real dependency in the startup recovery design; the other ordering follows A7 to settle shared mechanisms before their consumers, rather than establishing a universal technical prerequisite.
+
+- #653-A owns recoverable startup and scoped availability, using the final Host/configuration contracts. It preserves healthy Outline work while fencing actual Agent entry routes and producers when their owners are unavailable.
+- This feature owns shared exact-source resolution (FR-1), durable recovered-history provenance (BR-4), and record publication invalidation/cleanup (BR-5), integrated with existing Thread lifecycle owners.
+- #653-B owns verified, targeted conversation rebuild/removal. It consumes those same source, provenance, and publication lifecycle mechanisms while preserving the only surviving projection and unrelated resources. It adds no separate interpretation of history sources or independent publication cleanup coordinator.
+
+Record this ownership and order in both plans and the main-owned board before implementation claims. Verification C, Git publication D, and execution-isolation E can proceed under their own dependencies and collision checks; they do not wait for the entire sequence. CON-3 governs their relationship to readable history, and existing hidden delegated-session reference rules remain intact. Refresh exact file overlaps before coding. Do not edit the main-owned board, changelog, spec index, or infrastructure files without required coordination.
 
 ## Open questions
 
-OQ-1: Ratify the proposed file-discovery scope and saved-record boundary with this complete design: current file-index membership, self-inspection, existing retention, and explicit live-only diagnostics. Expanding delegated discovery or retaining every superseded process/provider trace would change the product scope.
+OQ-1: Obtain explicit PM ratification for BR-1's discovery scope: persistent roots across Profiles, Automation roots, and self-inspection, with existing exclusion and delegated-session isolation. Matching the current file index does not itself authorize broader explicit-reference eligibility. Existing retention and explicit live-only diagnostics remain the saved-record boundary; expanding delegated discovery or retaining every superseded process/provider trace would require a separate scope change.
 
 The implementation's private type names and exact text-continuation encoding are local choices constrained by this plan. No additional product model or serial design phase is required to choose them.
 
