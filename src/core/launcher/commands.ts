@@ -41,7 +41,7 @@ export interface LauncherInitialState {
 
 /**
  * Render an Electron accelerator (e.g. `CommandOrControl+Shift+Space`) as macOS
- * key symbols (`⌘⇧Space`). Both the launcher footer (its identity zone teaches the
+ * key symbols (`⇧⌘Space`). Both the launcher footer (its identity zone teaches the
  * summon keystroke) and Settings → General render the registered accelerator
  * through this one formatter. Unknown tokens pass through verbatim so a non-mac
  * accelerator still reads sensibly.
@@ -67,8 +67,13 @@ export function formatHotkey(accelerator: string | null): string | null {
     escape: 'esc',
     tab: '⇥',
   };
-  return accelerator
-    .split('+')
-    .map((part) => symbols[part.trim().toLowerCase()] ?? part.trim())
+  const parts = accelerator.split('+').map((part) => part.trim()).filter(Boolean);
+  const modifierOrder = ['control', 'ctrl', 'option', 'alt', 'shift', 'commandorcontrol', 'cmdorctrl', 'command', 'cmd'];
+  const modifiers = parts
+    .filter((part) => modifierOrder.includes(part.toLowerCase()))
+    .sort((left, right) => modifierOrder.indexOf(left.toLowerCase()) - modifierOrder.indexOf(right.toLowerCase()));
+  const keys = parts.filter((part) => !modifierOrder.includes(part.toLowerCase()));
+  return [...modifiers, ...keys]
+    .map((part) => symbols[part.toLowerCase()] ?? part)
     .join('');
 }

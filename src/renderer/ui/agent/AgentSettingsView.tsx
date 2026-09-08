@@ -39,6 +39,7 @@ import { SettingsAgentSection } from './SettingsAgentSection';
 import { PreviewDataPanel } from './PreviewDataPanel';
 import { AgentsSettings } from './AgentsSettings';
 import { SettingsAboutSection } from './SettingsAboutSection';
+import { ShortcutManager } from './ShortcutManager';
 import { capabilitySettingsRemovalPatch } from './agentCapabilitySettings';
 import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
 import { createSerialMutationQueue } from '../../../core/serialMutationQueue';
@@ -837,6 +838,8 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                 onError={setError}
                 onNotice={setNotice}
               />
+            ) : route.page === 'shortcuts' ? (
+              <ShortcutManager onError={setError} onNotice={setNotice} />
             ) : category === 'general' ? (
               <SettingsGeneralSection
                 onError={setError}

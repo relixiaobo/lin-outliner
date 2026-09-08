@@ -47,6 +47,7 @@ import {
 } from '../core/launcher/commands';
 import type { LauncherRemediation } from '../core/launcher/remediation';
 import { DEFAULT_LOCALE, isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, type Locale } from '../core/locale';
+import { KEYBINDINGS_CHANGED_CHANNEL, type KeybindingsView } from '../core/keybindings';
 
 /** The effective locale, resolved before first paint (same seam as the app). */
 function initialLanguage(): Locale {
@@ -74,6 +75,14 @@ const launcherApi = {
     getInitialState: () =>
       ipcRenderer.invoke('launcher:getInitialState') as Promise<LauncherInitialState>,
     hide: () => ipcRenderer.invoke('launcher:hide') as Promise<void>,
+    onHotkeysChanged: (listener: (hotkey: string | null) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, view: KeybindingsView) => {
+        const launcher = view.entries.find((entry) => entry.id === 'global.launcher');
+        listener(launcher?.effective[0] ?? null);
+      };
+      ipcRenderer.on(KEYBINDINGS_CHANGED_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(KEYBINDINGS_CHANGED_CHANNEL, handler);
+    },
     // Main derives the capture-degraded hint from its own warnings and pushes
     // only that view; the raw ExternalContext never reaches this renderer.
     onRemediation: (listener: (remediation: LauncherRemediation | null) => void) => {

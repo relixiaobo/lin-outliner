@@ -71,6 +71,39 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('list', { name: 'Agent access' })).toBeVisible();
   });
 
+  test('searches and records shortcuts in the dedicated editor', async ({ page }) => {
+    const settings = await openSettings(page, '&category=general/shortcuts');
+    await expect(settings.getByRole('heading', { name: 'Keyboard Shortcuts' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'System-wide' })).toBeVisible();
+
+    const search = settings.getByRole('searchbox', { name: 'Search shortcuts' });
+    await search.fill('translation');
+    await expect(settings.getByText('Toggle page translation', { exact: true })).toBeVisible();
+    await expect(settings.getByText('Open page in new pane', { exact: true })).toHaveCount(0);
+
+    await search.fill('global.open_page_in_pane');
+    await expect(settings.getByText('Open page in new pane', { exact: true })).toBeVisible();
+    await settings.getByRole('button', { name: 'Add an alternate for Open page in new pane' }).click();
+    await page.keyboard.press('Control+P');
+    await expect(settings.getByRole('button', { name: 'Change Control+P' })).toBeVisible();
+
+    await settings.getByRole('switch', { name: 'Enable Open page in new pane' }).click();
+    await expect(settings.getByText('Disabled', { exact: true })).toBeVisible();
+  });
+
+  for (const [colorScheme, width] of [['light', 560], ['dark', 900]] as const) {
+    test(`keeps the shortcut editor contained at ${width}px in ${colorScheme} mode`, async ({ page }, testInfo) => {
+      await page.emulateMedia({ colorScheme });
+      await page.setViewportSize({ width, height: 720 });
+      const settings = await openSettings(page, '&category=general/shortcuts');
+      await expect(settings.getByRole('list', { name: 'Application' })).toBeVisible();
+      expect(await settings.locator('.settings-content').evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      )).toBe(true);
+      await settings.screenshot({ path: testInfo.outputPath(`keyboard-shortcuts-${colorScheme}-${width}.png`) });
+    });
+  }
+
   // Runs against the real bundled CHANGELOG.md, so this is the case that would
   // catch the convention breaking in the file itself — the mocked build is 0.1.0
   // and that section must carry a note. Asserted structurally: the note's wording

@@ -1,6 +1,13 @@
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import type { KeybindingsView } from '../../core/keybindings';
 import { writeJsonFileSync } from '../jsonFileStore';
-import { DEFAULT_FILE_PREFERENCES, type FilePreferences, type FilePreferencesLoadResult } from './filePreferences';
+import {
+  DEFAULT_FILE_PREFERENCES,
+  loadFilePreferences,
+  type FilePreferences,
+  type FilePreferencesLoadResult,
+} from './filePreferences';
 
 export const FILE_PREFERENCES_STATUS_RELATIVE_PATH = join('config', 'status.json');
 
@@ -28,6 +35,7 @@ export interface FilePreferencesStatus {
       readonly disabledTools: readonly string[];
     };
   };
+  readonly keybindings?: KeybindingsView;
 }
 
 export function writeFilePreferencesStatus(
@@ -41,6 +49,7 @@ export function writeFilePreferencesStatus(
   } = {},
 ): FilePreferencesStatus {
   const effective = options.effective ?? DEFAULT_FILE_PREFERENCES;
+  const previous = readStatus(userDataDir);
   const status: FilePreferencesStatus = Object.freeze({
     schemaVersion: 1,
     hostSessionId,
@@ -65,9 +74,40 @@ export function writeFilePreferencesStatus(
         disabledTools: effective.agent.tools.disabled,
       },
     },
+    ...(previous?.hostSessionId === hostSessionId && previous.keybindings
+      ? { keybindings: previous.keybindings as KeybindingsView }
+      : {}),
   });
   writeJsonFileSync(join(userDataDir, FILE_PREFERENCES_STATUS_RELATIVE_PATH), status, {
     directoryMode: 0o700,
   });
   return status;
+}
+
+export function writeKeybindingsStatus(
+  userDataDir: string,
+  hostSessionId: string,
+  view: KeybindingsView,
+): void {
+  const previous = readStatus(userDataDir);
+  const base = previous?.hostSessionId === hostSessionId
+    ? previous
+    : writeFilePreferencesStatus(userDataDir, hostSessionId, loadFilePreferences(userDataDir));
+  writeJsonFileSync(join(userDataDir, FILE_PREFERENCES_STATUS_RELATIVE_PATH), {
+    ...base,
+    hostSessionId,
+    observedAt: new Date().toISOString(),
+    keybindings: view,
+  }, { directoryMode: 0o700 });
+}
+
+function readStatus(userDataDir: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(readFileSync(join(userDataDir, FILE_PREFERENCES_STATUS_RELATIVE_PATH), 'utf8'));
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
 }

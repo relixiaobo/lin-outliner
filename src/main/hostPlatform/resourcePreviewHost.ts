@@ -12,6 +12,7 @@ import {
 import type { ErrorReport } from '../../core/errorObservability';
 import type { Locale } from '../../core/locale';
 import { getMessages } from '../../core/i18n';
+import { portableChordMatchesEvent } from '../../core/keybindings';
 import { isRendererPermissionAllowed } from '../rendererPermissions';
 import {
   clearUrlPreviewSessionData,
@@ -60,6 +61,7 @@ export interface ResourcePreviewHostOptions {
   readonly rendererDevUrl?: string;
   readonly previewRoots: () => readonly string[];
   readonly localFileRoots: () => readonly string[];
+  readonly translationShortcutBindings: () => readonly string[];
   readonly resolveAttachmentFile: NativeLocalFileHostOptions['resolveAttachmentFile'];
   readonly resolveResourceFile: NativeLocalFileHostOptions['resolveResourceFile'];
   readonly reportError: (report: ErrorReport) => void;
@@ -326,11 +328,14 @@ function hardenWebContents(
     webContents.on('before-input-event', (event, input) => {
       const isTranslationShortcut = input.type === 'keyDown'
         && !input.isAutoRepeat
-        && input.alt
-        && !input.control
-        && !input.meta
-        && !input.shift
-        && (input.code === 'KeyA' || input.key.toLowerCase() === 'a');
+        && options.translationShortcutBindings().some((chord) => portableChordMatchesEvent(chord, {
+          key: input.key,
+          code: input.code,
+          ctrlKey: input.control,
+          metaKey: input.meta,
+          shiftKey: input.shift,
+          altKey: input.alt,
+        }));
       if (!isTranslationShortcut) return;
       event.preventDefault();
       if (!contents.isDestroyed()) {

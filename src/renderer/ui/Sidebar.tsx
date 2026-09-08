@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { formatHotkey } from '../../core/launcher/commands';
+import { useShortcutHint } from './interactions/useShortcutHint';
 import {
   isContentBearingNode,
   type ContentBearingNodeProjection,
@@ -635,13 +635,5 @@ function rootAvatar(node: ContentBearingNodeProjection, label: string) {
  * main because that is where the registration (and any fallback) happened.
  */
 function useLauncherHotkeyHint(): string | null {
-  const [hint, setHint] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void window.lin?.getLauncherHotkey?.().then((accelerator) => {
-      if (!cancelled) setHint(formatHotkey(accelerator));
-    });
-    return () => { cancelled = true; };
-  }, []);
-  return hint;
+  return useShortcutHint('global.launcher');
 }

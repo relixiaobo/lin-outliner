@@ -68,6 +68,7 @@ import {
 } from './previewRenderers';
 import { useEpubTranslation } from './useEpubTranslation';
 import { epubPreviewTranslationCacheSourceId } from './previewTranslationCache';
+import { useShortcutHint } from '../interactions/useShortcutHint';
 import { useUrlPageTranslation } from './useUrlPageTranslation';
 import { usePreviewContext } from './previewContext';
 import {
@@ -119,6 +120,7 @@ interface LooseBreadcrumbSegment {
 export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const t = useT();
   const { locale } = useI18n();
+  const translationShortcutHint = useShortcutHint('global.toggle_page_translation');
   const { context: translationContext, observation } = usePreviewContext(props.panelId, locale);
   const controls = observation.controls;
   const targetLanguage = controls.language ?? locale;
@@ -454,7 +456,9 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
           event.stopPropagation();
         }}
         ref={translationTriggerRef}
-        title={`${translationControlLabel} (${translationShortcutLabel()})`}
+        title={translationShortcutHint
+          ? `${translationControlLabel} (${translationShortcutHint})`
+          : translationControlLabel}
       >
         {translationStatus === 'starting' ? (
           <LoaderIcon size={ICON_SIZE.menu} />
@@ -483,6 +487,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
             })), closeTranslationPopover);
           }}
           status={translationStatus}
+          shortcutHint={translationShortcutHint}
           error={translationError}
           onClearCache={() => runTranslationOperation(() => translationContext.clearCache())}
         />
@@ -711,6 +716,7 @@ function TranslationPopover({
   onModelChange,
   onToggle,
   status,
+  shortcutHint,
 }: {
   anchorRef: RefObject<HTMLElement | null>;
   autoTranslate: boolean;
@@ -723,6 +729,7 @@ function TranslationPopover({
   onModelChange: (model: string | null) => void;
   onToggle: () => void;
   status: UrlPageTranslationStatus;
+  shortcutHint: string | null;
   error: string | null;
   onClearCache: () => void;
 }) {
@@ -802,7 +809,7 @@ function TranslationPopover({
             {enabled ? <HideIcon size={ICON_SIZE.menu} /> : <LanguagesIcon size={ICON_SIZE.menu} />}
             <span>{enabled ? labels.showOriginal : labels.translatePage}</span>
           </span>
-          <kbd>{translationShortcutLabel()}</kbd>
+          {shortcutHint ? <kbd>{shortcutHint}</kbd> : null}
         </Button>
         <div className="file-preview-translation-divider" role="presentation" />
         <SwitchControl
@@ -852,12 +859,6 @@ function TranslationPopover({
 
 
 
-
-function translationShortcutLabel(): string {
-  return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/u.test(navigator.platform)
-    ? '⌥A'
-    : 'Alt+A';
-}
 
 function previewTargetFallbackKey(target: PreviewTarget): string {
   if (target.kind === 'asset') return target.assetId;

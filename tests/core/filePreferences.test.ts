@@ -9,7 +9,8 @@ import {
   updateFilePreferences,
   writeFilePreferences,
 } from '../../src/main/configuration/filePreferences';
-import { writeFilePreferencesStatus } from '../../src/main/configuration/status';
+import { writeFilePreferencesStatus, writeKeybindingsStatus } from '../../src/main/configuration/status';
+import { keybindingsView, loadKeybindings } from '../../src/main/configuration/keybindings';
 
 let userData = '';
 
@@ -204,5 +205,32 @@ describe('file-backed preferences', () => {
     expect(status.source.status).toBe('missing');
     expect(status.source.observedDigest).toBeNull();
     expect(await readFile(path.join(userData, 'config', 'status.json'), 'utf8')).toContain('host-test');
+  });
+
+  test('settings and keybindings owners preserve each other in shared host status', async () => {
+    const preferences = loadFilePreferences(userData);
+    writeFilePreferencesStatus(userData, 'host-test', preferences);
+    writeKeybindingsStatus(userData, 'host-test', keybindingsView(loadKeybindings(userData)));
+    const afterKeybindings = JSON.parse(await readFile(path.join(userData, 'config', 'status.json'), 'utf8'));
+    expect(afterKeybindings.source.status).toBe('missing');
+    expect(afterKeybindings.keybindings.source.status).toBe('missing');
+
+    writeFilePreferencesStatus(userData, 'host-test', preferences, { applicationStatus: 'applied' });
+    const afterPreferences = JSON.parse(await readFile(path.join(userData, 'config', 'status.json'), 'utf8'));
+    expect(afterPreferences.application.status).toBe('applied');
+    expect(afterPreferences.keybindings.entries).toHaveLength(5);
+  });
+
+  test('keybindings can establish a complete shared host status before settings writes', async () => {
+    writeKeybindingsStatus(userData, 'host-test', keybindingsView(loadKeybindings(userData)));
+    const status = JSON.parse(await readFile(path.join(userData, 'config', 'status.json'), 'utf8'));
+    expect(status).toMatchObject({
+      schemaVersion: 1,
+      hostSessionId: 'host-test',
+      source: { status: 'missing' },
+      application: { status: 'pending' },
+      keybindings: { source: { status: 'missing' } },
+    });
+    expect(status.effective.agent).toBeDefined();
   });
 });
