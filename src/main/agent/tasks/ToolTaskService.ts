@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { TaskExecutionContext } from '../../../core/agent/executionContext';
-import { ExecutionAdmissionError, pendingExecutionContext, resolveExecutionAddress, revalidateExecutionContext } from './ExecutionContext';
+import { ExecutionAdmissionError, executionDigest, pendingExecutionContext, resolveExecutionAddress, revalidateExecutionContext, validateExecutionContext } from './ExecutionContext';
 import { discoverExecutionContext, validateDiscoveredSources } from './ExecutionContextDiscovery';
 import type { ExecutionContextObservationPayload, ThreadContextPayload, ThreadContextPayloadReference } from '../../../core/agent/protocol';
 import type { ChildProcess } from 'node:child_process';
@@ -407,15 +407,43 @@ export class ToolTaskService {
     if (!evidence || this.closing || this.discoveryRuns.has(key) || this.store.contextSuccessor(task.taskId)) return;
     const controller = new AbortController();
     const run = (async () => {
-      const admissionRef = await evidence.write(task.taskId, { schemaVersion: 1, kind: 'taskExecutionContext',
-        taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId, executionContext: task.executionContext });
-      const observed = await discoverExecutionContext(task.executionContext, { signal: controller.signal, now: this.now });
-      if (controller.signal.aborted || this.closing || !this.host?.ownerExists(task.ownerThreadId)) return;
-      const payload: ExecutionContextObservationPayload = { schemaVersion: 1, kind: 'executionContextObservation',
-        taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId,
-        admissionRef, executionContext: observed.context, sources: observed.sources, scopes: observed.scopes, checks: observed.checks };
-      const ref = await evidence.write(task.taskId, payload);
-      this.store.publishContextSuccessor(task.taskId, ref, this.now());
+      const admissionPayload = { schemaVersion: 1 as const, kind: 'taskExecutionContext' as const,
+        taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId, executionContext: task.executionContext };
+      const admissionRef = await evidence.write(task.taskId, admissionPayload);
+      try {
+        const observed = await discoverExecutionContext(task.executionContext, { signal: controller.signal, now: this.now });
+        if (controller.signal.aborted || this.closing || !this.host?.ownerExists(task.ownerThreadId)) return;
+        const payload: ExecutionContextObservationPayload = { schemaVersion: 1, kind: 'executionContextObservation',
+          taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId,
+          admissionRef, executionContext: observed.context, sources: observed.sources, scopes: observed.scopes, checks: observed.checks };
+        const ref = await evidence.write(task.taskId, payload);
+        this.store.publishContextSuccessor(task.taskId, ref, this.now());
+      } catch (error) {
+        if (controller.signal.aborted || this.closing || !this.host?.ownerExists(task.ownerThreadId)) return;
+        const reason = `Execution-context discovery failed: ${errorMessage(error)}`.slice(0, 4_096);
+        const capturedAt = this.now();
+        const snapshot = {
+          ...task.executionContext.snapshot,
+          capturedAt,
+          generation: task.executionContext.snapshot.generation + 1,
+          predecessorRef: task.executionContext.snapshotRef,
+          discovery: 'unavailable' as const,
+          degradation: reason,
+          facts: [...task.executionContext.snapshot.facts, {
+            source: 'host:execution-discovery', kind: 'discovery' as const, authority: 'host' as const,
+            purpose: 'observation' as const, scope: task.executionContext.address.cwd, version: 'failed',
+            text: 'Discovery failed after admission; inspect applicable sources before relying on project guidance.',
+            invalidated: false, observedAt: capturedAt,
+          }],
+        };
+        const context = validateExecutionContext({ ...task.executionContext, snapshot, snapshotRef: executionDigest(snapshot) });
+        const payload: ExecutionContextObservationPayload = { schemaVersion: 1, kind: 'executionContextObservation',
+          taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId, admissionRef,
+          executionContext: context, sources: [],
+          scopes: task.executionContext.address.scopes.map((scope) => ({ directory: scope.directory, sources: [], complete: false })), checks: [] };
+        const ref = await evidence.write(task.taskId, payload);
+        this.store.publishContextSuccessor(task.taskId, ref, this.now());
+      }
     })().catch((error) => {
       console.warn(`[agent] Execution-context discovery deferred for ${task.taskId}: ${errorMessage(error)}`);
     }).finally(() => this.discoveryRuns.delete(key));
