@@ -6,6 +6,7 @@ import type { ManagedSkillCatalogEntryView, ManagedSkillView } from '../../src/c
 import type { AppInfo } from '../../src/core/errorObservability';
 import type { AppUpdateView } from '../../src/core/appUpdate';
 import type { BundledApplicationRelease } from '../../src/core/applicationOperations';
+import type { EffectiveShortcutBindings, KeybindingsUpdateInput, KeybindingsView } from '../../src/core/keybindings';
 import { createBundledApplicationReleaseResolver } from '../../src/main/hostDomain/bundledApplicationRelease';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
 import { assetUrl } from '../../src/core/assets';
@@ -127,7 +128,7 @@ type E2EWindow = Window & {
     resolveOAuthLogin: (providerId: string) => void;
     setTranslationDelayMs: (delayMs: number) => void;
   };
-  lin?: Pick<LinApi, 'registerPreview' | 'observePreview' | 'unregisterPreview' | 'acknowledgePreview' | 'onPreviewAction' | 'previewOperation' | 'onPreviewDataChanged'> & {
+  lin?: Pick<LinApi, 'registerPreview' | 'observePreview' | 'unregisterPreview' | 'acknowledgePreview' | 'onPreviewAction' | 'previewOperation' | 'onPreviewDataChanged' | 'initialKeybindings' | 'keybindings'> & {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
     agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T>;
     automationRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T>;
@@ -737,6 +738,65 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       body: 'Review workspace conventions before automatic use.',
     }];
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+    const shortcutDefinitions = [
+      { id: 'global.launcher', context: 'system', defaults: ['CommandOrControl+Shift+Space', 'Control+Alt+Space'] },
+      { id: 'global.open_agent_panel', context: 'application', defaults: ['CommandOrControl+M'] },
+      { id: 'global.new_thread', context: 'application', defaults: ['CommandOrControl+Shift+O'] },
+      { id: 'global.go_to_today', context: 'application', defaults: ['CommandOrControl+Shift+D'] },
+      { id: 'global.toggle_page_translation', context: 'preview', defaults: ['Alt+A'] },
+    ] as const;
+    let keybindingsRevision = 0;
+    let keybindingsView: KeybindingsView = {
+      source: {
+        path: '/mock/userData/config/keybindings.jsonc',
+        schemaPath: '/mock/userData/config/keybindings.schema.json',
+        status: 'missing',
+        observedDigest: null,
+        acceptedDigest: null,
+        error: null,
+      },
+      entries: shortcutDefinitions.map((definition) => ({
+        id: definition.id,
+        context: definition.context,
+        desired: null,
+        effective: definition.defaults,
+        defaults: definition.defaults,
+        status: 'default',
+        error: null,
+      })),
+    };
+    const keybindingListeners = new Set<(view: KeybindingsView) => void>();
+    const effectiveKeybindings = (): EffectiveShortcutBindings => Object.fromEntries(
+      keybindingsView.entries.map((entry) => [entry.id, entry.effective]),
+    ) as unknown as EffectiveShortcutBindings;
+    const updateKeybindings = (input: KeybindingsUpdateInput): KeybindingsView => {
+      const nextEntries = keybindingsView.entries.map((entry) => {
+        if (input.resetAll) {
+          return { ...entry, desired: null, effective: entry.defaults, status: 'default' as const, error: null };
+        }
+        if (entry.id !== input.id) return entry;
+        const desired = Object.prototype.hasOwnProperty.call(input, 'value') ? input.value ?? null : null;
+        const effective = desired === false
+          ? []
+          : typeof desired === 'string'
+            ? [desired]
+            : desired ?? entry.defaults;
+        return {
+          ...entry,
+          desired,
+          effective,
+          status: desired === false ? 'disabled' as const : desired === null ? 'default' as const : 'applied' as const,
+          error: null,
+        };
+      });
+      const digest = (++keybindingsRevision).toString(16).padStart(8, '0');
+      keybindingsView = {
+        source: { ...keybindingsView.source, status: 'accepted', observedDigest: digest, acceptedDigest: digest },
+        entries: nextEntries,
+      };
+      for (const listener of keybindingListeners) listener(clone(keybindingsView));
+      return clone(keybindingsView);
+    };
     let appUpdate = clone(options.appUpdate ?? {
       currentVersion: '0.1.0',
       automaticChecksEnabled: true,
@@ -3575,6 +3635,16 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
 
     win.lin = {
+      initialKeybindings: effectiveKeybindings(),
+      keybindings: {
+        get: async () => clone(keybindingsView),
+        update: async (input) => updateKeybindings(input),
+        openFile: async () => { calls.push({ cmd: 'open_keybindings_file', args: {} }); },
+        onChanged: (listener) => {
+          keybindingListeners.add(listener);
+          return () => { keybindingListeners.delete(listener); };
+        },
+      },
       registerPreview: async (observation) => {
         for (const [id, entry] of previews) if (entry.paneId === observation.paneId) previews.delete(id);
         const id = crypto.randomUUID();

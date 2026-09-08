@@ -18,6 +18,8 @@ import { join } from 'node:path';
 const ROOT = join(import.meta.dir, '..', '..');
 const CONFIG = join(ROOT, 'electron.vite.config.ts');
 const PRELOAD_OUT = join(ROOT, 'out', 'preload');
+const PRELOAD_SOURCE = join(ROOT, 'src', 'preload', 'index.ts');
+const LAUNCHER_PRELOAD_SOURCE = join(ROOT, 'src', 'preload', 'launcher.ts');
 
 /** What a sandboxed preload's `require` polyfill can actually resolve. */
 const SANDBOX_SAFE_MODULES = new Set(['electron', 'events', 'timers', 'timers/promises', 'url']);
@@ -44,5 +46,16 @@ describe('the preload bundle', () => {
     for (const specifier of required) {
       expect(SANDBOX_SAFE_MODULES.has(specifier)).toBe(true);
     }
+  });
+
+  test('exposes keybinding state to the app preload while the launcher stays read-only', () => {
+    const preload = readFileSync(PRELOAD_SOURCE, 'utf8');
+    const launcher = readFileSync(LAUNCHER_PRELOAD_SOURCE, 'utf8');
+    expect(preload).toContain('initialKeybindings: readInitialKeybindings()');
+    expect(preload).toContain('ipcRenderer.invoke(KEYBINDINGS_UPDATE_CHANNEL, input)');
+    expect(preload).toContain('ipcRenderer.invoke(KEYBINDINGS_OPEN_FILE_CHANNEL)');
+    expect(launcher).toContain('onHotkeysChanged:');
+    expect(launcher).not.toContain('KEYBINDINGS_UPDATE_CHANNEL');
+    expect(launcher).not.toContain('KEYBINDINGS_OPEN_FILE_CHANNEL');
   });
 });

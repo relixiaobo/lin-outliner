@@ -83,7 +83,11 @@ import {
   hideLauncherWindow,
   showLauncherWindow,
 } from '../launcher/launcherWindow';
-import { registerLauncherHotkey, unregisterLauncherHotkeys } from '../launcher/launcherHotkey';
+import {
+  registerLauncherHotkeys,
+  replaceLauncherHotkeys,
+  unregisterLauncherHotkeys,
+} from '../launcher/launcherHotkey';
 import { oauthLoginManager } from '../agent/capabilities/agentOAuthManager';
 import { applyMacWindowCorner } from '../nativeWindowCorner';
 import {
@@ -118,6 +122,7 @@ export interface WindowApplicationHostOptions {
   readonly reportError: (report: ErrorReport) => void;
   readonly diagnosticLog: DiagnosticLogStore;
   readonly diagnosticEnvironment: () => Promise<DiagnosticEnvironment>;
+  readonly initialLauncherBindings: readonly string[];
 }
 
 export interface WindowApplicationHost {
@@ -171,6 +176,9 @@ export interface WindowApplicationHost {
   setTheme(raw: unknown): void;
   setLocale(raw: unknown): void;
   launcherHotkey(): string | null;
+  launcherHotkeys(): readonly string[];
+  launcherHotkeyError(): string | null;
+  applyLauncherHotkeys(bindings: readonly string[]): void;
   toggleLauncher(): Promise<void>;
   dismissLauncher(): void;
   initialize(): Promise<void>;
@@ -182,7 +190,8 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
   let settingsWindow: BrowserWindow | null = null;
   let providerConfigWindow: BrowserWindow | null = null;
   let cachedLocale: Locale | null = null;
-  let launcherHotkeyAccelerator: string | null = null;
+  let launcherHotkeyAccelerators: readonly string[] = Object.freeze([]);
+  let launcherHotkeyRegistrationError: string | null = null;
   let launcherContext: ExternalContext | null = null;
   let launcherOpenSeq = 0;
   let launcherInvocationRef: InvocationRef | null = null;
@@ -708,6 +717,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
           { label: t.about({ app: APP_NAME }), click: () => openSettings({ page: 'about' }) },
           { type: 'separator' },
           { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettings() },
+          { label: t.keyboardShortcuts, click: () => openSettings({ page: 'shortcuts' }) },
           { type: 'separator' }, { role: 'services' }, { type: 'separator' },
           { role: 'hide', label: t.hide({ app: APP_NAME }) }, { role: 'hideOthers' }, { role: 'unhide' },
           { type: 'separator' }, { role: 'quit', label: t.quit({ app: APP_NAME }) },
@@ -718,6 +728,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         label: t.file,
         submenu: [
           { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettings() },
+          { label: t.keyboardShortcuts, click: () => openSettings({ page: 'shortcuts' }) },
           { type: 'separator' }, { role: 'quit' },
         ],
       });
@@ -974,14 +985,24 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       liveWindow(settingsWindow)?.setTitle(messages.window.settingsTitle({ app: APP_NAME }));
       liveWindow(providerConfigWindow)?.setTitle(messages.window.providerConfigTitle);
     },
-    launcherHotkey: () => launcherHotkeyAccelerator,
+    launcherHotkey: () => launcherHotkeyAccelerators[0] ?? null,
+    launcherHotkeys: () => launcherHotkeyAccelerators,
+    launcherHotkeyError: () => launcherHotkeyRegistrationError,
+    applyLauncherHotkeys: (bindings) => {
+      const registration = replaceLauncherHotkeys(
+        launcherHotkeyAccelerators,
+        bindings,
+        () => void toggleLauncher(),
+      );
+      launcherHotkeyAccelerators = registration.accelerators;
+      launcherHotkeyRegistrationError = registration.error;
+    },
     toggleLauncher,
     dismissLauncher,
     initialize: async () => {
       if (initialized || released) return;
       initialized = true;
       nativeTheme.themeSource = loadAppPreferences().theme;
-      const target = createMainWindow();
       const launcherWindow = createLauncherWindow({
         preloadPath: join(options.moduleDir, '../preload/index.cjs'),
         devUrl: options.rendererDevUrl ? `${new URL(options.rendererDevUrl).origin}/launcher.html` : null,
@@ -990,11 +1011,13 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         onBlurHide: dismissLauncher,
       });
       registerRendererCapabilities(launcherWindow.webContents, LAUNCHER_RENDERER_CAPABILITIES);
+      const hotkey = registerLauncherHotkeys(() => void toggleLauncher(), options.initialLauncherBindings);
+      launcherHotkeyAccelerators = hotkey.accelerators;
+      launcherHotkeyRegistrationError = hotkey.error;
+      const target = createMainWindow();
       if (process.platform === 'darwin') app.setActivationPolicy('regular');
-      const hotkey = registerLauncherHotkey(() => void toggleLauncher());
-      launcherHotkeyAccelerator = hotkey.accelerator;
-      if (hotkey.accelerator) console.log(`[launcher] global hotkey: ${hotkey.accelerator}`);
-      else console.warn(`[launcher] no global hotkey registered; tried: ${hotkey.attempted.join(', ')}`);
+      if (hotkey.accelerators.length > 0) console.log(`[launcher] global hotkeys: ${hotkey.accelerators.join(', ')}`);
+      if (hotkey.error) console.warn(`[launcher] ${hotkey.error}; tried: ${hotkey.attempted.join(', ')}`);
       Menu.setApplicationMenu(buildApplicationMenu());
       const handleActivate = () => {
         if (!liveWindow(mainWindow)) createMainWindow();
@@ -1016,7 +1039,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       if (released) return;
       released = true;
       skillReviews.release();
-      if (app.isReady()) unregisterLauncherHotkeys();
+      if (app.isReady()) unregisterLauncherHotkeys(launcherHotkeyAccelerators);
       for (const release of releases.splice(0).reverse()) release();
       for (const resolve of pendingAmbientSeeds.values()) resolve(null);
       pendingAmbientSeeds.clear();

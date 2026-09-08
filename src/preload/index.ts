@@ -103,6 +103,17 @@ import {
   type BundledApplicationRelease,
 } from '../core/applicationOperations';
 import { OUTLINE_PROTOCOL_VERSION } from '../outline/contract/version';
+import {
+  KEYBINDINGS_CHANGED_CHANNEL,
+  KEYBINDINGS_GET_CHANNEL,
+  KEYBINDINGS_GET_SYNC_CHANNEL,
+  KEYBINDINGS_OPEN_FILE_CHANNEL,
+  KEYBINDINGS_UPDATE_CHANNEL,
+  effectiveShortcutBindings,
+  type EffectiveShortcutBindings,
+  type KeybindingsUpdateInput,
+  type KeybindingsView,
+} from '../core/keybindings';
 import type { OutlineStreamRecord } from '../outline/contract/schemas';
 import {
   OUTLINE_DESKTOP_CANCEL_CHANNEL,
@@ -281,7 +292,29 @@ function readInitialLanguage(): Locale {
   }
 }
 
+function readInitialKeybindings(): EffectiveShortcutBindings {
+  try {
+    const value = ipcRenderer.sendSync(KEYBINDINGS_GET_SYNC_CHANNEL) as EffectiveShortcutBindings;
+    return value ?? effectiveShortcutBindings({});
+  } catch {
+    return effectiveShortcutBindings({});
+  }
+}
+
 const api = {
+  initialKeybindings: readInitialKeybindings(),
+  keybindings: {
+    get: () => ipcRenderer.invoke(KEYBINDINGS_GET_CHANNEL) as Promise<KeybindingsView>,
+    update: (input: KeybindingsUpdateInput) => (
+      ipcRenderer.invoke(KEYBINDINGS_UPDATE_CHANNEL, input) as Promise<KeybindingsView>
+    ),
+    openFile: () => ipcRenderer.invoke(KEYBINDINGS_OPEN_FILE_CHANNEL) as Promise<void>,
+    onChanged: (listener: (view: KeybindingsView) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, view: KeybindingsView) => listener(view);
+      ipcRenderer.on(KEYBINDINGS_CHANGED_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(KEYBINDINGS_CHANGED_CHANNEL, handler);
+    },
+  },
   onMemoryChanged: (listener: () => void) => {
     const handler = () => listener();
     ipcRenderer.on(MEMORY_CHANGED_CHANNEL, handler);
@@ -400,10 +433,6 @@ const api = {
   // the stored mode so the settings control can reflect the current pick.
   getTheme: () => ipcRenderer.invoke('lin:get-theme') as Promise<ThemeMode>,
   setTheme: (mode: ThemeMode) => ipcRenderer.invoke('lin:set-theme', mode) as Promise<void>,
-  // The accelerator the global launcher actually registered under, or null when
-  // no candidate was free. Read-only and argument-free: the registration itself
-  // stays main's, this only lets Settings state the fact.
-  getLauncherHotkey: () => ipcRenderer.invoke('lin:launcher-hotkey') as Promise<string | null>,
   /** Summon the command surface from an in-app entry point. */
   showLauncher: () => ipcRenderer.invoke('lin:show-launcher') as Promise<void>,
   registerPreview: (observation: PreviewObservation) => ipcRenderer.invoke(PREVIEW_CONTEXT_CHANNEL, 'register', null, observation) as Promise<string>,

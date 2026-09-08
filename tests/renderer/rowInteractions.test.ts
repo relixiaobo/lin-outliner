@@ -2342,9 +2342,9 @@ describe('row interaction resolvers', () => {
       'global.open_agent_panel',
       'global.new_thread',
       'global.go_to_today',
+      'global.toggle_page_translation',
       'global.nav_back',
       'global.nav_forward',
-      'global.toggle_page_translation',
       'global.undo',
       'global.redo',
     ]);

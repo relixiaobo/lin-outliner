@@ -1,4 +1,33 @@
 import { isImeComposingEvent } from './imeKeyboard';
+import {
+  CONFIGURABLE_SHORTCUTS,
+  effectiveShortcutBindings,
+  isConfigurableShortcutId,
+  portableChordMatchesEvent,
+  type ConfigurableShortcutDefinition,
+  type ConfigurableShortcutId,
+  type EffectiveShortcutBindings,
+} from '../../../core/keybindings';
+import { formatHotkey } from '../../../core/launcher/commands';
+
+let effectiveConfigurableBindings = effectiveShortcutBindings({});
+const shortcutRegistryListeners = new Set<() => void>();
+
+export function applyEffectiveShortcutBindings(bindings: EffectiveShortcutBindings): void {
+  effectiveConfigurableBindings = Object.freeze(Object.fromEntries(
+    CONFIGURABLE_SHORTCUTS.map(({ id }) => [id, Object.freeze([...(bindings[id] ?? [])])]),
+  )) as EffectiveShortcutBindings;
+  for (const listener of shortcutRegistryListeners) listener();
+}
+
+export function subscribeShortcutRegistry(listener: () => void): () => void {
+  shortcutRegistryListeners.add(listener);
+  return () => shortcutRegistryListeners.delete(listener);
+}
+
+export function formatConfigurableShortcutHint(shortcutId: ConfigurableShortcutId): string | null {
+  return formatHotkey(effectiveConfigurableBindings[shortcutId][0] ?? null);
+}
 
 export type ShortcutScope =
   | 'editor'
@@ -7,7 +36,10 @@ export type ShortcutScope =
   | 'selected_reference'
   | 'global';
 
+type RendererConfigurableShortcutId = Exclude<ConfigurableShortcutId, 'global.launcher'>;
+
 export type ShortcutId =
+  | RendererConfigurableShortcutId
   | 'selection.navigate_up'
   | 'selection.navigate_down'
   | 'selection.convert_reference_right'
@@ -45,12 +77,8 @@ export type ShortcutId =
   | 'trailing.undo'
   | 'trailing.redo'
   | 'trailing.checkbox'
-  | 'global.open_agent_panel'
-  | 'global.new_thread'
-  | 'global.go_to_today'
   | 'global.nav_back'
   | 'global.nav_forward'
-  | 'global.toggle_page_translation'
   | 'global.undo'
   | 'global.redo';
 
@@ -73,6 +101,12 @@ export interface ShortcutDefinition {
   bindings: ShortcutBinding[];
   description: string;
 }
+
+const CONFIGURABLE_RENDERER_SHORTCUTS: readonly ShortcutDefinition[] = CONFIGURABLE_SHORTCUTS
+  .filter((definition): definition is ConfigurableShortcutDefinition & { readonly id: RendererConfigurableShortcutId } => (
+    definition.id !== 'global.launcher'
+  ))
+  .map(({ id, description }) => ({ id, scope: 'global', bindings: [], description }));
 
 function binding(
   key: string,
@@ -136,12 +170,9 @@ export const OUTLINER_SHORTCUTS: ShortcutDefinition[] = [
   { id: 'trailing.redo', scope: 'trailing', bindings: [binding('z', { mod: true, shift: true }), binding('y', { mod: true })], description: 'Redo document edit' },
   { id: 'trailing.checkbox', scope: 'trailing', bindings: [binding('Enter', { mod: true })], description: 'Create checkbox row' },
 
-  { id: 'global.open_agent_panel', scope: 'global', bindings: [binding('m', { mod: true })], description: 'Open agent panel' },
-  { id: 'global.new_thread', scope: 'global', bindings: [binding('o', { mod: true, shift: true })], description: 'New Thread' },
-  { id: 'global.go_to_today', scope: 'global', bindings: [binding('d', { mod: true, shift: true })], description: 'Go to today' },
+  ...CONFIGURABLE_RENDERER_SHORTCUTS,
   { id: 'global.nav_back', scope: 'global', bindings: [binding('[', { mod: true }), codeBinding('BracketLeft', { mod: true }), binding('ArrowLeft', { alt: true })], description: 'Navigate active panel back' },
   { id: 'global.nav_forward', scope: 'global', bindings: [binding(']', { mod: true }), codeBinding('BracketRight', { mod: true }), binding('ArrowRight', { alt: true })], description: 'Navigate active panel forward' },
-  { id: 'global.toggle_page_translation', scope: 'global', bindings: [binding('a', { alt: true }), codeBinding('KeyA', { alt: true })], description: 'Toggle translation for the active supported preview' },
   { id: 'global.undo', scope: 'global', bindings: [binding('z', { mod: true })], description: 'Undo document edit' },
   { id: 'global.redo', scope: 'global', bindings: [binding('z', { mod: true, shift: true }), binding('y', { mod: true })], description: 'Redo document edit' },
 ];
@@ -168,6 +199,9 @@ function keyOrCodeMatches(candidate: ShortcutBinding, event: KeyboardEvent): boo
 
 export function matchesShortcutEvent(event: KeyboardEvent, shortcutId: ShortcutId): boolean {
   if (isImeComposingEvent(event)) return false;
+  if (isConfigurableShortcutId(shortcutId)) {
+    return effectiveConfigurableBindings[shortcutId].some((chord) => portableChordMatchesEvent(chord, event));
+  }
   const shortcut = SHORTCUT_BY_ID.get(shortcutId);
   if (!shortcut) return false;
 
@@ -195,8 +229,8 @@ export function shortcutDefinitionsForScope(scope: ShortcutScope): ShortcutDefin
 }
 
 /**
- * A shortcut's FIRST binding rendered as macOS key symbols (`⌘K`), for chrome
- * that teaches a keystroke — today the sidebar's Search row. Derived from the
+ * A shortcut's FIRST binding rendered as macOS key symbols (`⌘K`) for chrome
+ * that teaches a keystroke. Derived from the
  * registry on purpose: a rebind flows through to every hint, and no surface gets
  * to hardcode a keystroke the registry no longer holds. Modifiers follow the
  * macOS order (⌃⌥⇧⌘). Returns null when the shortcut has no displayable literal
@@ -204,6 +238,7 @@ export function shortcutDefinitionsForScope(scope: ShortcutScope): ShortcutDefin
  * than a wrong one.
  */
 export function formatShortcutHint(shortcutId: ShortcutId): string | null {
+  if (isConfigurableShortcutId(shortcutId)) return formatConfigurableShortcutHint(shortcutId);
   const candidate = SHORTCUT_BY_ID.get(shortcutId)?.bindings[0];
   if (!candidate?.key) return null;
   const required = (value: ModifierValue | undefined) => value === true;

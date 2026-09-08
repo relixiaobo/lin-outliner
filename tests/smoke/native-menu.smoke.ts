@@ -60,6 +60,14 @@ test.describe('native application menu', () => {
     expect(prefs?.enabled).toBe(true);
   });
 
+  test('offers a direct Keyboard Shortcuts destination', () => {
+    const flatten = (nodes: MenuNode[]): MenuNode[] =>
+      nodes.flatMap((node) => [node, ...flatten(node.submenu)]);
+    const shortcuts = flatten(tree).find((node) => /Keyboard Shortcuts/i.test(node.label));
+    expect(shortcuts).toBeTruthy();
+    expect(shortcuts?.enabled).toBe(true);
+  });
+
   test('Help offers application help', () => {
     const help = tree.find((node) => node.role === 'help' || /help/i.test(node.label));
     expect(help?.submenu.some((node) => /Tenon Help/i.test(node.label))).toBe(true);

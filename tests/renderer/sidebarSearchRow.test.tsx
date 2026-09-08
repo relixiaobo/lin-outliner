@@ -6,11 +6,12 @@ import type { DocumentProjection, NodeProjection } from '../../src/core/types';
 import { buildIndex } from '../../src/renderer/state/document';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { Sidebar } from '../../src/renderer/ui/Sidebar';
+import { effectiveShortcutBindings } from '../../src/core/keybindings';
+import { applyEffectiveShortcutBindings } from '../../src/renderer/ui/interactions/shortcutRegistry';
 
 // The sidebar's Search row: the mouse-reachable entry point to the command
-// surface. Its keystroke hint must come from the accelerator that actually
-// REGISTERED — which now lives in main, because the summon is a global hotkey
-// that may have fallen back — never from a literal in the sidebar. A hardcoded
+// surface. Its keystroke hint must come from the effective projection that main
+// produced after OS registration, never from a literal in the sidebar. A hardcoded
 // hint would survive the guard below and keep lying about the keystroke.
 
 function node(id: string, text = id, patch: Partial<NodeProjection> = {}): NodeProjection {
@@ -53,7 +54,10 @@ function projection(): DocumentProjection {
 
 interface Rendered { cleanup: () => void; document: Document; window: Window & typeof globalThis; }
 const mounted: Rendered[] = [];
-afterEach(() => { while (mounted.length) mounted.pop()?.cleanup(); });
+afterEach(() => {
+  while (mounted.length) mounted.pop()?.cleanup();
+  applyEffectiveShortcutBindings(effectiveShortcutBindings({}));
+});
 
 function renderSidebar(
   onOpenSearch: () => void = () => {},
@@ -70,9 +74,11 @@ function renderSidebar(
     Node: window.Node,
   });
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  act(() => applyEffectiveShortcutBindings(effectiveShortcutBindings({
+    'global.launcher': hotkey ?? false,
+  })));
   (window as unknown as { lin: unknown }).lin = {
     initialLanguage: 'en',
-    getLauncherHotkey: async () => hotkey,
   };
   const index = buildIndex(projection());
   const container = document.getElementById('root')!;
@@ -136,13 +142,13 @@ describe('Sidebar Search row', () => {
 
   test('the hint follows the accelerator that actually registered', async () => {
     const first = await renderSidebarWithHotkey('CommandOrControl+Shift+Space');
-    expect(navRows(first)[0].querySelector('.sidebar-nav-hint')?.textContent).toBe('⌘⇧Space');
+    expect(navRows(first)[0].querySelector('.sidebar-nav-hint')?.textContent).toBe('⇧⌘Space');
     // The accessible name stays "Search" — the hint is decoration for the eye.
     expect(navRows(first)[0].querySelector('.sidebar-nav-hint')?.getAttribute('aria-hidden')).toBe('true');
 
     // The guard: change what main says registered, and the row must follow.
     const rebound = await renderSidebarWithHotkey('CommandOrControl+Shift+J');
-    expect(rebound.document.querySelector('.sidebar-nav-hint')?.textContent).toBe('⌘⇧J');
+    expect(rebound.document.querySelector('.sidebar-nav-hint')?.textContent).toBe('⇧⌘J');
   });
 
   test('no accelerator registered → the row shows no hint rather than a lie', async () => {

@@ -31,7 +31,8 @@ import { reportActionError } from '../../ui/interactions/actionSteps';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { runtimeSlashCommands, slashCommandsFromSkills } from '../threadComposerCommands';
 import { shouldRestoreComposerAfterThreadCreation } from '../composerRefocus';
-import { formatShortcutHint, matchesShortcutEvent } from '../../ui/interactions/shortcutRegistry';
+import { matchesShortcutEvent } from '../../ui/interactions/shortcutRegistry';
+import { useShortcutHint } from '../../ui/interactions/useShortcutHint';
 
 const AutomationsView = lazy(async () => {
   const module = await import('../automations/AutomationsView');
@@ -148,7 +149,7 @@ export const ThreadDock = memo(function ThreadDock({
   const plan = thread ? snapshot.planByThread.get(thread.id) ?? null : null;
   const providerBlocksCreation = providerSettingsLoaded
     && (!providerSettings || !resolveUsableActiveProvider(providerSettings));
-  const newThreadShortcutHint = formatShortcutHint('global.new_thread');
+  const newThreadShortcutHint = useShortcutHint('global.new_thread');
   useEffect(() => {
     if (open && !openRef.current) {
       setComposerFocusRequest((current) => ({

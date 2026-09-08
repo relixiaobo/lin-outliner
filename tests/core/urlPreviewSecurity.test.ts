@@ -129,7 +129,9 @@ describe('URL preview webview security posture', () => {
 
   test('the scoped translation shortcut is intercepted by the hardened guest host', () => {
     expect(RESOURCE_PREVIEW_HOST_SRC).toContain("webContents.on('before-input-event'");
-    expect(RESOURCE_PREVIEW_HOST_SRC).toContain("input.code === 'KeyA'");
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('options.translationShortcutBindings().some');
+    expect(RESOURCE_PREVIEW_HOST_SRC).toContain('portableChordMatchesEvent(chord');
+    expect(RESOURCE_PREVIEW_HOST_SRC).not.toContain("input.code === 'KeyA'");
     expect(RESOURCE_PREVIEW_HOST_SRC).toContain('LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL');
     expect(RESOURCE_PREVIEW_HOST_SRC)
       .toContain('contents.send(LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL, webContents.id)');

@@ -19,6 +19,7 @@ describe('Host platform composition', () => {
   test('main delegates one static composition root without constructing concrete services', () => {
     expect(MAIN_SRC.match(/createDesktopHost\(\{/g)).toHaveLength(1);
     expect(DESKTOP_HOST_SRC).toContain('createResourcePreviewHost({');
+    expect(DESKTOP_HOST_SRC).toContain("translationShortcutBindings: () => effectiveKeybindings['global.toggle_page_translation']");
     expect(DESKTOP_HOST_SRC).toContain('createWindowApplicationHost({');
     expect(MAIN_SRC).not.toContain('createResourcePreviewHost({');
     expect(MAIN_SRC).not.toContain('createWindowApplicationHost({');
@@ -85,15 +86,21 @@ describe('Host platform composition', () => {
     expect(WINDOW_HOST_SRC).toContain('new ActionInvocationService({');
     expect(WINDOW_HOST_SRC).toContain('pendingAmbientSeeds = new Map');
     expect(WINDOW_HOST_SRC).toContain('pendingActionStepAcks = new Map');
-    expect(WINDOW_HOST_SRC).toContain('registerLauncherHotkey(');
+    expect(WINDOW_HOST_SRC).toContain('registerLauncherHotkeys(');
     expect(WINDOW_HOST_SRC).toContain('Menu.setApplicationMenu(buildApplicationMenu())');
     expect(WINDOW_HOST_SRC).toContain("app.on('activate', handleActivate)");
     expect(WINDOW_HOST_SRC).toContain("app.removeListener('activate', handleActivate)");
   });
 
+  test('keybinding mutation channels stay settings-gated', () => {
+    expect(DESKTOP_HOST_SRC.match(/assertSettingsSender\(event, 'Keyboard Shortcuts'\)/g)).toHaveLength(3);
+    expect(DESKTOP_HOST_SRC).toContain('decodeKeybindingsUpdateInput(raw)');
+    expect(DESKTOP_HOST_SRC).toContain('ensureKeybindingsFile(resolvedUserDataDir)');
+  });
+
   test('window application release is idempotent and settles owned effects', () => {
     expect(WINDOW_HOST_SRC).toContain('if (released) return;');
-    expect(WINDOW_HOST_SRC).toContain('unregisterLauncherHotkeys();');
+    expect(WINDOW_HOST_SRC).toContain('unregisterLauncherHotkeys(launcherHotkeyAccelerators);');
     expect(WINDOW_HOST_SRC).toContain('pendingAmbientSeeds.clear();');
     expect(WINDOW_HOST_SRC).toContain('pendingActionStepAcks.clear();');
     expect(WINDOW_HOST_SRC).toContain('actionInvocationService.releaseOpening(launcherInvocationRef);');

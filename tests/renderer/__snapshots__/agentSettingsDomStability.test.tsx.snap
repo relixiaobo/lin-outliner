@@ -109,12 +109,17 @@ exports[`settings page DOM renders the general category byte-stably 1`] = `
           <div class="inset-group-header">Shortcuts</div>
           <div role="list" class="inset-card" aria-label="Shortcuts">
             <div role="listitem" class="inset-row">
-              <div class="inset-row-main is-static">
+              <button type="button" class="inset-row-main">
                 <span class="inset-row-text is-wrap">
-                  <span class="inset-row-label">Global launcher</span>
-                  <span class="inset-row-sublabel">Not available — the candidate shortcuts are in use by other apps. Quit the conflicting app and relaunch Tenon.</span>
+                  <span class="inset-row-label">Keyboard Shortcuts</span>
+                  <span class="inset-row-sublabel">Change application commands and the system-wide launcher.</span>
                 </span>
-              </div>
+                <span aria-hidden="true" class="settings-drilldown-chevron">
+                  <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                    <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
+                  </svg>
+                </span>
+              </button>
             </div>
           </div>
         </div>
@@ -943,6 +948,360 @@ exports[`settings page DOM renders the skills page byte-stably 1`] = `
 </div>
 </div>
 </main>"
+`;
+
+exports[`settings page DOM renders the shortcuts page byte-stably 1`] = `
+"<main aria-labelledby="settings-page-title" class="settings-window">
+  <div class="settings-drag-region">
+    <div class="settings-toolbar">
+      <div class="settings-history-nav">
+        <button type="button" title="Back" class="icon-button icon-button-chrome rail-toggle" aria-label="Back" disabled>
+          <svg data-icon="ChevronLeft" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M15 6L9 12L15 18" />
+          </svg>
+        </button>
+        <span aria-hidden="true" class="settings-history-divider">
+        </span>
+        <button type="button" title="Forward" class="icon-button icon-button-chrome rail-toggle" aria-label="Forward" disabled>
+          <svg data-icon="ChevronRight" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-md)" width="var(--icon-size-md)">
+            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M9 6L15 12L9 18" />
+          </svg>
+        </button>
+      </div>
+      <h1 id="settings-page-title" class="settings-toolbar-title">Keyboard Shortcuts</h1>
+    </div>
+  </div>
+  <div class="settings-layout">
+    <aside class="settings-rail">
+      <h2 class="settings-rail-title">Settings</h2>
+      <nav aria-label="Settings categories" class="settings-nav">
+        <button type="button" class="settings-nav-item is-active" aria-current="page">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg data-icon="Settings" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M19.6224 10.3954L18.5247 7.7448L20 6L18 4L16.2647 5.48295L13.5578 4.36974L12.9353 2H10.981L10.3491 4.40113L7.70441 5.51596L6 4L4 6L5.45337 7.78885L4.3725 10.4463L2 11V13L4.40111 13.6555L5.51575 16.2997L4 18L6 20L7.79116 18.5403L10.397 19.6123L11 22H13L13.6045 19.6132L16.2551 18.5155C16.6969 18.8313 18 20 18 20L20 18L18.5159 16.2494L19.6139 13.598L21.9999 12.9772L22 11L19.6224 10.3954Z" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">General</span>
+          </span>
+          <span class="settings-status-dot is-hidden" aria-hidden="true">
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg data-icon="Skill" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M2.57331 8.46334L11.2317 4.13416C11.4006 4.04971 11.5994 4.04971 11.7683 4.13416L20.4267 8.46334C20.8689 8.68446 20.8689 9.31554 20.4267 9.53666L11.7683 13.8658C11.5994 13.9503 11.4006 13.9503 11.2317 13.8658L2.57331 9.53666C2.13108 9.31554 2.13108 8.68446 2.57331 8.46334Z" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M22.5 13L22.5 9.5L20.5 8.5" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 10.5V15.9121C4.5 16.6843 4.94459 17.3876 5.6422 17.7188L10.6422 20.0928C11.185 20.3505 11.815 20.3505 12.3578 20.0928L17.3578 17.7188C18.0554 17.3876 18.5 16.6843 18.5 15.9121V10.5" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Agent</span>
+          </span>
+        </button>
+        <button type="button" class="settings-nav-item">
+          <span aria-hidden="true" class="settings-nav-icon">
+            <svg data-icon="Database" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke="currentColor" d="M5 12V18C5 18 5 21 12 21C19 21 19 18 19 18V12" />
+              <path stroke="currentColor" d="M5 6V12C5 12 5 15 12 15C19 15 19 12 19 12V6" />
+              <path stroke="currentColor" d="M12 3C19 3 19 6 19 6C19 6 19 9 12 9C5 9 5 6 5 6C5 6 5 3 12 3Z" />
+            </svg>
+          </span>
+          <span class="settings-nav-copy">
+            <span class="settings-nav-label">Preview</span>
+          </span>
+        </button>
+      </nav>
+    </aside>
+    <div class="settings-content">
+      <section aria-label="Keyboard Shortcuts" class="agent-settings-section settings-shortcuts-section">
+        <div class="settings-shortcuts-toolbar">
+          <div class="settings-shortcuts-search">
+            <svg data-icon="Search" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M17 17L21 21" />
+              <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M3 11C3 15.4183 6.58172 19 11 19C13.213 19 15.2161 18.1015 16.6644 16.6493C18.1077 15.2022 19 13.2053 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11Z" />
+            </svg>
+            <input type="search" class="input-control input-bare input-md" aria-label="Search shortcuts" placeholder="Search shortcuts">
+            </div>
+            <button type="button" class="button button-secondary button-sm">
+              <svg data-icon="Folder" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M2 11V4.6C2 4.26863 2.26863 4 2.6 4H8.77805C8.92127 4 9.05977 4.05124 9.16852 4.14445L12.3315 6.85555C12.4402 6.94876 12.5787 7 12.722 7H21.4C21.7314 7 22 7.26863 22 7.6V11M2 11V19.4C2 19.7314 2.26863 20 2.6 20H21.4C21.7314 20 22 19.7314 22 19.4V11M2 11H22" />
+              </svg>
+              <span>Open Keybindings File</span>
+            </button>
+            <button type="button" class="button button-secondary button-sm">
+              <svg data-icon="Undo" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 8C8.5 8 11 8 15 8C15 8 15 8 15 8C15 8 20 8 20 12.7059C20 18 15 18 15 18C11.5714 18 9.71429 18 6.28571 18" />
+                <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M7.5 11.5C6.13317 10.1332 5.36683 9.36683 4 8C5.36683 6.63317 6.13317 5.86683 7.5 4.5" />
+              </svg>
+              <span>Reset All</span>
+            </button>
+          </div>
+          <div class="inset-group">
+            <div class="inset-group-header">System-wide</div>
+            <div role="list" class="inset-card" aria-label="System-wide">
+              <div role="listitem" class="inset-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">
+                      <span>Global launcher</span>
+                      <span class="settings-chip">Default</span>
+                    </span>
+                    <span class="inset-row-sublabel">
+                      <span>Summon the launcher from any application.</span>
+                      <code class="inset-row-code">global.launcher</code>
+                    </span>
+                  </span>
+                </div>
+                <div class="inset-row-trailing">
+                  <div class="settings-shortcut-controls">
+                    <button type="button" role="switch" aria-label="Enable Global launcher" aria-checked="true">
+                      <span aria-hidden="true" class="switch-mark checked">
+                        <span class="switch-mark-thumb">
+                        </span>
+                      </span>
+                    </button>
+                    <div class="settings-shortcut-bindings">
+                      <span class="settings-shortcut-binding">
+                        <button type="button" title="Change CommandOrControl+Shift+Space" class="settings-shortcut-key" aria-label="Change CommandOrControl+Shift+Space">
+                          <kbd>⇧⌘Space</kbd>
+                        </button>
+                        <button type="button" title="Remove CommandOrControl+Shift+Space" class="icon-button icon-button-chrome" aria-label="Remove CommandOrControl+Shift+Space">
+                          <svg data-icon="Close" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6.75827 17.2426L12.0009 12M17.2435 6.75736L12.0009 12M12.0009 12L6.75827 6.75736M12.0009 12L17.2435 17.2426" />
+                          </svg>
+                        </button>
+                      </span>
+                      <span class="settings-shortcut-binding">
+                        <button type="button" title="Change Control+Alt+Space" class="settings-shortcut-key" aria-label="Change Control+Alt+Space">
+                          <kbd>⌃⌥Space</kbd>
+                        </button>
+                        <button type="button" title="Remove Control+Alt+Space" class="icon-button icon-button-chrome" aria-label="Remove Control+Alt+Space">
+                          <svg data-icon="Close" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6.75827 17.2426L12.0009 12M17.2435 6.75736L12.0009 12M12.0009 12L6.75827 6.75736M12.0009 12L17.2435 17.2426" />
+                          </svg>
+                        </button>
+                      </span>
+                      <button type="button" title="Add an alternate for Global launcher" class="icon-button icon-button-chrome" aria-label="Add an alternate for Global launcher">
+                        <svg data-icon="Add" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                          <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 12H12M18 12H12M12 12V6M12 12V18" />
+                        </svg>
+                      </button>
+                    </div>
+                    <button type="button" title="Reset Global launcher" class="icon-button icon-button-chrome" aria-label="Reset Global launcher" disabled>
+                      <svg data-icon="Undo" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 8C8.5 8 11 8 15 8C15 8 15 8 15 8C15 8 20 8 20 12.7059C20 18 15 18 15 18C11.5714 18 9.71429 18 6.28571 18" />
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M7.5 11.5C6.13317 10.1332 5.36683 9.36683 4 8C5.36683 6.63317 6.13317 5.86683 7.5 4.5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="inset-group">
+            <div class="inset-group-header">Application</div>
+            <div role="list" class="inset-card" aria-label="Application">
+              <div role="listitem" class="inset-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">
+                      <span>Open Agent panel</span>
+                      <span class="settings-chip">Default</span>
+                    </span>
+                    <span class="inset-row-sublabel">
+                      <span>Open and focus the Agent panel.</span>
+                      <code class="inset-row-code">global.open_agent_panel</code>
+                    </span>
+                  </span>
+                </div>
+                <div class="inset-row-trailing">
+                  <div class="settings-shortcut-controls">
+                    <button type="button" role="switch" aria-label="Enable Open Agent panel" aria-checked="true">
+                      <span aria-hidden="true" class="switch-mark checked">
+                        <span class="switch-mark-thumb">
+                        </span>
+                      </span>
+                    </button>
+                    <div class="settings-shortcut-bindings">
+                      <span class="settings-shortcut-binding">
+                        <button type="button" title="Change CommandOrControl+M" class="settings-shortcut-key" aria-label="Change CommandOrControl+M">
+                          <kbd>⌘M</kbd>
+                        </button>
+                        <button type="button" title="Remove CommandOrControl+M" class="icon-button icon-button-chrome" aria-label="Remove CommandOrControl+M">
+                          <svg data-icon="Close" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6.75827 17.2426L12.0009 12M17.2435 6.75736L12.0009 12M12.0009 12L6.75827 6.75736M12.0009 12L17.2435 17.2426" />
+                          </svg>
+                        </button>
+                      </span>
+                      <button type="button" title="Add an alternate for Open Agent panel" class="icon-button icon-button-chrome" aria-label="Add an alternate for Open Agent panel">
+                        <svg data-icon="Add" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                          <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 12H12M18 12H12M12 12V6M12 12V18" />
+                        </svg>
+                      </button>
+                    </div>
+                    <button type="button" title="Reset Open Agent panel" class="icon-button icon-button-chrome" aria-label="Reset Open Agent panel" disabled>
+                      <svg data-icon="Undo" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 8C8.5 8 11 8 15 8C15 8 15 8 15 8C15 8 20 8 20 12.7059C20 18 15 18 15 18C11.5714 18 9.71429 18 6.28571 18" />
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M7.5 11.5C6.13317 10.1332 5.36683 9.36683 4 8C5.36683 6.63317 6.13317 5.86683 7.5 4.5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div role="listitem" class="inset-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">
+                      <span>New Thread</span>
+                      <span class="settings-chip">Default</span>
+                    </span>
+                    <span class="inset-row-sublabel">
+                      <span>Create a new Agent Thread.</span>
+                      <code class="inset-row-code">global.new_thread</code>
+                    </span>
+                  </span>
+                </div>
+                <div class="inset-row-trailing">
+                  <div class="settings-shortcut-controls">
+                    <button type="button" role="switch" aria-label="Enable New Thread" aria-checked="true">
+                      <span aria-hidden="true" class="switch-mark checked">
+                        <span class="switch-mark-thumb">
+                        </span>
+                      </span>
+                    </button>
+                    <div class="settings-shortcut-bindings">
+                      <span class="settings-shortcut-binding">
+                        <button type="button" title="Change CommandOrControl+Shift+O" class="settings-shortcut-key" aria-label="Change CommandOrControl+Shift+O">
+                          <kbd>⇧⌘O</kbd>
+                        </button>
+                        <button type="button" title="Remove CommandOrControl+Shift+O" class="icon-button icon-button-chrome" aria-label="Remove CommandOrControl+Shift+O">
+                          <svg data-icon="Close" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6.75827 17.2426L12.0009 12M17.2435 6.75736L12.0009 12M12.0009 12L6.75827 6.75736M12.0009 12L17.2435 17.2426" />
+                          </svg>
+                        </button>
+                      </span>
+                      <button type="button" title="Add an alternate for New Thread" class="icon-button icon-button-chrome" aria-label="Add an alternate for New Thread">
+                        <svg data-icon="Add" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                          <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 12H12M18 12H12M12 12V6M12 12V18" />
+                        </svg>
+                      </button>
+                    </div>
+                    <button type="button" title="Reset New Thread" class="icon-button icon-button-chrome" aria-label="Reset New Thread" disabled>
+                      <svg data-icon="Undo" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 8C8.5 8 11 8 15 8C15 8 15 8 15 8C15 8 20 8 20 12.7059C20 18 15 18 15 18C11.5714 18 9.71429 18 6.28571 18" />
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M7.5 11.5C6.13317 10.1332 5.36683 9.36683 4 8C5.36683 6.63317 6.13317 5.86683 7.5 4.5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div role="listitem" class="inset-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">
+                      <span>Go to Today</span>
+                      <span class="settings-chip">Default</span>
+                    </span>
+                    <span class="inset-row-sublabel">
+                      <span>Open today’s Daily Note.</span>
+                      <code class="inset-row-code">global.go_to_today</code>
+                    </span>
+                  </span>
+                </div>
+                <div class="inset-row-trailing">
+                  <div class="settings-shortcut-controls">
+                    <button type="button" role="switch" aria-label="Enable Go to Today" aria-checked="true">
+                      <span aria-hidden="true" class="switch-mark checked">
+                        <span class="switch-mark-thumb">
+                        </span>
+                      </span>
+                    </button>
+                    <div class="settings-shortcut-bindings">
+                      <span class="settings-shortcut-binding">
+                        <button type="button" title="Change CommandOrControl+Shift+D" class="settings-shortcut-key" aria-label="Change CommandOrControl+Shift+D">
+                          <kbd>⇧⌘D</kbd>
+                        </button>
+                        <button type="button" title="Remove CommandOrControl+Shift+D" class="icon-button icon-button-chrome" aria-label="Remove CommandOrControl+Shift+D">
+                          <svg data-icon="Close" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6.75827 17.2426L12.0009 12M17.2435 6.75736L12.0009 12M12.0009 12L6.75827 6.75736M12.0009 12L17.2435 17.2426" />
+                          </svg>
+                        </button>
+                      </span>
+                      <button type="button" title="Add an alternate for Go to Today" class="icon-button icon-button-chrome" aria-label="Add an alternate for Go to Today">
+                        <svg data-icon="Add" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                          <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 12H12M18 12H12M12 12V6M12 12V18" />
+                        </svg>
+                      </button>
+                    </div>
+                    <button type="button" title="Reset Go to Today" class="icon-button icon-button-chrome" aria-label="Reset Go to Today" disabled>
+                      <svg data-icon="Undo" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 8C8.5 8 11 8 15 8C15 8 15 8 15 8C15 8 20 8 20 12.7059C20 18 15 18 15 18C11.5714 18 9.71429 18 6.28571 18" />
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M7.5 11.5C6.13317 10.1332 5.36683 9.36683 4 8C5.36683 6.63317 6.13317 5.86683 7.5 4.5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="inset-group">
+            <div class="inset-group-header">Preview</div>
+            <div role="list" class="inset-card" aria-label="Preview">
+              <div role="listitem" class="inset-row">
+                <div class="inset-row-main is-static">
+                  <span class="inset-row-text is-wrap">
+                    <span class="inset-row-label">
+                      <span>Toggle page translation</span>
+                      <span class="settings-chip">Default</span>
+                    </span>
+                    <span class="inset-row-sublabel">
+                      <span>Translate or show the original in the active supported preview.</span>
+                      <code class="inset-row-code">global.toggle_page_translation</code>
+                    </span>
+                  </span>
+                </div>
+                <div class="inset-row-trailing">
+                  <div class="settings-shortcut-controls">
+                    <button type="button" role="switch" aria-label="Enable Toggle page translation" aria-checked="true">
+                      <span aria-hidden="true" class="switch-mark checked">
+                        <span class="switch-mark-thumb">
+                        </span>
+                      </span>
+                    </button>
+                    <div class="settings-shortcut-bindings">
+                      <span class="settings-shortcut-binding">
+                        <button type="button" title="Change Alt+A" class="settings-shortcut-key" aria-label="Change Alt+A">
+                          <kbd>⌥A</kbd>
+                        </button>
+                        <button type="button" title="Remove Alt+A" class="icon-button icon-button-chrome" aria-label="Remove Alt+A">
+                          <svg data-icon="Close" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                            <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6.75827 17.2426L12.0009 12M17.2435 6.75736L12.0009 12M12.0009 12L6.75827 6.75736M12.0009 12L17.2435 17.2426" />
+                          </svg>
+                        </button>
+                      </span>
+                      <button type="button" title="Add an alternate for Toggle page translation" class="icon-button icon-button-chrome" aria-label="Add an alternate for Toggle page translation">
+                        <svg data-icon="Add" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" height="var(--icon-size-tiny)" width="var(--icon-size-tiny)">
+                          <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M6 12H12M18 12H12M12 12V6M12 12V18" />
+                        </svg>
+                      </button>
+                    </div>
+                    <button type="button" title="Reset Toggle page translation" class="icon-button icon-button-chrome" aria-label="Reset Toggle page translation" disabled>
+                      <svg data-icon="Undo" class="app-icon" focusable="false" aria-hidden="true" color="currentColor" xmlns="http://www.w3.org/2000/svg" fill="none" stroke-width="1.5" viewBox="0 0 24 24" height="var(--icon-size-sm)" width="var(--icon-size-sm)">
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M4.5 8C8.5 8 11 8 15 8C15 8 15 8 15 8C15 8 20 8 20 12.7059C20 18 15 18 15 18C11.5714 18 9.71429 18 6.28571 18" />
+                        <path stroke-linejoin="round" stroke-linecap="round" stroke="currentColor" d="M7.5 11.5C6.13317 10.1332 5.36683 9.36683 4 8C5.36683 6.63317 6.13317 5.86683 7.5 4.5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>"
 `;
 
 exports[`settings page DOM renders the about page byte-stably 1`] = `
