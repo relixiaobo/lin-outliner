@@ -1,3 +1,5 @@
+import { normalizePortableChord } from '../../core/keybindings';
+
 export interface GlobalShortcutRegistrar {
   isRegistered(accelerator: string): boolean;
   register(accelerator: string, callback: () => void): boolean;
@@ -46,14 +48,17 @@ export function replaceLauncherHotkeys(
   candidates: readonly string[],
   toggle: () => void,
   registrar: GlobalShortcutRegistrar,
+  platform: NodeJS.Platform = process.platform,
 ): HotkeyRegistration {
-  const currentSet = new Set(current);
-  const candidateSet = new Set(candidates);
+  const identity = (accelerator: string) => normalizePortableChord(accelerator)
+    .replace('CommandOrControl', platform === 'darwin' ? 'Command' : 'Control');
+  const currentSet = new Set(current.map(identity));
+  const candidateSet = new Set(candidates.map(identity));
   const additions: string[] = [];
   const failed: string[] = [];
 
   for (const accelerator of candidates) {
-    if (currentSet.has(accelerator)) continue;
+    if (currentSet.has(identity(accelerator))) continue;
     if (registrar.isRegistered(accelerator) || !safeRegister(registrar, accelerator, toggle)) {
       failed.push(accelerator);
       break;
@@ -71,7 +76,7 @@ export function replaceLauncherHotkeys(
   }
 
   for (const accelerator of current) {
-    if (!candidateSet.has(accelerator)) registrar.unregister(accelerator);
+    if (!candidateSet.has(identity(accelerator))) registrar.unregister(accelerator);
   }
   return {
     accelerators: Object.freeze([...candidates]),

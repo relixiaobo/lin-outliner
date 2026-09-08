@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { applyEdits, modify as jsoncModify, parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
 import {
@@ -9,7 +9,9 @@ import {
   isConfigurableShortcutId,
   normalizeKeybindingOverride,
   normalizePortableChord,
+  portableChordsConflict,
   type ConfigurableShortcutId,
+  type EffectiveShortcutBindings,
   type KeybindingOverride,
   type KeybindingsUpdateInput,
   type KeybindingsView,
@@ -46,7 +48,14 @@ export function loadKeybindings(userDataDir: string): KeybindingsLoadResult {
   try {
     sourceBytes = readFileSync(path, 'utf8');
   } catch (error) {
-    if (isNotFoundError(error)) return result(userDataDir, 'missing', null, {}, null);
+    if (isNotFoundError(error)) {
+      try {
+        rmSync(join(userDataDir, RECOVERY_RELATIVE_PATH), { force: true });
+      } catch (cacheError) {
+        console.warn('[keybindings] failed to clear obsolete recovery cache', cacheError);
+      }
+      return result(userDataDir, 'missing', null, {}, null);
+    }
     const recovery = readRecovery(userDataDir);
     return result(userDataDir, 'rejected', null, recovery.overrides, errorText(error), recovery.digest);
   }
@@ -182,6 +191,41 @@ export function retainLastAcceptedKeybindings(
   });
 }
 
+/** Reconcile native rollback before publishing handlers, hints, or status. */
+export function reconcileKeybindingsWithLauncher(
+  desired: EffectiveShortcutBindings,
+  previous: EffectiveShortcutBindings,
+  launcher: readonly string[],
+): {
+  effective: EffectiveShortcutBindings;
+  errors: Readonly<Partial<Record<ConfigurableShortcutId, string>>>;
+} {
+  const effective = { ...desired, 'global.launcher': Object.freeze([...launcher]) };
+  const errors: Partial<Record<ConfigurableShortcutId, string>> = {};
+  const retained = new Set<ConfigurableShortcutId>(['global.launcher']);
+  // Restoring an application chord can block another proposed move. Resolve
+  // that dependency transitively; each pass retains at least one more command.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const id of CONFIGURABLE_SHORTCUT_IDS) {
+      if (retained.has(id)) continue;
+      const conflictsWithRetained = (chord: string) => [...retained].find((owner) => (
+        effective[owner].some((other) => portableChordsConflict(chord, other))
+      ));
+      const chord = effective[id].find(conflictsWithRetained);
+      if (!chord) continue;
+      errors[id] = `${id} conflicts with retained ${conflictsWithRetained(chord)} on ${chord}`;
+      // At startup a recovery snapshot may be absent or native registration
+      // may differ. Never publish an unsafe fallback in that case.
+      effective[id] = Object.freeze(previous[id].filter((binding) => !conflictsWithRetained(binding)));
+      retained.add(id);
+      changed = true;
+    }
+  }
+  return { effective: Object.freeze(effective), errors: Object.freeze(errors) };
+}
+
 export function writeKeybindingsSchema(userDataDir: string): void {
   const chord = {
     type: 'string',
@@ -208,24 +252,30 @@ export function writeKeybindingsSchema(userDataDir: string): void {
   }, { directoryMode: 0o700 });
 }
 
-export function readLastAppliedLauncherBindings(userDataDir: string): readonly string[] | null {
+export function readLastAppliedKeybindings(userDataDir: string): EffectiveShortcutBindings | null {
   try {
     const value = JSON.parse(readFileSync(join(userDataDir, LAST_APPLIED_RELATIVE_PATH), 'utf8')) as {
-      launcher?: unknown;
+      bindings?: unknown;
     };
-    if (!Array.isArray(value.launcher) || value.launcher.length > 4) return null;
-    const normalized = value.launcher.map((entry, index) => (
-      normalizePortableChord(entry, `lastApplied.launcher[${index}]`)
-    ));
-    if (new Set(normalized).size !== normalized.length) return null;
-    return Object.freeze(normalized);
+    if (!value.bindings || typeof value.bindings !== 'object' || Array.isArray(value.bindings)) return null;
+    const entries = Object.entries(value.bindings);
+    if (entries.length !== CONFIGURABLE_SHORTCUT_IDS.length) return null;
+    const bindings = Object.fromEntries(entries.map(([id, chords]) => {
+      if (!isConfigurableShortcutId(id) || !Array.isArray(chords) || chords.length > 4) {
+        throw new Error('Invalid last-applied keybindings');
+      }
+      return [id, Object.freeze(chords.map((chord, index) => normalizePortableChord(chord, `${id}[${index}]`)))];
+    })) as EffectiveShortcutBindings;
+    assertNoKeybindingConflicts(bindings);
+    return Object.freeze(bindings);
   } catch {
     return null;
   }
 }
 
-export function writeLastAppliedLauncherBindings(userDataDir: string, bindings: readonly string[]): void {
-  writeJsonFileSync(join(userDataDir, LAST_APPLIED_RELATIVE_PATH), { launcher: bindings }, {
+export function writeLastAppliedKeybindings(userDataDir: string, bindings: EffectiveShortcutBindings): void {
+  assertNoKeybindingConflicts(bindings);
+  writeJsonFileSync(join(userDataDir, LAST_APPLIED_RELATIVE_PATH), { bindings }, {
     mode: 0o600,
     directoryMode: 0o700,
   });

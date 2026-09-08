@@ -115,6 +115,10 @@ so their effective chords must be unique. Chords reserved for native application
 editing, formatting, clipboard, and undo/redo behavior are rejected.
 Platform-equivalent `CommandOrControl`, `Command`, and `Control` forms collide;
 Shift alone cannot qualify a printable key as a configurable command chord.
+Fixed selection duplication reserves `CommandOrControl+Shift+D` (including
+equivalent Command/Control forms) against overlapping commands. Only Go to Today
+may share it: its handler requires no selected rows and a non-editable target.
+Disabling Today does not make the selection chord available to another command.
 
 The Host watches `config/keybindings.jsonc` by directory so atomic replacement
 and ordinary saves converge without restart. Invalid JSONC, unknown or duplicate
@@ -124,6 +128,14 @@ webview guest interception; the main renderer receives only an effective
 projection before first paint and on change. Matching and visible hints consume
 that same projection. IME composition never invokes a configurable renderer
 shortcut.
+Accepting a missing source resets to defaults and clears obsolete accepted-source
+recovery, so a later invalid recreation cannot resurrect deleted overrides after
+restart. After native registration, the Host checks the actual effective set:
+commands conflicting with retained launcher chords keep their previous bindings,
+including dependent command moves. A private complete effective snapshot preserves
+that set across restart. Without a safe previous binding, the conflicting chord
+is omitted. Every affected command reports failure until its desired bindings can
+apply, while unrelated commands can still update.
 
 The dedicated Keyboard Shortcuts page is searchable by localized label,
 description, and stable ID. It supports physical recording with Escape cancel,

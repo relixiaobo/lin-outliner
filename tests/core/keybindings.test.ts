@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import {
   effectiveShortcutBindings,
+  assertNoKeybindingConflicts,
   normalizeKeybindingOverride,
   normalizePortableChord,
   portableChordFromEvent,
@@ -16,10 +17,11 @@ import {
   keybindingsView,
   keybindingsPath,
   loadKeybindings,
-  readLastAppliedLauncherBindings,
+  readLastAppliedKeybindings,
+  reconcileKeybindingsWithLauncher,
   retainLastAcceptedKeybindings,
   updateKeybindings,
-  writeLastAppliedLauncherBindings,
+  writeLastAppliedKeybindings,
   writeKeybindingsSchema,
 } from '../../src/main/configuration/keybindings';
 
@@ -70,6 +72,34 @@ describe('keybindings configuration', () => {
       sourceStatus: 'accepted',
       effective: { 'global.go_to_today': ['CommandOrControl+Shift+D'] },
     });
+  });
+
+  test.each(['CommandOrControl', 'Command', 'Control'])(
+    'reserves selection duplication against overlapping commands using %s', (modifier) => {
+      const userData = tempUserData();
+      const chord = `${modifier}+Shift+D`;
+      for (const id of ['global.launcher', 'global.open_page_in_pane', 'global.new_thread', 'global.toggle_page_translation']) {
+        const source = JSON.stringify({ 'global.go_to_today': false, [id]: chord });
+        writeSource(userData, source);
+        expect(loadKeybindings(userData)).toMatchObject({
+          sourceStatus: 'rejected', error: expect.stringContaining('selection.duplicate'),
+        });
+        expect(readFileSync(keybindingsPath(userData), 'utf8')).toBe(source);
+      }
+      writeSource(userData, JSON.stringify({ 'global.go_to_today': chord }));
+      expect(loadKeybindings(userData).sourceStatus).toBe('accepted');
+    },
+  );
+
+  test('rejects a structured selection conflict after Today is disabled without changing the source', () => {
+    const userData = tempUserData();
+    const source = '{ "global.go_to_today": false }';
+    writeSource(userData, source);
+    expect(() => updateKeybindings(userData, {
+      id: 'global.open_page_in_pane', value: 'CommandOrControl+Shift+D',
+      observedDigest: loadKeybindings(userData).sourceDigest,
+    })).toThrow('selection.duplicate');
+    expect(readFileSync(keybindingsPath(userData), 'utf8')).toBe(source);
   });
 
   test('rejects duplicate and unknown command ids without rewriting the source', () => {
@@ -175,6 +205,26 @@ describe('keybindings configuration', () => {
     expect(readFileSync(keybindingsPath(userData), 'utf8')).toBe('{ invalid');
   });
 
+  test('missing-source defaults remain the accepted state after invalid recreation and restart', () => {
+    const userData = tempUserData();
+    writeSource(userData, '{ "global.new_thread": "Control+N" }');
+    const custom = loadKeybindings(userData);
+    rmSync(keybindingsPath(userData));
+    const reset = retainLastAcceptedKeybindings(custom, loadKeybindings(userData));
+    expect(reset.sourceStatus).toBe('missing');
+    expect(reset.acceptedDigest).toBeNull();
+    expect(reset.effective).toEqual(effectiveShortcutBindings({}));
+    writeSource(userData, '{ invalid');
+    const restarted = loadKeybindings(userData);
+    const live = retainLastAcceptedKeybindings(reset, restarted);
+    expect(restarted).toEqual(live);
+    expect(restarted).toMatchObject({
+      sourceStatus: 'rejected', acceptedDigest: null, overrides: {},
+      effective: effectiveShortcutBindings({}),
+    });
+    expect(readFileSync(keybindingsPath(userData), 'utf8')).toBe('{ invalid');
+  });
+
   test('retains the in-memory accepted snapshot even when disk recovery is stale', () => {
     const acceptedUserData = tempUserData();
     writeSource(acceptedUserData, '{ "global.new_thread": "Control+N" }\n');
@@ -201,18 +251,26 @@ describe('keybindings configuration', () => {
       .toMatchObject({ title: 'Tenon Keybindings', additionalProperties: false });
   });
 
-  test('persists bounded last-applied launcher state separately from desired input', () => {
+  test('persists the complete bounded last-applied set separately from desired input', () => {
     const userData = tempUserData();
-    expect(readLastAppliedLauncherBindings(userData)).toBeNull();
-    writeLastAppliedLauncherBindings(userData, ['Control+L']);
-    expect(readLastAppliedLauncherBindings(userData)).toEqual(['Control+L']);
+    const bindings = effectiveShortcutBindings({ 'global.launcher': 'Control+L', 'global.new_thread': false });
+    expect(readLastAppliedKeybindings(userData)).toBeNull();
+    writeLastAppliedKeybindings(userData, bindings);
+    expect(readLastAppliedKeybindings(userData)).toEqual(bindings);
     expect(loadKeybindings(userData).effective['global.launcher'])
       .toEqual(['CommandOrControl+Shift+Space', 'Control+Alt+Space']);
 
     writeFileSync(join(userData, 'config', 'keybindings.last-applied.json'), JSON.stringify({
-      launcher: ['Control+L', 'ctrl+l'],
+      bindings: { ...bindings, 'global.launcher': ['Control+L', 'ctrl+l'] },
     }));
-    expect(readLastAppliedLauncherBindings(userData)).toBeNull();
+    expect(readLastAppliedKeybindings(userData)).toBeNull();
+    writeFileSync(join(userData, 'config', 'keybindings.last-applied.json'), JSON.stringify({
+      bindings: { ...bindings, 'global.launcher': ['Command+M'] },
+    }));
+    expect(readLastAppliedKeybindings(userData)).toBeNull();
+    expect(() => writeLastAppliedKeybindings(userData, {
+      ...bindings, 'global.launcher': ['Command+M'],
+    })).toThrow('conflicts');
   });
 
   test('reports desired and actually applied launcher bindings separately after failure', () => {
@@ -232,6 +290,60 @@ describe('keybindings configuration', () => {
       status: 'failed',
       error: expect.stringContaining('Control+L'),
     });
+  });
+});
+
+describe('effective keybinding reconciliation', () => {
+  test('resolves retained-command dependencies that run opposite to registry order', () => {
+    const previous = effectiveShortcutBindings({ 'global.launcher': 'Control+Alt+F18' });
+    const desired = effectiveShortcutBindings({
+      'global.launcher': 'Control+Alt+F19',
+      'global.open_page_in_pane': 'CommandOrControl+Shift+O',
+      'global.new_thread': 'Control+Alt+F18',
+    });
+    assertNoKeybindingConflicts(desired);
+    const reconciled = reconcileKeybindingsWithLauncher(desired, previous, previous['global.launcher']);
+    expect(reconciled.effective).toEqual(previous);
+    expect(reconciled.errors).toEqual({
+      'global.open_page_in_pane': expect.stringContaining('retained global.new_thread'),
+      'global.new_thread': expect.stringContaining('retained global.launcher'),
+    });
+  });
+
+  test('retains affected commands transitively after native rollback and persists the conflict-free set', () => {
+    const previous = effectiveShortcutBindings({ 'global.launcher': 'Control+Alt+F18' });
+    const desired = effectiveShortcutBindings({
+      'global.launcher': 'Control+Alt+F19',
+      'global.open_page_in_pane': 'Control+Alt+F18',
+      'global.new_thread': 'CommandOrControl+M',
+      'global.go_to_today': 'CommandOrControl+Shift+O',
+      'global.toggle_page_translation': 'Control+Alt+J',
+    });
+    assertNoKeybindingConflicts(desired);
+    const reconciled = reconcileKeybindingsWithLauncher(desired, previous, previous['global.launcher']);
+    expect(reconciled.effective).toEqual({ ...previous, 'global.toggle_page_translation': ['Control+Alt+J'] });
+    expect(reconciled.errors).toEqual({
+      'global.open_page_in_pane': expect.stringContaining('retained global.launcher'),
+      'global.new_thread': expect.stringContaining('retained global.open_page_in_pane'),
+      'global.go_to_today': expect.stringContaining('retained global.new_thread'),
+    });
+    expect(() => assertNoKeybindingConflicts(reconciled.effective)).not.toThrow();
+    const userData = tempUserData();
+    writeLastAppliedKeybindings(userData, reconciled.effective);
+    const restarted = reconcileKeybindingsWithLauncher(desired, readLastAppliedKeybindings(userData)!, previous['global.launcher']);
+    expect(restarted).toEqual(reconciled);
+    const retried = reconcileKeybindingsWithLauncher(desired, reconciled.effective, desired['global.launcher']);
+    expect(retried).toEqual({ effective: desired, errors: {} });
+  });
+
+  test('omits unsafe startup fallbacks when no earlier application bindings are available', () => {
+    const desired = effectiveShortcutBindings({
+      'global.launcher': 'Control+Alt+F19', 'global.open_page_in_pane': 'CommandOrControl+Alt+F18',
+    });
+    const reconciled = reconcileKeybindingsWithLauncher(desired, desired, ['Command+Alt+F18']);
+    expect(reconciled.effective['global.open_page_in_pane']).toEqual([]);
+    expect(reconciled.errors['global.open_page_in_pane']).toContain('global.launcher');
+    expect(() => assertNoKeybindingConflicts(reconciled.effective)).not.toThrow();
   });
 });
 

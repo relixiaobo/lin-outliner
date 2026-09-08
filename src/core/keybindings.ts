@@ -68,9 +68,6 @@ export const CONFIGURABLE_SHORTCUT_IDS = Object.freeze(
 const CONFIGURABLE_SHORTCUT_ID_SET = new Set<string>(CONFIGURABLE_SHORTCUT_IDS);
 const MODIFIER_ORDER = ['CommandOrControl', 'Control', 'Command', 'Alt', 'Shift'] as const;
 const MODIFIERS = new Set<string>(MODIFIER_ORDER);
-const CONFIGURABLE_DEFAULT_CHORDS = new Set(
-  CONFIGURABLE_SHORTCUTS.flatMap(({ defaultBindings }) => defaultBindings.flatMap(portableChordCollisionKeys)),
-);
 const RESERVED_CHORDS = new Set([
   'CommandOrControl+Q',
   'CommandOrControl+W',
@@ -89,7 +86,21 @@ const RESERVED_CHORDS = new Set([
   'CommandOrControl+Shift+Z',
   'CommandOrControl+Y',
   'Control+I',
-].flatMap(portableChordCollisionKeys).filter((chord) => !CONFIGURABLE_DEFAULT_CHORDS.has(chord)));
+].flatMap(portableChordCollisionKeys));
+
+const CONTEXTUAL_FIXED_SHORTCUTS: readonly {
+  id: string;
+  chord: string;
+  disjointCommands: readonly ConfigurableShortcutId[];
+}[] = [
+  {
+    id: 'selection.duplicate',
+    chord: 'CommandOrControl+Shift+D',
+    // useWorkspaceKeyboard admits Today only without row selection or an
+    // editable target. Other commands can intercept the selection handler.
+    disjointCommands: ['global.go_to_today'],
+  },
+];
 
 export function isConfigurableShortcutId(value: unknown): value is ConfigurableShortcutId {
   return typeof value === 'string' && CONFIGURABLE_SHORTCUT_ID_SET.has(value);
@@ -150,12 +161,22 @@ export function assertNoKeybindingConflicts(
   const owners = new Map<string, ConfigurableShortcutId>();
   for (const definition of CONFIGURABLE_SHORTCUTS) {
     for (const chord of effective[definition.id]) {
+      const fixed = CONTEXTUAL_FIXED_SHORTCUTS.find((shortcut) => (
+        !shortcut.disjointCommands.includes(definition.id)
+        && portableChordsConflict(chord, shortcut.chord)
+      ));
+      if (fixed) throw new Error(`${definition.id} conflicts with ${fixed.id} on ${chord}`);
       const collisionKeys = portableChordCollisionKeys(chord);
       const owner = collisionKeys.map((candidate) => owners.get(candidate)).find(Boolean);
       if (owner) throw new Error(`${definition.id} conflicts with ${owner} on ${chord}`);
       for (const candidate of collisionKeys) owners.set(candidate, definition.id);
     }
   }
+}
+
+export function portableChordsConflict(left: string, right: string): boolean {
+  const rightKeys = portableChordCollisionKeys(right);
+  return portableChordCollisionKeys(left).some((key) => rightKeys.includes(key));
 }
 
 export interface KeybindingsViewEntry {

@@ -180,10 +180,11 @@ import {
   ensureKeybindingsFile,
   keybindingsView,
   loadKeybindings,
-  readLastAppliedLauncherBindings,
+  readLastAppliedKeybindings,
+  reconcileKeybindingsWithLauncher,
   retainLastAcceptedKeybindings,
   updateKeybindings,
-  writeLastAppliedLauncherBindings,
+  writeLastAppliedKeybindings,
   writeKeybindingsSchema,
 } from './configuration/keybindings';
 import {
@@ -281,9 +282,9 @@ const windowEffects = resources.child('window-application');
 const backgroundEffects = resources.child('background-effects');
 let applyFilePreferencesNow: (() => void) | null = null;
 const initialKeybindings = loadKeybindings(resolvedUserDataDir);
-const initialLauncherBindings = readLastAppliedLauncherBindings(resolvedUserDataDir)
-  ?? initialKeybindings.effective['global.launcher'];
-let effectiveKeybindings: EffectiveShortcutBindings = initialKeybindings.effective;
+const lastAppliedKeybindings = readLastAppliedKeybindings(resolvedUserDataDir);
+const initialLauncherBindings = (lastAppliedKeybindings ?? initialKeybindings.effective)['global.launcher'];
+let effectiveKeybindings: EffectiveShortcutBindings = lastAppliedKeybindings ?? initialKeybindings.effective;
 let currentKeybindingsView = keybindingsView(initialKeybindings, effectiveKeybindings);
 let lastAcceptedKeybindings = initialKeybindings;
 
@@ -683,20 +684,25 @@ function applyKeybindings(candidate = loadKeybindings(resolvedUserDataDir)): Key
   if (candidate.sourceStatus !== 'rejected') {
     lastAcceptedKeybindings = candidate;
     windowApplicationHost.applyLauncherHotkeys(candidate.effective['global.launcher']);
-    try {
-      writeLastAppliedLauncherBindings(resolvedUserDataDir, windowApplicationHost.launcherHotkeys());
-    } catch (error) {
-      console.warn('[keybindings] failed to record effective launcher bindings', error);
-    }
   }
-  effectiveKeybindings = Object.freeze({
-    ...(candidate.sourceStatus === 'rejected' ? effectiveKeybindings : candidate.effective),
-    'global.launcher': Object.freeze([...windowApplicationHost.launcherHotkeys()]),
-  });
+  const reconciled = reconcileKeybindingsWithLauncher(
+    observed.effective,
+    effectiveKeybindings,
+    windowApplicationHost.launcherHotkeys(),
+  );
+  effectiveKeybindings = reconciled.effective;
+  try {
+    writeLastAppliedKeybindings(resolvedUserDataDir, effectiveKeybindings);
+  } catch (error) {
+    console.warn('[keybindings] failed to record effective bindings', error);
+  }
+  const launcherError = windowApplicationHost.launcherHotkeyError()
+    ?? (JSON.stringify(observed.effective['global.launcher']) !== JSON.stringify(effectiveKeybindings['global.launcher'])
+      ? 'Desired launcher bindings are not applied; retaining the registered bindings'
+      : null);
   currentKeybindingsView = keybindingsView(observed, effectiveKeybindings, {
-    ...(windowApplicationHost.launcherHotkeyError()
-      ? { 'global.launcher': windowApplicationHost.launcherHotkeyError()! }
-      : {}),
+    ...reconciled.errors,
+    ...(launcherError ? { 'global.launcher': launcherError } : {}),
   });
   try {
     writeKeybindingsStatus(resolvedUserDataDir, hostSessionId, currentKeybindingsView);

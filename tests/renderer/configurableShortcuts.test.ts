@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { effectiveShortcutBindings } from '../../src/core/keybindings';
+import { assertNoKeybindingConflicts, effectiveShortcutBindings } from '../../src/core/keybindings';
 import {
   applyEffectiveShortcutBindings,
   formatConfigurableShortcutHint,
@@ -45,5 +45,17 @@ describe('configurable renderer shortcuts', () => {
     applyEffectiveShortcutBindings(effectiveShortcutBindings({ 'global.new_thread': 'Control+N' }));
     expect(matchesShortcutEvent(keyboard('z', { metaKey: true }), 'editor.undo')).toBe(true);
     expect(matchesShortcutEvent(keyboard('Backspace'), 'selection.delete')).toBe(true);
+  });
+
+  test('selection duplication remains reserved after its disjoint Today binding is disabled', () => {
+    const duplicate = keyboard('D', { code: 'KeyD', metaKey: true, shiftKey: true });
+    const bindings = effectiveShortcutBindings({ 'global.go_to_today': false });
+    applyEffectiveShortcutBindings(bindings);
+    expect(matchesShortcutEvent(duplicate, 'selection.duplicate')).toBe(true);
+    expect(matchesShortcutEvent(duplicate, 'global.go_to_today')).toBe(false);
+    expect(() => assertNoKeybindingConflicts({
+      ...bindings, 'global.open_page_in_pane': ['CommandOrControl+Shift+D'],
+    })).toThrow('selection.duplicate');
+    expect(() => assertNoKeybindingConflicts(effectiveShortcutBindings({}))).not.toThrow();
   });
 });

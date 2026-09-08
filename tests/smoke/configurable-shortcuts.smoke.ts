@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { KeybindingsView } from '../../src/core/keybindings';
@@ -86,7 +86,7 @@ test('native shortcut editor and external edits converge through the live Host',
   }
 });
 
-test('failed native registration retains owned bindings and recovers them after restart', async () => {
+test('failed native registration retains conflict-free application bindings and recovers them after restart', async () => {
   const previous = 'Control+Alt+F18';
   const blocked = 'Control+Alt+F19';
   const userDataDir = fixture(JSON.stringify({ 'global.launcher': previous }));
@@ -95,11 +95,24 @@ test('failed native registration retains owned bindings and recovers them after 
     let page = await openShortcuts(smoke);
     await expect.poll(async () => (await view(page)).entries.find((entry) => entry.id === 'global.launcher')?.effective).toEqual([previous]);
     expect(await smoke.app.evaluate(({ globalShortcut }, chord) => globalShortcut.register(chord, () => {}), blocked)).toBe(true);
-    writeFileSync(join(userDataDir, 'config/keybindings.jsonc'), JSON.stringify({ 'global.launcher': blocked }));
+    writeFileSync(join(userDataDir, 'config/keybindings.jsonc'), JSON.stringify({
+      'global.launcher': blocked,
+      'global.open_page_in_pane': previous,
+      'global.new_thread': 'CommandOrControl+M',
+    }));
     await expect.poll(async () => (await view(page)).entries.find((entry) => entry.id === 'global.launcher')?.status).toBe('failed');
     expect((await view(page)).entries.find((entry) => entry.id === 'global.launcher')).toMatchObject({ desired: blocked, effective: [previous] });
+    expect((await view(page)).entries.find((entry) => entry.id === 'global.open_page_in_pane')).toMatchObject({
+      desired: previous, effective: ['CommandOrControl+M'], status: 'failed',
+    });
+    expect((await view(page)).entries.find((entry) => entry.id === 'global.new_thread')).toMatchObject({
+      desired: 'CommandOrControl+M', effective: ['CommandOrControl+Shift+O'], status: 'failed',
+    });
     expect(await smoke.app.evaluate(({ globalShortcut }, chord) => globalShortcut.isRegistered(chord), previous)).toBe(true);
-    expect(JSON.parse(readFileSync(join(userDataDir, 'config/keybindings.last-applied.json'), 'utf8')).launcher).toEqual([previous]);
+    expect(JSON.parse(readFileSync(join(userDataDir, 'config/keybindings.last-applied.json'), 'utf8')).bindings).toMatchObject({
+      'global.launcher': [previous], 'global.open_page_in_pane': ['CommandOrControl+M'],
+    });
+    const acceptedEntries = (await view(page)).entries;
 
     await closeSmokeApp(smoke, { keepUserData: true });
     // The last accepted desired source is unavailable; the last applied set is
@@ -109,7 +122,107 @@ test('failed native registration retains owned bindings and recovers them after 
     page = await openShortcuts(smoke);
     expect((await view(page)).source.status).toBe('rejected');
     expect((await view(page)).entries.find((entry) => entry.id === 'global.launcher')?.effective).toEqual([previous]);
+    expect((await view(page)).entries.find((entry) => entry.id === 'global.launcher')?.status).toBe('failed');
+    for (const id of ['global.open_page_in_pane', 'global.new_thread']) {
+      expect((await view(page)).entries.find((entry) => entry.id === id))
+        .toEqual(acceptedEntries.find((entry) => entry.id === id));
+    }
     expect(await smoke.app.evaluate(({ globalShortcut }, chord) => globalShortcut.isRegistered(chord), previous)).toBe(true);
+    const status = JSON.parse(readFileSync(join(userDataDir, 'config/status.json'), 'utf8'));
+    expect(status.keybindings.entries).toEqual((await view(page)).entries);
+
+    // A later valid source retries the complete move; the blocked native chord
+    // is free in this process, so all affected failures must clear together.
+    writeFileSync(join(userDataDir, 'config/keybindings.jsonc'), JSON.stringify({
+      'global.launcher': blocked,
+      'global.open_page_in_pane': previous,
+      'global.new_thread': 'CommandOrControl+M',
+    }));
+    await expect.poll(async () => (await view(page)).entries.find((entry) => entry.id === 'global.launcher')?.effective).toEqual([blocked]);
+    expect((await view(page)).entries.some((entry) => entry.status === 'failed')).toBe(false);
+    expect((await view(page)).entries.find((entry) => entry.id === 'global.open_page_in_pane')?.effective).toEqual([previous]);
+  } finally {
+    await closeSmokeApp(smoke);
+  }
+});
+
+test('equivalent native accelerator spelling keeps ownership while other alternates change', async () => {
+  test.skip(process.platform !== 'darwin', 'Checks macOS native accelerator identity.');
+  const old = 'Command+Alt+F18';
+  const portable = 'CommandOrControl+Alt+F18';
+  const alternate = 'Control+Alt+F19';
+  const userDataDir = fixture(JSON.stringify({ 'global.launcher': old }));
+  const smoke = await launchSmokeApp({ userDataDir });
+  try {
+    const page = await openShortcuts(smoke);
+    await expect.poll(async () => (await view(page)).entries.find((entry) => entry.id === 'global.launcher')?.effective).toEqual([old]);
+    expect(await smoke.app.evaluate(({ globalShortcut }, chord) => globalShortcut.isRegistered(chord), portable)).toBe(true);
+    const sourcePath = join(userDataDir, 'config/keybindings.jsonc');
+    writeFileSync(sourcePath, JSON.stringify({ 'global.launcher': [portable, alternate] }));
+    await expect.poll(async () => (await view(page)).entries.find((entry) => entry.id === 'global.launcher')?.effective).toEqual([portable, alternate]);
+    expect((await view(page)).entries.find((entry) => entry.id === 'global.launcher')?.status).toBe('applied');
+    expect(await smoke.app.evaluate(({ globalShortcut }, chords) => chords.every((chord) => globalShortcut.isRegistered(chord)), [old, portable, alternate])).toBe(true);
+    writeFileSync(sourcePath, JSON.stringify({ 'global.launcher': old }));
+    await expect.poll(async () => (await view(page)).entries.find((entry) => entry.id === 'global.launcher')?.effective).toEqual([old]);
+    expect(await smoke.app.evaluate(({ globalShortcut }, chord) => globalShortcut.isRegistered(chord), alternate)).toBe(false);
+    expect(await smoke.app.evaluate(({ globalShortcut }, chord) => globalShortcut.isRegistered(chord), portable)).toBe(true);
+  } finally {
+    await closeSmokeApp(smoke);
+  }
+});
+
+test('deleting a custom source then recreating invalid JSONC preserves defaults across restart', async () => {
+  const userDataDir = fixture(JSON.stringify({ 'global.launcher': false, 'global.new_thread': 'Control+N' }));
+  let smoke = await launchSmokeApp({ userDataDir });
+  try {
+    let page = await openShortcuts(smoke);
+    await expect.poll(async () => (await view(page)).entries.find((entry) => entry.id === 'global.new_thread')?.effective).toEqual(['Control+N']);
+    const sourcePath = join(userDataDir, 'config/keybindings.jsonc');
+    rmSync(sourcePath);
+    await expect.poll(async () => (await view(page)).source.status).toBe('missing');
+    expect((await view(page)).entries.find((entry) => entry.id === 'global.new_thread')?.effective).toEqual(['CommandOrControl+Shift+O']);
+    writeFileSync(sourcePath, '{ invalid');
+    await expect.poll(async () => (await view(page)).source.status).toBe('rejected');
+    const reset = await view(page);
+    await closeSmokeApp(smoke, { keepUserData: true });
+    smoke = await launchSmokeApp({ userDataDir });
+    page = await openShortcuts(smoke);
+    expect((await view(page)).source).toEqual(reset.source);
+    expect((await view(page)).entries.find((entry) => entry.id === 'global.new_thread'))
+      .toEqual(reset.entries.find((entry) => entry.id === 'global.new_thread'));
+    expect(readFileSync(sourcePath, 'utf8')).toBe('{ invalid');
+  } finally {
+    await closeSmokeApp(smoke);
+  }
+});
+
+test('fixed selection chords reject remapping through both source and editor while Today remains disjoint', async () => {
+  const userDataDir = fixture('{ "global.launcher": false, "global.go_to_today": false }');
+  const smoke = await launchSmokeApp({ userDataDir });
+  try {
+    const page = await openShortcuts(smoke);
+    const sourcePath = join(userDataDir, 'config/keybindings.jsonc');
+    const original = readFileSync(sourcePath, 'utf8');
+    const result = await page.evaluate(async () => {
+      try {
+        await window.lin!.keybindings.update({
+          id: 'global.open_page_in_pane', value: 'CommandOrControl+Shift+D',
+          observedDigest: (await window.lin!.keybindings.get()).source.observedDigest,
+        });
+        return null;
+      } catch (error) { return String(error); }
+    });
+    expect(result).toContain('selection.duplicate');
+    expect(readFileSync(sourcePath, 'utf8')).toBe(original);
+    const source = '{ "global.launcher": false, "global.go_to_today": false, "global.open_page_in_pane": "CommandOrControl+Shift+D" }';
+    writeFileSync(sourcePath, source);
+    await expect.poll(async () => (await view(page)).source.status).toBe('rejected');
+    expect((await view(page)).source.error).toContain('selection.duplicate');
+    expect((await view(page)).entries.find((entry) => entry.id === 'global.open_page_in_pane')?.effective).toEqual(['CommandOrControl+M']);
+    expect(readFileSync(sourcePath, 'utf8')).toBe(source);
+    writeFileSync(sourcePath, '{ "global.launcher": false, "global.go_to_today": "CommandOrControl+Shift+D" }');
+    await expect.poll(async () => (await view(page)).source.status).toBe('accepted');
+    expect((await view(page)).entries.find((entry) => entry.id === 'global.go_to_today')?.effective).toEqual(['CommandOrControl+Shift+D']);
   } finally {
     await closeSmokeApp(smoke);
   }

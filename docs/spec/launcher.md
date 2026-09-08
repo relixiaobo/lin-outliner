@@ -106,8 +106,12 @@ the chords Tenon owns on quit. There is no environment override or Settings CLI.
 
 Runtime replacement registers additions before releasing removed chords. If an
 addition is unavailable, Tenon rolls back additions from that attempt and keeps
-the complete previous effective set. A private last-applied cache lets restart
-attempt that actual set before reconciling the current desired source. The
+the complete previous effective set. Ownership, additions, and removals compare
+platform-native accelerator identity: on macOS, `Command` and
+`CommandOrControl` name the same owned chord, while desired configuration retains
+its portable spelling. A private last-applied cache records the complete effective
+command set so restart can attempt the actual launcher set and retain affected
+application bindings before reconciling the current desired source. The
 public `config/status.json` and Keyboard Shortcuts page distinguish desired
 bindings, actual effective bindings, and registration errors.
 
