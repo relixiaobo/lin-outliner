@@ -146,11 +146,14 @@
 /* Settings uses the same compact form rows across domain editors and preferences. */
 .settings-window .inset-card, .settings-window .preference-list { border: 0; border-radius: var(--radius-lg); background: var(--fill-1); box-shadow: none; }
 .settings-window .inset-row { --inset-separator-inset: var(--space-5); --inset-separator-inset-right: var(--space-5); }
+.settings-window .inset-row:not(:last-child)::after { height: var(--settings-row-separator-width); background: var(--settings-row-separator); }
 .settings-window .preference-row { position: relative; padding: var(--space-5); }
 .settings-window .preference-row + .preference-row { border: 0; }
-.settings-window .preference-row + .preference-row::before { content: ''; position: absolute; top: 0; inset-inline: var(--space-5); height: var(--space-hairline); background: var(--separator); }
+.settings-window .preference-row + .preference-row::before { content: ''; position: absolute; top: 0; inset-inline: var(--space-5); height: var(--settings-row-separator-width); background: var(--settings-row-separator); pointer-events: none; }
 .settings-window .inset-group-header, .settings-window .configuration-group-title { font-size: var(--font-ui-sm); font-weight: 600; color: var(--text-primary); padding-inline: var(--space-5); }
 .settings-window .inset-row-label, .settings-window .preference-label { font-weight: 400; }
+.settings-window .inset-group-footnote { padding-inline: var(--space-5); font-size: var(--font-meta); line-height: var(--line-meta); }
+.settings-window .settings-memory-maintenance { margin-top: var(--space-lg); }
 .settings-window .select-popup { min-width: 0; max-width: 100%; }
 .settings-window .select-popup-input {
   field-sizing: content;
@@ -163,9 +166,3 @@
   box-shadow: none;
 }
 .settings-window .select-popup-input:hover:not(:disabled) { background: var(--fill-2); }
-.inset-row:has(> .inset-row-leading-control) { grid-template-columns: auto minmax(0, 1fr) auto; }
-.inset-row-leading-control { display: flex; align-items: center; padding-inline-start: var(--space-5); }
-.inset-row-leading-control + .inset-row-main { padding-inline-start: var(--space-3); }
-.settings-row-checkbox { display: inline-flex; align-items: center; justify-content: center; position: relative; min-width: var(--control-size-md); min-height: var(--control-size-md); }
-.settings-row-checkbox > input { position: absolute; opacity: 0; width: var(--checkbox-mark-size); height: var(--checkbox-mark-size); margin: 0; }
-.settings-row-checkbox > input:focus-visible + .checkbox-mark { box-shadow: var(--focus-ring-shadow); }

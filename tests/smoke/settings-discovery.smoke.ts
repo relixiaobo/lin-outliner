@@ -22,6 +22,12 @@ test('Settings edits and resets the real source, tracks external errors, and kee
       return { minimizable: window.isMinimizable(), maximizable: window.isMaximizable(), fullscreenable: window.isFullScreenable(), resizable: window.isResizable() };
     });
     expect(native).toEqual({ minimizable: false, maximizable: false, fullscreenable: false, resizable: true });
+    const appearance = page.getByRole('radiogroup', { name: 'Appearance', exact: true });
+    for (const [label, theme] of [['Dark', 'dark'], ['Light', 'light'], ['System', 'system']] as const) {
+      await appearance.getByRole('radio', { name: label, exact: true }).check();
+      await expect.poll(() => smoke.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe(theme);
+      await expect(appearance.getByRole('radio', { name: label, exact: true })).toBeChecked();
+    }
     await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
     await page.getByText('Advanced Preferences', { exact: true }).click();
     await page.getByRole('radio', { name: 'Modified', exact: true }).click();
@@ -135,7 +141,7 @@ test('all Settings destinations reuse one native window with bounded admission a
       expect(smoke.app.windows().filter((window) => new URL(window.url()).searchParams.get('surface') === 'settings')).toHaveLength(1);
       await expect(page.getByRole('button', { name: 'Back', exact: true })).toHaveCount(destination === 'about' ? 0 : 1);
       if (destination === 'shortcuts') {
-        await expect(page.getByRole('checkbox', { name: 'Enable Go to Today' })).toBeVisible();
+        await expect(page.getByText('Go to Today', { exact: true })).toBeVisible();
         await expect(page.getByRole('switch')).toHaveCount(0);
         for (const colorScheme of ['light', 'dark'] as const) {
           await page.emulateMedia({ colorScheme });

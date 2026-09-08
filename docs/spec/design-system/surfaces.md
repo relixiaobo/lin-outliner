@@ -366,18 +366,29 @@ of query/filter. Runtime application and file acceptance are separate facts;
 per-owner failures preserve only the affected owner's previous effective values.
 There is no window-wide Save/Apply footer.
 
-**Controls and accessibility.** Appearance is a neutral segmented radiogroup;
+**Controls and accessibility.** Appearance uses three labeled, miniature Tenon
+window previews in a native radio group. System combines light and dark samples;
+Light and Dark show their fixed palettes regardless of the current OS theme.
+These decorative samples do not change the renderer theming mechanism. A neutral
+outline marks the selected preview; native arrow keys change selection, and a
+pending write immediately marks the requested preview and retains focus while
+preventing another edit. Failure restores the effective choice and shows its error. General omits the
+duplicate Appearance group heading and lets the previews explain the choices.
 Language and other mutually exclusive choices use native pop-up selects.
-Feature-level boolean settings use compact switches. Collection membership
-(Shortcuts, Providers, Skills, and delegation runners) uses leading checkboxes,
-outside any row button. Both follow the `--control-on` exception in Foundations.
+Immediate on/off settings, including provider connections, Skills, and delegation
+runners, use compact trailing switches. An off service retains readable labels
+and its Configure action. Only selecting members of an Agent capability set uses
+checkboxes. These controls follow the `--control-on` exception in Foundations.
 Settings pop-up selectors size to the selected value, cap long labels, align
 consistently at the trailing edge, and show a value and menu indicator without a
 resting bezel. Domain and scalar rows share low-contrast filled groups without an
 outer stroke, the large inset radius, separators inset on both sides, regular
 weight row labels, and semibold section headings; default
 text/image model choices share one Default models group. Ordinary copy describes
-the user action rather than naming internal tool functions. Search,
+the user action rather than naming internal tool functions. Settings separators
+use a half-pixel line on the quiet fill rung, strengthening to the separator token
+and a full pixel with Increase Contrast. Integer fields show their accepted bounds
+beside their existing unit/default explanation. Search,
 controls, and Reset remain keyboard reachable with neutral focus indicators.
 Escape belongs first to IME, an editor, or a menu/sheet; otherwise it clears a
 focused nonempty search. `Cmd+W` closes the active native window. Closing a child
@@ -407,30 +418,43 @@ pre-acceptance reviews retain the owning service's cancellation rules.
 main persona, standing instructions, and capability ceiling. It does not restore
 retired Roles, per-type execution, or duplicated built-in Agents. Delegation
 preferences and runner readiness load through their own projection within Agents,
-separately from Models. Access states the Full Access boundary and lists explicit
+separately from Models. A visible Edit action opens the root editor; its copy
+names editable instructions and capabilities. Colour choices support roving arrow
+navigation. Delegation explains its purpose and names the runner to which the
+model/access/time options apply. Access states the Full Access boundary and lists explicit
 blocks; removal commits on its row. The boundary explanation is a footnote.
 
+Models exposes a visible Configure action on connections and catalog rows;
+additional actions stay in the menu. Defaults stay disabled until the provider
+view arrives. Automatic selection is named in full rather than abbreviated.
+
 **Skills, Memory, and Data.** Skills owns acquisition, source bindings, enabled
-state, and updates. Skill descriptions stay clamped to two lines; menu/checkbox
-focus never expands a row. Memory and Data own their inspection and confirmed
-maintenance actions. Translation controls remain contextual in previews; Data
-owns global translation-cache and website-data cleanup.
+state, and updates. Skill descriptions stay clamped to two lines; menu/switch
+focus never expands a row. Skill review uses a labeled action rather than a
+search icon. Memory and Data own their inspection and confirmed maintenance
+actions. Memory separates resetting from ordinary use/open controls, explains
+the scope in terms of entries and nested notes, and states when new memories are
+not being saved. Data shows readable storage units and keeps the consequences of
+clearing visible before the native confirmation. Translation controls remain
+contextual in previews; Data owns global translation-cache and website-data cleanup.
 
 **Keyboard Shortcuts.** The searchable pane owns the public keybindings source.
 One filled list surface contains an editing instruction, compact context headings,
-and alternating compact rows. Each row puts a labeled checkbox before the command
-and plain, right-aligned key combinations after it. IDs and default badges do not
+and alternating compact rows. Each row shows its command name and plain,
+right-aligned key combinations, without checkboxes or per-row action buttons. IDs and default badges do not
 appear in ordinary rows; IDs and descriptions remain searchable, and descriptions
 are accessible help.
-Alternate/removal/per-command reset actions live in the row menu, revealed on
-hover, keyboard focus, or while open without changing layout. Open File lives
+Alternate/removal/per-command reset actions live in a contextual menu opened by
+right-click or Shift+F10/Context Menu on a key field. Open File lives
 in the toolbar options menu; Restore Defaults sits below the list at the leading
 edge. Error repair remains available even when the source is rejected.
 
 Key combinations have no resting button bezel. Double-clicking starts recording
 in fixed field dimensions; keyboard and assistive activation use Return or Space.
 A single pointer click focuses without recording. Only editing adds a neutral
-field fill; keyboard focus keeps its neutral ring. Escape cancels. Recording
+field fill; keyboard focus keeps its neutral ring. Delete clears the edited
+binding, Escape cancels, and Tab leaves the recorder. An unassigned command
+shows an editable None field, so assigning it uses the same double-click gesture. Recording
 captures only the focused field, and blur or leaving the pane ends recording. It cannot intercept typing in
 another category. Source rejection and effective-binding failure stay local.
 

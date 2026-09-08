@@ -83,6 +83,46 @@ test('search finds aliases and IDs and Modified includes explicit defaults', asy
   await expect(page.getByRole('textbox', { name: 'Request timeout (ms)' })).toBeVisible();
 });
 
+test('appearance previews support native radio navigation, failed writes, and reset', async ({ page }) => {
+  await install(page);
+  const group = page.getByRole('radiogroup', { name: 'Appearance', exact: true });
+  const system = group.getByRole('radio', { name: 'System', exact: true });
+  const light = group.getByRole('radio', { name: 'Light', exact: true });
+  const dark = group.getByRole('radio', { name: 'Dark', exact: true });
+  await expect(system).toBeChecked();
+  await page.evaluate(() => {
+    const original = window.lin!.preferences.edit;
+    (window.lin!.preferences as any).edit = async (input: any) => {
+      await new Promise<void>((resolve) => { (window as any).__releaseAppearance = resolve; });
+      (window.lin!.preferences as any).edit = original;
+      return original(input);
+    };
+  });
+  await light.check();
+  await expect(light).toBeChecked();
+  await expect(light).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(light).toBeChecked();
+  await expect(light).toBeFocused();
+  await page.evaluate(() => (window as any).__releaseAppearance());
+  await expect(light).toBeEnabled();
+  await expect(light).toBeChecked();
+  await expect(light).toBeFocused();
+  await light.press('ArrowRight');
+  await expect(dark).toBeChecked();
+  await expect(dark).toBeFocused();
+  await page.evaluate(() => { (window as any).__settingsTest.failWrite = true; });
+  await dark.press('ArrowLeft');
+  await expect(page.getByRole('alert')).toContainText('Settings source changed');
+  await expect(dark).toBeChecked();
+  await page.evaluate(() => { (window as any).__settingsTest.failWrite = false; });
+  await page.getByRole('button', { name: 'Reset Appearance', exact: true }).click();
+  await expect(system).toBeChecked();
+  expect(await page.evaluate(() => (window as any).__settingsTest.edits.map((edit: any) => [edit.operation, edit.value]))).toEqual([
+    ['set', 'light'], ['set', 'dark'], ['set', 'light'], ['reset', undefined],
+  ]);
+});
+
 test('toolbar history preserves drafts, branches on a new category, and returns from search first', async ({ page }) => {
   await install(page);
   const back = page.getByRole('button', { name: 'Back', exact: true });

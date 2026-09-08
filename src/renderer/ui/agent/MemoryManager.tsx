@@ -58,7 +58,8 @@ export function MemoryManager() {
   const workerStatus = !status ? t.common.loading : status.lastError
     ? t.settings.general.memoryError({ error: status.lastError })
     : status.pendingJobs ? t.settings.general.memoryPending({ count: status.pendingJobs })
-      : status.lastSuccessfulRunAt ? t.settings.general.memoryUpdated({ date: formatDateTime(status.lastSuccessfulRunAt, locale, { dateStyle: 'medium', timeStyle: 'short' }) })
+      : !enabled ? t.settings.general.memoryPaused
+        : status.lastSuccessfulRunAt ? t.settings.general.memoryUpdated({ date: formatDateTime(status.lastSuccessfulRunAt, locale, { dateStyle: 'medium', timeStyle: 'short' }) })
         : t.settings.general.memoryReady;
   const statusCopy = status && status.strayTaggedNodeCount > 0
     ? `${workerStatus} ${t.settings.general.memoryStrayTaggedNodes({ count: status.strayTaggedNodeCount })}` : workerStatus;
@@ -69,7 +70,7 @@ export function MemoryManager() {
   const preferenceCopy = desiredEnabled === null ? null : t.settings.general.memoryPreferenceSaved;
 
   return <>
-    <InsetGroup ariaLabel={t.settings.general.memoryGroup} label={t.settings.general.memoryGroup}>
+    <InsetGroup ariaLabel={t.settings.general.memoryGroup}>
       <InsetRow label={t.settings.general.memoryLabel} sublabel={t.settings.general.memorySublabel} trailing={
         <SwitchControl checked={enabled} disabled={busy || !view} label={t.settings.general.memoryLabel}
           onCheckedChange={(value) => void run(async () => {
@@ -83,6 +84,8 @@ export function MemoryManager() {
           if (mounted.current && result.operation === 'open' && result.navigation !== 'opened') setNotice(t.settings.general.memoryNavigationUnavailable);
         })}>{t.settings.general.memoryOpenAction}</Button>
       } wrap />
+    </InsetGroup>
+    <InsetGroup ariaLabel={t.settings.general.memoryResetLabel} className="settings-memory-maintenance">
       <InsetRow label={t.settings.general.memoryResetLabel} sublabel={t.settings.general.memoryResetSublabel} trailing={
         <Button disabled={busy || !view || pendingReset} variant="danger" onClick={() => void run(async () => {
           const result = await api.memoryManage({ operation: 'reset' });

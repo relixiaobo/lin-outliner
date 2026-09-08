@@ -7,7 +7,7 @@ import type {
   SkillSourceKind,
 } from '../../api/types';
 import { api } from '../../api/client';
-import { AddIcon, ICON_SIZE, LoaderIcon, RefreshIcon, SearchIcon } from '../icons';
+import { AddIcon, ICON_SIZE, LoaderIcon, RefreshIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { AnchoredActionMenu, type AnchoredMenuAction } from '../primitives/AnchoredActionMenu';
 import { Button } from '../primitives/Button';
@@ -15,7 +15,8 @@ import { EmptyState } from '../primitives/FeedbackState';
 import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { Dialog } from '../primitives/Dialog';
 import { IconButton } from '../primitives/IconButton';
-import { CheckboxControl } from '../primitives/CheckboxControl';
+import { SwitchControl } from '../primitives/SwitchControl';
+import { SwitchMark } from '../primitives/SwitchMark';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import {
@@ -89,7 +90,6 @@ interface LibraryRow {
    */
   diagnosticTone?: 'danger' | 'muted';
   enabled: boolean;
-  dimmed: boolean;
   toggleLabel: string;
   onToggle: (enabled: boolean) => void;
   actions: RowMenuAction[];
@@ -342,7 +342,6 @@ export function SkillLibrary({
         ...(attention ? [attention] : []),
       ],
       enabled,
-      dimmed: !enabled || skill.status === 'modified',
       toggleLabel: t.settings.skills.managedEnableToggle({ name: skill.name }),
       onToggle: () => onToggleSkill(skill.name),
       actions: [...managedRevealAction, ...managedSkillActions(skill, {
@@ -399,7 +398,6 @@ export function SkillLibrary({
         sourceChip: localDirectory ? t.settings.skills.sourceLocal : sourceChipLabel(skill.source),
         chips,
         enabled: !disabled,
-        dimmed: disabled,
         toggleLabel: t.settings.skills.toggleSkill({ name: skill.name }),
         onToggle: () => onToggleSkill(skill.name),
         actions,
@@ -454,15 +452,12 @@ export function SkillLibrary({
           variant="chrome"
         />
       ) : null}
-      <IconButton
-        className="rail-toggle"
+      <Button
         disabled={curationBusy}
-        icon={SearchIcon}
-        iconSize={ICON_SIZE.menu}
-        label={curationBusy ? t.settings.skills.curationRunning : t.settings.skills.curationReport}
+        aria-label={t.settings.skills.curationReport}
         onClick={() => void runCurationReport()}
-        variant="chrome"
-      />
+        size="sm" variant="ghost"
+      >{curationBusy ? t.settings.skills.curationRunning : t.settings.skills.curationReport}</Button>
       <IconButton
         aria-expanded={addMenuOpen}
         aria-haspopup="menu"
@@ -576,13 +571,10 @@ export function SkillLibrary({
           ) : null}
           {rows.map((row) => (
             <InsetRow
-              dimmed={row.dimmed}
               feedback={rowToggleError(row) ? (
                 <span role="alert">{rowToggleError(row)}</span>
               ) : undefined}
               key={row.key}
-              leadingControl={<CheckboxControl className="settings-row-checkbox" checked={row.enabled}
-                onCheckedChange={row.onToggle} aria-label={row.toggleLabel}>{null}</CheckboxControl>}
               label={(
                 <>
                   {/* The slash form only where typing it does something. A Skill
@@ -620,7 +612,9 @@ export function SkillLibrary({
                       open={openRowMenu === row.key}
                     />
                   ) : null}
-
+                  <SwitchControl checked={row.enabled} onCheckedChange={row.onToggle} label={row.toggleLabel}>
+                    <SwitchMark checked={row.enabled} />
+                  </SwitchControl>
                 </>
               )}
               wrap

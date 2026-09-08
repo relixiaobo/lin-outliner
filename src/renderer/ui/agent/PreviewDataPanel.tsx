@@ -5,6 +5,7 @@ import { Button } from '../primitives/Button';
 import { IconButton } from '../primitives/IconButton';
 import { RefreshIcon } from '../icons';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
+import { formatBytes } from '../preview/previewFormatting';
 
 export function PreviewDataPanel() {
   const t = useT();
@@ -115,13 +116,14 @@ export function PreviewDataPanel() {
         label={labels.translationDataGroup}
         id="translation"
         ariaLabel={labels.translationDataGroup}
+        footnote={labels.translationDataClearConfirmDetail}
       >
         <InsetRow
           label={labels.translationDataLabel}
           sublabel={
             entries === null
               ? labels.translationDataSublabel
-              : labels.translationDataUsage({ entries, bytes: status!.translations.logicalBytes })
+              : labels.translationDataUsage({ entries, size: formatBytes(status!.translations.logicalBytes) })
           }
           trailing={
             <Button
@@ -135,14 +137,14 @@ export function PreviewDataPanel() {
           wrap
         />
       </InsetGroup>
-      <InsetGroup label={labels.websiteDataGroup} id="websites" ariaLabel={labels.websiteDataGroup}>
+      <InsetGroup label={labels.websiteDataGroup} id="websites" ariaLabel={labels.websiteDataGroup} footnote={labels.websiteDataClearConfirmDetail}>
         <InsetRow
           label={labels.websiteDataLabel}
           sublabel={
             status?.websites.cacheBytes == null
               ? labels.websiteDataSublabel
               : labels.websiteDataUsage({
-                  bytes: status.websites.cacheBytes,
+                  size: formatBytes(status.websites.cacheBytes),
                   previews: status.websites.activeGuests,
                 })
           }

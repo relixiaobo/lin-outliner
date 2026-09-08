@@ -17,13 +17,23 @@ test.describe('configuration panes', () => {
 
     await search.fill('global.open_page_in_pane');
     await expect(settings.getByText('Open page in new pane', { exact: true })).toBeVisible();
-    await settings.getByRole('button', { name: 'Open page in new pane actions', exact: true }).click();
+    await settings.getByRole('button', { name: 'Change CommandOrControl+M', exact: true }).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Add an alternate for Open page in new pane' }).click();
     await page.keyboard.press('Control+P');
     await expect(settings.getByRole('button', { name: 'Change Control+P' })).toBeVisible();
 
-    await settings.getByRole('checkbox', { name: 'Enable Open page in new pane' }).click();
-    await expect(settings.getByText('Disabled', { exact: true })).toBeVisible();
+    for (const shortcut of ['Control+P', 'CommandOrControl+M']) {
+      const key = settings.getByRole('button', { name: `Change ${shortcut}`, exact: true });
+      await key.dblclick();
+      await key.press('Backspace');
+    }
+    const empty = settings.getByRole('button', { name: 'Set shortcut for Open page in new pane', exact: true });
+    await expect(empty).toHaveText('None');
+    await empty.dblclick();
+    await empty.press('Control+Alt+K');
+    await expect(settings.getByRole('button', { name: 'Change Control+Alt+K', exact: true })).toBeVisible();
+    await expect(settings.getByRole('checkbox')).toHaveCount(0);
+    await expect(settings.locator('.settings-shortcut-row .settings-row-menu-trigger')).toHaveCount(0);
   });
 
   test('leaving the shortcut recorder releases keys to the current pane', async ({ page }) => {
@@ -57,6 +67,14 @@ test.describe('configuration panes', () => {
     await shortcut.press('Control+Alt+J');
     await expect(settings.getByRole('button', { name: 'Change Control+Alt+J', exact: true })).toBeVisible();
     await expect(settings.locator('.settings-shortcut-key.is-recording')).toHaveCount(0);
+    const changed = settings.getByRole('button', { name: 'Change Control+Alt+J', exact: true });
+    await changed.press('Shift+F10');
+    await page.getByRole('menuitem', { name: 'Reset Open page in new pane', exact: true }).click();
+    await expect(shortcut).toBeVisible();
+    await shortcut.dblclick();
+    await shortcut.press('Tab');
+    await expect(settings.locator('.settings-shortcut-key.is-recording')).toHaveCount(0);
+    await expect(shortcut).toBeVisible();
   });
 
   for (const [colorScheme, width] of [['light', 560], ['dark', 900]] as const) {
@@ -141,12 +159,21 @@ test.describe('configuration panes', () => {
 
     await expect(agents.getByText('Aspen')).toBeVisible();
     await expect(agents.getByText('The agent you talk to')).toBeVisible();
-    await agents.getByRole('button', { name: /Aspen/ }).click();
+    await agents.getByRole('button', { name: 'Edit…', exact: true }).click();
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('textbox', { name: 'Name' })).toBeVisible();
     await expect(dialog.getByRole('textbox', { name: 'Instructions' })).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Save' })).toBeVisible();
+    const colours = dialog.getByRole('radiogroup', { name: 'Colour' });
+    const current = colours.locator('[aria-checked="true"]');
+    await current.focus();
+    const before = await current.getAttribute('aria-label');
+    await page.keyboard.press('ArrowRight');
+    await expect(current).toBeFocused();
+    expect(await current.getAttribute('aria-label')).not.toBe(before);
+    await page.keyboard.press('ArrowLeft');
+    await expect(current).toHaveAttribute('aria-label', before!);
   });
 
   test('the conversation agent owns its standing instructions and the ceiling', async ({ page }) => {
@@ -216,7 +243,7 @@ test.describe('configuration panes', () => {
       await expect(row.locator('.settings-chip', { hasText: 'project' })).toBeVisible();
       await expect(row.getByRole('button', { name: /Accept/ })).toHaveCount(0);
 
-      const toggle = row.getByRole('checkbox');
+      const toggle = row.getByRole('switch');
       await expect(toggle).toBeVisible();
       const rowBox = await row.boundingBox();
       const toggleBox = await toggle.boundingBox();
@@ -336,7 +363,7 @@ test.describe('configuration panes', () => {
   test('toggles a configured provider without removing the connection row', async ({ page }) => {
     const settings = await openSettings(page);
     await openServicesPage(settings);
-    const openaiSwitch = settings.getByRole('checkbox', { name: 'Enable or disable OpenAI' });
+    const openaiSwitch = settings.getByRole('switch', { name: 'Enable or disable OpenAI' });
     await expect(openaiSwitch).toBeChecked();
 
     await openaiSwitch.click();
@@ -374,7 +401,7 @@ test.describe('configuration panes', () => {
   test('settles an accepted provider operation while another pane is visible and preserves scroll', async ({ page }) => {
     await page.setViewportSize({ width: 860, height: 480 });
     const settings = await openSettings(page);
-    await expect(settings.getByRole('checkbox', { name: 'Enable or disable OpenAI' })).toBeChecked();
+    await expect(settings.getByRole('switch', { name: 'Enable or disable OpenAI' })).toBeChecked();
     await page.evaluate(() => {
       const original = window.lin!.invoke;
       window.lin!.invoke = async (command, args) => {
@@ -382,25 +409,25 @@ test.describe('configuration panes', () => {
         return original(command, args);
       };
     });
-    await settings.getByRole('checkbox', { name: 'Enable or disable OpenAI' }).click();
+    await settings.getByRole('switch', { name: 'Enable or disable OpenAI' }).click();
     await expect.poll(() => page.evaluate(() => typeof (window as any).__releaseProviderWrite)).toBe('function');
     const content = page.locator('#settings-pane-models');
     const scroll = await content.evaluate((element) => { element.scrollTop = 240; return element.scrollTop; });
     expect(scroll).toBeGreaterThan(0);
     await settings.getByRole('tab', { name: 'General', exact: true }).click();
-    await expect(settings.getByRole('checkbox', { name: 'Enable or disable OpenAI' })).toHaveCount(0);
+    await expect(settings.getByRole('switch', { name: 'Enable or disable OpenAI' })).toHaveCount(0);
     await page.evaluate(() => (window as any).__releaseProviderWrite());
     await expect.poll(async () => (await commandCalls(page)).some((call) => call.cmd === 'agent_upsert_provider_config')).toBe(true);
     await settings.getByRole('tab', { name: 'Models', exact: true }).click();
     expect(await content.evaluate((element) => element.scrollTop)).toBe(scroll);
-    await expect(settings.getByRole('checkbox', { name: 'Enable or disable OpenAI' })).not.toBeChecked();
+    await expect(settings.getByRole('switch', { name: 'Enable or disable OpenAI' })).not.toBeChecked();
     await expect(settings.getByText('Provider disabled')).toBeVisible();
   });
 
   test('enables detected CC Switch directly from the provider list', async ({ page }) => {
     const settings = await openSettings(page);
     await openServicesPage(settings);
-    const ccSwitch = settings.getByRole('checkbox', { name: 'Enable or disable CC Switch' });
+    const ccSwitch = settings.getByRole('switch', { name: 'Enable or disable CC Switch' });
     await expect(ccSwitch).not.toBeChecked();
 
     await ccSwitch.click();
@@ -417,13 +444,13 @@ test.describe('configuration panes', () => {
       probeConnection: false,
     });
     await expect(settings.getByRole('button', { name: 'CC Switch, Ready' })).toBeVisible();
-    await expect(settings.getByRole('checkbox', { name: 'Enable or disable CC Switch' })).toBeChecked();
+    await expect(settings.getByRole('switch', { name: 'Enable or disable CC Switch' })).toBeChecked();
   });
 
   test('refreshes enabled CC Switch models from the provider row', async ({ page }) => {
     const settings = await openSettings(page);
     await openServicesPage(settings);
-    await settings.getByRole('checkbox', { name: 'Enable or disable CC Switch' }).click();
+    await settings.getByRole('switch', { name: 'Enable or disable CC Switch' }).click();
     await expect(settings.getByRole('button', { name: 'CC Switch, Ready' })).toBeVisible();
 
     await settings.getByRole('button', { name: 'CC Switch actions' }).click();

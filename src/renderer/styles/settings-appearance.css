@@ -1,0 +1,49 @@
+.preference-row[data-preference-id="appearance.theme"] { align-items: flex-start; }
+.preference-row[data-preference-id="appearance.theme"] .preference-copy { flex-basis: 6em; padding-top: var(--space-2); }
+.appearance-picker { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-4); max-width: 100%; }
+.appearance-choice { position: relative; display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-2); width: calc(var(--space-8) * 5); max-width: 100%; border-radius: var(--radius-md); }
+.appearance-choice > input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; }
+.appearance-choice-label { color: var(--text-secondary); font-size: var(--font-meta); line-height: var(--line-meta); text-align: center; overflow-wrap: anywhere; }
+.appearance-preview { position: relative; width: 100%; aspect-ratio: 8 / 5; overflow: hidden; border-radius: var(--radius-sm); outline: var(--space-1) solid transparent; outline-offset: var(--space-1); pointer-events: none; }
+.appearance-choice:has(input:checked) .appearance-preview { outline-color: var(--text-primary); }
+.appearance-choice:has(input:checked) .appearance-choice-label { color: var(--text-primary); font-weight: 600; }
+.appearance-choice:hover .appearance-choice-label { color: var(--text-primary); }
+.appearance-choice:has(input:focus-visible) { box-shadow: var(--focus-ring-shadow); }
+.appearance-choice:has(input:disabled) { opacity: 0.5; }
+.appearance-preview-window {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 24% 1fr 28%;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-radius: inherit;
+  background: var(--appearance-sample-base);
+  color: var(--appearance-sample-text);
+}
+.appearance-preview-window-light {
+  --appearance-sample-base: var(--appearance-preview-light-base);
+  --appearance-sample-text: var(--appearance-preview-light-text);
+  --appearance-sample-fill: var(--appearance-preview-light-fill);
+  --appearance-sample-selection: var(--appearance-preview-light-selection);
+  --appearance-sample-composer: var(--appearance-preview-light-composer);
+}
+.appearance-preview-window-dark {
+  --appearance-sample-base: var(--appearance-preview-dark-base);
+  --appearance-sample-text: var(--appearance-preview-dark-text);
+  --appearance-sample-fill: var(--appearance-preview-dark-fill);
+  --appearance-sample-selection: var(--appearance-preview-dark-selection);
+  --appearance-sample-composer: var(--appearance-preview-dark-composer);
+}
+.appearance-preview-system .appearance-preview-window-dark { clip-path: polygon(55% 0, 100% 0, 100% 100%, 45% 100%); }
+.appearance-preview-rail, .appearance-preview-thread { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-2xs); background: var(--appearance-sample-fill); }
+.appearance-preview-lights { display: flex; gap: var(--space-hairline); padding-bottom: var(--space-1); }
+.appearance-preview-lights i { width: 2px; height: 2px; border-radius: var(--radius-pill); background: currentColor; }
+.appearance-preview-selection { height: var(--space-2); border-radius: var(--radius-2xs); background: var(--appearance-sample-selection); }
+.appearance-preview-rail-line { width: 75%; height: 2px; border-radius: var(--radius-pill); background: currentColor; }
+.appearance-preview-content { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-1); }
+.appearance-preview-title { width: 75%; height: var(--space-2); margin-bottom: var(--space-2); border-radius: var(--radius-pill); background: currentColor; }
+.appearance-preview-line { height: 2px; margin-left: var(--space-1); border-radius: var(--radius-pill); background: currentColor; }
+.appearance-preview-line:last-child { width: 60%; }
+.appearance-preview-thread > span { height: 2px; border-radius: var(--radius-pill); background: currentColor; }
+.appearance-preview-thread > span:last-child { height: var(--space-4); margin-top: auto; border-radius: var(--radius-2xs); background: var(--appearance-sample-composer); }

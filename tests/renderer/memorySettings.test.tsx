@@ -31,7 +31,7 @@ describe('Memory owner UI', () => {
     await act(async () => toggle.click());
     expect(writes).toEqual([{ enabled: false }]);
     expect(toggle.getAttribute('aria-checked')).toBe('true');
-    expect(rendered.document.body.textContent).toContain('Application is pending');
+    expect(rendered.document.body.textContent).toContain('Waiting for Memory to finish applying the change');
     enabled = false;
     rendered.changed();
     await flush();
@@ -42,7 +42,7 @@ describe('Memory owner UI', () => {
     rendered.changed();
     await flush();
     expect(toggle.getAttribute('aria-checked')).toBe('true');
-    expect(rendered.document.body.textContent).not.toContain('Application is pending');
+    expect(rendered.document.body.textContent).not.toContain('Waiting for Memory to finish applying the change');
   });
 
   test('Reset uses the native owner decision and only reports finalized as complete', async () => {
@@ -56,7 +56,7 @@ describe('Memory owner UI', () => {
     await flush();
     await act(async () => rendered.button('Reset Memory').click());
     expect(rendered.document.querySelector('.confirm-dialog')).toBeNull();
-    expect(rendered.document.body.textContent).toContain('Reset is awaiting settlement.');
+    expect(rendered.document.body.textContent).toContain('Confirming whether Memory was reset. Please wait before trying again.');
     expect(rendered.document.body.textContent).not.toContain('Memory reset.');
     expect(rendered.button('Reset Memory').disabled).toBe(true);
     reset = { ...reset, state: 'finalized' };
@@ -77,7 +77,7 @@ describe('Memory owner UI', () => {
     expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('cancelled');
     await act(async () => rendered.button('Open Memory').click());
     expect(rendered.document.querySelector('[role="alert"]')).toBeNull();
-    expect(rendered.document.querySelector('[role="status"]')?.textContent).toContain('navigation was not confirmed');
+    expect(rendered.document.querySelector('[role="status"]')?.textContent).toContain('Try Open Memory again');
   });
 
   test('owner events refresh without parent callback churn and release on close', async () => {

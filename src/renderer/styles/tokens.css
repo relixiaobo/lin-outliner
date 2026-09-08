@@ -77,6 +77,23 @@
   /* separators */
   --separator: rgb(var(--ink) / 0.10);
   --separator-opaque: #d8d8dc;
+  --settings-row-separator: var(--fill-2);
+  --settings-row-separator-width: 0.5px;
+
+  /* Fixed palette samples, shown together in the Appearance picker. These are
+     illustration seeds, independent of the active OS/application appearance. */
+  --appearance-preview-light-base: #ffffff;
+  --appearance-preview-light-ink: 0 0 0;
+  --appearance-preview-dark-base: #1e1e1e;
+  --appearance-preview-dark-ink: 255 255 255;
+  --appearance-preview-light-text: rgb(var(--appearance-preview-light-ink) / 0.35);
+  --appearance-preview-light-fill: rgb(var(--appearance-preview-light-ink) / 0.08);
+  --appearance-preview-light-selection: rgb(var(--appearance-preview-light-ink) / 0.18);
+  --appearance-preview-light-composer: rgb(var(--appearance-preview-light-ink) / 0.12);
+  --appearance-preview-dark-text: rgb(var(--appearance-preview-dark-ink) / 0.35);
+  --appearance-preview-dark-fill: rgb(var(--appearance-preview-dark-ink) / 0.08);
+  --appearance-preview-dark-selection: rgb(var(--appearance-preview-dark-ink) / 0.18);
+  --appearance-preview-dark-composer: rgb(var(--appearance-preview-dark-ink) / 0.12);
 
   /* opaque surfaces (per-theme literals) */
   --bg-window: #ececec;

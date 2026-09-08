@@ -75,7 +75,7 @@ test('real Memory transport, file application, native review target, navigation 
       const value = (globalThis as any).memoryReviews.at(-1);
       return { type: value.type, detail: value.detail, defaultId: value.defaultId, cancelId: value.cancelId };
     });
-    expect(review).toEqual({ type: 'warning', detail: 'Containers: 1. Nodes: 2, including ordinary notes: 1.', defaultId: 1, cancelId: 1 });
+    expect(review).toEqual({ type: 'warning', detail: 'Memory sections: 1. Notes to delete: 2, including 1 ordinary notes.', defaultId: 1, cancelId: 1 });
     await app.evaluate(() => { (globalThis as any).memoryReviewResponse = 0; });
     await settings.getByRole('button', { name: 'Reset Memory', exact: true }).click();
     await expect(settings.getByRole('status')).toContainText('Memory reset.');

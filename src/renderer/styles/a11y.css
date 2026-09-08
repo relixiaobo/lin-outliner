@@ -48,6 +48,8 @@
 
     /* separators / borders gain real presence */
     --separator: rgb(var(--ink) / 0.32);
+    --settings-row-separator: var(--separator);
+    --settings-row-separator-width: var(--space-hairline);
     --border-emphasis: rgb(var(--ink) / 0.42);
     --border-strong: rgb(var(--ink) / 0.55);
 

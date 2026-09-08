@@ -14,7 +14,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { ICON_SIZE, SearchIcon } from '../icons';
 import { Button } from '../primitives/Button';
 import { Input } from '../primitives/Input';
-import { CheckboxControl } from '../primitives/CheckboxControl';
+import { AnchoredActionMenu } from '../primitives/AnchoredActionMenu';
 import { SettingsRowMenu } from './SettingsRowMenu';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 
@@ -95,14 +95,26 @@ export function ShortcutManager({ active = true, onError, onNotice }: ShortcutMa
     if (!entry) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat || event.isComposing || !(event.target instanceof Element) || !event.target.closest('.settings-shortcut-key.is-recording')) return;
+      if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) return;
+      if (event.key === 'Tab' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+        setRecording(null);
+        setRecordingError(null);
+        return;
+      }
       if (event.key === 'Escape') {
         event.preventDefault();
         setRecording(null);
         setRecordingError(null);
         return;
       }
-      if ((event.key === 'Backspace' || event.key === 'Delete') && recording.index < desiredBindings(entry).length) {
+      if (event.key === 'Backspace' || event.key === 'Delete') {
         event.preventDefault();
+        event.stopPropagation();
+        if (recording.index >= desiredBindings(entry).length) {
+          setRecording(null);
+          setRecordingError(null);
+          return;
+        }
         const next = desiredBindings(entry).filter((_binding, index) => index !== recording.index);
         void update({ id: entry.id, value: overrideFromBindings(next) }, labels.saved).then((saved) => {
           if (saved) setRecording(null);
@@ -194,10 +206,6 @@ export function ShortcutManager({ active = true, onError, onNotice }: ShortcutMa
                     void update({ id: entry.id, value: overrideFromBindings(next) }, labels.saved);
                   }}
                   onReset={() => void update({ id: entry.id }, labels.resetNotice)}
-                  onToggle={(enabled) => void update(
-                    enabled ? { id: entry.id } : { id: entry.id, value: false },
-                    labels.saved,
-                  )}
                   recording={recording?.id === entry.id ? recording.index : null}
                   recordingError={recording?.id === entry.id ? recordingError : null}
                 />
@@ -215,13 +223,12 @@ export function ShortcutManager({ active = true, onError, onNotice }: ShortcutMa
   );
 }
 
-function ShortcutRow({ busy, entry, onRecord, onRemove, onReset, onToggle, recording, recordingError, menuOpen, onMenuOpenChange, onCancelRecording }: {
+function ShortcutRow({ busy, entry, onRecord, onRemove, onReset, recording, recordingError, menuOpen, onMenuOpenChange, onCancelRecording }: {
   readonly busy: boolean;
   readonly entry: KeybindingsViewEntry;
   readonly onRecord: (index: number) => void;
   readonly onRemove: (index: number) => void;
   readonly onReset: () => void;
-  readonly onToggle: (enabled: boolean) => void;
   readonly recording: number | null;
   readonly recordingError: string | null;
   readonly menuOpen: boolean;
@@ -232,7 +239,6 @@ function ShortcutRow({ busy, entry, onRecord, onRemove, onReset, onToggle, recor
   const labels = t.settings.shortcuts;
   const command = labels.commands[entry.id];
   const bindings = desiredBindings(entry);
-  const enabled = entry.desired !== false;
   const feedback = recordingError ?? (entry.error
     ? labels.effectiveRetained({
         shortcuts: entry.effective.map((binding) => formatHotkey(binding) ?? binding).join(', ') || labels.disabledValue,
@@ -241,6 +247,8 @@ function ShortcutRow({ busy, entry, onRecord, onRemove, onReset, onToggle, recor
   const descriptionId = useId();
   const errorId = useId();
   const recordingButton = useRef<HTMLButtonElement>(null);
+  const firstKey = useRef<HTMLButtonElement | null>(null);
+  const menuAnchor = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (recording === null) return;
     // Menu dismissal first restores its trigger; then the new field receives input.
@@ -248,13 +256,16 @@ function ShortcutRow({ busy, entry, onRecord, onRemove, onReset, onToggle, recor
     return () => cancelAnimationFrame(frame);
   }, [recording]);
   const actions = [
-    ...(enabled && bindings.length < 4 ? [{ label: labels.add({ name: command.label }), disabled: busy, onSelect: () => onRecord(bindings.length) }] : []),
+    ...(bindings.length < 4 ? [{ label: bindings.length ? labels.add({ name: command.label }) : labels.assign({ name: command.label }), disabled: busy, onSelect: () => onRecord(bindings.length) }] : []),
     ...bindings.map((binding, index) => ({ label: labels.remove({ shortcut: formatHotkey(binding) ?? binding }), disabled: busy, onSelect: () => onRemove(index) })),
     ...(entry.desired !== null ? [{ label: labels.reset({ name: command.label }), disabled: busy, onSelect: onReset }] : []),
   ];
   const keyButton = (binding: string | null, index: number) => <button type="button" key={index}
-    ref={recording === index ? recordingButton : undefined}
-    aria-label={binding ? labels.change({ shortcut: binding }) : labels.add({ name: command.label })}
+    ref={(element) => {
+      if (recording === index) recordingButton.current = element;
+      if (index === 0) firstKey.current = element;
+    }}
+    aria-label={binding ? labels.change({ shortcut: binding }) : labels.assign({ name: command.label })}
     aria-describedby={`${descriptionId}${feedback ? ` ${errorId}` : ''}`}
     className={`settings-shortcut-key${recording === index ? ' is-recording' : ''}`}
     disabled={busy}
@@ -264,19 +275,35 @@ function ShortcutRow({ busy, entry, onRecord, onRemove, onReset, onToggle, recor
     title={recording === index ? labels.recording : binding ? labels.change({ shortcut: binding }) : labels.recording}>
     <kbd>{recording === index ? labels.recording : binding ? formatHotkey(binding) : labels.disabledValue}</kbd>
   </button>;
-  return <div className="settings-shortcut-row" role="listitem" data-shortcut-id={entry.id}>
-    <CheckboxControl className="settings-shortcut-enabled" checked={enabled} disabled={busy}
-      aria-label={labels.enabled({ name: command.label })} aria-describedby={descriptionId}
-      onCheckedChange={onToggle} title={command.description}>
-      <span>{command.label}</span>
-    </CheckboxControl>
+  return <div className="settings-shortcut-row" role="listitem" data-shortcut-id={entry.id}
+    onContextMenu={(event) => {
+      event.preventDefault();
+      if (busy) return;
+      const target = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('.settings-shortcut-key') : null;
+      menuAnchor.current = target ?? firstKey.current;
+      menuAnchor.current?.focus();
+      onCancelRecording();
+      onMenuOpenChange(true);
+    }}
+    onKeyDown={(event) => {
+      if (busy || event.nativeEvent.isComposing || !(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return;
+      event.preventDefault();
+      if (event.target instanceof Element) {
+        const key = event.target.closest<HTMLButtonElement>('.settings-shortcut-key');
+        if (key) menuAnchor.current = key;
+      }
+      onCancelRecording();
+      onMenuOpenChange(true);
+    }}>
+    <span className="settings-shortcut-label" title={command.description}>{command.label}</span>
     <span id={descriptionId} hidden>{command.description}</span>
     <div className="settings-shortcut-bindings">
-      {enabled ? <>{bindings.map((binding, index) => keyButton(binding, index))}
-        {recording === bindings.length ? keyButton(null, bindings.length) : null}</> : <span className="inset-row-value">{labels.disabledValue}</span>}
+      {bindings.map((binding, index) => keyButton(binding, index))}
+      {bindings.length === 0 || recording === bindings.length ? keyButton(null, bindings.length) : null}
     </div>
-    <SettingsRowMenu ariaLabel={labels.actions({ name: command.label })} menuLabel={labels.actions({ name: command.label })}
-      open={menuOpen} onOpenChange={onMenuOpenChange} actions={actions} />
+    {menuOpen ? <AnchoredActionMenu ariaLabel={labels.actions({ name: command.label })}
+      anchorRef={menuAnchor} onClose={() => onMenuOpenChange(false)} actions={actions}
+      className="settings-row-menu" itemClassName="settings-row-menu-item" /> : null}
     {feedback ? <p id={errorId} className="settings-shortcuts-source-error settings-shortcut-feedback" role="alert">{feedback}</p> : null}
   </div>;
 

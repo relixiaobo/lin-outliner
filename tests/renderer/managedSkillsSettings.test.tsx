@@ -63,7 +63,7 @@ describe('Skill library — managed sources', () => {
     await clickText(rendered, 'Install');
     expect(requests).toEqual([{ operation: 'install', discoveryId: 'discovery', candidateId: 'candidate', expectedCommit: 'a'.repeat(40) }]);
     expect(toggles).toEqual([]);
-    expect(rendered.document.querySelector<HTMLInputElement>('[aria-label="Enable demo-skill"]')?.checked).toBe(!disabled);
+    expect(rendered.document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Enable demo-skill"]')?.getAttribute('aria-checked')).toBe(String(!disabled));
     expect(rendered.document.body.textContent).toContain('demo-skill installed.');
     expect(rendered.document.body.textContent).not.toContain('installed and enabled');
   });

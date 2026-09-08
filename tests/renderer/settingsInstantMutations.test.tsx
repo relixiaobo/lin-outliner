@@ -1,4 +1,3 @@
-import { clickCheckbox } from './checkboxTestUtils';
 import { afterEach, expect, mock, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -57,15 +56,15 @@ test('provider enable is optimistic, live while pending, and does not request a 
     }
     return fixtureCommand(command);
   });
-  const control = checkboxFor(rendered.document, 'Enable or disable OpenAI');
+  const control = switchFor(rendered.document, 'Enable or disable OpenAI');
 
   await act(async () => {
-    clickCheckbox(control);
+    control.click();
     await Promise.resolve();
   });
 
   expect(control.disabled).toBe(false);
-  expect(control.checked).toBe(false);
+  expect(control.getAttribute('aria-checked')).toBe('false');
   expect(calls[0]).toMatchObject({
     provider: { providerId: 'openai', enabled: false },
     probeConnection: false,
@@ -98,10 +97,10 @@ test('the enable toggle never invents a Base URL for a row that stores none', as
     }
     return fixtureCommand(command);
   });
-  const control = checkboxFor(rendered.document, 'Enable or disable OpenAI');
+  const control = switchFor(rendered.document, 'Enable or disable OpenAI');
 
   await act(async () => {
-    clickCheckbox(control);
+    control.click();
     await Promise.resolve();
   });
 
@@ -123,14 +122,14 @@ test('two provider clicks before render serialize as off then on', async () => {
     }
     return fixtureCommand(command);
   });
-  const control = checkboxFor(rendered.document, 'Enable or disable OpenAI');
+  const control = switchFor(rendered.document, 'Enable or disable OpenAI');
 
   await act(async () => {
-    clickCheckbox(control);
-    clickCheckbox(control);
+    control.click();
+    control.click();
     await Promise.resolve();
   });
-  expect(control.checked).toBe(true);
+  expect(control.getAttribute('aria-checked')).toBe('true');
   expect(calls).toHaveLength(1);
 
   await act(async () => {
@@ -144,7 +143,7 @@ test('two provider clicks before render serialize as off then on', async () => {
     writes[1]!.resolve(providerSettings(true));
     await settle();
   });
-  expect(control.checked).toBe(true);
+  expect(control.getAttribute('aria-checked')).toBe('true');
 });
 
 test('provider actions cannot overtake an optimistic enable write with a stale snapshot', async () => {
@@ -165,17 +164,17 @@ test('provider actions cannot overtake an optimistic enable write with a stale s
   const imageModel = rendered.document.querySelector<HTMLSelectElement>(
     'select[aria-label="Default image model"]',
   );
-  const control = checkboxFor(rendered.document, 'Enable or disable OpenAI');
+  const control = switchFor(rendered.document, 'Enable or disable OpenAI');
 
   await act(async () => {
     if (!imageModel) throw new Error('Missing default image model control');
     Object.defineProperty(imageModel, 'value', { configurable: true, value: 'openai/gpt-test' });
     imageModel.dispatchEvent(new Event('change', { bubbles: true }));
-    clickCheckbox(control);
+    control.click();
     await Promise.resolve();
   });
 
-  expect(control.checked).toBe(false);
+  expect(control.getAttribute('aria-checked')).toBe('false');
   expect(calls).toEqual(['agent_update_image_generation_settings']);
 
   await act(async () => {
@@ -189,13 +188,13 @@ test('provider actions cannot overtake an optimistic enable write with a stale s
     'agent_update_image_generation_settings',
     'agent_upsert_provider_config',
   ]);
-  expect(control.checked).toBe(false);
+  expect(control.getAttribute('aria-checked')).toBe('false');
 
   await act(async () => {
     enabledWrite.resolve(providerSettings(false));
     await settle();
   });
-  expect(control.checked).toBe(false);
+  expect(control.getAttribute('aria-checked')).toBe('false');
 });
 
 test('a failed provider toggle reverts and reports at its row', async () => {
@@ -204,16 +203,16 @@ test('a failed provider toggle reverts and reports at its row', async () => {
     if (command === 'agent_upsert_provider_config') return write.promise;
     return fixtureCommand(command);
   });
-  const control = checkboxFor(rendered.document, 'Enable or disable OpenAI');
+  const control = switchFor(rendered.document, 'Enable or disable OpenAI');
 
   await act(async () => {
-    clickCheckbox(control);
+    control.click();
     await Promise.resolve();
     write.reject(new Error('disk detail that must not reach the row'));
     await settle();
   });
 
-  expect(control.checked).toBe(true);
+  expect(control.getAttribute('aria-checked')).toBe('true');
   const alert = rendered.document.querySelector('.inset-row-feedback [role="alert"]');
   expect(alert?.textContent).toBe('Could not update OpenAI. Try again.');
   expect(alert?.textContent).not.toContain('disk detail');
@@ -238,14 +237,14 @@ test.each(['local', 'managed'])('two %s Skill clicks before render use only the 
     }
     return fixtureCommand(command);
   });
-  const control = checkboxFor(rendered.document, source === 'local' ? 'Toggle notes' : 'Enable notes');
+  const control = switchFor(rendered.document, source === 'local' ? 'Toggle notes' : 'Enable notes');
 
   await act(async () => {
-    clickCheckbox(control);
-    clickCheckbox(control);
+    control.click();
+    control.click();
     await Promise.resolve();
   });
-  expect(control.checked).toBe(true);
+  expect(control.getAttribute('aria-checked')).toBe('true');
   expect(calls).toHaveLength(1);
 
   await act(async () => {
@@ -260,7 +259,7 @@ test.each(['local', 'managed'])('two %s Skill clicks before render use only the 
     writes[1]!.resolve({ disabledSkills: [], sourceBindings: [] });
     await settle();
   });
-  expect(control.checked).toBe(true);
+  expect(control.getAttribute('aria-checked')).toBe('true');
 });
 
 test('a refresh started before a Skill write cannot overwrite its result', async () => {
@@ -282,11 +281,11 @@ test('a refresh started before a Skill write cannot overwrite its result', async
       return () => undefined;
     },
   });
-  const notes = checkboxFor(rendered.document, 'Toggle notes');
+  const notes = switchFor(rendered.document, 'Toggle notes');
 
   await act(async () => {
     notifySettingsChanged?.();
-    clickCheckbox(notes);
+    notes.click();
     await settle();
   });
   write.resolve({ disabledSkills: ['notes'], sourceBindings: [] });
@@ -294,7 +293,7 @@ test('a refresh started before a Skill write cannot overwrite its result', async
   refresh.resolve({ disabledSkills: [], sourceBindings: [] });
   await act(async () => { await settle(); });
 
-  expect(notes.checked).toBe(false);
+  expect(notes.getAttribute('aria-checked')).toBe('false');
 });
 
 test('a refresh during a pending Skill write cannot erase queued toggles', async () => {
@@ -320,12 +319,12 @@ test('a refresh during a pending Skill write cannot erase queued toggles', async
       return () => undefined;
     },
   });
-  const notes = checkboxFor(rendered.document, 'Toggle notes');
-  const other = checkboxFor(rendered.document, 'Toggle other');
+  const notes = switchFor(rendered.document, 'Toggle notes');
+  const other = switchFor(rendered.document, 'Toggle other');
 
   await act(async () => {
-    clickCheckbox(notes);
-    clickCheckbox(other);
+    notes.click();
+    other.click();
     notifySettingsChanged?.();
     await settle();
   });
@@ -338,8 +337,8 @@ test('a refresh during a pending Skill write cannot erase queued toggles', async
     .toEqual([['notes'], ['notes', 'other']]);
   writes[1]!.resolve({ disabledSkills: ['notes', 'other'], sourceBindings: [] });
   await act(async () => { await settle(); });
-  expect(notes.checked).toBe(false);
-  expect(other.checked).toBe(false);
+  expect(notes.getAttribute('aria-checked')).toBe('false');
+  expect(other.getAttribute('aria-checked')).toBe('false');
 });
 
 test('a failed concurrent capability removal restores only its own rule', async () => {
@@ -518,9 +517,9 @@ function localSkill(name: string): SkillDefinition {
   };
 }
 
-function checkboxFor(document: Document, label: string): HTMLInputElement {
-  const control = document.querySelector<HTMLInputElement>(`[type="checkbox"][aria-label="${label}"]`);
-  if (!control) throw new Error(`Missing checkbox: ${label}`);
+function switchFor(document: Document, label: string): HTMLButtonElement {
+  const control = document.querySelector<HTMLButtonElement>(`[role="switch"][aria-label="${label}"]`);
+  if (!control) throw new Error(`Missing switch: ${label}`);
   return control;
 }
 

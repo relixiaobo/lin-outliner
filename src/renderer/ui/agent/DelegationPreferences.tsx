@@ -10,7 +10,6 @@ import { useT } from '../../i18n/I18nProvider';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
-import { CheckboxControl } from '../primitives/CheckboxControl';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { buildModelChoices, flattenModelChoices, modelChoiceAvailable } from './modelChoices';
 
@@ -89,6 +88,8 @@ export function DelegationPreferences({
       <InsetGroup ariaLabel={t.settings.agent.delegation.ariaLabel} label={t.settings.agent.delegation.label}>
         <InsetRow
           label={t.settings.agent.delegation.experimental}
+          sublabel={t.settings.discovery.fields['agent.delegation.enabled'].description}
+          wrap
           trailing={(
             <SwitchControl
               checked={enabled}
@@ -104,6 +105,8 @@ export function DelegationPreferences({
           <>
             <InsetRow
               label={t.settings.agent.delegation.defaultRunner}
+              sublabel={t.settings.agent.delegation.runnerOptionsHint({ runner: runnerLabel(selectedRunnerId, t) })}
+              wrap
               trailing={(
                 <SelectControl
                   disabled={saving}
@@ -141,10 +144,10 @@ export function DelegationPreferences({
                   key={runner.id}
                   label={runnerLabel(runner.id, t)}
                   sublabel={status}
-                  leadingControl={<CheckboxControl className="settings-row-checkbox" checked={isEnabled}
+                  trailing={<SwitchControl checked={isEnabled}
                     disabled={saving || (!runner.ready && runner.id !== 'internal')}
-                    aria-label={`${runnerLabel(runner.id, t)} ${t.settings.agent.delegation.runnerEnabled}`}
-                    onCheckedChange={(checked) => { void update({ runners: { [runner.id]: { enabled: checked } } }); }}>{null}</CheckboxControl>}
+                    label={`${runnerLabel(runner.id, t)} ${t.settings.agent.delegation.runnerEnabled}`}
+                    onCheckedChange={(checked) => { void update({ runners: { [runner.id]: { enabled: checked } } }); }}><SwitchMark checked={isEnabled} /></SwitchControl>}
                 />
               );
             })}

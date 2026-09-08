@@ -10,18 +10,6 @@
   color: var(--text-tertiary);
 }
 
-/* Single-action provider configure button: shared Button skin, hidden at rest and
-   revealed on row hover / keyboard focus because clicking the row does the same
-   thing. Its reveal is the row's hover locator. */
-.settings-provider-configure {
-  opacity: 0;
-}
-
-.inset-row:hover .settings-provider-configure,
-.settings-provider-configure:focus-visible {
-  opacity: 1;
-}
-
 .settings-provider-row-actions {
   display: inline-flex;
   align-items: center;

@@ -110,8 +110,8 @@ test('reports usage and keeps stable busy rows through a completed clear', async
         complete = resolve;
       }),
   });
-  expect(rendered.document.body.textContent).toContain('6 saved passages; 200 logical bytes');
-  expect(rendered.document.body.textContent).toContain('100 cache bytes; 2 open previews');
+  expect(rendered.document.body.textContent).toContain('6 saved passages · 200 B');
+  expect(rendered.document.body.textContent).toContain('100 B cached · 2 open previews');
   const button = rendered.document.querySelector<HTMLButtonElement>('button')!;
   const rows = [...rendered.document.querySelectorAll('.inset-row')];
   await act(async () => {
@@ -161,7 +161,7 @@ test('narrow notifications expose Agent operations and distinguish deletion from
   expect(rendered.document.querySelector('[role="alert"]')?.textContent).toBe(
     'Website data cleared, but a preview could not be reloaded.',
   );
-  expect(rendered.document.body.textContent).toContain('0 cache bytes');
+  expect(rendered.document.body.textContent).toContain('0 B cached');
 });
 
 test('failed inspection can retry without exposing raw errors, and unmount unsubscribes', async () => {
@@ -201,7 +201,7 @@ test('late inspection cannot replace a newer notification or update an unmounted
     finish({ ...status(), translations: { ...status().translations, logicalBytes: 999 } });
     await settle();
   });
-  expect(rendered.document.body.textContent).toContain('200 logical bytes');
+  expect(rendered.document.body.textContent).toContain('200 B');
   expect(rendered.document.body.textContent).not.toContain('999');
   unmount?.();
   unmount = undefined;

@@ -41,7 +41,7 @@ About retains its normal App-menu window; credentials remain an owned modal chil
 | --- | --- |
 | FR-1: Open and navigate | App menu **Settings…** and `Command+,` open/focus one **Tenon Settings** window. General, Models, Agents, Skills, Memory, Access, Data, Keyboard Shortcuts, and Advanced switch inside it. Untargeted reopening preserves selection, search, scroll, and focus. Explicit application destinations select the corresponding pane without a reload. Back/Forward traverse category history; choosing a new category clears the forward branch. Back from search returns to the selected pane first. Native minimize, zoom, and fullscreen are disabled; resizing and scrolling remain available. |
 | FR-2: Find | A persistent sidebar search field matches localized labels, descriptions, aliases, and stable IDs. `Command+F` focuses it. Results expose matching scalar controls and category destinations; category results navigate locally. Clearing search returns to the selected category. Search never loads catalogs for unvisited panes. |
-| FR-3: Organize and edit | General contains appearance, language, and automatic updates. Models groups request policy under a collapsed Request Options disclosure. Agents owns delegation, with capacity limits under a collapsed advanced disclosure. Memory owns its enable switch and maintenance. Advanced contains diagnostics, configuration files, and a collapsed scalar inspector with All / Modified filtering. Choices commit immediately; numbers commit on Return/blur and Escape cancels an uncommitted edit. Keyboard Shortcuts uses compact command rows with a leading checkbox and trailing editable key combination; secondary actions live in menus, and IDs/badges stay out of ordinary rows. No window-wide Save/Apply footer. |
+| FR-3: Organize and edit | General contains appearance, language, and automatic updates. Models groups request policy under a collapsed Request Options disclosure. Agents owns delegation, with capacity limits under a collapsed advanced disclosure. Memory owns its enable switch and maintenance. Advanced contains diagnostics, configuration files, and a collapsed scalar inspector with All / Modified filtering. Choices commit immediately; numbers commit on Return/blur and Escape cancels an uncommitted edit. Keyboard Shortcuts uses compact command rows with a name and trailing editable key combination; secondary actions live in contextual menus, and IDs/badges stay out of ordinary rows. No window-wide Save/Apply footer. |
 | FR-4: Reset and repair | Modified means an explicit source declaration, including an explicit default. Show a named Reset action only for modified rows; reset deletes only that declaration. Invalid sources disable their structural controls and retain an Open File repair action regardless of category or query. Show retained effective values separately from source acceptance and runtime application. |
 | FR-5: Keep context | Mount a domain pane on first visit, then keep it mounted but hidden on navigation. Preserve drafts, errors, disclosure state, scroll, queues, and accepted operations. Only the visible pane enters the accessibility tree and focus order. Each domain owns its subscriptions and progress. Credential input opens a modal child of Settings; navigation cannot switch its owner underneath it. An active in-app modal editor likewise takes precedence over a menu deep link. |
 | FR-6: Keyboard and recovery | A vertical tablist uses roving focus with Up/Down/Home/End; Tab follows the toolbar and content controls. Source conflicts preserve the draft and require an explicit retry against the new observation. Escape first belongs to IME, editor, or frontmost menu/sheet, otherwise it clears a focused nonempty search. `Command+W` closes the active native window. Child dismissal restores the invoking control. Scroll-region focus uses an inset neutral ring only for keyboard input; a pointer click never paints a viewport outline. Shortcut recording ends on blur or category change and only captures its focused field. No unrelated domain becomes busy. |
@@ -55,20 +55,39 @@ settings navigation never depends on live counts, badges, credentials, or probes
 Audit General, Models, Agents, Skills, Memory, Access, Data, Shortcuts, and Advanced
 as one system. Category headers should not repeat a single row label. Text/image
 model defaults share one group; popup menus size to the selected value with a
-bounded long-label fallback and consistent trailing alignment. List membership
-uses leading checkboxes outside selectable row buttons. Feature-level enablement
-may retain a compact switch. Use low-contrast filled groups without outer strokes,
+bounded long-label fallback and consistent trailing alignment. Immediate service
+and feature enablement uses trailing switches. Checkboxes are reserved for
+selecting members of an Agent capability set. Use low-contrast filled groups without outer strokes,
 separators inset on both sides, regular row labels, and semibold section headings
 across domain and scalar rows. Popups show their value and indicator without a
 resting bezel. Keyboard Shortcuts uses one compact alternating list with context
 headings and instructions above the rows. Key combinations read as trailing text;
 double-click or keyboard activation starts recording in stable field dimensions,
-and a single pointer click only focuses. Row menus appear on hover/focus/open
-without reflow; Restore Defaults sits below the list at the leading edge.
+and a single pointer click only focuses. Delete clears a binding; None is also
+directly editable. Right-click/Shift+F10 exposes additional actions without
+per-row menu buttons; Restore Defaults sits below the list at the leading edge.
 Hide ordinary technical IDs/badges and internal tool names where
 they do not help a person make a choice. Keep errors and meaningful source/status
 information visible. Check every pane in English/Chinese, light/dark, and large
 text, and verify focus, popup behavior, and retained operations on the real app.
+
+Choose presentation by the decision a person is making, across every category:
+
+| Category | Presentation and interaction |
+| --- | --- |
+| General | Labeled miniature app previews compare System, Light, and Dark; native radios keep keyboard behavior. Language remains a named popup, and automatic updates remain an immediate switch. |
+| Models | Defaults name Automatic selection; unavailable/loading states cannot masquerade as an editable default. Visible Configure actions reveal connection editing; secondary actions stay in menus. Request fields explain units, defaults, and accepted bounds. |
+| Agents | A visible Edit action and accurate copy expose instructions/capabilities. Colour choices support arrow navigation. Delegation explains its purpose and the runner affected by the following options; advanced limits remain disclosed. |
+| Skills | Keep descriptions and meaningful availability/source information. Name the review action instead of representing it as search. Acquisition, review, and destructive decisions retain their existing ownership. |
+| Memory | Separate everyday enable/open controls from reset. Use readable lifecycle and deletion-scope copy; an off feature cannot claim it is ready to save new memories. |
+| Access | State the fixed access boundary as information; list explicit blocks with readable labels and exact rules available for inspection. |
+| Data | Show readable storage units and explain the effects of clearing before confirmation. Do not conflate cache bytes with total website data or logical translation size with physical disk usage. |
+| Keyboard Shortcuts | Preserve the compact text list, deliberate editing, searchable help, focused recorder, and contextual actions without checkbox enablement. |
+| Advanced | Keep diagnostics, repair files, and the scalar inspector discoverable; show numeric bounds and preserve source-conflict drafts. |
+
+Shared row separators are quiet half-pixel rules with matching content insets;
+Increase Contrast strengthens both their opacity and width. Appearance previews
+use fixed illustration palette tokens, never a renderer theme bridge.
 
 ### Ownership And Failure Boundaries
 

@@ -194,7 +194,7 @@ export function SettingsWindow() {
           {SETTINGS_PANES.map((destination) => <section key={destination} id={`settings-pane-${destination}`} role="tabpanel"
             className="configuration-content settings-pane" aria-labelledby={`settings-tab-${destination}`} tabIndex={0} hidden={searching || pane !== destination}>
             {visited.has(destination) ? destination === 'settings' ? <>
-              <section aria-label={copy.appearanceGroup}><h2 className="configuration-group-title">{copy.appearanceGroup}</h2>{rows(['appearance.theme', 'appearance.language'])}</section>
+              <section aria-label={copy.appearanceGroup}>{rows(['appearance.theme', 'appearance.language'])}</section>
               <section aria-label={copy.updatesGroup}><h2 className="configuration-group-title">{copy.updatesGroup}</h2>{rows(['updates.checkAutomatically'])}</section>
             </> : <>
               <ConfigurationPane destination={destination} active={!searching && pane === destination} />

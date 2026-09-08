@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { preferenceDefinition, preferenceDefault, validatePreference, type PreferenceObservation, type PreferenceValue } from '../../../core/settingsDefinitions';
 import { useT } from '../../i18n/I18nProvider';
-import { SegmentedControl } from '../primitives/SegmentedControl';
+import { AppearancePicker } from './AppearancePicker';
 import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
@@ -50,22 +50,24 @@ export function PreferenceRow({ entry, sourceDigest, disabled, edit }: {
     void commit('set', value, draftDigest.current);
   }
   const unavailable = disabled || pending;
+  const rangeHint = definition.kind === 'integer' && definition.minimum !== undefined
+    ? definition.maximum === undefined ? copy.minimumValue({ minimum: definition.minimum })
+      : copy.valueRange({ minimum: definition.minimum, maximum: definition.maximum })
+    : null;
   const choiceLabel = (value: PreferenceValue) => {
     if (entry.id === 'appearance.language') return value === null ? copy.system : value === 'en' ? 'English' : '简体中文';
-    if (entry.id === 'appearance.theme') return value === 'system' ? t.settings.general.themeSystem : value === 'light' ? t.settings.general.themeLight : t.settings.general.themeDark;
     return value === 'none' ? copy.none : value === 'short' ? copy.short : copy.long;
   };
   return <div className="preference-row" data-preference-id={entry.id} role="listitem" aria-busy={pending || undefined}>
     <div className="preference-copy"><div className="preference-label">{text.label}</div>
-      <p id={descriptionId}>{text.description}</p>
+      <p id={descriptionId} hidden={entry.id === 'appearance.theme'}>{text.description}{rangeHint ? ` ${rangeHint}` : ''}</p>
     </div>
     <div className="preference-controls">
       {definition.kind === 'boolean' ? <SwitchControl checked={entry.value === true} disabled={unavailable}
         label={text.label} aria-describedby={descriptionId} onCheckedChange={(value) => void commit('set', value)}>
         <SwitchMark checked={entry.value === true} />
       </SwitchControl> : definition.kind === 'choice' ? entry.id === 'appearance.theme' ? (
-        <SegmentedControl label={text.label} value={String(entry.value)} disabled={unavailable}
-          options={definition.choices!.map((value) => ({ value: String(value), label: choiceLabel(value) }))}
+        <AppearancePicker value={String(entry.value)} disabled={disabled} pending={pending} descriptionId={descriptionId}
           onChange={(value) => void commit('set', value)} />
       ) : <SelectControl label={text.label} value={String(entry.value ?? '')} disabled={unavailable}
         aria-describedby={descriptionId} variant="popup" onChange={(event) => void commit('set', event.target.value || null)}>

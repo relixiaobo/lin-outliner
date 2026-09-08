@@ -2,7 +2,7 @@
 .settings-shortcuts-search {
   display: flex;
   min-width: 0;
-  min-height: var(--control-size-lg);
+  min-height: var(--control-size-xl);
   flex: 1;
   align-items: center;
   gap: var(--space-2);
@@ -23,16 +23,13 @@
 .settings-window .settings-shortcuts-table .inset-group-header { padding: var(--space-2) var(--space-5); font-size: var(--font-meta); }
 .settings-shortcut-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--control-size-md);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-4);
   align-items: center;
   padding: var(--space-1) var(--space-5);
 }
 .settings-shortcut-row:nth-child(even) { background: var(--fill-1); }
-.settings-shortcut-enabled { display: flex; align-items: center; gap: var(--space-4); min-width: 0; position: relative; overflow-wrap: anywhere; }
-.settings-shortcut-enabled > input { position: absolute; opacity: 0; width: var(--checkbox-mark-size); height: var(--checkbox-mark-size); margin: 0; }
-.settings-shortcut-enabled > input:focus-visible + .checkbox-mark { box-shadow: var(--focus-ring-shadow); }
-.settings-shortcut-enabled:has(input:disabled) { color: var(--text-tertiary); }
+.settings-shortcut-label { min-width: 0; overflow-wrap: anywhere; }
 .settings-shortcut-bindings { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 .settings-shortcut-key {
   width: 12ch;
@@ -52,8 +49,5 @@
 .settings-shortcut-key.is-recording { background: var(--fill-2); box-shadow: var(--inset-hairline); color: var(--text-strong); }
 .settings-shortcut-key:focus-visible { box-shadow: var(--focus-ring-shadow-inset); }
 .settings-shortcut-key kbd { font-family: var(--font-family-sans); font-size: var(--font-ui-sm); line-height: var(--line-ui-sm); }
-.settings-shortcut-row .settings-row-menu-trigger { width: var(--control-size-md); height: var(--control-size-md); opacity: 0; }
-.settings-shortcut-row:hover .settings-row-menu-trigger, .settings-shortcut-row:focus-within .settings-row-menu-trigger,
-.settings-shortcut-row .settings-row-menu-trigger[aria-expanded="true"] { opacity: 1; }
 .settings-shortcut-feedback { grid-column: 1 / -1; }
 .settings-shortcuts-footer { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-6); }

@@ -97,6 +97,7 @@ export function AgentConfigurationEditor({ onError, onNotice }: {
             leading={<AgentMark size={24} tint={identity.tint} />}
             onSelect={() => setEditing(view)}
             sublabel={t.settings.agents.mainSublabel}
+            trailing={<Button size="sm" variant="secondary" onClick={() => setEditing(view)}>{t.settings.agents.editAction}</Button>}
           />
         )}
       </InsetGroup>
@@ -177,13 +178,25 @@ function MainAgentEditor({ busy, capabilities, error, onCancel, onSave, override
         </label>
         <div className="settings-sheet-row">
           <span className="settings-sheet-row-label">{t.settings.agents.colour}</span>
-          <div aria-label={t.settings.agents.colour} className="agent-colour-choices" role="radiogroup">
+          <div aria-label={t.settings.agents.colour} className="agent-colour-choices" role="radiogroup"
+            onKeyDown={(event) => {
+              const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1
+                : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+              if (!direction || event.nativeEvent.isComposing) return;
+              const choices = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+              const index = choices.indexOf(event.target as HTMLButtonElement);
+              if (index < 0) return;
+              event.preventDefault();
+              const next = choices[(index + direction + choices.length) % choices.length];
+              next.focus(); next.click();
+            }}>
             <ButtonControl
               aria-checked={color === ''}
               aria-label={t.settings.agents.colourDefault}
               className={`agent-colour-choice is-default${color === '' ? ' is-selected' : ''}`}
               onClick={() => setColor('')}
               role="radio"
+              tabIndex={color === '' ? 0 : -1}
               title={t.settings.agents.colourDefault}
             >
               <AgentMark size={22} tint={inheritedTint} />
@@ -196,6 +209,7 @@ function MainAgentEditor({ busy, capabilities, error, onCancel, onSave, override
                 key={choice}
                 onClick={() => setColor(choice)}
                 role="radio"
+                tabIndex={color === choice ? 0 : -1}
               >
                 <AgentMark size={22} tint={IDENTITY_COLOR_TINT[choice]} />
               </ButtonControl>

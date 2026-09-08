@@ -5,7 +5,8 @@ import { AddIcon, ICON_SIZE } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { SelectControl } from '../primitives/SelectControl';
-import { CheckboxControl } from '../primitives/CheckboxControl';
+import { SwitchControl } from '../primitives/SwitchControl';
+import { SwitchMark } from '../primitives/SwitchMark';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { ProviderAvatar, formatProviderName } from './providerCatalog';
 import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
@@ -18,11 +19,8 @@ import {
 } from './settingsProviderModel';
 import { providerStatusSentence, resolveProviderStatus } from './providerStatus';
 
-// A single provider row in the inset grouped list. Configured rows expose an
-// enable checkbox plus details/removal actions. Unconfigured catalog rows usually
-// open the config sheet, except detected external providers such as CC Switch:
-// those are already configured by their own app, so the row is a direct enable
-// checkbox that materializes Tenon's connection.
+// Provider availability is an immediate on/off state. The trailing switch is
+// separate from the row's Configure action, including externally detected providers.
 const SettingsProviderRow = memo(function SettingsProviderRow({
   provider,
   menuOpen,
@@ -44,23 +42,22 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
   if (provider.canRefreshModels) {
     actions.push({ label: t.settings.providers.refreshModels, onSelect: () => handlers.onRefreshModels(provider.providerId) });
   }
-  if (!quickEnable) {
-    actions.push({ label: t.settings.providers.configureAction, onSelect: () => handlers.onConfigure(provider.providerId) });
-  }
   if (provider.configured) {
     actions.push({ label: t.settings.providers.removeProvider, danger: true, onSelect: () => handlers.onRemove(provider.providerId) });
   }
-  const enabledControl = provider.configured || quickEnable ? <CheckboxControl
-    className="settings-row-checkbox" checked={provider.enabled}
-    aria-label={t.settings.providers.enabledToggleNamed({ name })}
-    onCheckedChange={(enabled) => handlers.onToggleEnabled(provider.providerId, enabled)}>{null}</CheckboxControl> : null;
-  const trailing = actions.length > 1 ? (
-    <SettingsRowMenu actions={actions} ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
-      onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)} open={menuOpen} />
-  ) : quickEnable ? null : (
+  const enabledControl = provider.configured || quickEnable ? <SwitchControl
+    checked={provider.enabled}
+    label={t.settings.providers.enabledToggleNamed({ name })}
+    onCheckedChange={(enabled) => handlers.onToggleEnabled(provider.providerId, enabled)}><SwitchMark checked={provider.enabled} /></SwitchControl> : null;
+  const trailing = <>
+    {!quickEnable ? (
     <Button aria-label={t.settings.providers.configureNamed({ name })} className="settings-provider-configure"
-      onClick={() => handlers.onConfigure(provider.providerId)} size="sm" variant="secondary">{t.settings.providers.configure}</Button>
-  );
+      onClick={() => handlers.onConfigure(provider.providerId)} size="sm" variant="secondary">{t.settings.providers.configureAction}</Button>
+    ) : null}
+    {actions.length > 0 ? <SettingsRowMenu actions={actions} ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
+      onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)} open={menuOpen} /> : null}
+    {enabledControl}
+  </>;
   const status = resolveProviderStatus(provider);
   const statusSentence = providerStatusSentence(status, t);
   // The row states its status only when the status is worth stating. Labelling
@@ -73,11 +70,9 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
   return (
     <InsetRow
       ariaLabel={t.settings.providers.rowAriaLabel({ name, status: statusSentence })}
-      dimmed={(provider.configured || quickEnable) && !provider.enabled}
       feedback={toggleError ? <span role="alert">{toggleError}</span> : undefined}
       label={name}
       leading={<ProviderAvatar providerId={provider.providerId} />}
-      leadingControl={enabledControl}
       onSelect={quickEnable
         ? () => handlers.onToggleEnabled(provider.providerId, true)
         : () => handlers.onConfigure(provider.providerId)}
@@ -251,6 +246,7 @@ export function ModelsList({
             trailing={(
               <SelectControl
                 label={t.settings.providers.defaultModelLabel}
+                disabled={!settings}
                 onChange={(event) => runProviderMutation(
                   () => api.agentUpdateModelDefault(event.target.value || null),
                   t.settings.providers.defaultModelSavedNotice,
@@ -281,6 +277,7 @@ export function ModelsList({
             trailing={(
               <SelectControl
                 label={t.settings.providers.defaultImageModelLabel}
+                disabled={!settings}
                 onChange={(event) => changeDefaultImageModel(event.target.value)}
                 value={settings?.imageGeneration.defaultModel ?? ''}
                 variant="popup"
