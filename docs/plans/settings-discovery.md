@@ -28,22 +28,23 @@ ownership seams. A shared navigation view must not restore aggregate domain stat
 
 Use one Settings window with a left category list and right content. Category
 navigation is presentation, not a security or service boundary.
-The window uses the app's three-container composition: a floating left rail,
-a separate toolbar above the right content viewport, and opaque content. Reuse
-shared gaps, concentric corners, rail elevation, and chrome-only materials. Native
-traffic lights sit over the rail's top spacer. About retains its normal App-menu
-window; credentials remain an owned modal child.
+The window uses a floating left rail beside an opaque right canvas. Search sits
+below the rail's native traffic-light spacer. An unboxed toolbar above the right
+content viewport holds a compact Back/Forward group and the page title. Only the
+rail has material and elevation; the toolbar has no full-width capsule, border,
+or shadow. Shared gaps and concentric corners retain Tenon's container grammar.
+About retains its normal App-menu window; credentials remain an owned modal child.
 
 ### Interaction Requirements
 
 | Flow | Observable behavior |
 | --- | --- |
-| FR-1: Open and navigate | App menu **Settings…** and `Command+,` open/focus one **Tenon Settings** window. General, Models, Agents, Skills, Memory, Access, Data, Keyboard Shortcuts, and Advanced switch inside it. Untargeted reopening preserves selection, search, scroll, and focus. Explicit application destinations select the corresponding pane without a reload. Native minimize, zoom, and fullscreen are disabled; resizing and scrolling remain available. |
-| FR-2: Find | A persistent trailing search field matches localized labels, descriptions, aliases, and stable IDs. `Command+F` focuses it. Results expose matching scalar controls and category destinations; category results navigate locally. Clearing search returns to the selected category. Search never loads catalogs for unvisited panes. |
+| FR-1: Open and navigate | App menu **Settings…** and `Command+,` open/focus one **Tenon Settings** window. General, Models, Agents, Skills, Memory, Access, Data, Keyboard Shortcuts, and Advanced switch inside it. Untargeted reopening preserves selection, search, scroll, and focus. Explicit application destinations select the corresponding pane without a reload. Back/Forward traverse category history; choosing a new category clears the forward branch. Back from search returns to the selected pane first. Native minimize, zoom, and fullscreen are disabled; resizing and scrolling remain available. |
+| FR-2: Find | A persistent sidebar search field matches localized labels, descriptions, aliases, and stable IDs. `Command+F` focuses it. Results expose matching scalar controls and category destinations; category results navigate locally. Clearing search returns to the selected category. Search never loads catalogs for unvisited panes. |
 | FR-3: Organize and edit | General contains appearance, language, and automatic updates. Models groups request policy under a collapsed Request Options disclosure. Agents owns delegation, with capacity limits under a collapsed advanced disclosure. Memory owns its enable switch and maintenance. Advanced contains diagnostics, configuration files, and a collapsed scalar inspector with All / Modified filtering. Choices commit immediately; numbers commit on Return/blur and Escape cancels an uncommitted edit. Keyboard Shortcuts uses compact command rows with a leading checkbox and trailing editable key combination; secondary actions live in menus, and IDs/badges stay out of ordinary rows. No window-wide Save/Apply footer. |
 | FR-4: Reset and repair | Modified means an explicit source declaration, including an explicit default. Show a named Reset action only for modified rows; reset deletes only that declaration. Invalid sources disable their structural controls and retain an Open File repair action regardless of category or query. Show retained effective values separately from source acceptance and runtime application. |
 | FR-5: Keep context | Mount a domain pane on first visit, then keep it mounted but hidden on navigation. Preserve drafts, errors, disclosure state, scroll, queues, and accepted operations. Only the visible pane enters the accessibility tree and focus order. Each domain owns its subscriptions and progress. Credential input opens a modal child of Settings; navigation cannot switch its owner underneath it. An active in-app modal editor likewise takes precedence over a menu deep link. |
-| FR-6: Keyboard and recovery | A vertical tablist uses roving focus with Up/Down/Home/End; Tab enters content. Source conflicts preserve the draft and require an explicit retry against the new observation. Escape first belongs to IME, editor, or frontmost menu/sheet, otherwise it clears a focused nonempty search. `Command+W` closes the active native window. Child dismissal restores the invoking control. Shortcut recording ends on blur or category change and only captures its focused field. No unrelated domain becomes busy. |
+| FR-6: Keyboard and recovery | A vertical tablist uses roving focus with Up/Down/Home/End; Tab follows the toolbar and content controls. Source conflicts preserve the draft and require an explicit retry against the new observation. Escape first belongs to IME, editor, or frontmost menu/sheet, otherwise it clears a focused nonempty search. `Command+W` closes the active native window. Child dismissal restores the invoking control. Scroll-region focus uses an inset neutral ring only for keyboard input; a pointer click never paints a viewport outline. Shortcut recording ends on blur or category change and only captures its focused field. No unrelated domain becomes busy. |
 
 About and Help keep their App/Help menu homes. Preview translation remains
 contextual. Public source observations may supply bounded errors/modified state;

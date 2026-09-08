@@ -83,6 +83,56 @@ test('search finds aliases and IDs and Modified includes explicit defaults', asy
   await expect(page.getByRole('textbox', { name: 'Request timeout (ms)' })).toBeVisible();
 });
 
+test('toolbar history preserves drafts, branches on a new category, and returns from search first', async ({ page }) => {
+  await install(page);
+  const back = page.getByRole('button', { name: 'Back', exact: true });
+  const forward = page.getByRole('button', { name: 'Forward', exact: true });
+  await expect(back).toBeDisabled();
+  await expect(forward).toBeDisabled();
+  await page.getByRole('tab', { name: 'Models', exact: true }).click();
+  await page.getByText('Request Options', { exact: true }).click();
+  const number = page.getByRole('textbox', { name: 'Request timeout (ms)' });
+  await number.fill('3.5');
+  await number.press('Enter');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
+  await back.click();
+  await expect(number).toHaveValue('3.5');
+  await expect(page.getByRole('tab', { name: 'Models', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await back.click();
+  await expect(back).toBeDisabled();
+  await forward.click();
+  await expect(number).toHaveValue('3.5');
+  await page.getByRole('tab', { name: 'Models', exact: true }).click();
+  await expect(forward).toBeEnabled();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
+  await expect(forward).toBeDisabled();
+  await back.click();
+  const search = page.locator('.settings-rail').getByRole('searchbox');
+  await search.fill('appearance');
+  await expect(forward).toBeDisabled();
+  await back.click();
+  await expect(search).toHaveValue('');
+  await expect(number).toHaveValue('3.5');
+  await expect(forward).toBeEnabled();
+  expect(await page.evaluate(() => (window as any).__settingsTest.destinations)).toEqual([]);
+});
+
+test('content clicks stay visually quiet while keyboard scroll focus remains visible', async ({ page }) => {
+  await install(page);
+  const pane = page.getByRole('tabpanel', { name: 'General', exact: true });
+  await pane.click({ position: { x: 20, y: 450 } });
+  await expect(pane).toBeFocused();
+  await expect(pane).toHaveCSS('outline-style', 'none');
+  await expect(page.locator('html')).toHaveAttribute('data-input-modality', 'pointer');
+  const pointerShadow = await pane.evaluate((element) => getComputedStyle(element).boxShadow);
+  await page.getByRole('tab', { name: 'General', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  await expect(pane).toBeFocused();
+  await expect(page.locator('html')).toHaveAttribute('data-input-modality', 'keyboard');
+  expect(await pane.evaluate((element) => getComputedStyle(element).boxShadow)).not.toBe(pointerShadow);
+  await expect(pane).toHaveCSS('outline-style', 'none');
+});
+
 test('number edits preserve failed drafts, Escape cancels, and source errors survive filtering', async ({ page }) => {
   await install(page);
   const search = page.getByRole('searchbox');

@@ -7,7 +7,7 @@ import { useT } from '../i18n/I18nProvider';
 import { SegmentedControl } from './primitives/SegmentedControl';
 import { Button } from './primitives/Button';
 import { IconButton } from './primitives/IconButton';
-import { CloseIcon, SearchIcon, SettingsIcon, AgentIcon, SkillIcon, PasswordIcon, DatabaseIcon, CommandIcon, OptionsIcon, AppWindowIcon, RecentsIcon, ICON_SIZE } from './icons';
+import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, SearchIcon, SettingsIcon, AgentIcon, SkillIcon, PasswordIcon, DatabaseIcon, CommandIcon, OptionsIcon, AppWindowIcon, RecentsIcon, ICON_SIZE } from './icons';
 import { PreferenceRow } from './configuration/PreferenceRow';
 import { ConfigurationPane } from './configuration/ManagerWindow';
 
@@ -16,22 +16,38 @@ function initialPane(): SettingsPane {
   const destination = settingsOpenTargetFromSearch(window.location.search).destination;
   return destination && destination !== 'about' ? destination : 'settings';
 }
+function replacePaneUrl(pane: SettingsPane) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('destination', pane);
+  url.searchParams.delete('setting');
+  window.history.replaceState(null, '', url);
+}
 
 export function SettingsWindow() {
   const t = useT();
   const copy = t.settings.discovery;
   const [query, setQuery] = useState(() => settingsOpenTargetFromSearch(window.location.search).settingId ?? '');
-  const [pane, setPane] = useState<SettingsPane>(initialPane);
+  const [navigation, setNavigation] = useState(() => ({ panes: [initialPane()], index: 0 }));
+  const pane = navigation.panes[navigation.index];
   const [visited, setVisited] = useState<Set<SettingsPane>>(() => new Set([initialPane()]));
   const navigate = useCallback((next: SettingsPane) => {
     setQuery('');
-    setPane(next);
+    setNavigation((previous) => {
+      if (previous.panes[previous.index] === next) return previous;
+      const panes = [...previous.panes.slice(0, previous.index + 1).slice(-49), next];
+      return { panes, index: panes.length - 1 };
+    });
     setVisited((previous) => previous.has(next) ? previous : new Set([...previous, next]));
-    const url = new URL(window.location.href);
-    url.searchParams.set('destination', next);
-    url.searchParams.delete('setting');
-    window.history.replaceState(null, '', url);
+    replacePaneUrl(next);
   }, []);
+  const searching = query.trim().length > 0;
+  function traverse(direction: -1 | 1) {
+    if (searching) { if (direction === -1) setQuery(''); return; }
+    const index = navigation.index + direction;
+    if (index < 0 || index >= navigation.panes.length) return;
+    setNavigation({ ...navigation, index });
+    replacePaneUrl(navigation.panes[index]);
+  }
   const [filter, setFilter] = useState<'all' | 'modified'>('all');
   const [view, setView] = useState<PreferencesView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +109,6 @@ export function SettingsWindow() {
   }
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const matches = (...parts: string[]) => terms.every((term) => parts.join(' ').toLocaleLowerCase().includes(term));
-  const searching = terms.length > 0;
   const entries = view?.entries.filter((entry) => {
     const text = copy.fields[entry.id];
     return matches(entry.id, text.label, text.description, text.aliases);
@@ -121,6 +136,15 @@ export function SettingsWindow() {
     <div className="settings-layout">
       <aside className="settings-rail">
         <div className="settings-rail-chrome" aria-hidden="true" />
+        <div className="configuration-search" role="search">
+          <SearchIcon size={ICON_SIZE.menu} aria-hidden />
+          <input ref={search} type="search" aria-label={copy.search} placeholder={copy.search} value={query}
+            onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+              if (!event.nativeEvent.isComposing && event.key === 'Escape' && query) { event.preventDefault(); event.stopPropagation(); setQuery(''); }
+            }} />
+          {query ? <IconButton icon={CloseIcon} label={copy.clearSearch} variant="chrome"
+            onClick={() => { setQuery(''); search.current?.focus(); }} /> : null}
+        </div>
         <div className="settings-sidebar" role="tablist" aria-label={copy.navigation} aria-orientation="vertical">
           {SETTINGS_PANES.map((destination, index) => {
             const Icon = PANE_ICONS[destination];
@@ -140,16 +164,14 @@ export function SettingsWindow() {
       </aside>
       <div className="settings-column">
         <header className="configuration-toolbar">
-          <h1 id="configuration-title">{searching ? copy.searchResults : copy.destinations[pane]}</h1>
-          <div className="configuration-search" role="search">
-            <SearchIcon size={ICON_SIZE.menu} aria-hidden />
-            <input ref={search} type="search" aria-label={copy.search} placeholder={copy.search} value={query}
-              onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
-                if (!event.nativeEvent.isComposing && event.key === 'Escape' && query) { event.preventDefault(); event.stopPropagation(); setQuery(''); }
-              }} />
-            <IconButton icon={CloseIcon} label={copy.clearSearch} variant="chrome" disabled={!query}
-              onClick={() => { setQuery(''); search.current?.focus(); }} />
+          <div className="settings-history">
+            <IconButton icon={ChevronLeftIcon} iconSize={ICON_SIZE.large} label={t.settings.navigation.back} variant="chrome"
+              disabled={!searching && navigation.index === 0} onClick={() => traverse(-1)} />
+            <span className="settings-history-separator" aria-hidden="true" />
+            <IconButton icon={ChevronRightIcon} iconSize={ICON_SIZE.large} label={t.settings.navigation.forward} variant="chrome"
+              disabled={searching || navigation.index === navigation.panes.length - 1} onClick={() => traverse(1)} />
           </div>
+          <h1 id="configuration-title">{searching ? copy.searchResults : copy.destinations[pane]}</h1>
         </header>
         <div className="settings-body">
           <div className="settings-feedback">{sourceFeedback}</div>

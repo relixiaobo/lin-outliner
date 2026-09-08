@@ -26,6 +26,10 @@ for (const locale of ['en', 'zh-Hans'] as const) {
         expect(content!.y).toBeGreaterThan(toolbar!.y + toolbar!.height);
         expect(content!.x).toBeCloseTo(toolbar!.x);
         expect(content!.width).toBeCloseTo(toolbar!.width);
+        await expect(page.locator('.settings-rail').getByRole('searchbox', { name: copy.search })).toBeVisible();
+        await expect(page.locator('.configuration-toolbar').getByRole('searchbox')).toHaveCount(0);
+        await expect(page.locator('.configuration-toolbar')).toHaveCSS('box-shadow', 'none');
+        await expect(page.locator('.configuration-toolbar')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
         const overflow = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(
           '.settings-sidebar, .settings-pane:not([hidden]), .settings-pane:not([hidden]) .inset-row, .settings-pane:not([hidden]) .preference-row, .settings-pane:not([hidden]) .settings-shortcut-row',
         )].filter((element) => element.scrollWidth > element.clientWidth + 1).map((element) => element.className));

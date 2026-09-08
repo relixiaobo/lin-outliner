@@ -133,7 +133,7 @@ test('all Settings destinations reuse one native window with bounded admission a
       if (destination !== 'about') expect(page).toBe(settings);
       await expect(page.locator('.configuration-content:visible')).not.toBeEmpty();
       expect(smoke.app.windows().filter((window) => new URL(window.url()).searchParams.get('surface') === 'settings')).toHaveLength(1);
-      await expect(page.getByRole('button', { name: 'Back', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Back', exact: true })).toHaveCount(destination === 'about' ? 0 : 1);
       if (destination === 'shortcuts') {
         await expect(page.getByRole('checkbox', { name: 'Enable Go to Today' })).toBeVisible();
         await expect(page.getByRole('switch')).toHaveCount(0);

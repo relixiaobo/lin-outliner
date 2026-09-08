@@ -322,22 +322,26 @@ filled-default idiom; secondary actions remain neutral.
 ### Settings Window
 
 The settings surface follows the Preference Window pattern in
-[patterns.md](./patterns.md#preference-window): macOS System Settings interaction,
-Tenon foundations, no Apple chrome copying.
+[patterns.md](./patterns.md#preference-window): macOS System Settings interaction
+and container hierarchy expressed through Tenon's foundation tokens.
 
 **Window shell.** `Cmd+,` and the App menu open/focus one **Tenon Settings**
 window. The Host keeps its native title stable, uses real inset traffic lights,
 and disables minimize, maximize, and fullscreen. Bounded resizing and vertical
-scrolling keep larger text reachable. The shell follows the main application's container grammar: an inset floating
-category rail at the left, a separate toolbar at the upper right, and an opaque
-content viewport below it. The three regions use `--layout-gap` and
-`--panel-radius`; rail and toolbar use `--rail-surface-shadow` and the shared
-material/fallback tokens. Content never receives a glass material. Native traffic
-lights sit over the rail's top chrome spacer. The toolbar contains the selected
-pane title and a trailing search field with
-search symbol, clear button, and localized prompt. `Cmd+F` focuses search.
-A persistent left category list selects content within the same native window.
-There is no category back stack, in-content Close, or new window per category.
+scrolling keep larger text reachable. The shell uses an inset floating category
+rail beside an opaque content canvas. The rail owns `--rail-surface-shadow`,
+shared material/fallback tokens, and a persistent pill-shaped search field below
+the native traffic-light spacer. The right toolbar is unboxed: its background
+merges with the content canvas, with no full-width capsule, border, or shadow.
+Only the Back/Forward button group has a compact pill outline beside the page
+title. Region spacing and rail corners use `--layout-gap` and `--panel-radius`.
+
+`Cmd+F` focuses sidebar search. Back/Forward traverse visited categories without
+reloading their panes; a new category clears the forward branch. Back from search
+first restores the selected pane. History is bounded to 50 entries. There is no
+in-content Close or new window per category. The focusable content scroller uses
+the shared inset neutral keyboard focus ring; pointer focus does not expose a
+browser-default viewport outline.
 
 **Organization and discovery.** General contains appearance, language, and
 automatic updates. Other categories are Models, Agents, Skills, Memory, Access,

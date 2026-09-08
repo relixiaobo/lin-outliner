@@ -71,18 +71,38 @@
   box-shadow: var(--rail-surface-shadow);
 }
 .settings-rail-chrome { flex: 0 0 calc(var(--chrome-height) - var(--layout-gap)); -webkit-app-region: drag; }
+.settings-rail .configuration-search {
+  flex: none;
+  margin: var(--space-4) var(--rail-pad);
+  padding-inline: var(--space-4);
+  min-height: var(--control-size-xl);
+  border-radius: var(--radius-pill);
+  background: var(--fill-3);
+}
 .settings-sidebar { flex: 1; min-height: 0; overflow-y: auto; padding: var(--rail-pad); }
 .settings-column { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; gap: var(--layout-gap); }
 .settings-window .configuration-toolbar {
   padding: var(--space-4) var(--space-8);
   min-height: calc(var(--chrome-height) - var(--layout-gap));
   border: 0;
-  border-radius: var(--panel-radius);
-  background: var(--bg-elevated);
-  box-shadow: var(--rail-surface-shadow);
+  background: transparent;
 }
-:root[data-window-material] .settings-rail,
-:root[data-window-material] .settings-window .configuration-toolbar {
+.settings-window .configuration-toolbar h1 { min-width: 0; font-size: var(--font-content); overflow-wrap: anywhere; }
+.settings-history {
+  -webkit-app-region: no-drag;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--fill-1);
+  box-shadow: var(--inset-hairline);
+}
+.settings-history .icon-button { display: flex; align-items: center; justify-content: center; width: var(--control-size-xl); height: var(--control-size-xl); border-radius: var(--radius-pill); color: var(--text-secondary); }
+.settings-history .icon-button:hover:not(:disabled), .settings-history .icon-button:active:not(:disabled) { color: var(--text-primary); }
+.settings-history .icon-button:disabled { color: var(--text-quaternary); }
+.settings-history-separator { width: var(--space-hairline); height: var(--control-size-sm); background: var(--separator); }
+:root[data-window-material] .settings-rail {
   background: var(--material-sidebar);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
@@ -108,6 +128,9 @@
 .settings-sidebar .app-icon { flex-shrink: 0; }
 .settings-body { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; border-radius: var(--panel-radius); background: var(--bg-content); }
 .settings-pane { flex: 1; }
+/* Scroll-region focus uses the shared neutral, keyboard-only paint. Pointer
+   clicks must not expose Chromium's default blue outline around the viewport. */
+.settings-pane:focus { outline: none; box-shadow: var(--focus-ring-shadow-inset); }
 .settings-pane[hidden] { display: none; }
 .settings-feedback:not(:empty) { padding: var(--space-4) var(--space-lg); max-height: 40%; overflow: auto; }
 .settings-pane > section:first-child > .configuration-group-title { margin-top: 0; }
