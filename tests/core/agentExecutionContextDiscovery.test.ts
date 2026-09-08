@@ -4,7 +4,7 @@ import { Database } from 'bun:sqlite';
 import os from 'node:os';
 import path from 'node:path';
 import { pendingExecutionContext, resolveExecutionAddress } from '../../src/main/agent/tasks/ExecutionContext';
-import { discoverExecutionContext } from '../../src/main/agent/tasks/ExecutionContextDiscovery';
+import { discoverExecutionContext, validateDiscoveredSources } from '../../src/main/agent/tasks/ExecutionContextDiscovery';
 import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
 import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
 import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
@@ -31,6 +31,9 @@ describe('execution context discovery', () => {
       expect(result.context.snapshot.facts.filter((fact) => fact.kind === 'instruction').map((fact) => fact.scope))
         .toEqual([await realpath(root), await realpath(nested)]);
       expect(result.context.snapshot.facts.some((fact) => fact.text.includes('Keep source changes typed.'))).toBe(true);
+      expect(await validateDiscoveredSources(result)).toBe(true);
+      await writeFile(path.join(root, 'AGENTS.md'), 'The source changed after discovery.');
+      expect(await validateDiscoveredSources(result)).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
