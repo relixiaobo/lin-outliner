@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { ExecutionAdmissionError, validateExecutionContext } from './ExecutionContext';
+import type { TaskExecutionContext } from '../../../core/agent/executionContext';
 import type { ThreadId, ThreadResourceReference, TurnId } from '../../../core/agent/protocol';
 import type { SqliteDatabase } from '../persistence/sqlite';
 import {
@@ -218,7 +219,51 @@ export class ToolTaskStore {
         ON tool_task_leases(state, created_at, task_id);
       CREATE INDEX IF NOT EXISTS tool_task_leases_thread_idx
         ON tool_task_leases(owner_thread_id, state);
+
+      CREATE TABLE IF NOT EXISTS tool_task_context_successors (
+        predecessor_ref TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tool_tasks(task_id) ON DELETE CASCADE,
+        successor_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS tool_task_context_successors_task_idx
+        ON tool_task_context_successors(task_id);
     `);
+  }
+
+  /** Persist one immutable discovery successor for an admitted task context. */
+  publishContextSuccessor(taskId: string, successor: TaskExecutionContext, createdAt: number): TaskExecutionContext {
+    validateExecutionContext(successor);
+    return this.transaction(() => {
+      const task = this.require(taskId);
+      if (task.executionContext.snapshotRef !== successor.snapshot.predecessorRef) {
+        throw new Error('Execution context successor does not follow the task snapshot');
+      }
+      const existing = this.db.prepare(
+        'SELECT successor_json FROM tool_task_context_successors WHERE predecessor_ref = ?',
+      ).get(task.executionContext.snapshotRef) as { successor_json: string } | undefined;
+      if (existing) {
+        const recorded = validateExecutionContext(JSON.parse(existing.successor_json) as unknown);
+        if (JSON.stringify(recorded) !== JSON.stringify(successor)) {
+          throw new Error('Execution context successor is immutable');
+        }
+        return recorded;
+      }
+      this.db.prepare(`
+        INSERT INTO tool_task_context_successors(predecessor_ref, task_id, successor_json, created_at)
+        VALUES (?, ?, ?, ?)
+      `).run(task.executionContext.snapshotRef, taskId, JSON.stringify(successor), createdAt);
+      return successor;
+    });
+  }
+
+  contextSuccessor(taskId: string): TaskExecutionContext | null {
+    const task = this.read(taskId);
+    if (!task) return null;
+    const row = this.db.prepare(
+      'SELECT successor_json FROM tool_task_context_successors WHERE predecessor_ref = ?',
+    ).get(task.executionContext.snapshotRef) as { successor_json: string } | undefined;
+    return row ? validateExecutionContext(JSON.parse(row.successor_json) as unknown) : null;
   }
 
   admitLease(

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { TaskExecutionContext } from '../../../core/agent/executionContext';
 import { ExecutionAdmissionError, pendingExecutionContext, resolveExecutionAddress, revalidateExecutionContext } from './ExecutionContext';
+import { discoverExecutionContext } from './ExecutionContextDiscovery';
 import type { ChildProcess } from 'node:child_process';
 import { link, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -94,6 +95,8 @@ export interface ToolTaskHost {
   ): Promise<ToolTaskArtifactSettlement>;
   taskDetailsExpired?(ownerThreadId: ThreadId): Promise<void>;
   taskChanged(task: ToolTaskProjection): void;
+  /** Best-effort delivery of a committed successor at a later provider boundary. */
+  publishExecutionContextObservation?(task: ToolTaskRecord, context: TaskExecutionContext): Promise<void> | void;
 }
 
 export interface StartToolTaskInput {
@@ -302,6 +305,7 @@ export class ToolTaskService {
       timeoutMs: input.timeoutMs,
       startedAt,
     });
+    this.discoverTaskContext(task);
     try {
       await mkdir(detailPath, { recursive: false, mode: 0o700 });
       await input.onAdmitted?.(task);
@@ -389,6 +393,18 @@ export class ToolTaskService {
     }
   }
 
+  private discoverTaskContext(task: ToolTaskRecord): void {
+    if (this.store.contextSuccessor(task.taskId)) return;
+    void discoverExecutionContext(task.executionContext)
+      .then(({ context }) => this.store.publishContextSuccessor(task.taskId, context, this.now()))
+      .then((context) => this.host?.publishExecutionContextObservation?.(task, context))
+      .catch((error) => {
+        // Discovery is advisory evidence. Admission and the business operation
+        // have already crossed their own durable boundaries and must continue.
+        console.warn(`[agent] Execution-context discovery degraded for ${task.taskId}: ${errorMessage(error)}`);
+      });
+  }
+
   async runHostOperation<T>(input: {
     readonly ownerThreadId: ThreadId;
     readonly sourceTurnId: TurnId;
@@ -414,6 +430,7 @@ export class ToolTaskService {
       nonce: randomUUID(), detailPath: path.join(this.detailRoot, taskId),
       backgroundEnabled: false, timeoutMs: 600_000, startedAt: this.now(),
     });
+    this.discoverTaskContext(task);
     const controller = new AbortController();
     const signal = input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal;
     const operation = (async () => {
