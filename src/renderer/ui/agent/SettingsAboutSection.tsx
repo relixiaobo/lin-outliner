@@ -1,16 +1,8 @@
-/// <reference types="vite/client" />
-
 import { useEffect, useState, type ComponentPropsWithoutRef } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import {
-  changelogSectionPath,
-  normalizedVersion,
-  parseChangelogReleases,
-  resolveChangelogRelease,
-  type ChangelogRelease,
-} from '../../../core/changelog';
 import type { AppUpdateErrorCode, AppUpdateView } from '../../../core/appUpdate';
+import type { BundledApplicationRelease } from '../../../core/applicationOperations';
 import { serializeUnknownError, type AppInfo } from '../../../core/errorObservability';
 import { api } from '../../api/client';
 import { useI18n } from '../../i18n/I18nProvider';
@@ -36,14 +28,15 @@ interface SettingsAboutSectionProps {
   onAppUpdateChange?: (view: AppUpdateView) => void;
   onError: (message: string | null) => void;
   onNotice: (message: string | null) => void;
-  loadChangelog?: () => Promise<string>;
+  loadRelease?: () => Promise<BundledApplicationRelease | null>;
 }
 
 const RELEASE_NOTE_REMARK_PLUGINS = [remarkGfm];
 
-async function loadBundledChangelog(): Promise<string> {
-  const module = await import('../../../../CHANGELOG.md?raw');
-  return module.default;
+async function loadBundledApplicationRelease(): Promise<BundledApplicationRelease | null> {
+  const release = await window.lin?.bundledApplicationRelease?.();
+  if (release === undefined) throw new Error('Bundled release bridge unavailable.');
+  return release;
 }
 
 function ReleaseNoteLink({ children, href, ...props }: ComponentPropsWithoutRef<'a'>) {
@@ -109,11 +102,11 @@ export function SettingsAboutSection({
   onAppUpdateChange = () => undefined,
   onError,
   onNotice,
-  loadChangelog = loadBundledChangelog,
+  loadRelease = loadBundledApplicationRelease,
 }: SettingsAboutSectionProps) {
   const { locale, t } = useI18n();
   const [info, setInfo] = useState<AppInfo | null>(null);
-  const [releases, setReleases] = useState<readonly ChangelogRelease[]>([]);
+  const [release, setRelease] = useState<BundledApplicationRelease | null>(null);
   const [updateActionError, setUpdateActionError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -126,22 +119,19 @@ export function SettingsAboutSection({
 
   useEffect(() => {
     let active = true;
-    void loadChangelog()
-      .then((source) => {
-        if (active) setReleases(parseChangelogReleases(source));
-      })
+    void loadRelease()
+      .then((next) => { if (active) setRelease(next); })
       .catch(() => {
         if (active) onError(t.settings.about.releaseNotesUnavailable);
       });
     return () => { active = false; };
-  }, [loadChangelog, onError, t.settings.about.releaseNotesUnavailable]);
+  }, [loadRelease, onError, t.settings.about.releaseNotesUnavailable]);
 
-  const release = resolveChangelogRelease(releases, info?.version);
   // The heading names the release whose note is shown. For anyone running a
   // published build that is their own version; on a build ahead of the last
   // release the two differ, and naming the release is the honest reading —
   // the identity group directly above states what is installed.
-  const releaseVersion = release ? normalizedVersion(release.version) : '';
+  const releaseVersion = release?.version ?? '';
   const whatsNewLabel = releaseVersion
     ? t.settings.about.whatsNewInVersion({ version: releaseVersion })
     : t.settings.about.whatsNewGroup;
@@ -313,7 +303,7 @@ export function SettingsAboutSection({
           ) : null}
           <InsetRow
             label={t.settings.about.fullChangelogAction}
-            onSelect={() => void api.openExternalUrl(`${HELP_URL}/blob/${changelogSectionPath(release)}`)}
+            onSelect={() => void api.openExternalUrl(release.changelogUrl)}
             trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
           />
         </InsetGroup>

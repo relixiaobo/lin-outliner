@@ -12,8 +12,10 @@ import {
   type ApplicationManageResult,
   type ApplicationOperation,
   type ApplicationOperationCaller,
+  type BundledApplicationRelease,
   type DiagnosticsManageResult,
   type DiagnosticsStatusResult,
+  normalizeDiagnosticsManageResult,
 } from '../../core/applicationOperations';
 export type { ApplicationOperation, ApplicationOperationCaller } from '../../core/applicationOperations';
 import type { AppInfo, DiagnosticsActionResult } from '../../core/errorObservability';
@@ -25,6 +27,7 @@ import { compileToolParameters } from '../agent/runtime/kernel/exactToolArgument
 export interface ApplicationOperationsOptions {
   readonly updates: Pick<AppUpdateService, 'view' | 'checkExplicitly' | 'openAvailableUpdate'>;
   readonly appInfo: () => Promise<AppInfo>;
+  readonly bundledRelease: () => Promise<BundledApplicationRelease | null>;
   readonly diagnostics: Pick<DiagnosticLogStore, 'readRecords'>;
   readonly openExternal: (url: string) => Promise<void>;
   readonly revealDiagnostics: () => Promise<DiagnosticsActionResult>;
@@ -40,8 +43,9 @@ export function createApplicationOperations(options: ApplicationOperationsOption
   async function inspect(value: unknown, caller: ApplicationOperationCaller): Promise<ApplicationInspectResult> {
     if (!compileToolParameters(APPLICATION_INSPECT_SCHEMA as TSchema).Check(value)) throw failure('invalid_request', 'The application inspection does not match its schema.');
     await authorize(caller, 'application_inspect', value);
-    const operation = (value as { request: { operation: 'info' | 'updates' | 'destinations' } }).request.operation;
+    const operation = (value as { request: { operation: 'info' | 'release' | 'updates' | 'destinations' } }).request.operation;
     if (operation === 'info') return { operation, app: await options.appInfo() } satisfies ApplicationInfoResult;
+    if (operation === 'release') return { operation, release: await options.bundledRelease() };
     if (operation === 'updates') return { operation, updates: await options.updates.view() };
     return { operation, destinations: APPLICATION_DESTINATIONS };
   }
@@ -53,13 +57,12 @@ export function createApplicationOperations(options: ApplicationOperationsOption
     if (request.operation === 'check_updates') return { operation: request.operation, updates: await options.updates.checkExplicitly() };
     if (request.operation === 'open_update') return { operation: request.operation, result: await options.updates.openAvailableUpdate() };
     const destination = request.destination;
-    if (!destination) throw failure('invalid_request', 'A fixed application destination is required.');
     if (destination === 'help' || destination === 'issues' || destination === 'license') {
       await options.openExternal(APPLICATION_DESTINATIONS[destination]);
-      return { operation: request.operation, opened: destination };
+      return { operation: request.operation, destination, opened: true };
     }
     const result = await options.updates.openAvailableUpdate({ destination });
-    return { operation: request.operation, opened: result.ok ? destination : undefined, result };
+    return { operation: request.operation, destination, result };
   }
 
   async function diagnosticsInspect(value: unknown, caller: ApplicationOperationCaller): Promise<DiagnosticsStatusResult> {
@@ -81,10 +84,10 @@ export function createApplicationOperations(options: ApplicationOperationsOption
     const operation = (value as { request: { operation: 'reveal' | 'export' } }).request.operation;
     if (operation === 'reveal') {
       const result = await options.revealDiagnostics();
-      return { operation, ...result };
+      return normalizeDiagnosticsManageResult(operation, result);
     }
     const result = await options.exportDiagnostics(caller);
-    return { operation, ...result };
+    return normalizeDiagnosticsManageResult(operation, result);
   }
 
   return {

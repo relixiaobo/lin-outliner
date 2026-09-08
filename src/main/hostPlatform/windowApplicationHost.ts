@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import {
   app,
   BrowserWindow,
@@ -13,6 +15,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { SKILL_REVIEW_PRELOAD_ARG } from '../../core/agent/skillOperations';
 import { join } from 'node:path';
+import bundledChangelog from '../../../CHANGELOG.md?raw';
 import type { EffectStep } from '../../core/actions/bindings';
 import { externalPageLabel } from '../../core/actions/registry';
 import { externalContextSourceKind } from '../../core/actions/objects';
@@ -91,9 +94,11 @@ import {
 import { loadWindowState, trackWindowState } from '../windowState';
 import { windowMaterialKind } from '../../core/windowMaterial';
 import type { DiagnosticEnvironment, DiagnosticsActionResult, ErrorReport } from '../../core/errorObservability';
-import type { ApplicationOperation, ApplicationOperationCaller } from '../hostDomain/applicationOperations';
+import type { ApplicationOperation } from '../hostDomain/applicationOperations';
 import { createApplicationOperations } from '../hostDomain/applicationOperations';
+import { createBundledApplicationReleaseResolver } from '../hostDomain/bundledApplicationRelease';
 import type { DiagnosticLogStore } from '../diagnosticLog';
+import { createDiagnosticsExportHost } from './diagnosticsExportHost';
 
 const MAIN_RENDERER_LOAD_TIMEOUT_MS = 8_000;
 
@@ -797,39 +802,42 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   };
-  const exportDiagnostics = async (caller: ApplicationOperationCaller): Promise<DiagnosticsActionResult> => {
-    try {
-      const parent = caller.origin.kind === 'window'
-        ? BrowserWindow.fromId(caller.origin.windowId)
-        : liveWindow(mainWindow);
-      const defaultPath = join(
+  const applicationOperationWindow = (caller: Parameters<ApplicationOperation['inspect']>[1]) => (
+    caller.origin.kind === 'window'
+      ? BrowserWindow.fromId(caller.origin.windowId)
+      : liveWindow(mainWindow) ?? null
+  );
+  const exportDiagnostics = createDiagnosticsExportHost({
+    available: () => !released,
+    operationWindow: applicationOperationWindow,
+    defaultPath: () => join(
         app.getPath('desktop'),
         `tenon-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
-      );
-      const result = parent
-        ? await dialog.showSaveDialog(parent, { defaultPath, filters: [{ name: 'JSON', extensions: ['json'] }] })
-        : await dialog.showSaveDialog({ defaultPath, filters: [{ name: 'JSON', extensions: ['json'] }] });
-      if (result.canceled || !result.filePath) return { ok: false, canceled: true };
-      const filePath = await options.diagnosticLog.writeExport(result.filePath, await options.diagnosticEnvironment());
-      return { ok: true, path: filePath };
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
+      ),
+    selectPath: (parent, defaultPath) => dialog.showSaveDialog(parent, {
+      defaultPath,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    }),
+    environment: options.diagnosticEnvironment,
+    writeExport: (path, environment) => options.diagnosticLog.writeExport(path, environment),
+  });
+  const applicationInfo = async () => {
+    const environment = await options.diagnosticEnvironment();
+    return {
+      name: APP_NAME,
+      version: environment.appVersion,
+      platform: environment.platform,
+      arch: environment.arch,
+      electron: environment.electron,
+      chrome: environment.chrome,
+      node: environment.node,
+    };
   };
+  const resolveBundledRelease = createBundledApplicationReleaseResolver(bundledChangelog);
   const applicationOperations = createApplicationOperations({
     updates: appUpdateService,
-    appInfo: async () => {
-      const environment = await options.diagnosticEnvironment();
-      return {
-        name: APP_NAME,
-        version: environment.appVersion,
-        platform: environment.platform,
-        arch: environment.arch,
-        electron: environment.electron,
-        chrome: environment.chrome,
-        node: environment.node,
-      };
-    },
+    appInfo: applicationInfo,
+    bundledRelease: async () => resolveBundledRelease((await applicationInfo()).version),
     diagnostics: options.diagnosticLog,
     openExternal: (url) => shell.openExternal(url),
     revealDiagnostics,

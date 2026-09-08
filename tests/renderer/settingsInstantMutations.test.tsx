@@ -14,8 +14,6 @@ import { previewOperationsBridge } from '../helpers/previewOperationsBridge';
 mock.module('../../src/renderer/ui/agent/providerIcon', () => ({
   providerIconSvg: () => '<svg></svg>',
 }));
-mock.module('../../CHANGELOG.md?raw', () => ({ default: '# Changelog\n\n## [Unreleased]\n' }));
-
 const { AgentSettingsView } = await import('../../src/renderer/ui/agent/AgentSettingsView');
 
 interface Rendered {

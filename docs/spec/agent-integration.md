@@ -117,9 +117,11 @@ Agent Core. It is a contract checklist, not project status.
 - Keep application/update and diagnostics actions in the shared
   `application_inspect` / `application_manage` and
   `diagnostics_inspect` / `diagnostics_manage` Host owner. Fresh update checks,
-  validated release destinations, fixed support links, and native diagnostic
-  export are distinct outcomes; never expose an arbitrary URL/path or a
-  Settings/Configuration CLI.
+  bundled installed-release information, cached remote-update state, validated
+  release destinations, fixed support links, and native diagnostic export are
+  distinct outcomes. Revalidate caller authority and the originating Host/window
+  after native save interaction and before writing. Never expose an arbitrary
+  URL/path input or a Settings/Configuration CLI.
 
 ## Extension Contract
 

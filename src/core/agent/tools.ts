@@ -27,9 +27,13 @@ import { PREVIEW_INSPECT_SCHEMA, PREVIEW_MANAGE_SCHEMA, PREVIEW_INSPECT_OUTPUT_S
   DATA_INSPECT_SCHEMA, DATA_MANAGE_SCHEMA, DATA_INSPECT_OUTPUT_SCHEMA, DATA_MANAGE_OUTPUT_SCHEMA } from '../previewOperations';
 import {
   APPLICATION_INSPECT_SCHEMA,
+  APPLICATION_INSPECT_OUTPUT_SCHEMA,
   APPLICATION_MANAGE_SCHEMA,
+  APPLICATION_MANAGE_OUTPUT_SCHEMA,
   DIAGNOSTICS_INSPECT_SCHEMA,
+  DIAGNOSTICS_INSPECT_OUTPUT_SCHEMA,
   DIAGNOSTICS_MANAGE_SCHEMA,
+  DIAGNOSTICS_MANAGE_OUTPUT_SCHEMA,
 } from '../applicationOperations';
 
 export {
@@ -270,8 +274,6 @@ const booleanSchema = (description?: string): JsonSchema => ({
   type: 'boolean',
   ...(description ? { description } : {}),
 });
-
-const operationResultSchema: ObjectJsonSchema = { type: 'object', additionalProperties: true };
 
 const integerSchema = (description?: string): JsonSchema => ({
   type: 'integer',
@@ -874,30 +876,30 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
   },
   {
     identity: { namespace: null, name: 'application_inspect' },
-    description: 'Inspect bounded application identity, build/update state, or the fixed Help, Issues, and License destinations. Cached update availability is not a fresh check.',
+    description: 'Inspect bounded application identity, the installed build\'s bundled release note, cached update state, or the fixed Help, Issues, and License destinations. Bundled release information and remote update availability are separate; cached availability is not a fresh check.',
     scope: 'rootThread', schemaOwner: 'core', inputSchema: APPLICATION_INSPECT_SCHEMA,
-    outputSchema: objectSchema({ result: operationResultSchema }, ['result']),
+    outputSchema: APPLICATION_INSPECT_OUTPUT_SCHEMA,
     actionKinds: ['agent.application.inspect'],
   },
   {
     identity: { namespace: null, name: 'application_manage' },
     description: 'Check for updates, open a validated release/download, or open one fixed Help, Issues, or License destination. It never installs updates and never opens arbitrary URLs.',
     scope: 'rootThread', schemaOwner: 'core', inputSchema: APPLICATION_MANAGE_SCHEMA,
-    outputSchema: objectSchema({ result: operationResultSchema }, ['result']),
+    outputSchema: APPLICATION_MANAGE_OUTPUT_SCHEMA,
     actionKinds: ['agent.application.manage'],
   },
   {
     identity: { namespace: null, name: 'diagnostics_inspect' },
     description: 'Inspect bounded local diagnostic counts and severity totals. It never returns private log paths or record content.',
     scope: 'rootThread', schemaOwner: 'core', inputSchema: DIAGNOSTICS_INSPECT_SCHEMA,
-    outputSchema: objectSchema({ result: operationResultSchema }, ['result']),
+    outputSchema: DIAGNOSTICS_INSPECT_OUTPUT_SCHEMA,
     actionKinds: ['agent.diagnostics.inspect'],
   },
   {
     identity: { namespace: null, name: 'diagnostics_manage' },
     description: 'Reveal the local diagnostic log or export redacted diagnostics through a native save dialog. It never uploads or posts diagnostics and accepts no path.',
     scope: 'rootThread', schemaOwner: 'core', inputSchema: DIAGNOSTICS_MANAGE_SCHEMA,
-    outputSchema: objectSchema({ result: operationResultSchema }, ['result']),
+    outputSchema: DIAGNOSTICS_MANAGE_OUTPUT_SCHEMA,
     actionKinds: ['agent.diagnostics.manage'],
   },
   {

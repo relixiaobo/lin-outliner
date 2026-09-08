@@ -96,7 +96,12 @@ import {
   type AppUpdateOpenResult,
   type AppUpdateView,
 } from '../core/appUpdateProtocol';
-import { LIN_APP_OPEN_DESTINATION_CHANNEL, type ApplicationDestination } from '../core/applicationOperations';
+import {
+  LIN_APP_OPEN_DESTINATION_CHANNEL,
+  LIN_APP_RELEASE_CHANNEL,
+  type ApplicationDestination,
+  type BundledApplicationRelease,
+} from '../core/applicationOperations';
 import { OUTLINE_PROTOCOL_VERSION } from '../outline/contract/version';
 import type { OutlineStreamRecord } from '../outline/contract/schemas';
 import {
@@ -449,6 +454,8 @@ const api = {
     ipcRenderer.invoke('lin:get-provider-api-key', { providerId }) as Promise<AgentProviderStoredApiKey>,
   notifySettingsChanged: () => ipcRenderer.invoke('lin:settings-changed') as Promise<void>,
   appInfo: () => ipcRenderer.invoke(LIN_APP_INFO_CHANNEL) as Promise<AppInfo>,
+  bundledApplicationRelease: () =>
+    ipcRenderer.invoke(LIN_APP_RELEASE_CHANNEL) as Promise<BundledApplicationRelease | null>,
   openApplicationDestination: (destination: Exclude<ApplicationDestination, 'release' | 'download'>) =>
     ipcRenderer.invoke(LIN_APP_OPEN_DESTINATION_CHANNEL, destination) as Promise<void>,
   appUpdate: {

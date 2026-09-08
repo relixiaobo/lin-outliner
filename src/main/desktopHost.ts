@@ -112,7 +112,11 @@ import {
   type ErrorReportContext,
   type ErrorSeverity,
 } from '../core/errorObservability';
-import { LIN_APP_OPEN_DESTINATION_CHANNEL, type ApplicationDestination } from '../core/applicationOperations';
+import {
+  LIN_APP_OPEN_DESTINATION_CHANNEL,
+  LIN_APP_RELEASE_CHANNEL,
+  type ApplicationDestination,
+} from '../core/applicationOperations';
 import {
   deleteProviderApiKey,
   deleteProviderConfig,
@@ -1259,6 +1263,15 @@ function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
       { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
     );
     return result.operation === 'info' ? result.app : result;
+  });
+
+  ipcMain.handle(LIN_APP_RELEASE_CHANNEL, async (event) => {
+    windowApplicationHost.assertSettingsSender(event, 'Bundled release information');
+    const result = await windowApplicationHost.applicationOperations.inspect(
+      { request: { operation: 'release' } },
+      { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
+    );
+    return result.operation === 'release' ? result.release : null;
   });
 
   ipcMain.handle(LIN_APP_OPEN_DESTINATION_CHANNEL, async (event, destination: unknown) => {

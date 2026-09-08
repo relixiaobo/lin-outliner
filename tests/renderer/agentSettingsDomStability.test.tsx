@@ -10,22 +10,6 @@ import { parseHTML } from 'linkedom';
 mock.module('../../src/renderer/ui/agent/providerIcon', () => ({
   providerIconSvg: (providerId: string) => `<svg data-fixture-logo="${providerId}"></svg>`,
 }));
-mock.module('../../CHANGELOG.md?raw', () => ({
-  default: `# Changelog
-
-## [Unreleased]
-
-The maintainer bookkeeping the pane must never render as a note.
-
-## [0.1.0] - 2026-08-05
-
-A deterministic user note, which is all the pane renders.
-
-### Changed
-
-- The engineering entry the pane must never show.
-`,
-}));
 import type {
   AgentCapabilitySettingsView,
   AgentProviderSettingsView,
@@ -362,6 +346,13 @@ async function renderCategory(
         electron: '39.0.0',
         chrome: '142.0.0',
         node: '22.0.0',
+      }),
+      bundledApplicationRelease: async () => ({
+        version: '0.1.0',
+        date: '2026-08-05',
+        note: 'A deterministic user note, which is all the pane renders.',
+        noteTruncated: false,
+        changelogUrl: 'https://github.com/relixiaobo/lin-outliner/blob/v0.1.0/CHANGELOG.md#010---2026-08-05',
       }),
       appUpdate: {
         get: async () => appUpdate,
