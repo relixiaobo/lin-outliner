@@ -429,12 +429,12 @@ export class ToolTaskService {
           predecessorRef: task.executionContext.snapshotRef,
           discovery: 'unavailable' as const,
           degradation: reason,
-          facts: [...task.executionContext.snapshot.facts, {
+          facts: task.executionContext.snapshot.facts.filter((fact) => fact.source !== 'host:execution-discovery').concat({
             source: 'host:execution-discovery', kind: 'discovery' as const, authority: 'host' as const,
             purpose: 'observation' as const, scope: task.executionContext.address.cwd, version: 'failed',
             text: 'Discovery failed after admission; inspect applicable sources before relying on project guidance.',
             invalidated: false, observedAt: capturedAt,
-          }],
+          }),
         };
         const context = validateExecutionContext({ ...task.executionContext, snapshot, snapshotRef: executionDigest(snapshot) });
         const payload: ExecutionContextObservationPayload = { schemaVersion: 1, kind: 'executionContextObservation',

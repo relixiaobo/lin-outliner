@@ -112,4 +112,48 @@ describe('execution context discovery', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test('restores a committed successor after Tool Task service restart', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tenon-context-'));
+    const databasePath = path.join(root, 'tasks.sqlite');
+    const payloadPath = path.join(root, 'payloads');
+    const sourceTurnId = '00000000-0000-7000-8000-000000000003';
+    let taskId: string | null = null;
+    try {
+      const firstDatabase = new Database(databasePath);
+      const firstStore = new ToolTaskStore(firstDatabase as unknown as SqliteDatabase);
+      const firstPayloads = new ToolPayloadStore(payloadPath);
+      const first = new ToolTaskService(firstStore, path.join(root, 'tasks'));
+      first.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+        startCompletionTurn: async () => false, taskChanged: () => {}, contextEvidence: {
+          write: (owner: string, payload: ThreadContextPayload) => firstPayloads.writeContext(owner, payload),
+          read: (owner: string, ref) => firstPayloads.readContext(owner, ref),
+        } });
+      await first.initialize();
+      await first.runHostOperation({ ownerThreadId: 'thread', sourceTurnId, sourceItemId: 'restart', producer: 'test',
+        executionContext: pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root }), {
+          capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+        }), onAdmitted: async (task) => { taskId = task.taskId; }, execute: async () => ({ result: null, success: true }) });
+      for (let attempt = 0; attempt < 50 && !firstStore.contextSuccessor(taskId!); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      const before = firstStore.contextSuccessor(taskId!);
+      expect(before).not.toBeNull();
+      await first.close(2_000);
+      firstDatabase.close();
+
+      const secondDatabase = new Database(databasePath);
+      const secondStore = new ToolTaskStore(secondDatabase as unknown as SqliteDatabase);
+      const second = new ToolTaskService(secondStore, path.join(root, 'tasks'));
+      second.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+        startCompletionTurn: async () => false, taskChanged: () => {}, contextEvidence: {
+          write: (owner: string, payload: ThreadContextPayload) => firstPayloads.writeContext(owner, payload),
+          read: (owner: string, ref) => firstPayloads.readContext(owner, ref),
+        } });
+      await second.initialize();
+      expect(secondStore.contextSuccessor(taskId!)).toEqual(before);
+      await second.close(2_000);
+      secondDatabase.close();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
