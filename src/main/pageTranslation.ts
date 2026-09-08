@@ -50,6 +50,7 @@ import type {
   PreviewTranslationCacheBlock,
   PreviewTranslationCacheScope,
   PreviewTranslationCacheStore,
+  PreviewTranslationCacheWriteTicket,
 } from './previewTranslationCacheStore';
 
 const ID_PATTERN = /^[A-Za-z0-9:_-]{1,96}$/;
@@ -75,7 +76,7 @@ interface PageTranslationCompletionInput {
 type PageTranslationComplete = (input: PageTranslationCompletionInput) => Promise<string>;
 
 interface PageTranslationServiceOptions {
-  cache?: Pick<PreviewTranslationCacheStore, 'lookup' | 'record'>;
+  cache?: Pick<PreviewTranslationCacheStore, 'lookup' | 'record' | 'beginWrite' | 'releaseWrite'>;
   complete?: PageTranslationComplete;
   onError?: (error: unknown) => void;
   resolveModel?: (model?: string) => Promise<PageTranslationResolvedModel>;
@@ -90,7 +91,6 @@ interface PageTranslationResolvedModel {
 
 interface PageTranslationCacheContext {
   blocks: PreviewTranslationCacheBlock[];
-  epoch: number;
   scope: PreviewTranslationCacheScope;
 }
 
@@ -126,7 +126,7 @@ class PageTranslationResponseError extends Error {
 /** Main-owned model request service for preview translation. */
 export class PageTranslationService {
   private readonly active = new Map<string, ActiveTranslationRequest>();
-  private readonly cache?: Pick<PreviewTranslationCacheStore, 'lookup' | 'record'>;
+  private readonly cache?: PageTranslationServiceOptions['cache'];
   private readonly complete: PageTranslationComplete;
   private readonly resolveModel: (model?: string) => Promise<PageTranslationResolvedModel>;
   private readonly retryDelayMs: (retryCount: number, error: unknown) => number;
@@ -177,6 +177,8 @@ export class PageTranslationService {
 
     const controller = new AbortController();
     this.active.set(request.sessionId, { controller, requestId: request.requestId });
+    const cacheTicket: PreviewTranslationCacheWriteTicket | undefined = request.cacheSourceId
+      ? this.cache?.beginWrite(request.cacheSourceId) : undefined;
     try {
       let resolvedModel: PageTranslationResolvedModel | undefined;
       let cacheContext: PageTranslationCacheContext | null = null;
@@ -189,7 +191,6 @@ export class PageTranslationService {
           try {
             const lookup = await this.cache.lookup(cacheContext.scope, cacheContext.blocks);
             throwIfAborted(controller.signal);
-            cacheContext.epoch = lookup.epoch;
             if (lookup.hits.length > 0) {
               const hitIds = new Set(lookup.hits.map((item) => item.id));
               const remainingBlockIds = request.blocks
@@ -225,13 +226,14 @@ export class PageTranslationService {
       const output = await this.completeWithRetries(completionInput);
       throwIfAborted(controller.signal);
       const translations = parsePageTranslationResponse(output, request.blocks);
-      if (cacheContext) {
-        void this.cache?.record(
+      if (cacheContext && cacheTicket) {
+        await this.cache?.record(
           cacheContext.scope,
           cacheContext.blocks,
           translations,
-          cacheContext.epoch,
+          cacheTicket,
         ).catch(() => undefined);
+        throwIfAborted(controller.signal);
       }
       return {
         ok: true,
@@ -252,6 +254,7 @@ export class PageTranslationService {
       this.options.onError?.(error);
       return failure(request.requestId, 'provider-error');
     } finally {
+      if (cacheTicket) this.cache?.releaseWrite(cacheTicket);
       const current = this.active.get(request.sessionId);
       if (current?.controller === controller) this.active.delete(request.sessionId);
     }
@@ -274,7 +277,7 @@ export class PageTranslationService {
       sourceId: request.cacheSourceId,
       targetLanguage: request.targetLanguage,
     };
-    return { blocks, epoch: 0, scope };
+    return { blocks, scope };
   }
 
   private async completeWithRetries(input: PageTranslationCompletionInput): Promise<string> {

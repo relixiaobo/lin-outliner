@@ -15,10 +15,3 @@ export function httpReferrerForUrlPreview(url: string): string | undefined {
     return undefined;
   }
 }
-
-export const LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL = 'lin:clear-url-preview-data';
-
-export type ClearUrlPreviewDataResult =
-  | { status: 'cleared' }
-  | { status: 'canceled' }
-  | { status: 'failed'; error: 'unavailable' | 'clear-failed' };

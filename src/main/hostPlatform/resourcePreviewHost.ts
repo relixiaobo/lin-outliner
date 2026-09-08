@@ -1,15 +1,13 @@
-import { dialog, session, shell, type BrowserWindow, type IpcMainInvokeEvent, type Session, type WebContents } from 'electron';
+import { dialog, session, shell, webContents, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { join } from 'node:path';
 import { normalizePreviewHttpUrl } from '../../core/preview';
 import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME } from '../../core/assets';
 import {
   LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL,
-  type ClearPreviewTranslationCacheResult,
 } from '../../core/urlPageTranslation';
 import {
   httpReferrerForUrlPreview,
   URL_PREVIEW_WEBVIEW_PARTITION,
-  type ClearUrlPreviewDataResult,
 } from '../../core/urlPreviewSession';
 import type { ErrorReport } from '../../core/errorObservability';
 import type { Locale } from '../../core/locale';
@@ -23,7 +21,8 @@ import {
 } from '../urlPreviewSession';
 import { PageTranslationService, pageTranslationErrorReport } from '../pageTranslation';
 import { PreviewTranslationCacheStore } from '../previewTranslationCacheStore';
-import { clearPreviewTranslationCacheFromSettings } from '../previewTranslationCacheClear';
+import { PreviewOperations, type PreviewOperationCaller } from '../hostDomain/previewOperations';
+import { PREVIEW_ACTION_CHANNEL, type DataOperationView } from '../../core/previewOperations';
 import { LocalFilePreviewStreamRegistry } from '../localFilePreviewStream';
 import { LinkedFileGrantStore } from '../linkedFileGrantStore';
 import type { PreviewCommandContext } from '../previewSource';
@@ -54,6 +53,9 @@ const RENDERER_CSP = [
 ].join('; ');
 
 export interface ResourcePreviewHostOptions {
+  readonly operationWindow?: (caller: PreviewOperationCaller) => BrowserWindow | null;
+  readonly locale?: () => Locale;
+  readonly dataChanged?: () => void;
   readonly userDataDir: string;
   readonly rendererDevUrl?: string;
   readonly previewRoots: () => readonly string[];
@@ -64,6 +66,7 @@ export interface ResourcePreviewHostOptions {
 }
 
 export interface ResourcePreviewHost {
+  readonly operations: PreviewOperations;
   readonly rendererDevUrl: string | null;
   readonly rendererDevOrigin: string | null;
   readonly translation: {
@@ -85,16 +88,6 @@ export interface ResourcePreviewHost {
   configurePreviewSession(): () => void;
   hardenWebContents(contents: WebContents): void;
   configureDefaultSessionSecurity(): () => void;
-  clearWebsiteData(
-    event: IpcMainInvokeEvent,
-    settingsWindow: BrowserWindow | null,
-    locale: Locale,
-  ): Promise<ClearUrlPreviewDataResult>;
-  clearTranslationCache(
-    event: IpcMainInvokeEvent,
-    settingsWindow: BrowserWindow | null,
-    locale: Locale,
-  ): Promise<ClearPreviewTranslationCacheResult>;
   flush(): Promise<void>;
   close(): Promise<void>;
 }
@@ -113,9 +106,19 @@ export function createResourcePreviewHost(options: ResourcePreviewHostOptions): 
         `connect-src 'self' ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}: ${rendererDevOrigin} ${rendererDevOrigin.replace(/^http/i, 'ws')}`,
       ].join('; ')
     : null;
+  let dataNotificationTimer: ReturnType<typeof setTimeout> | null = null;
+  const notifyDataChanged = () => {
+    if (dataNotificationTimer) return;
+    dataNotificationTimer = setTimeout(() => {
+      dataNotificationTimer = null;
+      try { options.dataChanged?.(); } catch { /* A closed window cannot fail cache writes. */ }
+    }, 100);
+    dataNotificationTimer.unref?.();
+  };
   const previewTranslationCache = new PreviewTranslationCacheStore(
     join(options.userDataDir, 'preview-translation-cache'),
     {
+      onChanged: notifyDataChanged,
       onError: (operation) => options.reportError({
         domain: 'page-translation',
         severity: 'warn',
@@ -139,20 +142,69 @@ export function createResourcePreviewHost(options: ResourcePreviewHostOptions): 
   const previewGuests = new Set<WebContents>();
   let previewSession: Session | null = null;
   let closePromise: Promise<void> | null = null;
+  const operations = new PreviewOperations({
+    cache: previewTranslationCache,
+    changed: () => options.dataChanged?.(),
+    send: (ownerId, action) => {
+      const target = webContents.fromId(ownerId);
+      if (!target || target.isDestroyed()) throw new Error('Preview window is unavailable.');
+      target.send(PREVIEW_ACTION_CHANNEL, action);
+    },
+    review: async (scope, caller) => {
+      const parent = options.operationWindow?.(caller);
+      if (!parent || parent.isDestroyed() || caller.signal?.aborted) return false;
+      const labels = getMessages(options.locale?.() ?? 'en').settings.general;
+      const website = scope === 'websites';
+      const title = website ? labels.websiteDataClearConfirmTitle : labels.translationDataClearConfirmTitle;
+      const result = await dialog.showMessageBox(parent, {
+        type: 'warning', title,
+        message: scope === 'content' ? labels.translationContentClearConfirmMessage
+          : website ? labels.websiteDataClearConfirmMessage : labels.translationDataClearConfirmMessage,
+        detail: website ? labels.websiteDataClearConfirmDetail : labels.translationDataClearConfirmDetail,
+        buttons: [website ? labels.websiteDataClearConfirmAction : labels.translationDataClearConfirmAction, labels.translationDataCancelAction],
+        defaultId: 1, cancelId: 1, noLink: true,
+        ...(caller.signal ? { signal: caller.signal } : {}),
+      });
+      return result.response === 0 && !parent.isDestroyed() && !caller.signal?.aborted;
+    },
+    websites: async () => ({
+      available: previewSession !== null,
+      cacheBytes: previewSession ? await previewSession.getCacheSize().catch(() => null) : null,
+      activeGuests: [...previewGuests].filter((guest) => !guest.isDestroyed()).length,
+    }),
+    clearWebsites: async () => {
+      if (!previewSession) throw new Error('Preview session is unavailable.');
+      const steps = await clearUrlPreviewSessionData(previewSession);
+      let liveDisplays: DataOperationView['liveDisplays'] = 'retained';
+      if (!steps.some((step) => step.state === 'failed')) {
+        liveDisplays = 'reload_requested';
+        for (const guest of previewGuests) {
+          if (guest.isDestroyed()) continue;
+          try { guest.reloadIgnoringCache(); } catch { liveDisplays = 'reload_failed'; }
+        }
+      }
+      return { steps, liveDisplays };
+    },
+  });
 
   const close = (): Promise<void> => {
     if (closePromise) return closePromise;
+    if (dataNotificationTimer) clearTimeout(dataNotificationTimer);
     pageTranslation.dispose();
-    closePromise = Promise.all([
-      localFiles.close(),
-      previewTranslationCache.flushNow(),
-      flushUrlPreviewSession(previewSession),
-      streams.close(),
-    ]).then(() => undefined);
+    closePromise = (async () => {
+      await operations.settle();
+      await Promise.all([
+        localFiles.close(),
+        previewTranslationCache.flushNow(),
+        flushUrlPreviewSession(previewSession),
+        streams.close(),
+      ]);
+    })();
     return closePromise;
   };
 
   const host: ResourcePreviewHost = {
+    operations,
     rendererDevUrl,
     rendererDevOrigin,
     translation: {
@@ -183,57 +235,16 @@ export function createResourcePreviewHost(options: ResourcePreviewHostOptions): 
       if (!previewSession) throw new Error('URL Preview session is unavailable before initialization.');
       return configureUrlPreviewSession(previewSession);
     },
-    hardenWebContents: (contents) => hardenWebContents(contents, () => previewSession, previewGuests, options),
+    hardenWebContents: (contents) => {
+      contents.once('destroyed', () => operations.releaseOwner(contents.id));
+      contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) operations.releaseOwner(contents.id);
+      });
+      hardenWebContents(contents, () => previewSession, previewGuests, options);
+    },
     configureDefaultSessionSecurity: () => configureDefaultSessionSecurity(
       rendererDevOrigin,
       rendererDevCsp,
-    ),
-    clearWebsiteData: async (event, settingsWindow, locale) => {
-      if (!settingsWindow || settingsWindow.isDestroyed()
-        || event.sender !== settingsWindow.webContents || !previewSession) {
-        return { status: 'failed', error: 'unavailable' };
-      }
-      const labels = getMessages(locale).settings.general;
-      const confirmation = await dialog.showMessageBox(settingsWindow, {
-        type: 'warning',
-        title: labels.websiteDataClearConfirmTitle,
-        message: labels.websiteDataClearConfirmMessage,
-        detail: labels.websiteDataClearConfirmDetail,
-        buttons: [labels.websiteDataClearConfirmAction, labels.websiteDataCancelAction],
-        defaultId: 1,
-        cancelId: 1,
-        noLink: true,
-      });
-      if (confirmation.response !== 0) return { status: 'canceled' };
-      try {
-        await clearUrlPreviewSessionData(previewSession);
-        for (const guest of [...previewGuests]) {
-          if (guest.isDestroyed()) {
-            previewGuests.delete(guest);
-            continue;
-          }
-          guest.reloadIgnoringCache();
-        }
-        return { status: 'cleared' };
-      } catch (error) {
-        options.reportError({
-          domain: 'url-preview',
-          severity: 'error',
-          code: 'url-preview-clear-data',
-          message: 'URL Preview website data could not be cleared',
-          context: { operation: 'clear-data' },
-          error,
-        });
-        return { status: 'failed', error: 'clear-failed' };
-      }
-    },
-    clearTranslationCache: (event, settingsWindow, locale) => (
-      clearPreviewTranslationCacheFromSettings(event, {
-        cache: previewTranslationCache,
-        getSettingsWindow: () => settingsWindow && !settingsWindow.isDestroyed() ? settingsWindow : null,
-        labels: () => getMessages(locale).settings.general,
-        showMessageBox: (window, messageOptions) => dialog.showMessageBox(window, messageOptions),
-      })
     ),
     flush: () => Promise.all([
       previewTranslationCache.flushNow(),

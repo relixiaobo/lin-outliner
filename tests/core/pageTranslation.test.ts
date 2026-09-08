@@ -1,4 +1,8 @@
 import { describe, expect, mock, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { PreviewTranslationCacheStore } from '../../src/main/previewTranslationCacheStore';
 import {
   URL_CAPTION_TRANSLATION_MAX_BLOCKS,
   URL_PAGE_TRANSLATE_COMMAND,
@@ -79,7 +83,6 @@ describe('page translation service', () => {
   test('returns a full cache hit without invoking the provider', async () => {
     let completed = 0;
     const lookup = mock(async () => ({
-      epoch: 4,
       hits: [
         { id: 'b1', translation: '缓存一' },
         { id: 'b2', translation: '缓存二' },
@@ -87,7 +90,7 @@ describe('page translation service', () => {
     }));
     const record = mock(async () => true);
     const service = new PageTranslationService({
-      cache: { lookup, record },
+      cache: { lookup, record, beginWrite: (sourceDigest) => ({ sourceDigest }), releaseWrite: () => {} },
       complete: async () => {
         completed += 1;
         return '[]';
@@ -123,15 +126,42 @@ describe('page translation service', () => {
     });
   });
 
+  test.each(['content', 'all'] as const)('a %s clear fences requests admitted before model resolution without losing their display result', async (scope) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-translation-admission-'));
+    const cache = new PreviewTranslationCacheStore(root, { flushDelayMs: 60_000 });
+    try {
+      let resolve!: (model: { cacheIdentity: string }) => void;
+      let completions = 0;
+      const service = new PageTranslationService({
+        cache,
+        resolveModel: () => new Promise((done) => { resolve = done; }),
+        complete: async () => { completions++; return '[{"id":"b1","translation":"Translated"}]'; },
+      });
+      const input = request({ cacheSourceId: 'same-content', blocks: [{ id: 'b1', text: 'Hello', cacheKey: 'b1' }] });
+      const first = service.handle(URL_PAGE_TRANSLATE_COMMAND, { ...input });
+      await new Promise((done) => setImmediate(done));
+      if (scope === 'content') await cache.clearSource('same-content');
+      else await cache.clear();
+      resolve({ cacheIdentity: 'model' });
+      expect(await first).toMatchObject({ ok: true, translations: [{ id: 'b1', translation: 'Translated' }] });
+      expect((await cache.inspect()).entries.page).toBe(0);
+      const next = service.handle(URL_PAGE_TRANSLATE_COMMAND, { ...input, requestId: 'fresh' });
+      await new Promise((done) => setImmediate(done));
+      resolve({ cacheIdentity: 'model' });
+      expect(await next).toMatchObject({ ok: true });
+      expect(completions).toBe(2);
+      expect((await cache.inspect()).entries.page).toBe(1);
+    } finally { await cache.flushNow(); await rm(root, { recursive: true, force: true }); }
+  });
+
   test('returns partial cache hits immediately and translates only the continued misses', async () => {
     const providerBlocks: string[][] = [];
     const lookup = mock(async (_scope: unknown, blocks: Array<{ id: string }>) => ({
-      epoch: 9,
       hits: blocks.length > 1 ? [{ id: 'b1', translation: '缓存一' }] : [],
     }));
     const record = mock(async () => true);
     const service = new PageTranslationService({
-      cache: { lookup, record },
+      cache: { lookup, record, beginWrite: (sourceDigest) => ({ sourceDigest }), releaseWrite: () => {} },
       complete: async ({ userPrompt }) => {
         const payload = JSON.parse(userPrompt) as { blocks: Array<{ id: string; text: string }> };
         providerBlocks.push(payload.blocks.map((entry) => entry.id));
@@ -168,7 +198,7 @@ describe('page translation service', () => {
     expect(providerBlocks).toEqual([['b2']]);
     await Promise.resolve();
     expect(record).toHaveBeenCalledTimes(1);
-    expect(record.mock.calls[0]?.[3]).toBe(9);
+    expect(record.mock.calls[0]?.[3]).toEqual({ sourceDigest: cachedRequest.cacheSourceId });
   });
 
   test('degrades a cache read failure to normal provider translation', async () => {
@@ -176,6 +206,7 @@ describe('page translation service', () => {
     const record = mock(async () => true);
     const service = new PageTranslationService({
       cache: {
+        beginWrite: (sourceDigest) => ({ sourceDigest }), releaseWrite: () => {},
         lookup: async () => {
           throw new Error('cache unavailable');
         },
@@ -205,7 +236,8 @@ describe('page translation service', () => {
     let userPrompt = '';
     const service = new PageTranslationService({
       cache: {
-        lookup: async () => ({ epoch: 1, hits: [] }),
+        beginWrite: (sourceDigest) => ({ sourceDigest }), releaseWrite: () => {},
+        lookup: async () => ({ hits: [] }),
         record: async () => true,
       },
       complete: async (input) => {

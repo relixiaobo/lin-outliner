@@ -36,7 +36,7 @@ import { SettingsGeneralSection } from './SettingsGeneralSection';
 import { SettingsProvidersSection } from './SettingsProvidersSection';
 import { SettingsSkillLibrarySection } from './SettingsSkillLibrarySection';
 import { SettingsAgentSection } from './SettingsAgentSection';
-import { SettingsPreviewSection } from './SettingsPreviewSection';
+import { PreviewDataPanel } from './PreviewDataPanel';
 import { AgentsSettings } from './AgentsSettings';
 import { SettingsAboutSection } from './SettingsAboutSection';
 import { capabilitySettingsRemovalPatch } from './agentCapabilitySettings';
@@ -858,7 +858,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                 skillUpdateCount={skillUpdateCount}
               />
             ) : (
-              <SettingsPreviewSection onError={setError} onNotice={setNotice} settings={settings} />
+              <PreviewDataPanel />
             )}
 
             {/* Pinned to the bottom of the pane rather than sitting at the end of

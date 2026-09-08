@@ -23,6 +23,8 @@ import {
 import { REASONING_EFFORTS } from './configuration';
 import { SKILL_INSPECT_SCHEMA, SKILL_MANAGE_SCHEMA, SKILL_INSPECT_OUTPUT_SCHEMA, SKILL_MANAGE_OUTPUT_SCHEMA } from './skillOperations';
 import { MEMORY_INSPECT_SCHEMA, MEMORY_MANAGE_SCHEMA, MEMORY_INSPECT_OUTPUT_SCHEMA, MEMORY_MANAGE_OUTPUT_SCHEMA } from './memoryOperations';
+import { PREVIEW_INSPECT_SCHEMA, PREVIEW_MANAGE_SCHEMA, PREVIEW_INSPECT_OUTPUT_SCHEMA, PREVIEW_MANAGE_OUTPUT_SCHEMA,
+  DATA_INSPECT_SCHEMA, DATA_MANAGE_SCHEMA, DATA_INSPECT_OUTPUT_SCHEMA, DATA_MANAGE_OUTPUT_SCHEMA } from '../previewOperations';
 
 export {
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
@@ -149,6 +151,10 @@ export const MODEL_TOOL_ACTION_KINDS = [
   'agent.skill.manage',
   'agent.memory.inspect',
   'agent.memory.manage',
+  'preview.inspect',
+  'preview.control',
+  'preview.data.inspect',
+  'preview.data.clear',
   'agent.image.generate',
   'thread.history.search',
   'thread.history.read',
@@ -157,6 +163,8 @@ export const MODEL_TOOL_ACTION_KINDS = [
 export type ModelToolActionKind = typeof MODEL_TOOL_ACTION_KINDS[number];
 
 const READ_ONLY_ACTION_KINDS = new Set<ModelToolActionKind>([
+  'preview.inspect',
+  'preview.data.inspect',
   'agent.memory.inspect',
   'agent.skill.inspect',
   'file.read.local_path',
@@ -826,6 +834,30 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
 ];
 
 const coreControlToolContracts: readonly StaticModelToolContract[] = [
+  {
+    identity: { namespace: null, name: 'preview_inspect' },
+    description: 'List live preview identities, revisions and translation controls, or inspect an explicit previewId. No page content. Use the Models catalog for qualified model choices.',
+    scope: 'rootThread', schemaOwner: 'core', inputSchema: PREVIEW_INSPECT_SCHEMA, outputSchema: PREVIEW_INSPECT_OUTPUT_SCHEMA,
+    actionKinds: ['preview.inspect'],
+  },
+  {
+    identity: { namespace: null, name: 'preview_manage' },
+    description: 'Configure one live preview using its inspected revision, or request native-confirmed clearing of shared saved translations for its current content. Omit previewId only when exactly one eligible preview exists. Controls last until close; null language/model restores Follow UI/Agent. Display is automatic, translated, or original. Only applied proves control application, not provider completion. Clearing retains live displays and pending results; never retry an unknown change blindly.',
+    scope: 'rootThread', schemaOwner: 'core', inputSchema: PREVIEW_MANAGE_SCHEMA, outputSchema: PREVIEW_MANAGE_OUTPUT_SCHEMA,
+    actionKinds: ['preview.control', 'preview.data.clear'],
+  },
+  {
+    identity: { namespace: null, name: 'data_inspect' },
+    description: 'Inspect bounded saved-translation cache counts and logical bytes, preview-session cache bytes and maintenance outcomes. No sites, cookies, source text or private paths. Receipts cover this Host lifetime only.',
+    scope: 'rootThread', schemaOwner: 'core', inputSchema: DATA_INSPECT_SCHEMA, outputSchema: DATA_INSPECT_OUTPUT_SCHEMA,
+    actionKinds: ['preview.data.inspect'],
+  },
+  {
+    identity: { namespace: null, name: 'data_manage' },
+    description: 'Request native-confirmed clearing of all saved translations or Tenon preview website data. Translation clearing retains live displays and pending results; fresh requests can cache again. Website clearing affects only the preview partition and reloads its guests; it never clears external browsers or Agent credentials. Inspect the returned operation outcome before reporting success.',
+    scope: 'rootThread', schemaOwner: 'core', inputSchema: DATA_MANAGE_SCHEMA, outputSchema: DATA_MANAGE_OUTPUT_SCHEMA,
+    actionKinds: ['preview.data.clear'],
+  },
   {
     identity: { namespace: null, name: 'memory_inspect' },
     description: 'Inspect bounded Memory status, a persistent root user Thread mode/revision, or the exact settlement of a Reset operation. Omitted threadId means the calling Thread. No Memory content or private-store access.',

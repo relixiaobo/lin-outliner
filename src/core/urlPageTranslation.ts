@@ -3,9 +3,7 @@ import { parseProviderQualifiedModel } from './agentModelId';
 
 export const URL_PAGE_TRANSLATE_COMMAND = 'url_page_translate_blocks';
 export const URL_PAGE_TRANSLATION_CANCEL_COMMAND = 'url_page_translation_cancel';
-export const LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL = 'lin:clear-preview-translation-cache';
 export const LIN_URL_PAGE_TRANSLATION_SHORTCUT_CHANNEL = 'lin:url-page-translation-shortcut';
-export const LIN_URL_PAGE_TRANSLATION_PREFERENCES_CHANGED_CHANNEL = 'lin:url-page-translation-preferences-changed';
 
 export const URL_PAGE_TRANSLATION_MAX_ACTIVE_BATCHES = 6;
 // The workspace supports four panes, each with one bounded translation pool.
@@ -47,14 +45,6 @@ export interface UrlPageTranslationRequest {
   blocks: UrlPageTranslationBlock[];
 }
 
-export interface UrlPageTranslationPreferences {
-  /** Provider-qualified model id. null means dynamically follow the Agent model. */
-  translationModel: string | null;
-  autoTranslateUrls: boolean;
-  /** Local EPUB content requires a separate explicit opt-in from remote webpages. */
-  autoTranslateEpubs: boolean;
-}
-
 export interface UrlPageTranslationCancelRequest {
   sessionId: string;
 }
@@ -90,24 +80,8 @@ export interface UrlPageTranslationCancelResponse {
   cancelled: boolean;
 }
 
-export type ClearPreviewTranslationCacheResult =
-  | { status: 'cleared' }
-  | { status: 'canceled' }
-  | { status: 'failed'; error: 'unavailable' | 'clear-failed' };
-
 export function isUrlPageTranslationCommand(command: string): command is UrlPageTranslationCommand {
   return command === URL_PAGE_TRANSLATE_COMMAND || command === URL_PAGE_TRANSLATION_CANCEL_COMMAND;
-}
-
-export function isUrlPageTranslationPreferences(value: unknown): value is UrlPageTranslationPreferences {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as Record<string, unknown>;
-  const model = record.translationModel;
-  return (
-    (model === null || isUrlPageTranslationModel(model))
-    && typeof record.autoTranslateUrls === 'boolean'
-    && typeof record.autoTranslateEpubs === 'boolean'
-  );
 }
 
 export function isUrlPageTranslationModel(value: unknown): value is string {

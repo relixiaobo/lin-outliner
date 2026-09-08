@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TranslationLanguage } from '../../../core/translationLanguage';
 import type { UrlPageTranslationFailureCode } from '../../../core/urlPageTranslation';
+import type { PreviewControls } from '../../../core/previewOperations';
 import {
   UrlPageTranslationController,
   type UrlPageTranslationStatus,
@@ -9,6 +10,9 @@ import type { UrlPageTranslationGuestLabels } from './urlPageTranslationGuest';
 import { subscribeUrlPageTranslationShortcut } from './urlPageTranslationShortcut';
 
 interface UseUrlPageTranslationOptions {
+  display?: PreviewControls['display'];
+  onDisplayToggle?: () => void;
+  onSourceChange?: (sourceId: string | undefined) => void;
   active: boolean;
   autoTranslate: boolean;
   labels: UrlPageTranslationGuestLabels;
@@ -19,6 +23,7 @@ interface UseUrlPageTranslationOptions {
 }
 
 export function useUrlPageTranslation({
+  display = 'automatic', onDisplayToggle, onSourceChange,
   active,
   autoTranslate,
   labels,
@@ -31,6 +36,7 @@ export function useUrlPageTranslation({
   completed: boolean;
   status: UrlPageTranslationStatus;
   toggle: () => void;
+  applyControls: (controls: PreviewControls, language: TranslationLanguage) => UrlPageTranslationStatus | null;
 } {
   const [completed, setCompleted] = useState(false);
   const [status, setStatus] = useState<UrlPageTranslationStatus>('off');
@@ -42,6 +48,12 @@ export function useUrlPageTranslation({
   const shortcutActiveRef = useRef(shortcutActive);
   const targetLanguageRef = useRef(targetLanguage);
   const onErrorRef = useRef(onError);
+  const displayRef = useRef(display);
+  const onDisplayToggleRef = useRef(onDisplayToggle);
+  const onSourceChangeRef = useRef(onSourceChange);
+  displayRef.current = display;
+  onDisplayToggleRef.current = onDisplayToggle;
+  onSourceChangeRef.current = onSourceChange;
   activeRef.current = active;
   autoTranslateRef.current = autoTranslate;
   modelRef.current = model;
@@ -57,7 +69,8 @@ export function useUrlPageTranslation({
     setStatus('off');
     if (!active || !webview) return;
     controllerRef.current = new UrlPageTranslationController(webview, {
-      autoTranslate: autoTranslateRef.current,
+      autoTranslate: autoTranslateRef.current && displayRef.current === 'automatic',
+      onSourceChange: (sourceId) => onSourceChangeRef.current?.(sourceId),
       model: modelRef.current,
       targetLanguage: targetLanguageRef.current,
       labels,
@@ -65,6 +78,7 @@ export function useUrlPageTranslation({
       onError: (error) => onErrorRef.current(error),
       onStatusChange: setStatus,
     });
+    controllerRef.current.setDisplayIntent(displayRef.current);
   }, [active, labels.retry, labels.translating]);
 
   useEffect(() => {
@@ -76,8 +90,9 @@ export function useUrlPageTranslation({
   }, [model]);
 
   useEffect(() => {
-    controllerRef.current?.setAutoTranslate(autoTranslate);
-  }, [autoTranslate]);
+    controllerRef.current?.setAutoTranslate(autoTranslate && display === 'automatic');
+    controllerRef.current?.setDisplayIntent(display);
+  }, [autoTranslate, display]);
 
   useEffect(() => () => {
     controllerRef.current?.destroy();
@@ -85,7 +100,20 @@ export function useUrlPageTranslation({
   }, []);
 
   const toggle = useCallback(() => {
-    controllerRef.current?.toggle();
+    const controller = controllerRef.current;
+    if (!controller) return;
+    if (onDisplayToggleRef.current) onDisplayToggleRef.current();
+    else controller.toggle();
+  }, []);
+
+  const applyControls = useCallback((controls: PreviewControls, language: TranslationLanguage): UrlPageTranslationStatus | null => {
+    const controller = controllerRef.current;
+    if (!controller) return null;
+    controller.setAutoTranslate(controls.automatic && controls.display === 'automatic');
+    controller.setTargetLanguage(language);
+    controller.setTranslationModel(controls.model);
+    controller.setDisplayIntent(controls.display);
+    return controller.currentStatus;
   }, []);
 
   useEffect(() => {
@@ -101,10 +129,10 @@ export function useUrlPageTranslation({
           return false;
         }
       }
-      controllerRef.current.toggle();
+      toggle();
       return true;
     });
-  }, [active]);
+  }, [active, toggle]);
 
-  return { attachWebview, completed, status, toggle };
+  return { attachWebview, completed, status, toggle, applyControls };
 }

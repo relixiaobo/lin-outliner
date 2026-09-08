@@ -57,7 +57,6 @@ export const TRANSLATION_LANGUAGES = [
 
 export type TranslationLanguage = (typeof TRANSLATION_LANGUAGES)[number]['code'];
 
-export const LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL = 'lin:translation-language-changed';
 
 const TRANSLATION_LANGUAGE_BY_CODE = new Map<TranslationLanguage, (typeof TRANSLATION_LANGUAGES)[number]>(
   TRANSLATION_LANGUAGES.map((language) => [language.code, language]),

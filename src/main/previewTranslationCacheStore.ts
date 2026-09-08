@@ -10,7 +10,7 @@ import {
 } from '../core/urlPageTranslation';
 import { PRIVATE_JSON_FILE_OPTIONS, writeJsonFile } from './jsonFileStore';
 
-const CACHE_DIRECTORY_VERSION = 2;
+const CACHE_DIRECTORY_VERSION = 3;
 const CACHE_INDEX_FILE = 'index.json';
 const CACHE_SHARD_SUFFIX = '.json';
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
@@ -35,8 +35,18 @@ export interface PreviewTranslationCacheBlock {
 }
 
 export interface PreviewTranslationCacheLookup {
-  epoch: number;
   hits: UrlPageTranslationItem[];
+}
+
+export interface PreviewTranslationCacheWriteTicket {
+  readonly sourceDigest: string;
+}
+
+export interface PreviewTranslationCacheStatus {
+  entries: Record<UrlPageTranslationContentKind, number>;
+  logicalBytes: number;
+  maxBytes: number;
+  maxEntries: number;
 }
 
 export type PreviewTranslationCacheOperation = 'clear' | 'load' | 'write';
@@ -50,6 +60,7 @@ export interface PreviewTranslationCacheStoreOptions {
   maxShardEntries?: number;
   now?: () => number;
   onError?: (operation: PreviewTranslationCacheOperation) => void;
+  onChanged?: () => void;
 }
 
 interface PersistedTranslatedCacheEntry {
@@ -66,22 +77,28 @@ interface PersistedUnchangedCacheEntry {
 type PersistedCacheEntry = PersistedTranslatedCacheEntry | PersistedUnchangedCacheEntry;
 
 interface PersistedCacheShard {
-  version: 2;
+  version: 3;
+  sourceDigest: string;
+  contentKind: UrlPageTranslationContentKind;
   entries: Record<string, PersistedCacheEntry>;
 }
 
 interface CacheManifestEntry {
+  sourceDigest: string;
+  contentKind: UrlPageTranslationContentKind;
   bytes: number;
   entries: number;
   oldestAccessedAt: number;
 }
 
 interface PersistedCacheManifest {
-  version: 2;
+  version: 3;
   scopes: Record<string, CacheManifestEntry>;
 }
 
 interface CacheShard {
+  sourceDigest: string;
+  contentKind: UrlPageTranslationContentKind;
   entries: Map<string, PersistedCacheEntry>;
   logicalBytes: number;
 }
@@ -100,6 +117,7 @@ export class PreviewTranslationCacheStore {
   private readonly maxShardEntries: number;
   private readonly now: () => number;
   private readonly onError?: (operation: PreviewTranslationCacheOperation) => void;
+  private readonly onChanged?: () => void;
   private readonly hotShards = new Map<string, CacheShard>();
   private readonly dirtyScopes = new Set<string>();
   private readonly manifest = new Map<string, CacheManifestEntry>();
@@ -107,7 +125,8 @@ export class PreviewTranslationCacheStore {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private initialized = false;
   private manifestDirty = false;
-  private epoch = 0;
+  private readonly writeTickets = new Set<PreviewTranslationCacheWriteTicket>();
+  private readonly invalidatedTickets = new WeakSet<PreviewTranslationCacheWriteTicket>();
 
   constructor(
     private readonly rootDir: string,
@@ -127,6 +146,7 @@ export class PreviewTranslationCacheStore {
     );
     this.now = options.now ?? Date.now;
     this.onError = options.onError;
+    this.onChanged = options.onChanged;
   }
 
   lookup(
@@ -136,7 +156,7 @@ export class PreviewTranslationCacheStore {
     return this.enqueue(async () => {
       await this.ensureInitialized();
       const scopeDigest = cacheScopeDigest(scope);
-      const shard = await this.loadShard(scopeDigest);
+      const shard = await this.loadShard(scopeDigest, cacheSourceIdentity(scope));
       const accessedAt = this.now();
       const hits: UrlPageTranslationItem[] = [];
       for (const block of blocks) {
@@ -153,7 +173,7 @@ export class PreviewTranslationCacheStore {
         this.dirtyScopes.add(scopeDigest);
         this.scheduleFlush();
       }
-      return { epoch: this.epoch, hits };
+      return { hits };
     });
   }
 
@@ -161,14 +181,15 @@ export class PreviewTranslationCacheStore {
     scope: PreviewTranslationCacheScope,
     blocks: readonly PreviewTranslationCacheBlock[],
     translations: readonly UrlPageTranslationItem[],
-    epoch: number,
+    ticket: PreviewTranslationCacheWriteTicket,
   ): Promise<boolean> {
     return this.enqueue(async () => {
       await this.ensureInitialized();
-      if (epoch !== this.epoch) return false;
+      if (!this.writeTickets.has(ticket) || this.invalidatedTickets.has(ticket)
+        || ticket.sourceDigest !== digestJson(scope.sourceId)) return false;
       const translationsById = new Map(translations.map((item) => [item.id, item.translation]));
       const scopeDigest = cacheScopeDigest(scope);
-      const shard = await this.loadShard(scopeDigest);
+      const shard = await this.loadShard(scopeDigest, cacheSourceIdentity(scope));
       const accessedAt = this.now();
       let changed = false;
       for (const block of blocks) {
@@ -186,11 +207,74 @@ export class PreviewTranslationCacheStore {
       }
       if (!changed) return false;
       shard.logicalBytes = shardLogicalBytes(shard.entries);
+      const metadata = cacheShardMetadata(shard);
+      if (metadata) this.manifest.set(scopeDigest, metadata);
       this.touchHotShard(scopeDigest, shard);
       this.dirtyScopes.add(scopeDigest);
       this.scheduleFlush();
+      try { this.onChanged?.(); } catch { /* Cache observation must not affect translation. */ }
       return true;
     });
+  }
+
+  beginWrite(sourceId: string): PreviewTranslationCacheWriteTicket {
+    const ticket = Object.freeze({ sourceDigest: digestJson(sourceId) });
+    this.writeTickets.add(ticket);
+    return ticket;
+  }
+
+  releaseWrite(ticket: PreviewTranslationCacheWriteTicket): void {
+    this.writeTickets.delete(ticket);
+  }
+
+  inspect(): Promise<PreviewTranslationCacheStatus> {
+    return this.enqueue(async () => {
+      await this.ensureInitialized();
+      const entries = { page: 0, caption: 0, document: 0 };
+      let logicalBytes = 0;
+      for (const metadata of this.manifest.values()) {
+        entries[metadata.contentKind] += metadata.entries;
+        logicalBytes += metadata.bytes;
+      }
+      return { entries, logicalBytes, maxBytes: this.maxBytes, maxEntries: this.maxEntries };
+    });
+  }
+
+  clearSource(sourceId: string, authorize?: () => Promise<void>): Promise<void> {
+    const sourceDigest = digestJson(sourceId);
+    return this.enqueue(async () => {
+      await this.ensureInitialized();
+      await authorize?.();
+      this.invalidateWrites(sourceDigest);
+      const scopes = new Set([
+        ...[...this.manifest].filter(([, entry]) => entry.sourceDigest === sourceDigest).map(([scope]) => scope),
+        ...[...this.hotShards].filter(([, shard]) => shard.sourceDigest === sourceDigest).map(([scope]) => scope),
+      ]);
+      let failed = false;
+      for (const scope of scopes) {
+        try {
+          await rm(this.shardPath(scope), { force: true });
+          this.manifest.delete(scope);
+          this.hotShards.delete(scope);
+          this.dirtyScopes.delete(scope);
+        } catch { failed = true; }
+      }
+      this.manifestDirty = true;
+      try {
+        await writeJsonFile(this.indexPath(), serializeManifest(this.manifest), PRIVATE_JSON_FILE_OPTIONS);
+        this.manifestDirty = false;
+      } catch { failed = true; }
+      if (failed) {
+        this.onError?.('clear');
+        throw new Error('Content translation cache clear failed.');
+      }
+    });
+  }
+
+  private invalidateWrites(sourceDigest?: string): void {
+    for (const ticket of this.writeTickets) {
+      if (!sourceDigest || ticket.sourceDigest === sourceDigest) this.invalidatedTickets.add(ticket);
+    }
   }
 
   flushNow(): Promise<void> {
@@ -201,9 +285,11 @@ export class PreviewTranslationCacheStore {
     });
   }
 
-  clear(): Promise<void> {
+  clear(authorize?: () => Promise<void>): Promise<void> {
     this.clearFlushTimer();
     return this.enqueue(async () => {
+      await authorize?.();
+      this.invalidateWrites();
       await this.removeStaleClearTombstones();
       const tombstone = path.join(
         path.dirname(this.rootDir),
@@ -234,7 +320,6 @@ export class PreviewTranslationCacheStore {
         }
       }
 
-      this.epoch += 1;
       this.hotShards.clear();
       this.dirtyScopes.clear();
       this.manifest.clear();
@@ -320,7 +405,7 @@ export class PreviewTranslationCacheStore {
     }
   }
 
-  private async loadShard(scope: string): Promise<CacheShard> {
+  private async loadShard(scope: string, identity: Pick<CacheShard, 'sourceDigest' | 'contentKind'> | undefined = this.manifest.get(scope)): Promise<CacheShard> {
     const cached = this.hotShards.get(scope);
     if (cached) {
       this.touchHotShard(scope, cached);
@@ -330,7 +415,11 @@ export class PreviewTranslationCacheStore {
     let parsed: ParsedShard | null = null;
     try {
       parsed = parseShard(JSON.parse(await readFile(this.shardPath(scope), 'utf8')) as unknown);
+      if (identity && (parsed.shard.sourceDigest !== identity.sourceDigest || parsed.shard.contentKind !== identity.contentKind)) {
+        throw new Error('Cache shard identity mismatch.');
+      }
     } catch (error) {
+      parsed = null;
       if (isNotFoundError(error)) {
         if (this.manifest.delete(scope)) this.manifestDirty = true;
       } else {
@@ -340,7 +429,8 @@ export class PreviewTranslationCacheStore {
         this.manifestDirty = true;
       }
     }
-    const shard = parsed?.shard ?? emptyShard();
+    if (!identity) throw new Error('Cache source identity is unavailable.');
+    const shard = parsed?.shard ?? emptyShard(identity);
     if (parsed) {
       const previousSize = shard.entries.size;
       const previousBytes = shard.logicalBytes;
@@ -531,8 +621,12 @@ function normalizedTranslation(value: unknown): string | null {
     : null;
 }
 
-function emptyShard(): CacheShard {
-  return { entries: new Map(), logicalBytes: 0 };
+function cacheSourceIdentity(scope: PreviewTranslationCacheScope) {
+  return { sourceDigest: digestJson(scope.sourceId), contentKind: scope.contentKind };
+}
+
+function emptyShard(identity: Pick<CacheShard, 'sourceDigest' | 'contentKind'>): CacheShard {
+  return { ...identity, entries: new Map(), logicalBytes: 0 };
 }
 
 function parseManifest(value: unknown): Map<string, CacheManifestEntry> {
@@ -545,14 +639,18 @@ function parseManifest(value: unknown): Map<string, CacheManifestEntry> {
     const bytes = finiteNonNegative(raw.bytes);
     const entries = finiteNonNegativeInteger(raw.entries);
     const oldestAccessedAt = finiteNonNegative(raw.oldestAccessedAt);
-    if (bytes === null || entries === null || oldestAccessedAt === null || entries === 0) continue;
-    result.set(scope, { bytes, entries, oldestAccessedAt });
+    if (bytes === null || entries === null || oldestAccessedAt === null || entries === 0
+      || typeof raw.sourceDigest !== 'string' || !DIGEST_PATTERN.test(raw.sourceDigest)
+      || !isContentKind(raw.contentKind)) continue;
+    result.set(scope, { bytes, entries, oldestAccessedAt, sourceDigest: raw.sourceDigest, contentKind: raw.contentKind });
   }
   return result;
 }
 
 function parseShard(value: unknown): ParsedShard {
-  if (!isRecord(value) || value.version !== CACHE_DIRECTORY_VERSION || !isRecord(value.entries)) {
+  if (!isRecord(value) || value.version !== CACHE_DIRECTORY_VERSION || !isRecord(value.entries)
+    || typeof value.sourceDigest !== 'string' || !DIGEST_PATTERN.test(value.sourceDigest)
+    || !isContentKind(value.contentKind)) {
     throw new Error('Invalid preview translation cache shard.');
   }
   const entries = new Map<string, PersistedCacheEntry>();
@@ -586,7 +684,7 @@ function parseShard(value: unknown): ParsedShard {
   }
   return {
     dirty,
-    shard: { entries, logicalBytes: shardLogicalBytes(entries) },
+    shard: { sourceDigest: value.sourceDigest, contentKind: value.contentKind, entries, logicalBytes: shardLogicalBytes(entries) },
   };
 }
 
@@ -599,7 +697,7 @@ function serializeManifest(manifest: ReadonlyMap<string, CacheManifestEntry>): P
 function serializeShard(shard: CacheShard): PersistedCacheShard {
   const entries: Record<string, PersistedCacheEntry> = {};
   for (const [digest, entry] of shard.entries) entries[digest] = entry;
-  return { version: CACHE_DIRECTORY_VERSION, entries };
+  return { version: CACHE_DIRECTORY_VERSION, sourceDigest: shard.sourceDigest, contentKind: shard.contentKind, entries };
 }
 
 function compactShard(shard: CacheShard, maxEntries: number, maxBytes: number): void {
@@ -621,6 +719,8 @@ function cacheShardMetadata(shard: CacheShard): CacheManifestEntry | null {
     oldestAccessedAt = Math.min(oldestAccessedAt, entry.accessedAt);
   }
   return {
+    sourceDigest: shard.sourceDigest,
+    contentKind: shard.contentKind,
     bytes: shard.logicalBytes,
     entries: shard.entries.size,
     oldestAccessedAt,
@@ -703,6 +803,10 @@ function finiteNonNegativeInteger(value: unknown): number | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isContentKind(value: unknown): value is UrlPageTranslationContentKind {
+  return value === 'page' || value === 'caption' || value === 'document';
 }
 
 function isNotFoundError(error: unknown): boolean {

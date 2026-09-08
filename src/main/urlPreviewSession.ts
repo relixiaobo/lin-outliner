@@ -6,6 +6,7 @@ import type {
 } from 'electron';
 import { normalizePreviewHttpUrl } from '../core/preview';
 import { isRendererPermissionAllowed } from './rendererPermissions';
+import type { DataOperationView } from '../core/previewOperations';
 
 type PreviewSession = Pick<
   Session,
@@ -62,14 +63,18 @@ export function createUrlPreviewWindowOpenHandler(
   };
 }
 
-export async function clearUrlPreviewSessionData(previewSession: PreviewSession): Promise<void> {
-  await previewSession.closeAllConnections();
-  await Promise.all([
-    previewSession.clearAuthCache(),
-    previewSession.clearCache(),
-    previewSession.clearStorageData(),
-  ]);
-  await previewSession.cookies.flushStore();
+export async function clearUrlPreviewSessionData(previewSession: PreviewSession): Promise<DataOperationView['steps']> {
+  const steps: DataOperationView['steps'] = [];
+  const run = async (name: string, action: () => Promise<void>) => {
+    try { await action(); steps.push({ name, state: 'completed' }); }
+    catch { steps.push({ name, state: 'failed' }); }
+  };
+  await run('close_connections', () => previewSession.closeAllConnections());
+  await run('http_auth', () => previewSession.clearAuthCache());
+  await run('browser_cache', () => previewSession.clearCache());
+  await run('site_storage', () => previewSession.clearStorageData());
+  await run('flush_cookies', () => previewSession.cookies.flushStore());
+  return steps;
 }
 
 export async function flushUrlPreviewSession(previewSession: PreviewSession | null): Promise<void> {

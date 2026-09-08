@@ -7,7 +7,6 @@ import {
 } from '../../src/core/translationLanguage';
 import {
   isUrlPageTranslationModel,
-  isUrlPageTranslationPreferences,
 } from '../../src/core/urlPageTranslation';
 
 describe('URL page translation languages', () => {
@@ -42,18 +41,9 @@ describe('URL page translation languages', () => {
   });
 });
 
-describe('URL page translation preferences', () => {
+describe('URL page translation model references', () => {
   test('accepts only provider-qualified explicit models', () => {
     expect(isUrlPageTranslationModel('openai/gpt-4.1-mini')).toBe(true);
     expect(isUrlPageTranslationModel('gpt-4.1-mini')).toBe(false);
-    expect(isUrlPageTranslationPreferences({
-      translationModel: null,
-      autoTranslateEpubs: false,
-      autoTranslateUrls: false,
-    })).toBe(true);
-    expect(isUrlPageTranslationPreferences({
-      translationModel: null,
-      autoTranslateUrls: false,
-    })).toBe(false);
   });
 });
