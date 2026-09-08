@@ -2,7 +2,7 @@
 
 **Shape:** One complete feature. It composes Tool Tasks, Goals, Skills, and
 project check declarations into a factual, bounded correction workflow under
-the [Agent Capability-First Development Workbench](project-development-workbench.md).
+the [Agent Capability-First Development Workbench](../project-development-workbench.md).
 
 ## Goal
 
@@ -171,7 +171,7 @@ snapshot. A projectless Goal may use several directories in one conversation.
 ### Model context and budgets
 
 Use the shared
-[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)
+[Execution Context Publication](../../spec/agent-model-runtime.md#execution-context-publication)
 contract. A check's canonical call/result is its outcome evidence. Publish new
 applicability or required-check changes as scoped deltas; do not rewrite a
 historical `passed` result to `stale` inside an earlier model request. Repeated
