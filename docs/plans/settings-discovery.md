@@ -9,10 +9,10 @@ source-ownership contracts. The target is the existing Electron application;
 Apple's macOS interaction conventions and Tenon's
 [design system](../spec/design-system.md) govern every changed surface.
 
-The delivery shape is **two independently complete PRs**: G1 replaces shared
-configuration contracts in the functioning current UI; G2 delivers the complete
-discovery experience and retires the category shell. G1 is a working refactor,
-not unused interfaces that wait for G2.
+The delivery shape is **one complete feature in one PR**. Settle shared domain
+contracts first, then build the discovery consumers and retire the category
+shell within that same PR. The shared-type and consumer cutover is coordinated
+as one delivery, as explicitly directed by the PM.
 
 ## Non-goals
 
@@ -29,7 +29,7 @@ their domain semantics.
 `AgentSettingsView` eagerly queries Providers, capabilities, and Skills, owns
 their mutation/error state, and subscribes to broad Settings changes.
 `AgentProviderSettingsView` combines model information with runtime/delegation
-preferences. These concrete ownership seams must be settled before G2 consumers.
+preferences. These concrete ownership seams must be settled before the discovery consumers.
 `SettingsOpenTarget` still requires categories and secondary pages; several
 Settings-surface paragraphs also describe retired Roles. Replace those premises
 when the corresponding code changes, without restoring retired features.
@@ -112,15 +112,15 @@ Do not imitate SwiftUI with screenshots, ornamental panels, or decorative motion
 
 ### Delivery, Files, Risks, And Collisions
 
-**G1 — Domain contract refactor:** split the composite provider/runtime projection
+**Build order within the single PR — domain contracts first:** split the composite provider/runtime projection
 and events, move state/queues to domain consumers, and update all current callers
-in one working refactor. The current UI remains usable. Isolate the protected
-`src/core/types.ts` edit here; main integrates this coordinated contract before G2.
-**G2 — Complete discovery:** implement the flows above, direct manager windows,
+in one working refactor. The current UI remains usable. Coordinate the protected
+`src/core/types.ts` edit and all consumers in the same PR.
+**Then complete discovery:** implement the flows above, direct manager windows,
 source-aware controls/search/reset, exact sender routing, and old-shell retirement.
-Both PRs include their owning specification changes and regression evidence.
+The PR includes all owning specification changes and regression evidence.
 
-Expected files: `src/core/types.ts` (G1 only), `src/core/settingsWindow.ts`,
+Expected files: `src/core/types.ts`, `src/core/settingsWindow.ts`,
 `src/main/configuration/`, `src/main/agent/capabilities/agentSettings.ts`,
 `src/main/desktopHost.ts`, `src/main/hostPlatform/windowApplicationHost.ts`,
 `src/preload/index.ts`, renderer API/entry/window/domain components, Composer and
@@ -132,14 +132,13 @@ The main risks are stale notification consumers, widened window authority,
 accidental operation cancellation, and a visually flat page that still eagerly
 loads every domain. The acceptance checks target those boundaries directly.
 Open #653/#654 currently change recovery/session-record plans only; their future
-Host/preload scope intersects G2. #655 currently changes its verification plan
+Host/preload scope intersects the window integration. #655 currently changes its verification plan
 and claims execution contracts/ThreadService, not these Settings UI consumers.
 There is no current file collision; refresh remote scopes before each claim and
 coordinate any newly overlapping shared contract through the PR artifacts.
 
 ## Open questions
 
-Ratify the independent-manager window model and the G1/G2 delivery order before
-implementation. The shared-type edit is isolated in G1 under repository ownership
-rules. Window pixel dimensions and private helper names are reversible local
-choices; they do not require another product decision.
+The PM has selected one complete PR for the domain-contract and UI cutover.
+No unresolved product question blocks implementation. Window pixel dimensions
+and private helper names are reversible local choices.

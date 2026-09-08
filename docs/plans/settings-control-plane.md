@@ -506,10 +506,9 @@ Protected shared interfaces still follow the repository's coordination rule.
 | F. Configurable shortcuts | Full file/UI/Agent remapping, registry/hint parity, physical recording, safe system registration | A; shortcut and launcher owners; FR-8, FR-9 |
 | G. [Unified settings discovery](settings-discovery.md) | Final flat search/modified/reset UI, direct domain destinations, no nested Settings shell or aggregate loading/state | A-F; coordinated domain-contract refactor, then complete discovery; Settings routing/components/preload and narrow owner events; FR-10, FR-11 |
 
-G specializes this row into two independently complete PRs: a working domain
-contract refactor consumed by the current UI, followed by the complete discovery
-feature. This isolates the protected shared-type cutover before its new visual
-consumers. The linked design owns G's macOS flows and acceptance details.
+G is one complete PR: settle the shared domain contracts before building the
+new visual consumers within the same delivery. The linked design owns G's
+macOS flows and acceptance details.
 
 E1-E3 together are Unit E. Each is a complete owner-sized feature, not a
 foundation for another E feature. Their default order is E1, E2, then E3; F has
