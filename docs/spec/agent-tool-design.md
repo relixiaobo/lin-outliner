@@ -588,9 +588,11 @@ existing execution-context mechanism. Each exact Bash command and canonical cwd
 pair identifies one declaration; ambiguous pairs, incomplete discovery, and a
 profile without required checks are unavailable prerequisites. Each check is
 one ordinary Tool Task with its own immutable address, context snapshot, process
-receipt and output. Checks initially run sequentially. Child/delegated tasks
-keep their own admitted context and capability ceiling; an ancestor's active
-verification Goal can bind a matching check.
+receipt and output. The supervisor attaches output capture before yielding to
+identity publication or private-control transfer, so a fast exit cannot silently
+drain output needed for failure comparison. Checks initially run sequentially.
+Child/delegated tasks keep their own admitted context and capability ceiling;
+an ancestor's active verification Goal can bind a matching check.
 
 `get_goal` revalidates source evidence and returns `verification` with the run
 and revision, attempts used/limit, current check list, required/optional flags,

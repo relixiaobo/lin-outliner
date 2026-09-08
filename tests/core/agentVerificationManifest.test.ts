@@ -72,6 +72,11 @@ describe('verification source manifests', () => {
     const staged = await captureSourceManifest([directory], definitions(directory));
     expect(staged.digest).not.toBe(branch.digest);
     expect(staged.entries).toEqual(branch.entries);
+    git('update-index', '--assume-unchanged', 'file');
+    const flags = await captureSourceManifest([directory], definitions(directory));
+    expect(flags.roots[0]?.indexDigest).not.toBe(staged.roots[0]?.indexDigest);
+    expect(flags.entries).toEqual(staged.entries);
+    git('update-index', '--no-assume-unchanged', 'file');
     git('commit', '-qm', 'Staged');
     expect((await captureSourceManifest([directory], definitions(directory))).roots[0]?.head).not.toBe(branch.roots[0]?.head);
   });

@@ -88,7 +88,35 @@ export async function captureSourceManifest(
           if (error.code === 1 && ref !== null) return null;
           throw error;
         });
-        indexDigest = executionDigest(await git(['ls-files', '--stage', '-z']));
+        const indexPath = path.resolve(directory, (await git(['rev-parse', '--git-path', 'index'])).trim());
+        const indexStat = await stat(indexPath, { bigint: true }).catch((error) => {
+          if (error.code === 'ENOENT') return null;
+          throw error;
+        });
+        let indexFileDigest: string | null = null;
+        if (indexStat) {
+          if (!indexStat.isFile() || indexStat.size > BigInt(maxBytes - measuredBytes)) throw new VerificationUnavailable('Git index capture limit exceeded.');
+          const handle = await open(indexPath, constants.O_RDONLY | constants.O_NONBLOCK);
+          try {
+            if (!sameFile(indexStat, await handle.stat({ bigint: true }))) throw new VerificationUnavailable('Git index changed before capture.');
+            const digest = createHash('sha256');
+            const buffer = Buffer.alloc(256 * 1024);
+            let bytes = 0;
+            while (true) {
+              budget();
+              const read = await handle.read(buffer, 0, buffer.length, null);
+              if (!read.bytesRead) break;
+              bytes += read.bytesRead;
+              measuredBytes += read.bytesRead;
+              digest.update(buffer.subarray(0, read.bytesRead));
+            }
+            if (BigInt(bytes) !== indexStat.size || !sameFile(indexStat, await handle.stat({ bigint: true }))
+              || !sameFile(indexStat, await stat(indexPath, { bigint: true }))) throw new VerificationUnavailable('Git index changed during capture.');
+            indexFileDigest = digest.digest('hex');
+          } finally { await handle.close(); }
+        }
+        // Raw index state includes flags such as assume-unchanged that --stage omits.
+        indexDigest = executionDigest({ entries: await git(['ls-files', '--stage', '-z']), indexFileDigest });
       }
       roots.push({ path: directory, identity: `${identity.dev}:${identity.ino}`, worktree: scope.worktree,
         gitDirectory: scope.gitDirectory, head, ref, indexDigest });

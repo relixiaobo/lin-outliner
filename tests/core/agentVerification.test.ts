@@ -201,6 +201,7 @@ describe('source-bound verification using real Tool Tasks', () => {
     expect(await f.payloads.readContext(owner, baselineRef)).toBeNull();
     expect((await f.payloads.readContext(OWNER, baselineRef))?.kind).toBe('verificationSource');
     expect(f.goals.clear(OWNER)).toBe(true);
+    expect(f.goals.read(OWNER)).toBeNull();
   });
 
   test('worktree collision records an admission stop without running the check', async () => {

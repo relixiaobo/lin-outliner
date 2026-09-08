@@ -411,7 +411,7 @@ export class GoalStore {
 
   clear(threadId: ThreadId): boolean {
     return this.transaction(() => (
-      this.db.prepare('DELETE FROM goals WHERE thread_id = ?').run(threadId).changes === 1
+      this.db.prepare('DELETE FROM goals WHERE thread_id = ?').run(threadId).changes > 0
     ));
   }
 
