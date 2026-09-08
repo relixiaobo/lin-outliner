@@ -572,6 +572,106 @@ rejected before process launch, so the public CLI cannot bypass worktree policy.
 - `automation_update`: create, update, view, or delete a host-owned Automation
   on a root Thread
 
+#### Source-bound verification
+
+An explicitly requested coding Goal can opt in through
+`create_goal({ objective, verification: { roots, maxAttempts } })`. `roots` is
+one to eight absolute directory roots; the Host canonicalizes them. The attempt
+limit is 1–20. The same limit caps automatic Goal continuation admissions,
+so never starting a check cannot produce an unbounded cross-Turn loop. A Project is optional. Ordinary Goals keep their existing
+behavior, and verification requires a persistent Chat. The built-in
+`verification` Skill describes the procedural workflow without adding an
+execution or permission surface.
+
+Checks come from the enclosing `.tenon/checks.json` profiles discovered by the
+existing execution-context mechanism. Each exact Bash command and canonical cwd
+pair identifies one declaration; ambiguous pairs, incomplete discovery, and a
+profile without required checks are unavailable prerequisites. Each check is
+one ordinary Tool Task with its own immutable address, context snapshot, process
+receipt and output. The supervisor attaches output capture before yielding to
+identity publication or private-control transfer, so a fast exit cannot silently
+drain output needed for failure comparison. Checks initially run sequentially.
+Child/delegated tasks keep their own admitted context and capability ceiling;
+an ancestor's active verification Goal can bind a matching check.
+Such a check may execute inside its own live `delegate` launcher and
+`delegate_execution` Host containers. The exception follows immutable inherited
+claim edges validated at Task admission, the matching child Turn, and direct
+Thread ancestry; producer labels alone grant no exception. Nested coordinating
+pairs follow the same rule. Actual child writes, native processes and unrelated
+unfinished work remain fenced. Inspection preserves the check's applicability
+while its containers finish, but reports verification as running and waits for
+their settlement before completing the Goal. Unsuccessful coordinating
+settlement stops verification. Historical claim ancestry remains evidence after
+the Session stops admitting new inherited claims.
+
+`get_goal` revalidates source evidence and returns `verification` with the run
+and revision, attempts used/limit, current check list, required/optional flags,
+canonical outcomes, applicability, bounded output, changed-path preview, source
+reference, limitations and stop reason. Required checks must all be passed and
+current at one revision before `update_goal(complete)` accepts completion.
+Optional failures remain visible. A missing, running, failed, stopped, lost,
+stale or unavailable required check cannot satisfy completion. A historical
+passing receipt is never rewritten when its applicability changes.
+
+Each attempt references a full immutable source manifest in the existing
+context-payload store. Capture includes canonical root/worktree identities,
+Git HEAD/ref and index state, sorted file paths/kinds/modes/lengths/digests,
+untracked and ignored content, explicit deletion entries, and symlink target
+identity/content. Non-Git roots use the same file capture. Secret contents are
+not persisted. Profile commands, required flags, inputs and exclusions are part
+of the definition digest. Absolute inputs extend the measured roots; external
+symlink targets must be declared, and cycles or unsupported inputs are
+unavailable. Only Git administration is structurally excluded; every other
+exclusion is an explicit profile limitation.
+Explicit input patterns prune unrelated subtrees before resolving their entries
+or validating symlinks, while ancestors needed to reach selected descendants
+remain traversable. A parent inferred solely to capture an absolute file input
+does not select that file's siblings; an explicitly declared directory root
+still carries its own scope.
+
+Two complete capture passes must agree. The initial limits are 32 measured
+roots, 20,000 entries, 64 MiB of reads across both passes and five seconds.
+Each input may expand to at most 256 cross-segment glob alternatives.
+Unreadable paths, concurrent changes or exhausted capture limits produce
+unavailable evidence, never a partial successful fingerprint. These are
+observations of local inputs, not isolation against invisible external
+write-and-restore races or proof about unmeasured services.
+
+Capture runs at baseline admission, before/after each check, and aggregation.
+Known typed writes invalidate overlapping revisions before side effects.
+Unclassified processes in a workflow invalidate it even with another cwd.
+Unfinished workflow processes and overlapping typed mutations fence new
+baselines and completion until their canonical Tool Tasks settle. A check's own
+validated coordinating containers permit check admission as described above.
+This fence is derived from nonterminal Task records across revisions and
+coordinator restart, including Tasks admitted before the first check.
+Independent mutation settlement also invalidates the latest revision, even if
+the Task was never bound to a check.
+Observed writes followed by restoration cannot revive a revision. A check that
+changes included source invalidates itself. Any source/profile change,
+invalidation or repeated settled check starts a fresh bounded attempt and
+requires **all required checks** to rerun. Thus A-pass/B-fail at R0 followed by
+correction and B-pass at R1 leaves A outstanding, including across restart.
+
+Goal storage owns append-only attempt metadata, failure lineage, token usage at
+attempt admission, changed paths, invalidations, resumptions and evidence
+references. Tool Tasks remain the sole process-result owner. Canonical task
+bindings and settled source evidence cannot be rewritten. Source evidence is
+retained per Goal generation; deleting the owning Chat reclaims its private
+evidence, while published context dependencies obey ordinary history retention.
+
+Equivalent failures use check identity, exit/Host reason and normalized bounded
+diagnostics. A repeated failure, exhausted attempts/tokens, missing prerequisite,
+user stop, Host admission failure or Turn failure stops automatic continuation.
+Restart reconciles Tool Tasks first and revalidates source; missing terminal
+evidence remains lost/unavailable. It never replays an edit. A still-valid
+revision may resume only missing checks. After a new explicit user request to
+resume a stopped run, `create_goal` with the same objective, roots and limits
+admits a fresh attempt within the original remaining budget. Feature-generated
+continuations and the stopped Turn cannot renew admission or reset budgets.
+Exhausted budgets require a separately requested Goal. Verification does not
+authorize commit, push, PR creation, merge, deployment or publication.
+
 `request_user_input` is not an authorization tool. It supports an optional
 bounded auto-resolution timeout only for useful, non-blocking questions. Each
 question has a stable ID, short header, one sentence, and two or three mutually

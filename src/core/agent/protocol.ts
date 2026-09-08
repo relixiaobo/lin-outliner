@@ -845,6 +845,7 @@ export const CONTEXT_EVIDENCE_KINDS = Object.freeze([
   'inheritedContext',
   'taskExecutionContext',
   'executionContextObservation',
+  'verificationObservation',
   'executionContextPublication',
   'automationDispatch',
 ] as const);
@@ -1085,6 +1086,19 @@ export interface ExecutionContextPublicationPayload {
   readonly text: string;
 }
 
+export interface VerificationSourcePayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'verificationSource';
+  readonly manifest: import('./verification').VerificationSourceManifest;
+}
+
+export interface VerificationObservationPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'verificationObservation';
+  readonly evidenceRefs: readonly ThreadContextPayloadReference[];
+  readonly facts: readonly import('./executionContext').ExecutionContextFact[];
+}
+
 export interface AutomationDispatchContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'automationDispatch';
@@ -1180,6 +1194,8 @@ export interface ToolCallArgumentsContextPayload {
 }
 
 export type ThreadContextPayload =
+  | VerificationSourcePayload
+  | VerificationObservationPayload
   | AutomationDispatchContextPayload
   | TaskExecutionContextPayload
   | ExecutionContextObservationPayload
@@ -1201,6 +1217,7 @@ export type ContextPayloadKind = ThreadContextPayload['kind'];
 
 export const CONTEXT_PAYLOAD_KINDS = Object.freeze([
   ...CONTEXT_EVIDENCE_KINDS,
+  'verificationSource',
   'compactionSummary',
   'compactionRestoredState',
   'compactionInstructions',

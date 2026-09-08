@@ -18,6 +18,7 @@ import type {
 } from '../../../../core/agent/protocol';
 import { uuidV7 } from '../../uuid';
 import { AgentToolFailure } from '../../AgentToolFailure';
+import type { VerificationCoordinator } from '../../verification/VerificationCoordinator';
 import {
   GoalStore,
   type GoalContinuationKind,
@@ -51,6 +52,7 @@ export class GoalExtension implements AgentCoreExtension {
   constructor(
     private readonly store: GoalStore,
     private readonly publish: NotificationPublisher,
+    private readonly verification?: VerificationCoordinator,
   ) {}
 
   bindHost(host: ThreadServiceExtensionHost, readThread: ThreadReader, readTurn: TurnReader): void {
@@ -65,16 +67,34 @@ export class GoalExtension implements AgentCoreExtension {
 
   async create(input: CreateGoalInput, turnId: TurnId | null = null): Promise<CreateGoalResponse> {
     const thread = this.requireThread(input.threadId);
-    const record = thread.ephemeral
+    if (input.verification && !this.verification) throw new Error('Verification is unavailable.');
+    if (input.verification && thread.ephemeral) throw new Error('Verification requires a persistent Chat.');
+    const prior = !thread.ephemeral ? this.store.readVerification(input.threadId) : null;
+    if (input.verification && prior?.stopped && this.read(input.threadId)?.goal.status !== 'complete') {
+      const current = this.store.read(input.threadId)!;
+      const turn = turnId ? this.readTurn?.(input.threadId, turnId) : null;
+      if (!turn || current.goal.objective !== input.objective.trim() || (input.tokenBudget !== undefined && input.tokenBudget !== current.goal.tokenBudget)) {
+        throw new Error('Resume the same verification Goal from a fresh user Turn without changing its objective or budget.');
+      }
+      const verification = await this.verification!.resume(input.threadId, input.verification, turn);
+      const goal = this.store.read(input.threadId)!.goal;
+      await this.publish({ type: 'goal/updated', threadId: input.threadId, turnId, goal });
+      return { goal, verification };
+    }
+    thread.ephemeral
       ? this.createEphemeral(input.threadId, input.objective, input.tokenBudget ?? null)
       : this.store.create(input.threadId, input.objective, input.tokenBudget ?? null);
-    await this.publish({ type: 'goal/updated', threadId: input.threadId, turnId, goal: record.goal });
-    return { goal: record.goal };
+    const verification = input.verification ? await this.verification?.configure(input.threadId, input.verification) : undefined;
+    const goal = this.read(input.threadId)!.goal;
+    await this.publish({ type: 'goal/updated', threadId: input.threadId, turnId, goal });
+    return { goal, ...(verification ? { verification } : {}) };
   }
 
   async update(input: UpdateGoalInput, turnId: TurnId | null = null): Promise<UpdateGoalResponse> {
     const thread = this.requireThread(input.threadId);
-    const record = thread.ephemeral
+    const verifiedComplete = input.status === 'complete' && await this.verification?.completeGoal(input.threadId);
+    if (input.status === 'blocked') this.verification?.stop(input.threadId, 'The Agent reported that the Goal is blocked.');
+    const record = verifiedComplete ? this.store.read(input.threadId)! : thread.ephemeral
       ? this.updateEphemeral(input.threadId, input.status)
       : this.store.updateFromAgent(input.threadId, input.status);
     await this.publish({ type: 'goal/updated', threadId: input.threadId, turnId, goal: record.goal });
@@ -94,10 +114,12 @@ export class GoalExtension implements AgentCoreExtension {
     const record = thread.ephemeral
       ? this.addEphemeralUsage(threadId, tokens, timeSeconds, terminalStatus)
       : this.store.addUsage(threadId, tokens, timeSeconds, Date.now(), terminalStatus);
-    await this.publish({ type: 'goal/updated', threadId, turnId, goal: record.goal });
+    if (record.goal.status === 'budgetLimited') this.verification?.stop(threadId, 'The Goal token budget is exhausted.');
+    await this.publish({ type: 'goal/updated', threadId, turnId, goal: this.read(threadId)!.goal });
   }
 
   async clear(threadId: ThreadId): Promise<void> {
+    await this.verification?.clearEvidence(threadId);
     const ephemeralRemoved = this.ephemeralGoals.delete(threadId);
     this.ephemeralContinuationStates.delete(threadId);
     const removed = ephemeralRemoved || this.store.clear(threadId);
@@ -135,7 +157,41 @@ export class GoalExtension implements AgentCoreExtension {
     }
   }
 
+  async prepareHistoryRollback(context: import('../../../../core/agent/extensions').ThreadHistoryRollbackContext): Promise<void> {
+    this.verification?.stop(context.threadId, 'Thread history rollback requires explicit verification resumption.');
+  }
+
+  async abortHistoryRollback(): Promise<void> {
+    // A prepared stop remains conservative even if rollback admission later fails.
+  }
+
+  async commitHistoryRollback(): Promise<void> {
+    // Preparation already durably fenced continuation; settlement is idempotent.
+  }
+
+  async onTurnAborted(thread: Thread, turn: Turn): Promise<void> {
+    this.verification?.stop(thread.id, 'The user stopped the verification Turn.');
+    await this.publishVerificationStop(thread.id, turn.id);
+  }
+
+  async onTurnError(thread: Thread, turn: Turn): Promise<void> {
+    this.verification?.stop(thread.id, `Turn failed: ${turn.error?.message ?? 'execution or context capacity unavailable'}`);
+    await this.publishVerificationStop(thread.id, turn.id);
+  }
+
+  async onTurnStopped(thread: Thread, turn: Turn): Promise<void> {
+    if (turn.status === 'failed') await this.onTurnError(thread, turn);
+    else await this.publishVerificationStop(thread.id, turn.id);
+  }
+
+  private async publishVerificationStop(threadId: ThreadId, turnId: TurnId | null): Promise<void> {
+    if (!this.verification?.isStopped(threadId)) return;
+    const record = this.read(threadId);
+    if (record) await this.publish({ type: 'goal/updated', threadId, turnId, goal: record.goal });
+  }
+
   private async continueGoal(thread: Thread): Promise<void> {
+    if (this.verification?.isStopped(thread.id)) return;
     let record = this.read(thread.id);
     if (
       !record
@@ -168,6 +224,11 @@ export class GoalExtension implements AgentCoreExtension {
     }
     if (reservation && (!state || !canAdmit(record, state, reservation.kind))) {
       this.releaseContinuation(thread, record.generation, reservation.turnId);
+      return;
+    }
+
+    if (this.verification && !this.verification.allowContinuation(thread.id, state?.admittedCount ?? 0)) {
+      await this.publishVerificationStop(thread.id, null);
       return;
     }
 

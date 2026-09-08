@@ -465,6 +465,18 @@ const threadGoalOutputSchema = objectSchema({
   'updatedAt',
 ]);
 
+const verificationViewSchema = objectSchema({
+  verificationRunId: stringSchema(), revision: nullableSchema(integerSchema()), attemptsUsed: integerSchema(), maxAttempts: integerSchema(),
+  state: enumSchema(['pending', 'running', 'passed', 'failed', 'stopped', 'unavailable']), stopReason: nullableSchema(stringSchema()),
+  changedPaths: outputArraySchema(outputStringSchema()), limitations: outputArraySchema(outputStringSchema()),
+  sourceStateRef: nullableSchema(objectSchema({ id: stringSchema(), mimeType: stringSchema(), byteLength: integerSchema(), schemaVersion: integerSchema(), kind: stringSchema() },
+    ['id', 'mimeType', 'byteLength', 'schemaVersion', 'kind'])),
+  checks: outputArraySchema(objectSchema({ checkId: stringSchema(), command: stringSchema(), cwd: stringSchema(), required: booleanSchema(),
+    toolTaskId: nullableSchema(stringSchema()), state: enumSchema(['running', 'passed', 'failed', 'stopped', 'lost', 'unavailable']),
+    applicability: enumSchema(['current', 'stale', 'unavailable']), exitCode: nullableSchema(integerSchema()), output: nullableSchema(stringSchema()), reason: nullableSchema(stringSchema()) },
+    ['checkId', 'command', 'cwd', 'required', 'toolTaskId', 'state', 'applicability', 'exitCode', 'output', 'reason']), 64),
+}, ['verificationRunId', 'revision', 'attemptsUsed', 'maxAttempts', 'state', 'stopReason', 'changedPaths', 'limitations', 'sourceStateRef', 'checks']);
+
 const retainedCapabilityOutputSchemas: Readonly<Record<typeof RETAINED_CAPABILITY_TOOL_NAMES[number], JsonSchema>> = {
   file_read: fileReadOutputSchema,
   file_glob: objectSchema({
@@ -1046,23 +1058,25 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
   },
   {
     identity: { namespace: null, name: 'get_goal' },
-    description: 'Get the Goal attached one-to-one to the current Thread.',
+    description: 'Get the current Goal and revalidate its verification evidence. Run every required declared command through Bash at its stated cwd; stale passes do not count.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: objectSchema({}),
-    outputSchema: objectSchema({ goal: nullableSchema(threadGoalOutputSchema) }, ['goal']),
+    outputSchema: objectSchema({ goal: nullableSchema(threadGoalOutputSchema), verification: verificationViewSchema }, ['goal']),
     actionKinds: ['agent.goal.read'],
   },
   {
     identity: { namespace: null, name: 'create_goal' },
-    description: 'Create a Goal only when explicitly requested and no unfinished Goal exists.',
+    description: 'Create a Goal only when explicitly requested and no unfinished Goal exists. For an explicitly requested verify-and-correct workflow, select directory roots and a finite limit for attempts and automatic continuations. Checks come from .tenon/checks.json and execute through ordinary Bash; corrections use existing file tools. After an explicit user request to resume a stopped verification Goal, call create_goal with the same objective, roots and attempt limit in that new user Turn; budgets are not reset. This does not authorize publication.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: objectSchema({
       objective: stringSchema('Concrete objective to pursue.'),
       token_budget: { type: 'integer', minimum: 1 },
+      verification: objectSchema({ roots: boundedArraySchema(stringSchema('Absolute directory root.'), 8),
+        maxAttempts: { type: 'integer', minimum: 1, maximum: 20 } }, ['roots', 'maxAttempts']),
     }, ['objective']),
-    outputSchema: objectSchema({ goal: threadGoalOutputSchema }, ['goal']),
+    outputSchema: objectSchema({ goal: threadGoalOutputSchema, verification: verificationViewSchema }, ['goal']),
     actionKinds: ['agent.goal.create'],
   },
   {

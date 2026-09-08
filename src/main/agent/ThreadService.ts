@@ -1,4 +1,6 @@
 import type { Stats } from 'node:fs';
+import { VerificationCoordinator } from './verification/VerificationCoordinator';
+import type { VerificationConfiguration } from '../../core/agent/verification';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -329,6 +331,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly goals: GoalExtension;
   private readonly goalStore: GoalStore;
   private readonly toolTasks: ToolTaskService;
+  private readonly verification: VerificationCoordinator;
   private readonly delegationCoordinator: () => DelegationCoordinator | null;
   private readonly reportError: (report: ErrorReport) => Promise<void>;
   private readonly startupQuarantinedThreadIds = new Set<ThreadId>();
@@ -458,7 +461,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.resolveReferencedAsset,
       this.resolveSkillAdmission,
       (thread) => this.resolvePersona(thread),
-      { addUsage: (...args) => this.goals.addUsage(...args) },
+      {
+        addUsage: (...args) => this.goals.addUsage(...args),
+        verificationPublication: async (threadId) => {
+          const payload = await this.verification.publication(threadId);
+          const owner = this.verification.evidenceOwner(threadId);
+          return payload ? { payload, owner: owner ?? threadId } : null;
+        },
+      },
       options.normalizeOutputImage,
       this.now,
       (message, rendererSubmissionRetryable) => new ThreadBusyError(message, rendererSubmissionRetryable),
@@ -490,7 +500,21 @@ export class ThreadService implements ThreadServiceExtensionHost {
       (threadId) => this.goals.clear(threadId),
       (message) => new ThreadBusyError(message),
     );
-    this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification));
+    this.verification = new VerificationCoordinator(this.goalStore, this.toolTasks, {
+      deleteEvidence: (prefix) => this.core.payloads.deleteContextOwnersWithPrefix(prefix),
+      write: (owner, payload) => this.core.payloads.writeContext(owner, payload),
+      read: (owner, ref) => this.core.payloads.readContext(owner, ref),
+      ancestors: (threadId) => {
+        const parents: string[] = [];
+        let parent = this.core.metadata.read(threadId)?.thread.parentThreadId;
+        while (parent && !parents.includes(parent) && parents.length < 64) {
+          parents.push(parent);
+          parent = this.core.metadata.read(parent)?.thread.parentThreadId;
+        }
+        return parents;
+      },
+    });
+    this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification), this.verification);
     this.goals.bindHost(
       this,
       (threadId) => this.core.requireThread(threadId).thread,
@@ -498,6 +522,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     );
     this.extensions.register(this.goals, { applicationInstructions: true });
     this.toolTasks.bindHost({
+      admissionFailed: (owner, error) => this.verification.admissionFailed(owner, error),
+      beforeTask: (task) => this.verification.beforeTask(task),
+      afterTask: (task) => this.verification.afterTask(task),
       contextEvidence: {
         write: (owner, payload) => this.core.payloads.writeContext(owner, payload),
         read: (owner, ref) => this.core.payloads.readContext(owner, ref),
@@ -797,6 +824,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       }
     }
     await this.toolTasks.initialize();
+    await this.verification.initialize();
     await this.beforeInitialTurnAdmission();
     this.initialized = true;
     for (const thread of resumableThreads) {
@@ -1248,7 +1276,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           decoded as AgentCoreRequestByMethod['turn/rerun'],
         ) as AgentCoreResponseByMethod[Method];
       case 'goal/get':
-        return this.goals.get(decoded as AgentCoreRequestByMethod['goal/get']) as AgentCoreResponseByMethod[Method];
+        return await this.getVerifiedGoal((decoded as AgentCoreRequestByMethod['goal/get']).threadId) as AgentCoreResponseByMethod[Method];
       case 'goal/create':
         return await this.goals.create(decoded as AgentCoreRequestByMethod['goal/create']) as AgentCoreResponseByMethod[Method];
       case 'goal/update':
@@ -1749,18 +1777,23 @@ export class ThreadService implements ThreadServiceExtensionHost {
     });
     return input;
   }
-  getGoalForTurn(threadId: ThreadId, turnId: string): GetGoalResponse {
+  async getGoalForTurn(threadId: ThreadId, turnId: string): Promise<GetGoalResponse> {
     this.turnLifecycle.requireActiveTurn(threadId, turnId);
-    return this.goals.get({ threadId });
+    return this.getVerifiedGoal(threadId);
+  }
+  private async getVerifiedGoal(threadId: ThreadId): Promise<GetGoalResponse> {
+    const verification = await this.verification.inspect(threadId);
+    return { ...this.goals.get({ threadId }), ...(verification ? { verification } : {}) };
   }
   async createGoalForTurn(
     threadId: ThreadId,
     turnId: string,
     objective: string,
     tokenBudget?: number,
+    verification?: VerificationConfiguration,
   ): Promise<CreateGoalResponse> {
     this.turnLifecycle.requireActiveTurn(threadId, turnId);
-    return this.goals.create({ threadId, objective, ...(tokenBudget === undefined ? {} : { tokenBudget }) }, turnId);
+    return this.goals.create({ threadId, objective, ...(tokenBudget === undefined ? {} : { tokenBudget }), ...(verification ? { verification } : {}) }, turnId);
   }
   async updateGoalForTurn(
     threadId: ThreadId,

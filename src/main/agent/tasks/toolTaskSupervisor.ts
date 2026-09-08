@@ -43,7 +43,6 @@ async function main(): Promise<void> {
       windowsHide: true,
     });
     if (child.pid) activeChildPid = child.pid;
-    if (privateControl) await writePrivateControl(child, privateControl);
   } catch (error) {
     closeSync(stdin);
     closeSync(stdout);
@@ -67,7 +66,6 @@ async function main(): Promise<void> {
     childPid: child.pid,
     startedAt,
   };
-  await atomicJsonWrite(config.identityPath, identity);
 
   let stopReason: 'requested' | 'timed_out' | 'output_limit' | 'capture_error' | null = null;
   let stopSentAt: number | null = null;
@@ -97,6 +95,9 @@ async function main(): Promise<void> {
   };
   child.stdout?.on('data', (value) => capture(stdout, value));
   child.stderr?.on('data', (value) => capture(stderr, value));
+  // Attach capture before yielding: child-process close may drain an unobserved pipe.
+  if (privateControl) await writePrivateControl(child, privateControl);
+  await atomicJsonWrite(config.identityPath, identity);
   const writeHeartbeat = () => atomicJsonWrite(config.heartbeatPath, {
     version: 1,
     taskId: config.taskId,
