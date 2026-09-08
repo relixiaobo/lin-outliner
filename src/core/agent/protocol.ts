@@ -844,6 +844,7 @@ export const CONTEXT_EVIDENCE_KINDS = Object.freeze([
   'toolOutputProjection',
   'inheritedContext',
   'taskExecutionContext',
+  'executionContextObservation',
   'executionContextPublication',
   'automationDispatch',
 ] as const);
@@ -1062,6 +1063,19 @@ export interface TaskExecutionContextPayload {
   readonly executionContext: import('./executionContext').TaskExecutionContext;
 }
 
+export interface ExecutionContextObservationPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'executionContextObservation';
+  readonly taskId: string;
+  readonly sourceTurnId: string;
+  readonly sourceItemId: string;
+  readonly admissionRef: ThreadContextPayloadReference;
+  readonly executionContext: import('./executionContext').TaskExecutionContext;
+  readonly sources: readonly import('./executionContext').ExecutionContextSource[];
+  readonly scopes: readonly import('./executionContext').ExecutionContextScopeObservation[];
+  readonly checks: readonly import('./executionContext').ProjectCheckDeclaration[];
+}
+
 export interface ExecutionContextPublicationPayload {
   readonly schemaVersion: 1;
   readonly kind: 'executionContextPublication';
@@ -1168,6 +1182,7 @@ export interface ToolCallArgumentsContextPayload {
 export type ThreadContextPayload =
   | AutomationDispatchContextPayload
   | TaskExecutionContextPayload
+  | ExecutionContextObservationPayload
   | ExecutionContextPublicationPayload
   | TurnEnvironmentContextPayload
   | UserViewContextPayload

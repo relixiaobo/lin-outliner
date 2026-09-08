@@ -98,6 +98,7 @@ export interface TurnExecutionContext {
     payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>,
     summary: string,
   ): Promise<ContextEvidenceThreadItem>;
+  publishPendingContextObservations?(): Promise<void>;
   persistTurnDiagnostics(
     payload: TurnDiagnosticsPayload,
   ): Promise<TurnDiagnosticsPayloadReference>;

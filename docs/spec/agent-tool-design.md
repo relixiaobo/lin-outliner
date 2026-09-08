@@ -197,8 +197,27 @@ with unknown discovery; SHA-256 references cover the encoded address, policy
 and snapshot. `ToolTaskStore` stores that complete context with the task before
 execution. File operations use `ToolTaskService.runHostOperation`; Bash and native
 launchers use supervised process tasks. Both retain the same immutable context
-through terminal settlement and recovery. S1 instruction/profile discovery is
-defined by the context plan and is not inferred from successful file access.
+through terminal settlement and recovery. After task creation, the Host performs
+bounded best-effort discovery for each admitted scope. It walks canonical
+ancestors for `AGENTS.md`, `CLAUDE.md`, `AGENT.md`, and `.tenon/checks.json`,
+records source hashes and Git observations, and persists one immutable generation-1
+successor keyed by the S0 snapshot reference. Missing optional sources are a
+complete empty observation; read or byte-limit failures mark the successor
+unavailable with a degradation reason and never fail the already admitted task.
+The task receipt remains pinned to S0; later provider publication consumes S1 only
+at its own boundary. Discovery payloads are temporarily owned by the Tool Task so
+an unfinished observation survives Thread turn cleanup. Foreground output
+consumption clears task detail while retaining compact task truth and discovery
+ownership, including collection still in flight. At delivery, admission and
+successor payloads are copied into the consuming Thread before committing its
+evidence; only then is the temporary owner pruned. Fencing and Thread deletion
+drain outstanding discovery writes before pruning, without publishing evidence.
+Restart recovery pages the persisted tasks lacking a committed successor with
+bounded concurrency until all pages have been attempted; a failed payload write
+remains eligible on the next restart. Committed successors are never recollected.
+Snapshot reuse within five seconds revalidates both instruction/profile sources
+and the captured scopes' Git HEAD, ref, and status; a changed or unavailable
+observation requires fresh discovery.
 
 The Kernel's Host-only deferred-start callback lets local tools publish their
 execution-start event after admission evidence commits. Receipt context stays in

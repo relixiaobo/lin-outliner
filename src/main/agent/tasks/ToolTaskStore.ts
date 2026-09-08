@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ExecutionAdmissionError, validateExecutionContext } from './ExecutionContext';
-import type { ThreadId, ThreadResourceReference, TurnId } from '../../../core/agent/protocol';
+import type { ThreadContextPayloadReference, ThreadId, ThreadResourceReference, TurnId } from '../../../core/agent/protocol';
+import { decodeThreadContextPayloadReference } from '../../../core/agent/codec';
 import type { SqliteDatabase } from '../persistence/sqlite';
 import {
   isToolTaskTerminal,
@@ -218,7 +219,71 @@ export class ToolTaskStore {
         ON tool_task_leases(state, created_at, task_id);
       CREATE INDEX IF NOT EXISTS tool_task_leases_thread_idx
         ON tool_task_leases(owner_thread_id, state);
+
+      CREATE TABLE IF NOT EXISTS tool_task_context_successors (
+        predecessor_ref TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tool_tasks(task_id) ON DELETE CASCADE,
+        payload_ref_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        delivery_state TEXT NOT NULL CHECK (delivery_state IN ('pending', 'delivered', 'blocked'))
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS tool_task_context_successors_task_idx
+        ON tool_task_context_successors(task_id);
     `);
+  }
+
+  /** Bytes live in the existing context evidence store; this is delivery ownership only. */
+  publishContextSuccessor(taskId: string, ref: ThreadContextPayloadReference, createdAt: number): void {
+    if (decodeThreadContextPayloadReference(ref).kind !== 'executionContextObservation') throw new Error('Invalid discovery reference');
+    return this.transaction(() => {
+      const task = this.require(taskId);
+      const existing = this.db.prepare(
+        'SELECT payload_ref_json FROM tool_task_context_successors WHERE predecessor_ref = ?',
+      ).get(task.executionContext.snapshotRef) as { payload_ref_json: string } | undefined;
+      if (existing) {
+        if (existing.payload_ref_json !== JSON.stringify(ref)) {
+          throw new Error('Execution context successor is immutable');
+        }
+        return;
+      }
+      this.db.prepare(`
+        INSERT INTO tool_task_context_successors(predecessor_ref, task_id, payload_ref_json, created_at, delivery_state)
+        VALUES (?, ?, ?, ?, 'pending')
+      `).run(task.executionContext.snapshotRef, taskId, JSON.stringify(ref), createdAt);
+    });
+  }
+
+  contextSuccessor(taskId: string): { taskId: string; ref: ThreadContextPayloadReference } | null {
+    const task = this.read(taskId);
+    if (!task) return null;
+    const row = this.db.prepare(
+      'SELECT task_id, payload_ref_json FROM tool_task_context_successors WHERE predecessor_ref = ?',
+    ).get(task.executionContext.snapshotRef) as { task_id: string; payload_ref_json: string } | undefined;
+    return row ? { taskId: row.task_id, ref: decodeThreadContextPayloadReference(JSON.parse(row.payload_ref_json)) } : null;
+  }
+
+  pendingContextObservations(ownerThreadId: string): readonly { taskId: string; ref: ThreadContextPayloadReference }[] {
+    return (this.db.prepare(`SELECT s.task_id, s.payload_ref_json FROM tool_task_context_successors s
+      JOIN tool_tasks t ON t.task_id = s.task_id WHERE t.owner_thread_id = ? AND s.delivery_state = 'pending'
+      ORDER BY s.created_at, s.task_id LIMIT 32`).all(ownerThreadId) as { task_id: string; payload_ref_json: string }[])
+      .map((row) => ({ taskId: row.task_id, ref: decodeThreadContextPayloadReference(JSON.parse(row.payload_ref_json)) }));
+  }
+
+  settleContextObservation(taskId: string, state: 'delivered' | 'blocked'): void {
+    this.db.prepare("UPDATE tool_task_context_successors SET delivery_state = ? WHERE task_id = ? AND delivery_state = 'pending'").run(state, taskId);
+  }
+
+  discoveryCandidates(ownerThreadId: string, limit = 32): readonly ToolTaskRecord[] {
+    return (this.db.prepare(`SELECT * FROM tool_tasks WHERE owner_thread_id = ? ORDER BY started_at DESC, task_id DESC LIMIT ?`)
+      .all(ownerThreadId, limit) as ToolTaskRow[]).map(taskFromRow);
+  }
+
+  missingContextSuccessors(ownerThreadId: string, afterTaskId: string, limit: number): readonly ToolTaskRecord[] {
+    return (this.db.prepare(`SELECT t.* FROM tool_tasks t
+      WHERE t.owner_thread_id = ? AND t.task_id > ? AND t.delivery_state != 'blocked'
+        AND NOT EXISTS (SELECT 1 FROM tool_task_context_successors s
+          WHERE s.predecessor_ref = json_extract(t.execution_context_json, '$.snapshotRef'))
+      ORDER BY t.task_id LIMIT ?`).all(ownerThreadId, afterTaskId, limit) as ToolTaskRow[]).map(taskFromRow);
   }
 
   admitLease(
@@ -594,6 +659,11 @@ export class ToolTaskStore {
         WHERE owner_thread_id = ? AND background_enabled = 1
           AND delivery_state IN ('pending', 'delivering')
       `).run(now, ownerThreadId);
+      this.db.prepare(`
+        UPDATE tool_task_context_successors SET delivery_state = 'blocked'
+        WHERE task_id IN (SELECT task_id FROM tool_tasks WHERE owner_thread_id = ?)
+          AND delivery_state = 'pending'
+      `).run(ownerThreadId);
     });
   }
 

@@ -688,6 +688,7 @@ export class CanonicalContextProjector {
       case 'automationDispatch':
         return [contextBlock(payload.kind, payload.info, 'application', 'observation')];
       case 'taskExecutionContext':
+      case 'executionContextObservation':
         return [];
       case 'executionContextPublication':
         return payload.text ? [briefContextBlock(payload.kind, {

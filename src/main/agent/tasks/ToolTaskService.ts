@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { TaskExecutionContext } from '../../../core/agent/executionContext';
-import { ExecutionAdmissionError, pendingExecutionContext, resolveExecutionAddress, revalidateExecutionContext } from './ExecutionContext';
+import { ExecutionAdmissionError, executionDigest, pendingExecutionContext, resolveExecutionAddress, revalidateExecutionContext, validateExecutionContext } from './ExecutionContext';
+import { discoverExecutionContext, validateDiscoveredSources } from './ExecutionContextDiscovery';
+import type { ExecutionContextObservationPayload, ThreadContextPayload, ThreadContextPayloadReference } from '../../../core/agent/protocol';
 import type { ChildProcess } from 'node:child_process';
 import { link, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -94,6 +96,11 @@ export interface ToolTaskHost {
   ): Promise<ToolTaskArtifactSettlement>;
   taskDetailsExpired?(ownerThreadId: ThreadId): Promise<void>;
   taskChanged(task: ToolTaskProjection): void;
+  readonly contextEvidence?: {
+    write(owner: string, payload: ThreadContextPayload): Promise<ThreadContextPayloadReference>;
+    read(owner: string, ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
+    prune?(owner: string): Promise<void>;
+  };
 }
 
 export interface StartToolTaskInput {
@@ -162,6 +169,9 @@ export class ToolTaskService {
   private recoveryIdentityDeadline = 0;
   private closing = false;
   private initialized = false;
+  private readonly discoveryRuns = new Map<string, { run: Promise<void>; controller: AbortController }>();
+  private discoveryRecoveryRun: Promise<void> | null = null;
+  private readonly fencedContextOwners = new Set<ThreadId>();
 
   constructor(
     readonly store: ToolTaskStore,
@@ -248,6 +258,9 @@ export class ToolTaskService {
     await this.enforceRetention();
     for (const owner of this.store.ownersWithPendingDelivery()) this.wakeDelivery(owner);
     this.initialized = true;
+    this.discoveryRecoveryRun = this.recoverContextDiscovery().catch((error) => {
+      console.warn('[agent] Execution-context recovery deferred', error);
+    });
   }
 
   async start(input: StartToolTaskInput): Promise<ToolTaskRecord> {
@@ -305,6 +318,7 @@ export class ToolTaskService {
     try {
       await mkdir(detailPath, { recursive: false, mode: 0o700 });
       await input.onAdmitted?.(task);
+      this.discoverTaskContext(task);
       await Promise.all([
         writeFile(paths.stdin, input.stdin ?? '', { encoding: 'utf8', mode: 0o600 }),
         writeFile(paths.stdout, '', { encoding: 'utf8', mode: 0o600 }),
@@ -389,6 +403,103 @@ export class ToolTaskService {
     }
   }
 
+  private async recoverContextDiscovery(): Promise<void> {
+    if (!this.host?.contextEvidence) return;
+    for (const owner of this.store.ownerIds()) {
+      let afterTaskId = '';
+      while (!this.closing && this.host.ownerExists(owner) && !this.fencedContextOwners.has(owner)) {
+        const page = this.store.missingContextSuccessors(owner, afterTaskId, 4);
+        if (!page.length) break;
+        await Promise.allSettled(page.map((task) => this.discoverTaskContext(task)));
+        // Keyset paging still advances when payload storage fails; the durable gap
+        // remains eligible on restart without starving the rest of the queue.
+        afterTaskId = page[page.length - 1]!.taskId;
+      }
+    }
+  }
+
+  private discoverTaskContext(task: ToolTaskRecord): Promise<void> | undefined {
+    const evidence = this.host?.contextEvidence;
+    const key = task.executionContext.snapshotRef;
+    if (!evidence || this.closing || !this.host?.ownerExists(task.ownerThreadId)
+      || this.fencedContextOwners.has(task.ownerThreadId) || !this.store.read(task.taskId)
+      || this.store.contextSuccessor(task.taskId)) return;
+    const existing = this.discoveryRuns.get(key);
+    if (existing) return existing.run;
+    const controller = new AbortController();
+    const run = (async () => {
+      const admissionPayload = { schemaVersion: 1 as const, kind: 'taskExecutionContext' as const,
+        taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId, executionContext: task.executionContext };
+      const admissionRef = await evidence.write(task.taskId, admissionPayload);
+      try {
+        const observed = await discoverExecutionContext(task.executionContext, { signal: controller.signal, now: this.now });
+        if (controller.signal.aborted || this.closing || !this.host?.ownerExists(task.ownerThreadId)) return;
+        const payload: ExecutionContextObservationPayload = { schemaVersion: 1, kind: 'executionContextObservation',
+          taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId,
+          admissionRef, executionContext: observed.context, sources: observed.sources, scopes: observed.scopes, checks: observed.checks };
+        const ref = await evidence.write(task.taskId, payload);
+        if (controller.signal.aborted || this.closing || !this.host?.ownerExists(task.ownerThreadId)) return;
+        this.store.publishContextSuccessor(task.taskId, ref, this.now());
+      } catch (error) {
+        if (controller.signal.aborted || this.closing || !this.host?.ownerExists(task.ownerThreadId)) return;
+        const reason = `Execution-context discovery failed: ${errorMessage(error)}`.slice(0, 4_096);
+        const capturedAt = this.now();
+        const snapshot = {
+          ...task.executionContext.snapshot,
+          capturedAt,
+          generation: task.executionContext.snapshot.generation + 1,
+          predecessorRef: task.executionContext.snapshotRef,
+          discovery: 'unavailable' as const,
+          degradation: reason,
+          facts: task.executionContext.snapshot.facts.filter((fact) => fact.source !== 'host:execution-discovery').concat({
+            source: 'host:execution-discovery', kind: 'discovery' as const, authority: 'host' as const,
+            purpose: 'observation' as const, scope: task.executionContext.address.cwd, version: 'failed',
+            text: 'Discovery failed after admission; inspect applicable sources before relying on project guidance.',
+            invalidated: false, observedAt: capturedAt,
+          }),
+        };
+        const context = validateExecutionContext({ ...task.executionContext, snapshot, snapshotRef: executionDigest(snapshot) });
+        const payload: ExecutionContextObservationPayload = { schemaVersion: 1, kind: 'executionContextObservation',
+          taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId, admissionRef,
+          executionContext: context, sources: [],
+          scopes: task.executionContext.address.scopes.map((scope) => ({ directory: scope.directory, sources: [], complete: false })), checks: [] };
+        const ref = await evidence.write(task.taskId, payload);
+        if (controller.signal.aborted || this.closing || !this.host?.ownerExists(task.ownerThreadId)) return;
+        this.store.publishContextSuccessor(task.taskId, ref, this.now());
+      }
+    })().catch((error) => {
+      console.warn(`[agent] Execution-context discovery deferred for ${task.taskId}: ${errorMessage(error)}`);
+    }).finally(() => this.discoveryRuns.delete(key));
+    this.discoveryRuns.set(key, { run, controller });
+    return run;
+  }
+
+  async readContextObservation(taskId: string, ref: ThreadContextPayloadReference): Promise<ExecutionContextObservationPayload | null> {
+    const payload = await this.host?.contextEvidence?.read(taskId, ref);
+    return payload?.kind === 'executionContextObservation' ? payload : null;
+  }
+
+  async pruneContextOwner(taskId: string): Promise<void> {
+    const task = this.store.read(taskId);
+    const discovery = task && this.discoveryRuns.get(task.executionContext.snapshotRef);
+    discovery?.controller.abort();
+    await discovery?.run;
+    await this.host?.contextEvidence?.prune?.(taskId);
+  }
+
+  async prepareExecutionContext(owner: string, context: TaskExecutionContext): Promise<TaskExecutionContext> {
+    if (!this.host?.contextEvidence) return context;
+    for (const previous of this.store.discoveryCandidates(owner, 8)) {
+      if (previous.executionContext.addressRef !== context.addressRef || previous.executionContext.policyRef !== context.policyRef) continue;
+      const reference = this.store.contextSuccessor(previous.taskId);
+      if (!reference) continue;
+      const payload = await this.readContextObservation(reference.taskId, reference.ref).catch(() => null);
+      if (!payload || !await validateDiscoveredSources({ context: payload.executionContext, sources: payload.sources, scopes: payload.scopes, checks: payload.checks })) continue;
+      return revalidateExecutionContext(payload.executionContext);
+    }
+    return context;
+  }
+
   async runHostOperation<T>(input: {
     readonly ownerThreadId: ThreadId;
     readonly sourceTurnId: TurnId;
@@ -420,6 +531,7 @@ export class ToolTaskService {
       try {
         await mkdir(task.detailPath, { recursive: false, mode: 0o700 });
         await input.onAdmitted(task);
+        this.discoverTaskContext(task);
         if (signal.aborted || this.closing) throw new Error('Host operation cancelled before execution');
         const { result, success } = await input.execute(signal);
         await this.settleWithoutProcess(task, success ? 'succeeded' : 'failed', 'host_operation_completed', null);
@@ -698,8 +810,10 @@ export class ToolTaskService {
       throw new Error('Only a terminal foreground Tool Task can be consumed');
     }
     this.clearMonitor(taskId);
+    // Output consumption must not erase pending discovery or its durable owner.
+    // Keep compact task truth just as host operations do; Thread deletion owns it.
+    this.store.expireDetail(taskId, 'cleared', this.now());
     await rm(task.detailPath, { recursive: true, force: true });
-    this.store.deleteTask(taskId);
   }
 
   wakeDelivery(ownerThreadId: ThreadId): void {
@@ -726,6 +840,9 @@ export class ToolTaskService {
 
   async close(drainTimeoutMs: number): Promise<void> {
     this.closing = true;
+    for (const discovery of this.discoveryRuns.values()) discovery.controller.abort();
+    await this.discoveryRecoveryRun;
+    await Promise.allSettled([...this.discoveryRuns.values()].map(({ run }) => run));
     for (const operation of this.hostOperations.values()) operation.controller.abort();
     for (const timer of this.monitors.values()) clearInterval(timer);
     this.monitors.clear();
@@ -770,10 +887,14 @@ export class ToolTaskService {
   async deleteOwner(threadId: ThreadId): Promise<void> {
     const tasks = this.store.listAll(threadId);
     if (tasks.some((task) => !isToolTaskTerminal(task.state)
-      || task.deliveryState === 'pending' || task.deliveryState === 'delivering')) {
+      || (task.backgroundEnabled && (task.deliveryState === 'pending' || task.deliveryState === 'delivering')))) {
       throw new Error('Cannot delete a Thread with active Tool Tasks');
     }
-    await Promise.all(tasks.map((task) => rm(task.detailPath, { recursive: true, force: true })));
+    this.fencedContextOwners.add(threadId);
+    await Promise.all(tasks.map(async (task) => {
+      await this.pruneContextOwner(task.taskId);
+      await rm(task.detailPath, { recursive: true, force: true });
+    }));
     this.store.deleteOwner(threadId);
   }
 
@@ -797,8 +918,10 @@ export class ToolTaskService {
   }
 
   private async orphanOwner(ownerThreadId: ThreadId): Promise<void> {
+    this.fencedContextOwners.add(ownerThreadId);
     this.store.blockOwnerDelivery(ownerThreadId, this.now());
     await Promise.all(this.store.listAll(ownerThreadId).map(async (task) => {
+      await this.pruneContextOwner(task.taskId);
       if (isToolTaskTerminal(task.state)) return;
       const settling = this.store.setCoordinationError(
         task.taskId,

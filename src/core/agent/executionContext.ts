@@ -30,14 +30,40 @@ export interface ExecutionContextFact {
   readonly version: string;
   readonly text: string;
   readonly invalidated: boolean;
+  readonly observedAt?: number;
 }
 
 export interface ExecutionContextSnapshot {
+  readonly seriesId: string;
+  readonly capturedAt: number;
   readonly generation: number;
   readonly predecessorRef: string | null;
   readonly discovery: 'pending' | 'complete' | 'unavailable';
   readonly degradation: string | null;
   readonly facts: readonly ExecutionContextFact[];
+}
+
+export interface ExecutionContextSource {
+  readonly path: string;
+  readonly canonicalPath: string | null;
+  readonly digest: string | null;
+  readonly state: 'present' | 'missing' | 'unavailable';
+}
+
+export interface ExecutionContextScopeObservation {
+  readonly directory: string;
+  readonly sources: readonly string[];
+  readonly complete: boolean;
+}
+
+export interface ProjectCheckDeclaration {
+  readonly id: string;
+  readonly command: string;
+  readonly required: boolean;
+  readonly inputs: readonly string[];
+  readonly exclude: readonly string[];
+  readonly source: string;
+  readonly scope: string;
 }
 
 /** Self-contained evidence; references identify immutable values in this receipt. */
@@ -81,7 +107,9 @@ export function decodeTaskExecutionContext(value: unknown): TaskExecutionContext
   if (typeof policy.mutation !== 'boolean' || (policy.capability === 'read-only' && policy.mutation)) {
     throw new Error('Invalid execution mutation authority');
   }
-  const snapshot = object(context.snapshot, ['generation', 'predecessorRef', 'discovery', 'degradation', 'facts']);
+  const snapshot = object(context.snapshot, ['seriesId', 'capturedAt', 'generation', 'predecessorRef', 'discovery', 'degradation', 'facts']);
+  text(snapshot.seriesId);
+  if (!Number.isSafeInteger(snapshot.capturedAt) || (snapshot.capturedAt as number) < 0) throw new Error('Invalid snapshot capture time');
   if (!Number.isSafeInteger(snapshot.generation) || (snapshot.generation as number) < 0) {
     throw new Error('Invalid execution snapshot generation');
   }
@@ -98,7 +126,8 @@ export function decodeTaskExecutionContext(value: unknown): TaskExecutionContext
 }
 
 export function decodeExecutionContextFact(value: unknown): ExecutionContextFact {
-  const fact = object(value, ['source', 'kind', 'authority', 'purpose', 'scope', 'version', 'text', 'invalidated']);
+  const fact = object(value, ['source', 'kind', 'authority', 'purpose', 'scope', 'version', 'text', 'invalidated'], ['observedAt']);
+  if (fact.observedAt !== undefined && (!Number.isSafeInteger(fact.observedAt) || (fact.observedAt as number) < 0)) throw new Error('Invalid fact capture time');
   for (const key of ['source', 'scope', 'version', 'text']) text(fact[key]);
   member(fact.kind, ['discovery', 'instruction', 'profile', 'git', 'check', 'process']);
   member(fact.authority, ['host', 'repository']);
@@ -107,10 +136,10 @@ export function decodeExecutionContextFact(value: unknown): ExecutionContextFact
   return value as ExecutionContextFact;
 }
 
-function object(value: unknown, keys: readonly string[]): Record<string, unknown> {
+function object(value: unknown, keys: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected execution context object');
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).length !== keys.length || keys.some((key) => !Object.hasOwn(record, key))) {
+  if (Object.keys(record).some((key) => !keys.includes(key) && !optional.includes(key)) || keys.some((key) => !Object.hasOwn(record, key))) {
     throw new Error('Invalid execution context fields');
   }
   return record;

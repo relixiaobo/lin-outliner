@@ -132,6 +132,24 @@ describe('ToolTaskStore', () => {
     expect(fixture.store.read(first.taskId)?.deliveryState).toBe('pending');
     expect(fixture.store.read(second.taskId)?.deliveryState).toBe('blocked');
   });
+
+  test('blocks pending context successors when an owner is fenced', async () => {
+    const fixture = await createFixture();
+    const task = await seedRunningTask(fixture, 'task-context-successor', 10);
+    fixture.store.publishContextSuccessor(task.taskId, {
+      id: 'a'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json',
+      byteLength: 1,
+      schemaVersion: 1,
+      kind: 'executionContextObservation',
+    }, 20);
+
+    fixture.store.blockOwnerDelivery(OWNER_ID, 30);
+
+    expect(fixture.database.prepare(`
+      SELECT delivery_state FROM tool_task_context_successors WHERE task_id = ?
+    `).get(task.taskId)).toEqual({ delivery_state: 'blocked' });
+  });
 });
 
 describe('ToolTaskService', () => {
@@ -1090,9 +1108,23 @@ describe('ToolTaskService', () => {
     await waitUntil(() => fixture.store.read(task.taskId)?.childPid !== null);
 
     const completions: unknown[] = [];
+    const contextWrites: string[] = [];
     const recovery = await createService(fixture, {
       ...passiveHost(),
       ownerExists: () => false,
+      contextEvidence: {
+        write: async (owner) => {
+          contextWrites.push(owner);
+          return {
+            id: 'a'.repeat(64),
+            mimeType: 'application/vnd.tenon.agent-context+json',
+            byteLength: 1,
+            schemaVersion: 1,
+            kind: 'taskExecutionContext',
+          };
+        },
+        read: async () => null,
+      },
       startCompletionTurn: async (input) => {
         completions.push(input);
         return true;
@@ -1101,6 +1133,7 @@ describe('ToolTaskService', () => {
     const terminal = await waitForTerminal(recovery, task.taskId);
     expect(terminal).toMatchObject({ state: 'cancelled', deliveryState: 'blocked' });
     expect(completions).toHaveLength(0);
+    expect(contextWrites).toHaveLength(0);
   });
 
   test('does not signal a live PID without nonce-authenticated ownership', async () => {

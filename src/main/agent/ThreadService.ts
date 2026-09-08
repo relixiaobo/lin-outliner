@@ -458,6 +458,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.now,
       (message, rendererSubmissionRetryable) => new ThreadBusyError(message, rendererSubmissionRetryable),
       (error) => error instanceof ThreadBusyError,
+      this.toolTasks,
     );
     this.trajectory = new ThreadTrajectoryProjection(
       this.core,
@@ -492,6 +493,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     );
     this.extensions.register(this.goals, { applicationInstructions: true });
     this.toolTasks.bindHost({
+      contextEvidence: {
+        write: (owner, payload) => this.core.payloads.writeContext(owner, payload),
+        read: (owner, ref) => this.core.payloads.readContext(owner, ref),
+        prune: (owner) => this.core.payloads.pruneUnreferencedContexts(owner, [], []),
+      },
       ownerExists: (threadId) => this.core.metadata.read(threadId) !== null || this.core.ephemeral.has(threadId),
       canInheritClaim: (ownerThreadId, task) => {
         if (task.producer === 'delegate_execution' && task.ownerThreadId === ownerThreadId && task.inheritedClaimTaskId) {

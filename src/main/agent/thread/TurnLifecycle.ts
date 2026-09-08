@@ -119,6 +119,7 @@ export class TurnLifecycle {
     private readonly now: () => number,
     private readonly createThreadBusyError: (message: string, rendererSubmissionRetryable?: boolean) => Error,
     private readonly isThreadBusyError: (error: unknown) => boolean,
+    private readonly toolTasks?: import('../tasks/ToolTaskService').ToolTaskService,
   ) {}
   activeTurnsForInspection(): Map<ThreadId, ActiveTurn> { return this.activeTurns; } pendingUserInputsForInspection(): Map<ThreadId, PendingUserInput> { return this.pendingUserInputs; }
   activeTurnDiagnosticsForInspection(threadId: ThreadId, turnId: TurnId): TurnDiagnosticsPayload | null {
@@ -1166,6 +1167,7 @@ export class TurnLifecycle {
             payload,
             summary,
           ),
+          publishPendingContextObservations: () => this.publishPendingContextObservations(active, thread),
           persistTurnDiagnostics: (payload) => this.core.payloads.writeTurnDiagnostics(active.threadId, payload),
           inspectTurnDiagnostics: (read) => {
             if (this.activeTurns.get(active.threadId) !== active) return () => undefined;
@@ -1351,6 +1353,42 @@ export class TurnLifecycle {
       console.warn(`[agent] Final citation binding degraded for ${thread.id}`, error);
       return item;
     }
+  }
+
+  private publishPendingContextObservations(active: ActiveTurn, thread: Thread): Promise<void> {
+    return this.core.threadMutex.run(active.threadId, async () => {
+      if (!this.toolTasks || this.activeTurns.get(active.threadId) !== active || active.finishing || active.controller.signal.aborted) return;
+      const turns = this.core.allTurns(active.threadId).map((turn) => turn.id === active.turnId
+        ? { ...turn, items: active.recorder.orderedItems() } : turn);
+      const located = turns.flatMap((turn) => turn.items.map((item) => ({ turn, item })));
+      let reset = -1;
+      located.forEach(({ item }, index) => { if (item.type === 'contextReset') reset = index; });
+      for (const pending of this.toolTasks.store.pendingContextObservations(active.threadId)) {
+        const task = this.toolTasks.store.read(pending.taskId);
+        const source = task ? located.findIndex(({ turn, item }) => turn.id === task.sourceTurnId && item.id === task.sourceItemId) : -1;
+        if (!task || source < 0 || source <= reset) {
+          this.toolTasks.store.settleContextObservation(pending.taskId, 'blocked');
+          await this.toolTasks.pruneContextOwner(pending.taskId);
+          continue;
+        }
+        if (located.some(({ item }) => item.type === 'contextEvidence' && item.kind === 'executionContextObservation' && item.payloadRef.id === pending.ref.id)) {
+          this.toolTasks.store.settleContextObservation(pending.taskId, 'delivered');
+          await this.toolTasks.pruneContextOwner(pending.taskId);
+          continue;
+        }
+        try {
+          const payload = await this.toolTasks.readContextObservation(pending.taskId, pending.ref);
+          if (!payload || payload.executionContext.snapshot.predecessorRef !== task.executionContext.snapshotRef) continue;
+          if (!await this.core.payloads.copyContextToThread(pending.taskId, active.threadId, payload.admissionRef)) continue;
+          if (!await this.core.payloads.copyContextToThread(pending.taskId, active.threadId, pending.ref)) continue;
+          await this.persistExecutionContextEvidenceLocked(active, thread, payload, `Observed project context after admission: ${payload.executionContext.address.cwd}`);
+          this.toolTasks.store.settleContextObservation(pending.taskId, 'delivered');
+          await this.toolTasks.pruneContextOwner(pending.taskId);
+        } catch (error) {
+          console.warn('[agent] Optional context observation delivery deferred', error);
+        }
+      }
+    });
   }
 
   private persistExecutionContextEvidence(
