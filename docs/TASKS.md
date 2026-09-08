@@ -20,9 +20,12 @@ PR #639 approved the capability-first development workbench design; #645 revised
 its cache/publication contract. Unit A shipped in #646 as one complete
 execution-context refactor over the shipped delegation/native-launcher and
 Settings mechanisms, including frozen publication boundaries, scoped reduction,
-and compaction restore. Units B and D follow Unit A; verification Unit C
-follows Unit B's context/profile mechanism. All five plans remain active until
-their respective implementation, spec reconciliation, and archive gate complete.
+and compaction restore. PR #649 ships Unit B's bounded discovery, immutable
+successor delivery, and freshness validation. Project catalog metadata,
+confirmed membership, deletion fencing, and Project-backed Automation hints
+remain open. Verification Unit C consumes the shipped context/profile mechanism;
+Units C-E retain their plan prerequisites and collision checks. All five plans
+remain active until their remaining implementation and archive gates complete.
 
 PR #628 shipped internal Agent delegation and complete Subagent/isolated-Skill
 retirement under the design merged in #620. Generic Background Tool Tasks
@@ -119,9 +122,9 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P1 | [project-development-workbench](plans/project-development-workbench.md) | `in-progress` | Design approved in #639 and revised in #645. Unit A shipped in #646 with the complete task-context refactor, scoped publication/restore, all consumers, and generic prefix fixtures. Units B-E remain active under the aggregate plan. |
-| P1 | [project-context-runtime](plans/project-context-runtime.md) | `draft` | Unit B follows merged Unit A: bounded target-scoped discovery, immutable successor observations, and optional Project catalog/lifecycle. |
-| P1 | [verification-self-iteration](plans/verification-self-iteration.md) | `draft` | Unit C follows Units A and B: source-state-bound checks and bounded correction through the final Tool Task/context mechanisms. |
+| P1 | [project-development-workbench](plans/project-development-workbench.md) | `in-progress` | Design approved in #639 and revised in #645. Unit A shipped in #646; Unit B discovery and successor delivery shipped in #649. Remaining Project catalog/lifecycle work and Units C-E stay active under the aggregate plan. |
+| P1 | [project-context-runtime](plans/project-context-runtime.md) | `in-progress` | PR #649 ships bounded target-scoped discovery, immutable successor delivery, Git/source freshness validation, and restart recovery. Optional Project catalog, confirmed membership, deletion fencing, and Project-backed Automation hints remain open. |
+| P1 | [verification-self-iteration](plans/verification-self-iteration.md) | `draft` | Unit A's task context and Unit B's discovery/profile mechanism shipped in #646 and #649; source-state-bound checks and bounded correction remain subject to the plan's prerequisite and collision checks. |
 | P2 | [git-review-publication](plans/git-review-publication.md) | `draft` | Unit D follows Unit A; mandatory Git baselines are independent of optional context discovery. Recheck Tool Task/renderer collisions before claiming. |
 | P2 | [execution-sandbox-process](plans/execution-sandbox-process.md) | `draft` | Unit E follows Unit A: truthful isolation receipts and the bounded interactive-process experiment. Recheck process/receipt collisions before claiming. |
 | P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623, internal delegation plus Subagent/isolated-Skill retirement shipped in #628, and the external Runner adapter feature shipped in #637. Remaining work follows the aggregate plan's declared boundaries. |
@@ -143,12 +146,13 @@ contract or user-visible decision.
 
 - **Persisted-schema cutover verification** (release gate) — before the next
   packaged train, stop every Tenon process, manually reset installed and clone-
-  scoped pre-#607 Agent stores plus pre-#619 Outline storage-v2 workspaces, and
+  scoped pre-#649 Agent stores plus pre-#619 Outline storage-v2 workspaces, and
   verify fresh packaged/dev first launch. This covers the input-author, context
   dependency-manifest, unified Agent resource-reference, whole-Turn
   `history/rerun` event-name, #611 user-view/additional-context payload-shape,
-  and #619 required Operation-intent identity cuts; no migration or automatic
-  deletion ships.
+  #619 required Operation-intent identity, and #646/#649 execution-context
+  snapshot shape cuts (including series and capture identity); no migration or
+  automatic deletion ships.
 - **Launcher NSPanel packaged verification** — one `.dmg` pass for Cmd+Tab,
   fullscreen floating, focus, dock icon, and light/dark behavior.
 
@@ -243,6 +247,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **project-context-runtime discovery** (`done`, #649, 2026-09-08) - bounded scoped discovery, immutable successor publication, foreground evidence retention, Git/source freshness validation, and paged restart recovery shipped; Project catalog/lifecycle work remains active.
 - **settings-control-plane Unit E3** (`done`, #650, 2026-09-08) - people and root Agents share bounded application/release/update inspection, fixed support destinations, and local diagnostics reveal/export through the Host; Unit G remains in the active aggregate plan.
 - **workbench context-publication design gate** (`done`, #645, 2026-09-07) - approved immutable model-facing publications, scoped baselines, and compaction recovery across the plan series; runtime implementation remains pending.
 - **project-development-workbench Unit A** (`done`, #646, 2026-09-07) - task-owned execution context, scoped admission and receipts, canonical publication/compaction recovery, Thread consumers, delegation/native launchers, Automation dispatch, and renderer details are shipped; Units B-E remain active under the aggregate plan.

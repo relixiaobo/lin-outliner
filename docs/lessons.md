@@ -2675,3 +2675,16 @@ success discriminator.
 returned failures and cancellations into the canonical outcome before wrapping
 tool data, preserve cached observations separately, and test the model-visible
 discriminator for every domain result branch.
+
+## Output consumption must not release pending evidence ownership
+
+PR #649's first review found that foreground output cleanup deleted the task
+owning an immutable context successor before its next publication boundary.
+A collector still writing could also leave payload files after owner deletion.
+
+**Give output detail and asynchronous evidence separate retention lifetimes.**
+Keep compact task truth and its evidence owner until the consuming Thread has
+copied and committed the dependencies, or an explicit fence drains outstanding
+writes before pruning. Verify completed discovery, delayed admission writes,
+delayed successor writes, and deletion during a delayed write; testing only a
+settled collector misses the ownership race.
