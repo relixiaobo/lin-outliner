@@ -112,6 +112,7 @@ import {
   type ErrorReportContext,
   type ErrorSeverity,
 } from '../core/errorObservability';
+import { LIN_APP_OPEN_DESTINATION_CHANNEL, type ApplicationDestination } from '../core/applicationOperations';
 import {
   deleteProviderApiKey,
   deleteProviderConfig,
@@ -431,8 +432,10 @@ function startFilePreferencesWatcher(): void {
 }
 
 const agentImageObservationMutex = new Mutex();
+let applicationOperationsRef: import('./hostDomain/applicationOperations').ApplicationOperation | null = null;
 const agentHost = createAgentHost({
   previewOperations: resourcePreviewHost.operations,
+  applicationOperations: () => applicationOperationsRef,
   reviewSkillOperation: (input) => windowApplicationHost.reviewSkillOperation(input),
   reviewMemoryReset: (review, caller) => windowApplicationHost.reviewMemoryReset(review, caller),
   onMemoryChanged: () => {
@@ -628,7 +631,10 @@ const windowApplicationHost = createWindowApplicationHost({
   },
   sanitizeInvocationSeed,
   reportError,
+  diagnosticLog,
+  diagnosticEnvironment,
 });
+applicationOperationsRef = windowApplicationHost.applicationOperations;
 async function validateAutomationEffectiveConfiguration(
   modelProvider: string,
   configuration: EffectiveThreadConfiguration,
@@ -1237,54 +1243,38 @@ function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
     reportError(errorReportFromIpc(raw, 'render'));
   });
 
-  ipcMain.handle(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL, async (): Promise<DiagnosticsActionResult> => {
-    try {
-      const logPath = await diagnosticLog.ensureLogFile();
-      shell.showItemInFolder(logPath);
-      return { ok: true, path: logPath };
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
+  ipcMain.handle(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
+    windowApplicationHost.assertSettingsSender(event, 'Reveal diagnostics');
+    const result = await windowApplicationHost.applicationOperations.diagnosticsManage(
+      { request: { operation: 'reveal' } },
+      { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
+    );
+    return result;
   });
 
-  ipcMain.handle(LIN_APP_INFO_CHANNEL, async () => {
-    const environment = await diagnosticEnvironment();
-    return {
-      name: APP_NAME,
-      version: environment.appVersion,
-      platform: environment.platform,
-      arch: environment.arch,
-      electron: environment.electron,
-      chrome: environment.chrome,
-      node: environment.node,
-    };
+  ipcMain.handle(LIN_APP_INFO_CHANNEL, async (event) => {
+    windowApplicationHost.assertSettingsSender(event, 'Application information');
+    const result = await windowApplicationHost.applicationOperations.inspect(
+      { request: { operation: 'info' } },
+      { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
+    );
+    return result.operation === 'info' ? result.app : result;
+  });
+
+  ipcMain.handle(LIN_APP_OPEN_DESTINATION_CHANNEL, async (event, destination: unknown) => {
+    windowApplicationHost.assertSettingsSender(event, 'Application destination');
+    if (destination !== 'help' && destination !== 'issues' && destination !== 'license') {
+      throw new Error('Only fixed application destinations may be opened.');
+    }
+    await windowApplicationHost.applicationOperations.openDestination(destination as Exclude<ApplicationDestination, 'release' | 'download'>);
   });
 
   ipcMain.handle(LIN_EXPORT_DIAGNOSTICS_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
-    try {
-      const window =
-        BrowserWindow.fromWebContents(event.sender)
-        ?? BrowserWindow.getFocusedWindow()
-        ?? windowApplicationHost.windows.settingsOrMain();
-      const defaultPath = join(
-        app.getPath('desktop'),
-        `tenon-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
-      );
-      const result = window
-        ? await dialog.showSaveDialog(window, {
-            defaultPath,
-            filters: [{ name: 'JSON', extensions: ['json'] }],
-          })
-        : await dialog.showSaveDialog({
-            defaultPath,
-            filters: [{ name: 'JSON', extensions: ['json'] }],
-          });
-      if (result.canceled || !result.filePath) return { ok: false, canceled: true };
-      const filePath = await diagnosticLog.writeExport(result.filePath, await diagnosticEnvironment());
-      return { ok: true, path: filePath };
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
+    windowApplicationHost.assertSettingsSender(event, 'Export diagnostics');
+    return windowApplicationHost.applicationOperations.diagnosticsManage(
+      { request: { operation: 'export' } },
+      { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
+    );
   });
 }
 

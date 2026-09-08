@@ -33,6 +33,8 @@ import type { SkillOperationCaller } from './skillLifecycle';
 import { createMemoryOperations, type MemoryOperations, type OpenMemory, type ReviewMemoryReset } from './memoryOperations';
 import { createMemoryTools } from '../agent/capabilities/memoryTools';
 import { createPreviewTools } from '../agent/capabilities/previewTools';
+import { createApplicationTools } from '../agent/capabilities/applicationTools';
+import type { ApplicationOperation } from './applicationOperations';
 import type { PreviewOperations } from './previewOperations';
 import { AutomationWorktree } from '../agent/automations/AutomationWorktree';
 import { MemoryControlStore } from '../agent/extensions/memory/MemoryControlStore';
@@ -87,6 +89,7 @@ export interface AgentHostComposition {
 
 export interface AgentHostOptions {
   readonly previewOperations?: PreviewOperations;
+  readonly applicationOperations?: () => ApplicationOperation | null;
   readonly reviewMemoryReset: ReviewMemoryReset;
   readonly openMemory: OpenMemory;
   readonly onMemoryChanged: () => void;
@@ -572,6 +575,12 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
         ? createPreviewTools(options.previewOperations, (itemId, signal) => ({
           key: `agent:${context.thread.id}:${context.turn.id}:${itemId}`,
           origin: { kind: 'agent', threadId: context.thread.id, turnId: context.turn.id, itemId }, authorize, signal,
+        })) : []),
+      ...(options.applicationOperations?.() && context.thread.parentThreadId === null && context.thread.threadSource === 'user' && !context.thread.ephemeral
+        ? createApplicationTools(options.applicationOperations()!, (itemId, signal) => ({
+          origin: { kind: 'agent', threadId: context.thread.id, turnId: context.turn.id, itemId },
+          authorize,
+          signal,
         })) : []),
       ...(context.thread.parentThreadId === null && context.thread.threadSource === 'user' && !context.thread.ephemeral
         ? createMemoryTools(memoryOperations, (itemId, signal) => ({

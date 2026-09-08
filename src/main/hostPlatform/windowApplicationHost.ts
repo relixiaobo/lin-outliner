@@ -90,7 +90,10 @@ import {
 } from '../rendererCapabilities';
 import { loadWindowState, trackWindowState } from '../windowState';
 import { windowMaterialKind } from '../../core/windowMaterial';
-import type { ErrorReport } from '../../core/errorObservability';
+import type { DiagnosticEnvironment, DiagnosticsActionResult, ErrorReport } from '../../core/errorObservability';
+import type { ApplicationOperation, ApplicationOperationCaller } from '../hostDomain/applicationOperations';
+import { createApplicationOperations } from '../hostDomain/applicationOperations';
+import type { DiagnosticLogStore } from '../diagnosticLog';
 
 const MAIN_RENDERER_LOAD_TIMEOUT_MS = 8_000;
 
@@ -108,6 +111,8 @@ export interface WindowApplicationHostOptions {
   readonly searchNodes: (query: string, limit: number) => Promise<SearchHit[]>;
   readonly sanitizeInvocationSeed: (raw: unknown) => InvocationSeed | null;
   readonly reportError: (report: ErrorReport) => void;
+  readonly diagnosticLog: DiagnosticLogStore;
+  readonly diagnosticEnvironment: () => Promise<DiagnosticEnvironment>;
 }
 
 export interface WindowApplicationHost {
@@ -130,8 +135,9 @@ export interface WindowApplicationHost {
     checkInBackground(): Promise<AppUpdateView>;
     setAutomaticChecksEnabled(enabled: boolean): Promise<AppUpdateView>;
     applyAutomaticChecksEnabled(enabled: boolean): Promise<AppUpdateView>;
-    openAvailableUpdate(): ReturnType<AppUpdateService['openAvailableUpdate']>;
+    openAvailableUpdate: AppUpdateService['openAvailableUpdate'];
   };
+  readonly applicationOperations: ApplicationOperation;
   readonly actions: {
     openFromSeed: ActionInvocationService['openFromSeed'];
     queryObjects: ActionInvocationService['queryObjects'];
@@ -749,8 +755,8 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       role: 'help',
       label: t.helpTitle,
       submenu: [
-        { label: t.help({ app: APP_NAME }), click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner') },
-        { label: t.reportIssue, click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner/issues') },
+        { label: t.help({ app: APP_NAME }), click: () => void applicationOperations.openDestination('help') },
+        { label: t.reportIssue, click: () => void applicationOperations.openDestination('issues') },
       ],
     });
     return Menu.buildFromTemplate(template);
@@ -780,6 +786,54 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       context: { operation },
       error,
     }),
+  });
+
+  const revealDiagnostics = async (): Promise<DiagnosticsActionResult> => {
+    try {
+      const logPath = await options.diagnosticLog.ensureLogFile();
+      shell.showItemInFolder(logPath);
+      return { ok: true, path: logPath };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  };
+  const exportDiagnostics = async (caller: ApplicationOperationCaller): Promise<DiagnosticsActionResult> => {
+    try {
+      const parent = caller.origin.kind === 'window'
+        ? BrowserWindow.fromId(caller.origin.windowId)
+        : liveWindow(mainWindow);
+      const defaultPath = join(
+        app.getPath('desktop'),
+        `tenon-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
+      );
+      const result = parent
+        ? await dialog.showSaveDialog(parent, { defaultPath, filters: [{ name: 'JSON', extensions: ['json'] }] })
+        : await dialog.showSaveDialog({ defaultPath, filters: [{ name: 'JSON', extensions: ['json'] }] });
+      if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+      const filePath = await options.diagnosticLog.writeExport(result.filePath, await options.diagnosticEnvironment());
+      return { ok: true, path: filePath };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  };
+  const applicationOperations = createApplicationOperations({
+    updates: appUpdateService,
+    appInfo: async () => {
+      const environment = await options.diagnosticEnvironment();
+      return {
+        name: APP_NAME,
+        version: environment.appVersion,
+        platform: environment.platform,
+        arch: environment.arch,
+        electron: environment.electron,
+        chrome: environment.chrome,
+        node: environment.node,
+      };
+    },
+    diagnostics: options.diagnosticLog,
+    openExternal: (url) => shell.openExternal(url),
+    revealDiagnostics,
+    exportDiagnostics,
   });
 
   const host: WindowApplicationHost = {
@@ -836,8 +890,9 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         return appUpdateService.applyAutomaticChecksEnabled(enabled);
       },
       applyAutomaticChecksEnabled: (enabled) => appUpdateService.applyAutomaticChecksEnabled(enabled),
-      openAvailableUpdate: () => appUpdateService.openAvailableUpdate(),
+      openAvailableUpdate: (options) => appUpdateService.openAvailableUpdate(options),
     },
+    applicationOperations,
     actions: {
       openFromSeed: (...args) => actionInvocationService.openFromSeed(...args),
       queryObjects: (...args) => actionInvocationService.queryObjects(...args),

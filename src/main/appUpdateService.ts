@@ -93,13 +93,15 @@ export class AppUpdateService {
     return this.projectView();
   }
 
-  async openAvailableUpdate(): Promise<AppUpdateOpenResult> {
+  async openAvailableUpdate(options: { destination?: 'release' | 'download' } = {}): Promise<AppUpdateOpenResult> {
     await this.ready;
     const release = this.availableStoredRelease();
     if (!release) return { ok: false, error: 'unavailable' };
-    const destination = release.downloadUrl ? 'download' : 'release';
+    const destination = options.destination ?? (release.downloadUrl ? 'download' : 'release');
+    const url = destination === 'download' ? release.downloadUrl : release.releasePageUrl;
+    if (!url) return { ok: false, error: 'unavailable' };
     try {
-      await this.options.openExternal(release.downloadUrl ?? release.releasePageUrl);
+      await this.options.openExternal(url);
       return { ok: true, destination };
     } catch (error) {
       this.options.onError?.(error, 'open');

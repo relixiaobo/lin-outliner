@@ -25,6 +25,12 @@ import { SKILL_INSPECT_SCHEMA, SKILL_MANAGE_SCHEMA, SKILL_INSPECT_OUTPUT_SCHEMA,
 import { MEMORY_INSPECT_SCHEMA, MEMORY_MANAGE_SCHEMA, MEMORY_INSPECT_OUTPUT_SCHEMA, MEMORY_MANAGE_OUTPUT_SCHEMA } from './memoryOperations';
 import { PREVIEW_INSPECT_SCHEMA, PREVIEW_MANAGE_SCHEMA, PREVIEW_INSPECT_OUTPUT_SCHEMA, PREVIEW_MANAGE_OUTPUT_SCHEMA,
   DATA_INSPECT_SCHEMA, DATA_MANAGE_SCHEMA, DATA_INSPECT_OUTPUT_SCHEMA, DATA_MANAGE_OUTPUT_SCHEMA } from '../previewOperations';
+import {
+  APPLICATION_INSPECT_SCHEMA,
+  APPLICATION_MANAGE_SCHEMA,
+  DIAGNOSTICS_INSPECT_SCHEMA,
+  DIAGNOSTICS_MANAGE_SCHEMA,
+} from '../applicationOperations';
 
 export {
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
@@ -155,6 +161,10 @@ export const MODEL_TOOL_ACTION_KINDS = [
   'preview.control',
   'preview.data.inspect',
   'preview.data.clear',
+  'agent.application.inspect',
+  'agent.application.manage',
+  'agent.diagnostics.inspect',
+  'agent.diagnostics.manage',
   'agent.image.generate',
   'thread.history.search',
   'thread.history.read',
@@ -167,6 +177,8 @@ const READ_ONLY_ACTION_KINDS = new Set<ModelToolActionKind>([
   'preview.data.inspect',
   'agent.memory.inspect',
   'agent.skill.inspect',
+  'agent.application.inspect',
+  'agent.diagnostics.inspect',
   'file.read.local_path',
   'file.read.sensitive_local_path',
   'outline.read',
@@ -258,6 +270,8 @@ const booleanSchema = (description?: string): JsonSchema => ({
   type: 'boolean',
   ...(description ? { description } : {}),
 });
+
+const operationResultSchema: ObjectJsonSchema = { type: 'object', additionalProperties: true };
 
 const integerSchema = (description?: string): JsonSchema => ({
   type: 'integer',
@@ -857,6 +871,34 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     description: 'Request native-confirmed clearing of all saved translations or Tenon preview website data. Translation clearing retains live displays and pending results; fresh requests can cache again. Website clearing affects only the preview partition and reloads its guests; it never clears external browsers or Agent credentials. Inspect the returned operation outcome before reporting success.',
     scope: 'rootThread', schemaOwner: 'core', inputSchema: DATA_MANAGE_SCHEMA, outputSchema: DATA_MANAGE_OUTPUT_SCHEMA,
     actionKinds: ['preview.data.clear'],
+  },
+  {
+    identity: { namespace: null, name: 'application_inspect' },
+    description: 'Inspect bounded application identity, build/update state, or the fixed Help, Issues, and License destinations. Cached update availability is not a fresh check.',
+    scope: 'rootThread', schemaOwner: 'core', inputSchema: APPLICATION_INSPECT_SCHEMA,
+    outputSchema: objectSchema({ result: operationResultSchema }, ['result']),
+    actionKinds: ['agent.application.inspect'],
+  },
+  {
+    identity: { namespace: null, name: 'application_manage' },
+    description: 'Check for updates, open a validated release/download, or open one fixed Help, Issues, or License destination. It never installs updates and never opens arbitrary URLs.',
+    scope: 'rootThread', schemaOwner: 'core', inputSchema: APPLICATION_MANAGE_SCHEMA,
+    outputSchema: objectSchema({ result: operationResultSchema }, ['result']),
+    actionKinds: ['agent.application.manage'],
+  },
+  {
+    identity: { namespace: null, name: 'diagnostics_inspect' },
+    description: 'Inspect bounded local diagnostic counts and severity totals. It never returns private log paths or record content.',
+    scope: 'rootThread', schemaOwner: 'core', inputSchema: DIAGNOSTICS_INSPECT_SCHEMA,
+    outputSchema: objectSchema({ result: operationResultSchema }, ['result']),
+    actionKinds: ['agent.diagnostics.inspect'],
+  },
+  {
+    identity: { namespace: null, name: 'diagnostics_manage' },
+    description: 'Reveal the local diagnostic log or export redacted diagnostics through a native save dialog. It never uploads or posts diagnostics and accepts no path.',
+    scope: 'rootThread', schemaOwner: 'core', inputSchema: DIAGNOSTICS_MANAGE_SCHEMA,
+    outputSchema: objectSchema({ result: operationResultSchema }, ['result']),
+    actionKinds: ['agent.diagnostics.manage'],
   },
   {
     identity: { namespace: null, name: 'memory_inspect' },

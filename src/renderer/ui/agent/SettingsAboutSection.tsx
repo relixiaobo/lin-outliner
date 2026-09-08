@@ -23,6 +23,14 @@ import { SwitchMark } from '../primitives/SwitchMark';
 const HELP_URL = 'https://github.com/relixiaobo/lin-outliner';
 const ISSUES_URL = 'https://github.com/relixiaobo/lin-outliner/issues';
 
+function openFixedDestination(destination: 'help' | 'issues' | 'license', fallback: string): void {
+  if (window.lin?.openApplicationDestination) {
+    void window.lin.openApplicationDestination(destination);
+    return;
+  }
+  void api.openExternalUrl(fallback);
+}
+
 interface SettingsAboutSectionProps {
   appUpdate?: AppUpdateView | null;
   onAppUpdateChange?: (view: AppUpdateView) => void;
@@ -314,12 +322,12 @@ export function SettingsAboutSection({
       <InsetGroup ariaLabel={t.settings.about.supportGroup} id="support" label={t.settings.about.supportGroup}>
         <InsetRow
           label={t.settings.about.helpAction}
-          onSelect={() => void api.openExternalUrl(HELP_URL)}
+          onSelect={() => openFixedDestination('help', HELP_URL)}
           trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
         />
         <InsetRow
           label={t.settings.about.reportIssueAction}
-          onSelect={() => void api.openExternalUrl(ISSUES_URL)}
+          onSelect={() => openFixedDestination('issues', ISSUES_URL)}
           trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
         />
       </InsetGroup>
@@ -332,7 +340,7 @@ export function SettingsAboutSection({
       >
         <InsetRow
           label={t.settings.about.license}
-          onSelect={() => void api.openExternalUrl(`${HELP_URL}/blob/main/LICENSE`)}
+          onSelect={() => openFixedDestination('license', `${HELP_URL}/blob/main/LICENSE`)}
           trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
         />
       </InsetGroup>

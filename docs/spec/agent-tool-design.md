@@ -640,6 +640,23 @@ See [Preview translation](workspace-layout.md) for lifetime, cache-ticket, and U
 ownership. None of these tools writes durable translation preferences or adds a
 Settings/Configuration CLI.
 
+### Application And Diagnostics Operations
+
+`application_inspect`, `application_manage`, `diagnostics_inspect`, and
+`diagnostics_manage` are root-only operations backed by the same Host facade as
+the About and Help surfaces. Application inspection returns bounded version/build
+facts, cached update state, and the fixed Help/Issues/License destinations.
+`check_updates` is explicitly fresh; cached availability is never described as
+a successful check. Management can open only a validated release/download or
+one of those fixed destinations and cannot install updates or accept an arbitrary
+URL.
+
+Diagnostics inspection returns aggregate record counts and severity totals only.
+Reveal flushes and shows the Host-owned local log; export always uses a native
+save dialog, returns the redacted artifact outcome, and accepts no model-supplied
+path. Neither operation uploads or posts diagnostics. These tools do not create
+a Settings/Configuration CLI or expand the aggregate Settings DTO.
+
 ### Skills
 
 `skill` loads one configuration-selected inline Skill by canonical identity.
