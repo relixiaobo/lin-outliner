@@ -47,19 +47,19 @@ describe('keybindings configuration', () => {
     const loaded = loadKeybindings(tempUserData());
     expect(loaded.sourceStatus).toBe('missing');
     expect(loaded.sourceDigest).toBeNull();
-    expect(loaded.effective['global.open_agent_panel']).toEqual(['CommandOrControl+M']);
+    expect(loaded.effective['global.open_page_in_pane']).toEqual(['CommandOrControl+M']);
   });
 
   test('accepts comments, trailing commas, alternates, and explicit disable', () => {
     const userData = tempUserData();
     writeSource(userData, `{
       // Keep both physical choices.
-      "global.open_agent_panel": ["mod + shift + m", "Control+M"],
+      "global.open_page_in_pane": ["mod + shift + m", "Control+M"],
       "global.toggle_page_translation": false,
     }\n`);
     const loaded = loadKeybindings(userData);
     expect(loaded.sourceStatus).toBe('accepted');
-    expect(loaded.effective['global.open_agent_panel']).toEqual(['CommandOrControl+Shift+M', 'Control+M']);
+    expect(loaded.effective['global.open_page_in_pane']).toEqual(['CommandOrControl+Shift+M', 'Control+M']);
     expect(loaded.effective['global.toggle_page_translation']).toEqual([]);
   });
 
@@ -97,7 +97,7 @@ describe('keybindings configuration', () => {
 
     const userData = tempUserData();
     writeSource(userData, `{
-      "global.open_agent_panel": "Control+M",
+      "global.open_page_in_pane": "Control+M",
       "global.new_thread": "Control+M"
     }\n`);
     expect(loadKeybindings(userData)).toMatchObject({ sourceStatus: 'rejected', error: expect.stringContaining('conflicts') });
@@ -108,13 +108,13 @@ describe('keybindings configuration', () => {
     writeSource(userData, '{ "global.launcher": "Command+M" }\n');
     expect(loadKeybindings(userData)).toMatchObject({
       sourceStatus: 'rejected',
-      error: expect.stringContaining('global.open_agent_panel conflicts with global.launcher'),
+      error: expect.stringContaining('global.open_page_in_pane conflicts with global.launcher'),
     });
 
     writeSource(userData, '{ "global.launcher": "Control+M" }\n');
     expect(loadKeybindings(userData)).toMatchObject({
       sourceStatus: 'rejected',
-      error: expect.stringContaining('global.open_agent_panel conflicts with global.launcher'),
+      error: expect.stringContaining('global.open_page_in_pane conflicts with global.launcher'),
     });
   });
 

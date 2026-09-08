@@ -8,9 +8,9 @@
 
 .settings-shortcuts-search {
   display: flex;
-  min-width: min(220px, 100%);
+  min-width: min(24ch, 100%);
   height: var(--control-size-xl);
-  flex: 1 1 240px;
+  flex: 1 1 24ch;
   align-items: center;
   gap: var(--space-2);
   border-radius: var(--radius-md);
@@ -81,13 +81,13 @@
 }
 
 .settings-shortcut-key kbd {
-  font-family: var(--font-family-ui);
+  font-family: var(--font-family-sans);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
 
 .settings-shortcut-key.is-recording {
-  min-width: 112px;
+  min-width: 12ch;
 }
 
 @media (max-width: 720px) {

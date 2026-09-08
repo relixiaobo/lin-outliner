@@ -584,7 +584,7 @@ export const zhHans: PartialMessages = {
       openFailed: '无法打开快捷键文件。',
       commands: {
         'global.launcher': { label: '全局启动器', description: '在任意应用中唤起启动器。' },
-        'global.open_agent_panel': { label: '打开 Agent 面板', description: '打开并聚焦 Agent 面板。' },
+        'global.open_page_in_pane': { label: '在新分栏打开页面', description: '将当前页面打开到新分栏。' },
         'global.new_thread': { label: '新建线程', description: '新建一个 Agent 线程。' },
         'global.go_to_today': { label: '前往今天', description: '打开今天的每日笔记。' },
         'global.toggle_page_translation': { label: '切换页面翻译', description: '在当前支持的预览中翻译或显示原文。' },

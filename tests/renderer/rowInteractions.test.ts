@@ -2339,7 +2339,7 @@ describe('row interaction resolvers', () => {
       'selected_reference.escape',
     ]);
     expect(ids('global')).toEqual([
-      'global.open_agent_panel',
+      'global.open_page_in_pane',
       'global.new_thread',
       'global.go_to_today',
       'global.toggle_page_translation',

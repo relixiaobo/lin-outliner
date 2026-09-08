@@ -624,7 +624,7 @@ export const en = {
       openFailed: 'Could not open the keybindings file.',
       commands: {
         'global.launcher': { label: 'Global launcher', description: 'Summon the launcher from any application.' },
-        'global.open_agent_panel': { label: 'Open Agent panel', description: 'Open and focus the Agent panel.' },
+        'global.open_page_in_pane': { label: 'Open page in new pane', description: 'Open the current page in a new pane.' },
         'global.new_thread': { label: 'New Thread', description: 'Create a new Agent Thread.' },
         'global.go_to_today': { label: 'Go to Today', description: 'Open today’s Daily Note.' },
         'global.toggle_page_translation': { label: 'Toggle page translation', description: 'Translate or show the original in the active supported preview.' },

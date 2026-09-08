@@ -118,7 +118,7 @@ describe('Shortcut Manager', () => {
       rendered.window.dispatchEvent(keydown(rendered.window, { key: 'p', code: 'KeyP', metaKey: true }));
     });
     expect(rendered.updates).toContainEqual({
-      id: 'global.open_agent_panel',
+      id: 'global.open_page_in_pane',
       value: 'CommandOrControl+P',
       observedDigest: '1234abcd',
     });
@@ -140,14 +140,14 @@ describe('Shortcut Manager', () => {
   test('adds and removes alternate bindings', async () => {
     const rendered = await renderManager(view());
     const add = rendered.document.querySelector<HTMLButtonElement>(
-      '[aria-label="Add an alternate for Open Agent panel"]',
+      '[aria-label="Add an alternate for Open page in new pane"]',
     );
     await act(async () => add?.click());
     await act(async () => {
       rendered.window.dispatchEvent(keydown(rendered.window, { key: 'p', code: 'KeyP', ctrlKey: true }));
     });
     expect(rendered.updates.at(-1)).toEqual({
-      id: 'global.open_agent_panel',
+      id: 'global.open_page_in_pane',
       value: ['CommandOrControl+M', 'Control+P'],
       observedDigest: '1234abcd',
     });
@@ -157,35 +157,35 @@ describe('Shortcut Manager', () => {
     );
     await act(async () => remove?.click());
     expect(rendered.updates.at(-1)).toEqual({
-      id: 'global.open_agent_panel',
+      id: 'global.open_page_in_pane',
       value: false,
       observedDigest: '1234abcd',
     });
   });
 
   test('disables, resets one override, and resets all overrides', async () => {
-    const custom = withEntry(view(), 'global.open_agent_panel', {
+    const custom = withEntry(view(), 'global.open_page_in_pane', {
       desired: 'Control+P',
       effective: ['Control+P'],
       status: 'applied',
     });
     const rendered = await renderManager(custom);
     const enabled = rendered.document.querySelector<HTMLButtonElement>(
-      '[aria-label="Enable Open Agent panel"]',
+      '[aria-label="Enable Open page in new pane"]',
     );
     await act(async () => enabled?.click());
     expect(rendered.updates.at(-1)).toEqual({
-      id: 'global.open_agent_panel',
+      id: 'global.open_page_in_pane',
       value: false,
       observedDigest: '1234abcd',
     });
 
     const reset = rendered.document.querySelector<HTMLButtonElement>(
-      '[aria-label="Reset Open Agent panel"]',
+      '[aria-label="Reset Open page in new pane"]',
     );
     await act(async () => reset?.click());
     expect(rendered.updates.at(-1)).toEqual({
-      id: 'global.open_agent_panel',
+      id: 'global.open_page_in_pane',
       observedDigest: '1234abcd',
     });
 
@@ -197,7 +197,7 @@ describe('Shortcut Manager', () => {
 
   test('follows external source changes', async () => {
     const rendered = await renderManager(view());
-    await rendered.emit(withEntry(view(), 'global.open_agent_panel', {
+    await rendered.emit(withEntry(view(), 'global.open_page_in_pane', {
       desired: 'Control+P',
       effective: ['Control+P'],
       status: 'applied',

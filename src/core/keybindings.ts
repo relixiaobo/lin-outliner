@@ -6,7 +6,7 @@ export const KEYBINDINGS_GET_SYNC_CHANNEL = 'lin:keybindings-get-sync';
 
 export type ConfigurableShortcutId =
   | 'global.launcher'
-  | 'global.open_agent_panel'
+  | 'global.open_page_in_pane'
   | 'global.new_thread'
   | 'global.go_to_today'
   | 'global.toggle_page_translation';
@@ -32,10 +32,10 @@ export const CONFIGURABLE_SHORTCUTS: readonly ConfigurableShortcutDefinition[] =
     defaultBindings: Object.freeze(['CommandOrControl+Shift+Space', 'Control+Alt+Space']),
   },
   {
-    id: 'global.open_agent_panel',
+    id: 'global.open_page_in_pane',
     context: 'application',
-    title: 'Open Agent panel',
-    description: 'Open and focus the Agent panel.',
+    title: 'Open page in new pane',
+    description: 'Open the current page in a new pane.',
     defaultBindings: Object.freeze(['CommandOrControl+M']),
   },
   {

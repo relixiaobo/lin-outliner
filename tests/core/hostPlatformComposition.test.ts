@@ -100,7 +100,7 @@ describe('Host platform composition', () => {
 
   test('window application release is idempotent and settles owned effects', () => {
     expect(WINDOW_HOST_SRC).toContain('if (released) return;');
-    expect(WINDOW_HOST_SRC).toContain('unregisterLauncherHotkeys(launcherHotkeyAccelerators);');
+    expect(WINDOW_HOST_SRC).toContain('unregisterLauncherHotkeys(launcherHotkeyAccelerators, globalShortcut);');
     expect(WINDOW_HOST_SRC).toContain('pendingAmbientSeeds.clear();');
     expect(WINDOW_HOST_SRC).toContain('pendingActionStepAcks.clear();');
     expect(WINDOW_HOST_SRC).toContain('actionInvocationService.releaseOpening(launcherInvocationRef);');

@@ -107,8 +107,8 @@ keyboard or pointer change should be checked against this matrix.
 
 `src/core/keybindings.ts` is the definition source for the configurable command
 catalog, portable chord grammar, contexts, defaults, conflict rules, and schema.
-The current configurable commands are the system-wide launcher, Open Agent
-panel, New Thread, Go to Today, and active-preview translation toggle. A binding
+The current configurable commands are the system-wide launcher, Open page in
+new pane, New Thread, Go to Today, and active-preview translation toggle. A binding
 may be one chord, one to four alternates, or `false`; an absent property restores
 its definition default. Current system, application, and preview commands overlap,
 so their effective chords must be unique. Chords reserved for native application,

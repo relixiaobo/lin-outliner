@@ -1,13 +1,10 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { GlobalShortcutRegistrar } from '../../src/main/launcher/launcherHotkey';
-
-mock.module('electron', () => ({ globalShortcut: {} }));
-
-const {
+import {
   registerLauncherHotkeys,
   replaceLauncherHotkeys,
   unregisterLauncherHotkeys,
-} = await import('../../src/main/launcher/launcherHotkey');
+} from '../../src/main/launcher/launcherHotkey';
 
 function registrar(blocked: readonly string[] = []) {
   const callbacks = new Map<string, () => void>();

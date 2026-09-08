@@ -79,15 +79,15 @@ test.describe('agent settings window', () => {
     const search = settings.getByRole('searchbox', { name: 'Search shortcuts' });
     await search.fill('translation');
     await expect(settings.getByText('Toggle page translation', { exact: true })).toBeVisible();
-    await expect(settings.getByText('Open Agent panel', { exact: true })).toHaveCount(0);
+    await expect(settings.getByText('Open page in new pane', { exact: true })).toHaveCount(0);
 
-    await search.fill('global.open_agent_panel');
-    await expect(settings.getByText('Open Agent panel', { exact: true })).toBeVisible();
-    await settings.getByRole('button', { name: 'Add an alternate for Open Agent panel' }).click();
+    await search.fill('global.open_page_in_pane');
+    await expect(settings.getByText('Open page in new pane', { exact: true })).toBeVisible();
+    await settings.getByRole('button', { name: 'Add an alternate for Open page in new pane' }).click();
     await page.keyboard.press('Control+P');
     await expect(settings.getByRole('button', { name: 'Change Control+P' })).toBeVisible();
 
-    await settings.getByRole('switch', { name: 'Enable Open Agent panel' }).click();
+    await settings.getByRole('switch', { name: 'Enable Open page in new pane' }).click();
     await expect(settings.getByText('Disabled', { exact: true })).toBeVisible();
   });
 

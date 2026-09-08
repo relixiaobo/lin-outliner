@@ -5,6 +5,7 @@ import {
   BrowserWindow,
   clipboard,
   dialog,
+  globalShortcut,
   Menu,
   nativeImage,
   nativeTheme,
@@ -993,6 +994,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         launcherHotkeyAccelerators,
         bindings,
         () => void toggleLauncher(),
+        globalShortcut,
       );
       launcherHotkeyAccelerators = registration.accelerators;
       launcherHotkeyRegistrationError = registration.error;
@@ -1011,7 +1013,11 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         onBlurHide: dismissLauncher,
       });
       registerRendererCapabilities(launcherWindow.webContents, LAUNCHER_RENDERER_CAPABILITIES);
-      const hotkey = registerLauncherHotkeys(() => void toggleLauncher(), options.initialLauncherBindings);
+      const hotkey = registerLauncherHotkeys(
+        () => void toggleLauncher(),
+        options.initialLauncherBindings,
+        globalShortcut,
+      );
       launcherHotkeyAccelerators = hotkey.accelerators;
       launcherHotkeyRegistrationError = hotkey.error;
       const target = createMainWindow();
@@ -1039,7 +1045,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       if (released) return;
       released = true;
       skillReviews.release();
-      if (app.isReady()) unregisterLauncherHotkeys(launcherHotkeyAccelerators);
+      if (app.isReady()) unregisterLauncherHotkeys(launcherHotkeyAccelerators, globalShortcut);
       for (const release of releases.splice(0).reverse()) release();
       for (const resolve of pendingAmbientSeeds.values()) resolve(null);
       pendingAmbientSeeds.clear();

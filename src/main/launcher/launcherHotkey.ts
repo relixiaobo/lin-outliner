@@ -1,5 +1,3 @@
-import { globalShortcut } from 'electron';
-
 export interface GlobalShortcutRegistrar {
   isRegistered(accelerator: string): boolean;
   register(accelerator: string, callback: () => void): boolean;
@@ -20,7 +18,7 @@ export interface HotkeyRegistration {
 export function registerLauncherHotkeys(
   toggle: () => void,
   candidates: readonly string[],
-  registrar: GlobalShortcutRegistrar = globalShortcut,
+  registrar: GlobalShortcutRegistrar,
 ): HotkeyRegistration {
   const registered: string[] = [];
   const failed: string[] = [];
@@ -47,7 +45,7 @@ export function replaceLauncherHotkeys(
   current: readonly string[],
   candidates: readonly string[],
   toggle: () => void,
-  registrar: GlobalShortcutRegistrar = globalShortcut,
+  registrar: GlobalShortcutRegistrar,
 ): HotkeyRegistration {
   const currentSet = new Set(current);
   const candidateSet = new Set(candidates);
@@ -84,7 +82,7 @@ export function replaceLauncherHotkeys(
 
 export function unregisterLauncherHotkeys(
   accelerators: readonly string[],
-  registrar: GlobalShortcutRegistrar = globalShortcut,
+  registrar: GlobalShortcutRegistrar,
 ): void {
   for (const accelerator of accelerators) registrar.unregister(accelerator);
 }

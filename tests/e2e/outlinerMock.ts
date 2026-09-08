@@ -740,7 +740,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
     const shortcutDefinitions = [
       { id: 'global.launcher', context: 'system', defaults: ['CommandOrControl+Shift+Space', 'Control+Alt+Space'] },
-      { id: 'global.open_agent_panel', context: 'application', defaults: ['CommandOrControl+M'] },
+      { id: 'global.open_page_in_pane', context: 'application', defaults: ['CommandOrControl+M'] },
       { id: 'global.new_thread', context: 'application', defaults: ['CommandOrControl+Shift+O'] },
       { id: 'global.go_to_today', context: 'application', defaults: ['CommandOrControl+Shift+D'] },
       { id: 'global.toggle_page_translation', context: 'preview', defaults: ['Alt+A'] },
