@@ -1,8 +1,9 @@
 # Project Context Runtime
 
-**Shape:** One complete feature. It implements bounded context collection,
-per-task execution addresses, provider projection, and optional Project
-catalog metadata under the [Agent Capability-First Development Workbench](project-development-workbench.md).
+**Shape:** Two independently complete features: bounded execution-context
+discovery/publication, and the optional Project catalog with its entire
+membership, confirmation, deletion, and Automation lifecycle. Each is one PR
+under the [Agent Capability-First Development Workbench](project-development-workbench.md).
 
 ## Goal
 
@@ -239,6 +240,45 @@ durable fence rejects new dependencies until the membership/catalog transaction
 commits or deletion is refused and the intent is cleared. Startup reconciles
 that intent with Automation claims before scheduling. An in-memory mutex alone
 cannot provide this guarantee across restart.
+
+### Catalog implementation boundary
+
+The catalog feature is one complete PR, built in the following internal order:
+
+1. Define closed Project request/response codecs and a `ProjectCatalogStore`
+   sharing the Thread metadata SQLite connection. Store display name, optional
+   canonical root hint, revision, membership, and durable deletion intent here.
+   Project metadata and membership removal commit in one transaction. A saved
+   root remains a hint; it is never a Thread cwd or automatic tool default.
+2. Inherit membership through canonical parent/fork edges during Thread
+   creation. Explicit changes apply to the selected root and its complete
+   descendant lineage, including hidden execution Threads. Traverse lineage
+   rather than using membership rows as an approximation. Host confirmation
+   binds the exact Project revision, canonical path, and affected root; stale
+   confirmation cannot authorize a different binding. Plain new Chats remain
+   ungrouped, while New chat in project explicitly chooses membership.
+3. Share the Automation scheduler lifecycle lock for catalog deletion and
+   Project-backed hint admission. Capture Project display/root/revision values
+   into each claim's immutable snapshot. Definition edits, resume, new claims,
+   and reactivation validate live catalog state under that lock. Existing
+   claims and accepted Turns use their recorded snapshots, including when the
+   saved root changes. Reconcile accepted pending claims before deciding which
+   remaining references block deletion. Startup resolves persisted deletion
+   intents before waking the scheduler; completed history needs no catalog.
+4. Route renderer operations and root-Agent proposals through the same Host
+   service. Add compact Project grouping and actions to the existing Thread
+   chooser, an optional membership control near the composer, and Project
+   choices alongside directory hints in the Automation editor. Reuse native
+   confirmation and existing dialog/input/menu primitives. Root selection
+   never changes permissions, provider configuration, or task addresses.
+
+Verification covers stale revisions and cancelled confirmations; membership
+inheritance through forks and hidden children; deletion with missing membership
+rows and concurrent Thread creation; active/paused/completed Automation hints,
+accepted and unaccepted claims, root edits, and reactivation; crash recovery
+on both sides of deletion commit; and unchanged task receipts and user files.
+Renderer checks cover ungrouped Chat, new Chat in Project, reassignment,
+Project editing/deletion, and unavailable Automation references in both themes.
 
 ### Protocol clean cut
 
