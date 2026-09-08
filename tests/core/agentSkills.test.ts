@@ -1016,6 +1016,7 @@ describe('agent skills', () => {
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
       'configuration',
       'delegate',
+      'git-review',
       'outline',
       'skillify',
       'verification',
@@ -1430,7 +1431,10 @@ describe('built-in skill resource packaging', () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
     await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
-    expect((await readdir(generatedRoot)).sort()).toEqual(['configuration', 'delegate', 'outline', 'verification']);
+    expect((await readdir(generatedRoot)).sort()).toEqual(['configuration', 'delegate', 'git-review', 'outline', 'verification']);
+    const gitReviewRaw = await readFile(path.join(generatedRoot, 'git-review', 'SKILL.md'), 'utf8');
+    expect(gitReviewRaw).toContain('git-review capture --input - --output json');
+    expect(gitReviewRaw).toContain('Review and verification never imply publication authority.');
     const verificationRaw = await readFile(path.join(generatedRoot, 'verification', 'SKILL.md'), 'utf8');
     expect(verificationRaw).toContain('every required check');
     expect(verificationRaw).toContain('within the original');

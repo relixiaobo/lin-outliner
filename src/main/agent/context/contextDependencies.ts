@@ -266,6 +266,7 @@ export function contextPayloadDependencies(payload: ThreadContextPayload): Conte
   switch (payload.kind) {
     case 'verificationSource':
       return emptyDependencies();
+    case 'gitReviewEvidence':
     case 'verificationObservation':
       return emptyDependencies({ contexts: payload.evidenceRefs });
     case 'executionContextObservation':

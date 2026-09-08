@@ -1965,6 +1965,62 @@ describe('PiTurnExecutor event normalization', () => {
     }
   });
 
+  test('Git review deltas preserve provider request prefixes and retain exact references after compaction', async () => {
+    const fixture = createContext();
+    const { pendingExecutionContext } = await import('../../src/main/agent/tasks/ExecutionContext');
+    const payloads = new Map<string, ThreadContextPayload>();
+    const put = (payload: ThreadContextPayload): ThreadContextPayloadReference => {
+      const bytes = JSON.stringify(payload);
+      const ref = { id: createHash('sha256').update(bytes).digest('hex'), mimeType: 'application/vnd.tenon.agent-context+json' as const,
+        byteLength: Buffer.byteLength(bytes), schemaVersion: 1 as const, kind: payload.kind };
+      payloads.set(ref.id, payload); return ref;
+    };
+    const originalRead = fixture.context.readContext;
+    const read = async (ref: ThreadContextPayloadReference) => payloads.get(ref.id) ?? originalRead(ref);
+    const context = { ...fixture.context, readContext: read };
+    const requests: unknown[][] = [];
+    const references: ThreadContextPayloadReference[] = [];
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(), resolveRuntime: async () => runtimeSelection(),
+      createAgent: (options) => ({ state: { errorMessage: undefined }, subscribe: () => () => undefined,
+        abort: () => undefined, steer: () => undefined, prompt: async () => {
+          for (const [index, text] of ['Historical diff A reviewed.', 'HEAD changed; refresh the review.', 'Historical diff B reviewed.'].entries()) {
+            const item = await context.persistContextEvidence({ schemaVersion: 1, kind: 'gitReviewEvidence', taskId: `git-${index}`,
+              executionContext: pendingExecutionContext({ requestedCwd: '/repo', cwd: '/repo', targets: [], targetMode: 'follow', coverage: 'cwd-only',
+                scopes: [{ key: 'repo', directory: '/repo', worktree: null, gitDirectory: null }] },
+              { capability: 'full-access', isolation: 'unsandboxed', mutation: false, writablePaths: [] }),
+              evidenceRefs: references.slice(-1),
+              evidence: { version: 1, operation: 'capture', outcome: index === 1 ? 'rejected' : 'reviewed', cwd: '/repo', observedAt: index + 1,
+                baseline: null, paths: [{ path: 'UNPROJECTED_GIT_MANIFEST', canonicalPath: '/repo/UNPROJECTED_GIT_MANIFEST', kind: 'file', status: '??',
+                  previousPath: null, bytes: 1, mode: 420, digest: 'a'.repeat(64), index: '', diffDigest: 'b'.repeat(64), binary: false, diff: 'FULL_DIFF_NOT_PROJECTED' }],
+                preview: null, commit: null, parent: null, pullRequest: null, message: text },
+              facts: [{ source: 'git-review', kind: 'git', authority: 'host', purpose: 'observation', scope: '/repo', version: String(index),
+                text, invalidated: index === 1, observedAt: index + 1 }] }, 'Git review applicability');
+            references.push(item.payloadRef);
+            const messages = await options.transformContext!([]);
+            requests.push(convertResponsesMessages(testModel, { messages }, new Set([testModel.provider]), { includeSystemPrompt: false }));
+          }
+        } }),
+    });
+    expect((await executor.execute(context)).status).toBe('completed');
+    for (let index = 1; index < requests.length; index++) expect(requests[index]!.slice(0, requests[index - 1]!.length)).toEqual(requests[index - 1]);
+    expect(JSON.stringify(requests)).not.toContain('UNPROJECTED_GIT_MANIFEST');
+    expect(JSON.stringify(requests)).not.toContain('FULL_DIFF_NOT_PROJECTED');
+    expect(JSON.stringify(requests[1])).toContain('HEAD changed');
+    expect(JSON.stringify(requests[0])).toContain(references[0]!.id);
+    const prior = completedTurn(context.turn, context.turn.id, [...context.turn.items, ...fixture.recorder.orderedItems()], 1);
+    const plan = await planContextCompaction({ turns: [prior], readContext: read });
+    expect(plan).not.toBeNull();
+    const compacted = completedTurn(context.turn, uuidV7(), [{ id: uuidV7(), type: 'contextCompaction', ...plan,
+      summaryRef: put(plan!.summary), restoredStateRef: put(plan!.restoredState) } as ThreadItem], 3);
+    const projected = await new CanonicalContextProjector(testModel, { readContext: read, readInternalText: async () => null, readOutput: async () => null,
+      readResource: async () => null, resolveResourceObservationPath: async () => null, resolveImageArtifactPath: async () => null }).projectTurns([prior, compacted]);
+    const restored = JSON.stringify(convertResponsesMessages(testModel, { messages: projected }, new Set([testModel.provider]), { includeSystemPrompt: false }));
+    expect(restored).toContain(references.at(-1)!.id); expect(restored).toContain('Revalidate live state');
+    expect(restored).not.toContain('FULL_DIFF_NOT_PROJECTED');
+    expect(restored).toContain('Historical diff B reviewed.');
+  });
+
   test('rebuilds every provider boundary from durable canonical Items', async () => {
     const fixture = createContext();
     const providerContexts: Message[][] = [];
@@ -4949,7 +5005,7 @@ function createContext(): {
           kind: payload.kind,
         },
         summary,
-        contextRefs: payload.kind === 'executionContextPublication' ? payload.evidenceRefs : [],
+        contextRefs: payload.kind === 'executionContextPublication' || payload.kind === 'gitReviewEvidence' ? payload.evidenceRefs : [],
         internalTextRefs: [],
         resourceRefs: [],
         outputRefs: payload.kind === 'toolOutputProjection' ? [payload.outputRef] : [],

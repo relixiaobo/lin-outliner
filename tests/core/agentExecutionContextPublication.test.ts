@@ -171,3 +171,28 @@ function fixture() {
   };
   return { read, payloads, evidence, observation, publish };
 }
+
+test('Git reviews append immutable evidence and preserve exact references through compaction', async () => {
+  const f = fixture();
+  const context = pendingExecutionContext({ requestedCwd: null, cwd: '/repo', targets: [], targetMode: 'follow', coverage: 'cwd-only',
+    scopes: [{ key: 'repo', directory: '/repo', worktree: null, gitDirectory: null }] },
+  { capability: 'full-access', mutation: false, isolation: 'unsandboxed', writablePaths: [] });
+  const review = (version: string, invalidated: boolean, prior: ThreadContextPayloadReference[] = []) => f.evidence({
+    schemaVersion: 1, kind: 'gitReviewEvidence', taskId: version, executionContext: context, evidenceRefs: prior,
+    evidence: { version: 1, operation: 'capture', outcome: invalidated ? 'rejected' : 'reviewed', cwd: '/repo', observedAt: 1,
+      baseline: null, paths: [], preview: null, commit: null, parent: null, pullRequest: null, message: 'Review only' },
+    facts: [{ source: 'git-review', scope: '/repo', kind: 'git', authority: 'host', purpose: 'observation', version, invalidated,
+      text: invalidated ? 'HEAD changed; refresh the review.' : 'Historical diff reviewed.' }],
+  });
+  const original = review('first', false); const before = await f.publish([original]); const frozen = JSON.stringify(before.payload);
+  const changed = review('next', true, [original.payloadRef]); const after = await f.publish([original, before.item, changed]);
+  expect(JSON.stringify(before.payload)).toBe(frozen); expect(after.payload.text).toContain('HEAD changed');
+  expect(after.payload.text).toContain(changed.payloadRef.id); expect(before.payload.text).toContain(original.payloadRef.id);
+  const history = [turn([original, before.item, changed, after.item])];
+  const plan = await planContextCompaction({ turns: history, readContext: f.read });
+  expect(plan?.restoredState.executionContext.text).toContain(changed.payloadRef.id);
+  expect(plan?.restoredState.executionContext.text).toContain('Revalidate live state');
+  expect(contextPayloadDependencies(plan!.restoredState).contexts).toContainEqual(after.item.payloadRef);
+  expect(contextPayloadDependencies(after.payload).contexts).toContainEqual(changed.payloadRef);
+  expect(contextPayloadDependencies(f.payloads.get(changed.payloadRef.id)!).contexts).toContainEqual(original.payloadRef);
+});

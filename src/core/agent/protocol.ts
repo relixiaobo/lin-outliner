@@ -846,6 +846,7 @@ export const CONTEXT_EVIDENCE_KINDS = Object.freeze([
   'taskExecutionContext',
   'executionContextObservation',
   'verificationObservation',
+  'gitReviewEvidence',
   'executionContextPublication',
   'automationDispatch',
 ] as const);
@@ -1086,6 +1087,16 @@ export interface ExecutionContextPublicationPayload {
   readonly text: string;
 }
 
+export interface GitReviewEvidencePayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'gitReviewEvidence';
+  readonly evidence: import('./gitReview').GitReviewEvidence;
+  readonly taskId: string;
+  readonly executionContext: import('./executionContext').TaskExecutionContext;
+  readonly evidenceRefs: readonly ThreadContextPayloadReference[];
+  readonly facts: readonly import('./executionContext').ExecutionContextFact[];
+}
+
 export interface VerificationSourcePayload {
   readonly schemaVersion: 1;
   readonly kind: 'verificationSource';
@@ -1194,6 +1205,7 @@ export interface ToolCallArgumentsContextPayload {
 }
 
 export type ThreadContextPayload =
+  | GitReviewEvidencePayload
   | VerificationSourcePayload
   | VerificationObservationPayload
   | AutomationDispatchContextPayload

@@ -172,9 +172,11 @@ continuation, checking frozen earlier diffs and explicit renewed review needs.
   observations publish through Execution Context Publication, with dependency
   references retained through compaction. No separate Git database is added.
 - Selected-file commits build a temporary Git index, preserve unrelated real
-  index entries, and use an index lock plus a ref transaction that verifies HEAD
-  attachment and its expected OID. Git plumbing creates the exact reviewed tree;
-  repository commit hooks are not run by this workflow. Signing follows Git's
+  index entries, and use an index lock plus a Git compare-and-swap on the explicitly reviewed
+  ref. HEAD attachment is revalidated immediately before and after the update;
+  external attachment races produce an uncertain result. Git plumbing creates the exact reviewed tree;
+  repository commit hooks and clean filters are not run by this workflow.
+  The committed blobs contain the exact reviewed bytes. Signing follows Git's
   `commit.gpgSign` setting. Ordinary Bash remains available for custom workflows.
 - The tool result offers unchecked path selection and a copyable explicit
   commit request, plus a publication preview. Publication is requested through
@@ -184,7 +186,7 @@ continuation, checking frozen earlier diffs and explicit renewed review needs.
 - Scope: new Git review domain/helper/Skill and renderer result component;
   Bash admission, capability classification, ToolRuntime, context payload codecs,
   publication/dependency projection, focused tests, and current-behavior specs.
-  Collision check against open PR #656: only the agent-model-runtime spec is
+  Collision check against open PR #656: the agent-model-runtime spec and locale dictionaries are
   shared, in separate sections; no Settings implementation or infrastructure
   ownership files are needed. Main retains board/changelog/archive ownership.
 - Risks: external non-cooperating writes, process loss between Git ref/index
