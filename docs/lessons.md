@@ -2663,3 +2663,15 @@ actually received, not everything the Host collected. Append later facts;
 restore omitted instructions explicitly after compaction. Verify prepared and
 post-adapter message prefixes, including retries with no intervening assistant
 output; stable prompt hashes and cache affinity alone cannot prove preservation.
+
+## Returned domain failures must survive tool adapters
+
+PR #650 initially wrapped every resolved application/diagnostics result in a
+success envelope, including unavailable updates, failed checks, failed reveals,
+and canceled exports. Nested failure fields did not change the model-visible
+success discriminator.
+
+**A resolved promise proves completion, not domain success.** Translate typed
+returned failures and cancellations into the canonical outcome before wrapping
+tool data, preserve cached observations separately, and test the model-visible
+discriminator for every domain result branch.
