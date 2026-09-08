@@ -19,6 +19,43 @@ publishing implicitly.
 
 ## Design
 
+### Integration with the existing execution surface
+
+An explicitly requested Goal may opt into verification with canonical directory
+roots and a finite attempt limit. Ordinary Goals remain unchanged. The Host
+resolves the enclosing `.tenon/checks.json` declarations for those roots using
+the shipped discovery mechanism. The Agent runs their exact commands through
+ordinary Bash; a matching command and canonical cwd identifies a declared check.
+Every other process in that workflow is unclassified and invalidates the
+current revision before admission, including native/delegated producers. Typed
+mutations invalidate every overlapping workflow before their side effects.
+
+Goal storage owns immutable attempt/revision metadata and references to source
+evidence and Tool Tasks. Tool Tasks remain the only owners of process state,
+exit receipts, output and address claims. Full source manifests use the existing
+context-payload store. The existing execution-context publication and dependency
+graph carry bounded applicability facts and retain the full evidence through
+compaction and restart. Goal inspection exposes the current check list, factual
+outcomes, applicability, attempts and stop reason; Goal completion revalidates
+the aggregate before accepting success.
+
+The first declared check after a known mutation or source/profile change starts
+a fresh bounded attempt. Repeating an already settled check also starts a new
+attempt, so it cannot refresh one pass while retaining the other old passes.
+Read-only checks initially run sequentially. Missing profiles, capture failure,
+repeated equivalent failure, exhausted attempts, user stop and context-capacity
+failure stop automatic continuation in the existing Goal owner. A later user
+resume requires renewed admission and source validation. No edit is replayed by
+the verification mechanism.
+
+The implementation touches Agent Goal and context DTOs/codecs/tool contracts,
+`GoalStore`, `GoalExtension`, `ToolTaskService`, `ThreadService`, `ToolRuntime`,
+context publication/dependency/projection consumers, the built-in verification
+guidance, and their focused tests/specifications. It does not change the core
+document command protocol, dependency/build configuration, or startup-recovery
+ownership. Runtime invariants on inspection paths report unavailable evidence;
+write/decode boundaries continue to reject malformed state.
+
 ### Check result
 
 Each check is one Tool Task and records:
