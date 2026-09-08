@@ -146,6 +146,7 @@ import {
 } from './thread/TurnLifecycle';
 import { ToolTaskService } from './tasks/ToolTaskService';
 import { ToolTaskStore } from './tasks/ToolTaskStore';
+import { ProjectService, type ReviewProjectChange } from './projects/ProjectService';
 import type { ToolTaskSupervisorRuntime } from './tasks/toolTaskRuntime';
 import {
   collectDeclaredOutputArtifacts,
@@ -182,6 +183,7 @@ export interface ThreadServiceStores {
 }
 
 export interface ThreadServiceOptions {
+  readonly reviewProjectChange?: ReviewProjectChange;
   readonly stores: ThreadServiceStores;
   readonly executor: TurnExecutor;
   readonly attachmentScratchRoot: string;
@@ -303,6 +305,7 @@ export interface PersistentThreadExecutionContext {
 }
 
 export class ThreadService implements ThreadServiceExtensionHost {
+  readonly projects: ProjectService;
   defaultExecutionDirectory(): string { return this.hostDefaultDirectory; }
   writeFeatureContext(ownerId: string, payload: import('../../core/agent/protocol').ThreadContextPayload) {
     return this.core.payloads.writeContext(ownerId, payload);
@@ -387,6 +390,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.hostDefaultDirectory = options.defaultExecutionDirectory ?? homedir();
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
+    this.projects = new ProjectService(options.stores.metadata.projects,
+      (id) => this.core.metadata.read(id)?.thread ?? null, options.reviewProjectChange, this.now);
     this.delegationCoordinator = options.delegationCoordinator ?? (() => null);
     this.goalStore = options.stores.goals;
     this.toolTasks = new ToolTaskService(
@@ -1103,6 +1108,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
     decoded: AgentCoreRequestByMethod[Method],
   ): Promise<AgentCoreResponseByMethod[Method]> {
     switch (method) {
+      case 'project/inspect': return this.projects.inspect(decoded) as AgentCoreResponseByMethod[Method];
+      case 'project/manage': return this.projects.manage(decoded) as Promise<AgentCoreResponseByMethod[Method]>;
       case 'thread/list':
         return this.listThreads(decoded as AgentCoreRequestByMethod['thread/list']) as AgentCoreResponseByMethod[Method];
       case 'thread/references/search':

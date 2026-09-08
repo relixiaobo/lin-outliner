@@ -1,3 +1,4 @@
+import { decodeProjectSelection, decodeProjectInspectRequest, decodeProjectManageRequest, decodeProjectCatalogView, decodeProjectManageResult } from './project';
 import { decodeExecutionContextFact, decodeTaskExecutionContext } from './executionContext';
 import {
   CONTEXT_EVIDENCE_KINDS,
@@ -1185,6 +1186,8 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
 ): AgentCoreRequestByMethod[M] {
   let decoded: AgentCoreRequestByMethod[AgentCoreMethod];
   switch (method) {
+    case 'project/inspect': decoded = deepFreeze(decodeProjectInspectRequest(value)); break;
+    case 'project/manage': decoded = deepFreeze(decodeProjectManageRequest(value)); break;
     case 'thread/list':
       decoded = decodeThreadListRequest(value);
       break;
@@ -1314,6 +1317,8 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
 ): AgentCoreResponseByMethod[M] {
   let decoded: AgentCoreResponseByMethod[AgentCoreMethod];
   switch (method) {
+    case 'project/inspect': decoded = deepFreeze(decodeProjectCatalogView(value)); break;
+    case 'project/manage': decoded = deepFreeze(decodeProjectManageResult(value)); break;
     case 'thread/list':
       decoded = decodeThreadListResponse(value);
       break;
@@ -1719,13 +1724,14 @@ export function decodeThreadConfigurationSource(value: unknown): import('./proto
 function decodeRendererThreadStartRequest(value: unknown): AgentCoreRequestByMethod['thread/start'] {
   const record = recordValue(value, 'thread/start');
   exactKeys(record, [
-    'id', 'name', 'ephemeral', 'source', 'threadSource', 'modelProvider', 'configurationSource', 'configurationProfile',
+    'id', 'name', 'ephemeral', 'source', 'threadSource', 'modelProvider', 'configurationSource', 'configurationProfile', 'project',
   ], 'thread/start');
   if (record.source !== undefined && record.source !== 'app') fail('thread/start.source', 'renderer source must be app');
   if (record.threadSource !== undefined && record.threadSource !== 'user') {
     fail('thread/start.threadSource', 'renderer entry may create only user Threads');
   }
   return deepFreeze({
+    ...(record.project === undefined ? {} : { project: decodeProjectSelection(record.project) }),
     ...(record.id === undefined ? {} : { id: uuidV7(record.id, 'thread/start.id') }),
     ...(record.name === undefined ? {} : { name: stringValue(record.name, 'thread/start.name') }),
     ...(record.ephemeral === undefined

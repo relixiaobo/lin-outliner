@@ -1,14 +1,19 @@
-import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import type { Project, ProjectMembership } from '../../../core/agent/project';
 import { createPortal } from 'react-dom';
 import type { ThreadId } from '../../../core/agent/protocol';
 import type { Thread } from '../projectionTypes';
 import { useT } from '../../i18n/I18nProvider';
-import { AddIcon, HideIcon, ICON_SIZE, InfoIcon, MoreIcon, PencilIcon, ShowIcon, TrashIcon } from '../../ui/icons';
+import { AddIcon, FolderIcon, HideIcon, ICON_SIZE, InfoIcon, MoreIcon, PencilIcon, ShowIcon, TrashIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
 
 interface ThreadListProps {
+  readonly projects?: readonly Project[];
+  readonly memberships?: readonly ProjectMembership[];
+  readonly onManageProjects?: () => void;
+  readonly onAssignProject?: (thread: Thread) => void;
   readonly anchorRef: RefObject<HTMLElement | null>;
   /** Roots with live work outside the currently selected root surface. */
   readonly backgroundWorkThreadIds: ReadonlySet<string>;
@@ -42,6 +47,7 @@ interface ThreadListProps {
 const ACTION_MENU_WIDTH = 168;
 
 export function ThreadList({
+  projects = [], memberships = [], onManageProjects, onAssignProject,
   anchorRef,
   backgroundWorkThreadIds,
   createDisabled,
@@ -58,6 +64,11 @@ export function ThreadList({
   readRecorded,
 }: ThreadListProps) {
   const t = useT();
+  const membershipByThread = new Map(memberships.map((entry) => [entry.threadId, entry.projectId]));
+  const grouped = new Map(projects.map((project) => [project.id, { id: project.id, name: project.name, threads: [] as Thread[] }]));
+  const ungrouped = { id: 'ungrouped', name: t.agent.projects.none, threads: [] as Thread[] };
+  for (const thread of threads) (grouped.get(membershipByThread.get(thread.id) ?? '') ?? ungrouped).threads.push(thread);
+  const groups = [...grouped.values(), ungrouped].filter((group) => group.threads.length > 0);
   const listRef = useRef<HTMLElement>(null);
   const actionsAnchorRef = useRef<HTMLButtonElement | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
@@ -153,6 +164,7 @@ export function ThreadList({
       <header>
         <h2>{t.agent.thread.title}</h2>
         <span className="thread-list-header-actions">
+          {onManageProjects ? <IconButton icon={FolderIcon} label={t.agent.projects.title} onClick={onManageProjects} variant="message" /> : null}
           <IconButton
             aria-keyshortcuts="Meta+Shift+O"
             disabled={createDisabled}
@@ -166,7 +178,9 @@ export function ThreadList({
       </header>
       <div className="thread-list-scroll">
         {threads.length === 0 ? <p className="thread-empty-copy">{t.agent.thread.noThreads}</p> : null}
-        {threads.map((thread) => {
+        {groups.map((group) => <Fragment key={group.id}>
+          {projects.length ? <h3 className="thread-project-heading">{group.name}</h3> : null}
+          {group.threads.map((thread) => {
           const selected = thread.id === selectedThreadId;
           const identity = threadIdentity(thread, t.agent.thread.sources);
           const backgroundWork = backgroundWorkThreadIds.has(thread.id);
@@ -207,7 +221,8 @@ export function ThreadList({
               </span>
             </div>
           );
-        })}
+          })}
+        </Fragment>)}
       </div>
       {actionsTarget ? createPortal(
         <div
@@ -229,6 +244,12 @@ export function ThreadList({
             <PencilIcon size={ICON_SIZE.menu} />
             <span className="thread-action-menu-label">{t.agent.thread.rename}</span>
           </button>
+          {onAssignProject && !actionsTarget.ephemeral && actionsTarget.threadSource === 'user' ? (
+            <button onClick={() => runThreadAction(onAssignProject)} role="menuitem" type="button">
+              <FolderIcon size={ICON_SIZE.menu} />
+              <span className="thread-action-menu-label">{t.agent.projects.move}</span>
+            </button>
+          ) : null}
           <button
             disabled={recorded === null}
             // The label names only the consequence, so the hint is where the

@@ -33,6 +33,7 @@ import { AutomationStore } from '../../src/main/agent/automations/AutomationStor
 import { AutomationWorktree } from '../../src/main/agent/automations/AutomationWorktree';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import type { ThreadService } from '../../src/main/agent/ThreadService';
+import type { Project } from '../../src/core/agent/project';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 const execFileAsync = promisify(execFile);
@@ -1446,6 +1447,96 @@ describe('Automation worktrees', () => {
   });
 });
 
+describe('Automation Project hints', () => {
+  test('dispatch uses the claim Project snapshot after a root edit without changing Thread configuration', async () => {
+    const source = await realpath(await tempRoot('automation-frozen-project-'));
+    const next = await realpath(await tempRoot('automation-next-project-'));
+    const store = automationStore();
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    let project: Project = { id: uuidV7(), name: 'Original', rootHint: source, revision: 1, createdAt: now, updatedAt: now };
+    store.bindProjectResolver(() => project);
+    const service = automationServiceFor(store, now, { resolveProjectHint: () => project });
+    const automation = await service.create({ ...definition('20260724T100000'),
+      contextHints: [{ source: { kind: 'project', projectId: project.id }, executionMode: 'local' }] });
+    const run = store.claimNow(automation, automation.contextHints[0]!, now);
+    project = { ...project, name: 'Edited', rootHint: next, revision: 2 };
+    const host = threadHost();
+    expect((await dispatcherFor(store, host, now).dispatch(run)).state).toBe('dispatched');
+    expect(host.turnCalls[0]?.dispatchContext.sourceContext.address.cwd).toBe(source);
+    expect(host.turnCalls[0]?.dispatchContext.configuration).toEqual(defaultEffectiveThreadConfiguration());
+    const fresh = store.claimNow(automation, automation.contextHints[0]!, now + 1);
+    expect(fresh.snapshot.projectSnapshot?.rootHint).toBe(next);
+  });
+
+  test('rejects a saved Project path redirected through a symlink before Turn admission', async () => {
+    const source = await realpath(await tempRoot('automation-project-source-'));
+    const replacement = await realpath(await tempRoot('automation-project-replacement-'));
+    const store = automationStore();
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    const project: Project = { id: uuidV7(), name: 'Original', rootHint: source, revision: 1, createdAt: now, updatedAt: now };
+    store.bindProjectResolver(() => project);
+    const service = automationServiceFor(store, now, { resolveProjectHint: () => project });
+    const input = { ...definition('20260724T100000'),
+      contextHints: [{ source: { kind: 'project' as const, projectId: project.id }, executionMode: 'local' as const }] };
+    const automation = await service.create(input);
+    const run = store.claimNow(automation, automation.contextHints[0]!, now);
+    await rm(source, { recursive: true });
+    await symlink(replacement, source);
+    const host = threadHost();
+    expect((await dispatcherFor(store, host, now).dispatch(run)).state).toBe('failed');
+    expect(store.readRun(run.id)?.error).toContain('redirected');
+    expect(host.turnCalls).toHaveLength(0);
+    await expect(service.create(input)).rejects.toThrow('redirected');
+  });
+
+  test('clearing a Project root produces a failed claim while the scheduler can keep working', async () => {
+    const source = await realpath(await tempRoot('automation-project-cleared-'));
+    const store = automationStore();
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    let project: Project = { id: uuidV7(), name: 'Workspace', rootHint: source, revision: 1, createdAt: now, updatedAt: now };
+    store.bindProjectResolver(() => project);
+    const service = automationServiceFor(store, now, { resolveProjectHint: () => project });
+    const automation = await service.create({ ...definition('20260724T100000'),
+      contextHints: [{ source: { kind: 'project', projectId: project.id }, executionMode: 'local' }] });
+    project = { ...project, rootHint: null, revision: 2 };
+    const run = store.claimNow(automation, automation.contextHints[0]!, now);
+    const host = threadHost();
+    const dispatcher = dispatcherFor(store, host, now);
+    const failed = await dispatcher.dispatch(run);
+    expect(failed.state).toBe('failed');
+    expect(failed.error).toContain('no saved directory');
+    expect(failed.snapshot.projectSnapshot?.rootHint).toBeNull();
+    expect(host.turnCalls).toHaveLength(0);
+    const unrelated = store.create(definition('20260724T100000'), now);
+    expect((await dispatcher.dispatch(store.claimNow(unrelated, null, now))).state).toBe('dispatched');
+  });
+
+  test('reactivation must replace a missing Project and cannot reuse its historical root', async () => {
+    const source = await realpath(await tempRoot('automation-project-reactivate-'));
+    const store = automationStore();
+    const now = Date.parse('2026-07-24T09:00:00Z');
+    const project: Project = { id: uuidV7(), name: 'Original', rootHint: source, revision: 1, createdAt: now, updatedAt: now };
+    let available = true;
+    const resolve = () => { if (!available) throw new Error('Project is missing'); return project; };
+    store.bindProjectResolver(resolve);
+    const service = automationServiceFor(store, now, { resolveProjectHint: resolve });
+    const automation = store.create({ ...definition('20260724T080000', 'FREQ=DAILY;COUNT=1'),
+      contextHints: [{ source: { kind: 'project', projectId: project.id }, executionMode: 'local' }] }, now);
+    const completed = store.completeIfExhausted(automation.id, automation.revision, now)!;
+    expect(completed.status).toBe('completed');
+    available = false;
+    await expect(service.request('resume', { id: completed.id, expectedRevision: completed.revision })).rejects.toThrow('changing its schedule');
+    const update = { id: completed.id, expectedRevision: completed.revision, schedule: definition('20260725T100000').schedule };
+    await expect(service.update(update)).rejects.toThrow('Project is missing');
+    expect(store.read(completed.id)?.revision).toBe(completed.revision);
+    const active = await service.update({ ...update,
+      contextHints: [{ contextHintId: completed.contextHints[0]!.contextHintId,
+        source: { kind: 'directory', rootHint: source }, executionMode: 'local' }] });
+    expect(active.status).toBe('active');
+    expect(active.contextHints[0]?.contextHintId).toBe(completed.contextHints[0]?.contextHintId);
+  });
+});
+
 function definition(
   dtstart: string,
   rule = 'FREQ=DAILY',
@@ -1524,6 +1615,7 @@ function automationServiceFor(
     readonly isRunActive?: (run: AutomationRun) => boolean;
     readonly validateConfiguration?: () => Promise<unknown>;
     readonly threads?: ThreadService;
+    readonly resolveProjectHint?: (id: string) => Project;
   } = {},
 ): AutomationService {
   const dispatcher = {
@@ -1547,6 +1639,7 @@ function automationServiceFor(
     scheduler,
     dispatcher,
     threads: overrides.threads ?? {} as ThreadService,
+    resolveProjectHint: overrides.resolveProjectHint,
     now: () => now,
   });
 }

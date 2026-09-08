@@ -1,0 +1,40 @@
+.project-dialog {
+  max-height: calc(100vh - var(--space-12));
+  overflow: auto;
+}
+.project-form,
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.project-list {
+  list-style: none;
+  margin: var(--space-3) 0;
+  padding: 0;
+}
+.project-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.project-list-open {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+}
+.project-list-open:hover:not(:disabled) { background: var(--fill-2); }
+.project-list-open:focus-visible { outline: none; box-shadow: var(--focus-ring-shadow); }
+.project-path { overflow-wrap: anywhere; color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.thread-project-heading { margin: var(--space-3) var(--space-2) var(--space-1); color: var(--text-secondary); font-size: var(--font-ui-sm); }
+.thread-project-control { align-self: flex-start; margin: 0 var(--agent-content-x) var(--space-2); }

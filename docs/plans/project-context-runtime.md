@@ -26,7 +26,7 @@ Project or Thread directory a permission boundary.
 The Host owns collection and admission. The existing context evidence store
 owns immutable payloads and generations. `ContextProjector` owns provider
 projection. `ProjectCatalogStore` owns only display identity, saved root hints,
-context presets, and Chat grouping. It does not own runtime root identity,
+and Chat grouping. It does not own runtime root identity,
 Tool Tasks, Turns, Git facts, checks, or permissions.
 
 ### Execution address and snapshot

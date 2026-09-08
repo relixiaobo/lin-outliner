@@ -768,6 +768,7 @@ export class ThreadCatalogOps {
         toolCeiling: lineage.toolCeiling ?? null,
       };
       if (thread.ephemeral) {
+        if (request.project) throw new Error('Project membership requires a persistent Chat');
         this.core.ephemeral.set(thread.id, { record, turns: [], completedItemIds: new Set() });
         if (lineage.hidden) this.core.hiddenEphemeralThreads.add(thread.id);
       } else if (thread.parentThreadId) {
@@ -779,7 +780,7 @@ export class ThreadCatalogOps {
           createdAt: now,
         });
       } else {
-        this.core.metadata.create(record);
+        this.core.metadata.create(record, request.project);
       }
       await this.core.recordNotification({ type: 'thread/started', threadId: thread.id, thread });
       if (!this.core.hiddenEphemeralThreads.has(thread.id)) {

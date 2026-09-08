@@ -441,6 +441,7 @@ const agentHost = createAgentHost({
   previewOperations: resourcePreviewHost.operations,
   applicationOperations: () => applicationOperationsRef,
   reviewSkillOperation: (input) => windowApplicationHost.reviewSkillOperation(input),
+  reviewProjectChange: (input) => windowApplicationHost.reviewProjectChange(input),
   reviewMemoryReset: (review, caller) => windowApplicationHost.reviewMemoryReset(review, caller),
   onMemoryChanged: () => {
     for (const target of [windowApplicationHost.windows.main(), windowApplicationHost.windows.settings()]) {

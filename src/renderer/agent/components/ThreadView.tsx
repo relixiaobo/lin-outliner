@@ -182,6 +182,7 @@ import { classifyNewThreadCommand } from '../threadComposerCommands';
 import { parseNodeReferenceMarkers, parseThreadReferenceMarkers } from '../../../core/referenceMarkup';
 
 interface ThreadViewProps {
+  readonly projectControl?: ReactNode;
   readonly active: boolean;
   readonly composerEnabled: boolean;
   readonly composerFocusExpectedActiveElement: Element | null;
@@ -651,6 +652,7 @@ interface PendingComposerPasteRequest extends PendingComposerPaste {
 }
 
 export function ThreadView({
+  projectControl,
   active,
   composerEnabled,
   composerFocusExpectedActiveElement,
@@ -3200,6 +3202,7 @@ export function ThreadView({
         </div>
       ) : null}
       {composerEnabled ? <div className="thread-composer-region thread-composer" ref={composerRegionRef}>
+        {projectControl}
         {activePlan ? (
           <ThreadPlanProgress
             onClosed={() => composerRef.current?.focus()}

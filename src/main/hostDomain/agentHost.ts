@@ -35,6 +35,8 @@ import { createMemoryTools } from '../agent/capabilities/memoryTools';
 import { createPreviewTools } from '../agent/capabilities/previewTools';
 import { createApplicationTools } from '../agent/capabilities/applicationTools';
 import type { ApplicationOperation } from './applicationOperations';
+import { projectAutomationLifecycle } from '../agent/projects/projectAutomationLifecycle';
+import { createProjectTools } from '../agent/projects/projectTools';
 import type { PreviewOperations } from './previewOperations';
 import { AutomationWorktree } from '../agent/automations/AutomationWorktree';
 import { MemoryControlStore } from '../agent/extensions/memory/MemoryControlStore';
@@ -88,6 +90,7 @@ export interface AgentHostComposition {
 }
 
 export interface AgentHostOptions {
+  readonly reviewProjectChange?: import('../agent/projects/ProjectService').ReviewProjectChange;
   readonly previewOperations?: PreviewOperations;
   readonly applicationOperations?: () => ApplicationOperation | null;
   readonly reviewMemoryReset: ReviewMemoryReset;
@@ -318,6 +321,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   });
   const threadService = ThreadService.open(options.userDataDir, turnExecutor, {
     ...options.createThreadOptions(composition),
+    reviewProjectChange: options.reviewProjectChange,
     attachmentScratchRoot: options.scratchRoot,
     nameGenerator: turnExecutor,
     resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
@@ -494,6 +498,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   extensions.register(memory, { applicationInstructions: true });
 
   const automationStore = new AutomationStore(join(options.userDataDir, 'agent', 'automations.sqlite'));
+  automationStore.bindProjectResolver((id) => threadService.projects.store.require(id));
   const automationWorktree = new AutomationWorktree(options.userDataDir);
   const automationReference = assignOnce<AutomationService>('AutomationService');
   const automationDispatcher = new AutomationDispatcher({
@@ -516,7 +521,10 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     scheduler: automationScheduler,
     dispatcher: automationDispatcher,
     threads: threadService,
+    resolveProjectHint: (id) => threadService.projects.store.require(id),
+    beforeSchedulerStart: () => threadService.projects.initialize(),
   });
+  threadService.projects.attachAutomation(projectAutomationLifecycle(automationStore, automationScheduler, automationDispatcher));
   automationReference.set(automationService);
   const localWorkspaceForContext = (context: TurnExecutionContext) => {
     const workspaceOptions = options.createLocalWorkspaceOptions(context, composition);
@@ -571,6 +579,8 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       localWorkspaceForContext(context),
     ),
     dynamicTools: (context, authorize) => [createAutomationTool(automationService),
+      ...(context.thread.parentThreadId === null && context.thread.threadSource === 'user' && !context.thread.ephemeral
+        ? createProjectTools(threadService.projects, context.thread.id, authorize) : []),
       ...(options.previewOperations && context.thread.parentThreadId === null && context.thread.threadSource === 'user' && !context.thread.ephemeral
         ? createPreviewTools(options.previewOperations, (itemId, signal) => ({
           key: `agent:${context.thread.id}:${context.turn.id}:${itemId}`,

@@ -115,8 +115,13 @@ export class AutomationDispatcher {
       } else {
         const sourceAddress = await resolveExecutionAddress({
           defaultCwd: prepared.worktree?.sourceCwd ?? this.options.defaultCwd,
-          ...(prepared.worktree || !snapshot.contextHint ? {} : { cwd: automationDirectoryHint(snapshot.contextHint) }),
+          ...(prepared.worktree || !snapshot.contextHint ? {} : { cwd: snapshot.contextHint.source.kind === 'project'
+            ? requireProjectSnapshotRoot(snapshot) : automationDirectoryHint(snapshot.contextHint) }),
         });
+        if (snapshot.contextHint?.source.kind === 'project'
+          && sourceAddress.cwd !== requireProjectSnapshotRoot(snapshot)) {
+          throw new Error('Saved Project directory was redirected; edit its root hint before scheduling');
+        }
         const sourceContext = pendingExecutionContext(sourceAddress, {
           capability: 'full-access', isolation: 'unsandboxed', writablePaths: [], mutation: false,
         });
@@ -321,6 +326,7 @@ async function automationContext(
         destination: run.snapshot.destination.kind,
         contextHintId: run.contextHintId,
         source: run.snapshot.contextHint?.source ?? null,
+        ...(run.snapshot.projectSnapshot ? { project: run.snapshot.projectSnapshot } : {}),
         occurrenceKey: run.occurrenceKey,
         cwd,
         executionMode: run.snapshot.contextHint?.executionMode ?? null,
@@ -374,6 +380,13 @@ export function assertAutomationConfigurationMatchesThread(
 function requireThreadId(run: AutomationRun): string {
   if (!run.threadId) throw new Error(`Standalone AutomationRun has no reserved Thread ID: ${run.id}`);
   return run.threadId;
+}
+
+function requireProjectSnapshotRoot(snapshot: AutomationRun['snapshot']): string {
+  const project = snapshot.projectSnapshot;
+  if (snapshot.contextHint?.source.kind !== 'project' || !project?.rootHint
+    || project.id !== snapshot.contextHint.source.projectId) throw new Error('Automation Project hint is unavailable or has no saved directory');
+  return project.rootHint;
 }
 
 export function contextHintForRun(

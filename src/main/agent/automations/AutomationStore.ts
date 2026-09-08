@@ -87,6 +87,20 @@ export interface DueClaimResult {
 
 export class AutomationStore {
   private readonly db: SqliteDatabase;
+  private projectResolver: ((id: string) => import('../../../core/agent/project').Project) | null = null;
+
+  bindProjectResolver(resolve: (id: string) => import('../../../core/agent/project').Project): void {
+    if (this.projectResolver) throw new Error('Automation Project resolver is already bound');
+    this.projectResolver = resolve;
+  }
+
+  private captureSnapshot(automation: Automation, binding: AutomationContextHint | null): AutomationRunConfigurationSnapshot {
+    const snapshot = runSnapshot(automation, binding);
+    if (binding?.source.kind !== 'project') return snapshot;
+    const projectSnapshot = this.projectResolver?.(binding.source.projectId);
+    if (!projectSnapshot) throw new Error('Automation Project hint is unavailable');
+    return Object.freeze({ ...snapshot, projectSnapshot });
+  }
 
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
@@ -714,7 +728,7 @@ export class AutomationStore {
     }
     const id = uuidV7(now);
     const eventSequence = this.nextRunEventSequence();
-    const snapshot = runSnapshot(automation, binding);
+    const snapshot = this.captureSnapshot(automation, binding);
     const omission: AutomationRunOmission = { from, through, count, reason };
     this.db.prepare(`
       INSERT INTO automation_runs(
@@ -752,7 +766,7 @@ export class AutomationStore {
       scheduledFor,
       contextHintKey(binding),
       occurrenceKey,
-      json(runSnapshot(automation, binding)),
+      json(this.captureSnapshot(automation, binding)),
       threadId,
       now,
       now,

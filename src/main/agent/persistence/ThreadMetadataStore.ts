@@ -14,6 +14,7 @@ import type {
 } from '../../../core/agent/protocol';
 import { decodeCursor, encodeCursor, pageLimit } from './cursor';
 import { openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
+import { ProjectCatalogStore } from './ProjectCatalogStore';
 
 export interface ThreadCatalogRecord {
   readonly thread: Thread;
@@ -65,6 +66,7 @@ interface ThreadRow {
 const THREAD_RECORD_CACHE_LIMIT = 256;
 
 export class ThreadMetadataStore {
+  readonly projects: ProjectCatalogStore;
   private readonly db: SqliteDatabase;
   private readonly recordCache = new Map<ThreadId, ThreadCatalogRecord>();
 
@@ -113,6 +115,7 @@ export class ThreadMetadataStore {
         PRIMARY KEY(thread_id, client_id)
       ) STRICT;
     `);
+    this.projects = new ProjectCatalogStore(this.db);
   }
 
   close(): void {
@@ -120,13 +123,14 @@ export class ThreadMetadataStore {
     this.db.close();
   }
 
-  create(record: ThreadCatalogRecord): void {
+  create(record: ThreadCatalogRecord, project?: { projectId: string; expectedRevision: number }): void {
     const thread = decodeThread(record.thread);
     if (thread.ephemeral) throw new Error('Ephemeral Threads do not belong in the persistent catalog');
     if (thread.parentThreadId) {
       throw new Error('Child Threads must be inserted with createChild() so their spawn edge is atomic');
     }
-    this.writeThread(thread.id, () => this.db.prepare(`
+    this.transaction(() => {
+      this.writeThread(thread.id, () => this.db.prepare(`
         INSERT INTO threads (
           id, session_id, parent_thread_id, forked_from_id,
           name, name_origin, preview, ephemeral, source, thread_source, model_provider, configuration_source_json,
@@ -152,6 +156,8 @@ export class ThreadMetadataStore {
         JSON.stringify(record.configuration),
         record.toolCeiling === null ? null : JSON.stringify(record.toolCeiling),
       ));
+      if (project) this.projects.admit(thread.id, project.projectId, project.expectedRevision);
+    });
   }
 
   createChild(record: ThreadCatalogRecord, edge: SpawnEdge): void {

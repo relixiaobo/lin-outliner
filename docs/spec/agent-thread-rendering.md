@@ -35,6 +35,21 @@ appear in navigation, or enter the renderer Thread map. The renderer has no
 Agent tree, child navigation stack, delegated transcript, or descendant-running
 indicator.
 
+The Thread chooser groups assigned user Chats under their Project name and keeps
+unassigned Chats under No Project. Its Projects action opens the catalog manager:
+create/edit a name and optional directory hint, create a Chat explicitly inside a
+Project, or confirm deletion with the preservation/dependency consequences shown.
+The row menu moves a persistent user Chat and its descendant lineage to a Project
+or removes grouping. A grouped selected Chat has a compact membership control near
+the composer; an ungrouped Chat has no extra status row and requires no directory
+selection. These controls never change task directories or permissions.
+
+The renderer refreshes metadata after explicit mutations, Agent Project completion,
+Thread creation, and window focus. Request failure remains visible in the manager;
+loading or failed reads cannot submit stale membership choices. Revision conflicts
+surface as errors so a changed Project is never silently overwritten. The manager
+uses existing dialog, field, button, focus, and token primitives in both themes.
+
 The selected root's own foreground Turn state is visible in its transcript and
 composer. Background Bash work, including delegation CLI invocations, appears
 through the generic Tool Task strip. The strip is a projection of Tool Task
