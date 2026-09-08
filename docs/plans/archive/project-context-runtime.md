@@ -3,7 +3,7 @@
 **Shape:** Two independently complete features: bounded execution-context
 discovery/publication, and the optional Project catalog with its entire
 membership, confirmation, deletion, and Automation lifecycle. Each is one PR
-under the [Agent Capability-First Development Workbench](project-development-workbench.md).
+under the [Agent Capability-First Development Workbench](../project-development-workbench.md).
 
 ## Goal
 
@@ -149,7 +149,7 @@ prompt fingerprint.
 ### Provider projection
 
 Implement the common
-[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)
+[Execution Context Publication](../../spec/agent-model-runtime.md#execution-context-publication)
 contract through `CanonicalContextProjector` and the existing evidence store:
 
 ```text
@@ -230,7 +230,7 @@ pending claims that still depend on it, including claims of an exhausted
 schedule. Completed history retains self-contained dispatch references and
 cannot resume a historical run. Reactivating a completed definition requires
 fresh hint validation. The scheduler and deletion fence share the lifecycle
-ordering in [Agent Automations](../spec/agent-automations.md#project-deletion-and-reactivation).
+ordering in [Agent Automations](../../spec/agent-automations.md#project-deletion-and-reactivation).
 Internal isolated resources have a Tool
 Task/Goal cleanup owner and a deleted-parent fence; they cannot retain a
 dangling Project dependency.
@@ -289,9 +289,9 @@ diagnostics, preload, renderer DTOs, and restart readers in the same unit.
 No compatibility reader or silent fallback remains. A fresh userData tree is
 the only supported format.
 
-The cut includes [local tools](../spec/agent-tool-design.md#local-files-and-commands),
-[delegation context](../spec/agent-delegation.md#task-execution-context), and
-[Automation](../spec/agent-automations.md), alongside Agent Core, permissions,
+The cut includes [local tools](../../spec/agent-tool-design.md#local-files-and-commands),
+[delegation context](../../spec/agent-delegation.md#task-execution-context), and
+[Automation](../../spec/agent-automations.md), alongside Agent Core, permissions,
 model runtime, and the active delegation plan. Unit A delivers the durable S0
 admission, receipt, and scoped publication contract as a complete execution
 refactor; Unit B adds bounded discovery and its successor events to that

@@ -327,8 +327,8 @@ delegated Sessions retain the selected source. The desktop Host default is
 `<userData>/agent/workspaces`. This directory is shared Host storage, never a
 per-Thread allocation. New Chat needs no directory selection. Task calls resolve
 relative `cwd` against that default without remembering another call's directory.
-Generation-1 discovery and the optional Project catalog are separate features;
-the current execution runtime supplies immutable pending generation 0.
+Collection, immutable successor delivery, and freshness validation follow the
+[local task context lifecycle](agent-tool-design.md#local-files-and-commands).
 
 ### Optional Project catalog
 

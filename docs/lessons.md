@@ -2468,6 +2468,12 @@ barrier, supersede the operation, release it, drain the owning lock, and assert
 both durable state and temporary cleanup. File notifications, large payloads,
 polling, and scheduler luck cannot prove ordering and must not become the gate.
 
+PR #651 applied the same rule after asynchronous directory revalidation: checking
+before `realpath`/`stat` still permits a canceled proposal to commit afterward.
+Cancellation must also settle every pending user interaction. Pass the signal to
+the native confirmation itself so abort dismisses the modal and releases the
+awaiting tool; checks only before and after an unsignaled dialog cannot do that.
+
 ## A bounded summary is not evidence authority
 
 PR #625 completed Trajectory's paging and performance unit, but its retained

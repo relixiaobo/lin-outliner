@@ -172,8 +172,9 @@ degradation reason. Its admission and terminal receipt retain that reference.
 Discovery publishes generation 1 as a separate, later observation at the
 next provider boundary; only later admissions may consume it as execution
 context. Failure, restart, and replay never fill in or rewrite generation 0.
-The exact ordering is defined by the
-[snapshot lifecycle](project-context-runtime.md#snapshot-admission-and-discovery-lifecycle).
+The exact ordering follows the current
+[task discovery lifecycle](../spec/agent-tool-design.md#local-files-and-commands)
+and [execution-context publication](../spec/agent-model-runtime.md#execution-context-publication) contracts.
 Discovery degradation does not block ordinary Full Access work; mandatory
 address, policy, claim, and isolation validation still completes before spawn.
 
@@ -466,8 +467,10 @@ ownership or recovery gap is measured.
 
 ## Implementation contracts
 
-- [Project context runtime](project-context-runtime.md) defines Unit B's
-  context collection and Project catalog boundary.
+- [Local files and commands](../spec/agent-tool-design.md#local-files-and-commands)
+  and [Optional Project catalog](../spec/agent-core.md#optional-project-catalog)
+  define Unit B's context collection and Project catalog boundary. Its original
+  design remains in [Project context runtime](archive/project-context-runtime.md).
 - [Verification and bounded self-iteration](verification-self-iteration.md)
   defines Unit C's check and Goal contracts.
 - [Git review and publication](git-review-publication.md) defines Unit D's

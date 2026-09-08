@@ -20,12 +20,12 @@ PR #639 approved the capability-first development workbench design; #645 revised
 its cache/publication contract. Unit A shipped in #646 as one complete
 execution-context refactor over the shipped delegation/native-launcher and
 Settings mechanisms, including frozen publication boundaries, scoped reduction,
-and compaction restore. PR #649 ships Unit B's bounded discovery, immutable
-successor delivery, and freshness validation. Project catalog metadata,
-confirmed membership, deletion fencing, and Project-backed Automation hints
-remain open. Verification Unit C consumes the shipped context/profile mechanism;
-Units C-E retain their plan prerequisites and collision checks. All five plans
-remain active until their remaining implementation and archive gates complete.
+and compaction restore. PR #649 shipped Unit B's bounded discovery, immutable
+successor delivery, and freshness validation; PR #651 completes its optional
+Project catalog, confirmed membership, deletion fencing, and Project-backed
+Automation hints. The Unit B plan is archived. Verification Unit C consumes the
+shipped context/profile mechanism; Units C-E retain their plan prerequisites and
+collision checks. The aggregate plan and Units C-E remain active.
 
 PR #628 shipped internal Agent delegation and complete Subagent/isolated-Skill
 retirement under the design merged in #620. Generic Background Tool Tasks
@@ -122,8 +122,8 @@ does not mix their product decisions into the architectural queue above.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P1 | [project-development-workbench](plans/project-development-workbench.md) | `in-progress` | Design approved in #639 and revised in #645. Unit A shipped in #646; Unit B discovery and successor delivery shipped in #649. Remaining Project catalog/lifecycle work and Units C-E stay active under the aggregate plan. |
-| P1 | [project-context-runtime](plans/project-context-runtime.md) | `in-progress` | PR #649 ships bounded target-scoped discovery, immutable successor delivery, Git/source freshness validation, and restart recovery. Optional Project catalog, confirmed membership, deletion fencing, and Project-backed Automation hints remain open. |
+| P1 | [project-development-workbench](plans/project-development-workbench.md) | `in-progress` | Design approved in #639 and revised in #645. Unit A shipped in #646; Unit B discovery shipped in #649 and its Project catalog/lifecycle completed in #651. Units C-E stay active under the aggregate plan. |
+| P1 | [project-context-runtime](plans/archive/project-context-runtime.md) | `done` | Bounded discovery, immutable successor delivery, freshness validation, and restart recovery shipped in #649; optional Project catalog, confirmed membership, deletion fencing, and Project-backed Automation hints completed in #651. |
 | P1 | [verification-self-iteration](plans/verification-self-iteration.md) | `draft` | Unit A's task context and Unit B's discovery/profile mechanism shipped in #646 and #649; source-state-bound checks and bounded correction remain subject to the plan's prerequisite and collision checks. |
 | P2 | [git-review-publication](plans/git-review-publication.md) | `draft` | Unit D follows Unit A; mandatory Git baselines are independent of optional context discovery. Recheck Tool Task/renderer collisions before claiming. |
 | P2 | [execution-sandbox-process](plans/execution-sandbox-process.md) | `draft` | Unit E follows Unit A: truthful isolation receipts and the bounded interactive-process experiment. Recheck process/receipt collisions before claiming. |
@@ -247,10 +247,11 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
-- **project-context-runtime discovery** (`done`, #649, 2026-09-08) - bounded scoped discovery, immutable successor publication, foreground evidence retention, Git/source freshness validation, and paged restart recovery shipped; Project catalog/lifecycle work remains active.
+- **project-context-runtime complete** (`done`, #651, 2026-09-08) - optional Projects, confirmed Chat grouping and lineage inheritance, durable deletion fencing, immutable Automation hints, and stale Runtime startup recovery shipped; [plan archived](plans/archive/project-context-runtime.md).
+- **project-context-runtime discovery** (`done`, #649, 2026-09-08) - bounded scoped discovery, immutable successor publication, foreground evidence retention, Git/source freshness validation, and paged restart recovery shipped; Project catalog/lifecycle completed in #651.
 - **settings-control-plane Unit E3** (`done`, #650, 2026-09-08) - people and root Agents share bounded application/release/update inspection, fixed support destinations, and local diagnostics reveal/export through the Host; Unit G remains in the active aggregate plan.
-- **workbench context-publication design gate** (`done`, #645, 2026-09-07) - approved immutable model-facing publications, scoped baselines, and compaction recovery across the plan series; runtime implementation remains pending.
-- **project-development-workbench Unit A** (`done`, #646, 2026-09-07) - task-owned execution context, scoped admission and receipts, canonical publication/compaction recovery, Thread consumers, delegation/native launchers, Automation dispatch, and renderer details are shipped; Units B-E remain active under the aggregate plan.
+- **workbench context-publication design gate** (`done`, #645, 2026-09-07) - approved immutable model-facing publications, scoped baselines, and compaction recovery across the plan series; runtime delivery followed in #646 and #649.
+- **project-development-workbench Unit A** (`done`, #646, 2026-09-07) - task-owned execution context, scoped admission and receipts, canonical publication/compaction recovery, Thread consumers, delegation/native launchers, Automation dispatch, and renderer details are shipped; Units C-E remain active after Unit B completed in #651.
 - **project-development-workbench design gate** (`done`, #639, 2026-09-07) - approved task-scoped execution, context, verification, publication, and process designs; Unit A is eligible for implementation and the five workbench plans remain active.
 - **skill-declarative-settings** (`done`, #643, 2026-09-07) - Skill-owned file-backed read/update routes preserve source spelling and queued toggle state; the dependent Unit D lifecycle/provenance work shipped next in #644.
 - **skill-lifecycle-operations** (`done`, #644, 2026-09-07) - root-only Skill inspection and management tools now share the Host-owned lifecycle with the Settings Library, use revision/hash-bound targets and native human review, and preserve governed one-step Agent edit undo; [plan archived](plans/archive/skill-lifecycle-operations.md).
