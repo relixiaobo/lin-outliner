@@ -38,15 +38,20 @@ async function fixture(checks = [A, B], maxAttempts = 4, configure = true) {
   const payloads = new ToolPayloadStore(path.join(root, 'payloads'));
   let tasks: ToolTaskService;
   let verification: VerificationCoordinator;
+  const createVerification = () => new VerificationCoordinator(goals, tasks, {
+    write: (owner, payload) => payloads.writeContext(owner, payload),
+    read: (owner, ref) => payloads.readContext(owner, ref),
+    ancestors: (owner) => owner === CHILD ? [OWNER] : [],
+    deleteEvidence: (prefix) => payloads.deleteContextOwnersWithPrefix(prefix),
+  });
+  const reloadVerification = async () => {
+    verification = createVerification();
+    await verification.initialize();
+  };
   const restart = async () => {
     if (tasks) await tasks.close(2_000);
     tasks = new ToolTaskService(taskStore, path.join(root, 'tasks'));
-    verification = new VerificationCoordinator(goals, tasks, {
-      write: (owner, payload) => payloads.writeContext(owner, payload),
-      read: (owner, ref) => payloads.readContext(owner, ref),
-      ancestors: (owner) => owner === CHILD ? [OWNER] : [],
-      deleteEvidence: (prefix) => payloads.deleteContextOwnersWithPrefix(prefix),
-    });
+    verification = createVerification();
     tasks.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
       startCompletionTurn: async () => false, taskChanged: () => undefined,
       admissionFailed: (owner, error) => verification.admissionFailed(owner, error),
@@ -78,7 +83,7 @@ async function fixture(checks = [A, B], maxAttempts = 4, configure = true) {
         return { result: undefined, success: true };
       } });
   };
-  return { root, source, goals, payloads, taskStore, run, edit, profile, restart,
+  return { root, source, goals, payloads, taskStore, run, edit, profile, restart, reloadVerification,
     corruptMetadata: () => goalDatabase.prepare('UPDATE goal_verifications SET state_json = ? WHERE thread_id = ?').run('{}', OWNER),
     verification: () => verification, tasks: () => tasks, view: () => verification.inspect(OWNER) };
 }
@@ -118,6 +123,61 @@ describe('source-bound verification using real Tool Tasks', () => {
     expect((await f.view())?.state).toBe('passed');
     await f.run('echo unrelated-cwd', f.root);
     expect((await f.view())?.checks[0]?.applicability).toBe('stale');
+  }, 20_000);
+
+  for (const owner of [OWNER, CHILD]) {
+    test(`unfinished workflow process fences new revisions after coordinator reload (${owner === OWNER ? 'owner' : 'child'})`, async () => {
+      const f = await fixture([A]);
+      await f.run(A.command);
+      const worker = path.join(f.root, 'worker');
+      await mkdir(worker);
+      const task = await f.tasks().start({ ownerThreadId: owner, sourceTurnId: TURN, sourceItemId: 'background-edit', producer: 'bash',
+        command: `while [ ! -f release ]; do sleep 0.02; done; printf transient > '${f.source}/source.txt'; printf broken > '${f.source}/source.txt'`,
+        cwd: worker, description: 'Gated write and restore', timeoutMs: 10_000, env: process.env, backgroundEnabled: true });
+      try {
+        await f.reloadVerification();
+        expect(await f.run(A.command)).toMatchObject({ state: 'failed', error: expect.stringContaining('unfinished mutation') });
+        expect((await f.view())?.attemptsUsed).toBe(1);
+        await expect(f.verification().completeGoal(OWNER)).rejects.toThrow('All required checks');
+      } finally { await writeFile(path.join(worker, 'release'), 'go'); }
+      expect((await f.tasks().waitForTerminal(task.taskId, owner, 6_000))?.state).toBe('succeeded');
+      expect(await readFile(path.join(f.source, 'source.txt'), 'utf8')).toBe('broken');
+      expect((await f.view())?.checks[0]?.applicability).toBe('stale');
+      await f.run(A.command);
+      expect(await f.view()).toMatchObject({ state: 'passed', revision: 1, attemptsUsed: 2 });
+      expect(await f.verification().completeGoal(OWNER)).toBe(true);
+    }, 20_000);
+  }
+
+  test('an overlapping typed mutation admitted before the first baseline fences verification', async () => {
+    const f = await fixture([A]);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let admitted!: () => void;
+    const ready = new Promise<void>((resolve) => { admitted = resolve; });
+    const mutation = f.tasks().runHostOperation({ ownerThreadId: '00000000-0000-7000-8000-000000000099',
+      sourceTurnId: TURN, sourceItemId: 'overlap', producer: 'file_write',
+      executionContext: pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: f.source }), {
+        capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+      }), onAdmitted: async () => undefined, execute: async () => {
+        admitted();
+        await gate;
+        await writeFile(path.join(f.source, 'source.txt'), 'transient');
+        await writeFile(path.join(f.source, 'source.txt'), 'broken');
+        return { result: undefined, success: true };
+      } });
+    try {
+      await ready;
+      await f.reloadVerification();
+      // Call the verification admission hook directly: the ordinary address claim
+      // would also refuse this overlap, but cannot replace the revision fence.
+      const candidate = { ...f.taskStore.nonterminal()[0]!, taskId: 'candidate-check', ownerThreadId: OWNER,
+        producer: 'bash', operationKind: 'process' as const, commandDigest: new Bun.CryptoHasher('sha256').update(A.command).digest('hex') };
+      await expect(f.verification().beforeTask(candidate)).rejects.toThrow('unfinished mutation');
+      expect((await f.view())?.attemptsUsed).toBe(0);
+    } finally { release(); await mutation; }
+    await f.run(A.command);
+    expect(await f.view()).toMatchObject({ state: 'passed', revision: 0 });
   }, 20_000);
 
   test('repeated equivalent failures stop without spending the full budget', async () => {

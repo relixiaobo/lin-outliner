@@ -613,9 +613,15 @@ of the definition digest. Absolute inputs extend the measured roots; external
 symlink targets must be declared, and cycles or unsupported inputs are
 unavailable. Only Git administration is structurally excluded; every other
 exclusion is an explicit profile limitation.
+Explicit input patterns prune unrelated subtrees before resolving their entries
+or validating symlinks, while ancestors needed to reach selected descendants
+remain traversable. A parent inferred solely to capture an absolute file input
+does not select that file's siblings; an explicitly declared directory root
+still carries its own scope.
 
 Two complete capture passes must agree. The initial limits are 32 measured
 roots, 20,000 entries, 64 MiB of reads across both passes and five seconds.
+Each input may expand to at most 256 cross-segment glob alternatives.
 Unreadable paths, concurrent changes or exhausted capture limits produce
 unavailable evidence, never a partial successful fingerprint. These are
 observations of local inputs, not isolation against invisible external
@@ -624,6 +630,11 @@ write-and-restore races or proof about unmeasured services.
 Capture runs at baseline admission, before/after each check, and aggregation.
 Known typed writes invalidate overlapping revisions before side effects.
 Unclassified processes in a workflow invalidate it even with another cwd.
+Unfinished workflow processes and overlapping typed mutations fence new
+baselines and completion until their canonical Tool Tasks settle. This fence is
+derived from nonterminal Task records across revisions and coordinator restart,
+including Tasks admitted before the first check. Their settlement also
+invalidates the latest revision, even if they were never bound to a check.
 Observed writes followed by restoration cannot revive a revision. A check that
 changes included source invalidates itself. Any source/profile change,
 invalidation or repeated settled check starts a fresh bounded attempt and

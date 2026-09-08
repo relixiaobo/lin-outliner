@@ -51,10 +51,13 @@ export async function captureSourceManifest(
     limits.signal?.throwIfAborted();
     if (Date.now() > deadline || measuredBytes > maxBytes) throw new VerificationUnavailable('Source capture budget exhausted. Declare a measured source scope and explicit exclusions.');
   };
+  const explicitRoots = [...new Set([...directories, ...checks.map((check) => check.scope)])];
   const declaredRoots = [...new Set([
-    ...directories, ...checks.map((check) => check.scope),
+    ...explicitRoots,
     ...await Promise.all(checks.flatMap((check) => check.inputs.filter(path.isAbsolute)).map(inputRoot)),
   ])].sort();
+  const traversalPatterns = checks.flatMap((check) => (check.inputs.length ? check.inputs : ['.'])
+    .flatMap((pattern) => expandPathAlternatives(path.resolve(check.scope, pattern))));
   if (declaredRoots.length > 32) throw new VerificationUnavailable('Source capture exceeds the 32-root limit.');
   const definitionDigest = executionDigest(checks);
   const capture = async (): Promise<Pick<VerificationSourceManifest, 'roots' | 'entries'>> => {
@@ -126,20 +129,26 @@ export async function captureSourceManifest(
       entries.set(JSON.stringify([entry.root, entry.path]), entry);
     };
     const applies = (check: VerificationCheckDefinition, file: string) => contains(check.scope, file) || check.inputs.some((pattern) => path.isAbsolute(pattern) && matches(file, pattern));
-    const policies = (_root: string) => checks;
-    const excluded = (file: string, root: string) => {
-      const applicable = policies(root).filter((check) => applies(check, file));
+    const excluded = (file: string) => {
+      const applicable = checks.filter((check) => applies(check, file));
       return applicable.length > 0 && applicable.every((check) => check.exclude.some((pattern) => matches(path.relative(check.scope, file), pattern)));
     };
-    const selected = (file: string, root: string) => {
-      const applicable = policies(root).filter((check) => applies(check, file));
-      return !applicable.length || applicable.some((check) => !check.inputs.length || check.inputs.some((pattern) =>
+    const selected = (file: string) => {
+      const applicable = checks.filter((check) => applies(check, file));
+      // Parents inferred to reach an absolute input are traversal anchors, not
+      // implicit selections of the input's siblings.
+      return (!applicable.length && explicitRoots.some((root) => contains(root, file)))
+        || applicable.some((check) => !check.inputs.length || check.inputs.some((pattern) =>
         path.isAbsolute(pattern) ? matches(file, pattern) : matches(path.relative(check.scope, file), pattern)));
     };
+    const reachable = (file: string) => selected(file) || traversalPatterns.some((pattern) => couldContainMatch(file, pattern));
+    const admittedPath = (file: string) => ![...administrative].some((directory) => contains(directory, file))
+      && !excluded(file) && reachable(file);
     for (const root of declaredRoots) {
       const visit = async (file: string, relative: string, ancestors: ReadonlySet<string>): Promise<void> => {
         budget();
-        if ([...administrative].some((directory) => contains(directory, file)) || excluded(file, root)) return;
+        // Selection must prune before lstat/realpath and symlink validation.
+        if (!admittedPath(file)) return;
         const before = await lstat(file, { bigint: true });
         const kind = before.isSymbolicLink() ? 'symlink' : before.isDirectory() ? 'directory' : before.isFile() ? 'file' : null;
         if (!kind) throw new VerificationUnavailable(`Unsupported source entry: ${file}`);
@@ -148,7 +157,7 @@ export async function captureSourceManifest(
           if (kind === 'symlink') throw new VerificationUnavailable(`Source symlink targets Git administration: ${file}`);
           return;
         }
-        const include = selected(file, root);
+        const include = selected(file);
         if (kind === 'symlink') {
           if (!declaredRoots.some((directory) => contains(directory, canonical))) throw new VerificationUnavailable(`External symlink input must be declared explicitly: ${file}`);
           const target = await readlink(file);
@@ -158,10 +167,10 @@ export async function captureSourceManifest(
         if (targetStat.isDirectory()) {
           if (ancestors.has(canonical)) throw new VerificationUnavailable(`Source symlink cycle: ${file}`);
           if (include && kind !== 'symlink') put({ root, path: relative, kind: 'directory', mode: Number(before.mode & 0o7777n), bytes: 0, digest: null, target: null });
-          const children = (await readdir(file)).sort();
+          const children = (await readdir(file)).filter((child) => admittedPath(path.join(file, child))).sort();
           const next = new Set([...ancestors, canonical]);
           for (const child of children) await visit(path.join(file, child), relative === '.' ? child : `${relative}/${child}`, next);
-          if (JSON.stringify(children) !== JSON.stringify((await readdir(file)).sort())) throw new VerificationUnavailable(`Source directory changed during capture: ${file}`);
+          if (JSON.stringify(children) !== JSON.stringify((await readdir(file)).filter((child) => admittedPath(path.join(file, child))).sort())) throw new VerificationUnavailable(`Source directory changed during capture: ${file}`);
         } else if (targetStat.isFile() && include) {
           const handle = await open(file, constants.O_RDONLY | constants.O_NONBLOCK);
           try {
@@ -218,6 +227,56 @@ function matches(relative: string, pattern: string): boolean {
   const normalized = pattern.replace(/^\.\//u, '').replace(/\/$/u, '');
   return normalized === '.' || normalized === '**' || relative === normalized || relative.startsWith(`${normalized}/`)
     || path.matchesGlob(relative, normalized) || (normalized.endsWith('/**') && relative === normalized.slice(0, -3));
+}
+/** Test a path prefix without resolving entries outside a pattern's selection. */
+function couldContainMatch(file: string, pattern: string): boolean {
+  if (matches(file, pattern) || contains(file, pattern)) return true;
+  const parts = pattern.split('/').filter(Boolean);
+  const candidate = file.split('/').filter(Boolean);
+  const seen = new Map<string, boolean>();
+  const prefixMatches = (input: number, glob: number): boolean => {
+    if (input === candidate.length) return glob < parts.length;
+    if (glob === parts.length) return false;
+    const key = `${input}:${glob}`;
+    const cached = seen.get(key);
+    if (cached !== undefined) return cached;
+    const match = parts[glob] === '**'
+      ? prefixMatches(input, glob + 1) || prefixMatches(input + 1, glob)
+      : path.matchesGlob(candidate[input]!, parts[glob]!) && prefixMatches(input + 1, glob + 1);
+    seen.set(key, match);
+    return match;
+  };
+  return prefixMatches(0, 0);
+}
+/** Expand only alternatives spanning path segments; native glob matching owns each segment. */
+function expandPathAlternatives(pattern: string): string[] {
+  const pending = [pattern], expanded: string[] = [];
+  while (pending.length) {
+    const value = pending.pop()!;
+    const stack: { start: number; commas: number[] }[] = [];
+    let split = false;
+    for (let index = 0; index < value.length; index += 1) {
+      const char = value[index];
+      if (char === '\\') { index += 1; continue; }
+      if (char === '{') stack.push({ start: index, commas: [] });
+      else if (char === ',') stack.at(-1)?.commas.push(index);
+      else if (char === '}') {
+        const group = stack.pop();
+        if (!group?.commas.length || !value.slice(group.start, index).includes('/')) continue;
+        const ends = [...group.commas, index];
+        let start = group.start + 1;
+        for (const end of ends) {
+          pending.push(value.slice(0, group.start) + value.slice(start, end) + value.slice(index + 1));
+          start = end + 1;
+        }
+        split = true;
+        break;
+      }
+    }
+    if (!split) expanded.push(value);
+    if (expanded.length + pending.length > 256) throw new VerificationUnavailable('Source input glob exceeds the 256-alternative limit.');
+  }
+  return expanded;
 }
 function sameFile(a: import('node:fs').BigIntStats, b: import('node:fs').BigIntStats): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.mode === b.mode && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;

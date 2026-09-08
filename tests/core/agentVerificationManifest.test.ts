@@ -96,6 +96,65 @@ describe('verification source manifests', () => {
     await expect(resolveVerificationChecks([directory])).rejects.toThrow('distinct command and cwd');
   });
 
+  test('prunes unrelated trees and symlinks before resolving scoped inputs', async () => {
+    const directory = await root(), external = await root();
+    await mkdir(path.join(directory, 'src'));
+    await writeFile(path.join(directory, 'src/main.ts'), 'selected');
+    await symlink(external, path.join(directory, 'unrelated-link'));
+    await mkdir(path.join(directory, 'cache'));
+    await symlink(path.join(external, 'missing'), path.join(directory, 'cache/dangling'));
+    const checks = definitions(directory).map((check) => ({ ...check, inputs: ['src/**'] }));
+    const first = await captureSourceManifest([directory], checks, null, { maxEntries: 3 });
+    expect(first.entries.map((entry) => entry.path)).toEqual(['src', 'src/main.ts']);
+    await writeFile(path.join(directory, 'src/main.ts'), 'changed');
+    expect((await captureSourceManifest([directory], checks)).digest).not.toBe(first.digest);
+    await symlink(external, path.join(directory, 'src/selected-link'));
+    await expect(captureSourceManifest([directory], checks)).rejects.toThrow('External symlink');
+  });
+
+  test('keeps traversal to selected descendants while pruning nonrecursive glob siblings', async () => {
+    const directory = await root(), external = await root();
+    await mkdir(path.join(directory, 'src'));
+    await writeFile(path.join(directory, 'src/main.ts'), 'selected');
+    await symlink(external, path.join(directory, 'src/cache'));
+    const checks = definitions(directory).map((check) => ({ ...check, inputs: ['src/*.ts'] }));
+    expect((await captureSourceManifest([directory], checks)).entries.map((entry) => entry.path)).toEqual(['src/main.ts']);
+    await symlink(external, path.join(directory, 'linked'));
+    await expect(captureSourceManifest([directory], checks.map((check) => ({ ...check, inputs: ['linked/nested/file.ts'] })))).rejects.toThrow('External symlink');
+  });
+
+  test('an inferred absolute-file parent does not select unrelated siblings', async () => {
+    const directory = await root(), external = await root();
+    const file = path.join(external, 'settings.json');
+    await writeFile(file, '{}');
+    await writeFile(path.join(external, 'unrelated.log'), 'first');
+    const checks = definitions(directory).map((check) => ({ ...check, inputs: ['.', file] }));
+    const first = await captureSourceManifest([directory], checks);
+    expect(first.entries.filter((entry) => entry.root === external).map((entry) => entry.path)).toEqual(['settings.json']);
+    await writeFile(path.join(external, 'unrelated.log'), 'second');
+    expect((await captureSourceManifest([directory], checks)).digest).toBe(first.digest);
+    await symlink('/missing/unselected', path.join(external, 'unrelated-link'));
+    expect((await captureSourceManifest([directory], checks)).digest).toBe(first.digest);
+    await writeFile(file, '{"changed":true}');
+    expect((await captureSourceManifest([directory], checks)).digest).not.toBe(first.digest);
+    await rm(path.join(external, 'unrelated-link'));
+    const explicit = await captureSourceManifest([directory, external], checks);
+    expect(explicit.entries.some((entry) => entry.root === external && entry.path === 'unrelated.log')).toBe(true);
+  });
+
+  test('pruning preserves recursive and alternative glob descendants', async () => {
+    const directory = await root(), external = await root();
+    for (const name of ['a', 'b', 'unselected']) {
+      await mkdir(path.join(directory, 'src', name), { recursive: true });
+      await writeFile(path.join(directory, 'src', name, name === 'unselected' ? 'ignored.log' : 'entry.ts'), name);
+    }
+    for (const pattern of ['src/**/*.ts', 'src/{a,b}/entry.ts', 'src/{a/entry,b/entry}.ts']) {
+      if (pattern === 'src/{a,b}/entry.ts') await symlink(external, path.join(directory, 'src/unrelated-link'));
+      const checks = definitions(directory).map((check) => ({ ...check, inputs: [pattern] }));
+      expect((await captureSourceManifest([directory], checks)).entries.map((entry) => entry.path)).toEqual(['src/a/entry.ts', 'src/b/entry.ts']);
+    }
+  });
+
   test('Git index inspection cannot execute a repository fsmonitor command', async () => {
     const directory = await root(), external = await root();
     const git = (...args: string[]) => execFileSync('git', ['-C', directory, ...args], { stdio: 'pipe' });

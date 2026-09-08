@@ -152,25 +152,24 @@ export class VerificationCoordinator {
       }
       for (const state of states) {
         if (state.stopped || (state === own && declaration)) continue;
-        const withinWorkflow = family.has(state.threadId) && task.operationKind === 'process';
-        const measuredRoots = state.attempts.at(-1)
-          ? (await this.manifest(state, state.attempts.at(-1)!.baselineRef).catch(() => null))?.roots.map((root) => root.path) ?? state.configuration.roots
-          : state.configuration.roots;
-        const overlaps = task.executionContext.policy.mutation && measuredRoots.some((root) =>
-          task.executionContext.address.scopes.some((scope) => contains(root, scope.directory) || contains(scope.directory, root)));
-        if (withinWorkflow || overlaps) this.invalidate(state, 'An admitted mutation or unclassified process invalidated this revision.', task.taskId);
+        if (this.mayMutate(state, task, await this.measuredRoots(state))) {
+          this.invalidate(state, 'An admitted mutation or unclassified process invalidated this revision.', task.taskId);
+        }
       }
       if (!own || !declaration) return;
       if (own.stopped || this.goals.read(own.threadId)?.goal.status !== 'active') throw new VerificationUnavailable('Verification is stopped. Renew user admission before continuing.');
       const current = this.current(own.threadId)!;
       try {
         const previous = current.attempts.at(-1);
+        this.assertMutationsSettled(current, await this.measuredRoots(current), task.taskId);
         if (previous?.checks.some((check) => {
           const receipt = this.tasks.store.read(check.toolTaskId);
           return receipt && !isToolTaskTerminal(receipt.state);
         })) throw new ExecutionAdmissionError('worktree_busy', 'Another declared check is still running. Use an isolated worktree or finish it before the next check.');
         const baseline = previous ? await this.manifest(current, previous.baselineRef) : null;
         const source = await captureSourceManifest(current.configuration.roots, definitions, baseline);
+        // Absolute input roots and Tasks created while capture yielded also count.
+        this.assertMutationsSettled(current, source.roots.map((root) => root.path), task.taskId);
         const newAttempt = !previous || this.invalidated(current, previous) || source.digest !== baseline?.digest
           || previous.definitionDigest !== source.definitionDigest || previous.checks.some((check) => check.checkId === declaration!.key);
         let state = current;
@@ -204,7 +203,13 @@ export class VerificationCoordinator {
         if (!state) continue;
         const attempt = state.attempts.find((attempt) => attempt.checks.some((check) => check.toolTaskId === task.taskId));
         const check = attempt?.checks.find((check) => check.toolTaskId === task.taskId);
-        if (!attempt || !check || check.terminalDigest) continue;
+        if (!attempt || !check) {
+          if (this.mayMutate(state, task, await this.measuredRoots(state))) {
+            this.invalidate(state, 'A mutation or unclassified process settled; verify a fresh source revision.', task.taskId);
+          }
+          continue;
+        }
+        if (check.terminalDigest) continue;
         try {
           const baseline = await this.manifest(state, attempt.baselineRef);
           const definitions = await resolveVerificationChecks(state.configuration.roots);
@@ -286,6 +291,8 @@ export class VerificationCoordinator {
         }
       }
     } catch (error) { unavailable = message(error); this.goals.stopVerification(state.threadId, unavailable); state = this.current(state.threadId)!; }
+    const unfinished = this.unfinishedMutations(state, manifest?.roots.map((root) => root.path) ?? state.configuration.roots);
+    if (unfinished.length) state = this.invalidate(state, 'An unfinished mutation or unclassified process fences source verification.', unfinished[0]!.taskId);
     attempt = state.attempts.at(-1);
     const applicability = unavailable ? 'unavailable' : attempt && this.invalidated(state, attempt) ? 'stale' : 'current';
     const checks: VerificationCheckView[] = [];
@@ -321,7 +328,7 @@ export class VerificationCoordinator {
     }
     state = this.current(state.threadId) ?? state;
     const required = checks.filter((check) => check.required);
-    const passed = !state.stopped && required.length > 0 && required.every((check) => check.state === 'passed' && check.applicability === 'current');
+    const passed = !state.stopped && !unfinished.length && required.length > 0 && required.every((check) => check.state === 'passed' && check.applicability === 'current');
     return { verificationRunId: state.verificationRunId, revision: attempt?.revision ?? null, attemptsUsed: state.attempts.length, maxAttempts: state.configuration.maxAttempts,
       state: state.stopped ? 'stopped' : unavailable ? 'unavailable' : passed ? 'passed' : checks.some((check) => check.state === 'running') ? 'running'
         : checks.some((check) => check.state === 'failed' || check.state === 'lost' || check.applicability === 'stale') ? 'failed' : 'pending',
@@ -348,6 +355,28 @@ export class VerificationCoordinator {
   }
   private invalidated(state: VerificationState, attempt: VerificationAttempt): boolean {
     return state.invalidations.some((entry) => entry.revision === attempt.revision);
+  }
+  private async measuredRoots(state: VerificationState): Promise<readonly string[]> {
+    const attempt = state.attempts.at(-1);
+    return attempt ? (await this.manifest(state, attempt.baselineRef).catch(() => null))?.roots.map((root) => root.path)
+      ?? state.configuration.roots : state.configuration.roots;
+  }
+  private mayMutate(state: VerificationState, task: ToolTaskRecord, roots: readonly string[]): boolean {
+    if (state.attempts.some((attempt) => attempt.checks.some((check) => check.toolTaskId === task.taskId))) return false;
+    const withinWorkflow = task.operationKind === 'process'
+      && (task.ownerThreadId === state.threadId || this.host.ancestors(task.ownerThreadId).includes(state.threadId));
+    return withinWorkflow || (task.executionContext.policy.mutation && roots.some((root) =>
+      task.executionContext.address.scopes.some((scope) => contains(root, scope.directory) || contains(scope.directory, root))));
+  }
+  private unfinishedMutations(state: VerificationState, roots: readonly string[], candidateId?: string): readonly ToolTaskRecord[] {
+    // Canonical nonterminal Tasks retain the fence across revisions, coordinator
+    // reconstruction and mutations admitted before the first verification check.
+    return this.tasks.store.nonterminal().filter((task) => task.taskId !== candidateId && this.mayMutate(state, task, roots));
+  }
+  private assertMutationsSettled(state: VerificationState, roots: readonly string[], candidateId: string): void {
+    if (this.unfinishedMutations(state, roots, candidateId).length) {
+      throw new ExecutionAdmissionError('worktree_busy', 'An unfinished mutation or unclassified process must settle before admitting another verification baseline.');
+    }
   }
   private invalidate(state: VerificationState, reason: string, taskId: string | null): VerificationState {
     const attempt = state.attempts.at(-1);
