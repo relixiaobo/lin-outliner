@@ -1,5 +1,6 @@
 import { decodeProjectSelection, decodeProjectInspectRequest, decodeProjectManageRequest, decodeProjectCatalogView, decodeProjectManageResult } from './project';
 import { decodeExecutionContextFact, decodeTaskExecutionContext } from './executionContext';
+import { decodeVerificationConfiguration, decodeVerificationManifest } from './verification';
 import {
   CONTEXT_EVIDENCE_KINDS,
   CONTEXT_PAYLOAD_KINDS,
@@ -2072,10 +2073,11 @@ function decodeGoalGetInput(value: unknown): AgentCoreRequestByMethod['goal/get'
 
 function decodeGoalCreateInput(value: unknown): AgentCoreRequestByMethod['goal/create'] {
   const record = recordValue(value, 'goal/create');
-  exactKeys(record, ['threadId', 'objective', 'tokenBudget'], 'goal/create');
+  exactKeys(record, ['threadId', 'objective', 'tokenBudget', 'verification'], 'goal/create');
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'goal/create.threadId'),
     objective: stringValue(record.objective, 'goal/create.objective'),
+    ...(record.verification === undefined ? {} : { verification: decodeVerificationConfiguration(record.verification) }),
     ...(record.tokenBudget === undefined
       ? {}
       : { tokenBudget: positiveInteger(record.tokenBudget, 'goal/create.tokenBudget') }),
@@ -3257,14 +3259,48 @@ function decodeTurnInterruptResponse(value: unknown): AgentCoreResponseByMethod[
 
 function decodeGoalGetResponse(value: unknown): AgentCoreResponseByMethod['goal/get'] {
   const record = recordValue(value, 'goal/get response');
-  exactKeys(record, ['goal'], 'goal/get response');
-  return deepFreeze({ goal: record.goal === null ? null : decodeThreadGoal(record.goal) });
+  exactKeys(record, ['goal', 'verification'], 'goal/get response');
+  return deepFreeze({ goal: record.goal === null ? null : decodeThreadGoal(record.goal),
+    ...(record.verification === undefined ? {} : { verification: decodeVerificationView(record.verification) }) });
 }
 
 function decodeGoalMutationResponse(value: unknown): AgentCoreResponseByMethod['goal/create'] {
   const record = recordValue(value, 'goal mutation response');
-  exactKeys(record, ['goal'], 'goal mutation response');
-  return deepFreeze({ goal: decodeThreadGoal(record.goal) });
+  exactKeys(record, ['goal', 'verification'], 'goal mutation response');
+  return deepFreeze({ goal: decodeThreadGoal(record.goal),
+    ...(record.verification === undefined ? {} : { verification: decodeVerificationView(record.verification) }) });
+}
+
+function decodeVerificationView(value: unknown): import('./verification').VerificationView {
+  const record = recordValue(value, 'verification');
+  exactKeys(record, ['verificationRunId', 'revision', 'attemptsUsed', 'maxAttempts', 'state', 'stopReason', 'changedPaths', 'checks', 'sourceStateRef', 'limitations'], 'verification');
+  const checks = arrayValue(record.checks, 'verification.checks');
+  if (checks.length > 64) fail('verification.checks', 'exceeds check limit');
+  const maxAttempts = positiveInteger(record.maxAttempts, 'verification.maxAttempts');
+  const attemptsUsed = nonNegativeInteger(record.attemptsUsed, 'verification.attemptsUsed');
+  if (maxAttempts > 20 || attemptsUsed > maxAttempts) fail('verification', 'invalid attempt budget');
+  return {
+    verificationRunId: stringValue(record.verificationRunId, 'verification.verificationRunId'),
+    revision: record.revision === null ? null : nonNegativeInteger(record.revision, 'verification.revision'),
+    attemptsUsed, maxAttempts,
+    state: enumValue(record.state, ['pending', 'running', 'passed', 'failed', 'stopped', 'unavailable'], 'verification.state'),
+    stopReason: record.stopReason === null ? null : stringValue(record.stopReason, 'verification.stopReason'),
+    changedPaths: arrayValue(record.changedPaths, 'verification.changedPaths').map((v) => stringValue(v, 'changed path')),
+    limitations: arrayValue(record.limitations, 'verification.limitations').map((v) => stringValue(v, 'limitation')),
+    sourceStateRef: record.sourceStateRef === null ? null : decodeThreadContextPayloadReference(record.sourceStateRef),
+    checks: checks.map((value) => {
+      const check = recordValue(value, 'verification.check');
+      exactKeys(check, ['checkId', 'command', 'cwd', 'required', 'toolTaskId', 'state', 'applicability', 'exitCode', 'output', 'reason'], 'verification.check');
+      return { checkId: stringValue(check.checkId, 'checkId'), command: stringValue(check.command, 'command'),
+        cwd: stringValue(check.cwd, 'cwd'), required: booleanValue(check.required, 'required'),
+        toolTaskId: check.toolTaskId === null ? null : stringValue(check.toolTaskId, 'toolTaskId'),
+        state: enumValue(check.state, ['running', 'passed', 'failed', 'stopped', 'lost', 'unavailable'], 'check.state'),
+        applicability: enumValue(check.applicability, ['current', 'stale', 'unavailable'], 'check.applicability'),
+        exitCode: check.exitCode === null ? null : safeInteger(check.exitCode, 'exitCode'),
+        output: check.output === null ? null : stringValue(check.output, 'output', true),
+        reason: check.reason === null ? null : stringValue(check.reason, 'reason') };
+    }),
+  };
 }
 
 function decodeRequestUserInputRequest(value: unknown): RequestUserInputRequest {
@@ -3683,6 +3719,14 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
   const kind = enumValue(record.kind, CONTEXT_PAYLOAD_KINDS, 'contextPayload.kind');
 
   switch (kind) {
+    case 'verificationSource':
+      exactKeys(record, ['schemaVersion', 'kind', 'manifest'], 'contextPayload');
+      return deepFreeze({ schemaVersion: 1, kind, manifest: decodeVerificationManifest(record.manifest) });
+    case 'verificationObservation':
+      exactKeys(record, ['schemaVersion', 'kind', 'evidenceRefs', 'facts'], 'contextPayload');
+      return deepFreeze({ schemaVersion: 1, kind,
+        evidenceRefs: arrayValue(record.evidenceRefs, 'contextPayload.evidenceRefs').map((ref) => decodeThreadContextPayloadReference(ref)),
+        facts: arrayValue(record.facts, 'contextPayload.facts').map(decodeExecutionContextFact) });
     case 'automationDispatch': {
       exactKeys(record, ['schemaVersion', 'kind', 'automationRunId', 'sourceContext', 'executionContext', 'modelProvider', 'configuration', 'info'], 'contextPayload');
       const configuration = recordValue(record.configuration, 'dispatch.configuration');

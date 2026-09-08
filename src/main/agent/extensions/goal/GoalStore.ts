@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs';
+import { assertVerificationTransition, validateVerificationState, type VerificationState } from '../../verification/VerificationState';
 import { dirname } from 'node:path';
 import { decodeThreadGoal } from '../../../../core/agent/codec';
 import type { AgentWritableThreadGoalStatus, ThreadGoal, ThreadGoalStatus } from '../../../../core/agent/goal';
@@ -84,6 +85,12 @@ export class GoalStore {
         reason TEXT NOT NULL,
         created_at INTEGER NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS goal_verifications (
+        thread_id TEXT NOT NULL REFERENCES goals(thread_id) ON DELETE CASCADE,
+        generation INTEGER NOT NULL,
+        state_json TEXT NOT NULL,
+        PRIMARY KEY (thread_id, generation)
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS goal_continuation_state (
         thread_id TEXT PRIMARY KEY REFERENCES goals(thread_id) ON DELETE CASCADE,
         generation INTEGER NOT NULL,
@@ -99,6 +106,40 @@ export class GoalStore {
 
   close(): void {
     this.db.close();
+  }
+
+  readVerification(threadId: ThreadId): VerificationState | null {
+    const row = this.db.prepare('SELECT state_json FROM goal_verifications WHERE thread_id = ? ORDER BY generation DESC LIMIT 1').get(threadId) as { state_json: string } | undefined;
+    return row ? validateVerificationState(JSON.parse(row.state_json)) : null;
+  }
+
+  verificationOwners(): string[] {
+    return (this.db.prepare('SELECT DISTINCT thread_id FROM goal_verifications').all() as { thread_id: string }[]).map((row) => row.thread_id);
+  }
+
+  verificationRuns(threadId: ThreadId): VerificationState[] {
+    return (this.db.prepare('SELECT state_json FROM goal_verifications WHERE thread_id = ?').all(threadId) as { state_json: string }[])
+      .map((row) => validateVerificationState(JSON.parse(row.state_json)));
+  }
+
+  writeVerification(value: VerificationState): void {
+    const state = validateVerificationState(value);
+    if (this.read(state.threadId)?.generation !== state.generation) throw new Error('Verification Goal generation changed.');
+    const previous = this.readVerification(state.threadId);
+    if (previous?.generation === state.generation) assertVerificationTransition(previous, state);
+    this.db.prepare('INSERT INTO goal_verifications(thread_id, generation, state_json) VALUES (?, ?, ?) ON CONFLICT(thread_id, generation) DO UPDATE SET state_json = excluded.state_json')
+      .run(state.threadId, state.generation, JSON.stringify(state));
+  }
+
+  stopVerification(threadId: ThreadId, reason: string, now = Date.now()): void {
+    const state = this.readVerification(threadId);
+    if (!state || this.read(threadId)?.generation !== state.generation) return;
+    this.transaction(() => {
+      if (!state.stopped) this.writeVerification({ ...state, stopped: { reason, at: now } });
+      this.db.prepare("UPDATE goals SET status = 'blocked', updated_at = ? WHERE thread_id = ? AND status != 'complete'").run(now, threadId);
+      this.db.prepare('DELETE FROM continuation_deferrals WHERE thread_id = ?').run(threadId);
+      this.db.prepare('UPDATE goal_continuation_state SET pending_turn_id = NULL, pending_kind = NULL, wrap_up_eligible = 0 WHERE thread_id = ?').run(threadId);
+    });
   }
 
   read(threadId: ThreadId): GoalRecord | null {

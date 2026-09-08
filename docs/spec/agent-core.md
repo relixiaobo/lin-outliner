@@ -562,6 +562,17 @@ boundary; the next real idle boundary clears it and retries the same Goal
 generation. `waitForIdle` follows the whole continuation chain, including an
 admitted wrap-up, rather than returning after only its first Turn.
 
+Verification Goals additionally persist source revisions, immutable Tool Task
+bindings and bounded attempts in `goals.sqlite`; they do not own a second
+process-result ledger. See [source-bound verification](agent-tool-design.md#source-bound-verification).
+A verification stop durably blocks continuation and clears pending admission
+and wrap-up eligibility before idle notification. Turn failure, including
+active-Turn context-capacity exhaustion, cannot repeatedly resubmit the same
+oversized input after idle or restart. Explicit resumption requires a new user
+Turn and source reconciliation, retains the original budget, and starts a new
+revision. Preparing history rollback also stops verification conservatively;
+rollback or compaction never rewinds attempts or replays settled edits.
+
 Archiving or deleting a root Thread is an ownership-tree operation over
 `parentThreadId` lineage. `ThreadService` first fences the complete tree against
 new Turn and delegation admission, interrupts every active Turn and pending

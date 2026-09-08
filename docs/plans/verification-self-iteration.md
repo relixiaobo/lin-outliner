@@ -26,7 +26,9 @@ roots and a finite attempt limit. Ordinary Goals remain unchanged. The Host
 resolves the enclosing `.tenon/checks.json` declarations for those roots using
 the shipped discovery mechanism. The Agent runs their exact commands through
 ordinary Bash; a matching command and canonical cwd identifies a declared check.
-Every other process in that workflow is unclassified and invalidates the
+The same attempt limit also caps automatic Goal continuation admissions so
+never running a check cannot bypass the bound. Every other process in that
+workflow is unclassified and invalidates the
 current revision before admission, including native/delegated producers. Typed
 mutations invalidate every overlapping workflow before their side effects.
 
@@ -45,8 +47,10 @@ attempt, so it cannot refresh one pass while retaining the other old passes.
 Read-only checks initially run sequentially. Missing profiles, capture failure,
 repeated equivalent failure, exhausted attempts, user stop and context-capacity
 failure stop automatic continuation in the existing Goal owner. A later user
-resume requires renewed admission and source validation. No edit is replayed by
-the verification mechanism.
+resume uses `create_goal` with the same objective, roots and attempt limit in a
+fresh user Turn, validates the source and starts a new revision within the
+original remaining budget. Automatic continuation cannot renew admission. No
+edit is replayed by the verification mechanism.
 
 The implementation touches Agent Goal and context DTOs/codecs/tool contracts,
 `GoalStore`, `GoalExtension`, `ToolTaskService`, `ThreadService`, `ToolRuntime`,

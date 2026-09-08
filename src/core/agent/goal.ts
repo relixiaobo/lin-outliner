@@ -1,4 +1,5 @@
 import type { ThreadId, TurnId } from './protocol';
+import type { VerificationConfiguration, VerificationView } from './verification';
 
 export const THREAD_GOAL_STATUSES = [
   'active',
@@ -31,6 +32,7 @@ export interface CreateGoalInput {
   readonly threadId: ThreadId;
   readonly objective: string;
   readonly tokenBudget?: number;
+  readonly verification?: VerificationConfiguration;
 }
 
 export interface UpdateGoalInput {
@@ -40,14 +42,17 @@ export interface UpdateGoalInput {
 
 export interface GetGoalResponse {
   readonly goal: ThreadGoal | null;
+  readonly verification?: VerificationView;
 }
 
 export interface CreateGoalResponse {
   readonly goal: ThreadGoal;
+  readonly verification?: VerificationView;
 }
 
 export interface UpdateGoalResponse {
   readonly goal: ThreadGoal;
+  readonly verification?: VerificationView;
 }
 
 export type GoalToolName = 'get_goal' | 'create_goal' | 'update_goal';

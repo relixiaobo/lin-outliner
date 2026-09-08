@@ -99,7 +99,10 @@ interface TurnLifecycleDocumentDrift {
     projection: DocumentProjection | null,
   ): Promise<{ readonly context: AdditionalContext | null; readonly settle: () => void }>;
 }
-interface TurnLifecycleGoalUsage { addUsage(threadId: ThreadId, tokens: number, elapsedSeconds: number, turnId: TurnId, terminalStatus: TurnStatus): Promise<void>; }
+interface TurnLifecycleGoalUsage {
+  addUsage(threadId: ThreadId, tokens: number, elapsedSeconds: number, turnId: TurnId, terminalStatus: TurnStatus): Promise<void>;
+  verificationPublication?(threadId: ThreadId): Promise<{ owner: string; payload: import('../../../core/agent/protocol').VerificationObservationPayload } | null>;
+}
 
 export class TurnLifecycle {
   private readonly activeTurns = new Map<ThreadId, ActiveTurn>(); private readonly pendingUserInputs = new Map<ThreadId, PendingUserInput>();
@@ -1363,6 +1366,20 @@ export class TurnLifecycle {
       const located = turns.flatMap((turn) => turn.items.map((item) => ({ turn, item })));
       let reset = -1;
       located.forEach(({ item }, index) => { if (item.type === 'contextReset') reset = index; });
+      const verification = await this.goalUsage.verificationPublication?.(active.threadId);
+      if (verification) {
+        const previous = located.slice(reset + 1).reverse().find(({ item }) => item.type === 'contextEvidence' && item.kind === 'verificationObservation');
+        const priorPayload = previous?.item.type === 'contextEvidence' ? await this.core.payloads.readContext(active.threadId, previous.item.payloadRef).catch(() => null) : null;
+        if (priorPayload?.kind !== 'verificationObservation' || JSON.stringify(priorPayload.facts) !== JSON.stringify(verification.payload.facts)) {
+          let available = true;
+          for (const ref of verification.payload.evidenceRefs) {
+            available &&= await this.core.payloads.copyContextToThread(verification.owner, active.threadId, ref);
+          }
+          const payload = available ? verification.payload : { ...verification.payload, evidenceRefs: [],
+            facts: verification.payload.facts.map((fact) => ({ ...fact, version: 'unavailable', invalidated: true, text: 'Verification evidence could not be retained for this context. Inspect the Goal before relying on any earlier pass.' })) };
+          await this.persistExecutionContextEvidenceLocked(active, thread, payload, 'Current verification applicability');
+        }
+      }
       for (const pending of this.toolTasks.store.pendingContextObservations(active.threadId)) {
         const task = this.toolTasks.store.read(pending.taskId);
         const source = task ? located.findIndex(({ turn, item }) => turn.id === task.sourceTurnId && item.id === task.sourceItemId) : -1;

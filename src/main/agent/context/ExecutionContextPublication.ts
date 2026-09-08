@@ -69,7 +69,7 @@ export async function planExecutionContextPublication(
         // Only the bundle's exact dependencies have crossed this boundary.
         const published = new Set(item.contextRefs.map((ref) => ref.id));
         pending = pending.filter((ref) => !published.has(ref.id));
-      } else if (item.kind === 'taskExecutionContext' || item.kind === 'automationDispatch' || item.kind === 'executionContextObservation') {
+      } else if (item.kind === 'taskExecutionContext' || item.kind === 'automationDispatch' || item.kind === 'executionContextObservation' || item.kind === 'verificationObservation') {
         pending.push(item.payloadRef);
       }
     }
@@ -82,10 +82,10 @@ export async function planExecutionContextPublication(
   let omitted = 0;
   let omittedReplacement = false;
   for (const ref of pending) {
-    if (ref.kind !== 'taskExecutionContext' && ref.kind !== 'automationDispatch' && ref.kind !== 'executionContextObservation') continue;
+    if (ref.kind !== 'taskExecutionContext' && ref.kind !== 'automationDispatch' && ref.kind !== 'executionContextObservation' && ref.kind !== 'verificationObservation') continue;
     const payload = await read(ref).catch(() => null);
-    if (payload?.kind !== 'taskExecutionContext' && payload?.kind !== 'automationDispatch' && payload?.kind !== 'executionContextObservation') { omitted += 1; continue; }
-    const facts = [...payload.executionContext.snapshot.facts];
+    if (payload?.kind !== 'taskExecutionContext' && payload?.kind !== 'automationDispatch' && payload?.kind !== 'executionContextObservation' && payload?.kind !== 'verificationObservation') { omitted += 1; continue; }
+    const facts = payload.kind === 'verificationObservation' ? [...payload.facts] : [...payload.executionContext.snapshot.facts];
     if (payload.kind === 'executionContextObservation') {
       for (const { fact } of state.values()) {
         if (fact.authority !== 'repository' || facts.some((current) => executionFactKey(current) === executionFactKey(fact))) continue;

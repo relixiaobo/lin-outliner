@@ -1,4 +1,5 @@
 import type { AgentTool, AgentToolResult } from './kernel/types';
+import { decodeVerificationConfiguration } from '../../../core/agent/verification';
 import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from '../capabilities/agentToolEnvelope';
 import type { TSchema } from 'typebox';
 import {
@@ -308,6 +309,7 @@ export class ToolRuntime {
           turnId,
           requiredString(input.objective, 'create_goal.objective'),
           optionalPositiveInteger(input.token_budget, 'create_goal.token_budget'),
+          input.verification === undefined ? undefined : decodeVerificationConfiguration(input.verification),
         );
       }),
       coreTool('update_goal', 'Update Goal', async (_itemId, params) => {
