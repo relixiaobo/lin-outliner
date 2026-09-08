@@ -325,109 +325,79 @@ The settings surface follows the Preference Window pattern in
 [patterns.md](./patterns.md#preference-window): macOS System Settings interaction,
 Tenon foundations, no Apple chrome copying.
 
-**Window shell.** Settings is a standalone frameless window with inset traffic
-lights, the shared 24px native corner, and a renderer top drag region. Geometry
-matches the main shell: `--layout-gap`, `--sidebar-width`, `--panel-radius`, and
-traffic-light centreline alignment.
+**Window shell.** `Cmd+,` and the App menu open/focus one **Tenon Settings**
+window. The Host keeps its native title stable, uses real inset traffic lights,
+and disables minimize, maximize, and fullscreen. Bounded resizing and vertical
+scrolling keep larger text reachable. The opaque content scrollport starts below
+the toolbar; the toolbar contains the title and a trailing search field with
+search symbol, clear button, and localized prompt. `Cmd+F` focuses search.
+There is no category rail, nested page, history capsule, or in-content Close.
 
-**Toolbar.** The drag region carries the settings history capsule (`‹ ›`) and the
-selected category title. History controls reuse the main chrome control family
-inside one neutral `--radius-pill` capsule with a center divider. The content
-scrollport starts below fixed chrome via margin, not scroll padding.
+**Discovery.** A flat list exposes common scalar preferences and named commands
+for Models, Agents, Skills, Memory, Access, Data, Keyboard Shortcuts, and
+Diagnostics. Local search matches labels, descriptions, aliases, and stable IDs;
+IDs are not ordinary row labels. The **All / Modified** segmented filter lives
+in content. Modified means an explicit source override, even when equal to its
+default. Public root and shortcut source observations participate without loading
+runtime catalogs. An empty result offers Clear Search and/or Show All.
 
-**Category rail and content.** The left rail lists General, Agent, and Preview,
-cut along user intent rather than implementation subsystem. The content pane is
-an opaque Preferences base constrained to `--settings-content-max-width` (920px).
-Rail, toolbar, and category render immediately; provider/runtime data loads locally.
+**Commit model.** Choices commit immediately. Numeric edits validate on Return
+or blur; Escape restores the uncommitted value, and failed writes preserve the
+entered value. Reset deletes only that scalar declaration. Its named action has
+a stable slot. Source rejection disables that source's structural controls while
+showing its retained effective values and an Open File repair action regardless
+of query/filter. Runtime application and file acceptance are separate facts;
+per-owner failures preserve only the affected owner's previous effective values.
+There is no window-wide Save/Apply footer.
 
-**Pages.** Model services, Agents, and Skills sit under Agent; Keyboard Shortcuts
-and About sit under General.
-An unbounded collection the user installs or connects becomes a page; bounded
-settings stay inline. Page rows carry chevrons, history walks real routes, and
-per-provider configuration remains a native child window. Entering, leaving, or
-switching a secondary page resets the content scrollport before paint; ordinary
-category-to-category navigation does not trigger that reset. An explicit deep-
-link anchor then positions its requested group.
+**Controls and accessibility.** Appearance is a neutral segmented radiogroup;
+Language and other mutually exclusive choices use native pop-up selects.
+Emphasized boolean settings use the shared compact switches in content; their
+on-state follows the `--control-on` exception in Foundations. Search,
+controls, and Reset remain keyboard reachable with neutral focus indicators.
+Escape belongs first to IME, an editor, or a menu/sheet; otherwise it clears a
+focused nonempty search. `Cmd+W` closes the active native window. Closing a child
+restores its invoking control. Text wraps at narrow widths and 200% text size;
+chrome is nonselectable and the hand cursor is reserved for content links.
 
-**Deep links.** Categories are `general|agent|preview`; pages are
-`agent/services`, `agent/agents`, `agent/skills`, `general/shortcuts`, and
-`general/about`. An optional bounded
-lowercase-slug anchor (`[a-z0-9][a-z0-9-]{0,63}`) scrolls to and briefly
-highlights a group. Category/page mismatches do not route; retired ids have no
-aliases. Explicit targets retarget an open window, while `Cmd+,` only focuses it.
+**Independent managers.** `SettingsOpenTarget.destination` directly names a
+singleton native window: `settings|models|agents|skills|memory|access|data|shortcuts|about|diagnostics`.
+An optional `settingId` filters Settings to its matching row. Untargeted reopening
+preserves search, scroll, and focus. Each manager owns its loads, errors, queues,
+and subscriptions. Provider commands share a model response queue, and Skill
+availability writes retain keyed generation guards and their own serialized
+queue. No category shell owns domain state, live counts, badges, or polling.
+The credential editor remains a modal child of **Models**. Closing a manager
+does not revoke already accepted domain work; pre-acceptance reviews retain the
+owning service's cancellation rules.
 
-**Commit model.** Controls apply immediately with no footer or draft. Optimistic
-writes revert on failure, show a localized row-owned `role="alert"`, and record
-raw errors only in diagnostics. Writes serialize per key; independent Agent
-mutations use independent keys and a shared pending count. Provider commands
-also share a response queue because they return full settings snapshots, so an
-older Set active, Remove, Refresh, or image-model response cannot overwrite a
-later enable intent. Composite Preview writes serialize from the last persisted
-snapshot: failure rolls back only its field, later pending fields stay visible,
-and broadcasts merge below pending values. Settings and the preview popover use
-the same failure contract. Only the modal provider form retains Cancel/Save.
+**Agent configuration and Access.** The root Agent editor handles the existing
+main persona, standing instructions, and capability ceiling. It does not restore
+retired Roles, per-type execution, or duplicated built-in Agents. Delegation
+preferences and runner readiness load through their own projection within Agents,
+separately from Models. Access states the Full Access boundary and lists explicit
+blocks; removal commits on its row. The boundary explanation is a footnote.
 
-**General.** Appearance (Theme and Language), Keyboard Shortcuts, Diagnostics,
-and About. Theme is a
-neutral `SegmentedControl` radiogroup with roving tabindex and arrow navigation;
-Language is `SelectControl variant="popup"`. When a verified stable app release
-is newer than the running build and automatic checks remain enabled, General in
-the category rail and the About row each show the same fixed 6px rose status dot.
-It has a non-live accessible update-available name and no count or animation. Its
-fixed slot is reserved while hidden so async state cannot move adjacent content.
-This is a presence-based status, not unread state: opening About does not clear it; catching
-up to the release or disabling automatic checks does.
+**Skills, Memory, and Data.** Skills owns acquisition, source bindings, enabled
+state, and updates. Skill descriptions stay clamped to two lines; menu/switch
+focus never expands a row. Memory and Data own their inspection and confirmed
+maintenance actions. Translation controls remain contextual in previews; Data
+owns global translation-cache and website-data cleanup.
 
-Keyboard Shortcuts is a purpose-built inset-list page over the public keybindings
-source. A compact search field and Open File / Reset All commands precede grouped
-system, application, and preview rows. Each row keeps its label, description,
-stable ID, default/modified state, enable switch, alternate key controls, and
-Reset action in one scan line. Key caps use neutral fills and a visible focus
-ring; recording changes copy inside stable dimensions instead of resizing the
-row. Source rejection and effective-binding failure stay at their action point.
-
-**Agent.** Model services, Agents, and Skills are pages; Memory and Permissions
-stay inline. Permissions states the Full Access boundary, lists explicit blocks,
-and commits removal on the row; boundary explanation is a footnote under that row.
-The Skill library is a scan-and-toggle surface: descriptions stay clamped to two
-lines, and focusing or operating a row's menu or switch never expands the row.
-
-The Agents page lists the Roles a user wrote above the built-in types, each row
-wearing the same generated mark the transcript draws for it, so the editor and
-the conversation are visibly about one participant. A row opens a level-2 editor
-dialog rather than a third route, remounted per subject so it never holds the
-previous agent's fields. Identity (name, colour) for every agent; **the
-conversation agent** additionally gets its standing instructions and the
-capability ceiling; a Role gets definition (type, use-it-for, instructions,
-layer) and its own narrowing. Capabilities are checkbox lists of everything the
-install has, all checked, because unchecking is the whole gesture — a list can
-only narrow what the agent handing out work already had, never grant. Colour swatches
-are the mark itself, so a hue is chosen against what it produces; the chosen
-swatch is marked on the neutral ladder, never by tinting the mark. A leading
-**Default** swatch shows what would be inherited and is the only way to send an
-empty colour — without it the documented reset is unreachable from the UI. A built-in
-shows identity only and offers no Delete, because there is nothing of the user's
-to remove — instead it offers **Duplicate**, which seeds a new Role from the
-built-in's real description and instructions rather than a blank form. An existing Role's type is fixed — it is the key both dispatch and
-identity are stored under — and a new Role whose type is already taken says so
-in the card rather than at the write boundary, where finding out would cost the
-user the rest of what they typed. A refused write leaves the dialog standing
-with its values and reports the write boundary's own sentence **inside the
-dialog**: the pane's shared feedback block is a sticky element at `z-index: 1`
-and the modal backdrop is fixed at `--z-modal`, so an error raised there landed
-behind it and Save read as doing nothing at all.
-
-**Preview.** Translation owns target language, webpage/EPUB auto-translation,
-model, and clearing saved translations; Websites clears URL-preview session data.
-The preview Languages popover writes the same cross-window preference store.
+**Keyboard Shortcuts.** Its dedicated searchable editor owns the public
+keybindings source. Open File and Reset All precede grouped system, application,
+and preview rows. Each row exposes the command, description, stable ID,
+default/modified state, enable switch, alternate bindings, and Reset. Key caps
+use neutral fills and keyboard focus rings; recording changes copy inside stable
+dimensions. Source rejection and effective-binding failure stay local.
 
 **About.** Identity/version with copy, Software Update, What's New for the running
-version, support, and legal. The native About item opens this page. Software
+version, support, and legal. The native About item opens its independent window. Software
 Update shows checking, current, available, automatic-off, and explicit-failure
 states; an automatic-check switch and explicit Check now action apply immediately.
 Ambient failures render nothing and preserve cached availability. Explicit check
-and external-open failures stay inline in this group rather than using the shared
-Settings alert, an app toast, dialog, banner, notification, dock badge, or main-
+and external-open failures stay inline in this group rather than using the manager
+alert, an app toast, dialog, banner, notification, dock badge, or main-
 window surface.
 
 An available release shows only the newest stable version and its exact-tag

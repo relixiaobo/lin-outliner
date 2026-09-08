@@ -1,3 +1,5 @@
+import type { PreferenceEdit, PreferencesView } from '../core/settingsDefinitions';
+import type { DelegationSettingsView } from '../core/delegationSettings';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { MEMORY_CHANGED_CHANNEL } from '../core/agent/memoryOperations';
 import { DATA_CHANGED_CHANNEL, PREVIEW_ACTION_CHANNEL, PREVIEW_ACTION_ACK_CHANNEL, PREVIEW_CONTEXT_CHANNEL, PREVIEW_OPERATIONS_CHANNEL,
@@ -63,7 +65,8 @@ import {
 } from '../core/types';
 import { windowMaterialKind } from '../core/windowMaterial';
 import {
-  LIN_SETTINGS_CHANGED_CHANNEL,
+  CONFIGURATION_CHANGED_CHANNEL,
+  type ConfigurationDomain,
   LIN_SETTINGS_NAVIGATE_CHANNEL,
   type SettingsOpenTarget,
 } from '../core/settingsWindow';
@@ -481,7 +484,13 @@ const api = {
   closeProviderConfig: () => ipcRenderer.invoke('lin:close-provider-config') as Promise<void>,
   getProviderApiKey: (providerId: string) =>
     ipcRenderer.invoke('lin:get-provider-api-key', { providerId }) as Promise<AgentProviderStoredApiKey>,
-  notifySettingsChanged: () => ipcRenderer.invoke('lin:settings-changed') as Promise<void>,
+  preferences: {
+    get: () => ipcRenderer.invoke('lin:preferences/get') as Promise<PreferencesView>,
+    edit: (input: PreferenceEdit) => ipcRenderer.invoke('lin:preferences/edit', input) as Promise<PreferencesView>,
+    openFile: () => ipcRenderer.invoke('lin:preferences/open-file') as Promise<void>,
+    openSource: (sourceId: 'agent-user' | 'agent-project' | 'shortcuts') => ipcRenderer.invoke('lin:configuration/open-source', sourceId) as Promise<void>,
+  },
+  getDelegationSettings: () => ipcRenderer.invoke('lin:delegation/get') as Promise<DelegationSettingsView>,
   appInfo: () => ipcRenderer.invoke(LIN_APP_INFO_CHANNEL) as Promise<AppInfo>,
   bundledApplicationRelease: () =>
     ipcRenderer.invoke(LIN_APP_RELEASE_CHANNEL) as Promise<BundledApplicationRelease | null>,
@@ -504,12 +513,10 @@ const api = {
   exportDiagnostics: () =>
     ipcRenderer.invoke(LIN_EXPORT_DIAGNOSTICS_CHANNEL) as Promise<DiagnosticsActionResult>,
   reportRendererError: (report: ErrorReport) => reportRendererError(report),
-  onSettingsChanged: (listener: () => void) => {
-    const handler = () => listener();
-    ipcRenderer.on(LIN_SETTINGS_CHANGED_CHANNEL, handler);
-    return () => {
-      ipcRenderer.removeListener(LIN_SETTINGS_CHANGED_CHANNEL, handler);
-    };
+  onConfigurationChanged: (domain: ConfigurationDomain, listener: () => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, changed: ConfigurationDomain) => { if (changed === domain) listener(); };
+    ipcRenderer.on(CONFIGURATION_CHANGED_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(CONFIGURATION_CHANGED_CHANNEL, handler);
   },
   onSettingsNavigate: (listener: (target: SettingsOpenTarget) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, target: SettingsOpenTarget) => listener(target);

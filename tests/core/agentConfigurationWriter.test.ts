@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -117,6 +118,27 @@ describe('AgentConfigurationWriter', () => {
     const projectSource = await readFile(projectPath, 'utf8');
     expect(projectSource).toContain('Project.');
     expect(await readFile(projectConfigurationSchemaPath(cwd), 'utf8')).toContain('Tenon Root Agent Configuration');
+  });
+
+  test('rejects stale editor observations without changing newer source bytes', async () => {
+    const { writer, userData, cwd } = await fixture();
+    await writer.writeProfile('user', cwd, 'default', { developerInstructions: 'Before' });
+    const path = userConfigurationPath(userData);
+    const observed = await readFile(path, 'utf8');
+    const digest = createHash('sha256').update(observed).digest('hex');
+    const external = observed.replace('Before', 'External');
+    await writeFile(path, external);
+    await expect(writer.writeProfile('user', cwd, 'default', { developerInstructions: 'Stale' }, undefined, digest)).rejects.toThrow('source changed');
+    expect(await readFile(path, 'utf8')).toBe(external);
+  });
+
+  test('an empty rejected source cannot be overwritten through the structural editor', async () => {
+    const { writer, userData, cwd } = await fixture();
+    const path = userConfigurationPath(userData);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, '  ');
+    await expect(writer.writeProfile('user', cwd, 'default', {})).rejects.toThrow('Cannot edit');
+    expect(await readFile(path, 'utf8')).toBe('  ');
   });
 
   test('rejects invalid presentation before changing the file', async () => {

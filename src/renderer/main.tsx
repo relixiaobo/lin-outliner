@@ -8,6 +8,7 @@ import {
 import { windowSurfaceFromSearch } from '../core/settingsWindow';
 import { App } from './ui/App';
 import { SettingsWindow } from './ui/SettingsWindow';
+import { ManagerWindow } from './ui/configuration/ManagerWindow';
 import { ProviderConfigWindow } from './ui/agent/ProviderConfigWindow';
 import { SkillReviewWindow } from './ui/agent/SkillReviewWindow';
 import { I18nProvider } from './i18n/I18nProvider';
@@ -65,6 +66,8 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <I18nProvider>
       {surface === 'skill-review' ? (
         <SkillReviewWindow />
+      ) : surface === 'manager' ? (
+        <ManagerWindow />
       ) : surface === 'settings' ? (
         <SettingsWindow />
       ) : surface === 'provider-config' ? (

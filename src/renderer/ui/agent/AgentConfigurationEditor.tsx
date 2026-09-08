@@ -9,7 +9,6 @@ import type {
   AgentEditorView,
   AgentPresentationOverrideRow,
   AgentProfileView,
-  AgentProviderSettingsView,
 } from '../../api/types';
 import { api } from '../../api/client';
 import { AgentMark } from '../../agent/components/AgentMark';
@@ -26,28 +25,33 @@ import { InsetGroup, InsetRow } from './SettingsInsetList';
 
 const EMPTY_CAPABILITIES: AgentCapabilityCatalog = { tools: [], skills: [] };
 
-export function AgentsSettings({ initialAgentType: _initialAgentType, onError, onNotice, settings: _settings }: {
-  readonly initialAgentType?: string;
+export function AgentConfigurationEditor({ onError, onNotice }: {
   readonly onError: (message: string | null) => void;
   readonly onNotice: (message: string | null) => void;
-  readonly settings: AgentProviderSettingsView | null;
 }) {
   const t = useT();
   const [view, setView] = useState<AgentEditorView | null>(null);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState<AgentEditorView | null>(null);
   const [busy, setBusy] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    void api.agentIdentityCatalog()
-      .then((next) => { if (active) setView(next); })
-      .catch((caught: unknown) => { if (active) onError(errorText(caught)); });
-    return () => { active = false; };
+    let generation = 0;
+    const refresh = () => {
+      const request = ++generation;
+      void api.agentIdentityCatalog()
+        .then((next) => { if (active && request === generation) setView(next); })
+        .catch((caught: unknown) => { if (active) onError(errorText(caught)); });
+    };
+    refresh();
+    const off = window.lin?.onConfigurationChanged?.('agents', refresh);
+    window.addEventListener('focus', refresh);
+    return () => { active = false; off?.(); window.removeEventListener('focus', refresh); };
   }, [onError]);
 
   const save = useCallback(async (draft: MainAgentDraft, layer: 'user' | 'project') => {
-    if (!view) return;
+    if (!editing) return;
     setBusy(true);
     onError(null);
     onNotice(null);
@@ -55,7 +59,8 @@ export function AgentsSettings({ initialAgentType: _initialAgentType, onError, o
     try {
       const next = await api.agentWriteProfile({
         layer,
-        name: view.profile.name,
+        sourceDigest: editing.sources?.find((source) => source.layer === layer)?.digest ?? null,
+        name: editing.profile.name,
         presentation: { persona: draft.persona, color: draft.color },
         profile: {
           developerInstructions: draft.developerInstructions,
@@ -64,14 +69,14 @@ export function AgentsSettings({ initialAgentType: _initialAgentType, onError, o
         },
       });
       setView(next);
-      setEditing(false);
+      setEditing(null);
       onNotice(t.settings.agents.saved({ name: draft.persona || MAIN_PRESENTATION_KEY }));
     } catch (caught) {
       setEditorError(errorText(caught));
     } finally {
       setBusy(false);
     }
-  }, [onError, onNotice, t.settings.agents, view]);
+  }, [onError, onNotice, t.settings.agents, editing]);
 
   const entry = view?.entries.find((candidate) => candidate.agentType === MAIN_PRESENTATION_KEY);
   const identity = resolveAgentIdentity(entry ? new Map([[MAIN_PRESENTATION_KEY, entry]]) : new Map(), MAIN_PRESENTATION_KEY);
@@ -90,21 +95,21 @@ export function AgentsSettings({ initialAgentType: _initialAgentType, onError, o
           <InsetRow
             label={identity.name}
             leading={<AgentMark size={24} tint={identity.tint} />}
-            onSelect={() => setEditing(true)}
+            onSelect={() => setEditing(view)}
             sublabel={t.settings.agents.mainSublabel}
           />
         )}
       </InsetGroup>
 
-      {editing && view ? (
+      {editing ? (
         <MainAgentEditor
           busy={busy}
-          capabilities={view.capabilities ?? EMPTY_CAPABILITIES}
+          capabilities={editing.capabilities ?? EMPTY_CAPABILITIES}
           error={editorError}
-          onCancel={() => { setEditorError(null); setEditing(false); }}
+          onCancel={() => { setEditorError(null); setEditing(null); }}
           onSave={(draft, layer) => void save(draft, layer)}
-          override={effectiveMainOverride(view.presentationOverrides)}
-          profile={view.profile}
+          override={effectiveMainOverride(editing.presentationOverrides)}
+          profile={editing.profile}
         />
       ) : null}
     </section>

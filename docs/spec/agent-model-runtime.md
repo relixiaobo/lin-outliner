@@ -24,6 +24,13 @@ generations, and delegation state never rewrite the public JSONC source, so
 user comments and formatting remain stable. Source edits are observed on the
 next read/reconcile without a Settings or Configuration CLI.
 
+The Models manager receives only provider/model configuration, catalogs, and
+image defaults through `AgentProviderSettingsView`. It does not receive Agent
+runtime policy or discover delegation runners. Successful Host mutations and
+external model-source changes publish the scoped `models` event; Models and the
+Composer refresh that projection. Agents separately requests delegation settings
+and runner readiness. Renderers cannot publish configuration change events.
+
 ## Execution Boundary
 
 `PiTurnExecutor` receives an immutable `TurnExecutionContext` containing the

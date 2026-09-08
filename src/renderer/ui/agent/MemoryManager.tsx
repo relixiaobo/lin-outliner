@@ -9,7 +9,7 @@ import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 
-export function MemorySettingsGroup() {
+export function MemoryManager() {
   const { locale, t } = useI18n();
   const { view, error: readError, refresh } = useMemoryView();
   const [busy, setBusy] = useState(false);

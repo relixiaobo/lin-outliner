@@ -1,3 +1,5 @@
+import type { ConfigurationDomain } from '../../core/settingsWindow';
+import type { DelegationSettingsView } from '../../core/delegationSettings';
 import type {
   AgentEditorView,
   AgentProfileDraft,
@@ -115,8 +117,8 @@ export const api = {
    * dock listens so an Agent renamed or re-skinned in the editor is renamed in
    * the transcript at once, rather than at the next conversation switch.
    */
-  onSettingsChanged: (listener: () => void) => (
-    window.lin?.onSettingsChanged(listener) ?? (() => undefined)
+  onConfigurationChanged: (domain: ConfigurationDomain, listener: () => void) => (
+    window.lin?.onConfigurationChanged(domain, listener) ?? (() => undefined)
   ),
   onAgentCoreNotification: (listener: (notification: RendererAgentCoreNotification) => void) => (
     window.lin?.onAgentCoreNotification(listener) ?? (() => undefined)
@@ -178,7 +180,7 @@ export const api = {
   agentRefreshProviderModels: (providerId: string) =>
     command<AgentProviderSettingsView>('agent_refresh_provider_models', { providerId }),
   agentUpdateRuntimeSettings: (settings: AgentRuntimeSettingsInput) =>
-    command<AgentProviderSettingsView>('agent_update_runtime_settings', { settings }),
+    command<DelegationSettingsView>('agent_update_runtime_settings', { settings }),
   agentUpdateImageGenerationSettings: (settings: AgentImageGenerationSettingsInput) =>
     command<AgentProviderSettingsView>('agent_update_image_generation_settings', { settings }),
   agentUpdateModelDefault: (defaultModel: string | null) =>
@@ -256,6 +258,7 @@ export const api = {
     cwd?: string;
     name: string;
     profile: AgentProfileDraft;
+    sourceDigest?: string | null;
     /** The same agent's re-skin, applied in the same validated edit. */
     presentation?: { persona?: string; color?: string };
   }) => command<AgentEditorView>('agent_write_profile', input),

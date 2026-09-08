@@ -118,7 +118,7 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
   );
 });
 
-interface SettingsProvidersSectionProps {
+interface ModelsListProps {
   settings: AgentProviderSettingsView | null;
   draftProviderId: string;
   enabledOverrides: ReadonlyMap<string, boolean>;
@@ -141,14 +141,14 @@ interface SettingsProvidersSectionProps {
  * plus grouped inset cards). It owns only its own row-menu state; everything it
  * mutates goes through the parent's envelope.
  */
-export function SettingsProvidersSection({
+export function ModelsList({
   settings,
   draftProviderId,
   enabledOverrides,
   toggleErrors,
   onToggleProviderEnabled,
   runProviderMutation,
-}: SettingsProvidersSectionProps) {
+}: ModelsListProps) {
   const t = useT();
   // The per-row ⋯ actions menu (only one open at a time, keyed by providerId). The
   // per-provider config opens in its own native window, not an in-renderer sheet.

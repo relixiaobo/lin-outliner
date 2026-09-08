@@ -37,6 +37,9 @@
    strengthen the neutral focus ring. Alpha-on-ink, so this is correct in both
    themes. (Opaque materials are handled by the shared block above.) */
 @media (prefers-contrast: more) {
+  .preference-list, .preference-row + .preference-row, .configuration-toolbar {
+    border-color: var(--text-secondary);
+  }
   :root {
     /* text levels — push the quieter labels toward full contrast */
     --text-secondary: rgb(var(--ink) / 0.72);

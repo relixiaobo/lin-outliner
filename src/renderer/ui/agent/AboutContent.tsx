@@ -23,7 +23,7 @@ function openFixedDestination(destination: 'help' | 'issues' | 'license', fallba
   void api.openExternalUrl(fallback);
 }
 
-interface SettingsAboutSectionProps {
+interface AboutContentProps {
   appUpdate?: AppUpdateView | null;
   onAppUpdateChange?: (view: AppUpdateView) => void;
   onError: (message: string | null) => void;
@@ -97,13 +97,13 @@ function ReleaseNote({ note }: { note: string }) {
  * links, the one-paragraph description — are omitted rather than stubbed. An
  * empty row that says nothing is worse than a page that does not claim to.
  */
-export function SettingsAboutSection({
+export function AboutContent({
   appUpdate = null,
   onAppUpdateChange = () => undefined,
   onError,
   onNotice,
   loadRelease = loadBundledApplicationRelease,
-}: SettingsAboutSectionProps) {
+}: AboutContentProps) {
   const { locale, t } = useI18n();
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [release, setRelease] = useState<BundledApplicationRelease | null>(null);

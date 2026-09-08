@@ -1,3 +1,4 @@
+import { configureSmokeProvider } from './configurationHelpers';
 import { expect, test, type Page } from '@playwright/test';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -164,7 +165,8 @@ test.describe('persistent preview translation cache', () => {
     smoke = await launchSmokeApp();
     smoke.window = await findMainWindow(smoke);
     await smoke.window.locator('#root').waitFor();
-    await configureTranslation(smoke.window, `${origin}/v1`);
+    await configureSmokeProvider(smoke, `${origin}/v1`);
+    await smoke.window.evaluate(() => window.lin!.setLanguage('en'));
     await smoke.app.evaluate(({ BrowserWindow }, url) => {
       const window = BrowserWindow.getAllWindows().find(
         (entry) => entry.webContents.getURL() === url,
@@ -534,31 +536,15 @@ test.describe('persistent preview translation cache', () => {
   });
 });
 
-async function configureTranslation(page: Page, baseUrl: string): Promise<void> {
-  await page.evaluate(
-    async ({ baseUrl }) => {
-      const lin = window.lin;
-      if (!lin) throw new Error('Missing preload API');
-      const providerId = 'groq';
-      await lin.invoke('agent_upsert_provider_config', {
-        provider: { providerId, baseUrl, enabled: true },
-      });
-      await lin.invoke('agent_set_provider_api_key', { providerId, apiKey: 'smoke-key' });
-      await lin.invoke('agent_set_active_provider', { providerId });
-      await lin.setLanguage('en');
-    },
-    { baseUrl },
-  );
-}
 
 async function openGeneralSettings(smoke: SmokeApp): Promise<Page> {
   await smoke.window.evaluate(async () => {
-    await window.lin?.openSettings({ category: 'preview' });
+    await window.lin?.openSettings({ destination: 'data' });
   });
   await expect
-    .poll(() => smoke.app.windows().filter((page) => surfaceFor(page) === 'settings').length)
+    .poll(() => smoke.app.windows().filter((page) => surfaceFor(page) === 'manager' && page.url().includes('destination=data')).length)
     .toBe(1);
-  const settings = smoke.app.windows().find((page) => surfaceFor(page) === 'settings');
+  const settings = smoke.app.windows().find((page) => surfaceFor(page) === 'manager' && page.url().includes('destination=data'));
   if (!settings) throw new Error('Missing Settings window');
   await settings.locator('#root').waitFor();
   return settings;

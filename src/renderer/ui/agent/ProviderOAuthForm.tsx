@@ -40,7 +40,7 @@ interface ProviderOAuthFormProps {
   onSetActive?: () => void;
   onOpenExternal: (url: string) => void;
   /** Settings after a successful sign-in / sign-out — the window re-renders from these. */
-  onSettingsChanged: (settings: AgentProviderSettingsView) => void;
+  onProviderChange: (settings: AgentProviderSettingsView) => void;
   onClose: () => void;
 }
 
@@ -49,7 +49,7 @@ interface ProviderOAuthFormProps {
 // reply-needed steps. The login promise resolves with fresh settings on success.
 function useOAuthLogin(
   providerId: string,
-  onSettingsChanged: (settings: AgentProviderSettingsView) => void,
+  onProviderChange: (settings: AgentProviderSettingsView) => void,
 ) {
   const [flow, dispatch] = useReducer(oauthFlowReducer, INITIAL_OAUTH_FLOW);
   const [busy, setBusy] = useState(false);
@@ -77,7 +77,7 @@ function useOAuthLogin(
     setBusy(true);
     dispatch({ type: 'start' });
     api.agentOAuthLogin(providerId)
-      .then((settings) => { if (!mountedRef.current) return; dispatch({ type: 'done' }); onSettingsChanged(settings); })
+      .then((settings) => { if (!mountedRef.current) return; dispatch({ type: 'done' }); onProviderChange(settings); })
       .catch((caught) => {
         if (!mountedRef.current) return;
         // A user-initiated cancel rejects the login too — fold it back to idle, not an error.
@@ -85,7 +85,7 @@ function useOAuthLogin(
         else dispatch({ type: 'error', message: caught instanceof Error ? caught.message : String(caught) });
       })
       .finally(() => { runningRef.current = false; if (mountedRef.current) setBusy(false); });
-  }, [providerId, onSettingsChanged]);
+  }, [providerId, onProviderChange]);
 
   const respond = useCallback((requestId: string, value: string | undefined) => {
     dispatch({ type: 'responded' });
@@ -104,10 +104,10 @@ function useOAuthLogin(
   const signOut = useCallback(() => {
     setBusy(true);
     api.agentOAuthLogout(providerId)
-      .then((settings) => { if (mountedRef.current) onSettingsChanged(settings); })
+      .then((settings) => { if (mountedRef.current) onProviderChange(settings); })
       .catch((caught) => { if (mountedRef.current) dispatch({ type: 'error', message: caught instanceof Error ? caught.message : String(caught) }); })
       .finally(() => { if (mountedRef.current) setBusy(false); });
-  }, [providerId, onSettingsChanged]);
+  }, [providerId, onProviderChange]);
 
   return { flow, busy, signIn, respond, cancel, signOut };
 }
@@ -208,11 +208,11 @@ export function ProviderOAuthForm({
   onUseApiKey,
   onSetActive,
   onOpenExternal,
-  onSettingsChanged,
+  onProviderChange,
   onClose,
 }: ProviderOAuthFormProps) {
   const t = useT();
-  const { flow, busy, signIn, respond, cancel, signOut } = useOAuthLogin(providerId, onSettingsChanged);
+  const { flow, busy, signIn, respond, cancel, signOut } = useOAuthLogin(providerId, onProviderChange);
   const running = flow.status === 'running';
   const countdown = useCountdown(
     running ? flow.deviceCode?.expiresInSeconds : undefined,

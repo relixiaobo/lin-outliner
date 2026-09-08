@@ -1,3 +1,4 @@
+import { PREFERENCE_DEFINITIONS, preferenceDefault } from '../../src/core/settingsDefinitions';
 import { expect, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import type { PreviewAction, PreviewActionAck, PreviewObservation, PreviewView, PreviewManageRequest, PreviewControlResult } from '../../src/core/previewOperations';
@@ -162,7 +163,6 @@ type E2EWindow = Window & {
     openProviderConfig?: (params: { providerId: string; mode: string }) => Promise<void>;
     openSettings?: (target?: unknown) => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
-    notifySettingsChanged?: () => Promise<void>;
     appInfo?: () => Promise<AppInfo>;
     bundledApplicationRelease?: () => Promise<BundledApplicationRelease | null>;
     appUpdate?: {
@@ -172,7 +172,7 @@ type E2EWindow = Window & {
       open: () => Promise<{ ok: boolean; destination?: 'download' | 'release'; error?: string }>;
       onChanged: (listener: (view: AppUpdateView) => void) => () => void;
     };
-    onSettingsChanged?: (listener: () => void) => () => void;
+    onConfigurationChanged?: (domain: string, listener: () => void) => () => void;
     onSettingsNavigate?: (listener: (target: unknown) => void) => () => void;
     openLocalFile?: (options: { path: string; threadId?: string; attachmentId?: string }) => Promise<{ opened: boolean }>;
     revealLocalFile?: (options: { path: string; threadId?: string; attachmentId?: string }) => Promise<{ revealed: boolean }>;
@@ -308,7 +308,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
   ]);
   await page.addInitScript({ content: actionBridge });
   await page.addInitScript({ content: viewConfigBridge });
-  await page.addInitScript(({ assetUrlPrefix, bundledRelease, ids, options, queryChildLimit }) => {
+  await page.addInitScript(({ assetUrlPrefix, bundledRelease, ids, options, queryChildLimit, preferenceEntries }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
       | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
@@ -485,16 +485,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     // the event stream (emitOAuthEvent) and completes it (resolveOAuthLogin), so
     // the flow is fully deterministic — no real provider, timers, or network.
     const oauthPending = new Map<string, { resolve: (value: unknown) => void; reject: (err: unknown) => void }>();
-    const agentSettings = {
-      activeProviderId: 'openai',
-      agent: {
+    let agentRuntime = {
         additionalSkillDirectories: [],
         disabledSkills: [] as string[],
         providerTimeoutMs: null,
         providerMaxRetries: null,
         providerMaxRetryDelayMs: 60_000,
         providerCacheRetention: 'short',
-      },
+      };
+    agentRuntime.delegation = { enabled: false, defaultRunnerId: 'internal', maxConcurrentGlobal: 8, maxConcurrentThread: 4, maxQueuedGlobal: 32, maxQueuedThread: 8, runners: {} };
+    const agentSettings = {
+      activeProviderId: 'openai',
       imageGeneration: {},
       providers: [{
         providerId: 'openai',
@@ -5149,10 +5150,19 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         calls.push({ cmd: 'open_settings', args: clone(target ?? {}) });
       },
       closeProviderConfig: async () => {},
-      notifySettingsChanged: async () => {
-        for (const listener of settingsChangedListeners) listener();
+      preferences: {
+        get: async () => ({ source: { status: 'missing', path: '/config/settings.jsonc', digest: null, acceptedDigest: null, error: null, recoveryError: null },
+          application: { status: 'applied', error: null }, entries: clone(preferenceEntries), structuredOverrides: [] }),
+        edit: async (input) => {
+          const entry = preferenceEntries.find((entry) => entry.id === input.id)!;
+          entry.value = input.value ?? null;
+          entry.modified = input.operation !== 'reset';
+          return win.lin!.preferences.get();
+        },
+        openFile: async () => {},
       },
-      onSettingsChanged: (listener) => {
+      getDelegationSettings: async () => ({ delegation: clone(agentRuntime.delegation), runners: [] }),
+      onConfigurationChanged: (_domain, listener) => {
         settingsChangedListeners.push(listener);
         return () => {
           const index = settingsChangedListeners.indexOf(listener);
@@ -5327,10 +5337,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_get_skill_settings') {
           return clone({
-            disabledSkills: agentSettings.agent.disabledSkills,
-            sourceBindings: agentSettings.agent.additionalSkillDirectories.map((path) => ({
+            disabledSkills: agentRuntime.disabledSkills,
+            sourceBindings: agentRuntime.additionalSkillDirectories.map((path) => ({
               path,
-              mode: agentSettings.agent.additionalSkillSourceModes?.[path] ?? 'container',
+              mode: agentRuntime.additionalSkillSourceModes?.[path] ?? 'container',
             })),
           }) as T;
         }
@@ -5397,26 +5407,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             providerMaxRetryDelayMs?: number | null;
             providerCacheRetention?: string;
           };
-          agentSettings.agent = {
+          agentRuntime = {
+            ...agentRuntime,
+            ...(settings.delegation ? { delegation: { ...agentRuntime.delegation, ...settings.delegation } } : {}),
             additionalSkillDirectories: Array.isArray(settings.additionalSkillDirectories)
               ? settings.additionalSkillDirectories.map(String)
-              : agentSettings.agent.additionalSkillDirectories,
+              : agentRuntime.additionalSkillDirectories,
             providerTimeoutMs: typeof settings.providerTimeoutMs === 'number' || settings.providerTimeoutMs === null
               ? settings.providerTimeoutMs
-              : agentSettings.agent.providerTimeoutMs,
+              : agentRuntime.providerTimeoutMs,
             providerMaxRetries: typeof settings.providerMaxRetries === 'number' || settings.providerMaxRetries === null
               ? settings.providerMaxRetries
-              : agentSettings.agent.providerMaxRetries,
+              : agentRuntime.providerMaxRetries,
             providerMaxRetryDelayMs: typeof settings.providerMaxRetryDelayMs === 'number' || settings.providerMaxRetryDelayMs === null
               ? settings.providerMaxRetryDelayMs
-              : agentSettings.agent.providerMaxRetryDelayMs,
+              : agentRuntime.providerMaxRetryDelayMs,
             providerCacheRetention: settings.providerCacheRetention === 'none' || settings.providerCacheRetention === 'long'
               ? settings.providerCacheRetention
               : settings.providerCacheRetention === 'short'
                 ? 'short'
-                : agentSettings.agent.providerCacheRetention,
+                : agentRuntime.providerCacheRetention,
           };
-          return clone(agentSettings) as T;
+          return { delegation: clone(agentRuntime.delegation), runners: [] } as T;
         }
         if (cmd === 'agent_update_skill_settings') {
           const settings = args.settings as {
@@ -5424,19 +5436,19 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             sourceBindings?: Array<{ path: string; mode: 'skill' | 'container' }>;
           };
           if (Array.isArray(settings.disabledSkills)) {
-            agentSettings.agent.disabledSkills = settings.disabledSkills.map(String);
+            agentRuntime.disabledSkills = settings.disabledSkills.map(String);
           }
           if (Array.isArray(settings.sourceBindings)) {
-            agentSettings.agent.additionalSkillDirectories = settings.sourceBindings.map((binding) => String(binding.path));
-            agentSettings.agent.additionalSkillSourceModes = Object.fromEntries(
+            agentRuntime.additionalSkillDirectories = settings.sourceBindings.map((binding) => String(binding.path));
+            agentRuntime.additionalSkillSourceModes = Object.fromEntries(
               settings.sourceBindings.map((binding) => [String(binding.path), binding.mode]),
             );
           }
           return clone({
-            disabledSkills: agentSettings.agent.disabledSkills,
-            sourceBindings: agentSettings.agent.additionalSkillDirectories.map((path) => ({
+            disabledSkills: agentRuntime.disabledSkills,
+            sourceBindings: agentRuntime.additionalSkillDirectories.map((path) => ({
               path,
-              mode: agentSettings.agent.additionalSkillSourceModes?.[path] ?? 'container',
+              mode: agentRuntime.additionalSkillSourceModes?.[path] ?? 'container',
             })),
           }) as T;
         }
@@ -5538,7 +5550,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (options.agentSkillsDelayMs) await delay(options.agentSkillsDelayMs);
           const skills = args.userInvocableOnly === true
             ? agentSkills.filter((skill) => (
-              skill.userInvocable && !agentSettings.agent.disabledSkills.includes(skill.name)
+              skill.userInvocable && !agentRuntime.disabledSkills.includes(skill.name)
             ))
             : agentSkills;
           return clone(skills) as T;
@@ -6622,6 +6634,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       };
     }
   }, {
+    preferenceEntries: PREFERENCE_DEFINITIONS.map(({ id }) => ({ id, value: preferenceDefault(id), modified: false })),
     assetUrlPrefix: assetUrl(''),
     bundledRelease: E2E_BUNDLED_RELEASE,
     ids,

@@ -1,9 +1,10 @@
+import { PREFERENCE_DEFINITIONS, preferenceSchema } from '../../core/settingsDefinitions';
 import { join } from 'node:path';
 import { writeJsonFileSync } from '../jsonFileStore';
 
 export const FILE_PREFERENCES_SCHEMA_RELATIVE_PATH = join('config', 'settings.schema.json');
 
-const SETTINGS_SCHEMA = Object.freeze({
+const SETTINGS_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
   title: 'Tenon Settings',
   type: 'object',
@@ -104,7 +105,15 @@ const SETTINGS_SCHEMA = Object.freeze({
       },
     },
   },
-});
+};
+
+// Scalar metadata comes from the same definitions used for write admission.
+for (const definition of PREFERENCE_DEFINITIONS) {
+  const keys = definition.id.split('.');
+  let node = SETTINGS_SCHEMA as unknown as { properties: Record<string, unknown> };
+  for (const key of keys.slice(0, -1)) node = node.properties[key] as typeof node;
+  node.properties[keys.at(-1)!] = preferenceSchema(definition);
+}
 
 export function writeFilePreferencesSchema(userDataDir: string): void {
   writeJsonFileSync(join(userDataDir, FILE_PREFERENCES_SCHEMA_RELATIVE_PATH), SETTINGS_SCHEMA, {

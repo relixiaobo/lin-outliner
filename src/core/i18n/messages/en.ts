@@ -102,6 +102,125 @@ export const en = {
   },
   // The settings window: rail chrome, categories, and the General pane.
   settings: {
+    discovery: {
+      openSource: 'Open File…',
+  "search": "Search Settings",
+  "clearSearch": "Clear Search",
+  "filter": "Show preferences",
+  "all": "All",
+  "modified": "Modified",
+  "reset": "Reset",
+  "resetLabel": "Reset",
+  "preferences": "Preferences",
+  "managers": "Manage",
+  "noResults": "No matching settings",
+  "showAll": "Show All",
+  "open": "Open…",
+  "openFile": "Open Settings File…",
+  "refresh": "Refresh",
+  "loading": "Loading…",
+  "saved": "Saved",
+  "saving": "Saving…",
+  "retained": "The source is invalid. These are the last accepted values. Open the file to repair it.",
+  "applyPending": "Saved changes are being applied.",
+  "applyFailed": "Saved values could not be fully applied.",
+  "sourceError": "Settings could not be read.",
+  "invalidInteger": "Enter a whole number within the allowed range.",
+  "automatic": "Default",
+  "system": "System",
+  "none": "None",
+  "short": "Short",
+  "long": "Long",
+  "destinations": {
+    "settings": "Settings",
+    "models": "Models",
+    "agents": "Agents",
+    "skills": "Skills",
+    "memory": "Memory",
+    "access": "Access",
+    "data": "Data",
+    "shortcuts": "Keyboard Shortcuts",
+    "about": "About Tenon",
+    "diagnostics": "Diagnostics"
+  },
+  "descriptions": {
+    "models": "Connect providers and choose default models.",
+    "agents": "Edit agent instructions, capabilities, and delegation runners.",
+    "skills": "Install skills and manage skill folders.",
+    "memory": "Inspect or reset persistent memory.",
+    "access": "Review access boundaries and blocked operations.",
+    "data": "Manage preview storage, cache, and cleanup.",
+    "shortcuts": "Find commands and customize keyboard shortcuts.",
+    "diagnostics": "Open logs or export a diagnostic report."
+  },
+  "fields": {
+    "appearance.theme": {
+      "label": "Appearance",
+      "description": "Choose how Tenon follows the appearance of your Mac.",
+      "aliases": "theme dark light system"
+    },
+    "appearance.language": {
+      "label": "Language",
+      "description": "Use the system language or choose a display language.",
+      "aliases": "locale translation"
+    },
+    "updates.checkAutomatically": {
+      "label": "Check for updates automatically",
+      "description": "Check for new versions in the background.",
+      "aliases": "release automatic update"
+    },
+    "agent.memory.enabled": {
+      "label": "Memory",
+      "description": "Let agents use persistent memory.",
+      "aliases": "remember enable"
+    },
+    "agent.provider.timeoutMs": {
+      "label": "Request timeout (ms)",
+      "description": "Leave empty to use the provider default.",
+      "aliases": "network timeout milliseconds"
+    },
+    "agent.provider.maxRetries": {
+      "label": "Maximum retries",
+      "description": "Leave empty to use the provider default.",
+      "aliases": "retry failure network"
+    },
+    "agent.provider.maxRetryDelayMs": {
+      "label": "Maximum retry delay (ms)",
+      "description": "Limit the wait between provider retries.",
+      "aliases": "network backoff milliseconds"
+    },
+    "agent.provider.cacheRetention": {
+      "label": "Prompt cache retention",
+      "description": "Choose how long providers may retain cached prompts.",
+      "aliases": "provider caching prompt"
+    },
+    "agent.delegation.enabled": {
+      "label": "Allow delegation",
+      "description": "Let agents delegate work to configured runners.",
+      "aliases": "subagent parallel runner"
+    },
+    "agent.delegation.maxConcurrentGlobal": {
+      "label": "Concurrent tasks",
+      "description": "Maximum delegated tasks running across the app.",
+      "aliases": "delegation parallel global"
+    },
+    "agent.delegation.maxConcurrentThread": {
+      "label": "Concurrent tasks per conversation",
+      "description": "Maximum delegated tasks running in one conversation.",
+      "aliases": "delegation parallel thread"
+    },
+    "agent.delegation.maxQueuedGlobal": {
+      "label": "Queued tasks",
+      "description": "Maximum delegated tasks waiting across the app.",
+      "aliases": "delegation queue global"
+    },
+    "agent.delegation.maxQueuedThread": {
+      "label": "Queued tasks per conversation",
+      "description": "Maximum delegated tasks waiting in one conversation.",
+      "aliases": "delegation queue thread"
+    }
+  }
+},
     providers: {
       connectedGroup: 'Configured',
       connectedAriaLabel: 'Configured providers',

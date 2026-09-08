@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { filePreferencesPath } from '../../src/main/configuration/filePreferences';
+import { DEFAULT_FILE_PREFERENCES, filePreferencesPath, loadFilePreferences } from '../../src/main/configuration/filePreferences';
 import { preserveStoredSkillDirectoryForms } from '../../src/main/agent/capabilities/skillSettingsPaths';
 
 /**
@@ -99,8 +99,8 @@ describe('agent runtime settings limits', () => {
     await expect(readFile(path.join(currentUserData, 'agent-model-state.json'), 'utf8')).rejects.toThrow();
   });
 
-  test('normalizes unsafe delegation settings without enabling unknown Runners', async () => {
-    const { getAgentRuntimeSettings } = await settingsModule();
+  test('rejects invalid scalar sources and defensively normalizes unsafe runtime input', async () => {
+    const { getAgentRuntimeSettings, agentRuntimeSettingsFromPreferences } = await settingsModule();
     await mkdir(path.dirname(filePreferencesPath(currentUserData)), { recursive: true });
     await writeFile(filePreferencesPath(currentUserData), `${JSON.stringify({
       agent: {
@@ -128,7 +128,13 @@ describe('agent runtime settings limits', () => {
       },
     }, null, 2)}\n`);
 
-    const delegation = (await getAgentRuntimeSettings()).delegation;
+    expect(loadFilePreferences(currentUserData).sourceStatus).toBe('rejected');
+    expect((await getAgentRuntimeSettings()).delegation.maxConcurrentThread).toBe(4);
+    // Runtime normalization remains defensive independently of file admission.
+    const unsafe = JSON.parse(await readFile(filePreferencesPath(currentUserData), 'utf8'));
+    const delegation = agentRuntimeSettingsFromPreferences({ ...DEFAULT_FILE_PREFERENCES,
+      agent: { ...DEFAULT_FILE_PREFERENCES.agent, delegation: unsafe.agent.delegation },
+    }).delegation;
     expect(delegation.enabled).toBe(false);
     expect(delegation.defaultRunnerId).toBe('internal');
     expect(delegation.maxConcurrentGlobal).toBe(8);

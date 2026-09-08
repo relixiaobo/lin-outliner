@@ -14,7 +14,10 @@ import { previewOperationsBridge } from '../helpers/previewOperationsBridge';
 mock.module('../../src/renderer/ui/agent/providerIcon', () => ({
   providerIconSvg: () => '<svg></svg>',
 }));
-const { AgentSettingsView } = await import('../../src/renderer/ui/agent/AgentSettingsView');
+const { ModelsManager } = await import('../../src/renderer/ui/configuration/ModelsManager');
+const { SkillsManager } = await import('../../src/renderer/ui/configuration/SkillsManager');
+const { AccessManager } = await import('../../src/renderer/ui/configuration/AccessManager');
+const { PreviewDataPanel } = await import('../../src/renderer/ui/agent/PreviewDataPanel');
 
 interface Rendered {
   cleanup: () => void;
@@ -46,7 +49,7 @@ afterEach(() => {
 test('provider enable is optimistic, live while pending, and does not request a probe', async () => {
   const write = deferred<AgentProviderSettingsView>();
   const calls: Array<Record<string, unknown> | undefined> = [];
-  const rendered = await renderSettings({ page: 'services' }, async (command, args) => {
+  const rendered = await renderSettings({ destination: 'models' }, async (command, args) => {
     if (command === 'agent_upsert_provider_config') {
       calls.push(args);
       return write.promise;
@@ -86,7 +89,7 @@ test('the enable toggle never invents a Base URL for a row that stores none', as
   };
   const write = deferred<AgentProviderSettingsView>();
   const calls: Array<Record<string, unknown> | undefined> = [];
-  const rendered = await renderSettings({ page: 'services' }, async (command, args) => {
+  const rendered = await renderSettings({ destination: 'models' }, async (command, args) => {
     if (command === 'agent_get_provider_settings') return withoutBaseUrl;
     if (command === 'agent_upsert_provider_config') {
       calls.push(args);
@@ -112,7 +115,7 @@ test('the enable toggle never invents a Base URL for a row that stores none', as
 test('two provider clicks before render serialize as off then on', async () => {
   const writes = [deferred<AgentProviderSettingsView>(), deferred<AgentProviderSettingsView>()];
   const calls: Array<Record<string, unknown> | undefined> = [];
-  const rendered = await renderSettings({ page: 'services' }, async (command, args) => {
+  const rendered = await renderSettings({ destination: 'models' }, async (command, args) => {
     if (command === 'agent_upsert_provider_config') {
       const index = calls.push(args) - 1;
       return writes[index]!.promise;
@@ -147,7 +150,7 @@ test('provider actions cannot overtake an optimistic enable write with a stale s
   const imageWrite = deferred<AgentProviderSettingsView>();
   const enabledWrite = deferred<AgentProviderSettingsView>();
   const calls: string[] = [];
-  const rendered = await renderSettings({ page: 'services' }, async (command) => {
+  const rendered = await renderSettings({ destination: 'models' }, async (command) => {
     if (command === 'agent_update_image_generation_settings') {
       calls.push(command);
       return imageWrite.promise;
@@ -196,7 +199,7 @@ test('provider actions cannot overtake an optimistic enable write with a stale s
 
 test('a failed provider toggle reverts and reports at its row', async () => {
   const write = deferred<AgentProviderSettingsView>();
-  const rendered = await renderSettings({ page: 'services' }, async (command) => {
+  const rendered = await renderSettings({ destination: 'models' }, async (command) => {
     if (command === 'agent_upsert_provider_config') return write.promise;
     return fixtureCommand(command);
   });
@@ -219,7 +222,7 @@ test('a failed provider toggle reverts and reports at its row', async () => {
 test.each(['local', 'managed'])('two %s Skill clicks before render use only the file-backed queue', async (source) => {
   const writes = [deferred<AgentSkillSettingsView>(), deferred<AgentSkillSettingsView>()];
   const calls: Array<Record<string, unknown> | undefined> = [];
-  const rendered = await renderSettings({ page: 'skills' }, async (command, args) => {
+  const rendered = await renderSettings({ destination: 'skills' }, async (command, args) => {
     if (command === 'agent_list_all_skills') return source === 'local' ? [localSkill('notes')] : [];
     if (source === 'managed' && (command === 'agent_managed_skill_list' || command === 'agent_managed_skill_check_updates')) {
       return { ok: true, value: [{ id: 'notes', revision: 'revision', name: 'notes', description: 'Notes',
@@ -264,7 +267,7 @@ test('a refresh started before a Skill write cannot overwrite its result', async
   const write = deferred<AgentSkillSettingsView>();
   let skillReads = 0;
   let notifySettingsChanged: (() => void) | undefined;
-  const rendered = await renderSettings({ page: 'skills' }, async (command) => {
+  const rendered = await renderSettings({ destination: 'skills' }, async (command) => {
     if (command === 'agent_list_all_skills') return [localSkill('notes'), localSkill('other')];
     if (command === 'agent_get_skill_settings') {
       skillReads += 1;
@@ -273,7 +276,7 @@ test('a refresh started before a Skill write cannot overwrite its result', async
     if (command === 'agent_update_skill_settings') return write.promise;
     return fixtureCommand(command);
   }, {
-    onSettingsChanged: (listener: () => void) => {
+    onConfigurationChanged: (_domain: string, listener: () => void) => {
       notifySettingsChanged = listener;
       return () => undefined;
     },
@@ -299,7 +302,7 @@ test('a refresh during a pending Skill write cannot erase queued toggles', async
   const calls: Array<Record<string, unknown> | undefined> = [];
   let skillReads = 0;
   let notifySettingsChanged: (() => void) | undefined;
-  const rendered = await renderSettings({ page: 'skills' }, async (command, args) => {
+  const rendered = await renderSettings({ destination: 'skills' }, async (command, args) => {
     if (command === 'agent_list_all_skills') return [localSkill('notes'), localSkill('other')];
     if (command === 'agent_get_skill_settings') {
       skillReads += 1;
@@ -311,7 +314,7 @@ test('a refresh during a pending Skill write cannot erase queued toggles', async
     }
     return fixtureCommand(command);
   }, {
-    onSettingsChanged: (listener: () => void) => {
+    onConfigurationChanged: (_domain: string, listener: () => void) => {
       notifySettingsChanged = listener;
       return () => undefined;
     },
@@ -341,7 +344,7 @@ test('a refresh during a pending Skill write cannot erase queued toggles', async
 test('a failed concurrent capability removal restores only its own rule', async () => {
   const first = deferred<AgentCapabilitySettingsView>();
   const second = deferred<AgentCapabilitySettingsView>();
-  const rendered = await renderSettings({ category: 'agent' }, async (command, args) => {
+  const rendered = await renderSettings({ destination: 'access' }, async (command, args) => {
     if (command === 'agent_get_capability_settings') {
       return { blocks: ['Command(first)', 'Command(second)'], diagnostics: [] };
     }
@@ -375,9 +378,36 @@ test('a failed concurrent capability removal restores only its own rule', async 
     .toBe('Could not remove this block. Try again.');
 });
 
+test('Access refresh events cannot resurrect another optimistic removal while writes are in flight', async () => {
+  const writes = [deferred<AgentCapabilitySettingsView>(), deferred<AgentCapabilitySettingsView>()];
+  let refresh: (() => void) | undefined;
+  let reads = 0;
+  let blocks = ['Command(first)', 'Command(second)'];
+  const rendered = await renderSettings({ destination: 'access' }, async (command, args) => {
+    if (command === 'agent_get_capability_settings') { reads += 1; return { blocks, diagnostics: [] }; }
+    if (command === 'agent_apply_capability_settings_patch') {
+      return writes[(args?.patch as { removeBlocks: string[] }).removeBlocks[0] === 'Command(first)' ? 0 : 1]!.promise;
+    }
+    return fixtureCommand(command);
+  }, { onConfigurationChanged: (_domain: string, listener: () => void) => { refresh = listener; return () => undefined; } });
+  const buttons = [...rendered.document.querySelectorAll<HTMLButtonElement>('.settings-security-section button')]
+    .filter((button) => button.textContent?.trim() === 'Remove');
+  await act(async () => { buttons[0]!.click(); buttons[1]!.click(); await settle(); });
+  await act(async () => {
+    blocks = ['Command(second)']; refresh?.(); writes[0]!.resolve({ blocks, diagnostics: [] }); await settle();
+  });
+  expect(reads).toBe(1);
+  expect(rendered.document.body.textContent).not.toContain('Command(second)');
+  await act(async () => {
+    blocks = []; refresh?.(); writes[1]!.resolve({ blocks, diagnostics: [] }); await settle();
+  });
+  expect(reads).toBe(2);
+  expect(rendered.document.body.textContent).not.toContain('Command(second)');
+});
+
 test('Preview settings contains data maintenance without global translation controls', async () => {
   const rendered = await renderSettings(
-    { category: 'preview' },
+    { destination: 'data' },
     async (command) => fixtureCommand(command),
     previewOperationsBridge().bridge,
   );
@@ -401,7 +431,7 @@ async function renderSettings(
       initialLanguage: 'en',
       invoke,
       onSettingsNavigate: () => () => undefined,
-      onSettingsChanged: () => () => undefined,
+      onConfigurationChanged: () => () => undefined,
       reportRendererError: (report: unknown) => { reports.push(report); },
       ...linOverrides,
     },
@@ -410,7 +440,7 @@ async function renderSettings(
   if (!container) throw new Error('Missing root');
   const root = createRoot(container);
   await act(async () => {
-    root.render(<AgentSettingsView initialTarget={target} onApplied={async () => undefined} onClose={() => undefined} />);
+    root.render(target.destination === 'models' ? <ModelsManager /> : target.destination === 'skills' ? <SkillsManager /> : target.destination === 'access' ? <AccessManager /> : <PreviewDataPanel />);
     await settle();
   });
   const rendered = { cleanup: () => act(() => root.unmount()), document, reports };
@@ -465,21 +495,8 @@ function providerSettings(enabled: boolean): AgentProviderSettingsView {
       defaultBaseUrl: 'https://api.openai.com/v1',
       models: [],
     }],
-    agent: {
-      additionalSkillDirectories: [],
-      providerTimeoutMs: null,
-      providerMaxRetries: null,
-      providerMaxRetryDelayMs: null,
-      providerCacheRetention: 'short',
-      disabledSkills: [],
-    },
     imageGeneration: {},
   };
-}
-
-function settingsWithDisabled(disabledSkills: string[]): AgentProviderSettingsView {
-  const settings = providerSettings(true);
-  return { ...settings, agent: { ...settings.agent, disabledSkills } };
 }
 
 function localSkill(name: string): SkillDefinition {

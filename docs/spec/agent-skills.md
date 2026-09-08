@@ -317,7 +317,7 @@ history.
 Configurable command bindings use the sibling `config/keybindings.jsonc` source
 and generated `keybindings.schema.json`. The configuration Skill edits that file
 directly for a known chord, alternates, disable, or reset-by-property-removal.
-Physical recording remains a human interaction in the Keyboard Shortcuts page,
+Physical recording remains a human interaction in the Keyboard Shortcuts manager,
 not a prerequisite for an Agent that already knows the chord. The Skill verifies
 the `keybindings` member of `status.json`, including desired/effective divergence
 after a failed global registration. No command, model tool, or CLI edits or
@@ -421,7 +421,7 @@ Skill source bindings and disabled identities are exposed through a Skill-owned
 settings view and update route. They still persist under
 `config/settings.jsonc`, but the Skill Library does not edit the aggregate Agent
 runtime settings DTO; the Host applies the accepted file result to the active
-Skill runtime and broadcasts the normal settings refresh. This keeps Skill
+Skill runtime and publishes the scoped `skills` configuration event. This keeps Skill
 configuration ownership local while preserving one source of desired state.
 
 ### Lifecycle owner and Agent tools
@@ -640,8 +640,8 @@ absent, not disabled, when no managed Skill is installed.
 
 There is no periodic polling, no background download, and no auto-apply.
 
-Availability surfaces as a **count badge on the Skills row in the settings
-navigation** — a neutral count, not a status colour.
+Availability is shown inside the independent Skills manager. Settings discovery
+does not load Skills or maintain an update-count badge.
 
 A failed check records an `update_failed` diagnostic on that record and does
 nothing else (A12): it never blocks launch, raises an alert, or changes any

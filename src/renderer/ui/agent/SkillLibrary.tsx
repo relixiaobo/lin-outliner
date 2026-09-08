@@ -27,7 +27,6 @@ import {
 } from './ManagedSkillsSettings';
 import { useManagedSkills } from './useManagedSkills';
 import { cx } from '../primitives/cx';
-import { skillLibraryCount } from './skillLibraryCount';
 
 /** A fault in the Skill's own bytes or identity, as opposed to a failed check. */
 function isSkillFault(skill: ManagedSkillView): boolean {
@@ -35,21 +34,13 @@ function isSkillFault(skill: ManagedSkillView): boolean {
     || skill.diagnostic?.code === 'duplicate_skill_name';
 }
 
-interface SettingsSkillLibrarySectionProps {
+interface SkillLibraryProps {
   disabledSkills: readonly string[];
   /** Directories Tenon reads Skills from. Pointed at, never copied in. */
   additionalSkillDirectories: readonly string[];
   onDirectoriesChange: (next: string[], mode?: AgentSkillSourceMode) => Promise<readonly string[]>;
   onToggleSkill: (skillName: string) => void;
   toggleErrors?: ReadonlyMap<string, string>;
-  /** Reports the actual unified row count back to the Agent category. */
-  onSkillCountChange: (count: number) => void;
-  /**
-   * Reports how many managed Skills currently have an update waiting. The shell
-   * owns the nav badge and cannot see this list, so while the library is mounted
-   * it is the authority on that count.
-   */
-  onUpdateCountChange: (count: number) => void;
   onError: (message: string | null) => void;
   onNotice: (message: string | null) => void;
   onApplied: () => Promise<void>;
@@ -106,21 +97,18 @@ interface LibraryRow {
   actionsLabel: string;
 }
 
-export function SettingsSkillLibrarySection({
+export function SkillLibrary({
   disabledSkills,
   additionalSkillDirectories,
   onDirectoriesChange,
   onToggleSkill,
   toggleErrors = EMPTY_STRING_MAP,
-  onSkillCountChange,
-  onUpdateCountChange,
   onError,
   onNotice,
   onApplied,
-}: SettingsSkillLibrarySectionProps) {
+}: SkillLibraryProps) {
   const t = useT();
   const [allSkills, setAllSkills] = useState<SkillDefinition[]>([]);
-  const [skillsLoaded, setSkillsLoaded] = useState(false);
   const [loadingSkills, setLoadingSkills] = useState(false);
   // Undo round-trips through the lifecycle owner, then refreshes the list; its own
   // menu action is disabled while that provenance mutation is in flight.
@@ -239,7 +227,6 @@ export function SettingsSkillLibrarySection({
       const skills = await api.agentListAllSkills();
       if (isCurrent()) {
         setAllSkills(skills);
-        setSkillsLoaded(true);
       }
     } catch (caught) {
       if (isCurrent()) onError(caught instanceof Error ? caught.message : String(caught));
@@ -255,23 +242,6 @@ export function SettingsSkillLibrarySection({
     return window.lin?.onSkillLibraryChanged?.(() => { void reloadSkills(); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Keep the shell's nav badge honest for as long as this list is mounted: the
-  // shell's own read happens once, before the ambient check has run and before
-  // the user applies anything.
-  useEffect(() => {
-    // Not before the list is read. Firing on the initial empty array reported
-    // "no updates" and wiped a badge the shell had already computed — and if
-    // the read then failed, nothing ever restored it.
-    if (!managed.listLoaded) return;
-    onUpdateCountChange(managed.skills.filter((skill) => skill.updateCommit).length);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [managed.listLoaded, managed.skills]);
-
-  useEffect(() => {
-    if (!skillsLoaded || !managed.listLoaded) return;
-    onSkillCountChange(skillLibraryCount(allSkills, managed.skills));
-  }, [allSkills, managed.listLoaded, managed.skills, onSkillCountChange, skillsLoaded]);
 
   const runSkillProvenanceAction = (action: () => Promise<SkillDefinition[]>) => {
     setProvenanceActionBusy(true);

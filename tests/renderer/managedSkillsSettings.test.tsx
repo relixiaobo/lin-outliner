@@ -11,7 +11,7 @@ import type {
 } from '../../src/core/types';
 import type { Locale } from '../../src/core/locale';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
-import { SettingsSkillLibrarySection } from '../../src/renderer/ui/agent/SettingsSkillLibrarySection';
+import { SkillLibrary } from '../../src/renderer/ui/agent/SkillLibrary';
 import { SkillReviewWindow } from '../../src/renderer/ui/agent/SkillReviewWindow';
 import type { SkillReview } from '../../src/core/agent/skillOperations';
 
@@ -289,7 +289,7 @@ function renderComponent(
   // surface that shares its state, so the section is the renderable unit.
   act(() => root.render(
     <I18nProvider>
-      {options.review || options.loadReview ? <SkillReviewWindow /> : <SettingsSkillLibrarySection
+      {options.review || options.loadReview ? <SkillReviewWindow /> : <SkillLibrary
         additionalSkillDirectories={[]}
         disabledSkills={options.disabledSkills ?? []}
         onDirectoriesChange={async (next) => next}

@@ -137,14 +137,12 @@ export function ProviderConfigWindow() {
       baseUrl: draft.baseUrl.trim() || null,
       enabled: existing?.enabled ?? true,
     }, { probeConnection: true });
-    await window.lin?.notifySettingsChanged?.();
   }
 
   async function runMutation(action: () => Promise<unknown>) {
     try {
       await action();
-      await window.lin?.notifySettingsChanged?.();
-      close();
+        close();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -166,7 +164,7 @@ export function ProviderConfigWindow() {
           onSetActive={existing && existing.enabled && hasCredential && !isActive
             ? () => void runMutation(() => api.agentSetActiveProvider(providerId))
             : undefined}
-          onSettingsChanged={(next) => { setSettings(next); void window.lin?.notifySettingsChanged?.(); }}
+          onProviderChange={(next) => { setSettings(next);  }}
           onUseApiKey={OAUTH_API_KEY_FALLBACK.has(providerId) ? () => setUseApiKey(true) : undefined}
           providerId={providerId}
           providerName={formatProviderName(providerId)}

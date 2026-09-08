@@ -9,7 +9,7 @@ import type {
   SkillDefinition,
 } from '../../src/core/types';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
-import { SettingsSkillLibrarySection } from '../../src/renderer/ui/agent/SettingsSkillLibrarySection';
+import { SkillLibrary } from '../../src/renderer/ui/agent/SkillLibrary';
 
 /**
  * The library is one list over every source. What matters here is that a row's
@@ -325,48 +325,9 @@ describe('skill library list', () => {
       .not.toContain('is-muted');
   });
 
-  test('the badge is not zeroed before the installed list is read', async () => {
-    // The shell computed a real count already. Reporting the initial empty
-    // array as "none" wiped it, and a failed read never restored it.
-    const counts: number[] = [];
-    await render({
-      skills: [],
-      managed: [managedSkill({ status: 'update-available', updateCommit: 'b'.repeat(40) })],
-      onUpdateCountChange: (count) => { counts.push(count); },
-    });
 
-    expect(counts[0]).not.toBe(0);
-    expect(counts.at(-1)).toBe(1);
-  });
 
-  test('counts every managed record once and refreshes after the managed list changes', async () => {
-    const counts: number[] = [];
-    const incompatible = managedSkill({
-      id: 'managed-incompatible',
-      name: 'incompatible',
-      status: 'failed',
-      compatibility: { status: 'incompatible', appVersion: '0.1.0' },
-    });
-    const rendered = await render({
-      skills: [localSkill('notes', 'user'), localSkill('pdf', 'managed')],
-      managed: [managedSkill(), incompatible],
-      onSkillCountChange: (count) => { counts.push(count); },
-    });
 
-    expect(counts.at(-1)).toBe(3);
-
-    rendered.setManaged([managedSkill()]);
-    const check = rendered.document.querySelector<HTMLButtonElement>(
-      '.inset-group-header-action button[aria-label="Check managed skills for updates"]',
-    );
-    if (!check) throw new Error('Missing check-for-updates control');
-    await act(async () => {
-      check.click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(counts.at(-1)).toBe(2);
-  });
 
   test('enabling a managed skill keeps other pending toggles', async () => {
     const drafted: string[] = [];
@@ -394,35 +355,7 @@ describe('skill library list', () => {
     expect(rendered.document.querySelector('.settings-skill-diagnostic')).toBeNull();
   });
 
-  test('reports the update count up, and revises it when one is applied', async () => {
-    // The shell reads the count once, before the ambient check has run and
-    // before anything is applied. Left at that, the badge reported work that no
-    // longer existed until the window was reopened.
-    const counts: number[] = [];
-    const withUpdate = managedSkill({ status: 'update-available', updateCommit: 'b'.repeat(40) });
-    const rendered = await render({
-      skills: [],
-      managed: [withUpdate],
-      onUpdateCountChange: (count) => { counts.push(count); },
-    });
 
-    expect(counts.at(-1)).toBe(1);
-
-    // Applying an update clears updateCommit on the record. Re-listing is what
-    // every managed mutation does, so drive that and require the count to follow.
-    rendered.setManaged([managedSkill()]);
-    const check = rendered.document.querySelector<HTMLButtonElement>(
-      '.inset-group-header-action button[aria-label="Check managed skills for updates"]',
-    );
-    if (!check) throw new Error('Missing check-for-updates control');
-    await act(async () => {
-      check.click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(counts.at(-1)).toBe(0);
-  });
 
   test('offers an explicit check that the ambient throttle cannot suppress', async () => {
     const rendered = await render({ skills: [], managed: [managedSkill()] });
@@ -869,7 +802,7 @@ async function render(input: {
   await act(async () => {
     root.render(
       <I18nProvider>
-        <SettingsSkillLibrarySection
+        <SkillLibrary
           additionalSkillDirectories={input.directories ?? []}
           disabledSkills={input.disabledSkills ?? []}
           onDirectoriesChange={input.onDirectoriesChange ?? (async (next) => next)}

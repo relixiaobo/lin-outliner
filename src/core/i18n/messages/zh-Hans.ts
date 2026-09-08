@@ -80,6 +80,125 @@ export const zhHans: PartialMessages = {
     saving: '保存中…',
   },
   settings: {
+    discovery: {
+      openSource: '打开文件…',
+  "search": "搜索设置",
+  "clearSearch": "清除搜索",
+  "filter": "显示偏好设置",
+  "all": "全部",
+  "modified": "已修改",
+  "reset": "重置",
+  "resetLabel": "重置",
+  "preferences": "偏好设置",
+  "managers": "管理",
+  "noResults": "没有匹配的设置",
+  "showAll": "显示全部",
+  "open": "打开…",
+  "openFile": "打开设置文件…",
+  "refresh": "刷新",
+  "loading": "正在载入…",
+  "saved": "已保存",
+  "saving": "正在保存…",
+  "retained": "设置文件无效。当前显示上次接受的值，请打开文件修复。",
+  "applyPending": "正在应用已保存的更改。",
+  "applyFailed": "未能完整应用已保存的设置。",
+  "sourceError": "无法读取设置。",
+  "invalidInteger": "请输入允许范围内的整数。",
+  "automatic": "默认",
+  "system": "跟随系统",
+  "none": "不保留",
+  "short": "短期",
+  "long": "长期",
+  "destinations": {
+    "settings": "设置",
+    "models": "模型",
+    "agents": "Agent",
+    "skills": "技能",
+    "memory": "记忆",
+    "access": "访问权限",
+    "data": "数据",
+    "shortcuts": "键盘快捷键",
+    "about": "关于 Tenon",
+    "diagnostics": "诊断"
+  },
+  "descriptions": {
+    "models": "连接模型服务并选择默认模型。",
+    "agents": "编辑 Agent 指令、能力和委派执行器。",
+    "skills": "安装技能并管理技能文件夹。",
+    "memory": "查看或重置持久记忆。",
+    "access": "查看访问边界和被阻止的操作。",
+    "data": "管理预览存储、缓存和清理。",
+    "shortcuts": "查找命令并自定义键盘快捷键。",
+    "diagnostics": "打开日志或导出诊断报告。"
+  },
+  "fields": {
+    "appearance.theme": {
+      "label": "外观",
+      "description": "选择 Tenon 的浅色、深色或跟随系统外观。",
+      "aliases": "主题 深色 浅色 系统"
+    },
+    "appearance.language": {
+      "label": "语言",
+      "description": "跟随系统语言，或选择界面显示语言。",
+      "aliases": "显示 翻译 语言"
+    },
+    "updates.checkAutomatically": {
+      "label": "自动检查更新",
+      "description": "在后台检查是否有新版本。",
+      "aliases": "版本 升级 自动更新"
+    },
+    "agent.memory.enabled": {
+      "label": "记忆",
+      "description": "允许 Agent 使用持久记忆。",
+      "aliases": "记住 启用"
+    },
+    "agent.provider.timeoutMs": {
+      "label": "请求超时（毫秒）",
+      "description": "留空以使用服务提供方的默认值。",
+      "aliases": "网络 超时 毫秒"
+    },
+    "agent.provider.maxRetries": {
+      "label": "最多重试次数",
+      "description": "留空以使用服务提供方的默认值。",
+      "aliases": "网络 失败 重试"
+    },
+    "agent.provider.maxRetryDelayMs": {
+      "label": "重试间隔上限（毫秒）",
+      "description": "限制模型服务重试之间的等待时间。",
+      "aliases": "网络 重试 等待 毫秒"
+    },
+    "agent.provider.cacheRetention": {
+      "label": "提示缓存保留时间",
+      "description": "选择模型服务保留提示缓存的时长。",
+      "aliases": "服务 缓存 提示"
+    },
+    "agent.delegation.enabled": {
+      "label": "允许委派任务",
+      "description": "允许 Agent 将任务委派给已配置的执行器。",
+      "aliases": "子代理 并行 执行器"
+    },
+    "agent.delegation.maxConcurrentGlobal": {
+      "label": "并行任务上限",
+      "description": "整个应用同时运行的委派任务数量上限。",
+      "aliases": "委派 全局 并行"
+    },
+    "agent.delegation.maxConcurrentThread": {
+      "label": "每个对话的并行任务上限",
+      "description": "单个对话同时运行的委派任务数量上限。",
+      "aliases": "委派 并行 对话"
+    },
+    "agent.delegation.maxQueuedGlobal": {
+      "label": "排队任务上限",
+      "description": "整个应用等待执行的委派任务数量上限。",
+      "aliases": "委派 队列 全局"
+    },
+    "agent.delegation.maxQueuedThread": {
+      "label": "每个对话的排队任务上限",
+      "description": "单个对话等待执行的委派任务数量上限。",
+      "aliases": "委派 队列 对话"
+    }
+  }
+},
     providers: {
       connectedGroup: '已配置',
       connectedAriaLabel: '已配置的提供方',

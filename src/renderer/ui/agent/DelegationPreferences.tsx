@@ -1,3 +1,4 @@
+import type { DelegationSettingsView } from '../../../core/delegationSettings';
 import { useMemo, useRef, useState } from 'react';
 import { AGENT_REASONING_LADDER } from '../../../core/types';
 import { createSerialMutationQueue } from '../../../core/serialMutationQueue';
@@ -12,23 +13,23 @@ import { SwitchMark } from '../primitives/SwitchMark';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { buildModelChoices, flattenModelChoices, modelChoiceAvailable } from './modelChoices';
 
-export function SettingsDelegationGroup({
+export function DelegationPreferences({
   settings,
+  runtime,
   onChange,
 }: {
   settings: AgentProviderSettingsView | null;
+  runtime: DelegationSettingsView | null;
   onChange: (input: AgentDelegationSettingsInput) => Promise<void>;
 }) {
   const t = useT();
   const [saving, setSaving] = useState(false);
   const pendingMutations = useRef(0);
   const mutationQueue = useRef(createSerialMutationQueue());
-  const delegation = settings?.agent.delegation;
+  const delegation = runtime?.delegation;
   const internal = delegation?.runners.internal;
   const selectedRunnerId = delegation?.defaultRunnerId ?? 'internal';
-  const discoveredRunners = (settings as (AgentProviderSettingsView & {
-    delegationRunners?: readonly DelegationRunnerReadiness[];
-  }) | null)?.delegationRunners ?? [];
+  const discoveredRunners = runtime?.runners ?? [];
   const delegationRunners = discoveredRunners.length > 0
     ? discoveredRunners
     : [{

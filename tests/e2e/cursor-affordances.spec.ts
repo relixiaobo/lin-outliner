@@ -1053,8 +1053,8 @@ test.describe('cursor affordances', () => {
     await installElectronMock(page);
     // The provider rows this checks live on the Model services page now, not on
     // whatever Settings happens to open with.
-    await page.goto('/?surface=settings&category=agent/services');
-    const settings = page.locator('.settings-window');
+    await page.goto('/?surface=manager&destination=models');
+    const settings = page.locator('.configuration-window');
     await expect(settings.locator('.inset-row-main').first()).toBeVisible();
 
     const listCursors = await page.evaluate(() => {
@@ -1066,13 +1066,11 @@ test.describe('cursor affordances', () => {
       return {
         insetRow: cursor('.inset-row-main'),
         rowMenuTrigger: cursor('.settings-row-menu-trigger'),
-        historyArrow: cursor('.settings-history-nav .rail-toggle'),
         configure: cursor('.settings-provider-configure'),
       };
     });
     expect(listCursors.insetRow).toBe('default');
     expect(listCursors.rowMenuTrigger).toBe('default');
-    expect(listCursors.historyArrow).toBe('default');
     expect(listCursors.configure).toBe('default');
 
     // The per-provider config is its own native window (?surface=provider-config);

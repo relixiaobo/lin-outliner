@@ -502,23 +502,19 @@ const surfaces: SurfaceCase[] = [
     },
   },
   {
-    name: 'settings general',
+    name: 'settings discovery',
     path: '/?surface=settings',
-    waitFor: '.settings-window .inset-row',
-    beforeProbe: async (page) => {
-      await page.getByRole('button', { name: 'General', exact: true }).click();
-      await page.getByRole('list', { name: 'Diagnostics' }).waitFor({ state: 'visible' });
-    },
+    waitFor: '.configuration-window .preference-row',
   },
   {
     name: 'settings model services',
-    path: '/?surface=settings&category=agent/services',
-    waitFor: '.settings-window .inset-row',
+    path: '/?surface=manager&destination=models',
+    waitFor: '.configuration-window .inset-row',
   },
   {
     name: 'settings provider row menu',
-    path: '/?surface=settings&category=agent/services',
-    waitFor: '.settings-window .inset-row',
+    path: '/?surface=manager&destination=models',
+    waitFor: '.configuration-window .inset-row',
     beforeProbe: async (page) => {
       await page.getByRole('button', { name: 'OpenAI actions' }).click();
       const menu = page.getByRole('menu', { name: 'Provider actions' });
@@ -528,34 +524,26 @@ const surfaces: SurfaceCase[] = [
   },
   {
     name: 'settings agent',
-    path: '/?surface=settings',
-    waitFor: '.settings-window .inset-row',
-    beforeProbe: async (page) => {
-      await page.getByRole('button', { name: 'Agent', exact: true }).click();
-      await page.getByRole('list', { name: 'Agent access' }).waitFor({ state: 'visible' });
-    },
+    path: '/?surface=manager&destination=access',
+    waitFor: '.configuration-window .inset-row',
   },
   {
     name: 'settings preview',
-    path: '/?surface=settings',
-    waitFor: '.settings-window .inset-row',
-    beforeProbe: async (page) => {
-      await page.getByRole('button', { name: 'Preview', exact: true }).click();
-      await page.getByRole('list', { name: 'Translation preferences' }).waitFor({ state: 'visible' });
-    },
+    path: '/?surface=manager&destination=data',
+    waitFor: '.configuration-window .inset-row',
   },
   {
     name: 'settings skills',
-    path: '/?surface=settings&category=agent/skills',
-    waitFor: '.settings-window .inset-row',
+    path: '/?surface=manager&destination=skills',
+    waitFor: '.configuration-window .inset-row',
     beforeProbe: async (page) => {
       await page.locator('.inset-row', { hasText: '/workspace-review' }).waitFor({ state: 'visible' });
     },
   },
   {
     name: 'settings about',
-    path: '/?surface=settings&category=general/about',
-    waitFor: '.settings-window .inset-row',
+    path: '/?surface=manager&destination=about',
+    waitFor: '.configuration-window .inset-row',
   },
   {
     name: 'provider config',

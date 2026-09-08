@@ -62,6 +62,7 @@ describe('the main Agent editor', () => {
       name: 'agent_write_profile',
       args: {
         layer: 'user',
+        sourceDigest: null,
         name: 'default',
         presentation: { persona: 'Juniper', color: '' },
         profile: {
@@ -84,6 +85,14 @@ describe('the main Agent editor', () => {
       .toMatchObject({ tools: [], skills: [] });
   });
 
+  test('keeps the edited source observation when a background refresh arrives', async () => {
+    const rendered = await renderAgents();
+    await rendered.click(rendered.document.querySelector('.inset-row-main')!);
+    await rendered.refresh({ ...VIEW, sources: VIEW.sources.map((source) => ({ ...source, digest: 'new-source' })) });
+    await rendered.click([...rendered.document.querySelectorAll('button')].find((button) => button.textContent === 'Save')!);
+    expect(rendered.calls.at(-1)?.args).toMatchObject({ sourceDigest: null });
+  });
+
   test('keeps a refused write visible inside the editor', async () => {
     const rendered = await renderAgents({ rejectWrite: true });
     await rendered.click(rendered.document.querySelector('.inset-row-main')!);
@@ -95,6 +104,8 @@ describe('the main Agent editor', () => {
 
 async function renderAgents(options: { rejectWrite?: boolean } = {}) {
   const calls: Array<{ name: string; args: unknown }> = [];
+  let currentView = VIEW;
+  let refresh: (() => void) | undefined;
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   if (savedGlobals.length === 0) {
@@ -107,20 +118,21 @@ async function renderAgents(options: { rejectWrite?: boolean } = {}) {
     });
   }
   (globalThis as Record<string, unknown>).lin = {
+    onConfigurationChanged: (_domain: string, callback: () => void) => { refresh = callback; return () => {}; },
     invoke: async (name: string, args: unknown) => {
       calls.push({ name, args });
       if (options.rejectWrite && name === 'agent_write_profile') throw new Error('Refused by test');
-      return VIEW;
+      return currentView;
     },
   };
   (window as unknown as Record<string, unknown>).lin = (globalThis as Record<string, unknown>).lin;
 
-  const { AgentsSettings } = await import('../../src/renderer/ui/agent/AgentsSettings');
+  const { AgentConfigurationEditor } = await import('../../src/renderer/ui/agent/AgentConfigurationEditor');
   const root = createRoot(document.getElementById('root')!);
   await act(async () => {
     root.render(
       <I18nProvider>
-        <AgentsSettings onError={() => undefined} onNotice={() => undefined} settings={null} />
+        <AgentConfigurationEditor onError={() => undefined} onNotice={() => undefined} />
       </I18nProvider>,
     );
   });
@@ -130,6 +142,7 @@ async function renderAgents(options: { rejectWrite?: boolean } = {}) {
   return {
     document: document as unknown as Document,
     calls,
+    refresh: async (next: AgentEditorView) => { currentView = next; await act(async () => { refresh?.(); }); },
     click: async (element: Element) => {
       await act(async () => {
         element.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));

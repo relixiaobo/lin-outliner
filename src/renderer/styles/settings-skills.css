@@ -244,7 +244,7 @@
   max-height: none;
   min-width: 0;
   overflow: hidden;
-  border-radius: 0;
+  border-radius: var(--radius-none);
   box-shadow: none;
   outline: none;
 }

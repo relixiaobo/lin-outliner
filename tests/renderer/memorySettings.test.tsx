@@ -5,7 +5,7 @@ import { parseHTML } from 'linkedom';
 import type { MemoryInspectResult, MemoryResetView } from '../../src/core/agent/memoryOperations';
 import type { Thread } from '../../src/core/agent/protocol';
 import { ThreadDetailsDialog } from '../../src/renderer/agent/components/ThreadDetailsDialog';
-import { MemorySettingsGroup } from '../../src/renderer/ui/agent/MemorySettingsGroup';
+import { MemoryManager } from '../../src/renderer/ui/agent/MemoryManager';
 
 const cleanups: Array<() => void> = [];
 const savedGlobals: Array<[string, PropertyDescriptor | undefined]> = [];
@@ -25,7 +25,7 @@ describe('Memory owner UI', () => {
       if (name === 'memory_inspect') return status(enabled);
       if (name === 'memory_enabled_update') { writes.push(args); return; }
       throw new Error(name);
-    }, <MemorySettingsGroup />);
+    }, <MemoryManager />);
     await flush();
     const toggle = rendered.button('Use Memory');
     await act(async () => toggle.click());
@@ -52,7 +52,7 @@ describe('Memory owner UI', () => {
       if (name === 'memory_inspect') return request.operation === 'reset' ? { operation: 'reset', reset } : status(true);
       if (name === 'memory_manage') return { operation: 'reset', reset };
       throw new Error(name);
-    }, <MemorySettingsGroup />);
+    }, <MemoryManager />);
     await flush();
     await act(async () => rendered.button('Reset Memory').click());
     expect(rendered.document.querySelector('.confirm-dialog')).toBeNull();
@@ -71,7 +71,7 @@ describe('Memory owner UI', () => {
       if (name === 'memory_inspect') return status(true);
       if ((args?.request as { operation: string }).operation === 'reset') throw new Error('Memory Reset was cancelled.');
       return { operation: 'open', nodeId: 'search', navigation: 'unknown' };
-    }, <MemorySettingsGroup />);
+    }, <MemoryManager />);
     await flush();
     await act(async () => rendered.button('Reset Memory').click());
     expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('cancelled');
@@ -82,10 +82,10 @@ describe('Memory owner UI', () => {
 
   test('owner events refresh without parent callback churn and release on close', async () => {
     let reads = 0;
-    const rendered = render(async () => { reads++; return status(true, undefined, true, 2); }, <MemorySettingsGroup />);
+    const rendered = render(async () => { reads++; return status(true, undefined, true, 2); }, <MemoryManager />);
     await flush();
     expect(rendered.document.body.textContent).toContain('2 reserved-tagged Nodes');
-    rendered.rerender(<MemorySettingsGroup />);
+    rendered.rerender(<MemoryManager />);
     await flush();
     expect(reads).toBe(1);
     rendered.changed();
@@ -100,7 +100,7 @@ describe('Memory owner UI', () => {
   test('ignores an older status request after a newer owner invalidation', async () => {
     const stale = deferred<MemoryInspectResult>();
     let reads = 0;
-    const rendered = render(async () => ++reads === 2 ? stale.promise : status(reads === 1), <MemorySettingsGroup />);
+    const rendered = render(async () => ++reads === 2 ? stale.promise : status(reads === 1), <MemoryManager />);
     await flush();
     rendered.changed();
     await flush();

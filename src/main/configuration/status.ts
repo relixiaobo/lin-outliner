@@ -1,3 +1,4 @@
+import type { PreferencesApplicationState } from '../../core/settingsDefinitions';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import type { KeybindingsView } from '../../core/keybindings';
@@ -35,7 +36,17 @@ export interface FilePreferencesStatus {
       readonly disabledTools: readonly string[];
     };
   };
+  readonly preferences: FilePreferences;
+  readonly domains: PreferencesApplicationState;
   readonly keybindings?: KeybindingsView;
+}
+
+const liveStatuses = new Map<string, FilePreferencesStatus>();
+
+/** Generated disk output is not the authority for the running Settings window. */
+export function currentFilePreferencesStatus(userDataDir: string, hostSessionId: string): FilePreferencesStatus | null {
+  const status = liveStatuses.get(userDataDir);
+  return status?.hostSessionId === hostSessionId ? status : null;
 }
 
 export function writeFilePreferencesStatus(
@@ -46,6 +57,7 @@ export function writeFilePreferencesStatus(
     readonly effective?: FilePreferences;
     readonly applicationStatus?: FilePreferencesStatus['application']['status'];
     readonly applicationError?: string | null;
+    readonly domains?: PreferencesApplicationState;
   } = {},
 ): FilePreferencesStatus {
   const effective = options.effective ?? DEFAULT_FILE_PREFERENCES;
@@ -66,6 +78,8 @@ export function writeFilePreferencesStatus(
       status: options.applicationStatus ?? (loaded.sourceStatus === 'rejected' ? 'failed' : 'pending'),
       error: options.applicationError ?? (loaded.sourceStatus === 'rejected' ? loaded.error : null),
     },
+    preferences: effective,
+    domains: options.domains ?? {},
     effective: {
       appearance: effective.appearance,
       agent: {
@@ -78,6 +92,7 @@ export function writeFilePreferencesStatus(
       ? { keybindings: previous.keybindings as KeybindingsView }
       : {}),
   });
+  liveStatuses.set(userDataDir, status);
   writeJsonFileSync(join(userDataDir, FILE_PREFERENCES_STATUS_RELATIVE_PATH), status, {
     directoryMode: 0o700,
   });

@@ -238,3 +238,36 @@ Agent Core. It is a contract checklist, not project status.
   ID/affected/recovery data, and guarded exact revert.
 - Run typecheck, Core tests, renderer tests, E2E, docs check, and diff check
   before the PR is ready.
+
+## Settings discovery and source settlement
+
+`settingsDefinitions.ts` is the scalar definition authority shared by validation,
+JSON Schema, defaults, search metadata, and direct UI controls. The Host's
+preference discovery bridge exposes bounded public source observations and
+accepted/effective scalar values, not domain catalogs or credentials. Structural
+writes use the caller's observed source digest, reject malformed or stale input,
+validate the resulting document, and recheck bytes immediately before atomic
+replacement. Reset removes only the named override and retains unrelated JSONC.
+A missing source has no observed or accepted digest.
+
+The generated status carries the Host session identity, source observation,
+per-owner application state and effective preferences. Appearance, Memory,
+updates, Skills, Access, request policy, delegation, and models settle
+independently. Failures retain that owner's effective state; accepted request
+policy/model/delegation declarations apply at their next admission/read boundary.
+A previous Host's status cannot establish current application evidence.
+
+The main frame's actual native-window identity gates each configuration operation.
+Models, Agents, Skills, Access, Memory, Data, Shortcuts, About, and Diagnostics
+cannot invoke one another's commands. Credentials are exclusive to the provider
+configuration child. The main application retains its normal command authority;
+auxiliary managers do not inherit document or action-attestation capabilities.
+Configuration notifications are Host-authored and scoped to `preferences`,
+`models`, `agents`, `skills`, or `access`; each consumer subscribes to its owner.
+
+The root configuration editor captures the user/project source digests when an
+edit opens. Background catalog refreshes update the manager without replacing
+that draft observation. A save against an externally changed source is refused,
+leaving the draft visible; reopening the editor establishes a new observation.
+Settings and the root manager also refresh source observations when their native
+window regains focus, including after editing project configuration externally.

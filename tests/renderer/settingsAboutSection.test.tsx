@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import { SettingsAboutSection } from '../../src/renderer/ui/agent/SettingsAboutSection';
+import { AboutContent } from '../../src/renderer/ui/agent/AboutContent';
 import type { AppUpdateView } from '../../src/core/appUpdate';
 import { createBundledApplicationReleaseResolver } from '../../src/main/hostDomain/bundledApplicationRelease';
 
@@ -103,7 +103,7 @@ async function renderAbout(
   const release = createBundledApplicationReleaseResolver(changelog)(version);
   await act(async () => {
     root?.render(
-      <SettingsAboutSection
+      <AboutContent
         appUpdate={appUpdate}
         loadRelease={async () => release}
         onAppUpdateChange={onAppUpdateChange}
@@ -125,7 +125,7 @@ function openedUrls(): string[] {
   return opened;
 }
 
-describe('SettingsAboutSection', () => {
+describe('AboutContent', () => {
   test('shows a cached update note and uses URL-free update commands', async () => {
     if (!window.lin) throw new Error('Missing test bridge');
     const calls: string[] = [];
@@ -393,7 +393,7 @@ describe('SettingsAboutSection', () => {
 
     await act(async () => {
       root?.render(
-        <SettingsAboutSection
+        <AboutContent
           loadRelease={async () => createBundledApplicationReleaseResolver(CHANGELOG_FIXTURE)('0.1.0')}
           onError={() => undefined}
           onNotice={() => undefined}
@@ -420,7 +420,7 @@ describe('SettingsAboutSection', () => {
 
     await act(async () => {
       root?.render(
-        <SettingsAboutSection
+        <AboutContent
           loadRelease={async () => createBundledApplicationReleaseResolver(CHANGELOG_FIXTURE)('0.1.0')}
           onError={(message) => errors.push(message)}
           onNotice={() => undefined}

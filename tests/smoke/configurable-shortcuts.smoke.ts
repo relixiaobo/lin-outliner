@@ -15,8 +15,8 @@ async function openShortcuts(smoke: SmokeApp): Promise<Page> {
     if (!item) throw new Error('Keyboard Shortcuts menu item is missing');
     item.click();
   });
-  await expect.poll(() => smoke.app.windows().some((page) => page.url().includes('surface=settings'))).toBe(true);
-  const page = smoke.app.windows().find((page) => page.url().includes('surface=settings'))!;
+  await expect.poll(() => smoke.app.windows().some((page) => page.url().includes('destination=shortcuts'))).toBe(true);
+  const page = smoke.app.windows().find((page) => page.url().includes('destination=shortcuts'))!;
   await expect(page.getByRole('heading', { name: 'Keyboard Shortcuts' })).toBeVisible();
   await expect(page.getByRole('list', { name: 'Application', exact: true })).toBeVisible();
   return page;

@@ -376,10 +376,6 @@
   background: var(--accent);
 }
 
-.settings-nav-item > .settings-status-dot {
-  margin-left: auto;
-}
-
 .settings-status-dot.is-hidden {
   visibility: hidden;
 }
