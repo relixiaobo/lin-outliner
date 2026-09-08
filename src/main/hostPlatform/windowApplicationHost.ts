@@ -858,7 +858,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         detail: t.reviewDetail({ operation: t.operations[request.operation], name: editable?.name ?? project?.name ?? t.none,
           root: editable ? editable.rootHint ?? t.none : project?.rootHint ?? t.none, thread: threadName || t.none }),
         buttons: [strings.dialog.cancel, strings.dialog.confirm], defaultId: 0, cancelId: 0,
-        noLink: true,
+        noLink: true, signal,
       });
       signal?.throwIfAborted();
       return !released && !parent.isDestroyed() && result.response === 1;

@@ -350,8 +350,9 @@ A missing intermediate membership row never truncates that traversal.
 
 Root-Agent `project_manage` proposals require native Host confirmation displaying
 the canonical directory, operation, Project, affected Chat, and consequences.
-Cancellation or abort writes nothing; commit revalidates the confirmed revision and
-directory identity. Agents propose durable grouping only for lasting user intent.
+Cancellation or abort closes the pending native confirmation and writes nothing;
+commit revalidates the confirmed revision and directory identity, then checks
+cancellation again before writing. Agents propose durable grouping only for lasting user intent.
 The renderer's explicit Project forms use the same service and confirm deletion.
 
 Deletion persists a fence before checking Automation dependencies. New membership

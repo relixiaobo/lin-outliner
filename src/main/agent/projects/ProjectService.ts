@@ -71,6 +71,7 @@ export class ProjectService {
       signal?.throwIfAborted();
       if (request.operation === 'create' || request.operation === 'update') {
         if (await canonicalRoot(request.rootHint) !== request.rootHint) throw new Error('Project directory changed after confirmation');
+        signal?.throwIfAborted();
         const saved = request.operation === 'create'
           ? this.store.create(request.name, request.rootHint, this.now())
           : this.store.update(request.projectId, request.expectedRevision, request.name, request.rootHint, this.now());

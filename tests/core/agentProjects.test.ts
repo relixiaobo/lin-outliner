@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import * as fs from 'node:fs/promises';
 import { mkdtemp, realpath, rm, symlink, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -149,6 +150,41 @@ describe('Project catalog lifecycle', () => {
     await expect(host.service.manage({ operation: 'create', name: 'Example', rootHint: null }, 'agent', controller.signal)).rejects.toThrow();
     expect(host.projects.list()).toHaveLength(0);
   });
+
+  test.each(['create', 'update'] as const)(
+    'cancelling an approved %s during directory revalidation writes nothing',
+    async (operation) => {
+      const root = await directory();
+      const host = catalog(':memory:', async () => true);
+      const original = host.projects.create('Original', root, 1);
+      const controller = new AbortController();
+      let entered!: () => void;
+      let release!: () => void;
+      const revalidating = new Promise<void>((resolve) => { entered = resolve; });
+      const blocked = new Promise<void>((resolve) => { release = resolve; });
+      const originalStat = fs.stat;
+      let validations = 0;
+      const stat = spyOn(fs, 'stat').mockImplementation(async (...args: Parameters<typeof fs.stat>) => {
+        const result = await originalStat(...args);
+        if (++validations === 2) { entered(); await blocked; }
+        return result;
+      });
+      try {
+        const request = operation === 'create'
+          ? { operation, name: 'Agent edit', rootHint: root }
+          : { operation, projectId: original.id, expectedRevision: original.revision, name: 'Agent edit', rootHint: root };
+        const pending = host.service.manage(request, 'agent', controller.signal);
+        await revalidating;
+        controller.abort(new Error('Turn cancelled during directory validation'));
+        release();
+        await expect(pending).rejects.toThrow('Turn cancelled during directory validation');
+        expect(host.projects.list()).toEqual([original]);
+      } finally {
+        release();
+        stat.mockRestore();
+      }
+    },
+  );
 
   test('deletion traverses missing membership rows and preserves unrelated membership and user files', async () => {
     const host = catalog();
