@@ -206,9 +206,18 @@ complete empty observation; read or byte-limit failures mark the successor
 unavailable with a degradation reason and never fail the already admitted task.
 The task receipt remains pinned to S0; later provider publication consumes S1 only
 at its own boundary. Discovery payloads are temporarily owned by the Tool Task so
-an unfinished observation survives Thread turn cleanup; once the observation is
-delivered or fenced, its admission and successor payloads are copied into the
-consuming Thread and the temporary owner is pruned.
+an unfinished observation survives Thread turn cleanup. Foreground output
+consumption clears task detail while retaining compact task truth and discovery
+ownership, including collection still in flight. At delivery, admission and
+successor payloads are copied into the consuming Thread before committing its
+evidence; only then is the temporary owner pruned. Fencing and Thread deletion
+drain outstanding discovery writes before pruning, without publishing evidence.
+Restart recovery pages the persisted tasks lacking a committed successor with
+bounded concurrency until all pages have been attempted; a failed payload write
+remains eligible on the next restart. Committed successors are never recollected.
+Snapshot reuse within five seconds revalidates both instruction/profile sources
+and the captured scopes' Git HEAD, ref, and status; a changed or unavailable
+observation requires fresh discovery.
 
 The Kernel's Host-only deferred-start callback lets local tools publish their
 execution-start event after admission evidence commits. Receipt context stays in

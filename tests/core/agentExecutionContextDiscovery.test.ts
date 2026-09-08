@@ -1,17 +1,228 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { Database } from 'bun:sqlite';
 import os from 'node:os';
 import path from 'node:path';
 import { pendingExecutionContext, resolveExecutionAddress } from '../../src/main/agent/tasks/ExecutionContext';
 import { discoverExecutionContext, validateDiscoveredSources } from '../../src/main/agent/tasks/ExecutionContextDiscovery';
 import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
-import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
+import { ToolTaskService, type ToolTaskHost } from '../../src/main/agent/tasks/ToolTaskService';
 import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
 import type { ThreadContextPayload } from '../../src/core/agent/protocol';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 
+const sourceTurnId = '00000000-0000-7000-8000-000000000003';
+
+function bindEvidenceHost(service: ToolTaskService, payloads: ToolPayloadStore,
+  write: NonNullable<ToolTaskHost['contextEvidence']>['write'] = (owner, payload) => payloads.writeContext(owner, payload),
+): void {
+  service.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+    startCompletionTurn: async () => false, taskChanged: () => {}, contextEvidence: {
+      write, read: (owner, ref) => payloads.readContext(owner, ref),
+      prune: (owner) => payloads.pruneUnreferencedContexts(owner, [], []),
+    } });
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!predicate() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+  expect(predicate()).toBe(true);
+}
+
 describe('execution context discovery', () => {
+  test.each(['tracked edit', 'HEAD change', 'branch change', 'unavailable worktree'])(
+    'rejects snapshot reuse after a Git %s within the freshness window', async (change) => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'tenon-context-'));
+      const git = (...args: string[]) => execFileSync('git', ['-C', root,
+        '-c', 'user.name=Context Test', '-c', 'user.email=context@example.test',
+        '-c', 'commit.gpgsign=false', ...args], { stdio: 'pipe' });
+      try {
+        git('init');
+        await writeFile(path.join(root, 'tracked.txt'), 'original');
+        git('add', 'tracked.txt');
+        git('commit', '-m', 'Initial fixture');
+        const result = await discoverExecutionContext(pendingExecutionContext(
+          await resolveExecutionAddress({ defaultCwd: root }), {
+            capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+          }));
+        expect(result.context.snapshot.discovery).toBe('complete');
+        expect(result.context.snapshot.facts.find((fact) => fact.kind === 'git')?.text).toContain('(clean)');
+        expect(await validateDiscoveredSources(result)).toBe(true);
+        if (change === 'tracked edit') await writeFile(path.join(root, 'tracked.txt'), 'modified');
+        else if (change === 'HEAD change') git('commit', '--allow-empty', '-m', 'Next fixture');
+        else if (change === 'branch change') git('checkout', '-b', 'next-fixture');
+        else await rm(path.join(root, '.git'), { recursive: true, force: true });
+        expect(Date.now() - result.context.snapshot.capturedAt).toBeLessThan(5_000);
+        expect(await validateDiscoveredSources(result)).toBe(false);
+      } finally { await rm(root, { recursive: true, force: true }); }
+    },
+  );
+
+  test.each(['committed', 'taskExecutionContext', 'executionContextObservation'])(
+    'retains foreground discovery through output consumption when %s', async (pauseAt) => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'tenon-context-'));
+      const database = new Database(':memory:');
+      const store = new ToolTaskStore(database as unknown as SqliteDatabase);
+      const payloads = new ToolPayloadStore(path.join(root, 'payloads'));
+      const service = new ToolTaskService(store, path.join(root, 'tasks'));
+      const gate = Promise.withResolvers<void>();
+      let paused = false;
+      bindEvidenceHost(service, payloads, async (owner, payload) => {
+        if (payload.kind === pauseAt) { paused = true; await gate.promise; }
+        return payloads.writeContext(owner, payload);
+      });
+      try {
+        await service.initialize();
+        const task = await service.start({ ownerThreadId: 'thread', sourceTurnId, sourceItemId: 'bash',
+          producer: 'bash', description: 'Foreground fixture', command: 'printf foreground', cwd: root,
+          env: process.env, backgroundEnabled: false, timeoutMs: 5_000 });
+        expect((await service.waitForTerminal(task.taskId, 'thread', 5_000))?.state).toBe('succeeded');
+        expect((await service.output(task.taskId, 'thread'))?.stdout).toBe('foreground');
+        await waitUntil(() => pauseAt === 'committed' ? !!store.contextSuccessor(task.taskId) : paused);
+        await service.consumeForeground(task.taskId, 'thread');
+        expect(store.read(task.taskId)).toMatchObject({ detailState: 'cleared',
+          executionContext: task.executionContext });
+        expect(await stat(task.detailPath).catch(() => null)).toBeNull();
+        expect(service.list('thread')).toHaveLength(0);
+        gate.resolve();
+        await waitUntil(() => !!store.contextSuccessor(task.taskId));
+        const successor = store.contextSuccessor(task.taskId)!;
+        expect(store.pendingContextObservations('thread')).toEqual([successor]);
+        const observation = await service.readContextObservation(task.taskId, successor.ref);
+        expect(observation).not.toBeNull();
+        expect(await payloads.copyContextToThread(task.taskId, 'thread', observation!.admissionRef)).toBe(true);
+        expect(await payloads.copyContextToThread(task.taskId, 'thread', successor.ref)).toBe(true);
+        store.settleContextObservation(task.taskId, 'delivered');
+        await service.pruneContextOwner(task.taskId);
+        expect(await payloads.readContext(task.taskId, successor.ref)).toBeNull();
+        expect((await payloads.readContext('thread', successor.ref))?.kind).toBe('executionContextObservation');
+        expect((await payloads.readContext('thread', observation!.admissionRef))?.kind).toBe('taskExecutionContext');
+        expect(store.pendingContextObservations('thread')).toHaveLength(0);
+        expect(store.missingContextSuccessors('thread', '', 4)).toHaveLength(0);
+      } finally {
+        gate.resolve();
+        await service.close(2_000);
+        database.close();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test('drains delayed discovery writes before deleting a consumed foreground owner', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tenon-context-'));
+    const database = new Database(':memory:');
+    const store = new ToolTaskStore(database as unknown as SqliteDatabase);
+    const payloads = new ToolPayloadStore(path.join(root, 'payloads'));
+    const service = new ToolTaskService(store, path.join(root, 'tasks'));
+    const gate = Promise.withResolvers<void>();
+    let paused = false;
+    let taskId = '';
+    let deleted = false;
+    const refs: Awaited<ReturnType<ToolPayloadStore['writeContext']>>[] = [];
+    bindEvidenceHost(service, payloads, async (owner, payload) => {
+      if (payload.kind === 'executionContextObservation') { paused = true; await gate.promise; }
+      const ref = await payloads.writeContext(owner, payload);
+      refs.push(ref);
+      return ref;
+    });
+    try {
+      await service.initialize();
+      await service.runHostOperation({ ownerThreadId: 'thread', sourceTurnId, sourceItemId: 'fixture', producer: 'test',
+        executionContext: pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root }), {
+          capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+        }), onAdmitted: async (task) => { taskId = task.taskId; },
+        execute: async () => ({ result: null, success: true }) });
+      await waitUntil(() => paused);
+      await service.consumeForeground(taskId, 'thread');
+      const deletion = service.deleteOwner('thread').then(() => { deleted = true; });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(deleted).toBe(false);
+      gate.resolve();
+      await deletion;
+      expect(store.read(taskId)).toBeNull();
+      expect(store.pendingContextObservations('thread')).toHaveLength(0);
+      expect(refs).toHaveLength(2);
+      for (const ref of refs) expect(await payloads.readContext(taskId, ref)).toBeNull();
+    } finally {
+      gate.resolve();
+      await service.close(2_000);
+      database.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('recovers every missing successor across pages and retries a persisted gap on restart', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tenon-context-'));
+    const databasePath = path.join(root, 'tasks.sqlite');
+    let database = new Database(databasePath);
+    let store = new ToolTaskStore(database as unknown as SqliteDatabase);
+    let service = new ToolTaskService(store, path.join(root, 'tasks'));
+    const payloads = new ToolPayloadStore(path.join(root, 'payloads'));
+    const taskIds: string[] = [];
+    let operations = 0;
+    try {
+      service.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+        startCompletionTurn: async () => false, taskChanged: () => {} });
+      await service.initialize();
+      const address = await resolveExecutionAddress({ defaultCwd: root });
+      for (let index = 0; index < 33; index += 1) {
+        await service.runHostOperation({ ownerThreadId: 'thread', sourceTurnId,
+          sourceItemId: `fixture-${index}`, producer: 'test',
+          executionContext: pendingExecutionContext(address, {
+            capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+          }), onAdmitted: async (task) => { taskIds.push(task.taskId); },
+          execute: async () => { operations += 1; return { result: null, success: true }; } });
+        await service.consumeForeground(taskIds[index]!, 'thread');
+      }
+      await service.close(2_000);
+      database.close();
+      database = new Database(databasePath);
+      store = new ToolTaskStore(database as unknown as SqliteDatabase);
+      service = new ToolTaskService(store, path.join(root, 'tasks'));
+      const failedTaskId = [...taskIds].sort()[0]!;
+      const writes = new Set<string>();
+      let activeWrites = 0;
+      let maxActiveWrites = 0;
+      bindEvidenceHost(service, payloads, async (owner, payload) => {
+        writes.add(owner);
+        if (owner === failedTaskId) throw new Error('Fixture payload storage unavailable');
+        activeWrites += 1;
+        maxActiveWrites = Math.max(maxActiveWrites, activeWrites);
+        try { return await payloads.writeContext(owner, payload); }
+        finally { activeWrites -= 1; }
+      });
+      await service.initialize();
+      await waitUntil(() => taskIds.filter((taskId) => store.contextSuccessor(taskId)).length === 32);
+      expect(writes.size).toBe(33);
+      expect(maxActiveWrites).toBeLessThanOrEqual(4);
+      expect(store.missingContextSuccessors('thread', '', 4).map((task) => task.taskId)).toEqual([failedTaskId]);
+      const committed = taskIds.filter((taskId) => taskId !== failedTaskId)
+        .map((taskId) => store.contextSuccessor(taskId));
+      await service.close(2_000);
+      database.close();
+      database = new Database(databasePath);
+      store = new ToolTaskStore(database as unknown as SqliteDatabase);
+      service = new ToolTaskService(store, path.join(root, 'tasks'));
+      writes.clear();
+      bindEvidenceHost(service, payloads, async (owner, payload) => {
+        writes.add(owner);
+        return payloads.writeContext(owner, payload);
+      });
+      await service.initialize();
+      await waitUntil(() => store.missingContextSuccessors('thread', '', 4).length === 0);
+      expect(taskIds.every((taskId) => store.contextSuccessor(taskId))).toBe(true);
+      expect(writes).toEqual(new Set([failedTaskId]));
+      expect(taskIds.filter((taskId) => taskId !== failedTaskId)
+        .map((taskId) => store.contextSuccessor(taskId))).toEqual(committed);
+      expect(operations).toBe(33);
+    } finally {
+      await service.close(2_000);
+      database.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('walks ancestor scopes and preserves nested instruction applicability', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'tenon-context-'));
     try {

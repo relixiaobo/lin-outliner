@@ -120,7 +120,14 @@ export async function validateDiscoveredSources(result: ExecutionContextDiscover
     const current = (await inspectSource(source.path, MAX_SOURCE_BYTES)).observation;
     if (JSON.stringify(current) !== JSON.stringify(source)) return false;
   }
-  return true;
+  for (const scope of result.context.address.scopes) {
+    const observed = result.context.snapshot.facts.find((fact) => fact.source === 'host:git'
+      && fact.kind === 'git' && fact.scope === scope.directory && !fact.invalidated);
+    if (!observed) return false;
+    const current = await inspectGit(scope.directory, scope.worktree);
+    if (current === null || executionDigest(current) !== observed.version || current !== observed.text) return false;
+  }
+  return Date.now() - result.context.snapshot.capturedAt <= 5_000;
 }
 
 async function inspectSource(filePath: string, limit: number): Promise<{

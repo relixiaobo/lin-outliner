@@ -278,6 +278,14 @@ export class ToolTaskStore {
       .all(ownerThreadId, limit) as ToolTaskRow[]).map(taskFromRow);
   }
 
+  missingContextSuccessors(ownerThreadId: string, afterTaskId: string, limit: number): readonly ToolTaskRecord[] {
+    return (this.db.prepare(`SELECT t.* FROM tool_tasks t
+      WHERE t.owner_thread_id = ? AND t.task_id > ? AND t.delivery_state != 'blocked'
+        AND NOT EXISTS (SELECT 1 FROM tool_task_context_successors s
+          WHERE s.predecessor_ref = json_extract(t.execution_context_json, '$.snapshotRef'))
+      ORDER BY t.task_id LIMIT ?`).all(ownerThreadId, afterTaskId, limit) as ToolTaskRow[]).map(taskFromRow);
+  }
+
   admitLease(
     taskId: string,
     policy: ToolTaskSchedulingPolicy,
