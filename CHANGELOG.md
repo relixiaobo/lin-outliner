@@ -12,6 +12,8 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Coding Goals can now verify current sources through bounded correction (PR #655)** - opt-in verification binds exact declared Bash checks to source manifests, canonical Tool Task receipts, and finite attempt/continuation budgets. Edits invalidate all earlier passes; restart and compaction retain evidence without replaying corrections, and completion requires every required check to be current. Explicit input scopes prune unrelated paths. Unfinished mutations remain fenced across revisions, while validated delegation ancestry permits child checks and defers completion until coordinating containers succeed. The gate resolved all three P2 findings and passed typecheck, `docs:check`, 226 final focused Core tests and four independent reproductions; the earlier implementation also passed all 1,478 renderer tests. Non-gating E2E samples remained queued at merge; no live-provider end-to-end result is claimed. Unit C is complete, its design is folded into the specs and archived, and workbench D/E remain active.
+
 - **Keyboard shortcuts can now be remapped by people and Agents (PR #652)** - the Keyboard Shortcuts editor and configuration Skill share `config/keybindings.jsonc` for five commands, alternate bindings, disable, and reset. Handlers and hints update live; invalid files retain exact text and prior bindings. Native replacement reconciles retained conflicts, compares equivalent accelerator identities, and preserves effective state across restart; fixed selection grammar remains reserved. All four review findings were resolved. The integration tree over #651 passed typecheck, `docs:check`, build, 212 focused unit tests, eight browser flows, and light/dark visual inspection. Electron smoke initially passed eight of nine cases; the editor case lost its inspector execution context before opening and passed an unchanged isolated diagnostic rerun. Full suites were not rerun. Unit F is complete; Unit G remains in the active aggregate plan.
 
 - **Optional Projects now group Chats and supply saved Automation hints (PR #651)** - users can create and edit Projects, create a Chat inside one, reassign complete fork/child lineage, and delete grouping while preserving Chats, files, and running tasks. Root-Agent proposals require native confirmation and exact revision checks. Durable deletion fences share scheduler ordering with live dependencies; claims retain immutable Project name/root/revision snapshots, and missing or redirected roots cannot silently fall back. Project membership never changes Thread execution directories or permissions. Both cancellation review findings were fixed before merge. Gate verification passed typecheck, `docs:check`, focused protocol/persistence/Project/Automation regression suites, seven light/dark Playwright flows with inspected screenshots, and 63 final follow-up tests including the original cancellation reproduction and Runtime recovery. Native dialog cancellation was checked against the installed Electron interface, not exercised interactively. Non-gating GitHub E2E samples were still running at merge. This completes Unit B with #649; its design is folded into the spec and archived.
@@ -698,6 +700,15 @@ Entries reference the pull request that introduced them when one exists.
   whitespace checks, and all five GitHub E2E samples plus baseline subtraction.
 
 ### Internal
+
+- **Recovery/records delivery now follows the complete approved workbench series** -
+  corrected the #653/#654 integration order to finish Settings G and workbench
+  C/D/E before startup isolation, unified records, and targeted recovery. The
+  board and execution handoffs now account for Git review/publication evidence
+  and process/isolation ownership as well as verification. The gate ends at the
+  approved A-E scope, including the bounded process experiment; possible later
+  capabilities do not extend it. This docs-only sequencing correction passed
+  `docs:check` and whitespace checks.
 
 - **Recovery and session-record plans integrated for execution (PRs #653 and #654)** -
   separated recoverable startup, unified file-readable session records, and

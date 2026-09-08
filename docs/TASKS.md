@@ -24,9 +24,10 @@ record plan separates historical originals from new reading-Thread image/PDF
 observations. Runtime behavior has not shipped. Record-discovery eligibility
 remains gated on the explicit product decision in that plan's OQ-1.
 
-Verification Unit C is claimed by #655 and Settings Unit G by #656. Their
-implementations continue independently. The recovery/records queue consumes
-their overlapping final mechanisms in the selected order below; planning and
+Verification Unit C shipped in #655 and its plan is archived. Settings Unit G
+is claimed by #656. Complete Settings G and the remaining workbench units,
+Git publication D and execution/process E,
+before starting the recovery/records implementation queue. Planning and
 read-only collision checks need not wait for those merges.
 
 PR #639 approved the capability-first development workbench design; #645 revised
@@ -36,9 +37,10 @@ Settings mechanisms, including frozen publication boundaries, scoped reduction,
 and compaction restore. PR #649 shipped Unit B's bounded discovery, immutable
 successor delivery, and freshness validation; PR #651 completes its optional
 Project catalog, confirmed membership, deletion fencing, and Project-backed
-Automation hints. The Unit B plan is archived. Verification Unit C consumes the
-shipped context/profile mechanism; Units C-E retain their plan prerequisites and
-collision checks. The aggregate plan and Units C-E remain active.
+Automation hints. Unit C's source-bound verification and bounded correction
+shipped in #655 over that context/profile mechanism. The Unit B and C plans are
+archived; the aggregate plan and Units D/E remain active under their own
+prerequisites and collision checks.
 
 PR #628 shipped internal Agent delegation and complete Subagent/isolated-Skill
 retirement under the design merged in #620. Generic Background Tool Tasks
@@ -86,8 +88,9 @@ protocol, security rule, user flow, or acceptance criterion.
 
 - `->` is a contract or same-plan predecessor: the successor consumes the
   predecessor's merged result.
-- `~>` is a selected A7 collision order: the behavior may be independent, but
-  the successor must target the predecessor's final shared mechanism.
+- `~>` is a selected A7 integration order: the behavior may be independent, but
+  the successor must target the predecessors' final mechanisms. A series-level
+  edge includes all approved delivery units, not only its currently open PRs.
 
 ```text
 Parallel now eligible:
@@ -95,10 +98,10 @@ Parallel now eligible:
   url-static-reader
   computer-pilot-managed-skill
 
-Selected shared-mechanism order:
+Selected integration order:
   Settings G (#656) ~> startup-fault-isolation
+  Workbench A-E (remaining D, E) ~> startup-fault-isolation
   startup-fault-isolation ~> unified-session-records ~> targeted-thread-recovery
-  Verification C (#655) ~> unified-session-records
 
 Capability prerequisite:
   startup-fault-isolation -> targeted-thread-recovery
@@ -106,8 +109,8 @@ Capability prerequisite:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [startup-fault-isolation](plans/startup-fault-isolation.md) | `draft` | After #656's shared Host/preload/domain-routing cut; coordinate any actual ThreadService/Goal/Tool Task overlap with #655 |
-| P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | After startup fault isolation and #655's shared ThreadService/runtime evidence cut; settle OQ-1 before claiming implementation |
+| P1 | [startup-fault-isolation](plans/startup-fault-isolation.md) | `draft` | After Settings G and all approved workbench A-E units (remaining D, E); consume final Host, admission and restart ownership |
+| P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | After startup fault isolation over the completed workbench series; cover C/D/E evidence and settle OQ-1 before claiming implementation |
 | P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | After startup issue/lifecycle and unified source/provenance/publication mechanisms; one complete verified rebuild/removal feature |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
@@ -129,19 +132,31 @@ The split also absorbs three former planless tasks without losing their intent:
 - `computer-pilot-managed-skill` now has its own complete plan and consumes the
   final Host plus Agent resource lifecycle; both foundations are complete.
 
-Collision lanes remain claim-time constraints, not hidden graph edges:
+The series-level boundary avoids revisiting startup readiness, record source
+coverage, and recovery closure as workbench producers change. C owns check and
+attempt evidence; D adds review manifests and durable publication outcomes;
+E settles isolation receipts and interactive-process ownership, captures and
+restart behavior. The new sequence consumes all three, not just #655.
+
+This is a delivery order, not a claim that each workbench feature is required
+to display a startup error. Workbench completion means the approved A-E units
+have shipped, including E's bounded experiment and its recorded outcome. A
+possible later native terminal, additional sandbox backend, or other follow-up
+proposal does not extend this gate. C/D/E retain their own prerequisites and
+live collision checks; the series-level edge does not invent C -> D -> E.
+
+Collision lanes remain claim-time constraints alongside the selected order:
 
 - #656 settles shared Host/preload and domain destinations before startup fault
-  isolation rewires fallible construction and failure routes. #655 settles its
-  ThreadService/runtime evidence changes before unified records extracts source
-  readers and replaces publication. These are selected A7 edges, not feature
-  dependencies of Settings or verification on recovery. A newly discovered
-  overlap is reported on the implementation claim with exact files/symbols.
-- Git review/publication, execution isolation, and further delegation consume
-  Tool Tasks, execution context, and original evidence; none waits for the whole
-  new sequence. Record files cannot authorize a current check pass, commit,
-  process adoption or sandbox claim. Keep hidden delegated-session references
-  and discovery isolation under their existing owner.
+  isolation rewires fallible construction and failure routes. Workbench C/D/E
+  settle task/runtime evidence and process lifecycle before that new sequence.
+  Actual file overlap still requires a claim-time check with exact symbols;
+  the selected series order does not depend on an open PR already listing it.
+- Workbench C/D/E consume Tool Tasks, execution context, and original evidence;
+  they precede the new sequence and do not wait for readable record files.
+  Those files cannot authorize a current check pass, commit, process adoption
+  or sandbox claim. Further delegation retains its own collision check and
+  hidden-session discovery boundaries.
 - `file-preview-office`, `url-static-reader`, and the preview/translation units
   in Interaction Jank must not overlap on shared preview shell files; #605 is the
   merged baseline for every later claim.
@@ -152,17 +167,18 @@ Collision lanes remain claim-time constraints, not hidden graph edges:
   resource.
 ## Other Active Plans
 
-These plans are outside the primary chain. Any multi-PR aggregate here is
-reshaped to claim-sized plans before implementation; this first pass deliberately
-does not mix their product decisions into the architectural queue above.
+These plans retain their own delivery contracts. Settings and the workbench
+series supply the predecessors above; the other plans keep their separate
+start conditions. Any multi-PR aggregate is reshaped to claim-sized plans
+before implementation.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P1 | [project-development-workbench](plans/project-development-workbench.md) | `in-progress` | Design approved in #639 and revised in #645. Unit A shipped in #646; Unit B discovery shipped in #649 and its Project catalog/lifecycle completed in #651. Units C-E stay active under the aggregate plan. |
+| P1 | [project-development-workbench](plans/project-development-workbench.md) | `in-progress` | Design approved in #639 and revised in #645. Unit A shipped in #646, B in #649/#651, and C in #655. Complete remaining D/E under their own prerequisites/collision checks before the recovery/records queue. |
 | P1 | [project-context-runtime](plans/archive/project-context-runtime.md) | `done` | Bounded discovery, immutable successor delivery, freshness validation, and restart recovery shipped in #649; optional Project catalog, confirmed membership, deletion fencing, and Project-backed Automation hints completed in #651. |
-| P1 | [verification-self-iteration](plans/verification-self-iteration.md) | `in-progress` | #655 claims source-state-bound checks and bounded correction over #646/#649/#651. It precedes unified records on shared ThreadService/runtime evidence files; it does not wait for recovery. |
-| P2 | [git-review-publication](plans/git-review-publication.md) | `draft` | Unit D follows Unit A; mandatory Git baselines are independent of optional context discovery. Recheck Tool Task/renderer collisions before claiming. |
-| P2 | [execution-sandbox-process](plans/execution-sandbox-process.md) | `draft` | Unit E follows Unit A: truthful isolation receipts and the bounded interactive-process experiment. Recheck process/receipt collisions before claiming. |
+| P1 | [verification-self-iteration](plans/archive/verification-self-iteration.md) | `done` | Source-bound checks, finite correction budgets, retained evidence, and delegation-aware mutation fencing shipped in #655. |
+| P2 | [git-review-publication](plans/git-review-publication.md) | `draft` | Unit A prerequisite shipped; mandatory Git baselines are independent of optional discovery. Recheck Tool Task/renderer collisions before claiming; deliver before the recovery/records queue. |
+| P2 | [execution-sandbox-process](plans/execution-sandbox-process.md) | `draft` | Unit A prerequisite shipped; truthful isolation receipts and the bounded interactive-process experiment precede the recovery/records queue. Recheck process/receipt collisions before claiming. |
 | P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623, internal delegation plus Subagent/isolated-Skill retirement shipped in #628, and the external Runner adapter feature shipped in #637. Remaining work follows the aggregate plan's declared boundaries. |
 | P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-F are shipped, with F in #652. #656 claims Unit G's final discovery/domain-manager cut; it precedes startup fault isolation on shared Host/preload/routes and does not wait for recovery. |
 | P2 | [interaction-jank-cleanups](plans/archive/interaction-jank-cleanups.md) | `done` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, the Runtime-index unit shipped in #633, and PR-3 translation geometry shipped in #634. |
@@ -287,14 +303,15 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
-- **recovery/records design integration** (`done`, #653/#654, 2026-09-08) - three complete execution plans now define startup isolation, unified records and targeted recovery; runtime remains pending under the primary queue.
+- **verification-self-iteration** (`done`, #655, 2026-09-08) - source-bound checks, bounded correction, evidence recovery and delegation-aware mutation fencing shipped; [plan archived](plans/archive/verification-self-iteration.md).
+- **recovery/records design integration** (`done`, #653/#654, 2026-09-08) - three complete plans define startup isolation, unified records and targeted recovery after Settings G and workbench A-E; runtime remains pending.
 - **settings-control-plane Unit F** (`done`, #652, 2026-09-08) - public keybindings, the Keyboard Shortcuts editor, live handlers/hints, conflict-safe native replacement, and restart recovery shipped; Unit G remains in the active aggregate plan.
 - **project-context-runtime complete** (`done`, #651, 2026-09-08) - optional Projects, confirmed Chat grouping and lineage inheritance, durable deletion fencing, immutable Automation hints, and stale Runtime startup recovery shipped; [plan archived](plans/archive/project-context-runtime.md).
 - **project-context-runtime discovery** (`done`, #649, 2026-09-08) - bounded scoped discovery, immutable successor publication, foreground evidence retention, Git/source freshness validation, and paged restart recovery shipped; Project catalog/lifecycle completed in #651.
 - **settings-control-plane Unit E3** (`done`, #650, 2026-09-08) - people and root Agents share bounded application/release/update inspection, fixed support destinations, and local diagnostics reveal/export through the Host; Unit G remains in the active aggregate plan.
 - **workbench context-publication design gate** (`done`, #645, 2026-09-07) - approved immutable model-facing publications, scoped baselines, and compaction recovery across the plan series; runtime delivery followed in #646 and #649.
-- **project-development-workbench Unit A** (`done`, #646, 2026-09-07) - task-owned execution context, scoped admission and receipts, canonical publication/compaction recovery, Thread consumers, delegation/native launchers, Automation dispatch, and renderer details are shipped; Units C-E remain active after Unit B completed in #651.
-- **project-development-workbench design gate** (`done`, #639, 2026-09-07) - approved task-scoped execution, context, verification, publication, and process designs; Unit A is eligible for implementation and the five workbench plans remain active.
+- **project-development-workbench Unit A** (`done`, #646, 2026-09-07) - task-owned execution context, scoped admission and receipts, canonical publication/compaction recovery, Thread consumers, delegation/native launchers, Automation dispatch, and renderer details are shipped; Units D/E remain active after B completed in #651 and C in #655.
+- **project-development-workbench design gate** (`done`, #639, 2026-09-07) - approved task-scoped execution, context, verification, publication, and process designs; implementation followed in #646, #649/#651 and #655, with Units D/E remaining.
 - **skill-declarative-settings** (`done`, #643, 2026-09-07) - Skill-owned file-backed read/update routes preserve source spelling and queued toggle state; the dependent Unit D lifecycle/provenance work shipped next in #644.
 - **skill-lifecycle-operations** (`done`, #644, 2026-09-07) - root-only Skill inspection and management tools now share the Host-owned lifecycle with the Settings Library, use revision/hash-bound targets and native human review, and preserve governed one-step Agent edit undo; [plan archived](plans/archive/skill-lifecycle-operations.md).
 - **memory-operations** (`done`, #647, 2026-09-07) - people and root Agents now share bounded Memory inspection, native-confirmed exact-target Reset with durable recovery, saved-search opening, and revision-guarded per-Thread mode controls; [plan archived](plans/archive/memory-operations.md).

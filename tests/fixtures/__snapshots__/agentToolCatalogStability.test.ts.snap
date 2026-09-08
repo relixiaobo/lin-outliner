@@ -45,7 +45,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "create_goal",
-    "description": "Create a Goal only when explicitly requested and no unfinished Goal exists.",
+    "description": "Create a Goal only when explicitly requested and no unfinished Goal exists. For an explicitly requested verify-and-correct workflow, select directory roots and a finite limit for attempts and automatic continuations. Checks come from .tenon/checks.json and execute through ordinary Bash; corrections use existing file tools. After an explicit user request to resume a stopped verification Goal, call create_goal with the same objective, roots and attempt limit in that new user Turn; budgets are not reset. This does not authorize publication.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -56,6 +56,29 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "token_budget": {
           "type": "integer",
           "minimum": 1
+        },
+        "verification": {
+          "type": "object",
+          "properties": {
+            "roots": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "description": "Absolute directory root."
+              },
+              "maxItems": 8
+            },
+            "maxAttempts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          },
+          "required": [
+            "roots",
+            "maxAttempts"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -386,7 +409,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "get_goal",
-    "description": "Get the Goal attached one-to-one to the current Thread.",
+    "description": "Get the current Goal and revalidate its verification evidence. Run every required declared command through Bash at its stated cwd; stale passes do not count.",
     "parameters": {
       "type": "object",
       "properties": {},

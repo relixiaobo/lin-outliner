@@ -2718,3 +2718,18 @@ originals into the reader. An actual model-visible image observation follows its
 own Item and Thread retention. Verify source deletion and reader replay after
 restart, plus cleanup of each owner; absence of a source link alone does not prove
 that the newly observed result can still be replayed.
+
+## Verification fences must follow task lifetimes and delegation ancestry
+
+PR #655 initially invalidated evidence only when a mutation was admitted, so a
+background writer could outlive that revision and leave a later pass current.
+Fencing every unfinished process then blocked delegated checks behind their own
+launcher, which was waiting for those checks to finish.
+
+**Derive mutation fences from canonical unfinished tasks across revisions and
+restart, and distinguish coordinating ancestors through validated claim edges.**
+Permit checks inside their own containers while fencing actual child writes and
+independent processes; complete only after successful coordination settlement.
+Producer names alone confer no exception. Regressions must exercise the real
+launcher/container/check chain, nested delegation, interruption and recovery,
+alongside a gated write-and-restore that crosses a verification revision.

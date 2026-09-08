@@ -132,7 +132,12 @@ deleted history. Rebuild invalidates only affected publication generations.
 
 Verification checks and Git publication continue to use their immutable evidence
 and current applicability checks; retained recovery copies cannot authorize a
-check pass, commit, continuation or process adoption. An image/PDF observation
+check pass, commit, continuation or process adoption. The board places the
+approved workbench series before this recovery sequence. Closure inspection and
+interruption fixtures must therefore include its final check/attempt evidence,
+review/publication evidence, and owned interactive processes/captures. Reuse
+their retention, settlement and cleanup owners; deleting a conversation cannot
+undo a Git publication or delete an external repository. An image/PDF observation
 already recorded in another Thread follows that reader's Item retention, even
 when the original source Thread is in the confirmed recovery scope.
 

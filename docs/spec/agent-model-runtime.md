@@ -450,6 +450,18 @@ failure; bounded Goal continuation may proceed through later Turns under its own
 admission/recovery rules, never by replaying settled mutations or retrying an
 unchanged oversized request indefinitely.
 
+Verification uses `verificationObservation` evidence through this same
+publication reducer. Its bounded Host fact is scoped to the owning Thread and
+includes the current run/revision, required work, applicability and stop reason.
+The referenced `verificationSource` payloads contain complete manifests and have
+no direct model projection. Publication and compaction dependencies retain those
+payloads; ordinary correction deltas preserve prior provider prefixes and never
+rewrite a previous check outcome. A restored fact is historical until the Goal
+coordinator revalidates the source. Missing source or attempt evidence cannot
+revive an earlier passing aggregate. Capacity failure durably disables the
+verification Goal's automatic continuation before idle; only fresh user
+admission can resume a stopped run within its remaining budget.
+
 ### Cache Contract And Verification
 
 With the same provider/model, effective configuration, retained context, and

@@ -212,6 +212,32 @@ describe('ToolTaskService', () => {
     expect((await second.output(task.taskId, OWNER_ID))?.stdout).toBe('unset|visible');
   });
 
+  test('captures fast process output before delayed identity publication can drain its pipes', async () => {
+    const fixture = await createFixture();
+    const bundleDirectory = path.join(fixture.root, 'delayed-supervisor');
+    const built = await Bun.build({
+      entrypoints: [path.join(process.cwd(), 'src/main/agent/tasks/toolTaskSupervisor.ts')],
+      outdir: bundleDirectory, target: 'node', format: 'esm', naming: 'supervisor.mjs',
+      plugins: [{ name: 'delay-identity-publication', setup(build) {
+        build.onLoad({ filter: /toolTaskSupervisor\.ts$/u }, async (input) => ({ loader: 'ts',
+          contents: (await readFile(input.path, 'utf8')).replace('await atomicJsonWrite(config.identityPath, identity);',
+            'await new Promise((resolve) => setTimeout(resolve, 100)); await atomicJsonWrite(config.identityPath, identity);'),
+        }));
+      } }],
+    });
+    expect(built.success).toBe(true);
+    const entry = path.join(bundleDirectory, 'supervisor.mjs');
+    const service = new ToolTaskService(fixture.store, fixture.detailRoot, {
+      executable: 'node', argsPrefix: [entry], env: {}, entry, packaged: true,
+    });
+    services.push(service);
+    service.bindHost(passiveHost());
+    await service.initialize();
+    const task = await startHidden(service, "printf 'fast-stdout'; printf 'fast-stderr' >&2; exit 7");
+    expect((await service.waitForTerminal(task.taskId, OWNER_ID, 6_000))?.state).toBe('failed');
+    expect(await service.output(task.taskId, OWNER_ID)).toMatchObject({ stdout: 'fast-stdout', stderr: 'fast-stderr' });
+  });
+
   test('supervises exact stdin and preserves factual success, failure, and timeout outcomes', async () => {
     const fixture = await createFixture();
     const service = await createService(fixture, passiveHost());
@@ -315,17 +341,21 @@ describe('ToolTaskService', () => {
     const service = await createService(fixture, passiveHost());
     let disposed = 0;
     const terminal = await startHidden(service, 'invalid prepared command', {
-      prepareProcess: async () => ({
-        process: {
-          kind: 'exec',
-          executable: '/definitely/missing/tenon-test-command',
-          args: [],
-          env: {},
-          privateControl: true,
-        },
-        privateControlInput: Buffer.from('private capability'),
-        disposePrivateControl: () => { disposed += 1; },
-      }),
+      prepareProcess: async ({ taskId }) => {
+        // Force pre-spawn publication failure instead of racing child failure against fd 3 closure.
+        await mkdir(path.join(fixture.detailRoot, taskId, 'config.json'));
+        return {
+          process: {
+            kind: 'exec',
+            executable: '/definitely/missing/tenon-test-command',
+            args: [],
+            env: {},
+            privateControl: true,
+          },
+          privateControlInput: Buffer.from('private capability'),
+          disposePrivateControl: () => { disposed += 1; },
+        };
+      },
     });
 
     expect(terminal).toMatchObject({ state: 'failed', outcomeReason: 'admission_failed' });

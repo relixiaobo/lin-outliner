@@ -545,6 +545,16 @@ export class ToolPayloadStore {
     });
   }
 
+  /** Reclaims private evidence even when its owning metadata can no longer be decoded. */
+  async deleteContextOwnersWithPrefix(prefix: string): Promise<void> {
+    if (!/^[a-z0-9_-]+_$/iu.test(prefix)) throw new Error('Invalid private context owner prefix.');
+    const root = await this.existingManagedDirectory(null);
+    if (!root) return;
+    for (const owner of await readdir(root)) {
+      if (owner.startsWith(prefix)) await this.deleteThread(owner);
+    }
+  }
+
   async deleteThread(threadId: ThreadId): Promise<void> {
     await this.withResourceLock(threadId, async () => {
       await rm(join(this.rootPath, threadId), { recursive: true, force: true });

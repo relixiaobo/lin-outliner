@@ -471,8 +471,10 @@ ownership or recovery gap is measured.
   and [Optional Project catalog](../spec/agent-core.md#optional-project-catalog)
   define Unit B's context collection and Project catalog boundary. Its original
   design remains in [Project context runtime](archive/project-context-runtime.md).
-- [Verification and bounded self-iteration](verification-self-iteration.md)
-  defines Unit C's check and Goal contracts.
+- [Source-bound verification](../spec/agent-tool-design.md#source-bound-verification)
+  defines the current check and Goal contracts; the
+  [archived verification design](archive/verification-self-iteration.md)
+  preserves Unit C's design rationale.
 - [Git review and publication](git-review-publication.md) defines Unit D's
   review and publication evidence.
 - [Execution sandbox and interactive processes](execution-sandbox-process.md)

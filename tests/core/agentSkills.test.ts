@@ -1018,6 +1018,7 @@ describe('agent skills', () => {
       'delegate',
       'outline',
       'skillify',
+      'verification',
     ]);
   });
 
@@ -1429,7 +1430,10 @@ describe('built-in skill resource packaging', () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
     await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
-    expect((await readdir(generatedRoot)).sort()).toEqual(['configuration', 'delegate', 'outline']);
+    expect((await readdir(generatedRoot)).sort()).toEqual(['configuration', 'delegate', 'outline', 'verification']);
+    const verificationRaw = await readFile(path.join(generatedRoot, 'verification', 'SKILL.md'), 'utf8');
+    expect(verificationRaw).toContain('every required check');
+    expect(verificationRaw).toContain('within the original');
     const delegateRoot = path.join(generatedRoot, 'delegate');
     const delegateRaw = await readFile(path.join(delegateRoot, 'SKILL.md'), 'utf8');
     expect(delegateRaw).toContain('delegate run --input - --output json');
