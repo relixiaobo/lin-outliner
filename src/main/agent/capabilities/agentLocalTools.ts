@@ -828,7 +828,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
             writablePaths: workspace.writeBoundary?.shellWritablePaths ?? [],
           });
           const executionContext = workspace.threadId && options.toolTaskService
-            ? await options.toolTaskService.prepareExecutionContext(workspace.threadId, pendingContext)
+            ? await options.toolTaskService.prepareExecutionContext?.(workspace.threadId, pendingContext) ?? pendingContext
             : pendingContext;
           const validateAddress = async () => {
             await workspace.validateIsolation?.();
