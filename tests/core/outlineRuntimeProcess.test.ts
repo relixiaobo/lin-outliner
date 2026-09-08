@@ -159,6 +159,91 @@ describe('Outline Runtime process boundary', () => {
     }
   });
 
+  test.each(['development session', 'contract'] as const)(
+    'recovers a crashed Runtime with a stale %s and retains its workspace',
+    async (mismatch) => {
+      const root = await makeRoot();
+      const contentRoot = `${root}-content`;
+      const paths = resolveOutlineRuntimePaths(root);
+      const launch = {
+        command: process.execPath,
+        args: [runtimeEntry, '--root', root, '--content-root', contentRoot],
+        env: { TENON_OUTLINE_RUNTIME_IDLE_MS: '60000' },
+        detached: false,
+      };
+      const previous = spawn(launch.command, launch.args, {
+        stdio: 'ignore',
+        env: {
+          ...process.env,
+          ...launch.env,
+          TENON_OUTLINE_RUNTIME_DEVELOPMENT_SESSION_ID: 'desktop:previous',
+        },
+      });
+      let previousClient: OutlineClient | undefined;
+      let client: OutlineClient | undefined;
+      try {
+        const previousDescriptor = await waitForDescriptor(root);
+        previousClient = new OutlineClient(previousDescriptor, { origin: 'desktop' });
+        const preview = await previousClient.request('preview', {
+          changeSet: createTodayChangeSet('Retained after Runtime crash'),
+        });
+        // Public apply acknowledges durability before simulating an unclean exit.
+        await previousClient.request('apply', { diff: preview.data });
+        previousClient.close();
+        previous.kill('SIGKILL');
+        await waitFor(() => previous.signalCode !== null, 3_000);
+        const old = new Date(Date.now() - 60_000);
+        await utimes(paths.lockPath, old, old);
+        if (mismatch === 'contract') {
+          await writeFile(paths.descriptorPath, JSON.stringify({
+            ...previousDescriptor,
+            contractDigest: '0'.repeat(64),
+          }), { mode: 0o600 });
+        }
+
+        const supervisor = new OutlineClientSupervisor({
+          root,
+          contentRoot,
+          launch,
+          expectedDevelopmentSessionId: 'desktop:replacement',
+          startupTimeoutMs: 5_000,
+        });
+        client = await supervisor.connect();
+        expect(client.descriptor.instanceId).not.toBe(previousDescriptor.instanceId);
+        expect(client.descriptor.developmentSessionId).toBe('desktop:replacement');
+        const found = await client.request('find', {
+          target: {
+            selector: { by: 'query', query: {
+              kind: 'rule', op: 'STRING_MATCH', text: 'Retained after Runtime crash',
+            }, limit: 10 },
+            cardinality: 'many',
+            max: 10,
+          },
+        });
+        expect((found.data as ProjectionResult).nodes).toHaveLength(1);
+      } finally {
+        previousClient?.close();
+        client?.close();
+        await stopChild(previous);
+        await stopRuntimeProcess(root);
+      }
+    },
+  );
+
+  test('keeps stale dead Runtime inspection observational', async () => {
+    const root = await makeRoot();
+    const paths = resolveOutlineRuntimePaths(root);
+    const descriptor = staleDescriptor(paths.socketPath);
+    await writeFile(paths.descriptorPath, JSON.stringify(descriptor), { mode: 0o600 });
+    const supervisor = new OutlineClientSupervisor({ root, noStart: true });
+    await expect(supervisor.status()).resolves.toEqual({ running: false });
+    await expect(supervisor.connect()).rejects.toMatchObject({
+      outlineError: { code: 'runtime_unavailable' },
+    });
+    expect(await readOutlineRuntimeDescriptor(root)).toEqual(descriptor);
+    expect(await stat(paths.lockPath).catch(() => null)).toBeNull();
+  });
+
   test('authenticates before decoding a request and preserves the unauthorized error code', async () => {
     const root = await makeRoot();
     const runtime = await OutlineRuntimeServer.start({ root, contentRoot: `${root}-content`, idleTimeoutMs: 60_000 });
