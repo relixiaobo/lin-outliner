@@ -2694,3 +2694,15 @@ copied and committed the dependencies, or an explicit fence drains outstanding
 writes before pruning. Verify completed discovery, delayed admission writes,
 delayed successor writes, and deletion during a delayed write; testing only a
 settled collector misses the ownership race.
+
+## Partial application must reconcile the complete effective state
+
+PR #652 initially validated desired shortcuts before native registration, then
+published application bindings alongside a launcher chord retained by rollback.
+Individually valid desired entries could therefore conflict in actual use.
+
+**Recheck cross-entry invariants after applying owners settle, including retained
+values and dependent moves.** Publish and persist the complete effective set,
+report affected entries truthfully, and verify restart plus successful retry.
+Compare external resource ownership by its semantic identity rather than source
+spelling, and make an accepted reset invalidate obsolete recovery state.
