@@ -16,6 +16,19 @@ the latest published train is `v0.7.0`.
 
 ## In Flight
 
+PRs #653 and #654 integrated the startup-recovery and unified-record designs.
+Execution is now three complete plans: startup fault isolation, unified session
+records, and targeted conversation recovery. The original recovery aggregate is
+archived as provenance; each active plan carries its own full contract. The
+record plan separates historical originals from new reading-Thread image/PDF
+observations. Runtime behavior has not shipped. Record-discovery eligibility
+remains gated on the explicit product decision in that plan's OQ-1.
+
+Verification Unit C is claimed by #655 and Settings Unit G by #656. Their
+implementations continue independently. The recovery/records queue consumes
+their overlapping final mechanisms in the selected order below; planning and
+read-only collision checks need not wait for those merges.
+
 PR #639 approved the capability-first development workbench design; #645 revised
 its cache/publication contract. Unit A shipped in #646 as one complete
 execution-context refactor over the shipped delegation/native-launcher and
@@ -46,7 +59,8 @@ JSONC-preserving edits, and public delegation policy. PR #643 ships Skill
 declarative settings ownership; Unit D's Agent-facing lifecycle/provenance
 operations shipped in #644, E1 Memory operations shipped in #647, E2 preview
 translation/data operations shipped in #648, and E3 application/diagnostics
-operations shipped in #650. Unit G remains open under its declared prerequisites.
+operations shipped in #650. Unit F's configurable shortcuts shipped in #652.
+Unit G is now eligible under its declared collision checks.
 The aggregate plan remains their design authority under its dependency and
 collision checks.
 
@@ -80,10 +94,21 @@ Parallel now eligible:
   file-preview-office
   url-static-reader
   computer-pilot-managed-skill
+
+Selected shared-mechanism order:
+  Settings G (#656) ~> startup-fault-isolation
+  startup-fault-isolation ~> unified-session-records ~> targeted-thread-recovery
+  Verification C (#655) ~> unified-session-records
+
+Capability prerequisite:
+  startup-fault-isolation -> targeted-thread-recovery
 ```
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
+| P1 | [startup-fault-isolation](plans/startup-fault-isolation.md) | `draft` | After #656's shared Host/preload/domain-routing cut; coordinate any actual ThreadService/Goal/Tool Task overlap with #655 |
+| P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | After startup fault isolation and #655's shared ThreadService/runtime evidence cut; settle OQ-1 before claiming implementation |
+| P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | After startup issue/lifecycle and unified source/provenance/publication mechanisms; one complete verified rebuild/removal feature |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | **Now; Agent resource lifecycle shipped in #607** |
@@ -106,6 +131,17 @@ The split also absorbs three former planless tasks without losing their intent:
 
 Collision lanes remain claim-time constraints, not hidden graph edges:
 
+- #656 settles shared Host/preload and domain destinations before startup fault
+  isolation rewires fallible construction and failure routes. #655 settles its
+  ThreadService/runtime evidence changes before unified records extracts source
+  readers and replaces publication. These are selected A7 edges, not feature
+  dependencies of Settings or verification on recovery. A newly discovered
+  overlap is reported on the implementation claim with exact files/symbols.
+- Git review/publication, execution isolation, and further delegation consume
+  Tool Tasks, execution context, and original evidence; none waits for the whole
+  new sequence. Record files cannot authorize a current check pass, commit,
+  process adoption or sandbox claim. Keep hidden delegated-session references
+  and discovery isolation under their existing owner.
 - `file-preview-office`, `url-static-reader`, and the preview/translation units
   in Interaction Jank must not overlap on shared preview shell files; #605 is the
   merged baseline for every later claim.
@@ -124,11 +160,11 @@ does not mix their product decisions into the architectural queue above.
 | --- | --- | --- | --- |
 | P1 | [project-development-workbench](plans/project-development-workbench.md) | `in-progress` | Design approved in #639 and revised in #645. Unit A shipped in #646; Unit B discovery shipped in #649 and its Project catalog/lifecycle completed in #651. Units C-E stay active under the aggregate plan. |
 | P1 | [project-context-runtime](plans/archive/project-context-runtime.md) | `done` | Bounded discovery, immutable successor delivery, freshness validation, and restart recovery shipped in #649; optional Project catalog, confirmed membership, deletion fencing, and Project-backed Automation hints completed in #651. |
-| P1 | [verification-self-iteration](plans/verification-self-iteration.md) | `draft` | Unit A's task context and Unit B's discovery/profile mechanism shipped in #646 and #649; source-state-bound checks and bounded correction remain subject to the plan's prerequisite and collision checks. |
+| P1 | [verification-self-iteration](plans/verification-self-iteration.md) | `in-progress` | #655 claims source-state-bound checks and bounded correction over #646/#649/#651. It precedes unified records on shared ThreadService/runtime evidence files; it does not wait for recovery. |
 | P2 | [git-review-publication](plans/git-review-publication.md) | `draft` | Unit D follows Unit A; mandatory Git baselines are independent of optional context discovery. Recheck Tool Task/renderer collisions before claiming. |
 | P2 | [execution-sandbox-process](plans/execution-sandbox-process.md) | `draft` | Unit E follows Unit A: truthful isolation receipts and the bounded interactive-process experiment. Recheck process/receipt collisions before claiming. |
 | P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623, internal delegation plus Subagent/isolated-Skill retirement shipped in #628, and the external Runner adapter feature shipped in #637. Remaining work follows the aggregate plan's declared boundaries. |
-| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-C shipped in #636, #638, and #640; #643 ships Skill declarative settings ownership; Unit D shipped in #644; Units E1-E3 shipped in #647, #648, and #650. Unit G remains open under its declared prerequisites. |
+| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-F are shipped, with F in #652. #656 claims Unit G's final discovery/domain-manager cut; it precedes startup fault isolation on shared Host/preload/routes and does not wait for recovery. |
 | P2 | [interaction-jank-cleanups](plans/archive/interaction-jank-cleanups.md) | `done` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, the Runtime-index unit shipped in #633, and PR-3 translation geometry shipped in #634. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Settings redesign landed in #626; Provider/managed-Skill working-state behavior is absorbed by Units B and D, so claim it through those units rather than as a separate implementation. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
@@ -205,6 +241,10 @@ contract or user-visible decision.
 
 ## Shelved And Standing Decisions
 
+- **startup-data-recovery aggregate** (`superseded`, #653/#654) - execution
+  authority is now the three complete plans in the primary queue; the
+  [original recovery design](plans/archive/startup-data-recovery.md) is provenance,
+  not an implementation prerequisite. No recovery runtime is marked shipped.
 - **agent-self-modification** (`shelved`) — the old configuration-tool/hook plan
   described removed tools and an incorrect extension-hook gap. Reopen only after
   the PM chooses the self-configuration capability boundary and a clean
@@ -247,6 +287,8 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **recovery/records design integration** (`done`, #653/#654, 2026-09-08) - three complete execution plans now define startup isolation, unified records and targeted recovery; runtime remains pending under the primary queue.
+- **settings-control-plane Unit F** (`done`, #652, 2026-09-08) - public keybindings, the Keyboard Shortcuts editor, live handlers/hints, conflict-safe native replacement, and restart recovery shipped; Unit G remains in the active aggregate plan.
 - **project-context-runtime complete** (`done`, #651, 2026-09-08) - optional Projects, confirmed Chat grouping and lineage inheritance, durable deletion fencing, immutable Automation hints, and stale Runtime startup recovery shipped; [plan archived](plans/archive/project-context-runtime.md).
 - **project-context-runtime discovery** (`done`, #649, 2026-09-08) - bounded scoped discovery, immutable successor publication, foreground evidence retention, Git/source freshness validation, and paged restart recovery shipped; Project catalog/lifecycle completed in #651.
 - **settings-control-plane Unit E3** (`done`, #650, 2026-09-08) - people and root Agents share bounded application/release/update inspection, fixed support destinations, and local diagnostics reveal/export through the Host; Unit G remains in the active aggregate plan.

@@ -340,8 +340,8 @@ cut along user intent rather than implementation subsystem. The content pane is
 an opaque Preferences base constrained to `--settings-content-max-width` (920px).
 Rail, toolbar, and category render immediately; provider/runtime data loads locally.
 
-**Pages.** Model services, Agents, and Skills sit under Agent; About sits under
-General.
+**Pages.** Model services, Agents, and Skills sit under Agent; Keyboard Shortcuts
+and About sit under General.
 An unbounded collection the user installs or connects becomes a page; bounded
 settings stay inline. Page rows carry chevrons, history walks real routes, and
 per-provider configuration remains a native child window. Entering, leaving, or
@@ -350,7 +350,8 @@ category-to-category navigation does not trigger that reset. An explicit deep-
 link anchor then positions its requested group.
 
 **Deep links.** Categories are `general|agent|preview`; pages are
-`agent/services`, `agent/agents`, `agent/skills`, and `general/about`. An optional bounded
+`agent/services`, `agent/agents`, `agent/skills`, `general/shortcuts`, and
+`general/about`. An optional bounded
 lowercase-slug anchor (`[a-z0-9][a-z0-9-]{0,63}`) scrolls to and briefly
 highlights a group. Category/page mismatches do not route; retired ids have no
 aliases. Explicit targets retarget an open window, while `Cmd+,` only focuses it.
@@ -366,7 +367,8 @@ snapshot: failure rolls back only its field, later pending fields stay visible,
 and broadcasts merge below pending values. Settings and the preview popover use
 the same failure contract. Only the modal provider form retains Cancel/Save.
 
-**General.** Appearance (Theme and Language), Diagnostics, and About. Theme is a
+**General.** Appearance (Theme and Language), Keyboard Shortcuts, Diagnostics,
+and About. Theme is a
 neutral `SegmentedControl` radiogroup with roving tabindex and arrow navigation;
 Language is `SelectControl variant="popup"`. When a verified stable app release
 is newer than the running build and automatic checks remain enabled, General in
@@ -375,6 +377,14 @@ It has a non-live accessible update-available name and no count or animation. It
 fixed slot is reserved while hidden so async state cannot move adjacent content.
 This is a presence-based status, not unread state: opening About does not clear it; catching
 up to the release or disabling automatic checks does.
+
+Keyboard Shortcuts is a purpose-built inset-list page over the public keybindings
+source. A compact search field and Open File / Reset All commands precede grouped
+system, application, and preview rows. Each row keeps its label, description,
+stable ID, default/modified state, enable switch, alternate key controls, and
+Reset action in one scan line. Key caps use neutral fills and a visible focus
+ring; recording changes copy inside stable dimensions instead of resizing the
+row. Source rejection and effective-binding failure stay at their action point.
 
 **Agent.** Model services, Agents, and Skills are pages; Memory and Permissions
 stay inline. Permissions states the Full Access boundary, lists explicit blocks,

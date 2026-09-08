@@ -173,8 +173,29 @@ import {
   saveLastAgentThreadConfiguration,
 } from './appPreferences';
 import { DEFAULT_FILE_PREFERENCES, loadFilePreferences, updateFilePreferences } from './configuration/filePreferences';
-import { writeFilePreferencesStatus } from './configuration/status';
+import { writeFilePreferencesStatus, writeKeybindingsStatus } from './configuration/status';
 import { writeFilePreferencesSchema } from './configuration/schema';
+import {
+  decodeKeybindingsUpdateInput,
+  ensureKeybindingsFile,
+  keybindingsView,
+  loadKeybindings,
+  readLastAppliedKeybindings,
+  reconcileKeybindingsWithLauncher,
+  retainLastAcceptedKeybindings,
+  updateKeybindings,
+  writeLastAppliedKeybindings,
+  writeKeybindingsSchema,
+} from './configuration/keybindings';
+import {
+  KEYBINDINGS_CHANGED_CHANNEL,
+  KEYBINDINGS_GET_CHANNEL,
+  KEYBINDINGS_GET_SYNC_CHANNEL,
+  KEYBINDINGS_OPEN_FILE_CHANNEL,
+  KEYBINDINGS_UPDATE_CHANNEL,
+  type EffectiveShortcutBindings,
+  type KeybindingsView,
+} from '../core/keybindings';
 import type { ThemeMode } from '../core/theme';
 import { getMessages } from '../core/i18n';
 import { APP_NAME } from '../core/brand';
@@ -260,6 +281,12 @@ const transportEffects = resources.child('transport');
 const windowEffects = resources.child('window-application');
 const backgroundEffects = resources.child('background-effects');
 let applyFilePreferencesNow: (() => void) | null = null;
+const initialKeybindings = loadKeybindings(resolvedUserDataDir);
+const lastAppliedKeybindings = readLastAppliedKeybindings(resolvedUserDataDir);
+const initialLauncherBindings = (lastAppliedKeybindings ?? initialKeybindings.effective)['global.launcher'];
+let effectiveKeybindings: EffectiveShortcutBindings = lastAppliedKeybindings ?? initialKeybindings.effective;
+let currentKeybindingsView = keybindingsView(initialKeybindings, effectiveKeybindings);
+let lastAcceptedKeybindings = initialKeybindings;
 
 // Image file extensions for the native "insert image" picker. The filter's display
 // name is localized at the call site (it shows in the OS dialog).
@@ -316,6 +343,7 @@ const resourcePreviewHost = createResourcePreviewHost({
   rendererDevUrl: process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL,
   previewRoots: () => [agentLocalFileRoot, agentScratchRoot, outlineAssetExportRoot],
   localFileRoots: () => [agentLocalFileRoot, agentScratchRoot],
+  translationShortcutBindings: () => effectiveKeybindings['global.toggle_page_translation'],
   resolveAttachmentFile: async (threadId, attachmentId) => {
     await lifecycle.ready('agent');
     return agentHost.threads.resolveAttachmentFile(threadId, attachmentId);
@@ -360,12 +388,14 @@ function scheduleAppUpdateCheck(): void {
   timer.unref?.();
 }
 
-function startFilePreferencesWatcher(): void {
+function startConfigurationWatcher(): void {
   const configDir = join(resolvedUserDataDir, 'config');
   ensureAgentDir(configDir);
   writeAgentConfigurationSchema(resolvedUserDataDir);
   writeFilePreferencesSchema(resolvedUserDataDir);
+  writeKeybindingsSchema(resolvedUserDataDir);
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let keybindingsTimer: ReturnType<typeof setTimeout> | null = null;
   let applying = false;
   let pendingApply = false;
   let effectivePreferences = DEFAULT_FILE_PREFERENCES;
@@ -419,18 +449,26 @@ function startFilePreferencesWatcher(): void {
   };
   applyFilePreferencesNow = apply;
   const watcher = watch(configDir, { persistent: false }, (_event, filename) => {
-    if (filename && filename.toString() !== 'settings.jsonc') return;
-    if (timer !== null) clearTimeout(timer);
-    timer = setTimeout(apply, 100);
+    const name = filename?.toString();
+    if (!name || name === 'settings.jsonc') {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(apply, 100);
+    }
+    if (!name || name === 'keybindings.jsonc') {
+      if (keybindingsTimer !== null) clearTimeout(keybindingsTimer);
+      keybindingsTimer = setTimeout(() => applyKeybindings(), 100);
+    }
   });
   const initial = loadFilePreferences(resolvedUserDataDir);
   writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, initial, {
     effective: effectivePreferences,
     applicationStatus: 'pending',
   });
+  applyKeybindings(initialKeybindings);
   resources.defer('file-preferences-watcher', () => {
     watcher.close();
     if (timer !== null) clearTimeout(timer);
+    if (keybindingsTimer !== null) clearTimeout(keybindingsTimer);
     if (applyFilePreferencesNow === apply) applyFilePreferencesNow = null;
   });
 }
@@ -638,8 +676,56 @@ const windowApplicationHost = createWindowApplicationHost({
   reportError,
   diagnosticLog,
   diagnosticEnvironment,
+  initialLauncherBindings,
 });
 applicationOperationsRef = windowApplicationHost.applicationOperations;
+
+function applyKeybindings(candidate = loadKeybindings(resolvedUserDataDir)): KeybindingsView {
+  const observed = retainLastAcceptedKeybindings(lastAcceptedKeybindings, candidate);
+  if (candidate.sourceStatus !== 'rejected') {
+    lastAcceptedKeybindings = candidate;
+    windowApplicationHost.applyLauncherHotkeys(candidate.effective['global.launcher']);
+  }
+  const reconciled = reconcileKeybindingsWithLauncher(
+    observed.effective,
+    effectiveKeybindings,
+    windowApplicationHost.launcherHotkeys(),
+  );
+  effectiveKeybindings = reconciled.effective;
+  try {
+    writeLastAppliedKeybindings(resolvedUserDataDir, effectiveKeybindings);
+  } catch (error) {
+    console.warn('[keybindings] failed to record effective bindings', error);
+  }
+  const launcherError = windowApplicationHost.launcherHotkeyError()
+    ?? (JSON.stringify(observed.effective['global.launcher']) !== JSON.stringify(effectiveKeybindings['global.launcher'])
+      ? 'Desired launcher bindings are not applied; retaining the registered bindings'
+      : null);
+  currentKeybindingsView = keybindingsView(observed, effectiveKeybindings, {
+    ...reconciled.errors,
+    ...(launcherError ? { 'global.launcher': launcherError } : {}),
+  });
+  try {
+    writeKeybindingsStatus(resolvedUserDataDir, hostSessionId, currentKeybindingsView);
+  } catch (error) {
+    console.warn('[keybindings] failed to write configuration status', error);
+  }
+  for (const target of [
+    windowApplicationHost.windows.main(),
+    windowApplicationHost.windows.settings(),
+    windowApplicationHost.windows.launcher(),
+  ]) {
+    if (target && !target.isDestroyed() && !target.webContents.isDestroyed()) {
+      try {
+        target.webContents.send(KEYBINDINGS_CHANGED_CHANNEL, currentKeybindingsView);
+      } catch (error) {
+        console.warn('[keybindings] failed to notify a closing window', error);
+      }
+    }
+  }
+  return currentKeybindingsView;
+}
+
 async function validateAutomationEffectiveConfiguration(
   modelProvider: string,
   configuration: EffectiveThreadConfiguration,
@@ -1217,7 +1303,26 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
     return { hotkey: windowApplicationHost.launcherHotkey() };
   });
   ipcMain.handle('lin:get-theme', (): ThemeMode => windowApplicationHost.theme());
-  ipcMain.handle('lin:launcher-hotkey', (): string | null => windowApplicationHost.launcherHotkey());
+  ipcMain.on(KEYBINDINGS_GET_SYNC_CHANNEL, (event) => {
+    event.returnValue = Object.freeze({
+      ...effectiveKeybindings,
+      'global.launcher': Object.freeze([...windowApplicationHost.launcherHotkeys()]),
+    });
+  });
+  ipcMain.handle(KEYBINDINGS_GET_CHANNEL, (event): KeybindingsView => {
+    windowApplicationHost.assertSettingsSender(event, 'Keyboard Shortcuts');
+    return currentKeybindingsView;
+  });
+  ipcMain.handle(KEYBINDINGS_UPDATE_CHANNEL, (event, raw: unknown): KeybindingsView => {
+    windowApplicationHost.assertSettingsSender(event, 'Keyboard Shortcuts');
+    const loaded = updateKeybindings(resolvedUserDataDir, decodeKeybindingsUpdateInput(raw));
+    return applyKeybindings(loaded);
+  });
+  ipcMain.handle(KEYBINDINGS_OPEN_FILE_CHANNEL, async (event): Promise<void> => {
+    windowApplicationHost.assertSettingsSender(event, 'Keyboard Shortcuts');
+    const error = await shell.openPath(ensureKeybindingsFile(resolvedUserDataDir));
+    if (error) throw new Error(error);
+  });
   ipcMain.handle('lin:set-theme', (_event, mode: unknown) => windowApplicationHost.setTheme(mode));
   ipcMain.on('lin:get-language-sync', (event) => {
     event.returnValue = windowApplicationHost.effectiveLocale();
@@ -2590,7 +2695,7 @@ const lifecycle = new DesktopHostLifecycle({
     },
     { name: 'windows', run: async () => {
       await windowApplicationHost.initialize();
-      startFilePreferencesWatcher();
+      startConfigurationWatcher();
     } },
     {
       name: 'provider-configuration',

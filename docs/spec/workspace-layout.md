@@ -535,9 +535,10 @@ popover expansion. Clicking either host chrome or the webpage webview closes the
 popover. Manual translation and automatic translation both default off.
 Enabling translation keeps the remote page as the reading surface and inserts an
 inert plain-text translation after each eligible source block; disabling it hides
-translations without discarding the current page's in-memory cache. `Option+A`
-on macOS and `Alt+A` elsewhere toggles translation only for the active URL
-preview, including while its webview has focus, and never changes the automatic
+translations without discarding the current page's in-memory cache. The default
+`Option+A` on macOS and `Alt+A` elsewhere toggles translation only for the active
+URL preview, including while its webview has focus; its effective configurable
+binding and visible hint update live, and it never changes the automatic
 preference. Navigation and reload cancel pending work, clear mounted page state,
 and re-apply the preview's display intent; target/model change, pane close, or
 webview replacement also cancels pending work and clears mounted results. These
@@ -798,7 +799,8 @@ Reflowable EPUB file panels and dedicated EPUB readers extend the same
 translation workflow to local books. They use the shared `Languages` control,
 target-language catalog, `Follow Agent` or explicit model, Translate / Show
 original command, fixed-size loading and retry states, completion treatment, and
-scoped `Option+A` / `Alt+A` shortcut. Compact inline outliner previews do not
+the same scoped configurable shortcut (default `Option+A` / `Alt+A`). Compact
+inline outliner previews do not
 expose the control, and a book whose rendition layout is `pre-paginated` exposes
 no translation capability. Model output is inserted as inert plain text after
 the source block, marked with the target language for assistive technology;

@@ -12,7 +12,7 @@ and its split plans (`launcher-ai-actions.md`,
 A separate, locked-down renderer (`launcher.html` → `src/renderer/launcher/`)
 running in its own prewarmed `BrowserWindow`, talking to the main process over a
 small IPC surface. It is NOT the editor — the launcher bundle never loads
-ProseMirror/Shiki/markdown. One global hotkey toggles it; it captures what the
+ProseMirror/Shiki/markdown. One or more configured global hotkeys toggle it; it captures what the
 user was looking at, searches document nodes inline, and runs a couple of
 navigation commands.
 
@@ -98,22 +98,32 @@ or the user explicitly chooses Quit Anyway.
 
 ## Hotkey (`src/main/launcher/launcherHotkey.ts`)
 
-Registers the first free accelerator of `LIN_LAUNCHER_HOTKEY` (env) →
-`CommandOrControl+Shift+Space` → `Control+Alt+Space`. The winner is surfaced to
-the renderer via `launcher:getInitialState().hotkey` (or `null` if none was free).
-Released on quit.
+`config/keybindings.jsonc` owns the desired `global.launcher` binding. It may be
+one portable chord, one to four alternate chords, or `false`; absence restores
+the defaults `CommandOrControl+Shift+Space` and `Control+Alt+Space`. Main
+registers every alternate with Electron after app readiness and releases only
+the chords Tenon owns on quit. There is no environment override or Settings CLI.
 
-The registered accelerator is **shown**, in two places, both formatted by
+Runtime replacement registers additions before releasing removed chords. If an
+addition is unavailable, Tenon rolls back additions from that attempt and keeps
+the complete previous effective set. Ownership, additions, and removals compare
+platform-native accelerator identity: on macOS, `Command` and
+`CommandOrControl` name the same owned chord, while desired configuration retains
+its portable spelling. A private last-applied cache records the complete effective
+command set so restart can attempt the actual launcher set and retain affected
+application bindings before reconciling the current desired source. The
+public `config/status.json` and Keyboard Shortcuts page distinguish desired
+bindings, actual effective bindings, and registration errors.
+
+The first effective accelerator is **shown**, in two places, both formatted by
 `formatHotkey` (`src/core/launcher/commands.ts` — one formatter, two surfaces):
 
 - the launcher footer's identity zone, so a user who arrived by mouse (the
   sidebar's Search row) learns the keystroke;
-- **Settings → General → Shortcuts**, a read-only "Global launcher" row fed by
-  `window.lin.getLauncherHotkey()` over `ipcMain.handle('lin:launcher-hotkey')`.
-  When registration failed (`null` — every candidate is taken by another app) the
-  row states that, quietly, in secondary text with the fix ("Quit the conflicting
-  app and relaunch Tenon"), and the footer simply shows no keystroke. Registration
-  itself stays main's; neither surface can rebind.
+- the dedicated **Keyboard Shortcuts** page, where a person can search, record,
+  add/remove alternates, disable, reset, or open the public file. A failed system
+  registration shows the requested binding and the previous binding that remains
+  effective. The footer simply omits the keystroke when none is effective.
 
 ## The modeless model (`src/renderer/launcher/`)
 
@@ -304,15 +314,18 @@ for this sender before dispatch. See [`action-registry.md`](action-registry.md) 
   action seam (`action:objectQuery`, `action:parameterQuery`, `action:request`,
   `action:event`). It cannot create an invocation from a seed.
 - Main → launcher renderer: `LAUNCHER_SHOWN_CHANNEL`, `ACTION_OPENED_CHANNEL`,
-  `ACTION_AMBIENT_CHANGED_CHANNEL`, `LAUNCHER_REMEDIATION_CHANNEL`. The raw
-  `ExternalContext` never crosses.
+  `ACTION_AMBIENT_CHANGED_CHANNEL`, `LAUNCHER_REMEDIATION_CHANNEL`, and the
+  narrow effective-launcher projection derived from `KEYBINDINGS_CHANGED_CHANNEL`.
+  The raw `ExternalContext` and configuration paths never cross.
 - Main renderer → main: `lin:show-launcher`, so the sidebar Search row and the
   `/`-menu row summon the same panel the hotkey does.
 - Main → main renderer: `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL`.
-- Settings renderer → main: `lin:launcher-hotkey` (read-only, no args) for the
-  Settings row above.
+- Settings renderer → main: keybindings get/update/open-file IPC. Main admits
+  only the Settings sender, performs digest-guarded JSONC structural edits, and
+  returns the desired/effective view.
 
-The channel constants and serializable view types live in
+Keybinding channel constants and serializable view types live in
+`src/core/keybindings.ts`; launcher channel constants live in
 `src/core/launcher/commands.ts`; the capture data model in
 `src/core/launcher/sources.ts`; the context contract in
 `src/core/launcher/context.ts`.

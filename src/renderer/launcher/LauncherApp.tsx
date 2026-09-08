@@ -108,6 +108,8 @@ export function LauncherApp() {
     // rather than throwing: a blank window teaches the user nothing.
     if (!bridge?.launcher) return;
     void bridge.launcher.getInitialState?.().then(setState);
+    const offHotkeys = bridge.launcher.onHotkeysChanged?.((hotkey) => setState({ hotkey }))
+      ?? (() => undefined);
     const offShown = bridge.launcher.onShown?.(() => {
       reset();
       inputRef.current?.focus();
@@ -138,6 +140,7 @@ export function LauncherApp() {
       offOpened();
       offAmbient();
       offRemediation();
+      offHotkeys();
     };
   }, [reset]);
 

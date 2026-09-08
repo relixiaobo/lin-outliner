@@ -12,6 +12,15 @@ Agent Core. It is a contract checklist, not project status.
   part of the contract. Empty connection model lists follow the live catalog;
   non-empty lists are exact allow-lists, and unavailable explicit/default
   models return typed unavailable errors without provider fallback.
+- Treat `config/keybindings.jsonc` as the sole desired-state source for
+  configurable shortcuts. Its generated `keybindings.schema.json` defines the
+  current command IDs, portable chord values, alternates, defaults, and explicit
+  disable form. The `keybindings` member of `config/status.json` reports the
+  current Host session's observed/accepted source and desired/effective entries,
+  including retained system bindings after failed registration. Agents edit the
+  public JSONC with ordinary file tools, preserve unrelated text, and verify the
+  addressed entry against current-Host status; there is no shortcut tool or
+  Settings/Configuration CLI.
 - Root Configuration Profiles remain in the layered `agent/config.json` and
   `.tenon/agent.json` sources. Delegation policy is public under
   `agent.delegation`; active pointers, probe/runtime state, and Session bindings

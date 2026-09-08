@@ -1,6 +1,6 @@
 ---
 name: configuration
-description: Inspect and edit Tenon's declarative configuration files when the user asks to change preferences such as theme, language, Skill/tool availability, delegation policy, or root Agent configuration; verify the addressed values reached the current Host session.
+description: Inspect and edit Tenon's declarative configuration files when the user asks to change preferences such as theme, language, Skill/tool availability, delegation policy, keyboard shortcuts, or root Agent configuration; verify the addressed values reached the current Host session.
 user-invocable: false
 ---
 
@@ -66,8 +66,18 @@ output. Website clearing affects only Tenon's preview partition. Clearing requir
 native confirmation, never private-file deletion. If a tool is absent, report
 unavailability rather than inventing a settings key or command.
 
+Keyboard shortcut changes are edits to `keybindings.jsonc`, never a command,
+tool, or Settings CLI. Read `keybindings.schema.json` for the current command
+IDs. A value is one portable chord, a list of alternate chords, or `false` to
+disable the command; removing the property resets it to its declared default.
+Do not add IDs that the schema does not publish or attempt to remap fixed
+editing, selection, clipboard, undo/redo, printable-input, or IME grammar. A
+saved system-wide launcher chord can fail OS registration; only the matching
+entry in current-Host `status.json` proves which chords remain effective.
+
 1. Read `TENON_CONFIG_DIR` (the directory containing `settings.jsonc`,
-   `settings.schema.json`, and `status.json`) for application/delegation policy.
+   `settings.schema.json`, `keybindings.jsonc`, `keybindings.schema.json`, and
+   `status.json`) for application policy and command bindings.
    For root Profiles, read the user `agent/config.json` or project
    `.tenon/agent.json` source and its owner-provided schema/status. Always read
    the relevant schema, source file, and current Host status before editing.

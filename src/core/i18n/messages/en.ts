@@ -25,6 +25,7 @@ export const en = {
   // Native application + context menus (main process; rebuilt on language change).
   menu: {
     settings: 'Settings…',
+    keyboardShortcuts: 'Keyboard Shortcuts…',
     about: ({ app }: { app: string }) => `About ${app}`,
     hide: ({ app }: { app: string }) => `Hide ${app}`,
     quit: ({ app }: { app: string }) => `Quit ${app}`,
@@ -513,6 +514,7 @@ export const en = {
       services: 'Model services',
       skills: 'Skills',
       agents: 'Agents',
+      shortcuts: 'Keyboard Shortcuts',
       about: 'About',
     },
     general: {
@@ -524,14 +526,9 @@ export const en = {
       themeDark: 'Dark',
       languageLabel: 'Language',
       languageSublabel: 'Choose the display language for menus and the interface.',
-      // The global launcher's registered accelerator, read-only: main registers
-      // the first free candidate, so there is nothing to pick here — only the
-      // fact to surface, including the all-candidates-taken state.
       shortcutsGroup: 'Shortcuts',
-      launcherHotkeyLabel: 'Global launcher',
-      launcherHotkeySublabel: 'Summon the launcher from any app to capture, search, or run a command.',
-      launcherHotkeyUnavailable: ({ app }: { app: string }) =>
-        `Not available — the candidate shortcuts are in use by other apps. Quit the conflicting app and relaunch ${app}.`,
+      keyboardShortcutsLabel: 'Keyboard Shortcuts',
+      keyboardShortcutsSublabel: 'Change application commands and the system-wide launcher.',
       memoryGroup: 'Memory',
       memoryLabel: 'Use Memory',
       memorySublabel: 'Use and update durable Memory stored as editable Nodes in Daily Notes.',
@@ -601,6 +598,37 @@ export const en = {
       diagnosticsExportFailed: 'Could not export diagnostics.',
       diagnosticsRevealedNotice: 'Diagnostics log revealed.',
       diagnosticsExportedNotice: 'Diagnostics exported.',
+    },
+    shortcuts: {
+      search: 'Search shortcuts',
+      openFile: 'Open Keybindings File',
+      resetAll: 'Reset All',
+      systemGroup: 'System-wide',
+      applicationGroup: 'Application',
+      previewGroup: 'Preview',
+      enabled: ({ name }: { name: string }) => `Enable ${name}`,
+      change: ({ shortcut }: { shortcut: string }) => `Change ${shortcut}`,
+      remove: ({ shortcut }: { shortcut: string }) => `Remove ${shortcut}`,
+      add: ({ name }: { name: string }) => `Add an alternate for ${name}`,
+      reset: ({ name }: { name: string }) => `Reset ${name}`,
+      recording: 'Press shortcut…',
+      defaultBadge: 'Default',
+      modifiedBadge: 'Modified',
+      disabledValue: 'Disabled',
+      effectiveRetained: ({ shortcuts }: { shortcuts: string }) => `The requested binding could not be applied. Still active: ${shortcuts}`,
+      sourceRejected: ({ error }: { error: string }) => `The keybindings file is invalid. Tenon kept the previous effective shortcuts. ${error}`,
+      noResults: 'No shortcuts match your search.',
+      saved: 'Shortcut saved.',
+      resetNotice: 'Shortcut reset.',
+      resetAllNotice: 'All shortcuts reset.',
+      openFailed: 'Could not open the keybindings file.',
+      commands: {
+        'global.launcher': { label: 'Global launcher', description: 'Summon the launcher from any application.' },
+        'global.open_page_in_pane': { label: 'Open page in new pane', description: 'Open the current page in a new pane.' },
+        'global.new_thread': { label: 'New Thread', description: 'Create a new Agent Thread.' },
+        'global.go_to_today': { label: 'Go to Today', description: 'Open today’s Daily Note.' },
+        'global.toggle_page_translation': { label: 'Toggle page translation', description: 'Translate or show the original in the active supported preview.' },
+      },
     },
   },
   // Cross-surface shared atoms — declared once so the same word has one key and one

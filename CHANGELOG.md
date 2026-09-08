@@ -12,6 +12,8 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Added
 
+- **Keyboard shortcuts can now be remapped by people and Agents (PR #652)** - the Keyboard Shortcuts editor and configuration Skill share `config/keybindings.jsonc` for five commands, alternate bindings, disable, and reset. Handlers and hints update live; invalid files retain exact text and prior bindings. Native replacement reconciles retained conflicts, compares equivalent accelerator identities, and preserves effective state across restart; fixed selection grammar remains reserved. All four review findings were resolved. The integration tree over #651 passed typecheck, `docs:check`, build, 212 focused unit tests, eight browser flows, and light/dark visual inspection. Electron smoke initially passed eight of nine cases; the editor case lost its inspector execution context before opening and passed an unchanged isolated diagnostic rerun. Full suites were not rerun. Unit F is complete; Unit G remains in the active aggregate plan.
+
 - **Optional Projects now group Chats and supply saved Automation hints (PR #651)** - users can create and edit Projects, create a Chat inside one, reassign complete fork/child lineage, and delete grouping while preserving Chats, files, and running tasks. Root-Agent proposals require native confirmation and exact revision checks. Durable deletion fences share scheduler ordering with live dependencies; claims retain immutable Project name/root/revision snapshots, and missing or redirected roots cannot silently fall back. Project membership never changes Thread execution directories or permissions. Both cancellation review findings were fixed before merge. Gate verification passed typecheck, `docs:check`, focused protocol/persistence/Project/Automation regression suites, seven light/dark Playwright flows with inspected screenshots, and 63 final follow-up tests including the original cancellation reproduction and Runtime recovery. Native dialog cancellation was checked against the installed Electron interface, not exercised interactively. Non-gating GitHub E2E samples were still running at merge. This completes Unit B with #649; its design is folded into the spec and archived.
 
 - **Tool Tasks now discover scoped execution context without blocking admitted work (PR #649)** - bounded repository instructions, check declarations, and Git observations form immutable successor evidence and reach the Thread at a later provider boundary. Foreground output cleanup preserves pending evidence, delivery copies payloads before releasing temporary ownership, deletion drains delayed writes, reuse revalidates source hashes and Git observations, and restart pages every missing successor without replaying business operations. The gate verified all three review fixes on the current-main integration tree with typecheck, `docs:check`, focused Core/renderer suites, and light/dark Trajectory rendering. The complete ToolTask test process still exits 137 on both this tree and unchanged main after the identity-publication teardown fixture; the other 36 tests pass in two successful split invocations. Non-gating GitHub E2E samples were still running at merge. Project catalog and membership lifecycle remain open.
@@ -696,6 +698,20 @@ Entries reference the pull request that introduced them when one exists.
   whitespace checks, and all five GitHub E2E samples plus baseline subtraction.
 
 ### Internal
+
+- **Recovery and session-record plans integrated for execution (PRs #653 and #654)** -
+  separated recoverable startup, unified file-readable session records, and
+  targeted conversation recovery into three complete implementation contracts.
+  The original recovery aggregate is archived as provenance; the board owns
+  selected Host/runtime collision order and preserves independent verification,
+  Git publication, Settings and process-isolation work. Review corrected the
+  no-new-resource-link rule so publication cannot retain historical originals
+  while actual image/PDF reads retain their own replayable observations.
+  Discovery scope remains an explicit product decision before record
+  implementation. This is documentation integration only; no runtime behavior,
+  storage format or userData changed. Integration typecheck, 20 focused existing
+  startup/history tests, docs/diff checks, and all three product-spec structural
+  checks passed; proposed runtime acceptance remains with the implementation PRs.
 
 - **Workbench context publication and cache contract revised (PR #645)** -
   separates immutable task evidence, scoped effective state, and frozen

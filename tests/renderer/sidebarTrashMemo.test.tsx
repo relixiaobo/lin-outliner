@@ -42,7 +42,6 @@ function renderSidebar(initialIndex: DocumentIndex): {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   (window as unknown as { lin: unknown }).lin = {
     initialLanguage: 'en',
-    getLauncherHotkey: async () => null,
   };
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');

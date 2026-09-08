@@ -295,6 +295,14 @@ Final Agent answers link an ordinary persisted `node:UUID` as
 `[[node://UUID]]`, removing the internal prefix.
 ## Settings
 
+The built-in `configuration` Skill guides ordinary file edits for declarative
+preferences and root Agent configuration. It routes credentials, connection
+tests, Skill lifecycle, Memory reset, data deletion, application/update actions,
+and diagnostics to their semantic owners instead of inventing general setters.
+For every file edit it reads the generated schema, preserves unrelated JSONC,
+and verifies the addressed desired/effective state against a status record from
+the current Host session; a completed write alone is not proof of application.
+
 Agent settings control additional directories and disabled Skill identities. The
 delivered public source is `config/settings.jsonc`, with a generated
 `settings.schema.json` and bounded `status.json` beside it. The Host validates
@@ -305,6 +313,15 @@ tool catalogs and to active per-Turn Skill runtimes through a catalog refresh.
 Undo also reloads the restored bytes and appends a catalog delta before the next
 provider request when the content hash changed. Settings never rewrite Thread
 history.
+
+Configurable command bindings use the sibling `config/keybindings.jsonc` source
+and generated `keybindings.schema.json`. The configuration Skill edits that file
+directly for a known chord, alternates, disable, or reset-by-property-removal.
+Physical recording remains a human interaction in the Keyboard Shortcuts page,
+not a prerequisite for an Agent that already knows the chord. The Skill verifies
+the `keybindings` member of `status.json`, including desired/effective divergence
+after a failed global registration. No command, model tool, or CLI edits or
+validates shortcut settings.
 
 The Skills page has an explicit **Review Skills** action that generates a
 read-only curation report from the current loaded registry. The report is bound

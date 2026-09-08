@@ -17,6 +17,10 @@ describe('settings window query routing', () => {
       category: 'general',
       page: 'about',
     });
+    expect(settingsOpenTargetFromSearch('?surface=settings&category=general/shortcuts')).toEqual({
+      category: 'general',
+      page: 'shortcuts',
+    });
   });
 
   test('a page claimed by the wrong category does not route', () => {
@@ -65,6 +69,7 @@ describe('settings window query routing', () => {
   test('builds the path a link carries', () => {
     expect(settingsTargetPath({ category: 'agent' })).toBe('agent');
     expect(settingsTargetPath({ category: 'agent', page: 'skills' })).toBe('agent/skills');
+    expect(settingsTargetPath({ page: 'shortcuts' })).toBe('general/shortcuts');
     // The page names its own category, so a caller cannot mislabel one.
     expect(settingsTargetPath({ category: 'general', page: 'services' })).toBe('agent/services');
   });

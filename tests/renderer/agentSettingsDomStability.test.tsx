@@ -19,6 +19,7 @@ import type {
 } from '../../src/renderer/api/types';
 import type { SettingsOpenTarget } from '../../src/core/settingsWindow';
 import type { AppUpdateView } from '../../src/core/appUpdate';
+import { CONFIGURABLE_SHORTCUTS, effectiveShortcutBindings, type KeybindingsView } from '../../src/core/keybindings';
 
 // Imported dynamically, after the mock above: a static import would hoist above
 // mock.module and pull in the real provider-icon module before it is stubbed.
@@ -118,6 +119,26 @@ const APP_UPDATE_CURRENT: AppUpdateView = {
   lastSuccessfulCheckAt: null,
   availableRelease: null,
   manualError: null,
+};
+
+const KEYBINDINGS_VIEW: KeybindingsView = {
+  source: {
+    path: '/fixtures/config/keybindings.jsonc',
+    schemaPath: '/fixtures/config/keybindings.schema.json',
+    status: 'missing',
+    observedDigest: null,
+    acceptedDigest: null,
+    error: null,
+  },
+  entries: CONFIGURABLE_SHORTCUTS.map((definition) => ({
+    id: definition.id,
+    context: definition.context,
+    desired: null,
+    effective: definition.defaultBindings,
+    defaults: definition.defaultBindings,
+    status: 'default',
+    error: null,
+  })),
 };
 
 /** One skill per non-managed source, so every row shape is frozen. */
@@ -245,6 +266,7 @@ const ROUTES: SettingsOpenTarget[] = [
   { category: 'preview' },
   { page: 'services' },
   { page: 'skills' },
+  { page: 'shortcuts' },
   { page: 'about' },
 ];
 
@@ -329,6 +351,13 @@ async function renderCategory(
   Object.assign(window, {
     lin: {
       initialLanguage: 'en',
+      initialKeybindings: effectiveShortcutBindings({}),
+      keybindings: {
+        get: async () => KEYBINDINGS_VIEW,
+        update: async () => KEYBINDINGS_VIEW,
+        openFile: async () => undefined,
+        onChanged: () => () => undefined,
+      },
       invoke: async (name: string) => {
         if (name === 'agent_managed_skill_list' || name === 'agent_managed_skill_check_updates') {
           return { ok: true, value: managedSkills };

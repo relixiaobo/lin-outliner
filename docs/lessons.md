@@ -2694,3 +2694,27 @@ copied and committed the dependencies, or an explicit fence drains outstanding
 writes before pruning. Verify completed discovery, delayed admission writes,
 delayed successor writes, and deletion during a delayed write; testing only a
 settled collector misses the ownership race.
+
+## Partial application must reconcile the complete effective state
+
+PR #652 initially validated desired shortcuts before native registration, then
+published application bindings alongside a launcher chord retained by rollback.
+Individually valid desired entries could therefore conflict in actual use.
+
+**Recheck cross-entry invariants after applying owners settle, including retained
+values and dependent moves.** Publish and persist the complete effective set,
+report affected entries truthfully, and verify restart plus successful retry.
+Compare external resource ownership by its semantic identity rather than source
+spelling, and make an accepted reset invalidate obsolete recovery state.
+
+## Reading retained evidence can create a separately owned observation
+
+The #654 plan review found that a blanket ban on resource links during history
+reading conflicted with durable replay of image/PDF tool results.
+
+**Separate the source's retention from the observation a new invocation records.**
+Publication, metadata browsing and reference resolution must not adopt historical
+originals into the reader. An actual model-visible image observation follows its
+own Item and Thread retention. Verify source deletion and reader replay after
+restart, plus cleanup of each owner; absence of a source link alone does not prove
+that the newly observed result can still be replayed.

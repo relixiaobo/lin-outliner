@@ -15,6 +15,7 @@ import { installRendererDiagnostics } from './diagnostics';
 import { installInputModalityTracking } from './ui/focus/inputModality';
 import './styles/index.css';
 import './styles/outliner.css';
+import { applyEffectiveShortcutBindings } from './ui/interactions/shortcutRegistry';
 
 installRendererDiagnostics();
 installInputModalityTracking();
@@ -22,6 +23,15 @@ installInputModalityTracking();
 // The same bundle serves the main window and the dedicated settings window; the
 // surface is selected by a ?surface= query param the main process sets.
 const surface = windowSurfaceFromSearch(window.location.search);
+if (surface === 'main') {
+  if (window.lin?.initialKeybindings) applyEffectiveShortcutBindings(window.lin.initialKeybindings);
+  const release = window.lin?.keybindings?.onChanged((view) => {
+    applyEffectiveShortcutBindings(Object.fromEntries(
+      view.entries.map((entry) => [entry.id, entry.effective]),
+    ) as typeof window.lin.initialKeybindings);
+  });
+  if (release) window.addEventListener('beforeunload', release, { once: true });
+}
 
 // Dark/light follows the OS automatically via @media (prefers-color-scheme) in
 // tokens.css / theme-dark.css — no renderer theme bridge needed.

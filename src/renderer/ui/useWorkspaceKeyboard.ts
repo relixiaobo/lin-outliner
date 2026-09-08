@@ -243,7 +243,7 @@ export function useWorkspaceKeyboard({
         return;
       }
       const targetIsEditable = shouldIgnoreSelectionKeyboardTarget(event.target);
-      if (matchesShortcutEvent(event, 'global.open_agent_panel')) {
+      if (matchesShortcutEvent(event, 'global.open_page_in_pane')) {
         event.preventDefault();
         onOpenPanel();
         return;

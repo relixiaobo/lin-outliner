@@ -107,7 +107,7 @@ field row but still appear in the selectable-row order.
 
 | Key | nodex behavior | Tenon effect | Test coverage |
 | --- | --- | --- | --- |
-| Cmd/Ctrl+Shift+D with no row selection | Go to today's daily note. | `global.go_to_today` ensures today's date node and navigates the active panel. With a selection, `selection.duplicate` keeps owning the same chord. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts`, `outliner-selection-keyboard.spec.ts` |
+| Cmd/Ctrl+Shift+D with no row selection (default) | Go to today's daily note. | Configurable `global.go_to_today` ensures today's date node and navigates the active panel. With a selection, fixed `selection.duplicate` keeps owning Cmd/Ctrl+Shift+D. | `keybindings.test.ts`, `configurableShortcuts.test.ts`, `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts`, `outliner-selection-keyboard.spec.ts` |
 | Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z / Cmd/Ctrl+Y | nodex overloads no-editor Cmd/Ctrl+Z for page history. | Lin keeps these as document undo/redo globally and in editors. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts` |
 | Cmd/Ctrl+[ / Cmd/Ctrl+] | Not the nodex binding. | Navigate the active panel back/forward through page history. | `rowInteractions.test.ts` |
 | Alt+ArrowLeft / Alt+ArrowRight | Not the nodex binding. | Navigate the active panel back/forward through page history only outside editable text; inside editors it remains platform word-navigation. | `rowInteractions.test.ts`, `outliner-navigation-title.spec.ts` |
