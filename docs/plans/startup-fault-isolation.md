@@ -132,11 +132,13 @@ issue/action identity with truthful capability availability, and lifecycle entry
 points that retry or fence owners without reopening admission early. Document
 their final contract in current specs; do not publish unused recovery APIs.
 
-Use merged Project/Thread and shortcut/configuration owners. Settings discovery
-claims the shared Host/preload and domain routing surface; consume its final cut
-in the board's selected collision order. Coordinate any actual `ThreadService`,
-Goal, or Tool Task overlap with the verification implementation; its feature is
-not a prerequisite for displaying a recoverable startup failure.
+Use final Project/Thread, Settings/domain-routing and workbench owners. The
+board orders this feature after Settings discovery and the approved workbench
+series. Audit verification admission, uncertain Git publication settlement, and
+interactive-process restart/cancellation against their merged owners when
+establishing readiness and Retry. This selected integration order prevents
+reworking those boundaries as C/D/E land; displaying a recoverable startup error
+does not itself require every workbench capability.
 
 [Unified session records](unified-session-records.md) follows this final startup
 mechanism under the selected A7 order. [Targeted conversation recovery](targeted-thread-recovery.md)

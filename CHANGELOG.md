@@ -699,6 +699,15 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Recovery/records delivery now follows the complete approved workbench series** -
+  corrected the #653/#654 integration order to finish Settings G and workbench
+  C/D/E before startup isolation, unified records, and targeted recovery. The
+  board and execution handoffs now account for Git review/publication evidence
+  and process/isolation ownership as well as verification. The gate ends at the
+  approved A-E scope, including the bounded process experiment; possible later
+  capabilities do not extend it. This docs-only sequencing correction passed
+  `docs:check` and whitespace checks.
+
 - **Recovery and session-record plans integrated for execution (PRs #653 and #654)** -
   separated recoverable startup, unified file-readable session records, and
   targeted conversation recovery into three complete implementation contracts.
