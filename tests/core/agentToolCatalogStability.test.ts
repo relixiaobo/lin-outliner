@@ -51,7 +51,7 @@ describe('canonical provider tool catalog', () => {
   });
 
   test('declares and compiles output-data validation for every catalog tool', () => {
-    expect(MODEL_TOOL_CATALOG).toHaveLength(29);
+    expect(MODEL_TOOL_CATALOG).toHaveLength(33);
     const failures: string[] = [];
     for (const contract of MODEL_TOOL_CATALOG) {
       const name = canonicalModelToolKey(contract.identity);

@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import {
   app,
   BrowserWindow,
@@ -13,6 +15,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { SKILL_REVIEW_PRELOAD_ARG } from '../../core/agent/skillOperations';
 import { join } from 'node:path';
+import bundledChangelog from '../../../CHANGELOG.md?raw';
 import type { EffectStep } from '../../core/actions/bindings';
 import { externalPageLabel } from '../../core/actions/registry';
 import { externalContextSourceKind } from '../../core/actions/objects';
@@ -90,7 +93,12 @@ import {
 } from '../rendererCapabilities';
 import { loadWindowState, trackWindowState } from '../windowState';
 import { windowMaterialKind } from '../../core/windowMaterial';
-import type { ErrorReport } from '../../core/errorObservability';
+import type { DiagnosticEnvironment, DiagnosticsActionResult, ErrorReport } from '../../core/errorObservability';
+import type { ApplicationOperation } from '../hostDomain/applicationOperations';
+import { createApplicationOperations } from '../hostDomain/applicationOperations';
+import { createBundledApplicationReleaseResolver } from '../hostDomain/bundledApplicationRelease';
+import type { DiagnosticLogStore } from '../diagnosticLog';
+import { createDiagnosticsExportHost } from './diagnosticsExportHost';
 
 const MAIN_RENDERER_LOAD_TIMEOUT_MS = 8_000;
 
@@ -108,6 +116,8 @@ export interface WindowApplicationHostOptions {
   readonly searchNodes: (query: string, limit: number) => Promise<SearchHit[]>;
   readonly sanitizeInvocationSeed: (raw: unknown) => InvocationSeed | null;
   readonly reportError: (report: ErrorReport) => void;
+  readonly diagnosticLog: DiagnosticLogStore;
+  readonly diagnosticEnvironment: () => Promise<DiagnosticEnvironment>;
 }
 
 export interface WindowApplicationHost {
@@ -130,8 +140,9 @@ export interface WindowApplicationHost {
     checkInBackground(): Promise<AppUpdateView>;
     setAutomaticChecksEnabled(enabled: boolean): Promise<AppUpdateView>;
     applyAutomaticChecksEnabled(enabled: boolean): Promise<AppUpdateView>;
-    openAvailableUpdate(): ReturnType<AppUpdateService['openAvailableUpdate']>;
+    openAvailableUpdate: AppUpdateService['openAvailableUpdate'];
   };
+  readonly applicationOperations: ApplicationOperation;
   readonly actions: {
     openFromSeed: ActionInvocationService['openFromSeed'];
     queryObjects: ActionInvocationService['queryObjects'];
@@ -749,8 +760,8 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       role: 'help',
       label: t.helpTitle,
       submenu: [
-        { label: t.help({ app: APP_NAME }), click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner') },
-        { label: t.reportIssue, click: () => void shell.openExternal('https://github.com/relixiaobo/lin-outliner/issues') },
+        { label: t.help({ app: APP_NAME }), click: () => void applicationOperations.openDestination('help') },
+        { label: t.reportIssue, click: () => void applicationOperations.openDestination('issues') },
       ],
     });
     return Menu.buildFromTemplate(template);
@@ -780,6 +791,57 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       context: { operation },
       error,
     }),
+  });
+
+  const revealDiagnostics = async (): Promise<DiagnosticsActionResult> => {
+    try {
+      const logPath = await options.diagnosticLog.ensureLogFile();
+      shell.showItemInFolder(logPath);
+      return { ok: true, path: logPath };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  };
+  const applicationOperationWindow = (caller: Parameters<ApplicationOperation['inspect']>[1]) => (
+    caller.origin.kind === 'window'
+      ? BrowserWindow.fromId(caller.origin.windowId)
+      : liveWindow(mainWindow) ?? null
+  );
+  const exportDiagnostics = createDiagnosticsExportHost({
+    available: () => !released,
+    operationWindow: applicationOperationWindow,
+    defaultPath: () => join(
+        app.getPath('desktop'),
+        `tenon-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
+      ),
+    selectPath: (parent, defaultPath) => dialog.showSaveDialog(parent, {
+      defaultPath,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    }),
+    environment: options.diagnosticEnvironment,
+    writeExport: (path, environment) => options.diagnosticLog.writeExport(path, environment),
+  });
+  const applicationInfo = async () => {
+    const environment = await options.diagnosticEnvironment();
+    return {
+      name: APP_NAME,
+      version: environment.appVersion,
+      platform: environment.platform,
+      arch: environment.arch,
+      electron: environment.electron,
+      chrome: environment.chrome,
+      node: environment.node,
+    };
+  };
+  const resolveBundledRelease = createBundledApplicationReleaseResolver(bundledChangelog);
+  const applicationOperations = createApplicationOperations({
+    updates: appUpdateService,
+    appInfo: applicationInfo,
+    bundledRelease: async () => resolveBundledRelease((await applicationInfo()).version),
+    diagnostics: options.diagnosticLog,
+    openExternal: (url) => shell.openExternal(url),
+    revealDiagnostics,
+    exportDiagnostics,
   });
 
   const host: WindowApplicationHost = {
@@ -836,8 +898,9 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         return appUpdateService.applyAutomaticChecksEnabled(enabled);
       },
       applyAutomaticChecksEnabled: (enabled) => appUpdateService.applyAutomaticChecksEnabled(enabled),
-      openAvailableUpdate: () => appUpdateService.openAvailableUpdate(),
+      openAvailableUpdate: (options) => appUpdateService.openAvailableUpdate(options),
     },
+    applicationOperations,
     actions: {
       openFromSeed: (...args) => actionInvocationService.openFromSeed(...args),
       queryObjects: (...args) => actionInvocationService.queryObjects(...args),

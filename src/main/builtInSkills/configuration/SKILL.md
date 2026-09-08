@@ -39,6 +39,21 @@ Memory content remains ordinary Outline data, not management-tool arguments.
 Global disable can interrupt the calling Turn; do not claim application from
 the file-write result alone. No Settings or Configuration CLI exists.
 
+Application and support requests are operations, not file edits. Use
+`application_inspect` for version/build facts, the bundled installed-release
+note, cached remote-update state, and fixed support destinations; use
+`application_manage` for an explicit fresh update check or to open a validated
+release/download or fixed Help, Issues, or License
+destination. Bundled release information is not remote update availability, and
+a failed fresh check does not invalidate a separately returned cached release.
+Inspect the semantic outcome before reporting success. Opening is never
+installation and arbitrary URLs are unavailable.
+Use `diagnostics_inspect` for bounded local counts and `diagnostics_manage` to
+reveal or export redacted diagnostics. Export opens a native save dialog and
+accepts no path; cancellation and failed reveal/export outcomes are not success.
+Never retry a canceled export without a new user request, and never upload or
+post the result.
+
 Translation is preview-local, not a configuration-file preference. Use
 `preview_inspect` for live IDs and revisions, then `preview_manage` for controls
 or clearing saved translations for the selected content. Select an explicit

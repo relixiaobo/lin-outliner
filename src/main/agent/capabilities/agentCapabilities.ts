@@ -164,6 +164,19 @@ export function deriveAgentToolActionDescriptors(input: {
     }
     return result;
   }
+  if (toolName === 'application_inspect' || toolName === 'application_manage'
+    || toolName === 'diagnostics_inspect' || toolName === 'diagnostics_manage') {
+    const readOnly = toolName.endsWith('_inspect');
+    return [simpleDescriptor(
+      toolName,
+      input.args,
+      toolName === 'application_inspect' ? 'agent.application.inspect'
+        : toolName === 'application_manage' ? 'agent.application.manage'
+          : toolName === 'diagnostics_inspect' ? 'agent.diagnostics.inspect' : 'agent.diagnostics.manage',
+      readOnly ? 'Application and diagnostics inspection' : 'Application and diagnostics operation',
+      readOnly ? 'Inspect bounded application or diagnostics state.' : 'Perform a bounded application or diagnostics operation.',
+    )];
+  }
   if (toolName === 'bash') return deriveBashCapability(getStringArg(input.args, 'command'), input.args).descriptors;
   if (toolName === 'skill_inspect' || toolName === 'skill_manage') {
     const request = getUnknownArg(input.args, 'request');

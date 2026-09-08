@@ -1,11 +1,18 @@
 import { expect, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import type { PreviewAction, PreviewActionAck, PreviewObservation, PreviewView, PreviewManageRequest, PreviewControlResult } from '../../src/core/previewOperations';
 import type { LinApi } from '../../src/preload';
 import type { ManagedSkillCatalogEntryView, ManagedSkillView } from '../../src/core/types';
 import type { AppInfo } from '../../src/core/errorObservability';
 import type { AppUpdateView } from '../../src/core/appUpdate';
+import type { BundledApplicationRelease } from '../../src/core/applicationOperations';
+import { createBundledApplicationReleaseResolver } from '../../src/main/hostDomain/bundledApplicationRelease';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
 import { assetUrl } from '../../src/core/assets';
+
+const E2E_BUNDLED_RELEASE = createBundledApplicationReleaseResolver(
+  readFileSync(new URL('../../CHANGELOG.md', import.meta.url), 'utf8'),
+)('0.1.0');
 
 export const ids = {
   workspace: 'workspace',
@@ -156,6 +163,7 @@ type E2EWindow = Window & {
     closeProviderConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
     appInfo?: () => Promise<AppInfo>;
+    bundledApplicationRelease?: () => Promise<BundledApplicationRelease | null>;
     appUpdate?: {
       get: () => Promise<AppUpdateView>;
       check: () => Promise<AppUpdateView>;
@@ -299,7 +307,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
   ]);
   await page.addInitScript({ content: actionBridge });
   await page.addInitScript({ content: viewConfigBridge });
-  await page.addInitScript(({ assetUrlPrefix, ids, options, queryChildLimit }) => {
+  await page.addInitScript(({ assetUrlPrefix, bundledRelease, ids, options, queryChildLimit }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
       | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
@@ -3678,6 +3686,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         chrome: '142.0.0',
         node: '22.0.0',
       }),
+      bundledApplicationRelease: async () => clone(bundledRelease),
       appUpdate: {
         get: async () => clone(appUpdate),
         check: async () => clone(appUpdate),
@@ -6503,6 +6512,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     }
   }, {
     assetUrlPrefix: assetUrl(''),
+    bundledRelease: E2E_BUNDLED_RELEASE,
     ids,
     options,
     queryChildLimit: SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup,

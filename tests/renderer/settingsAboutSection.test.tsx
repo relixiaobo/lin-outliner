@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { SettingsAboutSection } from '../../src/renderer/ui/agent/SettingsAboutSection';
 import type { AppUpdateView } from '../../src/core/appUpdate';
+import { createBundledApplicationReleaseResolver } from '../../src/main/hostDomain/bundledApplicationRelease';
 
 const CHANGELOG_FIXTURE = `# Changelog
 
@@ -93,11 +94,18 @@ async function renderAbout(
   appUpdate: AppUpdateView | null = null,
   onAppUpdateChange: (view: AppUpdateView) => void = () => undefined,
 ): Promise<void> {
+  let version: string | null = null;
+  try {
+    version = (await window.lin?.appInfo?.())?.version ?? null;
+  } catch {
+    // The Host can still resolve its bundled fallback when the identity bridge fails.
+  }
+  const release = createBundledApplicationReleaseResolver(changelog)(version);
   await act(async () => {
     root?.render(
       <SettingsAboutSection
         appUpdate={appUpdate}
-        loadChangelog={async () => changelog}
+        loadRelease={async () => release}
         onAppUpdateChange={onAppUpdateChange}
         onError={() => undefined}
         onNotice={() => undefined}
@@ -386,7 +394,7 @@ describe('SettingsAboutSection', () => {
     await act(async () => {
       root?.render(
         <SettingsAboutSection
-          loadChangelog={async () => CHANGELOG_FIXTURE}
+          loadRelease={async () => createBundledApplicationReleaseResolver(CHANGELOG_FIXTURE)('0.1.0')}
           onError={() => undefined}
           onNotice={() => undefined}
         />,
@@ -413,7 +421,7 @@ describe('SettingsAboutSection', () => {
     await act(async () => {
       root?.render(
         <SettingsAboutSection
-          loadChangelog={async () => CHANGELOG_FIXTURE}
+          loadRelease={async () => createBundledApplicationReleaseResolver(CHANGELOG_FIXTURE)('0.1.0')}
           onError={(message) => errors.push(message)}
           onNotice={() => undefined}
         />,

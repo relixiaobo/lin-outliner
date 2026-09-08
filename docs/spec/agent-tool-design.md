@@ -640,6 +640,33 @@ See [Preview translation](workspace-layout.md) for lifetime, cache-ticket, and U
 ownership. None of these tools writes durable translation preferences or adds a
 Settings/Configuration CLI.
 
+### Application And Diagnostics Operations
+
+`application_inspect`, `application_manage`, `diagnostics_inspect`, and
+`diagnostics_manage` are root-only operations backed by the same Host facade as
+the About and Help surfaces. Application inspection returns bounded version/build
+facts, bundled release information, cached update state, and the fixed
+Help/Issues/License destinations. Bundled release inspection resolves the
+current build's packaged changelog with
+the same current-version/newest-noted fallback used by About, and remains
+separate from remote update state. `check_updates` is explicitly fresh; cached
+availability is never described as a successful check, including when it is
+returned alongside a failed fresh check. Management can open only a validated
+release/download or one of those fixed destinations and cannot install updates
+or accept an arbitrary URL. Domain unavailability, failed opening, and explicit
+check errors produce failed semantic outcomes with stable recovery guidance.
+
+Diagnostics inspection returns aggregate record counts and severity totals only.
+Reveal flushes and shows the Host-owned local log; export always uses a native
+save dialog, returns the redacted artifact outcome, and accepts no model-supplied
+path. After a path is selected, export obtains the diagnostic environment and
+then revalidates the caller signal, current operation authority, originating
+window identity, and Host lifetime immediately before writing. Cancellation is
+a cancellation outcome; reveal/export failures are failed semantic outcomes.
+Neither operation uploads or posts diagnostics. All four tools expose closed,
+bounded, operation-discriminated output data. They do not create a
+Settings/Configuration CLI or expand the aggregate Settings DTO.
+
 ### Skills
 
 `skill` loads one configuration-selected inline Skill by canonical identity.
@@ -812,7 +839,7 @@ permission, cancellation, and tool-execution failures do not increment this guar
 
 ## Result Contract
 
-The 22 tools in `MODEL_TOOL_CATALOG` return a Host-owned semantic result. MCP,
+Every tool in `MODEL_TOOL_CATALOG` returns a Host-owned semantic result. MCP,
 plugin, extension, and other owner-native dynamic tools retain their own result
 content unchanged. The discriminant prevents a Tenon tool from bypassing the
 semantic contract. An owner-native tool that returns the Tenon discriminant is
