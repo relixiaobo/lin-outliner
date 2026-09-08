@@ -330,6 +330,42 @@ relative `cwd` against that default without remembering another call's directory
 Generation-1 discovery and the optional Project catalog are separate features;
 the current execution runtime supplies immutable pending generation 0.
 
+### Optional Project catalog
+
+`ProjectCatalogStore` shares `ThreadMetadataStore`'s SQLite connection. A Project
+owns a UUIDv7 identity, display name, optional canonical directory hint, revision,
+and timestamps. Membership is separate from `Thread`; neither selecting a Project
+nor changing its root alters Thread configuration, permissions, Tool Task addresses,
+or prior context evidence. `project/inspect` reads this catalog and requested user
+root memberships; `project/manage` creates, edits, binds, or deletes through
+`ProjectService`. Exact codecs reject extra fields and relative saved roots.
+
+Plain new Chats are ungrouped. An explicit `thread/start.project` selection checks
+the Project revision and writes membership in the Thread insertion transaction.
+Persistent forks and children inherit membership from canonical parent/fork edges
+in that same database transaction, including hidden execution Threads. Ephemeral
+Threads have no durable catalog membership. An explicit root reassignment traverses
+its complete descendant lineage and checks both Project and membership revisions.
+A missing intermediate membership row never truncates that traversal.
+
+Root-Agent `project_manage` proposals require native Host confirmation displaying
+the canonical directory, operation, Project, affected Chat, and consequences.
+Cancellation or abort closes the pending native confirmation and writes nothing;
+commit revalidates the confirmed revision and directory identity, then checks
+cancellation again before writing. Agents propose durable grouping only for lasting user intent.
+The renderer's explicit Project forms use the same service and confirm deletion.
+
+Deletion persists a fence before checking Automation dependencies. New membership
+and live Project resolution reject fenced Projects; a child born during deletion
+remains ungrouped. `ProjectService` reconciles accepted claims before checking active
+or paused definitions and genuinely pending claims. Refusal clears the fence;
+interruption preserves it for startup recovery before the scheduler wakes. On
+success, one SQLite transaction detaches membership across canonical lineage and
+removes the catalog row. Explicit membership in another Project survives deletion.
+Chats, user files, active Tool Tasks, receipts, historical run snapshots, and managed
+resource owners remain intact. Automation ordering and reactivation are defined in
+[Agent Automations](agent-automations.md#project-deletion-and-reactivation).
+
 Transcript headers and `ThreadTranscriptIndex` retain conversation identity and
 timestamps without a synthetic single Thread cwd. Directory facts are read from
 the owning task receipts; index navigation never supplies execution authority.

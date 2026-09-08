@@ -26,16 +26,24 @@ may validate its current availability when saved but does not freeze the
 validation result as runtime identity. There are at most 32 hints. Zero hints
 means one implicit `default` hint using the documented Host default. An
 existing-Thread destination accepts at most one explicit hint.
-Directory sources are executable now. Project-ID sources remain unavailable until
-the Project catalog supplies its lifecycle owner; they never fall back to the
-Host default or a guessed directory.
+Directory and Project-ID sources are executable. Project sources resolve through
+`ProjectService` under the scheduler lifecycle lock, require a live saved directory,
+and never fall back to the Host default or a guessed directory. Create, edit,
+resume, and reactivation validate that live hint before persistence.
 
 Hint IDs identify scheduling/continuity slots within an Automation. They survive
 reordering and edits to a slot's source or policy, do not encode a directory,
 and are never reused after removal. A removed hint's history retains its saved
 source. Project root-hint edits affect future claim snapshots, not pending
 claims or existing execution contexts. Claim creation captures the effective
-root hint and display values under the Project lifecycle fence.
+root hint and display values under the Project lifecycle fence. A Project-source
+run requires an identity-matching `projectSnapshot` containing the name, canonical
+root, revision, and timestamps. Dispatch and history use this frozen value without
+consulting the catalog; the admitted Automation input includes the frozen Project.
+If that saved path now resolves elsewhere, dispatch fails before Turn admission.
+A root edit changes only later claims. Clearing the optional root freezes that
+unavailable value into new claims; each fails dispatch with a visible error, so
+one invalid hint cannot abort scheduling for unrelated Automations.
 The implicit `default` slot lasts for the definition's lifetime. It is inactive
 while explicit hints exist; returning to zero hints reactivates its cursor from
 edit time without replaying its previously claimed occurrences.
@@ -503,6 +511,11 @@ from a globally capped run page, and opening the drawer loads that Automation's
 own recent run page. Selecting a dispatched run closes the drawer and opens its
 canonical Thread/Turn. There are no local substitutes for ChatGPT cloud
 Suggestions or Automation-level notification settings.
+
+The Automation editor can select a saved Project or enter a standalone directory
+for each context hint. A Project without a directory is disabled. A removed Project
+remains visibly unavailable on a completed definition; editing its source preserves
+the scheduling slot ID. Historical roots are never copied into a reactivation.
 
 ## Replacement Boundary
 

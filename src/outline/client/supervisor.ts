@@ -163,7 +163,7 @@ export class OutlineClientSupervisor {
 
   private async tryConnect(signal?: AbortSignal): Promise<OutlineClient | null> {
     const descriptor = await readOutlineRuntimeDescriptor(this.options.root);
-    if (!descriptor) return null;
+    if (!descriptor || runtimeProcessHasExited(descriptor.pid)) return null;
     this.assertCompatibleDescriptor(descriptor);
     const client = new OutlineClient(descriptor, {
       ...(this.options.origin ? { origin: this.options.origin } : {}),
@@ -183,7 +183,7 @@ export class OutlineClientSupervisor {
 
   private async retireMismatchedRuntime(deadline: number, signal?: AbortSignal): Promise<boolean> {
     const descriptor = await readOutlineRuntimeDescriptor(this.options.root);
-    if (!descriptor) return true;
+    if (!descriptor || runtimeProcessHasExited(descriptor.pid)) return true;
     const expectedDigest = outlineCapabilityContractDigest();
     const expectedDevelopmentSessionId = this.options.expectedDevelopmentSessionId;
     if (descriptor.contractDigest === expectedDigest
@@ -211,6 +211,7 @@ export class OutlineClientSupervisor {
       await this.waitForRuntimeRelease(descriptor, deadline, probe.signal);
       return true;
     } catch (error) {
+      if (!signal?.aborted && runtimeProcessHasExited(descriptor.pid)) return true;
       if (probe.timedOut() && !signal?.aborted) {
         throw runtimeUnavailable('Outline Runtime replacement exceeded the startup timeout.', error);
       }
@@ -395,6 +396,16 @@ function isUnsupportedDevelopmentRetirement(error: unknown): boolean {
 
 function isMissingProcess(error: unknown): boolean {
   return isRecord(error) && error.code === 'ESRCH';
+}
+
+function runtimeProcessHasExited(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    // Only an absent process permits recovery; permission failures do not prove exit.
+    return isMissingProcess(error);
+  }
 }
 
 function sameRuntimeDescriptor(left: RuntimeDescriptor, right: RuntimeDescriptor): boolean {

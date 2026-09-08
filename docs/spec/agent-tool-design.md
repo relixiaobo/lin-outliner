@@ -596,6 +596,24 @@ writes scheduler tables from model code or introduces a permission profile. Sche
 standing authorization are specified in
 [`agent-automations.md`](agent-automations.md).
 
+### Project Organization
+
+`project_inspect` and `project_manage` are root-only Host tools for persistent user
+Chats. Inspection pages the optional catalog (50 Projects per page) and returns the
+current root membership with exact revisions. It is read-only. Management takes a
+closed operation-specific request nested under `request`; it invokes the same
+`ProjectService` as the renderer, after capability authorization, and always asks for
+native Host confirmation on the Agent path. Agents propose persistent grouping only
+when the user expresses lasting organizational intent. Cancellation ends the proposal
+until a new user request. Results contain the saved Project and affected Thread count.
+
+Project metadata grants no filesystem access and never supplies an implicit task cwd.
+Bindings require both the Project and root-membership revision; root edits and deletion
+require the Project revision. Stale approval fails instead of overwriting another
+change. Deletion preserves Chats, files, and running tasks and refuses live Automation
+dependencies. The persistence and recovery contract lives in
+[Agent Core](agent-core.md#optional-project-catalog).
+
 ### Delegation And Tool Tasks
 
 Delegation is a built-in Skill plus packaged CLI, not a model tool. When the

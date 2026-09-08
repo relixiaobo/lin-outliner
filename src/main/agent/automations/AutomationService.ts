@@ -32,6 +32,8 @@ type AutomationListener = (notification: AutomationNotification) => void | Promi
 const execFileAsync = promisify(execFile);
 
 export interface AutomationServiceOptions {
+  readonly resolveProjectHint?: (id: string) => import('../../../core/agent/project').Project;
+  readonly beforeSchedulerStart?: () => Promise<void>;
   readonly store: AutomationStore;
   readonly scheduler: AutomationScheduler;
   readonly dispatcher: AutomationDispatcher;
@@ -52,6 +54,7 @@ export class AutomationService {
     if (this.started) return;
     this.started = true;
     try {
+      await this.options.beforeSchedulerStart?.();
       await this.options.scheduler.start();
     } catch (error) {
       this.started = false;
@@ -157,8 +160,8 @@ export class AutomationService {
   async create(raw: AutomationCreateInput): Promise<Automation> {
     const input = decodeAutomationCreateInput(raw);
     const normalized = { ...input, schedule: normalizeAutomationSchedule(input.schedule) };
-    const validated = await this.validateDefinition(normalized);
     return this.options.scheduler.runExclusive(async () => {
+      const validated = await this.validateDefinition(normalized);
       const automation = this.options.store.create(validated, this.now());
       await this.automationChanged(automation);
       this.wake();
@@ -168,33 +171,33 @@ export class AutomationService {
 
   async update(raw: AutomationUpdateInput): Promise<Automation> {
     const input = decodeAutomationUpdateInput(raw);
-    const current = this.options.store.read(input.id, this.now());
-    if (!current) {
-      throw new AgentToolFailure(
-        'automation_not_found',
-        `Automation not found: ${input.id}`,
-        'View the current Automations, then retry with an existing automation_id.',
-      );
-    }
-    const normalized = {
-      ...input,
-      ...(input.schedule ? { schedule: normalizeAutomationSchedule(input.schedule) } : {}),
-    };
-    const validated = await this.validateDefinition({
-      name: normalized.name ?? current.name,
-      prompt: normalized.prompt ?? current.prompt,
-      schedule: normalized.schedule ?? current.schedule,
-      destination: normalized.destination ?? current.destination,
-      contextHints: normalized.contextHints ?? current.contextHints,
-      configuration: normalized.configuration
-        ? { ...current.configuration, ...normalized.configuration }
-        : current.configuration,
-      status: current.status === 'paused' ? 'paused' : 'active',
-    });
-    const canonicalUpdate = normalized.contextHints
-      ? { ...normalized, contextHints: validated.contextHints }
-      : normalized;
     return this.options.scheduler.runExclusive(async () => {
+      const current = this.options.store.read(input.id, this.now());
+      if (!current) {
+        throw new AgentToolFailure(
+          'automation_not_found',
+          `Automation not found: ${input.id}`,
+          'View the current Automations, then retry with an existing automation_id.',
+        );
+      }
+      const normalized = {
+        ...input,
+        ...(input.schedule ? { schedule: normalizeAutomationSchedule(input.schedule) } : {}),
+      };
+      const validated = await this.validateDefinition({
+        name: normalized.name ?? current.name,
+        prompt: normalized.prompt ?? current.prompt,
+        schedule: normalized.schedule ?? current.schedule,
+        destination: normalized.destination ?? current.destination,
+        contextHints: normalized.contextHints ?? current.contextHints,
+        configuration: normalized.configuration
+          ? { ...current.configuration, ...normalized.configuration }
+          : current.configuration,
+        status: current.status === 'paused' ? 'paused' : 'active',
+      });
+      const canonicalUpdate = normalized.contextHints
+        ? { ...normalized, contextHints: validated.contextHints }
+        : normalized;
       await this.options.dispatcher.recoverPendingRuns(input.id);
       const pending = this.options.store.pendingRuns(input.id);
       const automation = this.options.store.update(canonicalUpdate, this.now());
@@ -219,6 +222,12 @@ export class AutomationService {
     expectedRevision: number | undefined,
   ): Promise<Automation> {
     return this.options.scheduler.runExclusive(async () => {
+      if (status === 'active') {
+        const current = this.options.store.read(id, this.now());
+        if (!current) throw new Error('Automation no longer exists');
+        if (current.status === 'completed') return this.options.store.setStatus(id, status, expectedRevision, this.now());
+        await this.validateDefinition({ ...current, status: 'active' });
+      }
       if (status === 'paused') await this.options.dispatcher.recoverPendingRuns(id);
       const pending = status === 'paused' ? this.options.store.pendingRuns(id) : [];
       const automation = this.options.store.setStatus(id, status, expectedRevision, this.now());
@@ -255,7 +264,7 @@ export class AutomationService {
 
   private async validateDefinition(input: AutomationCreateInput): Promise<AutomationCreateInput> {
     const bindings = input.contextHints ?? [];
-    await Promise.all(bindings.map(validateContextHint));
+    await Promise.all(bindings.map((binding) => validateContextHint(binding, this.options.resolveProjectHint)));
     const configuration: AutomationConfiguration = {
       ...EMPTY_AUTOMATION_CONFIGURATION,
       ...input.configuration,
@@ -286,9 +295,14 @@ export class AutomationService {
   }
 }
 
-async function validateContextHint(binding: AutomationContextHintInput): Promise<string> {
-  const rootHint = automationDirectoryHint(binding);
+async function validateContextHint(binding: AutomationContextHintInput,
+  resolveProject?: AutomationServiceOptions['resolveProjectHint'],
+): Promise<string> {
+  const rootHint = binding.source.kind === 'project'
+    ? resolveProject?.(binding.source.projectId).rootHint : automationDirectoryHint(binding);
+  if (!rootHint) throw new Error('Automation Project hint is unavailable or has no saved directory');
   const cwd = await realpath(rootHint);
+  if (binding.source.kind === 'project' && cwd !== rootHint) throw new Error('Saved Project directory was redirected; edit its root hint before scheduling');
   const value = await stat(cwd);
   if (!value.isDirectory()) throw new Error(`Automation hint is not a directory: ${rootHint}`);
   if (binding.executionMode === 'worktree') {

@@ -327,11 +327,12 @@ export class ThreadStore {
     this.patch({ threads: sortThreads(upsertById(this.snapshot.threads, response.thread)) });
   }
 
-  async createThread(input: { name?: string } = {}): Promise<Thread> {
+  async createThread(input: { name?: string; project?: { projectId: string; expectedRevision: number } } = {}): Promise<Thread> {
     const response = await this.client.agentCoreRequest('thread/start', {
       source: 'app',
       threadSource: 'user',
       ...(input.name ? { name: input.name } : {}),
+      ...(input.project ? { project: input.project } : {}),
     });
     this.patch({ threads: sortThreads(upsertById(this.snapshot.threads, response.thread)) });
     await this.selectThread(response.thread.id);

@@ -845,6 +845,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       historyMode: 'paginated';
     };
     const mockThreads: MockThread[] = [];
+    type MockProject = { id: string; name: string; rootHint: string | null; revision: number; createdAt: number; updatedAt: number };
+    const mockProjects = new Map<string, MockProject>();
+    const mockMemberships = new Map<string, { threadId: string; projectId: string | null; revision: number }>();
       const mockTurns = new Map<string, MockTurn[]>();
       const mockGoals = new Map<string, unknown>();
       const mockToolTasks = new Map<string, Record<string, unknown>>();
@@ -975,6 +978,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         status: { type: 'idle' },
         historyMode: 'paginated',
       };
+      const selection = input.project as { projectId: string; expectedRevision: number } | undefined;
+      const inherited = forkedFromId ? mockMemberships.get(forkedFromId)?.projectId : null;
+      if (selection) {
+        const project = mockProjects.get(selection.projectId);
+        if (!project || project.revision !== selection.expectedRevision) throw new Error('Project changed');
+      }
+      const projectId = selection?.projectId ?? inherited;
+      if (projectId) mockMemberships.set(thread.id, { threadId: thread.id, projectId, revision: 1 });
       mockThreads.push(thread);
       mockTurns.set(thread.id, []);
       mockThreadConfigurations.set(thread.id, {
@@ -3916,6 +3927,36 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
       agentCoreRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd: method, args: clone(input) });
+        if (method === 'project/inspect') return clone({ projects: [...mockProjects.values()],
+          memberships: ((input.threadIds ?? []) as string[]).map((threadId) => mockMemberships.get(threadId)
+            ?? { threadId, projectId: null, revision: 0 }) }) as T;
+        if (method === 'project/manage') {
+          const operation = String(input.operation);
+          const id = operation === 'create' ? nextCanonicalId() : String(input.projectId);
+          let project = mockProjects.get(id) ?? null;
+          if (operation !== 'create' && input.projectId !== null
+            && (!project || project.revision !== input.expectedRevision)) throw new Error('Project changed');
+          const affectedThreadIds: string[] = [];
+          if (operation === 'create' || operation === 'update') {
+            project = { id, name: String(input.name), rootHint: input.rootHint as string | null,
+              revision: (project?.revision ?? 0) + 1, createdAt: project?.createdAt ?? now, updatedAt: ++now };
+            mockProjects.set(id, project);
+          } else if (operation === 'bind') {
+            const threadId = String(input.threadId);
+            const revision = mockMemberships.get(threadId)?.revision ?? 0;
+            if (revision !== input.expectedMembershipRevision) throw new Error('Membership changed');
+            mockMemberships.set(threadId, { threadId, projectId: input.projectId as string | null, revision: revision + 1 });
+            affectedThreadIds.push(threadId);
+          } else if (operation === 'delete') {
+            for (const [threadId, membership] of mockMemberships) if (membership.projectId === id) {
+              mockMemberships.set(threadId, { ...membership, projectId: null, revision: membership.revision + 1 });
+              affectedThreadIds.push(threadId);
+            }
+            mockProjects.delete(id);
+            project = null;
+          }
+          return clone({ outcome: 'applied', project, affectedThreadIds }) as T;
+        }
         if (method === 'thread/list') {
           // Root conversations only, like the real catalog: a child Thread is
           // reached from its parent, never from the history list.

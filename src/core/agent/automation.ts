@@ -1,6 +1,7 @@
 import { REASONING_EFFORTS, type ReasoningEffort } from './configuration';
 import type { ThreadId, TurnId } from './protocol';
 import { decodeThreadContextPayloadReference } from './codec';
+import { decodeProject, type Project } from './project';
 
 export const AUTOMATION_DESTINATIONS = ['standalone', 'existingThread'] as const;
 export type AutomationDestinationKind = typeof AUTOMATION_DESTINATIONS[number];
@@ -43,7 +44,7 @@ export interface AutomationContextHint {
 export type AutomationContextHintInput = Omit<AutomationContextHint, 'contextHintId'> & { readonly contextHintId?: string };
 
 export function automationDirectoryHint(hint: AutomationContextHint | AutomationContextHintInput): string {
-  if (hint.source.kind !== 'directory') throw new Error('Project catalog hints are not available until Project catalog support is installed.');
+  if (hint.source.kind !== 'directory') throw new Error('Project hints require a captured Project snapshot; they have no inline directory.');
   return hint.source.rootHint;
 }
 
@@ -69,6 +70,8 @@ export interface Automation {
 }
 
 export interface AutomationRunConfigurationSnapshot {
+  /** Present exactly for a Project-source claim; captured before it is persisted. */
+  readonly projectSnapshot?: Project;
   readonly automationName: string;
   readonly prompt: string;
   readonly schedule: AutomationSchedule;
@@ -668,14 +671,19 @@ function decodeContextHintInputs(value: unknown, path: string): readonly Automat
 function decodeRunSnapshot(value: unknown, path: string): AutomationRunConfigurationSnapshot {
   const record = objectValue(value, path);
   exactKeys(record, [
-    'automationName', 'prompt', 'schedule', 'destination', 'contextHint', 'configuration',
+    'automationName', 'prompt', 'schedule', 'destination', 'contextHint', 'configuration', 'projectSnapshot',
   ], path);
   const destination = decodeAutomationDestination(record.destination, `${path}.destination`);
   const contextHint = record.contextHint === null
     ? null
     : decodeContextHints([record.contextHint], `${path}.contextHint`)[0]!;
   assertDestinationBindings(destination, contextHint ? [contextHint] : [], path);
+  const projectSnapshot = record.projectSnapshot === undefined ? undefined : decodeProject(record.projectSnapshot);
+  if (contextHint?.source.kind === 'project') {
+    if (!projectSnapshot || projectSnapshot.id !== contextHint.source.projectId) throw new Error('Project claim requires its exact saved context snapshot');
+  } else if (projectSnapshot) throw new Error('Directory claims cannot carry a Project snapshot');
   return Object.freeze({
+    ...(projectSnapshot ? { projectSnapshot } : {}),
     automationName: boundedString(record.automationName, `${path}.automationName`, AUTOMATION_NAME_MAX_LENGTH),
     prompt: boundedString(record.prompt, `${path}.prompt`, AUTOMATION_PROMPT_MAX_LENGTH),
     schedule: decodeAutomationSchedule(record.schedule, `${path}.schedule`),

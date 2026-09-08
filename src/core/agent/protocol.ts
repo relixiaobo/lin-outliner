@@ -1518,6 +1518,7 @@ export interface ThreadReadResponse {
 }
 
 export interface ThreadStartRequest {
+  readonly project?: { readonly projectId: string; readonly expectedRevision: number };
   readonly id?: ThreadId;
   readonly name?: string;
   readonly ephemeral?: boolean;
@@ -2250,6 +2251,8 @@ export interface AgentIdentityCatalogResponse {
 }
 
 export const AGENT_CORE_METHODS = [
+  'project/inspect',
+  'project/manage',
   'thread/list',
   'thread/references/search',
   'thread/references/resolve',
@@ -2295,6 +2298,8 @@ export const AGENT_CORE_METHODS = [
 export type AgentCoreMethod = typeof AGENT_CORE_METHODS[number];
 
 export interface AgentCoreRequestByMethod {
+  readonly 'project/inspect': import('./project').ProjectInspectRequest;
+  readonly 'project/manage': import('./project').ProjectManageRequest;
   readonly 'thread/list': ThreadListRequest;
   readonly 'thread/references/search': ThreadReferenceSearchRequest;
   readonly 'thread/references/resolve': ThreadReferenceResolveRequest;
@@ -2338,6 +2343,8 @@ export interface AgentCoreRequestByMethod {
 }
 
 export interface AgentCoreResponseByMethod {
+  readonly 'project/inspect': import('./project').ProjectCatalogView;
+  readonly 'project/manage': import('./project').ProjectManageResult;
   readonly 'thread/list': ThreadListResponse;
   readonly 'thread/references/search': ThreadReferenceSearchResponse;
   readonly 'thread/references/resolve': ThreadReferenceResolveResponse;

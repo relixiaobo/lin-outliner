@@ -1602,6 +1602,8 @@ describe('Codex Agent Core protocol codec', () => {
       updatedAt: 100,
     } as const;
     const requests: Record<string, unknown> = {
+      'project/inspect': { threadIds: [THREAD_ID] },
+      'project/manage': { operation: 'create', name: 'Example', rootHint: null },
       'thread/list': {},
       'thread/references/search': { currentThreadId: THREAD_ID, query: 'presentation', limit: 8 },
       'thread/references/resolve': { currentThreadId: THREAD_ID, threadIds: [CHILD_THREAD_ID] },
@@ -1681,6 +1683,9 @@ describe('Codex Agent Core protocol codec', () => {
       'identities/get': { threadId: null },
     };
     const responses: Record<string, unknown> = {
+      'project/inspect': { projects: [], memberships: [{ threadId: THREAD_ID, projectId: null, revision: 0 }] },
+      'project/manage': { outcome: 'applied', project: { id: THREAD_ID, name: 'Example', rootHint: null,
+        revision: 1, createdAt: 1, updatedAt: 1 }, affectedThreadIds: [] },
       'thread/list': { data: [thread], nextCursor: null },
       'thread/references/search': {
         data: [{

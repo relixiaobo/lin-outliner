@@ -156,6 +156,8 @@ export const MODEL_TOOL_ACTION_KINDS = [
   'agent.goal.create',
   'agent.goal.update',
   'agent.automation.manage',
+  'agent.project.inspect',
+  'agent.project.manage',
   'agent.skill.invoke',
   'agent.skill.inspect',
   'agent.skill.manage',
@@ -177,6 +179,7 @@ export const MODEL_TOOL_ACTION_KINDS = [
 export type ModelToolActionKind = typeof MODEL_TOOL_ACTION_KINDS[number];
 
 const READ_ONLY_ACTION_KINDS = new Set<ModelToolActionKind>([
+  'agent.project.inspect',
   'preview.inspect',
   'preview.data.inspect',
   'agent.memory.inspect',
@@ -572,6 +575,25 @@ const threadReadSchema = objectSchema({
   }, ['citation_key', 'representation']), 10),
 }, ['thread_id']);
 
+const projectIdentitySchema = boundedStringSchema(36);
+const projectRevisionSchema: JsonSchema = { type: 'integer', minimum: 1 };
+const projectDataSchema = objectSchema({ id: projectIdentitySchema, name: boundedStringSchema(200),
+  rootHint: nullableSchema(boundedStringSchema(4096)), revision: projectRevisionSchema,
+  createdAt: { type: 'integer', minimum: 0 }, updatedAt: { type: 'integer', minimum: 0 },
+}, ['id', 'name', 'rootHint', 'revision', 'createdAt', 'updatedAt']);
+const projectMembershipSchema = objectSchema({ threadId: projectIdentitySchema,
+  projectId: nullableSchema(projectIdentitySchema), revision: { type: 'integer', minimum: 0 },
+}, ['threadId', 'projectId', 'revision']);
+const projectManageToolSchema = objectSchema({ request: { anyOf: [
+  objectSchema({ operation: { const: 'create' }, name: boundedStringSchema(200), rootHint: nullableSchema(boundedStringSchema(4096)) }, ['operation', 'name', 'rootHint']),
+  objectSchema({ operation: { const: 'update' }, projectId: projectIdentitySchema, expectedRevision: projectRevisionSchema,
+    name: boundedStringSchema(200), rootHint: nullableSchema(boundedStringSchema(4096)) }, ['operation', 'projectId', 'expectedRevision', 'name', 'rootHint']),
+  objectSchema({ operation: { const: 'bind' }, threadId: projectIdentitySchema, projectId: nullableSchema(projectIdentitySchema),
+    expectedRevision: nullableSchema(projectRevisionSchema), expectedMembershipRevision: { type: 'integer', minimum: 0 } },
+  ['operation', 'threadId', 'projectId', 'expectedRevision', 'expectedMembershipRevision']),
+  objectSchema({ operation: { const: 'delete' }, projectId: projectIdentitySchema, expectedRevision: projectRevisionSchema }, ['operation', 'projectId', 'expectedRevision']),
+] } }, ['request']);
+
 const automationScheduleSchema = objectSchema({
   rrule: boundedStringSchema(AUTOMATION_RRULE_MAX_LENGTH, 'RFC 5545 DTSTART and RRULE lines.'),
   timezone: boundedStringSchema(AUTOMATION_TIMEZONE_MAX_LENGTH, 'IANA timezone identifier.'),
@@ -880,6 +902,26 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
     scope: 'rootThread', schemaOwner: 'core', inputSchema: APPLICATION_INSPECT_SCHEMA,
     outputSchema: APPLICATION_INSPECT_OUTPUT_SCHEMA,
     actionKinds: ['agent.application.inspect'],
+  },
+  {
+    identity: { namespace: null, name: 'project_inspect' },
+    description: 'Inspect optional saved Projects and the current Chat membership, including exact revisions and canonical directory hints. A Project groups Chats and saves an optional hint. Never treat that hint as an implicit task cwd or permission boundary. Use the offset to page the catalog.',
+    scope: 'rootThread', schemaOwner: 'core',
+    inputSchema: objectSchema({ offset: { type: 'integer', minimum: 0 } }),
+    outputSchema: objectSchema({ projects: boundedArraySchema(projectDataSchema, 50),
+      memberships: boundedArraySchema(projectMembershipSchema, 1), totalProjects: { type: 'integer', minimum: 0 },
+      nextOffset: nullableSchema({ type: 'integer', minimum: 0 }),
+    }, ['projects', 'memberships', 'totalProjects', 'nextOffset']),
+    actionKinds: ['agent.project.inspect'],
+  },
+  {
+    identity: { namespace: null, name: 'project_manage' },
+    description: 'Propose creating, editing, binding, or deleting optional Project metadata through native Host confirmation. Propose a durable Project only after the user expresses lasting organizational intent. Inspect exact revisions first. Deletion detaches grouping, preserves Chats/files/tasks, and is blocked by live Automation dependencies. Cancellation is final until the user requests another proposal.',
+    scope: 'rootThread', schemaOwner: 'core', inputSchema: projectManageToolSchema,
+    outputSchema: objectSchema({ outcome: { const: 'applied' }, project: nullableSchema(projectDataSchema),
+      affectedThreadCount: { type: 'integer', minimum: 0 },
+    }, ['outcome', 'project', 'affectedThreadCount']),
+    actionKinds: ['agent.project.manage'],
   },
   {
     identity: { namespace: null, name: 'application_manage' },

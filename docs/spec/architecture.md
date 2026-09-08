@@ -696,6 +696,13 @@ an atomic private retirement claim makes simultaneous desktop and CLI starts
 converge on one signaler and one writer; a claim whose owner died is recovered.
 Unowned, unverifiable, or live-status drift remains `protocol_incompatible`;
 inspection through `status` and `--no-start` never retires or starts a process.
+If the descriptor's process has exited, its old contract or development session
+does not block startup: the client starts a replacement and the Runtime recovers
+the stale writer lock and socket while preserving the workspace. This also
+applies when the old process exits during replacement. Only a definite missing
+process permits this recovery; permission failures and live owners retain the
+identity and ownership checks. Inspection reports an exited Runtime as stopped
+without deleting its descriptor or lock.
 The Runtime contract digest covers both the public capability manifest and a
 private desktop-route version. Changing a desktop-only route therefore forces
 authenticated replacement of an older Runtime even when the public CLI schema

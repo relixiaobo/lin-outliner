@@ -1282,6 +1282,19 @@ export const en = {
 
   // Canonical Thread, Turn, and Item surfaces.
   agent: {
+    projects: {
+      title: 'Projects', new: 'New Project', edit: 'Edit Project', name: 'Name', root: 'Directory hint (optional)',
+      empty: 'No Projects yet.', none: 'No Project', directory: 'Directory', unavailable: 'Unavailable Project',
+      save: 'Save', cancel: 'Cancel', close: 'Close', remove: 'Delete Project', move: 'Move to Project',
+      newChat: 'New Chat in Project', back: 'Back', loading: 'Loading Projects…',
+      rootHelp: 'A saved directory is a hint for future Automation runs. Running tasks keep their current directory and permissions.',
+      membershipHelp: 'Group this Chat and its forks and child conversations in a Project.',
+      deleteHelp: 'Remove this Project and its Chat grouping. Chats, files, and running tasks are kept. Automations that still reference it must be updated first.',
+      reviewTitle: 'Review Project change',
+      reviewDetail: ({ operation, name, root, thread }: { operation: string; name: string; root: string; thread: string }) =>
+        `${operation}: ${name}\nDirectory hint: ${root}\nChat: ${thread}\n\nGrouping changes include the Chat's forks and child conversations. Saved directory changes apply to future Automation runs. Existing tasks keep their directories and permissions. Files and Chats are kept, and running tasks continue.`,
+      operations: { create: 'Create Project', update: 'Edit Project', bind: 'Change Chat grouping', delete: 'Delete Project' },
+    },
     automations: {
       title: 'Automations',
       open: 'Open Automations',

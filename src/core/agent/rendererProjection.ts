@@ -127,6 +127,8 @@ export function projectAgentCoreResponse<Method extends AgentCoreMethod>(
     case 'goal/update':
     case 'userInput/respond':
     case 'identities/get':
+    case 'project/inspect':
+    case 'project/manage':
       return response as unknown as RendererAgentCoreResponseByMethod[Method];
     default:
       return assertNever(method);

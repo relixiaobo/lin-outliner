@@ -23,6 +23,9 @@ import { Input } from '../../ui/primitives/Input';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { ResizeHandle } from '../../ui/primitives/ResizeHandle';
 import { ThreadList } from './ThreadList';
+import type { Project } from '../../../core/agent/project';
+import { invalidateProjectCatalog, useProjectCatalog } from '../projects/useProjectCatalog';
+import '../../styles/projects.css';
 import { ThreadDetailsDialog } from './ThreadDetailsDialog';
 import { MAIN_IDENTITY_KEY } from '../agentIdentity';
 import { ThreadView } from './ThreadView';
@@ -37,6 +40,7 @@ const AutomationsView = lazy(async () => {
   const module = await import('../automations/AutomationsView');
   return { default: module.AutomationsView };
 });
+const ProjectDialog = lazy(async () => ({ default: (await import('../projects/ProjectDialog')).ProjectDialog }));
 
 export type ThreadRailState = 'collapsed' | 'open';
 
@@ -67,6 +71,7 @@ export const ThreadDock = memo(function ThreadDock({
   const open = railState === 'open';
   const snapshot = useThreadStore(open);
   const [listOpen, setListOpen] = useState(false);
+  const [projectTarget, setProjectTarget] = useState<Thread | 'catalog' | null>(null);
   const [surface, setSurface] = useState<'thread' | 'automations'>('thread');
   /**
    * The pushed Agent detail stack, root-most first. Empty is the conversation
@@ -104,6 +109,9 @@ export const ThreadDock = memo(function ThreadDock({
     () => snapshot.threads.filter((candidate) => candidate.parentThreadId === null),
     [snapshot.threads],
   );
+  const projects = useProjectCatalog(rootThreads.filter((candidate) => !candidate.ephemeral && candidate.threadSource === 'user').map((candidate) => candidate.id));
+  const selectedProjectId = projects.view.memberships.find((entry) => entry.threadId === thread?.id)?.projectId;
+  const selectedProject = projects.view.projects.find((project) => project.id === selectedProjectId);
   /**
    * "This conversation has background work running" — either the unselected
    * root itself is active, or one of its descendants is. The selected root's
@@ -237,13 +245,15 @@ export const ThreadDock = memo(function ThreadDock({
 
   const createThread = useCallback(async (
     focusMode: 'automatic' | 'explicit' = 'explicit',
+    project?: Project,
   ) => {
     if (creatingRef.current || providerBlocksCreation) return false;
     const focusAtStart = document.activeElement;
     creatingRef.current = true;
     setCreating(true);
     try {
-      await threadStore.createThread();
+      await threadStore.createThread(project ? { project: { projectId: project.id, expectedRevision: project.revision } } : {});
+      invalidateProjectCatalog();
       const restoreComposerFocus = shouldRestoreComposerAfterThreadCreation(
         focusMode,
         focusAtStart,
@@ -259,6 +269,7 @@ export const ThreadDock = memo(function ThreadDock({
       }
       return true;
     } catch (error) {
+      if (project) throw error;
       reportActionError(errorMessage(error));
       return false;
     } finally {
@@ -429,6 +440,9 @@ export const ThreadDock = memo(function ThreadDock({
           <div className="thread-dock-body">
             <div className="thread-dock-conversation">
             <ThreadView
+              projectControl={selectedProject ? <Button className="thread-project-control" size="sm" variant="ghost"
+                disabled={projects.loading || !!projects.error} title={selectedProject.rootHint ?? undefined}
+                onClick={() => setProjectTarget(thread)}>{selectedProject.name}</Button> : null}
               active={open}
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
               composerFocusExpectedActiveElement={composerFocusRequest.expectedActiveElement}
@@ -492,6 +506,10 @@ export const ThreadDock = memo(function ThreadDock({
         ) : null}
         {surface === 'thread' && listOpen ? (
           <ThreadList
+            projects={projects.view.projects}
+            memberships={projects.view.memberships}
+            onManageProjects={() => { setListOpen(false); setProjectTarget('catalog'); }}
+            onAssignProject={setProjectTarget}
             anchorRef={threadListAnchorRef}
             createDisabled={creating || providerBlocksCreation}
             createTitle={providerBlocksCreation
@@ -518,6 +536,13 @@ export const ThreadDock = memo(function ThreadDock({
           />
         ) : null}
       </div>
+      {projectTarget ? <Suspense fallback={null}><ProjectDialog
+        view={projects.view} unavailable={projects.loading || !!projects.error}
+        catalogError={projects.error} createDisabled={creating || providerBlocksCreation}
+        createTitle={providerBlocksCreation ? t.agent.thread.providerRequired : t.agent.thread.new}
+        thread={projectTarget === 'catalog' ? null : projectTarget}
+        onClose={() => setProjectTarget(null)} onNewChat={(project) => createThread('explicit', project)}
+      /></Suspense> : null}
       {renameTarget ? (
         <Dialog
           backdropClassName="confirm-dialog-backdrop"

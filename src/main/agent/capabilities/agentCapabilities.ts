@@ -177,6 +177,11 @@ export function deriveAgentToolActionDescriptors(input: {
       readOnly ? 'Inspect bounded application or diagnostics state.' : 'Perform a bounded application or diagnostics operation.',
     )];
   }
+  if (toolName === 'project_inspect' || toolName === 'project_manage') {
+    return [simpleDescriptor(toolName, input.args,
+      toolName === 'project_inspect' ? 'agent.project.inspect' : 'agent.project.manage',
+      'Project organization', 'Inspect or change optional Project metadata and Chat grouping.')];
+  }
   if (toolName === 'bash') return deriveBashCapability(getStringArg(input.args, 'command'), input.args).descriptors;
   if (toolName === 'skill_inspect' || toolName === 'skill_manage') {
     const request = getUnknownArg(input.args, 'request');

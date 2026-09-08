@@ -20,6 +20,7 @@ import { Input } from '../../ui/primitives/Input';
 import { SelectControl } from '../../ui/primitives/SelectControl';
 import { Textarea } from '../../ui/primitives/Textarea';
 import { AutomationScheduleEditor } from './AutomationScheduleEditor';
+import { useProjectCatalog } from '../projects/useProjectCatalog';
 import {
   automationScheduleRrule,
   createAutomationScheduleDraft,
@@ -29,6 +30,7 @@ import {
 
 type ProjectMode = 'none' | 'local' | 'worktree';
 type ContextHintDraft = {
+  readonly projectId?: string;
   readonly id: string;
   readonly contextHintId?: string;
   readonly cwd: string;
@@ -50,6 +52,8 @@ interface AutomationEditorProps {
 
 export function AutomationEditor(props: AutomationEditorProps) {
   const t = useT().agent.automations;
+  const projectLabels = useT().agent.projects;
+  const projects = useProjectCatalog();
   const automationKey = props.automation?.id ?? 'create';
   const initial = useMemo(() => editorState(props.automation), [automationKey]);
   const [state, setState] = useState(initial);
@@ -117,7 +121,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
         : { kind: 'existingThread' as const, threadId: required(state.threadId, t.fieldRequired({ field: t.thread })) };
       const contextHints = state.contextHints.map((binding) => toAutomationContextHintInput(
         binding,
-        required(binding.cwd, t.fieldRequired({ field: t.cwd })),
+        binding.projectId ? '' : required(binding.cwd, t.fieldRequired({ field: t.cwd })),
       ));
       const definition: AutomationCreateInput = {
         name: state.name.trim(),
@@ -301,6 +305,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
 
           {state.contextHints.length > 0 ? (
             <div className="automation-project-details">
+              {projects.error ? <p className="automation-error" role="alert">{projects.error}</p> : null}
               {state.contextHints.map((binding, index) => (
                 <div className={`automation-project-binding${index === 0 ? ' is-primary' : ''}`} key={binding.id || index}>
                   {index > 0 ? (
@@ -321,7 +326,19 @@ export function AutomationEditor(props: AutomationEditorProps) {
                       <option value="worktree">{t.projects.worktree}</option>
                     </SelectControl>
                   ) : null}
-                  <Field label={t.projectPath({ index: index + 1 })}>
+                  <Field label={projectLabels.title}>
+                    <SelectControl label={projectLabels.title} value={binding.projectId ?? ''}
+                      disabled={props.busy || projects.loading || !!projects.error} variant="boxed"
+                      onChange={(event) => setState({ ...state, contextHints: replaceBinding(state.contextHints, index, {
+                        ...binding, projectId: event.target.value || undefined,
+                      }) })}>
+                      <option value="">{projectLabels.directory}</option>
+                      {binding.projectId && !projects.view.projects.some((project) => project.id === binding.projectId)
+                        ? <option value={binding.projectId}>{projectLabels.unavailable}</option> : null}
+                      {projects.view.projects.map((project) => <option key={project.id} value={project.id} disabled={!project.rootHint}>{project.name}</option>)}
+                    </SelectControl>
+                  </Field>
+                  {binding.projectId ? <p className="project-path">{projects.view.projects.find((project) => project.id === binding.projectId)?.rootHint ?? projectLabels.unavailable}</p> : <Field label={t.projectPath({ index: index + 1 })}>
                     <Input
                       disabled={props.busy}
                       label={t.projectPath({ index: index + 1 })}
@@ -334,7 +351,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
                       })}
                       value={binding.cwd}
                     />
-                  </Field>
+                  </Field>}
                   {index > 0 ? (
                     <IconButton
                       disabled={props.busy}
@@ -451,6 +468,7 @@ function editorState(automation: Automation | null): EditorState {
     contextHints: automation?.contextHints.map((binding) => ({
       id: binding.contextHintId, contextHintId: binding.contextHintId,
       cwd: binding.source.kind === 'directory' ? binding.source.rootHint : '',
+      ...(binding.source.kind === 'project' ? { projectId: binding.source.projectId } : {}),
       executionMode: binding.executionMode,
     })) ?? [],
     modelProvider: automation?.configuration.modelProvider ?? '',
@@ -473,12 +491,12 @@ function replaceBinding(
 
 /** Convert editor state to the closed Core contract; UI row ids never cross this boundary. */
 export function toAutomationContextHintInput(
-  binding: Pick<ContextHintDraft, 'id' | 'contextHintId' | 'executionMode'>,
+  binding: Pick<ContextHintDraft, 'id' | 'contextHintId' | 'executionMode' | 'projectId'>,
   rootHint: string,
 ): AutomationContextHintInput {
   return {
     ...(binding.contextHintId ? { contextHintId: binding.contextHintId } : {}),
-    source: { kind: 'directory', rootHint },
+    source: binding.projectId ? { kind: 'project', projectId: binding.projectId } : { kind: 'directory', rootHint },
     executionMode: binding.executionMode,
   };
 }
