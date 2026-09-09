@@ -16,6 +16,11 @@ test('the owned credential sheet previews a real saved key without disclosing it
   writeFileSync(join(userDataDir, 'agent-secrets.json'), JSON.stringify({
     credentials: { anthropic: { type: 'api_key', key } },
   }), { mode: 0o600 });
+  writeFileSync(join(userDataDir, 'agent-model-state.json'), JSON.stringify({
+    providers: [{ providerId: 'anthropic', connectionCheck: {
+      outcome: 'ok', at: Date.now() - 300_000, message: 'Connection successful. 12 model(s) available.',
+    } }],
+  }));
   const smoke = await launchSmokeApp({ userDataDir });
   try {
     const settings = await openConfiguration(smoke, 'models');

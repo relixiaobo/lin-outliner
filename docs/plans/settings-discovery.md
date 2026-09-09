@@ -160,8 +160,10 @@ strip or a separate content frame; accessibility fallbacks stay opaque.
 Keep the provider modal focused on authentication and endpoint configuration.
 Remove capability tables and duplicate status/actions; label every field. Standard
 endpoints belong under Advanced, while custom/local endpoints stay visible and
-custom providers require a unique ID and an HTTP(S) URL. Test Connection is optional, has local
-feedback, and never saves the draft. Save preserves failed input, blocks duplicate
+custom providers require a unique ID and an HTTP(S) URL. Test Connection is optional,
+keeps its button, result and secondary check age in a compact row without extra
+panel chrome, and never saves the draft. Full errors wrap when necessary; success
+uses a short localized label. Save preserves failed input, blocks duplicate
 writes/closing while committing, and keeps the existing background probe.
 Dual-auth providers support switching both ways without losing the key draft;
 OAuth account maintenance belongs with connected status. The native child grows

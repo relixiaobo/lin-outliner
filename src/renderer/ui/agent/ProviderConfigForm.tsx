@@ -73,6 +73,12 @@ export function ProviderConfigForm({
   const dirty = !hasExisting || Boolean(draft.apiKey.trim()) || endpoint !== initialBaseUrl.trim();
   const canSave = complete && dirty && !saving && !keyLoading;
   const displayedResult = result ?? (!dirty && activity === 'idle' ? previousCheck : null);
+  const resultMessage = displayedResult ? <>
+    <span>{displayedResult.success ? t.providerConfig.connectionSuccessful : displayedResult.message}</span>
+    {displayedResult === previousCheck && previousCheck ? <span className="settings-sheet-test-time">
+      {' · '}{previousCheck.checkedAt}
+    </span> : null}
+  </> : null;
 
   useEffect(() => {
     if (autoFocus) firstFieldRef.current?.focus();
@@ -182,16 +188,13 @@ export function ProviderConfigForm({
           </details>
         ) : null}
         <section className="settings-sheet-test" aria-label={t.providerConfig.validate}>
-          <div className="settings-sheet-test-action">
-            <Button onClick={() => void testConnection()} disabled={!complete || saving || testing || keyLoading}>
-              {testing ? <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} /> : null}
-              {testing ? t.providerConfig.validating : t.providerConfig.validate}
-            </Button>
-          </div>
+          <Button onClick={() => void testConnection()} disabled={!complete || saving || testing || keyLoading}>
+            {testing ? <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} /> : null}
+            {testing ? t.providerConfig.validating : t.providerConfig.validate}
+          </Button>
           {displayedResult ? displayedResult.success
-            ? <p className="settings-sheet-test-success" role="status">{displayedResult.message}</p>
-            : <ErrorState message={displayedResult.message} size="inline" /> : null}
-          {displayedResult === previousCheck && previousCheck ? <p className="settings-sheet-help">{previousCheck.checkedAt}</p> : null}
+            ? <p className="settings-sheet-test-result settings-sheet-test-success" role="status" title={displayedResult.message}>{resultMessage}</p>
+            : <ErrorState className="settings-sheet-test-result" message={resultMessage} size="inline" /> : null}
         </section>
       </div>
       <div className="settings-sheet-actions">

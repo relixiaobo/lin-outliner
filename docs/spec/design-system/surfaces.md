@@ -627,8 +627,12 @@ to a truthful Saved key placeholder without blocking editing. Externally managed
 environment and OAuth credentials never enter this display/read path. No Agent
 tool is involved.
 
-Test Connection is optional and has adjacent pending/result feedback; it does not
-save draft inputs. Editing the draft invalidates a pending or completed result.
+Test Connection is an optional compact action row without a separator or panel
+padding. Pending state stays in the button; the result and secondary check age
+share the space beside it. Success uses a short localized label, with the full
+response in its tooltip. Errors remain complete and wrap as needed, including at
+larger text sizes. Testing does not save draft inputs. Editing the draft
+invalidates a pending or completed result.
 Copy feedback stays with the key, and save failures stay next to the footer while
 preserving input. Return submits a valid changed draft. Save disables editing and
 Cancel/Escape until the write completes and rejects duplicate submissions. Save

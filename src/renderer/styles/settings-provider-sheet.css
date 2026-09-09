@@ -125,14 +125,21 @@
 .settings-sheet-note p { margin: 0; color: var(--text-soft); font-size: var(--font-ui-sm); line-height: var(--line-ui-sm); }
 .settings-sheet-test {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  border-top: 1px solid var(--separator);
-  padding-top: var(--space-6);
+  align-items: center;
+  gap: var(--space-5);
 }
-.settings-sheet-test-action { display: flex; align-items: center; gap: var(--space-5); }
-.settings-sheet-test-action .button { flex: 0 0 auto; }
-.settings-sheet-test-success { margin: 0; color: var(--status-success); font-size: var(--font-meta); line-height: var(--line-meta); }
+.settings-sheet-test > .button { flex: 0 0 auto; }
+.settings-sheet-test-result {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  overflow-wrap: anywhere;
+}
+.settings-sheet-test-result.feedback-state-inline { padding: 0; justify-content: flex-start; text-align: start; }
+.settings-sheet-test-success { color: var(--status-success); }
+.settings-sheet-test-time { color: var(--text-secondary); }
 .settings-sheet-spinner { flex: 0 0 auto; }
 .settings-sheet-actions {
   display: flex;
