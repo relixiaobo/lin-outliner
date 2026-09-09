@@ -295,6 +295,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **tool-output-boundaries** (`done`, #661, 2026-09-09) - partial reads and oversized search, web, image, and task results now satisfy the shared output contract while preserving continuation, artifacts, and terminal state; current behavior is recorded in the tool specification.
 - **settings-discovery / Settings complete** (`done`, #656, 2026-09-09) - unified Settings, file-based Agent configuration, safe credential previews and draft-preserving conflict retry complete Units A-G; [discovery](plans/archive/settings-discovery.md) and the [aggregate](plans/archive/settings-control-plane.md) are archived.
 - **workbench-tool-boundaries** (`done`, #660, 2026-09-09) - UI Projects and native Git/test Skills replace private workbench tools and directory claims while preserving generic Task ownership/isolation; [plan archived](plans/archive/workbench-tool-boundaries.md).
 - **remove-file-delete-tool** (`done`, #659, 2026-09-09) - local deletion now uses Bash command semantics without automatic Agent trash; existing policy/isolation and canonical deletion history remain, and the [plan is archived](plans/archive/remove-file-delete-tool.md).
