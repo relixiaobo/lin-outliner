@@ -16,7 +16,6 @@ import { ICON_SIZE, SearchIcon } from '../icons';
 import { Button } from '../primitives/Button';
 import { Input } from '../primitives/Input';
 import { AnchoredActionMenu } from '../primitives/AnchoredActionMenu';
-import { SettingsRowMenu } from './SettingsRowMenu';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 
 interface ShortcutManagerProps {
@@ -158,22 +157,17 @@ export function ShortcutManager({ active = true, toolbarTarget, onError, onNotic
     entry.context === context && filteredIds.has(entry.id)
   )));
 
-  // The pane owns filtering and actions while the shell owns placement.
-  const toolbar = active ? <div className="settings-shortcuts-toolbar">
-    <div className="settings-shortcuts-search" role="search" aria-label={labels.search}>
-      <SearchIcon size={ICON_SIZE.menu} aria-hidden />
-      <Input
-        label={labels.search}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder={labels.search}
-        type="search"
-        value={query}
-        variant="bare"
-      />
-    </div>
-    <SettingsRowMenu ariaLabel={labels.options} menuLabel={labels.options} open={menu === 'options'}
-      onOpenChange={(open) => setMenu(open ? 'options' : null)}
-      actions={[{ label: labels.openFile, onSelect: () => void openFile() }]} />
+  // The pane owns filtering while the shell owns placement.
+  const toolbar = active ? <div className="settings-shortcuts-search settings-toolbar-control" role="search" aria-label={labels.search}>
+    <SearchIcon size={ICON_SIZE.menu} aria-hidden />
+    <Input
+      label={labels.search}
+      onChange={(event) => setQuery(event.target.value)}
+      placeholder={labels.search}
+      type="search"
+      value={query}
+      variant="bare"
+    />
   </div> : null;
 
   return (
@@ -181,9 +175,10 @@ export function ShortcutManager({ active = true, toolbarTarget, onError, onNotic
       {toolbarTarget === undefined ? toolbar : toolbarTarget && createPortal(toolbar, toolbarTarget)}
 
       {rejected ? (
-        <p className="settings-shortcuts-source-error" role="alert">
-          {labels.sourceRejected({ error: view?.source.error ?? '' })}
-        </p>
+        <div className="settings-shortcuts-source-error" role="alert">
+          <p>{labels.sourceRejected({ error: view?.source.error ?? '' })}</p>
+          <Button size="sm" variant="secondary" onClick={() => void openFile()}>{labels.openFile}</Button>
+        </div>
       ) : null}
 
       {!view ? <InsetGroup><InsetRow empty label={t.settings.loading} /></InsetGroup> : null}

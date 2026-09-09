@@ -207,29 +207,27 @@ describe('Shortcut Manager', () => {
     expect(rendered.document.querySelector('[aria-label="Change Control+P"]')).not.toBeNull();
   });
 
-  test('opens the public source even when structured editing is unavailable', async () => {
-    const rendered = await renderManager(view('rejected'));
-    await clickMenu(rendered, 'Shortcut options', 'Open Keybindings File');
-    expect(rendered.opened()).toBe(1);
+  test('keeps file access out of ordinary shortcut controls', async () => {
+    const rendered = await renderManager(view());
+    expect(rendered.document.querySelector('[aria-label="Shortcut options"]')).toBeNull();
+    expect(rendered.document.body.textContent).not.toContain('Open Keybindings File');
   });
 
   test('rejected source remains openable but disables structured edits', async () => {
     const rendered = await renderManager(view('rejected'));
     expect(rendered.document.body.textContent).toContain('keybindings file is invalid');
     expect(rendered.document.querySelector<HTMLButtonElement>('[aria-label="Change CommandOrControl+Shift+Space"]')?.disabled).toBe(true);
-    await clickMenu(rendered, 'Shortcut options', 'Open Keybindings File');
+    const open = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Open Keybindings File')!;
+    await act(async () => open.click());
     expect(rendered.opened()).toBe(1);
   });
 });
 
 async function clickMenu(rendered: Rendered, label: string, action: string): Promise<void> {
-  if (label === 'Shortcut options') {
-    await act(async () => rendered.document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click());
-  } else {
-    const row = [...rendered.document.querySelectorAll<HTMLElement>('.settings-shortcut-row')]
-      .find((row) => `${row.querySelector('.settings-shortcut-label')?.textContent} actions` === label)!;
-    await act(async () => row.dispatchEvent(new rendered.window.Event('contextmenu', { bubbles: true, cancelable: true })));
-  }
+  const row = [...rendered.document.querySelectorAll<HTMLElement>('.settings-shortcut-row')]
+    .find((row) => `${row.querySelector('.settings-shortcut-label')?.textContent} actions` === label)!;
+  await act(async () => row.dispatchEvent(new rendered.window.Event('contextmenu', { bubbles: true, cancelable: true })));
   const item = [...rendered.document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent === action);
   if (!item) throw new Error(`Missing action: ${action}`);
   await act(async () => item.click());

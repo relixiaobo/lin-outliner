@@ -165,7 +165,7 @@ export function SettingsWindow() {
       </aside>
       <div className="settings-column">
         <header className="configuration-toolbar">
-          <div className="settings-history">
+          <div className="settings-history settings-toolbar-control">
             <IconButton icon={ChevronLeftIcon} iconSize={ICON_SIZE.large} label={t.settings.navigation.back} variant="chrome"
               disabled={!searching && navigation.index === 0} onClick={() => traverse(-1)} />
             <span className="settings-history-separator" aria-hidden="true" />

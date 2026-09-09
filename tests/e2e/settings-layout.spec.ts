@@ -28,6 +28,14 @@ for (const locale of ['en', 'zh-Hans'] as const) {
         expect(content!.width).toBeCloseTo(toolbar!.width);
         await expect(page.locator('.settings-rail').getByRole('searchbox', { name: copy.search })).toBeVisible();
         await expect(page.locator('.configuration-toolbar').getByRole('searchbox')).toHaveCount(destination === 'shortcuts' ? 1 : 0);
+        if (destination === 'shortcuts') {
+          const controls = await page.locator('.settings-history, .settings-shortcuts-search').evaluateAll((elements) => elements.map((element) => {
+            const style = getComputedStyle(element);
+            return { height: element.getBoundingClientRect().height, radius: style.borderRadius, fill: style.backgroundColor, shadow: style.boxShadow };
+          }));
+          expect(controls).toHaveLength(2);
+          expect(controls[1]).toEqual(controls[0]);
+        }
         await expect(page.locator('.configuration-toolbar')).toHaveCSS('box-shadow', 'none');
         await expect(page.locator('.configuration-toolbar')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
         const overflow = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(

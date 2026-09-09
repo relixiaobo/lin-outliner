@@ -31,9 +31,12 @@ navigation is presentation, not a security or service boundary.
 The window uses a floating left rail beside an opaque right canvas. Search sits
 below the rail's native traffic-light spacer. An unboxed toolbar above the right
 content viewport holds a compact Back/Forward group and the page title. A pane's
-local search and options belong at the trailing edge of this toolbar; Keyboard
+local search belongs at the trailing edge of this toolbar; Keyboard
 Shortcuts retains its own filter state while inactive and removes its toolbar
-controls during other categories or global search. Narrow windows and larger text
+controls during other categories or global search. Search and the Back/Forward
+group share one height, capsule background, and hairline outline. Configuration
+files belong in Advanced; a rejected shortcut source exposes a direct repair
+action beside its error instead of a permanent toolbar menu. Narrow windows and larger text
 can wrap trailing controls within the toolbar without squeezing the title. Only the
 rail has material and elevation; the toolbar has no full-width capsule, border,
 or shadow. Shared gaps and concentric corners retain Tenon's container grammar.

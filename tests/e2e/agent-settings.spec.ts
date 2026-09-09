@@ -43,9 +43,9 @@ test.describe('configuration panes', () => {
     await expect(localSearch).toBeVisible();
     await expect(settings.getByRole('tabpanel', { name: 'Keyboard Shortcuts', exact: true }).getByRole('searchbox')).toHaveCount(0);
     await expect(settings.locator('.settings-toolbar-actions')).toHaveCSS('-webkit-app-region', 'no-drag');
+    await expect(toolbar.getByRole('button', { name: 'Shortcut options' })).toHaveCount(0);
+    await expect(settings.getByRole('button', { name: 'Open Keybindings File' })).toHaveCount(0);
     await localSearch.fill('translation');
-    await toolbar.locator('.settings-row-menu-trigger').click();
-    await expect(page.getByRole('menuitem', { name: 'Open Keybindings File' })).toBeVisible();
     await settings.getByRole('tab', { name: 'General', exact: true }).click();
     await expect(toolbar.getByRole('searchbox')).toHaveCount(0);
     await expect(toolbar.locator('.settings-row-menu-trigger')).toHaveCount(0);

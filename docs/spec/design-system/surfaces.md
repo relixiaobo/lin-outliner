@@ -439,8 +439,10 @@ clearing visible before the native confirmation. Translation controls remain
 contextual in previews; Data owns global translation-cache and website-data cleanup.
 
 **Keyboard Shortcuts.** The searchable pane owns the public keybindings source.
-Its compact Search shortcuts field and options menu occupy the trailing edge of
-the page toolbar, leaving the content scroller to start with the list. Global
+Its compact Search shortcuts field occupies the trailing edge of
+the page toolbar, leaving the content scroller to start with the list. Search and
+the Back/Forward group share their height, pill radius, neutral fill, and inset
+hairline; their height accommodates larger text. Global
 Search Settings remains in the sidebar. The local filter stays owned by the pane
 and survives navigation; its toolbar controls disappear in other categories and
 global search results. At narrow widths or larger text the controls wrap within
@@ -451,9 +453,10 @@ right-aligned key combinations, without checkboxes or per-row action buttons. ID
 appear in ordinary rows; IDs and descriptions remain searchable, and descriptions
 are accessible help.
 Alternate/removal/per-command reset actions live in a contextual menu opened by
-right-click or Shift+F10/Context Menu on a key field. Open File lives
-in the toolbar options menu; Restore Defaults sits below the list at the leading
-edge. Error repair remains available even when the source is rejected.
+right-click or Shift+F10/Context Menu on a key field. Open File lives in Advanced's
+Configuration Files group; the shortcuts toolbar has no permanent overflow menu.
+A rejected source shows a direct Open Keybindings File action beside its error.
+Restore Defaults sits below the list at the leading edge.
 
 Key combinations have no resting button bezel. Double-clicking starts recording
 in fixed field dimensions; keyboard and assistive activation use Return or Space.

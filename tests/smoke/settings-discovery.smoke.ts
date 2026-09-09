@@ -149,6 +149,10 @@ test('all Settings destinations reuse one native window with bounded admission a
           await page.screenshot({ path: testInfo.outputPath(`shortcuts-${colorScheme}.png`), animations: 'disabled' });
         }
       }
+      if (destination === 'diagnostics') {
+        const source = page.locator('.settings-source-list').getByRole('listitem').filter({ hasText: 'keybindings.jsonc' });
+        await expect(source.getByRole('button', { name: 'Open File…' })).toBeVisible();
+      }
     }
   } finally { await closeSmokeApp(smoke); }
 });

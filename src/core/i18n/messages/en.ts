@@ -733,7 +733,6 @@ export const en = {
       diagnosticsExportedNotice: 'Diagnostics exported.',
     },
     shortcuts: {
-      options: 'Shortcut options',
       actions: ({ name }: { name: string }) => `${name} actions`,
       editHint: 'Double-click a shortcut, then press the new keys. Press Delete to clear or Esc to cancel.',
 

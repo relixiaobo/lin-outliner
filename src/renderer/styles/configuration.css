@@ -90,16 +90,16 @@
 .settings-window .configuration-toolbar h1 { min-width: 0; flex-basis: max-content; font-size: var(--font-content); overflow-wrap: anywhere; }
 .settings-toolbar-actions { -webkit-app-region: no-drag; min-width: 0; max-width: 100%; flex: 0 1 calc(var(--font-ui-sm) * 17); margin-inline-start: auto; }
 .settings-toolbar-actions:empty { display: none; }
-.settings-history {
+.settings-toolbar-control {
   -webkit-app-region: no-drag;
   display: flex;
-  flex-shrink: 0;
   align-items: center;
-  padding: var(--space-2);
+  min-height: calc(max(var(--control-size-xl), var(--line-ui-sm)) + var(--space-2) * 2);
   border-radius: var(--radius-pill);
   background: var(--fill-1);
   box-shadow: var(--inset-hairline);
 }
+.settings-history { flex-shrink: 0; padding: var(--space-2); }
 .settings-history .icon-button { display: flex; align-items: center; justify-content: center; width: var(--control-size-xl); height: var(--control-size-xl); border-radius: var(--radius-pill); color: var(--text-secondary); }
 .settings-history .icon-button:hover:not(:disabled), .settings-history .icon-button:active:not(:disabled) { color: var(--text-primary); }
 .settings-history .icon-button:disabled { color: var(--text-quaternary); }

@@ -693,7 +693,6 @@ export const zhHans: PartialMessages = {
       diagnosticsExportedNotice: '已导出诊断。',
     },
     shortcuts: {
-      options: '快捷键选项',
       actions: ({ name }: { name: string }) => `${name}操作`,
       editHint: '双击快捷键，然后按下新的组合键。按 Delete 清除，按 Esc 取消。',
 

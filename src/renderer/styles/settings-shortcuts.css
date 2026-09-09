@@ -1,20 +1,14 @@
-.settings-shortcuts-toolbar { display: flex; min-width: 0; align-items: center; gap: var(--space-4); }
 .settings-shortcuts-search {
-  display: flex;
   min-width: 0;
-  min-height: var(--control-size-xl);
-  flex: 1;
-  align-items: center;
   gap: var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--fill-1);
   color: var(--text-tertiary);
-  padding: 0 var(--space-3);
+  padding: var(--space-2) var(--space-4);
 }
-.settings-shortcuts-search .input-control { min-width: 0; flex: 1; }
-.settings-shortcuts-search:has(input:focus-visible) { box-shadow: var(--focus-ring-shadow); }
+.settings-shortcuts-search .input-control { min-width: 0; flex: 1; padding-inline: 0; }
+.settings-shortcuts-search:has(input:focus-visible) { box-shadow: var(--focus-ring-shadow), var(--inset-hairline); }
 :root[data-input-modality="keyboard"] .settings-shortcuts-search input:focus-visible { box-shadow: none; }
-.settings-shortcuts-source-error { margin: 0; color: var(--status-danger); font-size: var(--font-meta); line-height: var(--line-meta); }
+.settings-shortcuts-source-error { display: grid; justify-items: start; gap: var(--space-4); color: var(--status-danger); font-size: var(--font-meta); line-height: var(--line-meta); }
+.settings-shortcuts-source-error p { margin: 0; }
 .settings-shortcuts-table { overflow: hidden; border-radius: var(--radius-lg); background: var(--fill-1); }
 .settings-shortcuts-instruction { margin: 0; padding: var(--space-5); font-size: var(--font-meta); line-height: var(--line-meta); color: var(--text-secondary); }
 .settings-shortcuts-table .inset-group { gap: 0; }
