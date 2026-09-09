@@ -725,6 +725,19 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Scheduled-work redesign integrated (PR #668)** - the design defines one
+  complete task/results workspace and scheduling CLI/Skill feature, with separate
+  timing, execution and attention, idempotent admission, exact run/Task control,
+  and original-run ownership for delayed delivery. The board orders implementation
+  after unified records over the shipped startup contracts; Memory/profile work
+  remains eligible under actual shared-interface collision checks. Recovery must
+  cover whichever assignment/run references land first. Local catch-up and the
+  task/work-location choices remain explicit OQ-1/OQ-2 decisions before
+  implementation. Integration over #664 passed typecheck, `docs:check`, whitespace
+  checks and 71 existing Automation/delegated-admission tests (324 assertions).
+  Runtime behavior is unchanged; the new UI/CLI and continuation flows require
+  implementation acceptance tests.
+
 - **Global Memory and Agent profile design integrated (PR #665)** - approved
   independently complete Node-retention quality and profile-file/direct-learning
   units. Current personal context has one `USER.md` authority; explicit identity

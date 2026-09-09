@@ -625,9 +625,9 @@ and file scopes before implementation.
 | Background lifetime and observations, #663; [tool design](../spec/agent-tool-design.md) | Implemented | BR-6/7 consume live observations and terminal receipts separately. Cross-Thread inspection uses validated run/Task ownership; late delivery continuations require shared foreground admission. Result rendering must not terminate surviving background work. |
 | Bounded output and source evidence, #661; [resources](../spec/agent-core.md) | Implemented | Display partial/oversized results honestly; use existing complete-output and resource references, not copied previews as evidence. |
 | HTTP web search, #662 | Implemented | Research tasks use configured common search tools; scheduling does not require browser state or add a private fetch pipeline. |
-| File-first Settings and Skills, #636/#638/#640/#641/#643/#644/#656 | Implemented | Task configuration consumes accepted configuration; global edits remain UI/file/Skill owned. The open #666 model-picker fix is a separate renderer lane. |
+| File-first Settings and Skills, #636/#638/#640/#641/#643/#644/#656 | Implemented | Task configuration consumes accepted configuration; global edits remain UI/file/Skill owned. The #666 model-picker fix is also integrated and introduces no new scheduling prerequisite. |
 | Outline CLI/Skill, #584/#606; delegation CLI/Skill, #628/#637 | Implemented | DEC-6 follows packaged CLI discovery, literal Bash stdin, bounded receipts, and Host admission. Reuse their transport/admission approach without repurposing document or delegation operations. |
-| [Startup fault isolation](startup-fault-isolation.md), #664 | Implementation claim open | Consume final scoped readiness, issue actions, admission fencing, and retry ownership before changing Automation lifecycle/Host wiring. |
+| [Startup fault isolation](../spec/architecture.md#desktop-host-lifecycle), #664 | Implemented | Consume the current scoped readiness, issue actions, admission fencing, and retry ownership, including [Agent startup availability](../spec/agent-thread-rendering.md#startup-availability), when changing Automation lifecycle/Host wiring. |
 | [Unified session records](unified-session-records.md), #654 | Design integrated; runtime absent | Build result process navigation, history access, continuity, and handoff on its final exact-source/publication contract. Do not add another transcript tree or new history model tools. Its OQ-1 discovery membership still requires its own decision. |
 | [Memory/profile](memory-agent-profile.md), #665 | Design integrated; runtime absent | Global preferences, identity, style, and learning remain with that owner. Task briefs contain work-specific instructions. Consume accepted configuration without a direct USER.md reader or task-local learned profile. |
 | [Targeted conversation recovery](targeted-thread-recovery.md) | Design only | Preserve definition/run fences and shared references. Coordinate final new assignment and run references with its recovery closure; no separate repair action or cleanup interpretation. |
@@ -652,10 +652,11 @@ Current intended behavior is folded into `docs/spec/agent-automations.md` and
 the affected tool, Skill, workspace, and rendering specs in the implementing PR.
 The main agent owns board and changelog changes.
 
-**Collision result:** The document-only scope is this file. At the recorded
-baseline, open #664 and #666 do not touch it. Product implementation overlaps
-#664 on Host/lifecycle and the unified-record/recovery plans on source and
-navigation ownership. Land against final startup and unified-record mechanisms.
+**Collision result:** The document-only scope is this file. The integrated
+#664 and #666 changes do not claim it. Product implementation consumes #664's
+current Host/lifecycle contracts and overlaps the unified-record/recovery plans
+on source and navigation ownership. Land against final startup and unified-record
+mechanisms.
 CLI admission also shares Host/Bash capability wiring with the delivered
 delegation path; perform a fresh file-scope check and coordinate its shared
 contract before implementation. No currently open PR claims this plan file.

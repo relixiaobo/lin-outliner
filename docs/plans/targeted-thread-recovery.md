@@ -45,6 +45,14 @@ explicit forgetting, correction and rollback retain their distinct invalidation
 semantics. Optional views, temporal enhancements and narrower Node Reset are
 outside this predecessor boundary.
 
+Coordinate with [scheduled-work redesign](scheduled-work-redesign.md) through
+the existing Automation, Turn and Tool Task owners. Whichever feature lands
+later must cover the earlier feature's final assignment/run associations,
+durable request identities, pending delivery continuations and retained-resource
+references. Removal must not strand a continuation or allow a stale request to
+become a new execution after its association is removed. This is a shared-owner
+handoff, not an unconditional ordering edge; the board selects live collisions.
+
 CON-2: Source resolution and completeness validation are distinct. A retained
 value being readable does not prove a complete reconstructable history. A
 reconstructed projection remains usable with its recovery provenance, but does

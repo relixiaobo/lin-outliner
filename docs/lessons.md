@@ -2891,3 +2891,15 @@ each retried owner reconcile the current source before reporting recovery.**
 Exercise the interval around an issue: preserve drafts, deliver background changes,
 apply edits made while observation was unavailable, and verify the effective
 owner state rather than accepting a ready badge as evidence.
+
+## Delayed delivery retains its logical execution owner
+
+PR #668's design lets background Tasks outlive a delivered result while later
+scheduled runs proceed. A per-Thread idle check alone cannot enforce one
+foreground execution per scheduled task when those runs use different Threads.
+
+**Keep the original run association and acquire the logical task's admission
+slot for every continuation.** Pending work stays with the existing delivery
+owner and its canonical batch identity. Verify a late completion while a newer
+run is active, including cancellation and archive, without assigning old output
+to the latest run or creating a second delivery queue.
