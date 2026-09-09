@@ -46,12 +46,17 @@ export function ShortcutManager({ active = true, toolbarTarget }: ShortcutManage
 
   useEffect(() => {
     let active = true;
-    void window.lin?.keybindings?.get()
-      .then((next) => { if (active) { setView(next); setReadError(null); } })
-      .catch((error: unknown) => { if (active) setReadError(errorText(error)); });
+    let receivedChange = false;
     const unsubscribe = window.lin?.keybindings?.onChanged((next) => {
-      if (active) { setView(next); setReadError(null); }
+      if (!active) return;
+      receivedChange = true;
+      setView(next);
+      setReadError(null);
     });
+    // A live change supersedes both the initial snapshot and its possible error.
+    void window.lin?.keybindings?.get()
+      .then((next) => { if (active && !receivedChange) { setView(next); setReadError(null); } })
+      .catch((error: unknown) => { if (active && !receivedChange) setReadError(errorText(error)); });
     return () => {
       active = false;
       unsubscribe?.();

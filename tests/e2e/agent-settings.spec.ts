@@ -37,6 +37,36 @@ test.describe('configuration panes', () => {
     await expect(settings.locator('.settings-shortcut-row .settings-row-menu-trigger')).toHaveCount(0);
   });
 
+  test('keeps a shortcut change when an older initial read arrives afterward', async ({ page }) => {
+    const settings = await openSettings(page);
+    await page.evaluate(() => {
+      const original = window.lin!.keybindings.get;
+      window.lin!.keybindings.get = async () => {
+        const initial = await original();
+        await new Promise<void>((resolve) => { Object.assign(window, { releaseShortcutRead: resolve }); });
+        return initial;
+      };
+    });
+    await settings.getByRole('tab', { name: 'Keyboard Shortcuts', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (
+      typeof (window as typeof window & { releaseShortcutRead?: () => void }).releaseShortcutRead
+    ))).toBe('function');
+    await page.evaluate(() => window.lin!.keybindings.update({
+      id: 'global.open_page_in_pane', value: 'Control+P', observedDigest: null,
+    }));
+    const changed = settings.getByRole('button', { name: 'Change Control+P', exact: true });
+    await expect(changed).toBeVisible();
+    await page.evaluate(async () => {
+      (window as typeof window & { releaseShortcutRead: () => void }).releaseShortcutRead();
+      // Let the late result render before checking that the new binding survived.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    });
+    await expect(changed).toBeVisible();
+    await changed.dblclick();
+    await changed.press('Control+Alt+K');
+    await expect(settings.getByRole('button', { name: 'Change Control+Alt+K', exact: true })).toBeVisible();
+  });
+
   test('shortcut toolbar follows the active pane and retains its local filter', async ({ page }) => {
     const settings = await openSettings(page, '&destination=shortcuts');
     const toolbar = settings.locator('.configuration-toolbar');
