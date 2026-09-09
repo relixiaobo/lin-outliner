@@ -1,15 +1,17 @@
 # Dark-Mode Contrast Verification
 
-**Shape:** (a) ONE complete visual-verification feature in one PR.
+**Shape:** (a) ONE complete correction PR when verification confirms defects.
+A clean walk is a complete verification-only result and requires no product PR.
 
 ## Goal
 
-Run a final light/dark product walk after the active visual plans land and fix
+Run a light/dark product walk on one selected release candidate and fix
 only contrast failures confirmed in the rendered application. The alpha-on-ink
 theme mechanism is already correct, and #377 already lifted dark
 `--text-tertiary` to its current value. The remaining work is evidence-driven
 verification plus the smallest token-level corrections that the run proves are
-necessary.
+necessary. The verification target is a named commit and finite surface set,
+not eventual completion of every visual plan in the backlog.
 
 ## Non-goals
 
@@ -31,15 +33,23 @@ necessary.
   token authority; raw site colors are forbidden.
 - **FR-3:** Reduced motion, increased contrast, and reduced transparency remain
   independently testable after every token change.
-- **FR-4:** The PR records both unchanged confirmations and changed tokens so a
-  quiet diff cannot masquerade as an incomplete walk.
+- **FR-4:** Release-gate evidence, and a correction PR when needed, records both
+  unchanged confirmations and changed tokens so a quiet diff cannot masquerade
+  as an incomplete walk.
 
 ### Verification order
 
-Run this plan after Settings working states, icon semantics, Source preview
-composition, and other active visual work so it evaluates the surface that will
-ship. Walk the same content in light and dark, then repeat the critical cases
-with increased contrast, reduced motion, and reduced transparency.
+At claim time, record the candidate commit and derive the surface inventory from
+the shipped UI, changed consumers and current token usage. Include Settings
+working states or new previews when present on that candidate; unimplemented
+plans are not prerequisites. Each feature still supplies its own visual evidence.
+Walk the same content in light and dark, then repeat the critical cases with
+increased contrast, reduced motion and reduced transparency.
+
+If another visual change lands before release, recheck its affected surfaces and
+any shared tokens it changes. Do not restart the whole walk or silently add every
+new backlog proposal. A clean walk is a valid verification result: record its
+evidence at the release gate without manufacturing a token edit or an empty PR.
 
 Confirm these current risks:
 
@@ -83,6 +93,9 @@ assertions after any token change.
   and all token/design guards pass.
 - **AC-4:** Keyboard focus, status meaning, text hierarchy, and overlay elevation
   remain distinguishable after the smallest confirmed corrections.
+- **AC-5:** The evidence identifies the verified commit and finite surface set;
+  a later visual diff receives affected-surface verification. Zero confirmed
+  failures requires no speculative product change.
 
 ## Open questions
 
@@ -92,8 +105,8 @@ existing hierarchy and record the measured/rendered reason in the PR.
 
 ## Implementation checklist
 
-- [ ] Land after the active visual consumers and regenerate the surface queue
-      from current token usage.
+- [ ] Select the candidate commit and regenerate its bounded surface queue from
+      shipped consumers, the release diff and current token usage.
 - [ ] Capture light/dark and accessibility-preference evidence for every risk
       family.
 - [ ] Apply only confirmed token or semantic-tier corrections.

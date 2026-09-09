@@ -1,15 +1,17 @@
-# Performance Optimization Tail
+# Performance Optimization Candidates
 
 **Shape:** (b) A SET of three independent complete optimizations. Each unit has
-its own measurement, implementation, and verification PR.
+its own measurement and, when justified, implementation and verification PR.
 
 ## Goal
 
-Finish the measured costs that remain after incremental projection, sparse
+Evaluate the candidate costs that remain after incremental projection, sparse
 transactions, virtualized rendering, typing-path repair, renderer indexes, and
 Runtime cutover shipped. This plan is no longer the historical P0-P3 program;
 it contains only work whose current symbols still exist and that is not owned by
-`interaction-jank-cleanups` or another active plan.
+the shipped interaction-jank work or another active plan. Symbol existence and
+repeated scans are evidence of possible cost, not proof of a meaningful current
+performance problem. No candidate starts as a pre-approved data-structure rewrite.
 
 ## Non-goals
 
@@ -19,8 +21,8 @@ it contains only work whose current symbols still exist and that is not owned by
   before changing data structures or immutability boundaries (A9).
 - No search-scope reduction, language-support reduction, or other product
   behavior trade disguised as performance work.
-- No Runtime selector-index work; that belongs to
-  `interaction-jank-cleanups`.
+- No reimplementation of Runtime selector indexes or translation geometry
+  delivered by the interaction-jank changes.
 - Window-first startup follows the current
   [Desktop Host lifecycle](../spec/architecture.md#desktop-host-lifecycle).
   First paint precedes Runtime readiness; verified snapshot loading and
@@ -39,6 +41,15 @@ it contains only work whose current symbols still exist and that is not owned by
   failure semantics byte-for-byte unless a separate product decision says
   otherwise.
 
+Before changing a candidate, record the current commit, fixed fixture, selected
+user operation, cold/warm conditions, latency distribution, relevant process or
+allocation count, and an improvement threshold justified by that operation.
+Measure under comparable load and keep correctness assertions identical. If the
+observed cost or improvement is immaterial, close that candidate with the probe
+result; do not replace it with a different optimization under the same claim.
+Measurement is the first internal step of each complete unit, not a new required
+infrastructure PR. The board records eligibility and the resulting decision.
+
 ### Unit 1: Core mutation indexes
 
 Measure deletion, backlink lookup, schema-name lookup, and repeated state reads
@@ -55,16 +66,19 @@ material cost, add transaction-maintained indexes so:
   repeatedly requesting equivalent state.
 
 The indexes are derived, rebuilt from canonical state, and updated from sparse
-transaction facts. They are never a second authority. This unit follows
-`outline-source-model` because that cut changes Core Node variants, Source
-commands, deletion closure, and schema invariants on the same files.
+transaction facts. They are never a second authority. The Source cutover is
+already represented by the current Core command/state contract. Recheck live
+Core claims, particularly tagged extraction, rather than waiting on an archived
+plan. `collectSubtreeAndDependentReferences` and the schema scans in `core.ts`
+remain candidate locations; that inspection alone does not establish latency.
 
 ### Unit 2: Local filename fallback reuse
 
-`rgFileNameMatches` remains a Spotlight fallback and may scan the home directory
-repeatedly. Preserve the existing result scope and ranking while adding a
-bounded query/result cache, in-flight request coalescing, cancellation, and a
-short invalidation horizon. Do not narrow roots or silently omit hidden files in
+`rgFileNameMatches` in `nativeLocalFileHost` remains a Spotlight fallback and may
+scan the home directory repeatedly. Preserve the existing result scope and
+ranking while adding a bounded query/result cache, in-flight request coalescing,
+cancellation, and a short invalidation horizon. Do not narrow roots or silently
+omit hidden files in
 the name of speed. Measure first-launch and repeated-query latency plus spawned
 process counts.
 
@@ -113,7 +127,8 @@ the observable contracts above.
 
 - [ ] Regenerate each unit's queue from current symbols and a failing/expensive
       probe, not the historical catalog.
-- [ ] Land `outline-source-model` before the Core mutation-index unit.
+- [ ] Record a current baseline and operation-specific acceptance threshold,
+      then refresh shared Core/file-search claims before implementation.
 - [ ] Ship each measured optimization independently with before/after evidence.
 - [ ] Fold any changed performance invariant into the owning current spec.
 - [ ] Run typecheck, relevant tests, docs check, diff check, and the unit's

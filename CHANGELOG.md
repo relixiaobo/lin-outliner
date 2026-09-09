@@ -725,6 +725,24 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Active plan validity audited against current implementation** - classified
+  all 15 active designs as one completed runtime aggregate to archive, five
+  targeted design revisions and nine retained goals. Delegation's shipped Task,
+  internal Session and native launcher units are archived without restoring
+  superseded runner/verification rules; experimental value measurement remains
+  an explicit unfinished verification item. Office now requires a shared
+  no-Python DOCX/XLSX extraction cutover, URL Reader preserves Agent fetch modes
+  and acquisition boundaries, and Computer Pilot uses current admission plus
+  per-execution output ownership and separate CLI readiness. Performance work
+  requires current measurements, and contrast verification has a finite release
+  candidate scope. The board records evidence and #669's submitted-fix head for
+  re-review. This changes planning documents only; no runtime feature or
+  experimental graduation is claimed. Typecheck, `docs:check` and whitespace
+  checks passed; all five revised designs passed the spec checker with template
+  section warnings reviewed. A combined delegation check hit one existing
+  five-second test timeout; the focused runtime/launcher rerun passed all 13
+  tests. No runtime or visual acceptance for queued features was performed.
+
 - **Execution order reconciled across active plans** - audited all 15 active
   designs against main and the sole open implementation claim, #669. The board
   now records its two review fixes, prioritizes bounded question recovery and

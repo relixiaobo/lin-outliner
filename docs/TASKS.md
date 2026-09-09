@@ -13,13 +13,14 @@ starting or integrating work; the audit below is a dated snapshot, not a lock.
 
 ## In Flight
 
-Execution-order audit: 2026-09-09, main `222cc068`, all 15 top-level active
-plans and the live GitHub claims. The only open implementation PR is
-**#669, unified session records**, at reviewed head `81f86b0b`. It is ready for
-review but has two posted P2 findings: cursor newline consistency and matching-
-line context when a byte cursor is unavailable. Fix and re-review those findings
-before its integration gate. No downstream implementation is claimed by merging
-its design or by this audit.
+Design-validity audit: 2026-09-09, main `122d199f`, all 15 then-active top-level
+plans, current code/specifications and live GitHub claims. One completed aggregate
+is now archived, leaving 14 active designs. The only open implementation PR is
+**#669, unified session records**, at head `6458abb1`. It has submitted fixes for
+the two P2 findings on reviewed head `81f86b0b`: cursor newline consistency and
+matching-line context when a byte cursor is unavailable. Re-review the new head
+before its integration gate; this audit does not verify those fixes. No downstream
+implementation is claimed by merging its design or by this audit.
 
 The board previously labelled unified records as draft and omitted the #670/#671
 work from its main dependency graph. #665, #668, #670 and #671 integrated designs,
@@ -34,10 +35,47 @@ launchers (#623/#628/#637), file-first Settings through #656, simplified workben
 and isolation (#658/#660/#663), and startup fault isolation (#664). Consume the
 current specifications; these completed series do not reserve future work.
 
-The delegation aggregate needs a closure audit, not another unspecified runtime
-phase: its three named units have shipped. Its row below retains only that
-integration obligation until acceptance/spec coverage is checked and the plan
-can be archived. Optional vendor protocols do not extend the primary queue.
+The delegation closure audit confirms its three runtime units in #623/#628/#637
+and current Task/delegation specs. The original plan's no-runner-override and
+CLI-owned verification requirements were replaced by subsequent contracts;
+Host-owned worktree base revisions, changed paths and patch resources remain.
+Do not restore retired private Git/test mechanisms to satisfy historical wording.
+The aggregate is archived as provenance.
+Its uncompleted sequential-versus-delegated value measurement remains an explicit
+verification item below, and delegation remains experimental and disabled by
+default. Optional vendor protocols do not extend the primary queue.
+
+## Design Validity Audit
+
+This is a code/specification audit, not product acceptance or evidence that an
+unimplemented feature works. The 15-plan disposition is **one archive, five
+targeted revisions, nine retained designs**. The retained goals have no evidenced
+reason for wholesale replanning; explicit product questions and feature-specific
+acceptance still apply. Standing references and archived designs are not queued
+features.
+
+| Design | Disposition | Evidence and resulting boundary |
+| --- | --- | --- |
+| [agent-delegation-runtime](plans/archive/agent-delegation-runtime.md) | Archive delivered runtime aggregate | `ToolTaskStore`/`ToolTaskService`, `DelegationCoordinator`, `InternalDelegationSessionRuntime` and `ExternalAgentCliLauncher` cover the three shipped units. Current spec replaces AC-19's runner ban with admitted selection. AC-24's worktree/patch guarantees persist through the Host, while #660 replaced private Git/test mechanisms; do not re-create CLI verification ownership. Preserve FR-9/AC-17 measurement separately. |
+| [file-preview-office](plans/file-preview-office.md) | Revise extraction approach | `ingestRichDocumentAsMarkdown` still uses local MarkItDown/Python for DOCX/XLSX, unlike bounded `agentPptxIngestion`. A wrapper cannot meet the no-external-runtime goal. Prove TypeScript extraction, then cut over Agent and preview together; retain independent XLS/EPUB behavior. |
+| [url-static-reader](plans/url-static-reader.md) | Revise shared-reader boundary | `extractPageContent` and `agentWebTools` already support extraction plus raw/metadata/matching/binary projections. Sharing static extraction must preserve Agent calls without UI selection, their existing modes, and separate acquisition authority. |
+| [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | Refresh admission and acquisition | `ManagedSkillShellEnvironmentRegistry` and `BrowserPilotHost.processEnvironment` provide current eligible-root and per-execution ownership. Use file-backed availability rather than retired Role/enabled-record policy; distinguish Skill integrity from CLI readiness and isolate concurrent output roots. |
+| [performance-optimization](plans/performance-optimization.md) | Reframe as measured candidates | Core scans, `nativeLocalFileHost.rgFileNameMatches` and repeated normalization in `analyzeTextSearchField` still exist, but no current baseline establishes worthwhile latency savings. Each of the three independent candidates must first pass a fixed-fixture measurement threshold; an immaterial candidate can close without a rewrite. |
+| [dark-mode-contrast-pass](plans/dark-mode-contrast-pass.md) | Bound the verification scope | The current ink tokens and prior tertiary-text correction already exist. Freeze one release candidate and finite shipped-surface inventory; future visual proposals are not dependencies. A clean visual walk can finish verification without token edits. |
+| [unified-session-records](plans/unified-session-records.md) | Retain; implementation in review | #669 implements the ordinary-file/source publication cutover. Re-review its submitted fixes and reconcile recorded approval; do not rewrite a concurrently implemented contract because its consumers are queued. |
+| [user-input-request-recovery](plans/user-input-request-recovery.md) | Retain; current defect | `requestUserInput` permits an absent deadline, and renderer pending requests depend on live events. The bounded no-answer outcome, recoverable presentation, exact-request cancellation and session-local drafts still address the observed failure. |
+| [background-task-continuation-policy](plans/background-task-continuation-policy.md) | Retain; current defect | `ToolTaskStore.pendingDelivery` selects terminal work without service handoff, and `ToolTaskService` can start a completion Turn. Launch receipt, explicit watch and event acknowledgement remain necessary; exit code/log text cannot establish user intent. |
+| [conversation-work-folders](plans/conversation-work-folders.md) | Retain; location contract still absent | Current Task isolation and UI Projects do not provide the proposed multi-folder Project owner and independent ordinary-conversation default. Keep the explicit OQ-1 and consume current Task/CLI owners. |
+| [scheduled-work-redesign](plans/scheduled-work-redesign.md) | Retain; complete replacement feature | Current Automation scheduling does not supply the planned task/results workspace and CLI lifecycle. Keep one complete feature, settle local catch-up/location questions and consume final record/question/Task owners; document length alone is not a reason to ship partial scaffolding. |
+| [memory-agent-profile](plans/memory-agent-profile.md) | Retain; two independent core units | Current Phase1 bounded rollouts and Phase2 publication do not implement the proposed retention quality or editable Profile/direct-learning loop. Keep Node quality and Profile learning distinct; optional views, temporal memory and narrower Reset are not prerequisites. |
+| [targeted-thread-recovery](plans/targeted-thread-recovery.md) | Retain; final-owner dependency is real | Readable session records are not a complete reconstructable Thread store. Exact owner closure and source-loss versus accepted-learning semantics remain necessary; consume final records/Profile owners and the lifecycle owners that actually ship. |
+| [semantic-working-state](plans/semantic-working-state.md) | Retain; small consumer feature | Settings provider/managed-Skill surfaces still have raw labels and spinner-only gaps. Keep WorkingText scoped to Settings operations over existing lifecycle truth, without introducing another state owner. |
+| [floating-toolbar-polish](plans/floating-toolbar-polish.md) | Retain; two complete features | `ToolbarMark` still excludes heading, and tagged extraction has no `defaultExtractParentId` route. The heading control and atomic tagged extraction remain independent; only the latter needs shared Core ownership. |
+
+The revisions above correct execution premises, not shipped behavior. Office
+parser feasibility, Computer Pilot executable acquisition and performance probes
+must produce evidence before consumers or optimizations are built. No current
+parser/library choice or measured performance win is asserted by this audit.
 
 ## Primary Delivery Queue
 
@@ -95,7 +133,7 @@ extend these prerequisites.
 
 | Priority | Plan / PR claim | Status | Next action / eligibility |
 | --- | --- | --- | --- |
-| P1 | [unified-session-records](plans/unified-session-records.md), #669 | `in-progress` | First integration: fix the two reviewed P2 findings, re-review the final head, reconcile OQ-1 with the recorded approval, and pass the gate. |
+| P1 | [unified-session-records](plans/unified-session-records.md), #669 | `in-progress` | First integration: re-review submitted fixes at `6458abb1`, reconcile OQ-1 with the recorded approval, and pass the gate. |
 | P1 | [user-input-request-recovery](plans/user-input-request-recovery.md) | `draft` | Next shared Agent claim after #669: visible/recoverable questions, 60-second default, typed no-answer outcome, session-local drafts. Its incident OQ-1 is diagnostic, not a start blocker. |
 | P2 | [background-task-continuation-policy](plans/background-task-continuation-policy.md) | `draft` | Prefer after question recovery; ratify the service-exit OQ-1. Ship launch/handoff, exact-event acknowledgement, independent watch and receipts together. |
 | P2 | [conversation-work-folders](plans/conversation-work-folders.md) | `draft` | After #669 by selected Thread/context order, with its own OQ-1 ratified. Prefer after interaction fixes and before scheduling on Project resolution, CLI and composer owners. |
@@ -103,9 +141,9 @@ extend these prerequisites.
 | P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | Eligible now on Memory-local files; preserve the existing source interface during #669. Freeze quality/coverage fixtures before implementation. |
 | P2 | [memory-agent-profile: Profile files and direct learning](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | After #669 and selected Node-quality changes. Demonstrate edit/source/activation contracts before consumers; parallel with the Agent lane only where shared context/configuration owners remain settled. |
 | P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | Requires final records and profile owners. Prefer after other selected lifecycle consumers; verify exact question, Task, Project and scheduled-run closure through their actual owners. |
-| P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | Parser/library and archive-policy evaluation can start now. Order shared file-tool changes after #669; take the first preview-shell claim and ship all three readers together. |
-| P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | Network/image-policy fixtures can start now. Prefer after Office on preview shell and shared extraction wiring; no independent Agent or renderer fetch authority. |
-| P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | Acquisition pin and packaged/TCC probes can start now. Refresh #669 Host/resource overlap; use current file-backed availability and resource contracts. |
+| P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | Prove no-Python DOCX/XLSX extraction and archive policy first; cut over Agent and preview in the same feature. Order overlapping file-tool changes after #669; take the first preview-shell claim and ship all three readers together. |
+| P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | Network/image-policy and existing Agent-mode fixtures can start now. Prefer after Office on preview shell/extraction wiring; preserve each caller's acquisition authority without a renderer fetch path. |
+| P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | Prove both Skill and CLI acquisition plus packaged/TCC behavior. Refresh #669 Host/resource overlap; use current file-backed admission and per-execution output ownership. |
 
 ### Decisions and implementation preparation
 
@@ -158,10 +196,9 @@ claiming; an aggregate's optional additions do not reserve an entire subsystem.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
-| P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Integration closure only: Units 1/2/3 shipped in #623/#628/#637 and current Task/delegation specs. Verify remaining acceptance coverage and archive; no unnamed runtime phase or optional vendor protocol blocks consumers. |
 | P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Eligible now: Settings-only WorkingText consumer over #656; no provider/Skill lifecycle changes. Coordinate the exact Settings component/spec scope. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Two complete claims: renderer heading toggle is eligible now; atomic tagged extraction is separately eligible after shipped #598 and needs coordinated Core command/type ownership. |
-| P3 | [performance-optimization](plans/performance-optimization.md) | `draft` | Three independent measured candidates: Core indexes, filename fallback and text normalization. Measurement precedes each claim; order Core changes with tagged extraction and file-tool changes with #669. |
+| P3 | [performance-optimization](plans/performance-optimization.md) | `draft` | Three independent unmeasured candidates: Core indexes, filename fallback and text normalization. Freeze current-operation baselines before implementation; close immaterial candidates without a rewrite. Order Core changes with tagged extraction and refresh the actual `nativeLocalFileHost` overlap rather than assuming all search work waits for #669. |
 | P3 | [dark-mode-contrast-pass](plans/dark-mode-contrast-pass.md) | `draft` | Final verification of the selected release's landed visual surfaces. Do not wait for every future visual backlog item; every feature still supplies its own light/dark evidence. |
 
 ## Small And Release Work
@@ -207,6 +244,13 @@ into a blanket dependency for every PR.
 
 ### Reliability and maintenance tails
 
+- **delegation-graduation-evidence** (P3, `draft`) — preserve FR-9/AC-17 from
+  the [archived runtime design](plans/archive/agent-delegation-runtime.md): freeze
+  a representative task corpus and compare sequential/delegated wall time, total
+  usage/cost (unknown when unavailable), failures, duplicate work and ownership-
+  recovery cost. Record reproducible runs before a graduation decision. No such
+  evidence was confirmed in this audit; delegation stays experimental and off by
+  default, and this measurement does not block the shipped runtime or consumers.
 - **ThreadTurnView render-body refs** (P3) — latch `turnRef`,
   `responseTailTurnRef`, and `contentGrouperRef` after commit so abandoned React
   renders cannot advance event-handler state.
@@ -287,6 +331,7 @@ One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
 - **Execution-order audit** (`done`, 2026-09-09) - reconciled 15 active plans, #669's review state, contract dependencies, selected integration lanes and product gates; runtime features remain in their own rows.
+- **Design-validity audit and delegation closure** (`done`, 2026-09-09) - audited 15 designs, revised five and retained nine; the three shipped delegation units are [archived](plans/archive/agent-delegation-runtime.md), with graduation measurement preserved separately and no experimental graduation claimed.
 - **Task responsibility and input recovery design refinement** (`done`, #671, 2026-09-09) - Task acknowledgement/watch receipts, unsent answer recovery and scheduled question settlement are specified; all three runtime features remain unimplemented.
 - **conversation-work-folders design integration** (`done`, #670, 2026-09-09) - Project sources, independent conversation defaults, CLI/Skill access and composer controls are specified; implementation follows #669 and OQ-1 ratification.
 - **scheduled-work design integration** (`done`, #668, 2026-09-09) - the task/results workspace and CLI/Skill design is integrated; implementation follows unified records, with OQ-1/OQ-2 still pending.
@@ -346,8 +391,8 @@ One line per recent shipped integration. Older history and review detail live in
 - **agent-delegation-runtime plan gate** (`done`, #620, 2026-09-04) — Agent
   delegation now has approved design authority for generic Background Tool
   Tasks, internal multi-Turn delegation, Subagent and isolated-Skill retirement,
-  and separate external Runner adapters; the plan remains active for
-  implementation, with its generic Tool Task Unit 1 shipped in #623.
+  and separate external Runner adapters; its three runtime units subsequently
+  shipped in #623/#628/#637 and the aggregate is now archived.
 - **agent-trajectory-evidence-fidelity Unit 1** (`done`, #625, 2026-09-03) —
   Trajectory now pages real dense Turn ranks, coalesces live tail refreshes, and
   retains at most three renderer pages while cache-independent detail/export
