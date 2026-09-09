@@ -118,6 +118,8 @@ Start evaluation with a 2,000-token combined automatic profile ceiling, includin
 
 Existing authority rules remain intact: current applicable instructions and explicit user settings govern personalization; style defaults may be refined by supported preferences. Learning cannot change permissions or explicit identity. Accepted profile changes apply at the next root Turn, with recorded revisions and source eligibility, without rewriting earlier model history. Other configuration preserves its existing model/permission snapshot lifecycle.
 
+Before profile consumers are built, demonstrate how selected `IDENTITY.md` and `STYLE.md` components compose with existing `developerInstructions`. The example contract must identify each selected component source, define instruction precedence, and cover conflicting explicit instructions and scoped user preferences. Verify an edit during an active Turn, next-eligible-root-Turn activation, unchanged frozen model/tool permissions, and explainable earlier context; do not infer source selection or precedence from file order.
+
 ### Memory Nodes and time
 
 **FR-10 / FLOW-1: Inspect and correct.** Memory is accessed through existing Outline controls and CLI. A global Current/Timeline/topic view can reference the same dated Nodes; it does not own another copy. Direct Node edits remain authoritative. Source actions open exact available evidence or report that it is unavailable. The profile UI similarly opens `USER.md` entries with their direct sources; profile corrections do not require a Node editor.
@@ -142,6 +144,8 @@ Deleting an optional historical Memory event does not by itself erase an indepen
 
 For Node Reset/targeted forget, preserve unrelated non-Memory descendants by reparenting them outside a removed Memory container in the same command transaction. Ordinary Outline Trash/delete retains its normal subtree semantics. Moving a Memory record outside its canonical classification makes it an ordinary note and withdraws that learned contribution. These Node-ownership changes are additional behavior beyond profile routing and must be reviewed explicitly.
 
+At the core delivery boundaries, retain the existing Node Reset subtree ownership until the optional narrower Node Reset feature is implemented. Reset UI must name the actual canonical-container scope, including ordinary descendants, together with the profile entries affected by the shipped profile unit. Do not promise ordinary-descendant preservation before that behavior exists. The preservation rule above applies only to the narrower feature, and its future selection does not delay profile learning.
+
 **FR-14:** Global disable and per-Thread modes preserve their existing timing distinctions. Ineligible Turns do not contribute automatic learning or receive automatically learned profile entries or Memory routing. Explicit authored configuration remains applicable. Existing Memory Nodes remain ordinary visible/editable content, including explicit user-supplied references. Re-enable does not admit disabled-period evidence retroactively.
 
 **FR-15 / FLOW-4: Recover an interrupted update.** Each owner uses expected revisions, accepted content hashes, source/admission generations, and idempotent publication records. Profile content is canonical file content with immutable accepted snapshots for recovery, not a second editable collection. A successful raw file write alone is not an accepted profile update. On conflict or invalidation, omit affected learned content until it is reconciled; optional learning or inspection failure does not block ordinary conversation or Outline editing.
@@ -163,11 +167,11 @@ Profile acceptance has no hard dependency on an optional history Node publishing
 | AC-9 | User edits to profile entries survive later inferred updates; explicit identity/style have no ordinary learning writer (FR-3, FR-4) |
 | AC-10 | Source invalidation, forgetting, Reset, and disable exclude affected automatic profile content without relying on a Memory Node mirror (FR-12 through FR-15) |
 | AC-11 | Invalid, conflicting, or over-budget profile revisions are not silently activated or truncated (FR-4, FR-9) |
-| AC-12 | Accepted profile changes affect the next eligible root Turn; past context observations remain explainable (FR-9) |
+| AC-12 | Conflicting component/developer instructions resolve under demonstrated source and precedence rules; accepted changes affect the next eligible root Turn while model/tool permissions stay frozen and past context remains explainable (FR-9) |
 | AC-13 | No useful Memory record means no daily container; actual dated records remain normal editable Nodes (FR-11) |
 | AC-14 | Folding or filtering Memory does not duplicate records; background writes preserve focus, selection, and scroll (FR-10, FR-11) |
 | AC-15 | User-authoritative Node edits survive background cleanup; unavailable sources are reported honestly (FR-10) |
-| AC-16 | Reset removes learned entries/records and pending replay while preserving the declared authored/ordinary content boundaries (FR-12, FR-13) |
+| AC-16 | Reset removes learned entries/records and pending replay according to the shipped scope. Core-unit UI includes ordinary descendants in existing Node subtree deletion; only the optional narrower feature promises their preservation. Authored profile boundaries remain explicit (FR-12, FR-13) |
 | AC-17 | Moving a Memory record out preserves its note content and withdraws that Node contribution; it does not blindly delete unrelated profile entries (FR-12, FR-13) |
 | AC-18 | Re-enable does not backfill disabled-interval evidence; explicit Node references retain ordinary access (FR-14) |
 | AC-19 | Interrupted file or Node publication converges to accepted revisions; optional learning failure does not block ordinary work (FR-15) |
@@ -200,7 +204,20 @@ Expected implementation files and owners:
 - Existing local file tools and `src/main/builtInSkills/configuration/SKILL.md`: preserve ordinary file editing while exposing accepted profile status through its owner; do not recreate retired Settings tools.
 - `tests/core/agentMemory.test.ts`, configuration loader/writer tests, relevant renderer/E2E cases, [Agent Core](../spec/agent-core.md), [Memory](../spec/agent-memory.md), [tool design](../spec/agent-tool-design.md), and [Memory foundations](reference/agent-memory-foundations.md): verify and document the final behavior in the implementing change. Update the standing vocabulary's storage mapping so file-backed personal context does not contradict it.
 
-The document-only claim is `docs/plans/memory-agent-profile.md`. The collision self-check found no open PR or board claim on that path. Future implementation has real mechanism overlap with [startup fault isolation](startup-fault-isolation.md), [unified session records](unified-session-records.md), and [targeted conversation recovery](targeted-thread-recovery.md): Memory control readiness, exact source/provenance, invalidation, publication recovery, and retained-source cleanup. Refresh live claims and settle the shared owners before implementation. Do not write a second source resolver, startup coordinator, or recovery ledger around an interim contract. Unavailable admission authority remains a hard boundary; omitting optional learned context does not bypass it.
+The document-only claim is `docs/plans/memory-agent-profile.md`. The collision self-check found no competing PR or board claim on that path. Future implementation has real mechanism overlap with [startup fault isolation](startup-fault-isolation.md), [unified session records](unified-session-records.md), and [targeted conversation recovery](targeted-thread-recovery.md): Memory control readiness, exact source/provenance, invalidation, publication recovery, and retained-source cleanup. The live startup-fault-isolation claim is #664; it does not overlap this document path. Refresh live claims and settle the shared owners before implementation. Do not write a second source resolver, startup coordinator, or recovery ledger around an interim contract. Unavailable admission authority remains a hard boundary; omitting optional learned context does not bypass it.
+
+Consume these final mechanisms in order:
+
+```text
+startup fault isolation
+  -> unified session records
+  -> profile files and direct learning
+  -> targeted conversation recovery
+```
+
+The profile unit consumes the settled startup admission and exact-record source contracts. Targeted recovery then consumes the profile owner's final file, admission, provenance, pending-work, and retained-source contracts rather than designing a closure against the previous Node-only ownership model. Optional views, temporal enhancements, and narrower Node Reset do not extend that prerequisite chain. Unified records' discovery-scope decision remains its own product gate.
+
+Node retention quality may ship independently after startup fault isolation. Recheck its actual overlap with unified records; when both core units are selected, sequence shared Memory quality changes before profile implementation to avoid rewriting those mechanisms. This is a collision order, not a functional dependency of profile learning on the quality feature. Task status and scheduling remain on the main-owned board.
 
 Profile activation intentionally changes personalized text at a later root Turn without changing that Thread's frozen model/tool permissions. Define and test that seam before consumers. Keep imported/project instructions and repeated Agent text distinguishable from direct user evidence. A profile's source reference is not authority to broaden access to its source Thread.
 
