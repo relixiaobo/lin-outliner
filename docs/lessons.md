@@ -2857,3 +2857,13 @@ actual affected owners and ordinary descendants in review and confirmation;
 promise preservation only when its transaction and recovery behavior ship.
 Optional refinements must neither silently widen an earlier action nor become
 an undeclared prerequisite for an otherwise complete feature.
+
+## Live snapshots supersede both outcomes of a pending initial read
+
+PR #667 fixes a shortcut pane where a delayed initial read could replace a live
+binding and its source digest, or display an obsolete read error.
+
+**Subscribe before reading, then fence both success and failure once a live
+snapshot arrives.** Scope that fence to the subscription lifetime and retain
+unmount cleanup. Verify the next edit uses the live snapshot's concurrency token,
+as well as checking the visible value and recovery from a genuine initial error.

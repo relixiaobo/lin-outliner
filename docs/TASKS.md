@@ -324,6 +324,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **shortcut-initial-read** (`done`, #667, 2026-09-09) - live shortcut changes supersede late initial reads and errors, preserving the latest bindings and source digest for subsequent edits.
 - **memory-agent-profile design integration** (`done`, #665, 2026-09-09) - two complete core units and their activation/Reset boundaries are approved; profile learning precedes targeted recovery, and runtime remains pending.
 - **development-process-lifecycle** (`done`, #663, 2026-09-09) - requested background servers retain ownership without a default deadline, running logs preserve multiline secret context, and nested desktops resolve their own Runtime launch; [plan archived](plans/archive/development-process-lifecycle.md).
 - **web-search-http** (`done`, #662, 2026-09-09) - bounded Parallel/Exa HTTP search replaces Google/DuckDuckGo browser search, preserving independent Bing Images and #661's web-fetch contract; [plan archived](plans/archive/web-search-http.md).
