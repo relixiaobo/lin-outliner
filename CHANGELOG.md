@@ -626,6 +626,8 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Fixed
 
+- **Agent-started development servers now stay available for testing (PR #663)** - explicit-background Bash without a timeout has no elapsed-time deadline; foreground defaults and delegated deadlines remain intact, and Stop, Quit, process exit, and resource limits still govern ownership. Task status exposes bounded running observations without settling the process. Ambient Electron controls no longer leak into ordinary shells, and nested desktops resolve their own Outline Runtime launch. The review's P1 multiline-key leak is fixed by scanning the bounded capture prefix before clipping and withholding unfinished secret blocks or failed scans. Final gate verification passed typecheck, `docs:check`, whitespace checks, 111 focused Core tests, and both original private-key reproductions with zero leaked body lines; the earlier review passed 319 relevant tests. The implementation's isolated Electron probe verified healthy Runtime access beyond 130 seconds and explicit teardown. Non-gating E2E samples remained queued at merge; large scans can withhold observations at the existing worker timeout. The nullable Task timeout requires fresh pre-release development data without migration or automatic deletion. Current specs are synchronized and the plan is archived.
+
 - **Web search now uses bounded HTTP providers (PR #662)** - ordinary searches use Parallel with Exa fallback instead of hidden Google/DuckDuckGo browser navigation. Per-provider and total deadlines, bounded responses, shared in-flight requests, short success caching, and failure cooldowns keep retries bounded while preserving the existing result contract; Bing Images remains independent. Both review findings are fixed: Exa's complete empty response stays empty without cooldown, and internationalized site hosts use canonical exact/subdomain matching. Integration over #661 preserved its web-fetch output bounds and passed typecheck, `docs:check`, whitespace checks, 129 focused Core tests, and all 13 isolated Electron probes with no search-created windows. Non-gating remote E2E samples were still queued at merge. Current behavior is folded into the tool specification and the plan is archived.
 
 - **Partial and oversized tool results now remain usable (PR #661)** - bounded file reads admit an unknown line count until EOF; file searches and web matches fit UTF-8/JSON budgets with continuation from the entries actually returned, and file-search ordering is stable across unchanged-tree pages. Oversized web metadata, generated-image captions, and terminal task output are clipped without losing saved images, terminal state, or stored logs. Shared validation limits remain unchanged. Gate review found no actionable issues; typecheck, `docs:check`, whitespace checks, and 263 focused Core tests across 11 files passed without skips. Non-gating remote E2E samples were still running at merge; the owning tool specification is synchronized.
@@ -716,6 +718,20 @@ Entries reference the pull request that introduced them when one exists.
   whitespace checks, and all five GitHub E2E samples plus baseline subtraction.
 
 ### Internal
+
+- **Global Memory and Agent profile design integrated (PR #665)** - approved
+  independently complete Node-retention quality and profile-file/direct-learning
+  units. Current personal context has one `USER.md` authority; explicit identity
+  and style use profile components, while valuable dated experience remains in
+  Outline Nodes and original evidence remains in conversation history. The
+  handoff requires demonstrated component precedence and next-Turn activation
+  without changing frozen permissions, and Reset UI must reflect its actually
+  shipped Node ownership. The board sequences startup, unified records, profile
+  learning and targeted recovery; recovery now includes the final profile owner.
+  Optional views, temporal work and narrower Node Reset do not extend that chain.
+  This integration changes documentation only; implementation and quality/cost
+  validation remain pending. The integration gate passed typecheck, docs/diff
+  checks, and 34 existing configuration-loader/Memory Reset tests (99 assertions).
 
 - **Recovery/records delivery now follows the complete approved workbench series** -
   corrected the #653/#654 integration order to finish Settings G and workbench
