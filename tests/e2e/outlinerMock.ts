@@ -73,6 +73,7 @@ interface MockFixtureOptions {
   initWorkspaceDelayMs?: number;
   /** Delays provider settings so Settings chrome can be asserted before settings data arrives. */
   providerSettingsDelayMs?: number;
+  providerSettingsUnavailable?: boolean;
   /** Delays only the first automatic Thread creation request. */
   initialThreadStartDelayMs?: number;
   /** Keeps translated blocks pending long enough for loader assertions. */
@@ -129,6 +130,7 @@ type E2EWindow = Window & {
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
     setTranslationDelayMs: (delayMs: number) => void;
+    setProviderSettingsAvailable: () => void;
   };
   lin?: Pick<LinApi, 'registerPreview' | 'observePreview' | 'unregisterPreview' | 'acknowledgePreview' | 'onPreviewAction' | 'previewOperation' | 'onPreviewDataChanged' | 'initialKeybindings' | 'keybindings' | 'initialLanguage'> & {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -3643,6 +3645,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       emitDocumentEvent,
       emitOAuthEvent,
       resolveOAuthLogin,
+      setProviderSettingsAvailable: () => { options.providerSettingsUnavailable = false; },
       setTranslationDelayMs: (delayMs) => { translationDelayMs = Math.max(0, delayMs); },
     };
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
@@ -5334,6 +5337,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ cancelled: true }) as T;
         }
         if (cmd === 'agent_get_provider_settings') {
+          if (options.providerSettingsUnavailable) {
+            throw new Error('Provider settings are temporarily unavailable');
+          }
           if (options.providerSettingsDelayMs) await delay(options.providerSettingsDelayMs);
           return clone(agentSettings) as T;
         }

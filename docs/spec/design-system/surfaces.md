@@ -597,30 +597,40 @@ so a dynamic provider with an empty initial catalog can still recover and then
 populate its model choices. Refresh remains an explicit network action; ordinary
 settings loading uses only the last persisted catalog.
 
-**Provider config.** Per-provider config is a native modal child window
-(`?surface=provider-config`) and owns connection only. It has no traffic lights,
-no in-renderer backdrop, and closes through Cancel / Save / Escape. One inset card
-holds credential mode, key/base URL/provider id as needed, and async
-non-blocking validation. Model and effort belong to the Thread Configuration Profile, not the
-provider connection. Saved user-pasted keys stay masked until explicit show/copy;
-externally managed keys such as CC Switch registry keys are never shown or copied.
-Raw-key show/copy is available only inside the provider config child window, and
-main rejects the dedicated key-read IPC from all other windows. Before provider
-settings resolve, the window still paints the provider title/avatar, reserved
-credential/base-URL rows, and disabled footer actions with `aria-busy`; it never
-falls back to a whole-window loading page.
+**Provider config.** Per-provider config is a focused native modal child window
+(`?surface=provider-config`, 520 × 400 logical pixels; 480 high for custom providers). A stable provider title and
+purpose replace model marketing and capability tables. The scrolling body owns
+connection inputs; the fixed footer owns Cancel and Save. Default-provider and
+removal actions stay in the Models list so they cannot discard a connection draft.
+Before settings resolve, the title and Cancel remain available with a loading
+status; a failed load offers Try Again without guessing the authentication form.
 
-Credential mode follows main's provider auth descriptor. OAuth-capable providers
-show the shared sign-in flow for browser URLs, device codes, progress, selection,
-and manual-code prompts; closing or cancelling the flow aborts outstanding
-prompts. When that same provider accepts a normal user API key, the sheet offers
-"Use an API key instead" and returns to the standard key form. Reopening a
-provider that already has a stored API key starts on that key form rather than
-presenting it as a disconnected OAuth account. OAuth-only providers omit the
-fallback. A completed sign-in may populate a dynamic model catalog without
-changing the sheet's connection-only ownership. Capability rows render only
-non-empty model groups; provider-level refreshability remains available to the
-settings row when a dynamic catalog is empty.
+Every input has a visible label and its own framed keyboard focus. Standard API
+providers show the key first, with the optional Base URL under Advanced; an
+existing override opens that disclosure. Custom and local API servers show the
+endpoint prominently. Custom providers require a unique ID and a complete HTTP(S) endpoint;
+loopback servers may omit the key. Managed providers explain their credential
+source instead of asking for a key. Saved user-pasted keys remain masked until an
+explicit show/copy; an empty key field retains the saved key. Raw-key reads use the
+narrow IPC admitted only from this owned child window. Externally managed keys
+such as CC Switch registry credentials are never read into the form.
+
+Test Connection is optional and has adjacent pending/result feedback; it does not
+save draft inputs. Editing the draft invalidates a pending or completed result.
+Copy feedback stays with the key, and save failures stay next to the footer while
+preserving input. Return submits a valid changed draft. Save disables editing and
+Cancel/Escape until the write completes and rejects duplicate submissions. Save
+does not require a successful test.
+
+Credential mode follows main's provider auth descriptor. Dual-auth providers have
+an Account / API key choice that works in both directions and preserves an
+unfinished key/endpoint draft. An existing stored key selects the key form on
+opening. OAuth-only providers show sign-in directly. Browser URLs, device codes,
+progress, selection, and manual-code prompts share the same header and footer;
+closing or cancelling aborts outstanding prompts. Failed replies remain
+cancellable. Connected-account maintenance stays with its status; Done is the
+footer action. Completing OAuth can populate a dynamic model catalog without
+turning the connection sheet into a model browser.
 
 Save commits before its non-blocking probe; OAuth completion follows the same
 path, while opening Settings never probes. Using the stored Base URL, the probe
@@ -644,7 +654,6 @@ The stored verdict is displayed as an age ("Checked just now", "Checked 5 minute
 ago"), localized as a whole sentence rather than an English fragment placed in a
 localized frame.
 
-Every framed content block in the config window uses `--radius-md`; row-level
-field focus uses `:focus-within` on the row because inset cards clip outer rings.
-Validation success/failure uses status colour for status only. The primary footer
+OAuth step cards use `--radius-md`; inputs retain their own visible focus rings.
+Connection test success/failure uses status colour for status only. The primary footer
 action uses the neutral filled-default idiom; destructive actions use danger text.

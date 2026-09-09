@@ -23,7 +23,7 @@ test.describe('provider OAuth sign-in', () => {
     const config = page.locator('.provider-config-window');
 
     await expect(config.getByRole('heading', { name: /OpenRouter/ })).toBeVisible();
-    await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', 'sk*****************');
+    await expect(config.locator('input.input-control[aria-label="API key"]')).toHaveAttribute('placeholder', 'sk*****************');
     await expect(config.getByRole('button', { name: /Sign in to OpenRouter/ })).toHaveCount(0);
   });
 

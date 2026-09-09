@@ -96,7 +96,7 @@ const focusVisibleRingSuppressionExceptions = new Map([
     'Outliner description editing uses the caret and local description surface.',
   ],
   [
-    'src/renderer/styles/settings-provider-sheet.css|.inset-card .settings-sheet-row-input:focus-visible',
+    'src/renderer/styles/settings-agent-editor.css|.inset-card .settings-sheet-row-input:focus-visible',
     'Clipped inset-card inputs transfer the keyboard ring to the row.',
   ],
 ]);

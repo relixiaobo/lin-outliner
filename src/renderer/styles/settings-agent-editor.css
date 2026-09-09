@@ -30,6 +30,62 @@
   gap: var(--space-4);
 }
 
+/* The editor owns these grouped field rows; provider connections use framed inputs. */
+.settings-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--settings-tile-size-lg);
+  padding: var(--space-2) var(--space-4);
+}
+
+.inset-card .settings-sheet-row:not(:last-child) {
+  border-bottom: 1px solid var(--separator);
+}
+
+.settings-sheet-row-label {
+  flex: 0 0 auto;
+  width: var(--settings-field-label-width);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  font-weight: 600;
+  line-height: var(--line-meta);
+}
+
+/* Borderless control that fills the row (input or select). */
+.settings-sheet-row-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  /* Scoped to non-keyboard focus. Unconditional `outline: none` sits outside the
+     focus-suppression guard's reach — it only inspects `:focus-visible` rules —
+     so this suppression was unregistered, and the keyboard ring survived only
+     because a global `[data-input-modality="keyboard"]` rule happened to win on
+     specificity. */
+  background: transparent;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+}
+
+.settings-sheet-row-input:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* The field inputs are borderless inside the clipped inset card, so the global
+   outer text-control ring (base.css) would be cropped by the card's
+   overflow:hidden — show the neutral keyboard focus on the ROW instead, as the
+   inset ring the list primitive uses (.inset-row-main:focus-visible). Pointer
+   focus relies on the caret / local editing affordance, not an extra row frame.
+   The editor owns these clipped fields; provider inputs keep their own ring. */
+.inset-card .settings-sheet-row-input:focus-visible {
+  box-shadow: none;
+}
+
+:root[data-input-modality="keyboard"] .inset-card .settings-sheet-row:focus-within {
+  box-shadow: var(--outline-focus);
+}
+
 /* Instructions are the one multi-line field: the label sits above rather than
    beside it, because a label vertically centred against five rows of text reads
    as floating. */

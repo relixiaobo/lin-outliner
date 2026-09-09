@@ -704,8 +704,8 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     openSettings({ destination: 'models' });
     const target = createConfigChildWindow({
       title: getMessages(effectiveLocale()).window.providerConfigTitle,
-      width: 460,
-      height: 384,
+      width: 520,
+      height: mode === 'custom' ? 480 : 400,
       parent: liveWindow(settingsWindow),
       query: {
         [WINDOW_SURFACE_QUERY_PARAM]: 'provider-config',

@@ -155,6 +155,20 @@ The scroll-under material follows the right canvas's concentric upper corners.
 A longer graduated mask softens the blurred backing without exposing a rectangular
 strip or a separate content frame; accessibility fallbacks stay opaque.
 
+### Provider Connection Flow
+
+Keep the provider modal focused on authentication and endpoint configuration.
+Remove capability tables and duplicate status/actions; label every field. Standard
+endpoints belong under Advanced, while custom/local endpoints stay visible and
+custom providers require a unique ID and an HTTP(S) URL. Test Connection is optional, has local
+feedback, and never saves the draft. Save preserves failed input, blocks duplicate
+writes/closing while committing, and keeps the existing background probe.
+Dual-auth providers support switching both ways without losing the key draft;
+OAuth account maintenance belongs with connected status. The native child grows
+to 520 × 400 (480 high for custom providers), with a scrolling body and stable
+actions. Cover stored keys, local servers, managed credentials, dual auth, interrupted tests, failed writes, and
+light/dark layout at normal and enlarged text. No new Agent tools or IPC contracts.
+
 ### Acceptance Criteria
 
 - **AC-1 (FR-1, FR-2):** General opens without domain catalog requests. All category

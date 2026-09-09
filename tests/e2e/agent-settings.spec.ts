@@ -573,12 +573,14 @@ test.describe('provider config windows', () => {
     const config = await openProviderConfig(page, 'openai');
     await expect(config.getByRole('heading', { name: /OpenAI/ })).toBeVisible();
     await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', 'sk*****************');
-    await expect(config.getByLabel('Base URL')).toBeVisible();
+    await expect(config.getByLabel('Base URL')).not.toBeVisible();
     // Model and effort moved to the Configuration Profile; neither control lives here now.
     await expect(config.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
     await expect(config.getByRole('combobox', { name: 'Thinking level' })).toHaveCount(0);
-    // A configured provider can be removed from its window.
-    await expect(config.getByRole('button', { name: 'Remove provider' })).toBeVisible();
+    // List-level mutations never discard an unfinished connection draft.
+    await expect(config.getByRole('button', { name: 'Remove provider' })).toHaveCount(0);
+    await expect(config.getByText('Capabilities', { exact: true })).toHaveCount(0);
+    await expect(config.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
   });
 
   test('reveals and copies a saved API key on explicit user action', async ({ page }) => {
@@ -631,11 +633,11 @@ test.describe('provider config windows', () => {
   test('validates a key asynchronously and never saves on validate', async ({ page }) => {
     const config = await openProviderConfig(page, 'anthropic');
     await config.getByLabel('API key').fill('sk-good');
-    await config.getByRole('button', { name: 'Validate' }).click();
+    await config.getByRole('button', { name: 'Test Connection' }).click();
     await expect(config.getByText(/Connection successful/)).toBeVisible();
 
     await config.getByLabel('API key').fill('sk-bad');
-    await config.getByRole('button', { name: 'Validate' }).click();
+    await config.getByRole('button', { name: 'Test Connection' }).click();
     await expect(config.getByText(/Invalid API key/)).toBeVisible();
 
     const calls = await commandCalls(page);
@@ -647,13 +649,14 @@ test.describe('provider config windows', () => {
     await expect(config.getByLabel('API key')).toHaveCount(0);
     await expect(config.getByText(/uses your AWS credentials/i)).toBeVisible();
     await expect(config.getByRole('button', { name: /AWS credential setup/ })).toBeVisible();
-    await expect(config.getByLabel('Base URL')).toBeVisible();
+    await expect(config.getByLabel('Base URL')).not.toBeVisible();
   });
 
-  test('exposes the base URL inline, not behind an Advanced disclosure', async ({ page }) => {
+  test('keeps the optional endpoint in Advanced', async ({ page }) => {
     const config = await openProviderConfig(page, 'openai');
+    await expect(config.getByLabel('Base URL')).not.toBeVisible();
+    await config.getByText('Advanced', { exact: true }).click();
     await expect(config.getByLabel('Base URL')).toBeVisible();
-    await expect(config.getByText('Advanced')).toHaveCount(0);
   });
 
   test('toggles API key visibility', async ({ page }) => {
@@ -671,6 +674,7 @@ test.describe('provider config windows', () => {
   test('creates a custom provider', async ({ page }) => {
     const config = await openProviderConfig(page, '', 'custom');
     await config.getByLabel('Provider ID').fill('my-proxy');
+    await config.getByLabel('Base URL').fill('https://proxy.example.com/v1');
     await config.getByLabel('API key').fill('sk-test');
     await config.getByRole('button', { name: 'Save', exact: true }).click();
 
@@ -685,6 +689,7 @@ test.describe('provider config windows', () => {
 
   test('saves the connection with a base URL override', async ({ page }) => {
     const config = await openProviderConfig(page, 'openai');
+    await config.getByText('Advanced', { exact: true }).click();
     await config.getByLabel('Base URL').fill('http://localhost:1234/v1');
     await config.getByRole('button', { name: 'Save', exact: true }).click();
 

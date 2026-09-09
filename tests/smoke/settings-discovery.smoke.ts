@@ -130,6 +130,17 @@ test('all Settings destinations reuse one native window with bounded admission a
     await smoke.window.evaluate(() => window.lin!.openSettings({ destination: 'shortcuts' }));
     expect(new URL(settings.url()).searchParams.get('destination')).toBe('models');
     const child = smoke.app.windows().find((page) => page.url().includes('surface=provider-config'))!;
+    await expect(child.getByLabel('API key')).toBeVisible();
+    await expect(child.getByText('Capabilities', { exact: true })).toHaveCount(0);
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await child.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+      await child.screenshot({ path: testInfo.outputPath(`provider-connection-${colorScheme}.png`), animations: 'disabled' });
+      await child.getByText('Advanced', { exact: true }).click();
+      await expect(child.getByLabel('Base URL')).toBeVisible();
+      await child.screenshot({ path: testInfo.outputPath(`provider-endpoint-${colorScheme}.png`), animations: 'disabled' });
+      await child.getByText('Advanced', { exact: true }).click();
+    }
+
     const closed = child.waitForEvent('close');
     await child.getByRole('button', { name: 'Cancel', exact: true }).click();
     await closed;
@@ -174,5 +185,47 @@ test('all Settings destinations reuse one native window with bounded admission a
         await expect(source.getByRole('button', { name: 'Open File…' })).toBeVisible();
       }
     }
+  } finally { await closeSmokeApp(smoke); }
+});
+
+test('every catalog provider opens an actionable connection sheet without exposing credentials', async ({}, testInfo) => {
+  test.setTimeout(180_000);
+  const smoke = await launchSmokeApp({ userDataDir: fixture() });
+  try {
+    const models = await open(smoke, 'models');
+    const providers = await models.evaluate(async () => {
+      const view = await window.lin!.invoke<{ availableProviders: Array<{ providerId: string; authKind: string }> }>('agent_get_provider_settings', {});
+      return view.availableProviders.map(({ providerId, authKind }) => ({ providerId, authKind }));
+    });
+    expect(providers.length).toBeGreaterThan(0);
+    const capturedKinds = new Set<string>();
+    for (const provider of providers) {
+      await models.evaluate((providerId) => window.lin!.openProviderConfig({ providerId, mode: 'configure' }), provider.providerId);
+      await expect.poll(() => smoke.app.windows().some((page) => page.url().includes('surface=provider-config'))).toBe(true);
+      const child = smoke.app.windows().find((page) => page.url().includes('surface=provider-config'))!;
+      await expect(child.locator('.provider-config-window')).toHaveAttribute('aria-busy', 'false');
+      await expect(child.locator('.settings-sheet-title')).not.toBeEmpty();
+      const close = child.getByRole('button', { name: /^(Cancel|Done)$/, exact: true });
+      await expect(close).toBeVisible();
+      await expect(child.getByRole('alert')).toHaveCount(0);
+      expect(await child.locator('.settings-sheet-body').evaluate((body) => body.scrollWidth <= body.clientWidth)).toBe(true);
+      // No explicit reveal, copy, login, connection test, or credential write.
+      expect(await child.locator('input[type="password"]').evaluateAll((inputs) => inputs.every((input) => !(input as HTMLInputElement).value))).toBe(true);
+      if (!capturedKinds.has(provider.authKind)) {
+        capturedKinds.add(provider.authKind);
+        for (const colorScheme of ['light', 'dark'] as const) {
+          await child.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+          await child.mouse.move(0, 0);
+          await expect(close).toHaveCSS('color', colorScheme === 'dark' ? 'rgba(255, 255, 255, 0.55)' : 'rgba(0, 0, 0, 0.55)');
+          await child.screenshot({ path: testInfo.outputPath(`catalog-${provider.authKind}-${colorScheme}.png`), animations: 'disabled' });
+        }
+      }
+      const closed = child.waitForEvent('close');
+      await close.click();
+      await closed;
+    }
+    const coveragePath = testInfo.outputPath('catalog-provider-coverage.json');
+    writeFileSync(coveragePath, JSON.stringify(providers, null, 2));
+    await testInfo.attach('catalog-provider-coverage', { path: coveragePath, contentType: 'application/json' });
   } finally { await closeSmokeApp(smoke); }
 });
