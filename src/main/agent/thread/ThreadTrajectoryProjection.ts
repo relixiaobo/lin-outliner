@@ -1,45 +1,42 @@
 import { createHash } from 'node:crypto';
-import {
-  MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
-  type ContextEvidenceThreadItem,
-  type JsonValue,
-  type Thread,
-  type ThreadId,
-  type ThreadItem,
-  type ThreadItemId,
-  type ThreadTrajectoryAvailability,
-  type ThreadTrajectoryDetailReadRequest,
-  type ThreadTrajectoryDetailReadResponse,
-  type ThreadTrajectoryDiagnosticsEvidence,
-  type ThreadTrajectoryEvidenceRef,
-  type ThreadTrajectoryItemEvidence,
-  type ThreadTrajectoryModelImagePart,
-  type ThreadTrajectoryModelInputPart,
-  type ThreadTrajectoryModelOutputPart,
-  type ThreadTrajectoryProviderCallEvidence,
-  type ThreadTrajectoryReadRequest,
-  type ThreadTrajectoryReadResponse,
-  type ThreadTrajectoryRecordLabel,
-  type ThreadTrajectoryRecordKind,
-  type ThreadTrajectoryRecordSummary,
-  type ThreadTrajectoryReplacementRange,
-  type ThreadTrajectoryRuntimeEvidence,
-  type ThreadTrajectorySummary,
-  type ThreadTrajectoryTimingSummary,
-  type ThreadTrajectoryTurnEvidence,
-  type ThreadTrajectoryUsageSummary,
-  type ThreadTrajectoryUserMessageEvidence,
-  type Turn,
-  type TurnId,
-  type TurnDiagnosticsPayload,
-  type TurnDiagnosticsPayloadReference,
-  type TurnDiagnosticsSystemContextEntry,
-  type UserMessageThreadItem,
-} from '../../../core/agent/protocol';
 import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
-import { rehydrateLargeTextArguments } from '../runtime/largeTextArguments';
-import { ThreadCore } from './ThreadCore';
+import {
+type ContextEvidenceThreadItem,
+type JsonValue,
+type Thread,
+type ThreadId,
+type ThreadItem,
+type ThreadItemId,
+type ThreadTrajectoryAvailability,
+type ThreadTrajectoryDetailReadRequest,
+type ThreadTrajectoryDetailReadResponse,
+type ThreadTrajectoryDiagnosticsEvidence,
+type ThreadTrajectoryEvidenceRef,
+type ThreadTrajectoryItemEvidence,
+type ThreadTrajectoryModelImagePart,
+type ThreadTrajectoryModelInputPart,
+type ThreadTrajectoryModelOutputPart,
+type ThreadTrajectoryReadRequest,
+type ThreadTrajectoryReadResponse,
+type ThreadTrajectoryRecordKind,
+type ThreadTrajectoryRecordLabel,
+type ThreadTrajectoryRecordSummary,
+type ThreadTrajectoryReplacementRange,
+type ThreadTrajectoryRuntimeEvidence,
+type ThreadTrajectorySummary,
+type ThreadTrajectoryTimingSummary,
+type ThreadTrajectoryTurnEvidence,
+type ThreadTrajectoryUsageSummary,
+type ThreadTrajectoryUserMessageEvidence,
+type Turn,
+type TurnDiagnosticsPayload,
+type TurnDiagnosticsSystemContextEntry,
+type TurnId,
+type UserMessageThreadItem
+} from '../../../core/agent/protocol';
 import type { ThreadTrajectoryTurnOverview } from '../persistence/ThreadHistoryProjectionStore';
+import { ThreadCore } from './ThreadCore';
+import { availability,DiagnosticsBundle,exactJsonValue,messagePart,modelContextTextForContextRecord,modelResponseContent,PreparedContextPartRecord,providerCallDiagnosticsEvidence,semanticText,stablePromptModelText,textForMessagePart,ThreadRecordSources,toolCatalogEvidence,toolCatalogRecord,ToolCatalogRecord,TrajectoryToolExecution } from './ThreadRecordSources';
 
 const DEFAULT_TRAJECTORY_LIMIT = 100;
 const MAX_TRAJECTORY_LIMIT = 250;
@@ -52,11 +49,6 @@ const TRAJECTORY_TURN_SCAN_BATCH = 8;
 const MAX_CACHED_TRAJECTORY_RECORDS = MAX_TRAJECTORY_LIMIT * 3;
 const MAX_CACHED_TRAJECTORY_TURNS = MAX_TRAJECTORY_LIMIT * 3;
 
-type DiagnosticsBundle = {
-  readonly ref: TurnDiagnosticsPayloadReference;
-  readonly payload: TurnDiagnosticsPayload;
-};
-
 type TrajectoryCursor = {
   readonly direction: 'before' | 'after';
   readonly recordId: string;
@@ -68,11 +60,6 @@ type TrajectoryPage = {
   readonly olderCursor: string | null;
   readonly newerCursor: string | null;
 };
-
-type TrajectoryToolExecution = Extract<
-  TurnDiagnosticsPayload['activities'][number],
-  { readonly type: 'toolExecutionBatch' }
->['executions'][number];
 
 interface LoadedTurn {
   readonly threadId: ThreadId;
@@ -136,11 +123,6 @@ interface DetailReadResult {
   readonly availability: readonly ThreadTrajectoryAvailability[];
 }
 
-interface EvidenceReadResult<T> {
-  readonly value: T;
-  readonly availability: readonly ThreadTrajectoryAvailability[];
-}
-
 export class ThreadTrajectoryProjection {
   private readonly completedTurnProjectionCache = new Map<string, CachedTurnProjection>();
   private cachedTrajectoryRecordCount = 0;
@@ -151,6 +133,7 @@ export class ThreadTrajectoryProjection {
     private readonly readActiveDiagnostics: (
       (threadId: ThreadId, turnId: TurnId) => TurnDiagnosticsPayload | null
   ) | null = null,
+    private readonly sources = new ThreadRecordSources(core, readActiveDiagnostics),
   ) {}
 
   async read(request: ThreadTrajectoryReadRequest): Promise<ThreadTrajectoryReadResponse> {
@@ -289,7 +272,7 @@ export class ThreadTrajectoryProjection {
         };
       }
       const materializedTurn = this.core.readTurn(threadId, turn.id) ?? turn;
-      const diagnostics = await this.readDiagnostics(threadId, materializedTurn);
+      const diagnostics = await this.sources.readDiagnostics(threadId, materializedTurn);
       const loaded = {
         threadId,
         turn: materializedTurn,
@@ -346,50 +329,6 @@ export class ThreadTrajectoryProjection {
       const oldest = this.completedTurnProjectionCache.get(oldestKey);
       this.completedTurnProjectionCache.delete(oldestKey);
       this.cachedTrajectoryRecordCount -= oldest?.candidate.records.length ?? 0;
-    }
-  }
-
-  private async readDiagnostics(
-    threadId: ThreadId,
-    turn: Turn,
-  ): Promise<{
-    readonly bundle: DiagnosticsBundle | null;
-    readonly availability: readonly ThreadTrajectoryAvailability[];
-  }> {
-    const ref = turn.execution.diagnosticsRef;
-    if (!ref) {
-      const activePayload = turn.status === 'inProgress'
-        ? this.readActiveDiagnostics?.(threadId, turn.id) ?? null
-        : null;
-      if (activePayload) {
-        const activeBundle = activeDiagnosticsBundle(activePayload);
-        if (activeBundle) return { bundle: activeBundle, availability: [] };
-        return {
-          bundle: null,
-          availability: [availability('diagnosticsUnavailable')],
-        };
-      }
-      return {
-        bundle: null,
-        availability: turn.status === 'inProgress'
-          ? []
-          : [availability('diagnosticsUnavailable')],
-      };
-    }
-    try {
-      const payload = await this.core.payloads.readTurnDiagnostics(threadId, ref);
-      if (!payload) {
-        return {
-          bundle: null,
-          availability: [availability('diagnosticsUnavailable')],
-        };
-      }
-      return { bundle: { ref, payload }, availability: [] };
-    } catch {
-      return {
-        bundle: null,
-        availability: [availability('diagnosticsCorrupt')],
-      };
     }
   }
 
@@ -456,14 +395,16 @@ export class ThreadTrajectoryProjection {
       const item = itemForToolRecord(loaded.turn, record);
       const execution = toolExecutionForRecord(loaded.diagnostics?.payload ?? null, record);
       const [input, output] = await Promise.all([
-        this.readToolInput(
+        this.sources.readToolInput(
           record.threadId,
           loaded.diagnostics?.payload ?? null,
           diagnosticActivityIndex(record.primaryEvidence),
           execution,
           item,
+          record.turnId,
+          loaded.diagnostics?.retention,
         ),
-        this.readToolOutput(record.threadId, item),
+        this.sources.readToolOutput(record.threadId, item, record.turnId),
       ]);
       const schema = toolSchemaEvidence(loaded.diagnostics?.payload ?? null, execution?.toolName ?? null);
       return detailRead({
@@ -497,7 +438,7 @@ export class ThreadTrajectoryProjection {
     if (record.kind === 'compaction') {
       const item = itemForEvidence(loaded.turn, record.primaryEvidence)
         ?? itemForRelatedEvidence(loaded.turn, record);
-      const summary = await this.readCompactionSummary(record.threadId, item);
+      const summary = await this.sources.readCompactionSummary(record.threadId, item, record.turnId);
       return detailRead({
         kind: 'compaction',
         turn: turnEvidence(loaded.turn),
@@ -513,69 +454,6 @@ export class ThreadTrajectoryProjection {
     }
     throw new Error(`Unsupported Trajectory record kind: ${record.kind}`);
   }
-
-  private async readToolInput(
-    threadId: ThreadId,
-    diagnostics: TurnDiagnosticsPayload | null,
-    activityIndex: number | null,
-    execution: TrajectoryToolExecution | null,
-    item: ThreadItem | null,
-  ): Promise<EvidenceReadResult<JsonValue | null>> {
-    if (diagnostics) {
-      if (activityIndex === null || !execution) return unavailableEvidence('evidenceUnavailable');
-      return providerToolInputEvidence(diagnostics, activityIndex, execution);
-    }
-    if (!item || !('modelCall' in item)) return retainedEvidence(null);
-    if (item.modelCall.disposition !== 'replayable') return unavailableEvidence('evidenceUnavailable');
-    const source = modelCallArgumentSource(item.modelCall);
-    if (source.storage === 'inline') {
-      return retainedEvidence(structuredClone(source.value));
-    }
-    try {
-      const payload = await this.core.payloads.readContext(threadId, source.ref);
-      if (payload?.kind !== 'toolCallArguments') return unavailableEvidence('payloadUnavailable');
-      const rehydrated = await rehydrateLargeTextArguments(
-        payload,
-        source.internalTextRefs,
-        (ref) => this.core.payloads.readInternalText(threadId, ref),
-      );
-      return rehydrated === null
-        ? unavailableEvidence('payloadUnavailable')
-        : retainedEvidence(rehydrated);
-    } catch {
-      return unavailableEvidence('payloadUnavailable');
-    }
-  }
-
-  private async readToolOutput(
-    threadId: ThreadId,
-    item: ThreadItem | null,
-  ): Promise<EvidenceReadResult<string | null>> {
-    if (!item || !('outputRef' in item) || !item.outputRef) return retainedEvidence(null);
-    try {
-      const text = await this.core.payloads.readTextReference(threadId, item.outputRef);
-      return text === null
-        ? unavailableEvidence('evidenceUnavailable')
-        : retainedEvidence(text);
-    } catch {
-      return unavailableEvidence('evidenceUnavailable');
-    }
-  }
-
-  private async readCompactionSummary(
-    threadId: ThreadId,
-    item: ThreadItem | null,
-  ): Promise<EvidenceReadResult<string | null>> {
-    if (item?.type !== 'contextCompaction') return retainedEvidence(null);
-    try {
-      const payload = await this.core.payloads.readContext(threadId, item.summaryRef);
-      return payload?.kind === 'compactionSummary'
-        ? retainedEvidence(payload.text)
-        : unavailableEvidence('payloadUnavailable');
-    } catch {
-      return unavailableEvidence('payloadUnavailable');
-    }
-  }
 }
 
 function detailRead(
@@ -583,16 +461,6 @@ function detailRead(
   availability: readonly ThreadTrajectoryAvailability[] = [],
 ): DetailReadResult {
   return { detail, availability };
-}
-
-function retainedEvidence<T>(value: T): EvidenceReadResult<T> {
-  return { value, availability: [] };
-}
-
-function unavailableEvidence(
-  reason: ThreadTrajectoryAvailability['reason'],
-): EvidenceReadResult<null> {
-  return { value: null, availability: [availability(reason)] };
 }
 
 function withAvailability(
@@ -778,21 +646,6 @@ function trajectoryOrderKey(order: readonly [number, number, number, number, num
   }).join(':');
 }
 
-function activeDiagnosticsBundle(payload: TurnDiagnosticsPayload): DiagnosticsBundle | null {
-  const encoded = JSON.stringify(payload);
-  const byteLength = Buffer.byteLength(encoded, 'utf8');
-  if (byteLength > MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES) return null;
-  return {
-    ref: {
-      id: createHash('sha256').update(encoded).digest('hex'),
-      mimeType: 'application/vnd.tenon.agent-turn-diagnostics+json',
-      byteLength,
-      schemaVersion: 1,
-    },
-    payload,
-  };
-}
-
 function diagnosticsEvidence(
   bundle: DiagnosticsBundle | null,
   activityIndex: number | null,
@@ -829,127 +682,6 @@ function runtimeEvidence(runtime: TurnDiagnosticsPayload['runtime']): ThreadTraj
     cacheRetention: runtime.cacheRetention,
     toolExecution: runtime.toolExecution,
     steeringMode: runtime.steeringMode,
-  };
-}
-
-function providerCallDiagnosticsEvidence(
-  payload: TurnDiagnosticsPayload,
-  call: TurnDiagnosticsPayload['providerCalls'][number] | null,
-): ThreadTrajectoryProviderCallEvidence | null {
-  if (!call) return null;
-  return {
-    index: call.index,
-    requestedAt: call.requestedAt,
-    estimatedInputTokens: call.estimatedInputTokens,
-    inputTokenLimit: call.inputTokenLimit,
-    reservedOutputTokens: call.reservedOutputTokens,
-    commonPrefixMessageCount: call.commonPrefixMessageCount,
-    requestFingerprint: call.requestFingerprint,
-    cacheBreakpoints: call.cacheBreakpoints,
-    request: structuredClone(materializeProviderRequest(payload, call)),
-    response: call.response ? exactJsonValue(call.response) : null,
-    transportResponse: call.transportResponse,
-  };
-}
-
-function materializeProviderRequest(
-  payload: TurnDiagnosticsPayload,
-  call: TurnDiagnosticsPayload['providerCalls'][number],
-): JsonValue | null {
-  const request = call.request;
-  if (request.kind === 'value') return request.value;
-  const fragments = new Map(payload.requestFragments.map((fragment) => [fragment.id, fragment.value]));
-  const result: Record<string, JsonValue> = {};
-  for (const field of request.fields) {
-    if (field.representation === 'inline') {
-      result[field.name] = field.value;
-      continue;
-    }
-    const values: JsonValue[] = [];
-    for (const id of field.fragmentIds) {
-      const value = fragments.get(id);
-      if (value === undefined) return null;
-      values.push(value);
-    }
-    if (field.container === 'array') {
-      result[field.name] = values;
-    } else {
-      const value = values[0];
-      if (value === undefined) return null;
-      result[field.name] = value;
-    }
-  }
-  return result;
-}
-
-function modelContextTextForContextRecord(
-  payload: TurnDiagnosticsPayload | null,
-  record: ThreadTrajectoryRecordSummary,
-): string | null {
-  if (!payload) return null;
-  if (record.primaryEvidence.type === 'stablePrompt') return stablePromptModelText(payload);
-  if (record.primaryEvidence.type === 'preparedContextPart') {
-    return modelContextTextForPreparedContextPart(payload, record.primaryEvidence);
-  }
-  return null;
-}
-
-function stablePromptModelText(payload: TurnDiagnosticsPayload): string | null {
-  for (const call of payload.providerCalls) {
-    const fragment = payload.requestFragments.find((candidate) => (
-      candidate.id === call.preparedContext.systemPromptFragmentId
-    ));
-    const text = semanticText(fragment?.value ?? null);
-    if (text) return text;
-  }
-  return null;
-}
-
-type PreparedContextPartEvidenceRef = Extract<ThreadTrajectoryEvidenceRef, { readonly type: 'preparedContextPart' }>;
-interface PreparedContextPartRecord {
-  readonly callIndex: number;
-  readonly messageIndex: number;
-  readonly partIndex: number;
-  readonly entries: readonly TurnDiagnosticsSystemContextEntry[];
-  readonly text: string;
-  readonly requestedAt: number;
-}
-
-interface ToolCatalogRecord {
-  readonly callIndex: number;
-  readonly toolNames: readonly string[];
-  readonly tools: readonly JsonValue[];
-  readonly fingerprint: string;
-  readonly requestedAt: number;
-}
-
-function modelContextTextForPreparedContextPart(
-  payload: TurnDiagnosticsPayload,
-  ref: PreparedContextPartEvidenceRef,
-): string | null {
-  return preparedContextPartRecord(payload, ref)?.text ?? null;
-}
-
-function preparedContextPartRecord(
-  payload: TurnDiagnosticsPayload,
-  ref: PreparedContextPartEvidenceRef,
-): PreparedContextPartRecord | null {
-  const messagesById = new Map(payload.canonicalMessages.map((message) => [message.id, message.value]));
-  const call = payload.providerCalls[ref.callIndex] ?? null;
-  if (!call) return null;
-  const messageId = call.preparedContext.messageIds[ref.messageIndex];
-  if (!messageId) return null;
-  const provenance = call.preparedContext.messagePartProvenance[ref.messageIndex]?.[ref.partIndex] ?? null;
-  if (provenance?.source !== 'systemContext') return null;
-  const partText = textForMessagePart(messagesById.get(messageId) ?? null, ref.partIndex);
-  if (!partText) return null;
-  return {
-    callIndex: ref.callIndex,
-    messageIndex: ref.messageIndex,
-    partIndex: ref.partIndex,
-    entries: provenance.entries,
-    text: partText,
-    requestedAt: call.requestedAt,
   };
 }
 
@@ -994,41 +726,6 @@ function preparedContextFingerprint(context: PreparedContextPartRecord): string 
   });
 }
 
-function toolCatalogRecord(
-  payload: TurnDiagnosticsPayload,
-  callIndex: number,
-): ToolCatalogRecord | null {
-  const call = payload.providerCalls[callIndex] ?? null;
-  if (!call) return null;
-  const schemasByName = new Map(payload.toolSchemas.map((schema) => [schema.name, schema]));
-  const tools = call.preparedContext.toolNames.map((name): JsonValue => {
-    const schema = schemasByName.get(name);
-    return schema ? exactJsonValue(schema) : { name, schemaUnavailable: true };
-  });
-  return {
-    callIndex: call.index,
-    toolNames: call.preparedContext.toolNames,
-    tools,
-    fingerprint: JSON.stringify(tools),
-    requestedAt: call.requestedAt,
-  };
-}
-
-function toolCatalogEvidence(
-  payload: TurnDiagnosticsPayload | null,
-  callIndex: number,
-): JsonValue | null {
-  if (!payload) return null;
-  const catalog = toolCatalogRecord(payload, callIndex);
-  if (!catalog) return null;
-  return {
-    kind: 'toolCatalog',
-    requestIndex: catalog.callIndex,
-    toolNames: [...catalog.toolNames],
-    tools: structuredClone(catalog.tools),
-  };
-}
-
 function toolCatalogLabel(catalog: ToolCatalogRecord, update: boolean): ThreadTrajectoryRecordLabel {
   return {
     type: 'toolCatalog',
@@ -1040,20 +737,6 @@ function toolCatalogLabel(catalog: ToolCatalogRecord, update: boolean): ThreadTr
 
 function toolCatalogPreview(catalog: ToolCatalogRecord): string | null {
   return catalog.toolNames.length > 0 ? catalog.toolNames.join(', ') : null;
-}
-
-function textForMessagePart(message: JsonValue | null, partIndex: number): string | null {
-  return semanticText(messagePart(message, partIndex));
-}
-
-function messagePart(message: JsonValue | null, partIndex: number): JsonValue | null {
-  if (message === null) return null;
-  if (typeof message === 'string') return partIndex === 0 ? message : null;
-  if (typeof message !== 'object' || Array.isArray(message)) return null;
-  const record = message as Readonly<Record<string, JsonValue>>;
-  const content = record.content ?? record.parts;
-  if (Array.isArray(content)) return content[partIndex] ?? null;
-  return partIndex === 0 ? content ?? message : null;
 }
 
 function modelInputPartsForItem(
@@ -1109,38 +792,6 @@ function modelOutputPartsForResponse(value: JsonValue | null): readonly ThreadTr
   if (content === null) return null;
   const parts = content.map(modelOutputPartEvidence);
   return parts.length > 0 ? parts : null;
-}
-
-function modelResponseContent(value: JsonValue | null): readonly JsonValue[] | null {
-  if (value === null) return null;
-  if (Array.isArray(value)) return value;
-  if (typeof value !== 'object') return [value];
-  const record = value as Readonly<Record<string, JsonValue>>;
-  const content = record.content ?? record.parts;
-  if (Array.isArray(content)) return content;
-  if (content !== undefined && content !== null) return [content];
-  return [value];
-}
-
-function providerToolInputEvidence(
-  payload: TurnDiagnosticsPayload,
-  activityIndex: number,
-  execution: TrajectoryToolExecution,
-): EvidenceReadResult<JsonValue | null> {
-  const batch = payload.activities[activityIndex] ?? null;
-  if (batch?.type !== 'toolExecutionBatch') return unavailableEvidence('evidenceUnavailable');
-  const response = payload.providerCalls[batch.sourceCallIndex]?.response?.value ?? null;
-  const part = modelResponseContent(response)?.[execution.providerResponsePartIndex] ?? null;
-  if (typeof part !== 'object' || part === null || Array.isArray(part)) {
-    return unavailableEvidence('evidenceUnavailable');
-  }
-  const record = part as Readonly<Record<string, JsonValue>>;
-  const type = typeof record.type === 'string' ? record.type.toLowerCase().replace(/[_-]/g, '') : '';
-  if (type !== 'toolcall' && type !== 'functioncall') return unavailableEvidence('evidenceUnavailable');
-  for (const key of ['arguments', 'args', 'input'] as const) {
-    if (Object.hasOwn(record, key)) return retainedEvidence(structuredClone(record[key] ?? null));
-  }
-  return unavailableEvidence('evidenceUnavailable');
 }
 
 function modelOutputPartEvidence(part: JsonValue): ThreadTrajectoryModelOutputPart {
@@ -2085,10 +1736,6 @@ function turnIdFromTrajectoryRecordId(recordId: string): TurnId | null {
   return match?.[1] ?? null;
 }
 
-function availability(reason: ThreadTrajectoryAvailability['reason']): ThreadTrajectoryAvailability {
-  return { reason };
-}
-
 function turnEvidence(turn: Turn): ThreadTrajectoryTurnEvidence {
   return {
     id: turn.id,
@@ -2329,21 +1976,6 @@ function toolInputPreview(item: ThreadItem | null): string | null {
     : null;
 }
 
-function semanticText(value: JsonValue | null): string | null {
-  if (typeof value === 'string') return value;
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const record = value as Readonly<Record<string, JsonValue>>;
-  for (const key of ['text', 'input_text', 'output_text', 'content']) {
-    const text = record[key];
-    if (typeof text === 'string' && text.length > 0) return text;
-  }
-  const content = record.content ?? record.parts;
-  if (Array.isArray(content)) {
-    return content.map(semanticText).filter(Boolean).join(' ');
-  }
-  return null;
-}
-
 function jsonPreview(value: JsonValue | null): string | null {
   if (value === null) return null;
   try {
@@ -2351,10 +1983,6 @@ function jsonPreview(value: JsonValue | null): string | null {
   } catch {
     return null;
   }
-}
-
-function exactJsonValue(value: unknown): JsonValue {
-  return structuredClone(value) as JsonValue;
 }
 
 function compact(value: string | null | undefined): string | null {

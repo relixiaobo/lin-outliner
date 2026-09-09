@@ -83,7 +83,7 @@ Discovery membership comes from the eligible catalog, not the existence of an al
 
 Each published entry states its source boundary and publication time. Concurrent reads see a named snapshot, not a claim that all activity is finished. A reader continuing an older file generation must receive an explicit source-changed result instead of silently combining generations. Publishing later detail must not require regenerating every earlier Turn.
 
-BR-1: Keep current record-discovery membership as the proposed default: non-excluded persistent root conversations, including Automation roots, across Profiles as the current file index already does. Apply that rule consistently to the new index, record publication, and Agent-facing Thread-reference resolution. Self is eligible. Delegated Threads do not gain global discovery or tools; their owning session's existing references and isolation policy remain in force. Ephemeral Threads have no durable reading tree. This rule needs ratification with the complete plan because explicit mentions currently use narrower eligibility.
+BR-1: Use the ratified record-discovery membership: non-excluded persistent root conversations, including Automation roots, across Profiles as the current file index already does. Apply that rule consistently to the new index, record publication, and Agent-facing Thread-reference resolution. Self is eligible. Delegated Threads do not gain global discovery or tools; their owning session's existing references and isolation policy remain in force. Ephemeral Threads have no durable reading tree. Explicit references use this same eligibility rather than their former narrower scope.
 
 BR-2: Preserve Trajectory's best-effort live diagnostics snapshots. File history promises retained records; an in-memory-only diagnostic is identified as not yet persisted. Do not persist an additional diagnostic ledger just to make the file view appear identical to live UI. If crash-surviving in-flight provider traces become a requirement, change the existing collector's persistence separately and explicitly.
 
@@ -181,11 +181,11 @@ The board records live claims and merge eligibility. At claim time recheck the a
 | Ordinary-file retrieval | Long-line search/continuation and real compaction recovery work through ordinary file tools; current/explicit Thread entry points lead to the same reading tree. | FR-5, FR-6; AC-1 through AC-4, AC-8 |
 | Complete cutover | Retire both model tools only with all replacement flows usable; preserve Composer, Trajectory, Automations, hidden-session references and current execution authorities. | FR-6, CON-1, CON-3; AC-1 through AC-8 |
 
-These stages are build order, not separate PRs. Before coding, the discovery rule in OQ-1 must have an explicit decision. The implementation must exercise a scope matrix covering same/cross Profile, user/Automation root, self, excluded, ephemeral and delegated Threads for index publication and explicit-reference resolution. A capability-disabled caller receives an unavailable read path in every otherwise eligible case.
+These stages are build order, not separate PRs. The implementation must exercise a scope matrix covering same/cross Profile, user/Automation root, self, excluded, ephemeral and delegated Threads for index publication and explicit-reference resolution. A capability-disabled caller receives an unavailable read path in every otherwise eligible case.
 
 ## Open questions
 
-OQ-1: Obtain explicit PM ratification for BR-1's discovery scope: persistent roots across Profiles, Automation roots, and self-inspection, with existing exclusion and delegated-session isolation. Matching the current file index does not itself authorize broader explicit-reference eligibility. Existing retention and explicit live-only diagnostics remain the saved-record boundary; expanding delegated discovery or retaining every superseded process/provider trace would require a separate scope change.
+No unresolved product questions. BR-1 defines the ratified discovery scope for both publication and explicit references. Existing retention and explicit live-only diagnostics remain the saved-record boundary; expanding delegated discovery or retaining every superseded process/provider trace requires a separate scope change.
 
 The implementation's private type names and exact text-continuation encoding are local choices constrained by this plan. No additional product model or serial design phase is required to choose them.
 

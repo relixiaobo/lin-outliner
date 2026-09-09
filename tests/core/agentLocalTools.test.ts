@@ -1271,7 +1271,7 @@ describe('agent local tools', () => {
       }>(workspaceRoot, 'file_read', { file_path: filePath, offset: 9, limit: 1 });
 
       expect(read.status).toBe('partial');
-      expect(read.data!.file).toEqual({
+      expect(read.data!.file).toMatchObject({
         filePath,
         content: '',
         numLines: 0,

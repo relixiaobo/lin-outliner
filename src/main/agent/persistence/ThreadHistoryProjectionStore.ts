@@ -638,6 +638,7 @@ export class ThreadHistoryProjectionStore {
   }
 
   private projectEvent(ordinal: number, projectionVersion: number, event: RolloutEvent): void {
+    if (event.type === 'history/recovered') return;
     if (event.type === 'history/rerun') {
       this.projectRollback(ordinal, projectionVersion, event);
       this.projectNotification(ordinal, event.replacement);

@@ -1,5 +1,6 @@
 import { mkdir, open, readFile, rename, rm, stat, truncate, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import { decodeAgentCoreRecordedNotification } from '../../../core/agent/codec';
 import {
   createThreadHistoryRollbackContext,
@@ -19,7 +20,19 @@ export interface ThreadHistoryRerunMarker extends ThreadHistoryRollbackContext {
 export type RolloutEvent =
   | AgentCoreRecordedNotification
   | ThreadHistoryRollbackMarker
-  | ThreadHistoryRerunMarker;
+  | ThreadHistoryRerunMarker
+  | RolloutRecoveryMarker;
+
+export interface RolloutRecoveryMarker {
+  readonly type: 'history/recovered';
+  readonly threadId: ThreadId;
+  readonly recoveryId: string;
+  readonly recoveredThreadId: ThreadId;
+  readonly recoveredAt: number;
+  readonly source: 'history-projection';
+  readonly coverage: 'snapshot-only';
+  readonly snapshotDigest: string;
+}
 
 export interface RolloutRecord {
   readonly ordinal: number;
@@ -104,6 +117,10 @@ export class RolloutStore {
     recordedAt = Date.now(),
   ): Promise<RolloutEntry> {
     return this.appendEvent(threadId, notificationInput, recordedAt);
+  }
+
+  async appendRecovery(threadId: ThreadId, origin: RolloutRecoveryMarker): Promise<RolloutEntry> {
+    return this.appendEvent(threadId, { ...origin, threadId }, Date.now());
   }
 
   async appendHistoryRollback(
@@ -217,6 +234,30 @@ export class RolloutStore {
     assertThreadId(threadId);
     await this.waitForThread(threadId);
     return readEntries(this.pathFor(threadId), true);
+  }
+
+  /** Recovery is the first record; inspection never scans a whole history for it. */
+  async readRecovery(threadId: ThreadId): Promise<RolloutRecoveryMarker | null> {
+    assertThreadId(threadId);
+    let handle: FileHandle;
+    try { handle = await open(this.pathFor(threadId), 'r'); }
+    catch (error) { if (isNotFound(error)) return null; throw error; }
+    try {
+      // Recovery is a preface: first in a repaired Rollout, or immediately after
+      // thread/started in a fork that inherits recovered history. Never scan Turns.
+      const buffer = Buffer.alloc(16 * 1024);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      let offset = 0;
+      for (let index = 0; index < 2; index++) {
+        const end = buffer.subarray(0, bytesRead).indexOf(10, offset);
+        if (end < 0) return null;
+        const event = decodeEnvelope(buffer.subarray(offset, end).toString('utf8'), offset, end + 1 - offset).event;
+        if (event.type === 'history/recovered') return event;
+        if (event.type !== 'thread/started') return null;
+        offset = end + 1;
+      }
+      return null;
+    } finally { await handle.close(); }
   }
 
   async readAfter(threadId: ThreadId, ordinal: number): Promise<readonly RolloutEntry[]> {
@@ -417,9 +458,15 @@ function encodeSnapshot(
   const entries: RolloutEntry[] = [];
   const lines: string[] = [];
   let byteOffset = 0;
-  for (const [ordinal, record] of records.entries()) {
+  const recoveredAt = Date.now();
+  const recovery: RolloutRecoveryMarker = {
+    type: 'history/recovered', threadId, recoveredThreadId: threadId, recoveryId: randomUUID(), recoveredAt,
+    source: 'history-projection', coverage: 'snapshot-only',
+    snapshotDigest: createHash('sha256').update(JSON.stringify(records)).digest('hex'),
+  };
+  for (const [ordinal, record] of [{ recordedAt: recoveredAt, event: recovery }, ...records].entries()) {
     if (!Number.isFinite(record.recordedAt)) throw new Error('Invalid rollout snapshot timestamp');
-    const event = decodeAgentCoreRecordedNotification(record.event);
+    const event = decodeRolloutEvent(record.event);
     if (event.threadId !== threadId) throw new Error('Rollout snapshot event Thread does not match its file owner');
     const line = `${JSON.stringify({ ordinal, recordedAt: record.recordedAt, event })}\n`;
     const byteLength = Buffer.byteLength(line);
@@ -490,6 +537,18 @@ function decodeEnvelope(encoded: string, byteOffset: number, byteLength: number)
 
 function decodeRolloutEvent(value: unknown): RolloutEvent {
   if (!isRecord(value)) return decodeAgentCoreRecordedNotification(value);
+  if (value.type === 'history/recovered') {
+    if (Object.keys(value).sort().join(',') !== 'coverage,recoveredAt,recoveredThreadId,recoveryId,snapshotDigest,source,threadId,type'
+      || value.source !== 'history-projection' || value.coverage !== 'snapshot-only'
+      || typeof value.recoveredAt !== 'number' || !Number.isFinite(value.recoveredAt)
+      || typeof value.recoveryId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.recoveryId)
+      || typeof value.snapshotDigest !== 'string' || !/^[0-9a-f]{64}$/.test(value.snapshotDigest)) {
+      throw new Error('Invalid Rollout recovery provenance');
+    }
+    assertThreadId(String(value.threadId));
+    assertThreadId(String(value.recoveredThreadId));
+    return Object.freeze(value) as unknown as RolloutRecoveryMarker;
+  }
   if (value.type === 'history/rerun') return decodeHistoryRerunMarker(value);
   if (value.type !== 'history/rollback') return decodeAgentCoreRecordedNotification(value);
   const keys = Object.keys(value).sort();

@@ -4,7 +4,6 @@ import { createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveAgentScratchRoot } from '../../src/main/agent/capabilities/agentLocalRoot';
-import { threadTranscriptRoot } from '../../src/main/agent/thread/ThreadTranscriptArtifact';
 import { closeSmokeApp, launchSmokeApp, REPO_ROOT, type SmokeApp } from './electronApp';
 
 async function workspaceFixture() {
@@ -123,9 +122,9 @@ test('Retry restores existing conversations after the document opens before Agen
     await closeSmokeApp(smoke, { keepUserData: true });
     smoke = undefined;
 
-    const transcriptRoot = threadTranscriptRoot(fixture.userDataDir);
-    await mkdir(transcriptRoot, { recursive: true });
-    const exclusionsPath = join(transcriptRoot, 'excluded.txt');
+    const recordRoot = join(fixture.userDataDir, 'thread-transcripts');
+    await mkdir(recordRoot, { recursive: true });
+    const exclusionsPath = join(recordRoot, 'excluded.txt');
     await writeFile(exclusionsPath, '');
     const held = await holdFileRead(exclusionsPath);
     releaseRead = held.releaseRead;

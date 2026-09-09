@@ -1,3 +1,11 @@
+import {
+  TextFileNewlines,
+  type NormalizedTextCharacter,
+  TextFileCursorError,
+  textFileGeneration,
+  encodeTextFileCursor,
+  readTextFileContinuation,
+} from './textFileCursor';
 import type { AgentTool, AgentToolTextReplacement } from '../runtime/kernel/types';
 import {
   type BashTaskStatus,
@@ -183,6 +191,7 @@ type WorkspaceContext = AgentLocalWorkspaceContext;
 
 interface FileReadParams {
   file_path: string;
+  cursor?: string;
   offset?: number;
   limit?: number;
   pages?: string;
@@ -206,6 +215,8 @@ interface FileReadTextData {
     totalLines: number | null;
     hasMore: boolean;
     lineTruncated?: boolean;
+    nextCursor?: string | null;
+    generation?: string;
   };
 }
 
@@ -314,6 +325,7 @@ export interface FileGrepData {
   numMatches?: number;
   appliedLimit?: number;
   appliedOffset?: number;
+  readLocations?: Array<{ filePath: string; line: number; byteOffset: number; cursor: string | null }>;
 }
 
 interface FileEditParams {
@@ -650,6 +662,7 @@ const FILE_READ_PARAMETERS = {
   required: ['file_path'],
   properties: {
     file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the call working directory.' },
+    cursor: { type: 'string', minLength: 1, maxLength: 2048, description: 'Continue from nextCursor returned by file_read or file_grep, including inside a long line. Do not combine with offset or pages.' },
     offset: { type: 'integer', minimum: 0, description: 'The line number to start reading from. Only provide if the file is too large to read at once.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_FILE_READ_LIMIT, description: 'The number of lines to read. Only provide if the file is too large to read at once.' },
     pages: { type: 'string', minLength: 1, description: `PDF FILES ONLY. Omit pages to extract text from the entire PDF by default. Provide a page range for PDF layout inspection, for example "1-5", "3", or "10-20". Never use for text, images, Office documents, notebooks, or other non-PDF files. Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.` },
@@ -1179,7 +1192,7 @@ function createFileReadTool(
       'Reads a local file.',
       'Use an absolute file_path when known; relative paths resolve from the call working directory.',
       `By default, it reads up to ${DEFAULT_FILE_READ_LIMIT} lines starting from the beginning of the file.`,
-      'You can optionally specify a line offset and limit, especially for long files.',
+      'Specify offset and limit for line windows; use the returned nextCursor to continue inside a long line. A cursor is bound to that exact file generation.',
       'This tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. It can only read files, not directories.',
       'PDFs are read as extracted text by default. For PDF files only, use pages when page images or layout inspection are needed.',
       'For text pagination, use offset and limit. A pages value on a non-PDF file is ignored with a route-specific warning.',
@@ -1207,6 +1220,14 @@ function createFileReadTool(
               ? `Use the original document instead: ${suggestedName}.`
               : 'Use the original document instead.',
           );
+        }
+        if (params.cursor) {
+          const read = await readTextFileContinuation(filePath, params.cursor, MAX_FILE_READ_CHARS, params.limit ?? DEFAULT_FILE_READ_LIMIT, signal);
+          const data: FileReadTextData = { type: 'text', file: { filePath, ...read } };
+          await notifySuccessfulFileTouch(workspace, filePath);
+          return agentToolResult(successEnvelope('file_read', data, { status: read.hasMore ? 'partial' : undefined,
+            instructions: read.nextCursor ? 'Continue with nextCursor and the same file_path.' : 'Reached the end of this file generation.', metrics: metrics(started, data) }),
+            visibleFileRead(data), [{ type: 'text', text: read.content }]);
         }
         const ext = path.extname(filePath).toLowerCase();
         const imageType = await imageMediaTypeForFile(filePath, IMAGE_MEDIA_TYPES.get(ext));
@@ -1352,7 +1373,9 @@ function createFileReadTool(
             metrics: metrics(started, data),
           }), visible);
         }
+        const source = await textFileGeneration(filePath);
         const read = await readTextFileWindow(filePath, lineOffset + 1, limit, MAX_FILE_READ_CHARS, signal);
+        if ((await textFileGeneration(filePath)).generation !== source.generation) throw new TextFileCursorError('source_changed', 'The file changed during reading. Read it again.');
         const partial = lineOffset > 0 || read.hasMore || read.lineTruncated;
         const fullContent = !partial && lineOffset === 0 ? read.content : null;
         workspace.readFileState.set(filePath, {
@@ -1376,6 +1399,8 @@ function createFileReadTool(
             totalLines: read.totalLines,
             hasMore: read.hasMore,
             ...(read.lineTruncated ? { lineTruncated: true } : {}),
+            generation: source.generation,
+            nextCursor: read.lineTruncated ? encodeTextFileCursor(filePath, { generation: source.generation, encoding: read.encoding, nextByte: read.nextByte, line: read.nextLine, end: source.size }) : null,
           },
         };
         const nextOffset = read.startLine + read.numLines;
@@ -1386,7 +1411,7 @@ function createFileReadTool(
           // truncation signal, not just prose it might skip.
           status: partial ? 'partial' : undefined,
           instructions: read.lineTruncated
-            ? 'A single line exceeded the file_read character budget. Use file_grep to narrow the content or bash for an explicit byte range.'
+            ? 'Continue with nextCursor and the same file_path to read the rest of this line without gaps.'
             : read.hasMore
               ? `Call file_read with offset ${nextOffset} to continue, or read the whole file before editing it.`
               : lineOffset > 0
@@ -1455,17 +1480,18 @@ function createFileGrepTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
     ].join('\n'),
     parameters: FILE_GREP_PARAMETERS,
     executionMode: 'parallel',
-    execute: async (_toolCallId, rawParams: unknown) => {
+    execute: async (_toolCallId, rawParams: unknown, signal) => {
       const started = Date.now();
       try {
         const params = normalizeFileGrepParams(rawParams);
-        const data = await runGrep(workspace, params);
+        const data = await runGrep(workspace, params, signal);
         return agentToolResult(successEnvelope('file_grep', data, {
           status: data.appliedLimit !== undefined ? 'partial' : undefined,
           instructions: data.appliedLimit !== undefined ? `More results may be available. Call file_grep again with offset ${(data.appliedOffset ?? 0) + data.appliedLimit}.` : undefined,
           metrics: { ...metrics(started, data), truncated: data.appliedLimit !== undefined },
         }), visibleFileGrep(data));
       } catch (error) {
+        if (signal?.aborted) throw error;
         return localErrorResult('file_grep', error, started);
       }
     },
@@ -1905,7 +1931,11 @@ function backgroundTaskOwnedBy(task: BackgroundTask, ownerThreadId: string | und
 function normalizeFileReadParams(rawParams: unknown): FileReadParams {
   const input = asRecord(rawParams);
   const filePath = requiredLocalString(input.file_path, 'file_path');
+  if (input.cursor !== undefined && (typeof input.cursor !== 'string' || !input.cursor || input.cursor.length > 2048 || input.offset !== undefined || input.pages !== undefined)) {
+    throw new LocalToolFailure('invalid_args', 'cursor must be a non-empty continuation, without offset or pages.');
+  }
   return {
+    cursor: input.cursor as string | undefined,
     file_path: filePath,
     offset: input.offset === undefined ? undefined : clampInteger(input.offset, 0, Number.MAX_SAFE_INTEGER, 0),
     limit: input.limit === undefined ? undefined : clampInteger(input.limit, 1, MAX_FILE_READ_LIMIT, DEFAULT_FILE_READ_LIMIT),
@@ -1997,7 +2027,8 @@ function normalizeBashParams(rawParams: unknown): BashParams {
   };
 }
 
-async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Promise<FileGrepData> {
+async function runGrep(workspace: WorkspaceContext, params: FileGrepParams, signal?: AbortSignal): Promise<FileGrepData> {
+  signal?.throwIfAborted();
   const target = params.path ? resolveWorkspacePath(workspace, params.path) : workspace.root;
   const targetStat = await stat(target).catch((error: unknown) => {
     throw localFsError(error, target);
@@ -2022,19 +2053,48 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
   }
 
   const rawLines = result.lines.slice(0, page.limit);
+  const locations = new Map<number, NonNullable<FileGrepData['readLocations']>[number]>();
+  if (mode === 'content') {
+    const matchesByFile = new Map<string, GrepPreviewRequest[]>();
+    for (let index = 0; index < rawLines.length; index++) {
+      const raw = rawLines[index]!;
+      const separator = raw.indexOf('\0');
+      if (separator < 0) continue;
+      const filePath = path.resolve(workspace.root, raw.slice(0, separator));
+      const match = /^(\d+)([:-])(\d+)[:-]([\s\S]*)$/.exec(raw.slice(separator + 1));
+      if (!match) continue;
+      const [, lineText, kind, byteText, snippet] = match;
+      const line = Number(lineText); const byteOffset = Number(byteText);
+      rawLines[index] = `${targetStat.isFile() ? '' : `${relativeToWorkspace(workspace, filePath)}${kind}`}${params['-n'] === false ? '' : `${line}${kind}`}${snippet}`;
+      if (kind !== ':') continue;
+      const matches = matchesByFile.get(filePath) ?? [];
+      matches.push({ index, byteOffset, line, match: snippet ?? '' });
+      matchesByFile.set(filePath, matches);
+    }
+    for (const [filePath, matches] of matchesByFile) {
+      const previews = await locateGrepSnippets(filePath, matches, signal);
+      for (const { index, byteOffset, line } of matches) {
+        const located = previews.get(index);
+        if (located) rawLines[index] = `${targetStat.isFile() ? '' : `${relativeToWorkspace(workspace, filePath)}:`}${params['-n'] === false ? '' : `${line}:`}${located.preview}`;
+        locations.set(index, { filePath, line, byteOffset, cursor: located?.cursor ?? null });
+      }
+    }
+  }
   const candidates = rawLines.map((line) => mode === 'files_with_matches'
     ? relativeToWorkspace(workspace, path.resolve(workspace.root, line))
-    : relativizeRipgrepLine(workspace, line, mode));
+    : mode === 'content' ? line : relativizeRipgrepLine(workspace, line, mode));
   const items: string[] = [];
   let visibleBytes = jsonByteLength(mode === 'files_with_matches' ? { filenames: [] }
-    : mode === 'count' ? { content: '', numMatches: Number.MAX_SAFE_INTEGER } : { content: '' });
+    : mode === 'count' ? { content: '', numMatches: Number.MAX_SAFE_INTEGER } : { content: '', readLocations: [] });
   for (const item of candidates) {
     const itemBytes = mode === 'files_with_matches'
       ? jsonByteLength(item) + (items.length > 0 ? 1 : 0)
       : jsonByteLength(item) - 2 + (items.length > 0 ? 2 : 0);
-    if (items.length >= MAX_TOOL_OUTPUT_ARRAY_LENGTH || visibleBytes + itemBytes > MAX_TENON_RESULT_DATA_BYTES) break;
+    const location = locations.get(items.length);
+    const locationBytes = location ? jsonByteLength(location) + 1 : 0;
+    if (items.length >= MAX_TOOL_OUTPUT_ARRAY_LENGTH || visibleBytes + itemBytes + locationBytes > MAX_TENON_RESULT_DATA_BYTES) break;
     items.push(item);
-    visibleBytes += itemBytes;
+    visibleBytes += itemBytes + locationBytes;
   }
   const appliedLimit = result.truncated || result.lines.length > page.limit || items.length < rawLines.length
     ? items.length : undefined;
@@ -2046,6 +2106,7 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
       numFiles: 0,
       filenames: [],
       content: items.join('\n'),
+      readLocations: [...locations].filter(([index]) => index < items.length).sort(([a], [b]) => a - b).map(([, location]) => location),
       numLines: items.length,
       ...(appliedLimit !== undefined ? { appliedLimit } : {}),
       ...(appliedOffset !== undefined ? { appliedOffset } : {}),
@@ -2078,6 +2139,179 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
   };
 }
 
+interface GrepPreviewRequest {
+  readonly index: number;
+  readonly byteOffset: number;
+  readonly line: number;
+  readonly match: string;
+}
+
+interface GrepPreview {
+  readonly preview: string;
+  readonly cursor: string | null;
+}
+
+/** One file generation per request: bounded positional reads, or one transcoded scan. */
+async function locateGrepSnippets(
+  filePath: string,
+  matches: readonly GrepPreviewRequest[],
+  signal?: AbortSignal,
+): Promise<ReadonlyMap<number, GrepPreview>> {
+  signal?.throwIfAborted();
+  try {
+    const source = await textFileGeneration(filePath);
+    const handle = await open(filePath, 'r');
+    const previews = new Map<number, GrepPreview>();
+    try {
+      const prefix = Buffer.alloc(3);
+      await handle.read(prefix, 0, prefix.length, 0);
+      const encoding = detectTextEncoding(prefix);
+      if (encoding !== 'utf8') {
+        for (const [index, preview] of await readTranscodedGrepPreviews(
+          filePath,
+          matches,
+          encoding,
+          signal,
+        )) {
+          previews.set(index, { preview, cursor: null });
+        }
+      } else {
+        // ripgrep omits a UTF-8 BOM from offsets. Adding its three bytes restores
+        // exact original positions without decoding the prefix before each match.
+        const bomBytes = prefix.equals(Buffer.from([0xef, 0xbb, 0xbf])) ? 3 : 0;
+        const buffer = Buffer.alloc(4_000);
+        for (const request of matches) {
+          signal?.throwIfAborted();
+          const byteOffset = request.byteOffset + bomBytes;
+          if (byteOffset > source.size) continue;
+          const start = Math.max(bomBytes, byteOffset - 2_000);
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+          const atMatch = byteOffset - start;
+          const expected = Buffer.from(request.match, 'utf8').subarray(0, 32);
+          if (
+            atMatch + expected.length > bytesRead ||
+            !buffer.subarray(atMatch, atMatch + expected.length).equals(expected)
+          )
+            continue;
+          const before = buffer.subarray(0, atMatch).toString('utf8').split(/\r?\n/).at(-1)!;
+          const after = buffer.subarray(atMatch, bytesRead).toString('utf8').split(/\r?\n/)[0]!;
+          const { preview, leading } = boundedGrepPreview(before, after);
+          previews.set(request.index, {
+            preview: preview.replace(/\r$/, ''),
+            // Empty matches expose line context without claiming verified bytes.
+            cursor: expected.length
+              ? encodeTextFileCursor(filePath, {
+                  generation: source.generation,
+                  end: source.size,
+                  encoding: 'utf8',
+                  nextByte: byteOffset - Buffer.byteLength(leading),
+                  line: request.line,
+                })
+              : null,
+          });
+        }
+      }
+      signal?.throwIfAborted();
+      // Never combine previews from one generation with locators for another.
+      if ((await textFileGeneration(filePath)).generation !== source.generation) return new Map();
+      return previews;
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return new Map();
+  }
+}
+
+function boundedGrepPreview(before: string, after: string): { preview: string; leading: string } {
+  const wholeLine = before.length + after.length <= 500;
+  const leading = wholeLine ? before : [...before].slice(-120).join('');
+  const trailing = wholeLine ? after : [...after].slice(0, 380).join('');
+  return {
+    leading,
+    preview: `${leading}${trailing}${trailing.length < after.length ? ' … [preview truncated]' : ''}`,
+  };
+}
+
+/** Satisfy the requested windows in offset order, retaining only bounded nearby text. */
+async function readTranscodedGrepPreviews(
+  filePath: string,
+  matches: readonly GrepPreviewRequest[],
+  encoding: TextEncoding,
+  signal?: AbortSignal,
+): Promise<ReadonlyMap<number, string>> {
+  const requests = [...matches].sort((a, b) => a.byteOffset - b.byteOffset || a.index - b.index);
+  const previews = new Map<number, string>();
+  const active: Array<{ request: GrepPreviewRequest; before: string; after: string }> = [];
+  const decoder = new StringDecoder(encoding);
+  let first = true;
+  let position = 0;
+  let next = 0;
+  let before = '';
+  const remember = (text: string) => {
+    const newline = text.lastIndexOf('\n');
+    before = newline < 0 ? before + text : text.slice(newline + 1);
+    if (before.length > 1_000) {
+      before = before.slice(-500);
+      if (/^[\uDC00-\uDFFF]/u.test(before)) before = before.slice(1);
+    }
+  };
+  const admit = () => {
+    while (next < requests.length && requests[next]!.byteOffset < position) next++;
+    while (next < requests.length && requests[next]!.byteOffset === position) {
+      active.push({ request: requests[next++]!, before, after: '' });
+    }
+  };
+  const finish = (window: (typeof active)[number]) => {
+    const expected = Buffer.from(window.request.match, 'utf8').subarray(0, 32);
+    if (!Buffer.from(window.after, 'utf8').subarray(0, expected.length).equals(expected)) return;
+    previews.set(
+      window.request.index,
+      boundedGrepPreview(window.before, window.after).preview.replace(/\r$/, ''),
+    );
+  };
+  const consume = (decoded: string) => {
+    if (first && decoded.length) {
+      first = false;
+      if (decoded.charCodeAt(0) === 0xfeff) decoded = decoded.slice(1);
+    }
+    const bytes = Buffer.byteLength(decoded, 'utf8');
+    if (!active.length && next < requests.length && position + bytes <= requests[next]!.byteOffset) {
+      remember(decoded);
+      position += bytes;
+      return;
+    }
+    for (const character of decoded) {
+      admit();
+      for (let index = active.length - 1; index >= 0; index--) {
+        const window = active[index]!;
+        if (character !== '\n') window.after += character;
+        if (character === '\n' || window.after.length > 1_000) {
+          finish(window);
+          active.splice(index, 1);
+        }
+      }
+      remember(character);
+      position += Buffer.byteLength(character, 'utf8');
+      if (next === requests.length && !active.length) return;
+    }
+  };
+  const stream = createReadStream(filePath, { highWaterMark: 16 * 1024, signal });
+  for await (const chunk of stream) {
+    signal?.throwIfAborted();
+    consume(decoder.write(chunk as Buffer));
+    if (next === requests.length && !active.length) break;
+  }
+  // This also admits a zero-width match at EOF without reading another byte.
+  if (next < requests.length || active.length) {
+    consume(decoder.end());
+    admit();
+    for (const window of active) finish(window);
+  }
+  return previews;
+}
+
 function buildRipgrepArgs(workspace: WorkspaceContext, target: string, params: FileGrepParams): string[] {
   const mode = params.output_mode ?? 'files_with_matches';
   // Offset pagination must preserve file order across calls on an unchanged tree.
@@ -2090,8 +2324,7 @@ function buildRipgrepArgs(workspace: WorkspaceContext, target: string, params: F
   if (mode === 'files_with_matches') args.push('-l');
   if (mode === 'count') args.push('-c');
   if (mode === 'content') {
-    args.push('--no-heading');
-    if (params['-n'] !== false) args.push('-n');
+    args.push('--no-heading', '--only-matching', '--with-filename', '--null', '--byte-offset', '--max-columns-preview', '-n');
     if (params.context !== undefined) {
       args.push('-C', String(params.context));
     } else if (params['-C'] !== undefined) {
@@ -2107,11 +2340,7 @@ function buildRipgrepArgs(workspace: WorkspaceContext, target: string, params: F
       args.push('--glob', globPattern);
     }
   }
-  if (params.pattern.startsWith('-')) {
-    args.push('-e', params.pattern);
-  } else {
-    args.push(params.pattern);
-  }
+  args.push('-e', params.pattern);
   args.push(relativeTarget(workspace, target));
   return args;
 }
@@ -4105,6 +4334,7 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
           totalLines: data.file.totalLines,
           hasMore: data.file.hasMore,
           ...(data.file.lineTruncated ? { lineTruncated: true } : {}),
+          ...(data.file.nextCursor !== undefined ? { nextCursor: data.file.nextCursor, generation: data.file.generation } : {}),
         },
       };
     case 'markdown':
@@ -4218,7 +4448,7 @@ export function visibleFileGrep(data: FileGrepData): unknown {
   // (`content` vs `filenames`).
   const mode = data.mode ?? 'files_with_matches';
   if (mode === 'content') {
-    return { content: data.content ?? '' };
+    return { content: data.content ?? '', ...(data.readLocations ? { readLocations: data.readLocations } : {}) };
   }
   if (mode === 'count') {
     return { content: data.content ?? '', numMatches: data.numMatches ?? 0 };
@@ -4440,7 +4670,9 @@ function localErrorResult<TData>(tool: string, error: unknown, started: number, 
     && (error.code === 'ENOENT' || isNativeFilePermissionError(error))
     ? localFsError(error, filePath)
     : error;
-  const failure = normalizedError instanceof ExecutionAdmissionError
+  const failure = normalizedError instanceof TextFileCursorError
+    ? new LocalToolFailure(normalizedError.code, normalizedError.message)
+    : normalizedError instanceof ExecutionAdmissionError
     ? new LocalToolFailure(normalizedError.code, normalizedError.message)
     : normalizedError instanceof LocalToolFailure
     ? normalizedError
@@ -4510,7 +4742,7 @@ async function readTextFileWindow(
   limit: number,
   maxChars: number,
   signal?: AbortSignal,
-): Promise<TextFileWindow> {
+): Promise<TextFileWindow & { nextByte: number; nextLine: number }> {
   signal?.throwIfAborted();
   const prefixHandle = await open(filePath, 'r');
   let prefix: Buffer;
@@ -4534,6 +4766,8 @@ async function readTextFileWindow(
   const hasBom = prefixText.charCodeAt(0) === 0xfeff;
   const lineEndings = detectLineEndings(hasBom ? prefixText.slice(1) : prefixText);
   const decoder = new StringDecoder(encoding);
+  const newlines = new TextFileNewlines();
+  let nextByte = hasBom ? Buffer.byteLength("\ufeff", encoding) : 0;
   const selected: string[] = [];
   const lastRequestedLine = requestedStartLine + limit - 1;
   let currentLine = 1;
@@ -4542,7 +4776,6 @@ async function readTextFileWindow(
   let captureStarted = false;
   let outputChars = 0;
   let completedLines = 0;
-  let pendingCarriageReturn = false;
   let endedWithNewline = false;
   let hasMore = false;
   let lineTruncated = false;
@@ -4571,7 +4804,7 @@ async function readTextFileWindow(
     }
     if (currentLine < requestedStartLine || !ensureCaptureStarted()) return;
     if (outputChars + character.length > maxChars) {
-      if (currentLineContent.length > 0) selected.push(currentLineContent);
+      selected.push(currentLineContent);
       lineTruncated = true;
       hasMore = true;
       stopped = true;
@@ -4597,28 +4830,21 @@ async function readTextFileWindow(
     currentLineHasChars = false;
     captureStarted = false;
   };
+  const consumeCharacters = (characters: Iterable<NormalizedTextCharacter>) => {
+    for (const { character, source } of characters) {
+      if (character === '\n') consumeNewline();
+      else consumeCharacter(character);
+      if (stopped) return;
+      nextByte += Buffer.byteLength(source, encoding);
+    }
+  };
   const consumeDecodedText = (decoded: string) => {
     let text = decoded;
     if (firstDecodedText && text.length > 0) {
       firstDecodedText = false;
       if (hasBom && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     }
-    for (const character of text) {
-      if (pendingCarriageReturn) {
-        pendingCarriageReturn = false;
-        consumeNewline();
-        if (stopped) return;
-        if (character === '\n') continue;
-      }
-      if (character === '\r') {
-        pendingCarriageReturn = true;
-      } else if (character === '\n') {
-        consumeNewline();
-      } else {
-        consumeCharacter(character);
-      }
-      if (stopped) return;
-    }
+    consumeCharacters(newlines.write(text));
   };
 
   signal?.throwIfAborted();
@@ -4629,10 +4855,7 @@ async function readTextFileWindow(
   }
   if (!stopped) {
     consumeDecodedText(decoder.end());
-    if (pendingCarriageReturn) {
-      pendingCarriageReturn = false;
-      consumeNewline();
-    }
+    if (!stopped) consumeCharacters(newlines.end());
   }
   if (!stopped && !endedWithNewline && currentLineHasChars) {
     if (currentLine <= lastRequestedLine && currentLine >= requestedStartLine) {
@@ -4645,6 +4868,7 @@ async function readTextFileWindow(
 
   return {
     content: selected.join('\n'),
+    nextByte, nextLine: currentLine,
     encoding,
     hasBom,
     hasMore,

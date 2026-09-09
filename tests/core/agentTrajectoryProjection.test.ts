@@ -1,3 +1,8 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ThreadRecordPublisher } from '../../src/main/agent/thread/ThreadRecordPublisher';
+import { ThreadRecordSources } from '../../src/main/agent/thread/ThreadRecordSources';
 import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import { decodeAgentCoreResponse } from '../../src/core/agent/codec';
@@ -235,7 +240,8 @@ describe('ThreadTrajectoryProjection', () => {
         }, outputRef),
       ],
     };
-    const projection = trajectoryProjection({ diagnostics, turn });
+    let sourceCore!: ThreadCore;
+    const projection = trajectoryProjection({ diagnostics, turn, onCore: core => { sourceCore = core; } });
     const response = await projection.read({ threadId: THREAD_ID, limit: 100 });
     const tools = response.records.filter((record) => record.kind === 'tool');
 
@@ -261,6 +267,7 @@ describe('ThreadTrajectoryProjection', () => {
     expect(missingDetail.detail.outputText).toBeNull();
     expect(missingDetail.record.availability).toEqual([{ reason: 'evidenceUnavailable' }]);
     expect(decodeAgentCoreResponse('thread/trajectory/detail/read', missingDetail)).toEqual(missingDetail);
+    await comparePublishedSources(sourceCore, projection);
   });
 
   test('emits stable-prompt and tool-catalog records and round-trips exact tool evidence through the codec', async () => {
@@ -1724,6 +1731,7 @@ function trajectoryProjection(overrides: {
   readonly toolOutput?: string | null;
   readonly turn?: Turn;
   readonly turns?: readonly Turn[];
+  readonly onCore?: (core: ThreadCore) => void;
   readonly onAllTurns?: (itemsView: TurnItemsView) => void;
   readonly onReadDiagnostics?: (ref: TurnDiagnosticsPayloadReference) => void;
   readonly onReadTurn?: (turnId: string) => void;
@@ -1735,6 +1743,8 @@ function trajectoryProjection(overrides: {
   const diagnosticsByRef = overrides.diagnosticsByRef ?? new Map([[DIAGNOSTICS_REF.id, diagnostics]]);
   const contextPayload = overrides.contextPayload ?? null;
   const core = {
+    metadata: { read: () => ({ thread }) },
+    rollout: { readRecovery: async () => null },
     requireThread: (threadId: string) => {
       if (threadId !== THREAD_ID) throw new Error('Unknown Thread');
       return { thread };
@@ -1809,6 +1819,7 @@ function trajectoryProjection(overrides: {
       ),
     },
   } as unknown as ThreadCore;
+  overrides.onCore?.(core);
   return new ThreadTrajectoryProjection(core, () => 500, overrides.activeDiagnostics ?? null);
 }
 
@@ -2334,4 +2345,30 @@ function inputEnvelopeDiagnostics(): TurnDiagnosticsPayload {
       { type: 'modelCall', callIndex: 0 },
     ],
   };
+}
+
+async function comparePublishedSources(core: ThreadCore, projection: ThreadTrajectoryProjection): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'tenon-source-parity-'));
+  const publisher = new ThreadRecordPublisher({ recordRoot: root, core, sources: new ThreadRecordSources(core), tasks: { list: () => [] } as never,
+    isEligible: () => true,
+  });
+  try {
+    publisher.schedule(core.requireThread(THREAD_ID).thread, TURN_ID);
+    await publisher.flush(THREAD_ID);
+    const published = await readFile(join(root, THREAD_ID, 'turns', `${TURN_ID}.md`), 'utf8');
+    const records = (await projection.read({ threadId: THREAD_ID, limit: 100 })).records.filter(record => record.kind === 'tool');
+    for (const record of records) {
+      const detail = (await projection.readDetail({ threadId: THREAD_ID, recordId: record.id })).detail;
+      if (detail?.kind !== 'tool' || !detail.item) throw new Error('Expected tool source');
+      const section = published.split('## provider-tool-arguments\n').slice(1).find(section => {
+        const line = section.split('\n').find(line => line.startsWith('Source: '));
+        return line && JSON.parse(line.slice(8)).coordinate.itemId === detail.item!.itemId;
+      });
+      expect(section).toBeDefined();
+      const link = /\[Complete retained value\]\(([^)]+)\)/.exec(section!)![1]!;
+      const exact = JSON.parse(await readFile(join(root, THREAD_ID, 'turns', link), 'utf8'));
+      expect(exact).toEqual(detail.input);
+      expect(section).toContain('"retention":"persisted"');
+    }
+  } finally { await publisher.flushAll(); await rm(root, { recursive: true, force: true }); }
 }

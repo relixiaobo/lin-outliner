@@ -1,17 +1,16 @@
-import { describe, expect, test } from 'bun:test';
+import { describe,expect,test } from 'bun:test';
 import { join } from 'node:path';
 import type { EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
 import {
-  MODEL_TOOL_CATALOG,
-  canonicalModelToolKey,
-  providerToolSchemaFailure,
-  type ModelToolContract,
+MODEL_TOOL_CATALOG,
+canonicalModelToolKey,
+providerToolSchemaFailure,
+type ModelToolContract,
 } from '../../src/core/agent/tools';
 import type { ThreadService } from '../../src/main/agent/ThreadService';
 import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import {
-  compileToolParameters,
-  validateExactToolArguments,
+compileToolParameters
 } from '../../src/main/agent/runtime/kernel/exactToolArguments';
 import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
@@ -51,7 +50,7 @@ describe('canonical provider tool catalog', () => {
   });
 
   test('declares and compiles output-data validation for every catalog tool', () => {
-    expect(MODEL_TOOL_CATALOG).toHaveLength(20);
+    expect(MODEL_TOOL_CATALOG).toHaveLength(18);
     expect(MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity))).not.toContain('file_delete');
     const failures: string[] = [];
     for (const contract of MODEL_TOOL_CATALOG) {
@@ -84,10 +83,6 @@ describe('canonical provider tool catalog', () => {
         base64: 'private bytes',
         internalPath: '/private/runtime/path',
       },
-    })).toBe(false);
-    expect(schema('thread_search').Check({
-      results: [{ threadId: 'thread-id', title: 'Title', updatedAt: 1, snippet: 'Hit', readCursor: null, internal: true }],
-      untrusted: true,
     })).toBe(false);
     expect(schema('create_goal').Check({
       goal: { objective: 'Ship it', internalContinuationState: true },
@@ -147,30 +142,10 @@ describe('canonical provider tool catalog', () => {
     expect(unsendable).toEqual([]);
   });
 
-  test('requires a valid representation for every selected historical citation', () => {
-    const contract = MODEL_TOOL_CATALOG.find((candidate) => canonicalModelToolKey(candidate.identity) === 'thread_read');
-    if (!contract?.inputSchema) throw new Error('Missing thread_read contract');
-    const tool = {
-      name: 'thread_read',
-      label: 'Thread Read',
-      description: contract.description,
-      parameters: contract.inputSchema as never,
-      executionMode: 'sequential' as const,
-      execute: async () => ({ kind: 'tenon' as const, outcome: { ok: true as const }, data: {}, content: [], details: {} }),
-    } satisfies AgentTool;
-
-    expect(() => validateExactToolArguments(tool, {
-      thread_id: '01951d6e-7c25-7c31-8d62-313038616239',
-      citations: [{ citation_key: 'citation:key' }],
-    })).toThrow('Invalid arguments for tool "thread_read"');
-    expect(() => validateExactToolArguments(tool, {
-      thread_id: '01951d6e-7c25-7c31-8d62-313038616239',
-      citations: [{ citation_key: 'citation:key', representation: 'overwrite' }],
-    })).toThrow('Invalid arguments for tool "thread_read"');
-    expect(() => validateExactToolArguments(tool, {
-      thread_id: '01951d6e-7c25-7c31-8d62-313038616239',
-      citations: [{ citation_key: 'citation:key', representation: 'edit' }],
-    })).not.toThrow();
+  test('retires history tools from canonical contracts', async () => {
+    const names = MODEL_TOOL_CATALOG.map(tool => canonicalModelToolKey(tool.identity));
+    expect(names).not.toContain('thread_search');
+    expect(names).not.toContain('thread_read');
   });
 
   test('names every root shape a provider answers with HTTP 400', () => {

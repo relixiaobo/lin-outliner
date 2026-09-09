@@ -59,7 +59,7 @@ export class AutomationDispatcher {
     return {
       recentRunsForContextHint: (...args) => this.options.store.recentRunsForContextHint(...args),
       readTurn: (threadId, turnId) => this.options.threads.readTurnForHost(threadId, turnId),
-      transcriptPath: (threadId) => this.options.threads.threadTranscriptPath(threadId),
+      transcriptPath: (threadId) => this.options.threads.threadRecordPath(threadId),
     };
   }
 

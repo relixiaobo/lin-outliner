@@ -361,7 +361,7 @@ describe('native turn kernel parity', () => {
       expect(header).toMatchObject({
         ok: true, status: 'partial',
         data: { file: { filePath, totalLines: null, lineTruncated: true } },
-        instructions: expect.stringContaining('A single line exceeded'),
+        instructions: expect.stringContaining('nextCursor'),
       });
       expect(providerResult!.content[1]).toEqual({ type: 'text', text: 'x'.repeat(200_000) });
     } finally {
@@ -692,13 +692,7 @@ describe('native turn kernel parity', () => {
           'Call get_goal and continue the existing Goal.',
         );
       },
-      readThreadHistoryForAgent: async () => {
-        throw new AgentToolFailure(
-          'thread_cursor_stale',
-          'Stale or mismatched Thread history cursor',
-          'Call thread_read again without a cursor.',
-        );
-      },
+
     });
     const controlTools = await new ToolRuntime(expectedService, {
       capabilityTools: () => [],
@@ -723,14 +717,6 @@ describe('native turn kernel parity', () => {
       arguments: { objective: 'Existing objective' },
       code: 'goal_already_exists',
       instructions: 'Call get_goal and continue the existing Goal.',
-    }, {
-      tool: controlTools.find((candidate) => candidate.name === 'thread_read')!,
-      arguments: {
-        thread_id: '00000000-0000-7000-8000-000000000099',
-        cursor: 'stale.cursor',
-      },
-      code: 'thread_cursor_stale',
-      instructions: 'Call thread_read again without a cursor.',
     }, {
       tool: automationTool,
       arguments: {
@@ -1903,7 +1889,7 @@ function toolRuntimeContext(): TurnExecutionContext {
       developerInstructions: [],
       model: 'test-model',
       reasoningEffort: 'medium',
-      tools: ['thread_read', 'create_goal', 'task_stop'],
+      tools: ['create_goal', 'task_stop'],
       skills: [],
       preloadedSkills: [],
       plugins: [],

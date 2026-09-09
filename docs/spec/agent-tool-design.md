@@ -271,12 +271,34 @@ whole-file budget. Image `file_read` uses main's globally serialized native
 normalization path: it accepts at most 256 MiB of source data and emits at most
 2,000 px / 4.5 MiB of model input rather than base64-encoding the original file.
 
-`file_grep` sorts paths before applying offsets so consecutive pages on an
-unchanged tree neither repeat nor skip files. Each page retains complete lines
-or filenames within the shared 4,096-entry and 256 KiB serialized result-data
-limits, including UTF-8 and JSON escaping. A clipped page is a successful partial
-result; its continuation offset advances by the number of entries actually
-returned, including when the byte limit is reached before the requested limit.
+A long-line partial read includes `nextCursor` and a file generation. Passing that
+cursor with the same `file_path` continues inside the line without a shell byte-range
+workaround. The cursor carries path identity, generation, original encoding, next
+byte position, line and observed end. Initial reads and continuations share CRLF/CR
+to LF normalization and line counting while advancing through original encoded
+bytes. Both readers join code points and CRLF pairs across decoding blocks and
+place cursors only after complete units. UTF-8 and UTF-16LE are supported; changed
+sources return `source_changed`. Cursors cannot combine with `offset` or
+`pages`. Ordinary line windows remain available. New Turn tool assembly and actual
+context compaction invalidate read freshness on the active tool closures, so a file
+whose earlier contents left model context can return its text again.
+
+`file_grep` sorts paths before applying offsets. Content mode preserves the regex
+and emits bounded regions around actual matches, including matches deep inside a
+long line, plus `readLocations` with path, line, match byte offset and a `file_read`
+cursor when the source bytes can be verified. UTF-16 search offsets are transcoded
+by ripgrep, so those matches retain a line locator and no misleading byte cursor.
+UTF-8 BOM offsets are adjusted by three bytes and use bounded positional reads.
+UTF-16 matches are grouped by file within the search request and share one forward
+decoding pass, stopping after the last requested preview window. Retained windows
+are bounded; work does not grow with the sum of matching offsets. Each file batch
+keeps its generation check and cancellation signal. Zero-width
+matches still expose their matching line context, including at CRLF line endings.
+Ordinary UTF-16 reads can continue through the line. Previews may be truncated and
+multiple matches on one line may produce separate regions. Files/count modes remain
+unchanged. Context rows stay distinct from match locations. Pages fit the shared
+4,096-entry and 256 KiB serialized result-data limits including cursor metadata,
+UTF-8 and JSON escaping. Partial pagination advances by entries actually returned.
 
 PDF and rich-document reads retain their own page, byte, output, and timeout
 budgets; PDF source size is rejected before whole-file buffering, and rendered
@@ -1057,55 +1079,21 @@ available when machine fidelity is explicitly required.
 Memory citation accounting accepts only explicit `outline --json get` output,
 so bounded presentation changes cannot silently alter durable usage evidence.
 
-## Thread History Tools
+## Conversation Records Through File Tools
 
-`thread_search` and `thread_read` are canonical `anyThread` Core tools. A default root
-Thread includes both; Configuration Profiles still place exact-name ceilings on them.
-Delegated Sessions always remove both tools. Search covers same-profile, non-ephemeral root user Threads, includes
-archived Threads, excludes the current Thread, and returns 8 candidates by default with
-a maximum of 20. Each result contains canonical Thread ID, current title, updated time,
-a maximum 320-character redacted snippet, and an opaque HMAC-signed match cursor when a
-visible history match exists. Searchable history includes visible user/assistant text,
-bounded activity summaries, and resolved reference display metadata. It excludes system
-content, reasoning, diagnostics, raw tool output, file locators, and secrets. The bounded
-history-row budget is divided fairly across the candidate Threads before matching, so a
-single long Thread cannot displace every shorter or later candidate from transcript
-search. Each candidate read applies its share through the visible-history partial ordering
-index and an index-backed `LIMIT` before rows are interleaved, bounding synchronous
-database work without ranking complete histories.
+Historical retrieval uses ordinary `file_glob`, `file_grep`, and `file_read`.
+The model catalog has no Thread search/read tools, signed history cursors,
+page-scoped citation selectors, or history-specific read action descriptors.
+Composer keeps bounded, redacted `searchReferences` / `resolveReferences` metadata
+and stable Thread markers. See [published conversation records](agent-core.md#published-conversation-records)
+for eligibility, original owners, publication and lifecycle.
 
-`thread_read` validates a same-profile canonical target, excludes the current Thread,
-and returns the newest page or the page containing a signed search cursor. A page holds
-4 Turns by default and at most 10, uses a 24,000-character text budget, reports exact
-coverage plus previous/next cursors, and never resumes, forks, wakes, appends to, or
-changes read state on the target. Visible user/assistant text and concise activity
-summaries are always treated as untrusted quoted context. Optional tool output reads the
-real canonical `outputRef`, applies the shared secret scanner, removes bound historical
-file markers and local paths, and caps each output at 4,000 characters. The payload reader
-streams the complete file through UTF-8 validation, SHA-256 verification, and stable-file
-identity checks while retaining only that bounded character prefix; it never materializes
-the complete payload as a `Buffer` or string. A truncated prefix discards an unmatched
-private-key block before ordinary secret scanning, then unconditionally discards its
-complete trailing non-whitespace field after scanning. This preserves complete secret
-terminators for the scanner while remaining independent of any guessed credential character
-set, so the character boundary cannot expose a partial credential. Reasoning, diagnostics,
-system input, provider envelopes, and raw unbounded output never enter the result.
-
-An ordinary page read issues at most 20 display-metadata entries plus opaque page-scoped
-citation keys; their serialized metadata shares the 24,000-character page budget. The
-read creates no current-Thread link, retention anchor, materialization, or tool
-`resourceRefs`. Keys expire after 15 minutes and are valid only for the same current
-Thread, target Thread, page coverage, and still-present canonical resource. Selecting a
-citation requires both `citation_key` and one representation: `reveal`, `replay`, `edit`,
-or `observe`. A selection batch is validated in full before side effects, rejects repeated
-citation keys, and resolves selections serially. The runtime revalidates each claim, links
-only that resource, and returns it through the ordinary working-set contract. Reveal uses
-a validated source; replay and observe use the exact revision. Edit reuses a source in the
-current workspace or an admitted external scope, while a source in another managed root
-is copied from validated exact bytes into a new current-workspace source. Same-name copies
-claim their destination atomically and retry the next numbered name on an existing-file
-race. The old managed root never becomes ambient access and its source is never edited.
-Missing canonical citations do not trigger filesystem or profile-wide search.
+The stable prompt identifies `thread-records/index.tsv` and the current
+conversation's `record.md`. Search the index for a conversation or the tree for
+content, read its Turn, and follow complete-value paths. Explicit references resolve
+to that same entry only when the effective file-read capability is available. Paths,
+identity and historical content do not confer execution authority; current command
+outcomes and process liveness still require native state and Tool Task inspection.
 
 ## Execution And Audit
 

@@ -88,7 +88,7 @@ interface TurnLifecycleCatalog {
  * The account layer's hook. Every Thread's completed Turn passes through here,
  * including hidden feature-owned Threads.
  */
-interface TurnLifecycleTranscripts { enqueueTurn(thread: Thread, turn: Turn): void; }
+interface TurnLifecycleRecords { enqueueTurn(thread: Thread, turn: Turn): void; }
 /**
  * The drift check. Injected rather than reached for, so this file keeps knowing
  * nothing about beliefs beyond when to ask — admission is the moment, and it is
@@ -109,7 +109,7 @@ export class TurnLifecycle {
   constructor(
     private readonly core: ThreadCore, private readonly resourceOps: ThreadResourceOps,
     private readonly catalog: TurnLifecycleCatalog,
-    private readonly transcripts: TurnLifecycleTranscripts,
+    private readonly records: TurnLifecycleRecords,
     private readonly documentDrift: TurnLifecycleDocumentDrift,
     private readonly executor: TurnExecutor, private readonly extensions: ExtensionRegistry,
     private readonly getDocumentProjection: () => DocumentProjection | null,
@@ -1354,7 +1354,7 @@ export class TurnLifecycle {
         else if (executionError) await this.extensions.turnError(thread, turn, executionError);
         else await this.extensions.turnStopped(thread, turn);
       }
-      this.transcripts.enqueueTurn(thread, turn);
+      this.records.enqueueTurn(thread, turn);
       if (active.lifecyclePublished) {
         if (!hidden) await this.extensions.threadIdle(this.core.requireThread(active.threadId).thread);
       }
@@ -1626,7 +1626,7 @@ export class TurnLifecycle {
       if (active.lifecyclePublished && thread && failedTurn) {
         this.catalog.scheduleAutomaticThreadName(thread, failedTurn, active.configuration);
       }
-      if (thread && failedTurn) this.transcripts.enqueueTurn(thread, failedTurn);
+      if (thread && failedTurn) this.records.enqueueTurn(thread, failedTurn);
     }
   async setStatus(
       threadId: ThreadId,

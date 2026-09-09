@@ -1,23 +1,8 @@
 /**
- * Which Threads the user has taken out of the records.
- *
- * The state lives beside the records it governs rather than on the Thread
- * record. Whether a conversation is kept in readable form is a property of this
- * subsystem, not of the conversation's identity, and the subsystem's other
- * questions — what exists, what to sweep, what to index — are all already
- * answered by this directory. Keeping the switch here means one place answers
- * all of them, and the writer, the sweep and the index need no store read to
- * agree.
- *
- * KEYED BY SESSION, NOT BY THREAD. Every Thread in one conversation shares a
- * `sessionId`, so one entry covers its retained transcript set and stays O(1) on the
- * turn-completion path — a parent walk would be a store read per Turn. A fork
- * starts a new session, which is right: it is a new conversation.
- *
- * It is a plain list of session ids, loaded once at startup and rewritten whole
- * and atomically on change. Exclusion has to be answerable SYNCHRONOUSLY — the
- * subject is resolved on the turn-completion path — so the set is held in
- * memory, and the file is only how it survives a restart.
+ * Canonical recording exclusions, keyed by session ID and loaded synchronously
+ * for publication eligibility. Forks start a new session. The plain ID list is
+ * atomically replaced on change and retains its original storage location;
+ * deleting or rebuilding the derived record tree must not reset user exclusions.
  */
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -28,10 +13,10 @@ const EXCLUSIONS_FILE = 'excluded.txt';
 export class ThreadTranscriptExclusions {
   private readonly excluded = new Set<string>();
 
-  constructor(private readonly transcriptRoot: string) {}
+  constructor(private readonly recordRoot: string) {}
 
   private get path(): string {
-    return join(this.transcriptRoot, EXCLUSIONS_FILE);
+    return join(this.recordRoot, EXCLUSIONS_FILE);
   }
 
   /**
@@ -79,7 +64,7 @@ export class ThreadTranscriptExclusions {
 
   private async persist(): Promise<void> {
     try {
-      await mkdir(this.transcriptRoot, { recursive: true });
+      await mkdir(this.recordRoot, { recursive: true });
       await atomicWriteFile(this.path, `${[
         '# Sessions excluded from the transcript records, one id per line.',
         ...[...this.excluded].sort(),
