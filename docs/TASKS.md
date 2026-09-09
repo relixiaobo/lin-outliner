@@ -62,6 +62,10 @@ The question feature also gives every request a finite deadline (60 seconds by
 default), returning an explicit no-answer result so the same Agent Turn can
 continue without treating silence as approval. These entries record designs
 only; neither runtime fix has shipped.
+PR #671 completes their Task control/receipt and session-local answer-draft
+contracts and aligns scheduled questions with the same settlement owner. The
+later question/scheduling implementation verifies their shared consumer without
+adding a second timer or releasing an executing run's foreground slot on timeout.
 
 Workbench Units A-E shipped through #658. PR #660 subsequently simplified the
 workbench to UI-owned Projects, native Git/test commands guided by Skills, and
@@ -154,12 +158,12 @@ Capability prerequisite:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [user-input-request-recovery](plans/user-input-request-recovery.md) | `draft` | Recover/display questions, clean up cancellation, and continue after a default 60-second unanswered wait. Coordinate #669's shared owners; prioritize before background-policy edits on shared files. |
-| P2 | [background-task-continuation-policy](plans/background-task-continuation-policy.md) | `draft` | Ratify OQ-1 and coordinate #669 plus the question-recovery shared interfaces. Preserve scheduled-run and delegated-result ownership; no new process manager. |
+| P1 | [user-input-request-recovery](plans/user-input-request-recovery.md) | `draft` | Design refined in #671: recover questions, retain unsent answer drafts, and continue after a default 60-second unanswered wait. Coordinate #669; prioritize before background-policy edits and verify the later scheduled consumer. |
+| P2 | [background-task-continuation-policy](plans/background-task-continuation-policy.md) | `draft` | Task control/receipt design refined in #671. Ratify OQ-1 and coordinate #669 plus question-recovery shared interfaces; preserve scheduled-run and delegated-result ownership. |
 | P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | **Startup predecessor complete (#664)**; cover generic Task outputs, context, artifacts and isolation, and settle OQ-1 before claiming implementation |
 | P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | **Now; startup predecessor complete (#664)**; independent complete Node quality feature. Recheck actual overlap with unified records and land shared Memory changes before the selected profile unit. |
 | P2 | [memory-agent-profile: Profile files and direct learning](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | After unified records and selected Node-quality shared changes; demonstrate component sources/precedence before consumers. One complete profile, direct-learning, activation and lifecycle feature. |
-| P2 | [scheduled-work-redesign](plans/scheduled-work-redesign.md) | `draft` | After unified records; startup is complete in #664. Settle OQ-1/OQ-2, then coordinate Host/Bash admission, exact run/Task ownership and delivery with live claims. One complete UI/CLI feature. |
+| P2 | [scheduled-work-redesign](plans/scheduled-work-redesign.md) | `draft` | After unified records; startup is complete in #664. Settle OQ-1/OQ-2 and coordinate Host/Bash admission plus exact run/Task ownership. Consume #671's shared question settlement and draft recovery; one complete UI/CLI feature. |
 | P2 | [conversation-work-folders](plans/conversation-work-folders.md) | `draft` | Design integrated in #670; after unified records (#669) and OQ-1 ratification. One complete Project/folder/CLI/composer feature; coordinate scheduling, recovery/profile, and question-recovery shared owners. |
 | P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | After unified records and the profile owner; startup is complete in #664; include final profile file/admission/provenance/pending-work/retention contracts in verified rebuild/removal. |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
@@ -371,6 +375,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **Task responsibility and input recovery design refinement** (`done`, #671, 2026-09-09) - Task acknowledgement/watch receipts, unsent answer recovery and scheduled question settlement are specified; all three runtime features remain unimplemented.
 - **conversation-work-folders design integration** (`done`, #670, 2026-09-09) - Project sources, independent conversation defaults, CLI/Skill access and composer controls are specified; implementation follows #669 and OQ-1 ratification.
 - **scheduled-work design integration** (`done`, #668, 2026-09-09) - the task/results workspace and CLI/Skill design is integrated; implementation follows unified records, with OQ-1/OQ-2 still pending.
 - **startup-fault-isolation** (`done`, #664, 2026-09-09) - scoped startup recovery preserves healthy notes, chat drafts and notifications; owner retry and configuration recovery are specified, and the [plan is archived](plans/archive/startup-fault-isolation.md).

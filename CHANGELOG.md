@@ -725,6 +725,17 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Task responsibility and input recovery designs refined (PR #671)** - Task
+  control now specifies explicit service handoff, exact-result acknowledgement,
+  and independent watch creation/revocation, with durable receipts and one event
+  disposition/admission boundary. Question expiry retains unsent answer drafts
+  within the renderer session for explicit recovery without replacing composer
+  content or sending automatically. Scheduled questions consume the same
+  settlement, preserving unrelated attention, unread results and active-run
+  admission. Review found no actionable issues; the integration passed typecheck,
+  `docs:check` and whitespace checks. This is design-only: runtime and interaction
+  acceptance remain pending, and existing product open questions are retained.
+
 - **Project and conversation work-folder design integrated (PR #670)** - one
   complete feature defines multiple Project source folders and a primary,
   independently saved conversation work folders, immutable task addresses, and
