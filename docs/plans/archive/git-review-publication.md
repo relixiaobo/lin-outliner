@@ -2,7 +2,7 @@
 
 **Shape:** One complete feature. It provides auditable review and explicit
 publication over Git and hosting CLIs without creating a Git ledger under the
-[Agent Capability-First Development Workbench](project-development-workbench.md).
+[Agent Capability-First Development Workbench](../project-development-workbench.md).
 
 ## Goal
 
@@ -76,7 +76,7 @@ execution address, context reference, selected paths, and result.
 ### Model context
 
 Review uses the shared
-[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)
+[Execution Context Publication](../../spec/agent-model-runtime.md#execution-context-publication)
 contract. A new diff or baseline mismatch appends new evidence and a bounded
 explanation of what must be reviewed again. Neither an old diff nor an earlier
 reviewed-state statement is replaced in a previously sent provider message.

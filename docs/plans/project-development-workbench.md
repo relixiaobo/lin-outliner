@@ -475,8 +475,10 @@ ownership or recovery gap is measured.
   defines the current check and Goal contracts; the
   [archived verification design](archive/verification-self-iteration.md)
   preserves Unit C's design rationale.
-- [Git review and publication](git-review-publication.md) defines Unit D's
-  review and publication evidence.
+- [Git review and explicit publication](../spec/agent-tool-design.md#git-review-and-explicit-publication)
+  defines the current review and publication contracts; the
+  [archived Git publication design](archive/git-review-publication.md)
+  preserves Unit D's design rationale.
 - [Execution sandbox and interactive processes](execution-sandbox-process.md)
   defines Unit E's isolation receipt and tmux experiment.
 

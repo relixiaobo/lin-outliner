@@ -2733,3 +2733,28 @@ independent processes; complete only after successful coordination settlement.
 Producer names alone confer no exception. Regressions must exercise the real
 launcher/container/check chain, nested delegation, interruption and recovery,
 alongside a gated write-and-restore that crosses a verification revision.
+
+## Native inspection includes configured executable extensions
+
+PR #657 classified Git capture as read-only, but status, index, and diff queries
+could execute configured fsmonitor and clean-filter scripts. Automatic Task
+discovery could reach the same side effects before the helper ran.
+
+**Audit the complete native command chain before declaring an operation a read.**
+Include inherited configuration, hooks, filters, recursive repository inspection,
+and optional discovery. Disable executable extensions or refuse inspection before
+they run; optional observations must degrade without blocking admitted work.
+Verify the actual read-only tool path with marker-writing scripts, including
+configuration includes, environment overrides, and nested repositories.
+
+## Evidence budgets must fit every transport hop
+
+PR #657 could persist a valid review above 64 KiB, then reject a single-file
+commit because the complete manifest crossed a smaller private control channel.
+Domain-only tests never exercised that mismatch.
+
+**A producer's accepted byte budget must be consumable through the real execution
+path.** Keep large evidence in the bounded data transport and bind it to trusted
+control metadata with an exact length and digest. Test near-limit UTF-8 evidence,
+small selections from large captures, tampering, and the production runtime;
+display truncation and successful persistence do not prove later executability.
