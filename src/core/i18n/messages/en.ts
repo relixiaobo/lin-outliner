@@ -12,6 +12,14 @@
 // docs/plans/i18n-multi-language.md.
 
 export const en = {
+  gitReview: {
+    title: 'Git review', historical: 'This is a saved review. Files and Git state are checked again before a commit.',
+    detached: 'Detached HEAD', unborn: 'No commits yet', nonGit: 'File review only. Commit and publication are unavailable in this directory.',
+    binary: 'Binary', diff: 'Diff excerpt', message: 'Commit message', rename: 'Select both paths of a rename.',
+    copy: 'Copy commit request', copied: 'Copied. Paste into the conversation to request the commit.', copyFailed: 'Unable to copy the request.',
+    omitted: ({ count }: { count: number }) => `${count} paths are omitted here. Request a focused review to select them.`,
+    remote: 'Remote', upstream: 'Upstream', none: 'None', branches: 'Head → base', provider: 'Provider', range: 'Commit range', commits: 'Commits',
+  },
   startup: {
     failed: 'Unable to start Tenon',
     documentFailed: 'Unable to open your workspace',

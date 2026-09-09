@@ -1,3 +1,4 @@
+import { decodeGitReviewEvidence } from './gitReview';
 import { decodeProjectSelection, decodeProjectInspectRequest, decodeProjectManageRequest, decodeProjectCatalogView, decodeProjectManageResult } from './project';
 import { decodeExecutionContextFact, decodeTaskExecutionContext } from './executionContext';
 import { decodeVerificationConfiguration, decodeVerificationManifest } from './verification';
@@ -3719,6 +3720,13 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
   const kind = enumValue(record.kind, CONTEXT_PAYLOAD_KINDS, 'contextPayload.kind');
 
   switch (kind) {
+    case 'gitReviewEvidence':
+      exactKeys(record, ['schemaVersion', 'kind', 'evidence', 'taskId', 'executionContext', 'evidenceRefs', 'facts'], 'contextPayload');
+      return deepFreeze({ schemaVersion: 1, kind, evidence: decodeGitReviewEvidence(record.evidence),
+        taskId: stringValue(record.taskId, 'contextPayload.taskId'),
+        executionContext: decodeTaskExecutionContext(record.executionContext),
+        evidenceRefs: arrayValue(record.evidenceRefs, 'contextPayload.evidenceRefs').map((ref) => decodeThreadContextPayloadReference(ref)),
+        facts: arrayValue(record.facts, 'contextPayload.facts').map(decodeExecutionContextFact) });
     case 'verificationSource':
       exactKeys(record, ['schemaVersion', 'kind', 'manifest'], 'contextPayload');
       return deepFreeze({ schemaVersion: 1, kind, manifest: decodeVerificationManifest(record.manifest) });

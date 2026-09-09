@@ -31,6 +31,34 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
 }
 
 describe('execution context discovery', () => {
+  test.each(['fsmonitor', 'clean', 'process'])(
+    'automatic discovery does not execute the configured %s extension', async (extension) => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'tenon-context-'));
+      const git = (...args: string[]) => execFileSync('git', ['-C', root,
+        '-c', 'user.name=Context Test', '-c', 'user.email=context@example.test',
+        '-c', 'commit.gpgsign=false', ...args], { stdio: 'pipe' });
+      try {
+        git('init'); await writeFile(path.join(root, 'tracked.txt'), 'original');
+        git('add', 'tracked.txt'); git('commit', '-m', 'Initial fixture');
+        await writeFile(path.join(root, 'tracked.txt'), 'modified');
+        if (extension === 'fsmonitor') {
+          const script = path.join(root, 'monitor.sh');
+          await writeFile(script, '#!/bin/sh\nprintf ran > extension-ran\nprintf "token\\0"\n', { mode: 0o700 });
+          git('config', 'core.fsmonitor', script);
+        } else {
+          await writeFile(path.join(root, '.gitattributes'), '*.txt filter=probe\n');
+          git('config', `filter.probe.${extension}`, 'printf ran > extension-ran; cat');
+        }
+        const result = await discoverExecutionContext(pendingExecutionContext(
+          await resolveExecutionAddress({ defaultCwd: root }), {
+            capability: 'read-only', mutation: false, isolation: 'unsandboxed', writablePaths: [],
+          }));
+        expect(await stat(path.join(root, 'extension-ran')).then(() => true, () => false)).toBe(false);
+        expect(result.context.snapshot.discovery).toBe(extension === 'fsmonitor' ? 'complete' : 'unavailable');
+      } finally { await rm(root, { recursive: true, force: true }); }
+    },
+  );
+
   test.each(['tracked edit', 'HEAD change', 'branch change', 'unavailable worktree'])(
     'rejects snapshot reuse after a Git %s within the freshness window', async (change) => {
       const root = await mkdtemp(path.join(os.tmpdir(), 'tenon-context-'));

@@ -1,3 +1,4 @@
+import { gitReviewOperation } from '../../../core/agent/gitReview';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -42,6 +43,8 @@ export const BASH_STDIN_CONSUMER_CONTRACTS: readonly StdinConsumerContract[] = O
   Object.freeze({ executable: 'outline', command: 'preview', classification: 'registered-data' }),
   Object.freeze({ executable: 'delegate', command: 'run', classification: 'registered-data' }),
   Object.freeze({ executable: 'delegate', command: 'send', classification: 'registered-data' }),
+  ...(['capture', 'commit', 'preview', 'push', 'create-pr'] as const).map((command) =>
+    Object.freeze({ executable: 'git-review', command, classification: 'registered-data' as const })),
 ]);
 
 export interface AgentCapabilityPolicy {
@@ -390,6 +393,8 @@ function classifyParsedBashStdinConsumer(
   registry: readonly StdinConsumerContract[] = BASH_STDIN_CONSUMER_CONTRACTS,
 ): BashStdinConsumer {
   if (!stdinPresent) return 'absent';
+  const gitReview = gitReviewOperation(command);
+  if (gitReview && registry.some((entry) => entry.executable === 'git-review' && entry.command === gitReview)) return 'registered-data';
   if (segments.length !== 1 || containsShellComposition(command)) return 'unknown';
   const words = segments[0]!;
   const delegate = parsePrivilegedDelegateCommand(command);
@@ -474,6 +479,9 @@ function classifyShellSegment(
     command: fullCommand,
   });
   if (!head) return [unknownShellDescriptor(fullCommand, 'Empty shell segment.')];
+  const gitReview = gitReviewOperation(fullCommand);
+  if (gitReview) return [values(gitReview === 'push' || gitReview === 'create-pr' ? 'git.publish_remote'
+    : gitReview === 'commit' ? 'file.edit.local_path' : 'file.read.local_path', `Git ${gitReview}`, segment)];
   const outlineActions = classifyOutlineActions(words);
   if (outlineActions) {
     return outlineActions.map((actionKind) => values(

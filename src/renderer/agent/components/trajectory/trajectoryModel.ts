@@ -367,6 +367,7 @@ function contextKindLabel(kind: ContextPayloadKind, labels: TrajectoryLabels): s
     case 'taskExecutionContext': return labels.record.context.turnEnvironment;
     case 'executionContextObservation': return labels.record.context.additionalContext;
     case 'verificationObservation': return labels.record.context.additionalContext;
+    case 'gitReviewEvidence': return labels.record.context.additionalContext;
     case 'verificationSource': return labels.record.context.additionalContext;
     case 'executionContextPublication': return labels.record.context.additionalContext;
     case 'turnEnvironment': return labels.record.context.turnEnvironment;

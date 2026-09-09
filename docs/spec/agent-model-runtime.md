@@ -455,6 +455,15 @@ revive an earlier passing aggregate. Capacity failure durably disables the
 verification Goal's automatic continuation before idle; only fresh user
 admission can resume a stopped run within its remaining budget.
 
+Git review uses `gitReviewEvidence` through this same publication boundary.
+The payload contains the full bounded immutable manifest, canonical Task ID,
+admitted execution context, dependencies on prior reviewed evidence, and bounded
+facts. Direct projection omits the full manifest. Publication appends the exact
+review resource reference and current applicability to the observation, without
+rewriting prior provider messages or diffs. The compaction checkpoint retains
+publication dependencies and exact review references. Neither a historical tool
+result nor a restored summary bypasses live commit/publication validation.
+
 ### Cache Contract And Verification
 
 With the same provider/model, effective configuration, retained context, and

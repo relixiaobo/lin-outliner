@@ -670,3 +670,13 @@ requires `compatibilityRange` on every entry, requires each `name` to satisfy th
 install path's `SKILL_NAME_PATTERN`, and caps total bytes at
 `MANAGED_SKILL_LIMITS.catalogBytes`; the loader stays permissive about all three
 because it parses bytes it did not author.
+
+
+### Git Review Skill
+
+The built-in `git-review` Skill supplies the review, selected-file commit,
+publication-preview, push and GitHub PR workflow through ordinary Bash and Tool
+Tasks. It distinguishes review from publication intent, teaches exact evidence
+references and literal stdin, and requires reconciliation after uncertain
+results. Its supervised command and evidence contracts are defined in
+[Git Review And Explicit Publication](agent-tool-design.md#git-review-and-explicit-publication).

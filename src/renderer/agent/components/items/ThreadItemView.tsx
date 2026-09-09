@@ -1,3 +1,4 @@
+import { GitReviewResult, parseGitReviewOutput } from './GitReviewResult';
 import {
   memo,
   useCallback,
@@ -896,6 +897,7 @@ function ToolItemDisclosure({
   const detail = toolDetail(item, t, threadId, argumentsValue);
   const detailInput = detail.input;
   const output = (outputLoaded ? loadedOutput.text : undefined) ?? detail.output;
+  const gitReview = item.type === 'commandExecution' ? parseGitReviewOutput(item.command, output) : null;
   const segments = threadToolItemSegments(item, t.agent.thread.activity, index);
   // A caller-authored description replaces the shell text in the label, so the
   // tooltip has to keep the command itself visible without expanding the row —
@@ -939,6 +941,7 @@ function ToolItemDisclosure({
             </ToolDetailSection>
           ) : null}
           {detail.body}
+          {gitReview ? <GitReviewResult key={gitReview.review.id} review={gitReview} /> : null}
           {/*
             No output, no section — including for a failure. The exit code rides
             this heading and so depends on there being output to hang it on,

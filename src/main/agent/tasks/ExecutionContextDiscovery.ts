@@ -7,6 +7,7 @@ import type { ExecutionContextFact, ExecutionContextSource, ExecutionContextScop
   ProjectCheckDeclaration, TaskExecutionContext } from '../../../core/agent/executionContext';
 import { redactSecretLikeContent } from '../capabilities/agentSecretRedaction';
 import { executionDigest, validateExecutionContext } from './ExecutionContext';
+import { assertNoExecutableGitFilters, GIT_FILTER_CONFIG_ARGS, GIT_INSPECTION_ARGS } from './gitInspectionPolicy';
 
 const run = promisify(execFile);
 const SOURCE_NAMES = ['AGENTS.md', 'CLAUDE.md', 'AGENT.md', '.tenon/checks.json'] as const;
@@ -163,12 +164,16 @@ async function inspectSource(filePath: string, limit: number): Promise<{
 async function inspectGit(directory: string, worktree: string | null, signal?: AbortSignal): Promise<string | null> {
   if (!worktree) return 'No Git worktree was detected at admission.';
   try {
-    const git = async (args: string[]) => (await run('git', ['-C', worktree, ...args], {
-      timeout: 400, maxBuffer: 16 * 1024, signal, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+    const git = async (args: string[]) => (await run('git', [...GIT_INSPECTION_ARGS, '-C', worktree, ...args], {
+      timeout: 400, maxBuffer: 16 * 1024, signal, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1' },
     })).stdout.trim();
     const head = await git(['rev-parse', '--verify', 'HEAD']).catch(() => 'unborn or unavailable');
     const ref = await git(['symbolic-ref', '--quiet', 'HEAD']).catch(() => 'detached or unavailable');
-    const status = await git(['status', '--porcelain=v1', '--untracked-files=normal']);
+    const filters = await git(GIT_FILTER_CONFIG_ARGS).catch((error: { code?: number }) => {
+      if (error.code === 1) return ''; throw error;
+    });
+    assertNoExecutableGitFilters(filters);
+    const status = await git(['status', '--porcelain=v1', '--untracked-files=normal', '--ignore-submodules=dirty']);
     return `Observed Git worktree: ${worktree}\nScope: ${directory}\nHEAD: ${head}\nRef: ${ref}\nStatus:\n${status || '(clean)'}`;
   } catch { return null; }
 }

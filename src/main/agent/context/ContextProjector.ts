@@ -689,6 +689,7 @@ export class CanonicalContextProjector {
         return [contextBlock(payload.kind, payload.info, 'application', 'observation')];
       case 'taskExecutionContext':
       case 'executionContextObservation':
+      case 'gitReviewEvidence':
       case 'verificationObservation':
         return [];
       case 'executionContextPublication':

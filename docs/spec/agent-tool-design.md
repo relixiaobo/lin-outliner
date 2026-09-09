@@ -1131,3 +1131,82 @@ or executed evidence, so secrecy does not erase a side effect and induce a retry
 The security model is Full Access plus explicit unavailability, as specified in
 [`agent-tool-permissions.md`](agent-tool-permissions.md). Tools do not implement
 an approval mode or a second filesystem sandbox.
+
+### Git Review And Explicit Publication
+
+The built-in `git-review` Skill uses ordinary Bash and Git inspection plus a
+strict standalone `git-review <capture|commit|preview|push|create-pr> --input -
+--output json` command with literal JSON stdin. The Host prepares a bundled
+Node helper after Tool Task address admission. Its Git/`gh` children belong to
+that same supervised process group; Task output, stop, timeout, and settlement
+remain canonical. No new model tool, native Git engine, process runner, or Git
+database is introduced. Captures/previews classify as reads, commits as local
+writes, and push/PR as `git.publish_remote`; configured blocks and delegation
+ceilings still apply. Full Access remains the default authority.
+
+The Host resolves the immutable prior reference into bounded Task stdin data.
+After admission, the private control channel carries only command/cwd plus the
+stdin byte count and SHA-256. The helper verifies that binding before parsing
+or executing anything. Full evidence fits without widening the Task's 64 KiB
+private-control limit or creating another resource store; provider-visible
+arguments and results retain the original reference and bounded presentation.
+
+A capture records canonical execution cwd, worktree, per-worktree Git directory,
+common Git directory, exact HEAD OID and symbolic ref (or detached/unborn state),
+plus selected index entries, file kind/mode/size, working digest, diff digest,
+status and rename source. It queries baseline directly, twice, independently of
+optional discovery. Path inspection is repeated to detect changes during capture.
+Non-Git roots require explicit file paths and support review/checks only. Missing
+or inconsistent Git evidence refuses commit. Limits are 256 paths, 8 MiB per
+file, 1 MiB full evidence, bounded CLI output, and short redacted diff excerpts;
+binary bytes are represented by digests. Omitted display paths require focused
+review for selection. Ordinary Bash remains available for complete inspection.
+
+All helper Git invocations disable fsmonitor, hooks, and implicit lazy fetching.
+Before status, diff, or index operations, effective Git configuration (including
+includes and environment configuration) is checked for nonempty clean/process
+filter commands; configured executable filters refuse this workflow before
+inspection. External diffs and textconv are disabled. Submodule status does not
+recurse into dirty worktrees; changed gitlinks remain visible, and selected
+submodules cannot be committed. Automatic Task Git context discovery uses the
+same inspection policy and degrades to unavailable when filters prevent safe
+inspection. Ordinary Bash remains the explicit route for filtered repositories.
+
+Commit requires the immutable capture reference, explicit exact paths, and a
+message. Paths are relative to the worktree root, with literal Git pathspecs;
+parent escapes, Git metadata, unresolved stages and submodules are refused.
+Renames require both paths. The operation commits **reviewed working bytes**,
+including the selected files' unstaged content; it does not commit staged hunks.
+It holds the admitted worktree claim and Git index lock, builds a temporary tree
+from HEAD using reviewed blobs, and preserves unrelated index entries. Clean
+filters and commit hooks are not run; `commit.gpgSign` is honored. A custom hook
+or filtered-content workflow uses ordinary Bash explicitly.
+
+After preparation, Host-supervised code revalidates exact baseline and selected
+state immediately before Git's old-OID comparison on the explicitly reviewed
+ref. It verifies resulting HEAD attachment, commit parent, and selected working
+bytes after the update. The claim does not exclude external clients. A detected
+race or interrupted ref/index settlement is non-success and requires read-only
+reconciliation, never automatic commit retry, index-lock deletion, reset, or
+force push. Git ref and index updates are not claimed to be one transaction.
+A successfully committed receipt records SHA, parent, ref, paths, address and
+execution context. Older evidence remains immutable.
+
+Publication preview requires an explicit remote and base. It records the sole
+push URL, local HEAD/branch, upstream, observed remote branch/base OIDs, provider,
+and exact local commit range. It never silently fetches missing base objects.
+Supported transports are credential-free HTTPS/SSH and absolute local remotes;
+multiple push URLs and embedded credentials are refused. Each push first queries
+the exact remote ref, adopts an already-matching OID, and otherwise validates the
+preview again before pushing its exact OID without force. Each GitHub PR attempt
+queries bounded `gh` JSON for the exact same-repository head/base before creating
+and after the attempt. Existing matching PRs, including closed/merged ones, are
+retained as evidence instead of duplicated. Missing, truncated, ambiguous or
+unexpected provider evidence is not success. Uncertain remote attempts reconcile
+against the same preview; hosting failures never authorize a fallback adapter.
+The initial PR adapter supports same-repository branches on github.com only.
+
+The renderer shows inert historical evidence, initially unchecked file selection,
+a commit-message field, a copyable explicit request for the composer, and remote
+preview details. Rendering or copying never mutates Git. Commit, push and PR
+creation require user intent; review/check completion never implies publication.
