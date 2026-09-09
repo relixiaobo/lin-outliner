@@ -6,7 +6,7 @@ People can find and change preferences in one familiar Settings window, without
 opening another window for each category. This specializes Unit G of
 [File-First Settings](settings-control-plane.md), preserving its source and
 operation ownership. Apple's macOS interaction conventions and Tenon's
-[design system](../spec/design-system.md) govern every changed surface.
+[design system](../../spec/design-system.md) govern every changed surface.
 
 The delivery shape is **one complete feature in one PR**. Settle shared domain
 contracts before building their consumers, within the same coordinated delivery.

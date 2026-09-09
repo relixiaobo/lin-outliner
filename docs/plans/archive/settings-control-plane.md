@@ -124,7 +124,7 @@ distinct from repository instructions and native build/test configuration.
 Those scoped inputs cannot change the selected root configuration. Skill
 discovery/lifecycle remains under the Skill owner and its canonical catalog.
 The shared
-[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)
+[Execution Context Publication](../../spec/agent-model-runtime.md#execution-context-publication)
 contract defines how task observations preserve stable prompt/tool bytes and
 affinity. Explicit model/tool/configuration edits can change that prefix under
 their own admission rules; cache reuse cannot defer security revocation.
@@ -485,9 +485,9 @@ Protected shared interfaces still follow the repository's coordination rule.
 | A. File-backed preferences | Existing preference controls plus root Agent file edits, schema/status/recovery, configuration Skill, global availability, request/update policy | Configuration modules and preference consumers; FR-1 through FR-4, FR-6; removes migrated fields from old stores immediately |
 | B. Model configuration and bootstrap | File-backed connection/default definitions, shared composer/admission precedence, complete Models UI, auth/test/catalog operations, sensitive input, complete snapshot recovery | A; Provider/credential/catalog/image owners, root start defaults, and Tool/Trajectory boundary; FR-2, FR-5, FR-6, FR-12 |
 | C. Root configuration and delegation policy | Public root-source discovery/schema/status and structural UI edits, file-backed Runner/Session defaults, access inspection/block operations; no Agent-type editor | A and final delegation runtime; surviving root Profile/presentation, delegation policy, and Access owners; FR-2 through FR-6 |
-| D. [Skill lifecycle operations](archive/skill-lifecycle-operations.md) | Human Library install/update/reversal/provenance operations, with file-only availability and no managed enable writer | A, Skill identity foundation, and domain-owned declarative Skill settings; Skill owners; FR-2 through FR-6 |
-| E1. [Memory operations](archive/memory-operations.md) | Human status, Open Memory, confirmed Reset, and per-Thread mode; global enablement remains a file edit | A; Memory and Thread details owners; FR-5, FR-6 |
-| E2. [Preview translation and data operations](archive/preview-translation-data-operations.md) | Preview-local translation controls and scoped clearing, plus website/session and global translation-cache inspection/clearing | A; preview, session, and cache owners; FR-5 through FR-7 |
+| D. [Skill lifecycle operations](skill-lifecycle-operations.md) | Human Library install/update/reversal/provenance operations, with file-only availability and no managed enable writer | A, Skill identity foundation, and domain-owned declarative Skill settings; Skill owners; FR-2 through FR-6 |
+| E1. [Memory operations](memory-operations.md) | Human status, Open Memory, confirmed Reset, and per-Thread mode; global enablement remains a file edit | A; Memory and Thread details owners; FR-5, FR-6 |
+| E2. [Preview translation and data operations](preview-translation-data-operations.md) | Preview-local translation controls and scoped clearing, plus website/session and global translation-cache inspection/clearing | A; preview, session, and cache owners; FR-5 through FR-7 |
 | E3. Application and diagnostic operations | Human version/build/release information, update checking/opening, Help/license destinations, and local diagnostics reveal/export | A; application, Updates, and diagnostics owners; FR-5, FR-6 |
 | F. Configurable shortcuts | Full file/UI/Agent remapping, registry/hint parity, physical recording, safe system registration | A; shortcut and launcher owners; FR-8, FR-9 |
 | G. [Unified settings discovery](settings-discovery.md) | Single-window categories and search/modified/reset UI, direct pane destinations, no aggregate domain loading/state | A-F; coordinated domain-contract refactor, then complete discovery; Settings routing/components/preload and narrow owner events; FR-10, FR-11 |
@@ -705,9 +705,9 @@ cannot bypass the new application default or Profile pin.
 Merged #627 owns exact-or-unavailable Trajectory evidence. Before B registers
 sensitive input, coordinate the shared persistence contract so raw credential
 Tool Input is explicitly unavailable rather than retained as exact diagnostics.
-[Skill identity foundation](archive/agent-skill-authoring-foundation.md) owns exact
+[Skill identity foundation](agent-skill-authoring-foundation.md) owns exact
 bindings and provenance; D consumes it.
-[Settings working states](semantic-working-state.md) supplies the final Provider
+[Settings working states](../semantic-working-state.md) supplies the final Provider
 and managed-Skill progress behavior for B and D. Contextual Translation follows
 the merged preview-shell baseline.
 

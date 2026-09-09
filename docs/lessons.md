@@ -2795,3 +2795,16 @@ admission, and a remote alias does not identify one transport destination.
 Exercise distinct fetch/push URLs, multiple destinations and partial success;
 test literal-path inspections through the capability and execution path without
 broadening authority to make the recipe pass.
+
+## Conflict recovery must retain the draft and renew only its admission token
+
+PR #656 correctly rejected stale Agent configuration writes but retried with the
+same captured digest forever; reopening obtained a fresh digest by discarding
+the user's draft.
+
+**Keep editable intent separate from source observations.** After rejection,
+refresh only the target layer's observation and require an explicit retry;
+background refreshes must not silently admit stale drafts. Preserve the draft
+when refresh fails and reject again if the source changes before retry. Verify
+both user and project layers through the real UI and writer, including unrelated
+JSONC fields/comments and repeated conflicts.

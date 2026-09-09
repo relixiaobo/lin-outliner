@@ -94,4 +94,4 @@ Core/renderer/E2E tests, docs checks, and visual light/dark verification pass.
 ## Open questions
 
 None. Provider identity, credential ownership, selection precedence, recovery,
-and the no-migration rule are fixed by `docs/plans/settings-control-plane.md`.
+and the no-migration rule are fixed by `docs/plans/archive/settings-control-plane.md`.
