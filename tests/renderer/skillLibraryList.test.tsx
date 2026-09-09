@@ -162,15 +162,19 @@ describe('skill library list', () => {
       curationReport: report,
     });
     const review = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.getAttribute('aria-label') === 'Review Skills');
-    if (!review) throw new Error('Missing Review Skills control');
+      .find((button) => button.textContent === 'Check Skill Files…');
+    if (!review) throw new Error('Missing Skill file diagnostic control');
+    expect(review.closest('details')?.querySelector('summary')?.textContent).toBe('Troubleshooting');
+    expect(review.closest('details')?.hasAttribute('open')).toBe(false);
     await act(async () => {
+      review.closest('details')?.setAttribute('open', '');
       review.click();
       await Promise.resolve();
     });
     expect(rendered.calls.map((call) => call.command)).toContain('agent_skill_curation_report');
-    expect(rendered.document.body.textContent).toContain('Skill curation report');
+    expect(rendered.document.body.textContent).toContain('Skill File Diagnostics');
     expect(rendered.document.body.textContent).toContain('Use `bash` instead.');
+    expect(rendered.document.body.textContent).not.toContain('b'.repeat(64));
     expect(rendered.document.body.textContent).toContain('No reliable Agent-write provenance is recorded.');
     expect([...rendered.document.querySelectorAll('button')].some((button) => /apply|fix|write/i.test(button.textContent ?? ''))).toBe(false);
   });
@@ -223,7 +227,7 @@ describe('skill library list', () => {
     expect(rendered.document.body.textContent).toContain('No skills yet.');
     // Exactly one empty row, and it stays inside the group so the `+` that fixes
     // the empty state is still reachable from it.
-    expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(1);
+    expect(rendered.document.querySelectorAll('.settings-skills-section > .inset-group .inset-row')).toHaveLength(1);
     expect(rendered.document.querySelector('.inset-group-header-action button[aria-haspopup="menu"]')).not.toBeNull();
   });
 
@@ -453,7 +457,7 @@ describe('skill library list', () => {
   });
 
   test('every managed row can be checked on its own', async () => {
-    const rendered = await render({ skills: [], managed: [managedSkill()] });
+    const rendered = await render({ skills: [], managed: [managedSkill(), managedSkill({ id: 'managed-doc', name: 'document' })] });
 
     await act(async () => {
       rendered.document.querySelector<HTMLButtonElement>('[aria-label="pdf actions"]')?.click();
@@ -472,6 +476,25 @@ describe('skill library list', () => {
     const call = rendered.calls.filter((entry) => entry.command === 'agent_managed_skill_check_updates').at(-1);
     expect(call?.args?.skillId).toBe('managed-pdf');
     expect(call?.args?.ambient).toBeUndefined();
+    const row = switchFor(rendered.document, 'Enable pdf').closest('.inset-row')!;
+    expect(row.querySelector('[role="status"]')?.textContent).toBe('Up to date');
+    expect(switchFor(rendered.document, 'Enable document').closest('.inset-row')?.textContent).not.toContain('Up to date');
+    expect(rendered.document.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+
+  test('an explicit failed update check reports the diagnostic once on its Skill', async () => {
+    const rendered = await render({ skills: [], managed: [managedSkill({ diagnostic: { code: 'github_rate_limited' } })] });
+    await act(async () => {
+      rendered.document.querySelector<HTMLButtonElement>('[aria-label="pdf actions"]')?.click();
+      await settle();
+    });
+    const check = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Check for updates');
+    if (!check) throw new Error('Missing per-skill check action');
+    await act(async () => { check.click(); await settle(); });
+    const row = switchFor(rendered.document, 'Enable pdf').closest('.inset-row')!;
+    expect(row.querySelector('[role="alert"]')?.textContent).toBe('GitHub request limit reached. Try again later.');
+    expect(row.textContent?.split('GitHub request limit reached.').length).toBe(2);
   });
 
   test('a recommendation whose name is already taken offers no Install', async () => {
@@ -641,7 +664,7 @@ describe('skill library list', () => {
 
     await openAddMenu(rendered, 'Add Local Directory…');
 
-    expect(errors.at(-1)).toContain('at most');
+    expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('at most');
   });
 
   test('unbinding a directory only drops the pointer', async () => {
@@ -807,11 +830,7 @@ async function render(input: {
           disabledSkills={input.disabledSkills ?? []}
           onDirectoriesChange={input.onDirectoriesChange ?? (async (next) => next)}
           onApplied={async () => undefined}
-          onError={input.onError ?? (() => undefined)}
-          onNotice={input.onNotice ?? (() => undefined)}
-          onSkillCountChange={input.onSkillCountChange ?? (() => undefined)}
           onToggleSkill={input.onToggleSkill ?? (() => undefined)}
-          onUpdateCountChange={input.onUpdateCountChange ?? (() => undefined)}
         />
       </I18nProvider>,
     );

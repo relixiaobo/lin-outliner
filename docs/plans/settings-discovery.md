@@ -37,9 +37,11 @@ controls during other categories or global search. Search and the Back/Forward
 group share one height, capsule background, and hairline outline. Configuration
 files belong in Advanced; a rejected shortcut source exposes a direct repair
 action beside its error instead of a permanent toolbar menu. Narrow windows and larger text
-can wrap trailing controls within the toolbar without squeezing the title. Only the
-rail has material and elevation; the toolbar has no full-width capsule, border,
-or shadow. Shared gaps and concentric corners retain Tenon's container grammar.
+can wrap trailing controls within the toolbar without squeezing the title. The rail keeps its elevation; the toolbar has no full-width capsule, border,
+or shadow. Content scrolls behind a shared-material toolbar backing with a soft
+blurred edge. Measure toolbar height to support wrapping and scroll-padding;
+Reduced Transparency/Increase Contrast use an opaque backing. Remove the content
+viewport frame and its redundant focus stop; focus actual controls instead. Shared gaps and concentric corners retain Tenon's container grammar.
 About retains its normal App-menu window; credentials remain an owned modal child.
 
 ### Interaction Requirements
@@ -48,10 +50,10 @@ About retains its normal App-menu window; credentials remain an owned modal chil
 | --- | --- |
 | FR-1: Open and navigate | App menu **Settings…** and `Command+,` open/focus one **Tenon Settings** window. General, Models, Agents, Skills, Memory, Access, Data, Keyboard Shortcuts, and Advanced switch inside it. Untargeted reopening preserves selection, search, scroll, and focus. Explicit application destinations select the corresponding pane without a reload. Back/Forward traverse category history; choosing a new category clears the forward branch. Back from search returns to the selected pane first. Native minimize, zoom, and fullscreen are disabled; resizing and scrolling remain available. |
 | FR-2: Find | A persistent sidebar search field matches localized labels, descriptions, aliases, and stable IDs. `Command+F` focuses it. Results expose matching scalar controls and category destinations; category results navigate locally. Clearing search returns to the selected category. Search never loads catalogs for unvisited panes. |
-| FR-3: Organize and edit | General contains appearance, language, and automatic updates. Models groups request policy under a collapsed Request Options disclosure. Agents owns delegation, with capacity limits under a collapsed advanced disclosure. Memory owns its enable switch and maintenance. Advanced contains diagnostics, configuration files, and a collapsed scalar inspector with All / Modified filtering. Choices commit immediately; numbers commit on Return/blur and Escape cancels an uncommitted edit. Keyboard Shortcuts uses compact command rows with a name and trailing editable key combination; secondary actions live in contextual menus, and IDs/badges stay out of ordinary rows. No window-wide Save/Apply footer. |
+| FR-3: Organize and edit | General contains appearance, language, and automatic updates. Models groups request policy under a collapsed Request Options disclosure. Agents owns delegation, with capacity limits under a collapsed advanced disclosure. Memory owns its enable switch and maintenance. Advanced contains diagnostics, configuration files, and a collapsed Configuration Inspector with All / Modified filtering, defaulting to Modified and explaining that these are the same preferences shown in each category. Choices commit immediately; numbers commit on Return/blur and Escape cancels an uncommitted edit. Keyboard Shortcuts uses compact command rows with a name and trailing editable key combination; secondary actions live in contextual menus, and IDs/badges stay out of ordinary rows. No window-wide Save/Apply footer. |
 | FR-4: Reset and repair | Modified means an explicit source declaration, including an explicit default. Show a named Reset action only for modified rows; reset deletes only that declaration. Invalid sources disable their structural controls and retain an Open File repair action regardless of category or query. Show retained effective values separately from source acceptance and runtime application. |
 | FR-5: Keep context | Mount a domain pane on first visit, then keep it mounted but hidden on navigation. Preserve drafts, errors, disclosure state, scroll, queues, and accepted operations. Only the visible pane enters the accessibility tree and focus order. Each domain owns its subscriptions and progress. Credential input opens a modal child of Settings; navigation cannot switch its owner underneath it. An active in-app modal editor likewise takes precedence over a menu deep link. |
-| FR-6: Keyboard and recovery | A vertical tablist uses roving focus with Up/Down/Home/End; Tab follows the toolbar and content controls. Source conflicts preserve the draft and require an explicit retry against the new observation. Escape first belongs to IME, editor, or frontmost menu/sheet, otherwise it clears a focused nonempty search. `Command+W` closes the active native window. Child dismissal restores the invoking control. Scroll-region focus uses an inset neutral ring only for keyboard input; a pointer click never paints a viewport outline. Shortcut recording ends on blur or category change and only captures its focused field. No unrelated domain becomes busy. |
+| FR-6: Keyboard and recovery | A vertical tablist uses roving focus with Up/Down/Home/End; Tab follows the toolbar and content controls. Source conflicts preserve the draft and require an explicit retry against the new observation. Escape first belongs to IME, editor, or frontmost menu/sheet, otherwise it clears a focused nonempty search. `Command+W` closes the active native window. Child dismissal restores the invoking control. The content region is not an extra tab stop; search navigation focuses a real control. Actual controls retain neutral keyboard focus, and empty content clicks never paint a viewport outline. Shortcut recording ends on blur or category change and only captures its focused field. No unrelated domain becomes busy. |
 
 About and Help keep their App/Help menu homes. Preview translation remains
 contextual. Public source observations may supply bounded errors/modified state;
@@ -67,7 +69,7 @@ and feature enablement uses trailing switches. Checkboxes are reserved for
 selecting members of an Agent capability set. Use low-contrast filled groups without outer strokes,
 separators inset on both sides, regular row labels, and semibold section headings
 across domain and scalar rows. Popups show their value and indicator without a
-resting bezel. Keyboard Shortcuts uses one compact alternating list with context
+resting bezel. Keyboard Shortcuts uses one comfortably spaced list with inset separators and context
 headings and instructions above the rows. Key combinations read as trailing text;
 double-click or keyboard activation starts recording in stable field dimensions,
 and a single pointer click only focuses. Delete clears a binding; None is also
@@ -85,7 +87,7 @@ Choose presentation by the decision a person is making, across every category:
 | General | Labeled miniature app previews compare System, Light, and Dark; native radios keep keyboard behavior. Language remains a named popup, and automatic updates remain an immediate switch. |
 | Models | Defaults name Automatic selection; unavailable/loading states cannot masquerade as an editable default. Visible Configure actions reveal connection editing; secondary actions stay in menus. Request fields explain units, defaults, and accepted bounds. |
 | Agents | A visible Edit action and accurate copy expose instructions/capabilities. Colour choices support arrow navigation. Delegation explains its purpose and the runner affected by the following options; advanced limits remain disclosed. |
-| Skills | Keep descriptions and meaningful availability/source information. Name the review action instead of representing it as search. Acquisition, review, and destructive decisions retain their existing ownership. |
+| Skills | Keep descriptions and meaningful availability/source information. Put read-only Skill File Diagnostics in collapsed Troubleshooting with a plain explanation of its limited scope; omit hashes from the report. Acquisition, review, and destructive decisions retain their existing ownership. |
 | Memory | Separate everyday enable/open controls from reset. Use readable lifecycle and deletion-scope copy; an off feature cannot claim it is ready to save new memories. |
 | Access | State the fixed access boundary as information; list explicit blocks with readable labels and exact rules available for inspection. |
 | Data | Show readable storage units and explain the effects of clearing before confirmation. Do not conflate cache bytes with total website data or logical translation size with physical disk usage. |
@@ -116,6 +118,43 @@ use fixed illustration palette tokens, never a renderer theme bridge.
   old category/page routes, and misleading domain component names. Keeping a
   category navigation view does not restore the retired lifecycle coupling.
 
+### Operation Feedback And Toolbar Ownership
+
+Keep this within the same complete PR. Skills moves group-wide Check and Add
+into the page toolbar and removes its duplicate list title. File diagnostics
+stays in a collapsed Troubleshooting section with a clear scope explanation. Toolbar
+portals render only for their active pane, including during global search.
+
+Scope progress/errors/outcomes by row or operation: individual Skill checks,
+model defaults/providers, shortcut commands, delegation fields, Memory actions,
+translation/website data cleanup, and diagnostics/source-file opening. A batch
+check or removal of a row uses a named group summary. Acquisition keeps its
+feedback in the active dialog. Reset All uses the footer. Source read/recovery
+errors retain their broader scope, while preference application failures stay
+with their affected controls. A change in one row cannot clear another row's
+outcome, and shared serialization must not make unrelated buttons claim work.
+About copy, automatic-update, manual-check, and download feedback follow the same
+rule. Preserve cancellation, stale-response guards, accepted writes, and per-owner
+rollback behavior; do not introduce backend contracts for visual feedback.
+
+### Configuration Without Additional Agent Tools
+
+Remove the twelve Settings-era model tools for Skill lifecycle, Memory, preview
+translation/data, and application/diagnostics operations. The canonical model
+catalog, action descriptors, runtime adapters, and Agent Host wiring no longer
+publish or execute them. Keep existing ordinary file tools and the configuration
+Skill as the Agent surface for public declarative preferences, including schema
+and current-Host acceptance/effectiveness verification. Do not add a replacement
+tool or CLI. Human Settings, preview, About, and Help keep their existing internal
+services, confirmations, and IPC admission; these are not model tools. Operation
+requests without a declarative setting point to that user interface. Update active
+specifications and replace retired adapter coverage with registry exclusion and
+retained UI/domain operation coverage.
+
+The scroll-under material follows the right canvas's concentric upper corners.
+A longer graduated mask softens the blurred backing without exposing a rectangular
+strip or a separate content frame; accessibility fallbacks stay opaque.
+
 ### Acceptance Criteria
 
 - **AC-1 (FR-1, FR-2):** General opens without domain catalog requests. All category
@@ -142,6 +181,7 @@ Apple references: [Settings](https://developer.apple.com/design/human-interface-
 [Search fields](https://developer.apple.com/design/human-interface-guidelines/search-fields),
 [Toggles](https://developer.apple.com/design/human-interface-guidelines/toggles),
 [Pop-up buttons](https://developer.apple.com/design/human-interface-guidelines/pop-up-buttons),
+[Scroll views](https://developer.apple.com/design/human-interface-guidelines/scroll-views),
 and [Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility).
 These guide semantics; the category layout is Tenon's decision. Keep neutral
 functional states, tokenized geometry, system type, opaque content, native
@@ -156,7 +196,9 @@ and update specifications and regression evidence together. The coordinated
 
 Scope: `src/core/settingsWindow.ts`, scalar/delegation definitions, configuration
 and window hosts, preload, renderer APIs/domain components, Settings styles,
-English/Chinese messages, notification consumers, and corresponding tests/specs.
+English/Chinese messages, notification consumers, and corresponding tests/specs. Retirement also touches the Agent tool catalog,
+capability derivation, four model adapters, Agent Host composition, and the
+built-in configuration Skill.
 No dependencies/build configuration, document commands, board, or changelog edits.
 
 Risks: stale notification consumers, accidentally broad IPC admission, loss of
@@ -164,8 +206,9 @@ in-flight work on navigation, and eager catalog loading behind a shared shell.
 Tests target these boundaries directly. PR #655 shares only the existing
 `docs/spec/agent-model-runtime.md` scope, in distinct ownership paragraphs; its
 execution-contract/ThreadService implementation is outside this change. It has
-merged, and the current open-claim check finds no other PR. Recheck remote file
-scopes before publishing any newly shared contract edit.
+merged. The current open claim #658 owns process execution, Tool Tasks, and
+related specification/locale sections; it does not claim Settings or these model
+tool adapters. Keep shared specification edits in their respective sections.
 
 ## Open questions
 

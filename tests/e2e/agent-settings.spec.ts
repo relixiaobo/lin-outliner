@@ -61,6 +61,14 @@ test.describe('configuration panes', () => {
     await globalSearch.press('Escape');
     await expect(localSearch).toHaveValue('translation');
     await expect(globalSearch).toBeFocused();
+    await settings.getByRole('tab', { name: 'Skills', exact: true }).click();
+    await expect(toolbar.getByRole('button', { name: 'Add a skill', exact: true })).toBeVisible();
+    await globalSearch.fill('appearance');
+    await expect(toolbar.getByRole('button', { name: 'Add a skill', exact: true })).toHaveCount(0);
+    await globalSearch.press('Escape');
+    await expect(toolbar.getByRole('button', { name: 'Add a skill', exact: true })).toBeVisible();
+    await settings.getByRole('tab', { name: 'General', exact: true }).click();
+    await expect(toolbar.getByRole('button', { name: 'Add a skill', exact: true })).toHaveCount(0);
   });
 
   test('leaving the shortcut recorder releases keys to the current pane', async ({ page }) => {
@@ -156,13 +164,15 @@ test.describe('configuration panes', () => {
 
 
 
-  test('keeps scrolled content below the fixed toolbar chrome', async ({ page }) => {
+  test('keeps the toolbar fixed while content scrolls underneath', async ({ page }) => {
     const settings = await openSettings(page);
     const toolbarBox = await settings.locator('.configuration-toolbar').boundingBox();
     const contentBox = await settings.locator('.configuration-content:visible').boundingBox();
     expect(toolbarBox).not.toBeNull();
     expect(contentBox).not.toBeNull();
-    expect(contentBox!.y).toBeGreaterThanOrEqual(toolbarBox!.y + toolbarBox!.height);
+    expect(contentBox!.y).toBeCloseTo(toolbarBox!.y, 1);
+    const firstRow = await settings.getByRole('tabpanel', { name: 'Models', exact: true }).getByRole('listitem').first().boundingBox();
+    expect(firstRow!.y).toBeGreaterThanOrEqual(toolbarBox!.y + toolbarBox!.height);
 
     await settings.locator('.configuration-content:visible').evaluate((element) => {
       element.scrollTop = 240;
@@ -407,7 +417,7 @@ test.describe('configuration panes', () => {
     });
     await expect(openaiSwitch).not.toBeChecked();
     await expect(settings.getByRole('button', { name: 'OpenAI, Disabled' })).toBeVisible();
-    await expect(settings.getByText('Provider disabled')).toBeVisible();
+    await expect(openaiSwitch).not.toBeChecked();
 
     await openaiSwitch.click();
 
@@ -422,7 +432,7 @@ test.describe('configuration panes', () => {
       probeConnection: false,
     });
     await expect(openaiSwitch).toBeChecked();
-    await expect(settings.getByText('Provider enabled')).toBeVisible();
+    await expect(settings.getByText('Provider enabled', { exact: true })).toHaveCount(0);
   });
 
   test('settles an accepted provider operation while another pane is visible and preserves scroll', async ({ page }) => {
@@ -448,7 +458,6 @@ test.describe('configuration panes', () => {
     await settings.getByRole('tab', { name: 'Models', exact: true }).click();
     expect(await content.evaluate((element) => element.scrollTop)).toBe(scroll);
     await expect(settings.getByRole('switch', { name: 'Enable or disable OpenAI' })).not.toBeChecked();
-    await expect(settings.getByText('Provider disabled')).toBeVisible();
   });
 
   test('enables detected CC Switch directly from the provider list', async ({ page }) => {

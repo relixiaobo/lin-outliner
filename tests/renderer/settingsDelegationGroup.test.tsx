@@ -49,6 +49,19 @@ describe('DelegationPreferences', () => {
     ]);
   });
 
+  test('keeps a failed model change beside Model when another setting succeeds', async () => {
+    const rendered = await render(settings(true), async (input) => {
+      if (input.runners?.internal?.model) throw new Error('Model write failed');
+    });
+    const model = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Model"]')!;
+    const limit = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Running globally"]')!;
+    await rendered.change(model, 'openai/gpt-test');
+    expect(model.closest('.inset-row')?.querySelector('[role="alert"]')?.textContent).toBe('Model write failed');
+    await rendered.change(limit, '16');
+    expect(model.closest('.inset-row')?.querySelector('[role="alert"]')?.textContent).toBe('Model write failed');
+    expect(limit.closest('.inset-row')?.querySelector('[role="alert"]') === null).toBe(true);
+  });
+
   test('keeps an unavailable explicit model visible as not ready', async () => {
     const configured = settings(true);
     configured.runtime.delegation.runners.internal!.model = 'openai/missing';

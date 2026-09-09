@@ -1,3 +1,4 @@
+import { SettingsFeedback, type SettingsFeedbackState } from '../configuration/SettingsFeedback';
 import { useEffect, useRef, useState } from 'react';
 import type { MemoryResetView } from '../../../core/agent/memoryOperations';
 import { api } from '../../api/client';
@@ -13,8 +14,8 @@ export function MemoryManager() {
   const { locale, t } = useI18n();
   const { view, error: readError, refresh } = useMemoryView();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Record<string, SettingsFeedbackState>>({});
+  function report(key: string, value: SettingsFeedbackState = {}) { setFeedback((current) => ({ ...current, [key]: value })); }
   const [reset, setReset] = useState<MemoryResetView | null>(null);
   const [desiredEnabled, setDesiredEnabled] = useState<boolean | null>(null);
   const busyRef = useRef(false);
@@ -25,7 +26,7 @@ export function MemoryManager() {
 
   useEffect(() => {
     if (desiredEnabled === null || desiredEnabled !== enabled) return;
-    setNotice(enabled ? t.settings.general.memoryEnabledNotice : t.settings.general.memoryDisabledNotice);
+    report('enabled');
     setDesiredEnabled(null);
   }, [desiredEnabled, enabled, t.settings.general.memoryEnabledNotice, t.settings.general.memoryDisabledNotice]);
 
@@ -38,16 +39,15 @@ export function MemoryManager() {
     return () => { active = false; };
   }, [view, reset?.operationId, pendingReset]);
 
-  async function run(action: () => Promise<void>) {
+  async function run(key: string, action: () => Promise<void>) {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
-    setError(null);
-    setNotice(null);
-    setDesiredEnabled(null);
-    setReset((current) => current?.state === 'prepared' || current?.state === 'unknown' ? current : null);
+    report(key);
+    if (key === 'enabled') setDesiredEnabled(null);
+    if (key === 'reset') setReset(null);
     try { await action(); }
-    catch (caught) { if (mounted.current) setError(caught instanceof Error ? caught.message : String(caught)); }
+    catch (caught) { if (mounted.current) report(key, { error: caught instanceof Error ? caught.message : String(caught) }); }
     finally {
       busyRef.current = false;
       if (mounted.current) { setBusy(false); refresh(); }
@@ -70,30 +70,28 @@ export function MemoryManager() {
   const preferenceCopy = desiredEnabled === null ? null : t.settings.general.memoryPreferenceSaved;
 
   return <>
-    <InsetGroup ariaLabel={t.settings.general.memoryGroup}>
-      <InsetRow label={t.settings.general.memoryLabel} sublabel={t.settings.general.memorySublabel} trailing={
+    <InsetGroup ariaLabel={t.settings.general.memoryGroup} headerFeedback={<SettingsFeedback feedback={{ error: readError }} />}>
+      <InsetRow feedback={<SettingsFeedback feedback={feedback.enabled?.error ? feedback.enabled : { notice: preferenceCopy }} />} label={t.settings.general.memoryLabel} sublabel={t.settings.general.memorySublabel} trailing={
         <SwitchControl checked={enabled} disabled={busy || !view} label={t.settings.general.memoryLabel}
-          onCheckedChange={(value) => void run(async () => {
+          onCheckedChange={(value) => void run('enabled', async () => {
             await api.memorySetEnabled(value);
             if (mounted.current) setDesiredEnabled(value);
           })}><SwitchMark checked={enabled} /></SwitchControl>
       } wrap />
-      <InsetRow label={t.settings.general.memoryStatusLabel} sublabel={statusCopy} trailing={
-        <Button disabled={busy || !view} onClick={() => void run(async () => {
+      <InsetRow feedback={<SettingsFeedback feedback={feedback.open} />} label={t.settings.general.memoryStatusLabel} sublabel={statusCopy} trailing={
+        <Button disabled={busy || !view} onClick={() => void run('open', async () => {
           const result = await api.memoryManage({ operation: 'open' });
-          if (mounted.current && result.operation === 'open' && result.navigation !== 'opened') setNotice(t.settings.general.memoryNavigationUnavailable);
+          if (mounted.current && result.operation === 'open' && result.navigation !== 'opened') report('open', { error: t.settings.general.memoryNavigationUnavailable });
         })}>{t.settings.general.memoryOpenAction}</Button>
       } wrap />
     </InsetGroup>
-    <InsetGroup ariaLabel={t.settings.general.memoryResetLabel} className="settings-memory-maintenance">
-      <InsetRow label={t.settings.general.memoryResetLabel} sublabel={t.settings.general.memoryResetSublabel} trailing={
-        <Button disabled={busy || !view || pendingReset} variant="danger" onClick={() => void run(async () => {
+    <InsetGroup ariaLabel={t.settings.general.memoryResetLabel} className="memory-reset-section">
+      <InsetRow feedback={<SettingsFeedback feedback={feedback.reset?.error ? feedback.reset : reset?.state === 'conflicted' || reset?.state === 'unknown' ? { error: resetCopy } : { notice: resetCopy }} />} label={t.settings.general.memoryResetLabel} sublabel={t.settings.general.memoryResetSublabel} trailing={
+        <Button disabled={busy || !view || pendingReset} variant="danger" onClick={() => void run('reset', async () => {
           const result = await api.memoryManage({ operation: 'reset' });
           if (mounted.current && result.operation === 'reset') setReset(result.reset);
         })}>{t.settings.general.memoryResetAction}</Button>
       } wrap />
     </InsetGroup>
-    {error || readError ? <div className="agent-settings-error" role="alert">{error ?? readError}</div> : null}
-    {notice || resetCopy || preferenceCopy ? <div className="agent-settings-notice" role="status">{notice ?? resetCopy ?? preferenceCopy}</div> : null}
   </>;
 }

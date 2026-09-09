@@ -1,7 +1,6 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense } from 'react';
 import type { SettingsPane } from '../../../core/settingsWindow';
 import { useT } from '../../i18n/I18nProvider';
-import { ManagerFeedback } from './ManagerFeedback';
 
 const Models = lazy(() => import('./ModelsManager').then((m) => ({ default: m.ModelsManager })));
 const Agents = lazy(() => import('./AgentsManager').then((m) => ({ default: m.AgentsManager })));
@@ -20,15 +19,12 @@ export function ConfigurationPane({ destination, active, toolbarTarget }: {
   toolbarTarget: HTMLElement | null;
 }) {
   const t = useT();
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   return <>
     <Suspense fallback={<p role="status">{t.settings.discovery.loading}</p>}>
-      {destination === 'models' ? <Models /> : destination === 'agents' ? <Agents /> : destination === 'skills' ? <Skills />
+      {destination === 'models' ? <Models /> : destination === 'agents' ? <Agents /> : destination === 'skills' ? <Skills active={active} toolbarTarget={toolbarTarget} />
         : destination === 'memory' ? <Memory /> : destination === 'access' ? <Access /> : destination === 'data' ? <Data />
-          : destination === 'shortcuts' ? <Shortcuts active={active} toolbarTarget={toolbarTarget} onError={setError} onNotice={setNotice} /> : <Diagnostics />}
+          : destination === 'shortcuts' ? <Shortcuts active={active} toolbarTarget={toolbarTarget} /> : <Diagnostics />}
     </Suspense>
-    <ManagerFeedback error={error} notice={notice} />
   </>;
 }
 

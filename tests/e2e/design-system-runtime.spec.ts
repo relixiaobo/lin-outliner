@@ -519,7 +519,8 @@ const surfaces: SurfaceCase[] = [
       await page.getByRole('button', { name: 'OpenAI actions' }).click();
       const menu = page.getByRole('menu', { name: 'Provider actions' });
       await menu.waitFor({ state: 'visible' });
-      await expect(menu.getByRole('menuitem', { name: /Configure/ })).toBeVisible();
+      // Configure is the row's primary button; the menu contains secondary actions.
+      await expect(menu.getByRole('menuitem', { name: /Remove/ })).toBeVisible();
     },
   },
   {

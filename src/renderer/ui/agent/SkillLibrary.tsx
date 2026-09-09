@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom';
+import { SettingsFeedback, type SettingsFeedbackState } from '../configuration/SettingsFeedback';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentSkillCurationReport,
@@ -41,8 +43,8 @@ interface SkillLibraryProps {
   onDirectoriesChange: (next: string[], mode?: AgentSkillSourceMode) => Promise<readonly string[]>;
   onToggleSkill: (skillName: string) => void;
   toggleErrors?: ReadonlyMap<string, string>;
-  onError: (message: string | null) => void;
-  onNotice: (message: string | null) => void;
+  active?: boolean;
+  toolbarTarget?: HTMLElement | null;
   onApplied: () => Promise<void>;
 }
 
@@ -82,6 +84,7 @@ interface LibraryRow {
    * the runtime is not loading it at all.
    */
   diagnostic?: string;
+  feedback?: SettingsFeedbackState;
   /**
    * Whether the diagnostic is about the Skill itself or about Tenon's last
    * attempt to reach GitHub. An offline launch produces the latter for every
@@ -102,11 +105,18 @@ export function SkillLibrary({
   onDirectoriesChange,
   onToggleSkill,
   toggleErrors = EMPTY_STRING_MAP,
-  onError,
-  onNotice,
+  active = true,
+  toolbarTarget,
   onApplied,
 }: SkillLibraryProps) {
   const t = useT();
+  const [feedback, setFeedback] = useState<Record<string, SettingsFeedbackState>>({});
+  const [readError, setReadError] = useState<string | null>(null);
+  function report(key: string, value: SettingsFeedbackState = {}) {
+    if (mountedRef.current) setFeedback((current) => ({ ...current, [key]: value }));
+  }
+  function onError(error: string | null) { report('library', { error }); }
+  function onNotice(notice: string | null) { report('library', { notice }); }
   const [allSkills, setAllSkills] = useState<SkillDefinition[]>([]);
   const [loadingSkills, setLoadingSkills] = useState(false);
   // Undo round-trips through the lifecycle owner, then refreshes the list; its own
@@ -120,11 +130,12 @@ export function SkillLibrary({
   // Unbinding is not destructive to files, but it is invisible in scale: the
   // action is offered on EVERY row that came from the directory, and one click
   // removes all of them at once. The confirmation exists to say how many.
-  const [pendingUnbind, setPendingUnbind] = useState<{ directory: string; skillCount: number } | null>(null);
+  const [pendingUnbind, setPendingUnbind] = useState<{ directory: string; skillCount: number; target: string } | null>(null);
   const addAnchorRef = useRef<HTMLButtonElement | null>(null);
   const mountedRef = useRef(false);
   const sectionRequestRef = useRef(0);
   const managed = useManagedSkills(onApplied);
+  useEffect(() => { if (!active) { setOpenRowMenu(null); setAddMenuOpen(false); } }, [active]);
 
   // A local directory is POINTED AT, never copied in: Tenon stores the path, so
   // the user's edits are live and there is no snapshot to drift.
@@ -142,11 +153,11 @@ export function SkillLibrary({
 
   async function runCurationReport() {
     setCurationBusy(true);
-    onError(null);
+    report('curation');
     try {
       setCurationReport(await api.agentSkillCurationReport());
     } catch (cause) {
-      onError(cause instanceof Error ? cause.message : String(cause));
+      report('curation', { error: cause instanceof Error ? cause.message : String(cause) });
     } finally {
       setCurationBusy(false);
     }
@@ -175,13 +186,13 @@ export function SkillLibrary({
   }
 
   /** Reveals a bound directory, and reports it when the directory is gone. */
-  async function revealDirectory(directory: string) {
-    onError(null);
+  async function revealDirectory(directory: string, key = `dir:${directory}`) {
+    report(key);
     try {
       const { revealed } = await api.agentRevealSkillDirectory(directory);
-      if (!revealed) onError(t.settings.skills.revealFailed({ directory }));
+      if (!revealed) report(key, { error: t.settings.skills.revealFailed({ directory }) });
     } catch (cause) {
-      onError(cause instanceof Error ? cause.message : String(cause));
+      report(key, { error: cause instanceof Error ? cause.message : String(cause) });
     }
   }
 
@@ -189,15 +200,15 @@ export function SkillLibrary({
    * Unbinds a directory. This removes Tenon's pointer to it and NOTHING else —
    * the directory and every file in it are the user's and are left untouched.
    */
-  async function unbindDirectory(directory: string) {
-    onError(null);
-    onNotice(null);
+  async function unbindDirectory(directory: string, target = `dir:${directory}`) {
+    report(target, { notice: t.common.loading });
     try {
       await onDirectoriesChange(additionalSkillDirectories.filter((dir) => dir !== directory));
       await reloadSkills();
+      report(target);
       onNotice(t.settings.skills.localUnboundNotice({ directory }));
     } catch (cause) {
-      onError(cause instanceof Error ? cause.message : String(cause));
+      report(target, { error: cause instanceof Error ? cause.message : String(cause) });
     }
   }
 
@@ -226,9 +237,10 @@ export function SkillLibrary({
       const skills = await api.agentListAllSkills();
       if (isCurrent()) {
         setAllSkills(skills);
+        setReadError(null);
       }
     } catch (caught) {
-      if (isCurrent()) onError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrent()) setReadError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       if (isCurrent()) setLoadingSkills(false);
     }
@@ -242,12 +254,12 @@ export function SkillLibrary({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const runSkillProvenanceAction = (action: () => Promise<SkillDefinition[]>) => {
+  const runSkillProvenanceAction = (key: string, action: () => Promise<SkillDefinition[]>) => {
     setProvenanceActionBusy(true);
-    onError(null);
+    report(key, { notice: t.common.loading });
     void action()
-      .then((skills) => setAllSkills(skills))
-      .catch((cause) => onError(cause instanceof Error ? cause.message : String(cause)))
+      .then((skills) => { setAllSkills(skills); report(key); })
+      .catch((cause) => report(key, { error: cause instanceof Error ? cause.message : String(cause) }))
       .finally(() => setProvenanceActionBusy(false));
   };
 
@@ -273,7 +285,7 @@ export function SkillLibrary({
     if (!rootDir) return [];
     return [{
       label: t.settings.skills.revealInFinder,
-      onSelect: () => void revealDirectory(rootDir),
+      onSelect: () => void revealDirectory(rootDir, `skill:${skillName}`),
     }];
   }
 
@@ -316,6 +328,7 @@ export function SkillLibrary({
     const attention = managedSkillAttentionLabel(skill, t);
     return {
       key: `managed:${skill.id}`,
+      feedback: managed.feedback[`skill:${skill.id}`],
       name: skill.name,
       displayName: skill.name,
       userInvocable: skill.userInvocable,
@@ -354,7 +367,7 @@ export function SkillLibrary({
     } satisfies LibraryRow;
     // Depend on controller data rather than its rebuilt object; managed rows
     // never resolve an editable folder.
-  }), [disabledSkills, managed.busy, managed.skills, onToggleSkill, t]);
+  }), [disabledSkills, managed.busy, managed.skills, managed.feedback, onToggleSkill, t]);
 
   const localRows: LibraryRow[] = useMemo(() => allSkills
     .filter((skill) => skill.source !== 'managed')
@@ -365,7 +378,7 @@ export function SkillLibrary({
         actions.push({
           label: t.settings.skills.undoAgentEdit,
           disabled: provenanceActionBusy,
-          onSelect: () => runSkillProvenanceAction(async () => {
+          onSelect: () => runSkillProvenanceAction(`skill:${skill.name}`, async () => {
             await api.agentSkillManage({ operation: 'undo_edit', ...skill.undoTarget! });
             return api.agentListAllSkills();
           }),
@@ -385,12 +398,14 @@ export function SkillLibrary({
           label: t.settings.skills.localUnbind,
           onSelect: () => setPendingUnbind({
             directory: localDirectory,
+            target: `skill:${skill.name}`,
             skillCount: allSkills.filter((candidate) => directoryContaining(candidate.rootDir, additionalSkillDirectories) === localDirectory).length,
           }),
         });
       }
       return {
         key: `skill:${skill.name}`,
+        feedback: feedback[`skill:${skill.name}`],
         name: skill.name,
         displayName: skill.displayName || skill.name,
         userInvocable: skill.userInvocable,
@@ -403,7 +418,7 @@ export function SkillLibrary({
         actions,
         actionsLabel: t.settings.skills.rowActionsAriaLabel({ name: skill.name }),
       } satisfies LibraryRow;
-    }), [allSkills, disabledSkills, onToggleSkill, provenanceActionBusy, t]);
+    }), [allSkills, additionalSkillDirectories, disabledSkills, feedback, onToggleSkill, provenanceActionBusy, t]);
 
   // One list, sorted by the name the user reads, so a Skill's position never
   // depends on where it came from.
@@ -445,19 +460,13 @@ export function SkillLibrary({
         <IconButton
           className="rail-toggle"
           disabled={managed.busy !== null}
-          icon={RefreshIcon}
+          icon={managed.busy === 'check:all' ? LoaderIcon : RefreshIcon}
           iconSize={ICON_SIZE.menu}
           label={t.settings.skills.checkUpdatesAriaLabel}
           onClick={() => void managed.checkUpdates()}
           variant="chrome"
         />
       ) : null}
-      <Button
-        disabled={curationBusy}
-        aria-label={t.settings.skills.curationReport}
-        onClick={() => void runCurationReport()}
-        size="sm" variant="ghost"
-      >{curationBusy ? t.settings.skills.curationRunning : t.settings.skills.curationReport}</Button>
       <IconButton
         aria-expanded={addMenuOpen}
         aria-haspopup="menu"
@@ -486,6 +495,7 @@ export function SkillLibrary({
 
   return (
     <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
+      {active && toolbarTarget && createPortal(<div className="settings-skills-toolbar">{addControl}</div>, toolbarTarget)}
       {curationReport ? (
         <Dialog
           label={t.settings.skills.curationTitle}
@@ -511,7 +521,6 @@ export function SkillLibrary({
                     {row.included ? t.settings.skills.curationIncluded : t.settings.skills.curationExcluded}
                   </span>
                 </div>
-                <code>{row.currentHash ?? t.settings.skills.curationUnhashed}</code>
                 {row.exclusionReason ? <p>{row.exclusionReason}</p> : null}
                 {row.findings.length > 0 ? row.findings.map((finding) => (
                   <p
@@ -544,9 +553,9 @@ export function SkillLibrary({
           })}
           onCancel={() => setPendingUnbind(null)}
           onConfirm={() => {
-            const directory = pendingUnbind.directory;
+            const { directory, target } = pendingUnbind;
             setPendingUnbind(null);
-            void unbindDirectory(directory);
+            void unbindDirectory(directory, target);
           }}
           title={t.settings.skills.localUnbindConfirmTitle}
         />
@@ -563,17 +572,21 @@ export function SkillLibrary({
       ) : (
         <InsetGroup
           ariaLabel={t.settings.skills.installedAriaLabel}
-          headerAction={addControl}
-          label={t.settings.skills.installedGroup}
+          headerAction={toolbarTarget === undefined ? addControl : undefined}
+          label={toolbarTarget === undefined ? t.settings.skills.installedGroup : undefined}
+          headerFeedback={<>
+            <SettingsFeedback feedback={{ error: readError ?? managed.loadError }} />
+            <SettingsFeedback feedback={managed.feedback.library} />
+            {!acquireOpen && <SettingsFeedback feedback={managed.feedback.acquisition} />}
+            <SettingsFeedback feedback={feedback.library} />
+          </>}
         >
           {rows.length === 0 && emptyDirectories.length === 0 ? (
             <InsetRow empty label={t.settings.skills.noneInstalled} />
           ) : null}
           {rows.map((row) => (
             <InsetRow
-              feedback={rowToggleError(row) ? (
-                <span role="alert">{rowToggleError(row)}</span>
-              ) : undefined}
+              feedback={rowToggleError(row) || row.feedback?.error || row.feedback?.notice ? <SettingsFeedback feedback={rowToggleError(row) ? { error: rowToggleError(row) } : row.feedback} /> : undefined}
               key={row.key}
               label={(
                 <>
@@ -595,7 +608,7 @@ export function SkillLibrary({
                   <span className="settings-skill-description">
                     {row.description}
                   </span>
-                  {row.diagnostic ? (
+                  {row.diagnostic && row.diagnostic !== row.feedback?.error ? (
                     <span className={cx('settings-skill-diagnostic', row.diagnosticTone === 'muted' && 'is-muted')}>
                       {row.diagnostic}
                     </span>
@@ -623,6 +636,7 @@ export function SkillLibrary({
           {emptyDirectories.map((directory) => (
             <InsetRow
               key={`dir:${directory}`}
+              feedback={<SettingsFeedback feedback={feedback[`dir:${directory}`]} />}
               label={(
                 <>
                   {directory}
@@ -652,6 +666,16 @@ export function SkillLibrary({
           ))}
         </InsetGroup>
       )}
+      <details className="settings-disclosure">
+        <summary>{t.settings.skills.troubleshooting}</summary>
+        <InsetGroup ariaLabel={t.settings.skills.curationTitle}>
+          <InsetRow label={t.settings.skills.curationTitle} sublabel={t.settings.skills.curationDescription}
+            feedback={<SettingsFeedback feedback={feedback.curation} />}
+            trailing={<Button disabled={curationBusy} onClick={() => void runCurationReport()} size="sm" variant="secondary">
+              {curationBusy ? t.settings.skills.curationRunning : t.settings.skills.curationReport}
+            </Button>} wrap />
+        </InsetGroup>
+      </details>
     </section>
   );
 }

@@ -119,6 +119,9 @@ test('reports usage and keeps stable busy rows through a completed clear', async
     await settle();
   });
   expect(button.disabled).toBe(true);
+  const websiteButton = rendered.document.querySelectorAll('button')[1]!;
+  expect(websiteButton.textContent).toBe('Clear…');
+  expect(button.textContent).toBe('Clearing…');
   expect([...rendered.document.querySelectorAll('.inset-row')]).toEqual(rows);
   await act(async () => {
     complete(outcome('cleared'));
@@ -128,6 +131,8 @@ test('reports usage and keeps stable busy rows through a completed clear', async
   expect(rendered.document.querySelector('[role="status"]')?.textContent).toBe(
     'Saved translations cleared.',
   );
+  expect(rows[0]!.querySelector('[role="status"]')?.textContent).toBe('Saved translations cleared.');
+  expect(rows[1]!.querySelector('[role="status"]') === null).toBe(true);
 });
 
 test('native cancellation is inert and partial failure is not reported as success', async () => {
@@ -162,6 +167,22 @@ test('narrow notifications expose Agent operations and distinguish deletion from
     'Website data cleared, but a preview could not be reloaded.',
   );
   expect(rendered.document.body.textContent).toContain('0 B cached');
+});
+
+test('retains separate translation and website outcomes across owner notifications', async () => {
+  const current = status();
+  const rendered = await mount({ read: async () => structuredClone(current) });
+  current.operations = [outcome('failed', { operationId: 'translations:first' })];
+  await rendered.changed();
+  current.operations.push(outcome('cleared', { operationId: 'websites:second', scope: 'websites' }));
+  await rendered.changed();
+  const rows = [...rendered.document.querySelectorAll('.inset-row')];
+  expect(rows[0]!.querySelector('[role="alert"]')?.textContent).toBe('Could not clear saved translations.');
+  expect(rows[1]!.querySelector('[role="status"]')?.textContent).toBe('Website data cleared.');
+  current.operations.push(outcome('running', { operationId: 'content:third', scope: 'content' }));
+  await rendered.changed();
+  expect([...rendered.document.querySelectorAll('button')].every((button) => !button.disabled)).toBe(true);
+  expect(rows[0]!.querySelector('[role="alert"]')?.textContent).toBe('Could not clear saved translations.');
 });
 
 test('failed inspection can retry without exposing raw errors, and unmount unsubscribes', async () => {

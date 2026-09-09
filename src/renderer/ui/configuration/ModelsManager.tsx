@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
 import { createSerialMutationQueue } from '../../../core/serialMutationQueue';
+import { type SettingsFeedbackState } from './SettingsFeedback';
 import { ManagerFeedback } from './ManagerFeedback';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { ModelsList } from '../agent/ModelsList';
@@ -18,7 +19,8 @@ export function ModelsManager() {
   const providerMutationQueueRef = useRef(createSerialMutationQueue());
   const providerEnabledTargetsRef = useRef(new Map<string, boolean>());
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Record<string, SettingsFeedbackState>>({});
+  function report(key: string, value: SettingsFeedbackState = {}) { if (mountedRef.current) setFeedback((current) => ({ ...current, [key]: value })); }
   const mountedRef = useRef(false);
   const mutationGenerationsRef = useRef(new Map<string, number>());
   const t = useT();
@@ -45,6 +47,7 @@ export function ModelsManager() {
           if (!active) return;
           providerSettingsRef.current = next;
           setSettings(next);
+          setError(null);
           setProviderDraft(resolveInitialProviderDraft(next));
         } catch (caught) { if (active) setError(caught instanceof Error ? caught.message : String(caught)); }
       });
@@ -61,8 +64,7 @@ export function ModelsManager() {
     providerEnabledTargetsRef.current.set(providerId, enabled);
     setProviderEnabledOverrides((current) => withMapValue(current, providerId, enabled));
     setProviderToggleErrors((current) => withoutMapKey(current, providerId));
-    setError(null);
-    setNotice(null);
+    report(providerId);
 
     void enqueueProviderMutation(async () => {
       let next: AgentProviderSettingsView;
@@ -92,17 +94,17 @@ export function ModelsManager() {
       if (isCurrentMutation(mutationKey, generation)) {
         providerEnabledTargetsRef.current.delete(providerId);
         setProviderEnabledOverrides((current) => withoutMapKey(current, providerId));
-        setNotice(enabled ? t.settings.providers.enabledNotice : t.settings.providers.disabledNotice);
       }
     });
   }
 
   async function runProviderMutationAsync(
+    target: string,
     action: () => Promise<AgentProviderSettingsView>,
     successNotice: string,
     resetToInitial = false,
   ) {
-    return enqueueProviderMutation(() => runProviderMutationStep(action, successNotice, resetToInitial));
+    return enqueueProviderMutation(() => runProviderMutationStep(target, action, successNotice, resetToInitial));
   }
 
   function enqueueProviderMutation<T>(action: () => Promise<T>): Promise<T> {
@@ -110,14 +112,15 @@ export function ModelsManager() {
   }
 
   async function runProviderMutationStep(
+    target: string,
     action: () => Promise<AgentProviderSettingsView>,
     successNotice: string,
     resetToInitial: boolean,
   ) {
-    const mutationKey = 'providers';
+    const mutationKey = target;
     const generation = beginMutation(mutationKey);
-    setError(null);
-    setNotice(null);
+    setProviderToggleErrors((current) => withoutMapKey(current, target));
+    report(target, { notice: t.common.loading });
     try {
       const next = await action();
       providerSettingsRef.current = next;
@@ -126,26 +129,27 @@ export function ModelsManager() {
         setProviderDraft(resetToInitial
           ? resolveInitialProviderDraft(next)
           : resolveProviderDraftFor(next, providerDraft.providerId));
-        setNotice(successNotice);
+        report(target, { notice: successNotice });
       }
       await onApplied();
     } catch (caught) {
-      if (isCurrentMutation(mutationKey, generation)) setError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrentMutation(mutationKey, generation)) report(target, { error: caught instanceof Error ? caught.message : String(caught) });
     }
   }
 
   function runProviderMutation(
+    target: string,
     action: () => Promise<AgentProviderSettingsView>,
     successNotice: string,
     resetToInitial = false,
   ) {
-    void runProviderMutationAsync(action, successNotice, resetToInitial);
+    void runProviderMutationAsync(target, action, successNotice, resetToInitial);
   }
 
   return <>
-    <ModelsList draftProviderId={providerDraft.providerId} enabledOverrides={providerEnabledOverrides}
+    <ManagerFeedback error={error} />
+    <ModelsList feedback={feedback} draftProviderId={providerDraft.providerId} enabledOverrides={providerEnabledOverrides}
       onToggleProviderEnabled={toggleProviderEnabled} runProviderMutation={runProviderMutation}
       settings={settings} toggleErrors={providerToggleErrors} />
-    <ManagerFeedback error={error} notice={notice} />
   </>;
 }

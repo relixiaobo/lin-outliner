@@ -90,13 +90,6 @@
   gap: var(--space-2);
 }
 
-.settings-skill-curation-row code {
-  color: var(--text-tertiary);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-ui-2xs);
-  overflow-wrap: anywhere;
-}
-
 .settings-skill-curation-row p {
   margin: 0;
   color: var(--text-secondary);

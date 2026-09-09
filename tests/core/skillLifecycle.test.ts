@@ -6,9 +6,8 @@ import { AgentToolFailure } from '../../src/main/agent/AgentToolFailure';
 import { createLocalTools } from '../../src/main/agent/capabilities/agentLocalTools';
 import { AgentSkillRuntime, skillContentHash, skillLifecycleIdentity } from '../../src/main/agent/capabilities/agentSkills';
 import { acquireSkillWriteGuard } from '../../src/main/agent/capabilities/agentSkillWriteGuard';
-import { SKILL_INSPECT_SCHEMA, SKILL_MANAGE_SCHEMA } from '../../src/core/agent/skillOperations';
+import { SKILL_MANAGE_SCHEMA } from '../../src/core/agent/skillOperations';
 import { compileToolParameters } from '../../src/main/agent/runtime/kernel/exactToolArguments';
-import { evaluateAgentToolCapability } from '../../src/main/agent/capabilities/agentCapabilities';
 
 const fixtures: Awaited<ReturnType<typeof skillLifecycleFixture>>[] = [];
 afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });
@@ -17,8 +16,8 @@ async function fixture(review?: Parameters<typeof skillLifecycleFixture>[0]) {
 }
 function target(skill: any) { return { skillId: skill.skillId, expectedRevision: skill.revision, expectedActiveHash: skill.contentHash }; }
 async function discover(f: Awaited<ReturnType<typeof fixture>>) {
-  const found = await f.inspect({ operation: 'discover', sourceUrl: 'https://github.com/public/skills' });
-  return { operation: 'install', discoveryId: found.discoveryId, candidateId: found.candidates[0].id, expectedCommit: found.commit };
+  const found = await f.service.discover({ sourceUrl: 'https://github.com/public/skills' });
+  return { operation: 'install', discoveryId: found.id, candidateId: found.candidates[0].id, expectedCommit: found.resolvedCommit };
 }
 
 describe('shared Skill lifecycle', () => {
@@ -30,10 +29,10 @@ describe('shared Skill lifecycle', () => {
     expect(installed.observed.available).toBe(false);
     expect(installed.version).not.toHaveProperty('enabled');
     f.github.version = 2;
-    expect((await f.inspect({ operation: 'check_updates' })).updates).toHaveLength(1);
-    const preview = await f.inspect({ operation: 'preview_update', ...target(installed.version) });
+    expect((await f.service.checkUpdates()).filter((skill) => skill.updateCommit)).toHaveLength(1);
+    const preview = await f.service.previewUpdate(target(installed.version));
     const updated = await f.manage({ operation: 'apply_update', ...target(installed.version),
-      previewId: preview.previewId, expectedCandidateHash: preview.candidateHash });
+      previewId: preview.id, expectedCandidateHash: preview.candidate.contentHash });
     expect(updated.version.contentHash).not.toBe(installed.version.contentHash);
     const restored = await f.manage({ operation: 'rollback', ...target(updated.version), expectedPreviousHash: installed.version.contentHash });
     expect(restored.version.contentHash).toBe(installed.version.contentHash);
@@ -66,23 +65,6 @@ describe('shared Skill lifecycle', () => {
     await expect(f.manage({ operation: 'uninstall', ...target(installed.version) })).rejects.toMatchObject({ code: 'stale_skill_version' });
   });
 
-  test('binds bounded cursors to the caller view and snapshot', async () => {
-    const f = await fixture();
-    for (const name of ['one', 'two', 'three']) {
-      const directory = join(f.workspace, '.agents', 'skills', name);
-      await mkdir(directory, { recursive: true });
-      await writeFile(join(directory, 'SKILL.md'), `---\ndescription: ${name} fixture\n---\nInstructions.`);
-    }
-    await f.runtime.notifySkillContentWritten([]);
-    const first = await f.inspect({ operation: 'list', limit: 1 });
-    expect(first.items).toHaveLength(1);
-    expect((await f.inspect({ operation: 'list', limit: 1, cursor: first.nextCursor })).items).toHaveLength(1);
-    await expect(f.inspect({ operation: 'list', cursor: first.nextCursor }, { key: 'other-view' })).rejects.toMatchObject({ code: 'stale_cursor' });
-    f.runtime.updateDisabledSkills(['one']);
-    await expect(f.inspect({ operation: 'list', cursor: first.nextCursor })).rejects.toMatchObject({ code: 'stale_cursor' });
-    await expect(f.inspect({ operation: 'list', limit: 51 })).rejects.toMatchObject({ code: 'invalid_request' });
-  });
-
   test('undo restores only a hash-bound Agent definition edit through the file writer', async () => {
     const f = await fixture();
     const directory = join(f.workspace, '.agents', 'skills', 'editable');
@@ -97,23 +79,17 @@ describe('shared Skill lifecycle', () => {
     });
     expect(written.details.ok).toBe(true);
     const identity = skillLifecycleIdentity((await f.runtime.getSkill('editable'))!);
-    const inspection = await f.inspect({ operation: 'inspect', identity });
-    expect(inspection.undo).not.toBeNull();
-    await f.manage({ operation: 'undo_edit', ...inspection.undo });
+    const undo = await f.runtime.inspectUndoTarget(identity);
+    expect(undo).not.toBeNull();
+    await f.manage({ operation: 'undo_edit', ...undo });
     expect(await readFile(file, 'utf8')).toBe(original);
-    await expect(f.manage({ operation: 'undo_edit', ...inspection.undo })).rejects.toMatchObject({ code: 'undo_unavailable' });
+    await expect(f.manage({ operation: 'undo_edit', ...undo })).rejects.toMatchObject({ code: 'undo_unavailable' });
   });
 
-  test('accepts only strict operation variants and derives network blocks by operation', () => {
-    const inspect = compileToolParameters(SKILL_INSPECT_SCHEMA as never);
+  test('accepts only strict internal operation variants', () => {
     const manage = compileToolParameters(SKILL_MANAGE_SCHEMA as never);
-    expect(inspect.Check({ request: { operation: 'list' } })).toBe(true);
-    expect(inspect.Check({ request: { operation: 'discover', catalogId: 'demo', sourceUrl: 'https://github.com/public/skills' } })).toBe(false);
     expect(manage.Check({ request: { operation: 'uninstall', skillId: 'demo', expectedRevision: 'revision', expectedActiveHash: 'a'.repeat(64), approved: true } })).toBe(false);
-    const evaluate = (operation: string) => evaluateAgentToolCapability({ toolName: 'skill_inspect', args: { request: { operation } },
-      policy: { capabilityConfig: { blocks: ['Action(web.fetch)'] } } });
-    expect(evaluate('list').behavior).toBe('allow');
-    expect(evaluate('discover').behavior).toBe('unavailable');
+
   });
 
   test('a committed install reports refresh failure without replaying or reverting the installation', async () => {
@@ -126,27 +102,6 @@ describe('shared Skill lifecycle', () => {
       expect(result.runtimeRefresh.message).toContain('[truncated]');
       expect(await f.service.list()).toHaveLength(1);
     } finally { failure.mockRestore(); }
-  });
-
-  test('discovery bounds model text with explicit omissions while retaining full human review', async () => {
-    const f = await fixture();
-    const original = await f.github.discover();
-    const body = 'Full instructions.\n'.repeat(2_000);
-    const source = spyOn(f.github, 'discover').mockResolvedValue({ ...original,
-      candidates: Array.from({ length: 100 }, (_, index) => ({ ...original.candidates[0]!,
-        view: { ...original.candidates[0]!.view, id: `candidate-${index}`, skillBody: body },
-      })),
-    });
-    try {
-      const result = await f.inspect({ operation: 'discover', sourceUrl: 'https://github.com/public/skills' });
-      expect(result.candidatesOmitted).toBeGreaterThan(0);
-      expect(result.candidates.length + result.candidatesOmitted).toBe(100);
-      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(256 * 1024);
-      expect(result.candidates[0].instructionsTruncated).toBe(true);
-      const { review } = await f.service.review({ operation: 'install', discoveryId: result.discoveryId,
-        candidateId: result.candidates[0].id, expectedCommit: result.commit });
-      expect(review).toMatchObject({ kind: 'install', candidate: { skillBody: body } });
-    } finally { source.mockRestore(); }
   });
 
   test('the final commit check rejects authority revoked during content installation', async () => {
@@ -200,7 +155,7 @@ describe('shared Skill lifecycle', () => {
     await expect(second.undoLastAgentSkillEdit(target)).rejects.toMatchObject({ code: 'undo_unavailable' });
   });
 
-  test('queued undo refuses unbound ownership and respects resolved sensitive-path blocks', async () => {
+  test('queued undo refuses lost window authority and unbound ownership', async () => {
     const f = await fixture();
     const directory = join(f.root, '.ssh', 'bound-skill');
     const file = join(directory, 'SKILL.md');
@@ -213,10 +168,8 @@ describe('shared Skill lifecycle', () => {
     await f.runtime.recordAgentSkillWrite(file, skillContentHash(after), { hash: skillContentHash(before), content: before });
     const identity = skillLifecycleIdentity((await f.runtime.getSkill('bound-skill'))!);
     const target = await f.runtime.inspectUndoTarget(identity);
-    await expect(f.manage({ operation: 'undo_edit', ...target }, { authorize: async (toolName, args, _signal, fileWritePath) => {
-      const decision = evaluateAgentToolCapability({ toolName, args, fileWritePath,
-        policy: { capabilityConfig: { blocks: ['Action(file.write.sensitive_local_path)'] } } });
-      if (decision.behavior === 'unavailable') throw new AgentToolFailure('operation_unavailable', decision.reason, 'Stop.');
+    await expect(f.manage({ operation: 'undo_edit', ...target }, { authorize: async () => {
+      throw new AgentToolFailure('operation_unavailable', 'The originating window closed.', 'Open Settings again.');
     } })).rejects.toMatchObject({ code: 'operation_unavailable' });
     expect(await readFile(file, 'utf8')).toBe(after);
     const release = await acquireSkillWriteGuard(file);

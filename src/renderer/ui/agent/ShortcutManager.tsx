@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { SettingsFeedback, type SettingsFeedbackState } from '../configuration/SettingsFeedback';
 import { createPortal } from 'react-dom';
 import {
   CONFIGURABLE_SHORTCUTS,
@@ -21,8 +22,6 @@ import { InsetGroup, InsetRow } from './SettingsInsetList';
 interface ShortcutManagerProps {
   readonly active?: boolean;
   readonly toolbarTarget?: HTMLElement | null;
-  readonly onError: (message: string | null) => void;
-  readonly onNotice: (message: string | null) => void;
 }
 
 interface RecordingTarget {
@@ -32,7 +31,7 @@ interface RecordingTarget {
 
 const CONTEXTS: readonly ShortcutContext[] = ['system', 'application', 'preview'];
 
-export function ShortcutManager({ active = true, toolbarTarget, onError, onNotice }: ShortcutManagerProps) {
+export function ShortcutManager({ active = true, toolbarTarget }: ShortcutManagerProps) {
   const t = useT();
   const labels = t.settings.shortcuts;
   const [view, setView] = useState<KeybindingsView | null>(null);
@@ -40,21 +39,24 @@ export function ShortcutManager({ active = true, toolbarTarget, onError, onNotic
   const [menu, setMenu] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState<RecordingTarget | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [operationFeedback, setOperationFeedback] = useState<Record<string, SettingsFeedbackState>>({});
+  function report(key: string, feedback: SettingsFeedbackState = {}) { setOperationFeedback((current) => ({ ...current, [key]: feedback })); }
   const [recordingError, setRecordingError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
     void window.lin?.keybindings?.get()
-      .then((next) => { if (active) setView(next); })
-      .catch((error: unknown) => { if (active) onError(errorText(error)); });
+      .then((next) => { if (active) { setView(next); setReadError(null); } })
+      .catch((error: unknown) => { if (active) setReadError(errorText(error)); });
     const unsubscribe = window.lin?.keybindings?.onChanged((next) => {
-      if (active) setView(next);
+      if (active) { setView(next); setReadError(null); }
     });
     return () => {
       active = false;
       unsubscribe?.();
     };
-  }, [onError]);
+  }, []);
 
   const filteredIds = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -67,8 +69,8 @@ export function ShortcutManager({ active = true, toolbarTarget, onError, onNotic
   async function update(input: Omit<KeybindingsUpdateInput, 'observedDigest'>, notice: string): Promise<boolean> {
     if (!view || busy || view.source.status === 'rejected') return false;
     setBusy(true);
-    onError(null);
-    onNotice(null);
+    const key = input.id ?? 'defaults';
+    report(key);
     try {
       const next = await window.lin?.keybindings?.update({
         ...input,
@@ -76,10 +78,10 @@ export function ShortcutManager({ active = true, toolbarTarget, onError, onNotic
       });
       if (!next) throw new Error('Keyboard Shortcuts are unavailable.');
       setView(next);
-      onNotice(notice);
+      report(key, { notice });
       return true;
     } catch (error) {
-      onError(errorText(error));
+      report(key, { error: errorText(error) });
       return false;
     } finally {
       setBusy(false);
@@ -144,11 +146,11 @@ export function ShortcutManager({ active = true, toolbarTarget, onError, onNotic
   }, [active, busy, labels.saved, recording, view]);
 
   async function openFile(): Promise<void> {
-    onError(null);
+    setReadError(null);
     try {
       await window.lin?.keybindings?.openFile();
     } catch {
-      onError(labels.openFailed);
+      setReadError(labels.openFailed);
     }
   }
 
@@ -174,6 +176,7 @@ export function ShortcutManager({ active = true, toolbarTarget, onError, onNotic
     <section className="agent-settings-section settings-shortcuts-section" aria-label={t.settings.pages.shortcuts}>
       {toolbarTarget === undefined ? toolbar : toolbarTarget && createPortal(toolbar, toolbarTarget)}
 
+      <SettingsFeedback feedback={{ error: readError }} />
       {rejected ? (
         <div className="settings-shortcuts-source-error" role="alert">
           <p>{labels.sourceRejected({ error: view?.source.error ?? '' })}</p>
@@ -191,6 +194,7 @@ export function ShortcutManager({ active = true, toolbarTarget, onError, onNotic
             <InsetGroup ariaLabel={contextLabel(context, labels)} key={context} label={contextLabel(context, labels)}>
               {entries.map((entry) => (
                 <ShortcutRow
+                  operationFeedback={operationFeedback[entry.id]}
                   busy={busy || rejected}
                   entry={entry}
                   key={entry.id}
@@ -218,12 +222,14 @@ export function ShortcutManager({ active = true, toolbarTarget, onError, onNotic
       <div className="settings-shortcuts-footer">
         <Button disabled={!view || busy || rejected || !view.entries.some((entry) => entry.desired !== null)}
           onClick={() => void update({ resetAll: true }, labels.resetAllNotice)} size="sm" variant="secondary">{labels.resetAll}</Button>
+        <SettingsFeedback feedback={operationFeedback.defaults} />
       </div>
     </section>
   );
 }
 
-function ShortcutRow({ busy, entry, onRecord, onRemove, onReset, recording, recordingError, menuOpen, onMenuOpenChange, onCancelRecording }: {
+function ShortcutRow({ operationFeedback, busy, entry, onRecord, onRemove, onReset, recording, recordingError, menuOpen, onMenuOpenChange, onCancelRecording }: {
+  readonly operationFeedback?: SettingsFeedbackState;
   readonly busy: boolean;
   readonly entry: KeybindingsViewEntry;
   readonly onRecord: (index: number) => void;
@@ -304,6 +310,7 @@ function ShortcutRow({ busy, entry, onRecord, onRemove, onReset, recording, reco
     {menuOpen ? <AnchoredActionMenu ariaLabel={labels.actions({ name: command.label })}
       anchorRef={menuAnchor} onClose={() => onMenuOpenChange(false)} actions={actions}
       className="settings-row-menu" itemClassName="settings-row-menu-item" /> : null}
+    {!feedback && (operationFeedback?.error || operationFeedback?.notice) ? <div className="settings-shortcut-feedback"><SettingsFeedback feedback={operationFeedback} /></div> : null}
     {feedback ? <p id={errorId} className="settings-shortcuts-source-error settings-shortcut-feedback" role="alert">{feedback}</p> : null}
   </div>;
 

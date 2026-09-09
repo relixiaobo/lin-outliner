@@ -12,7 +12,6 @@ export function AccessManager() {
   const [capabilitySettings, setCapabilitySettings] = useState<AgentCapabilitySettingsView | null>(null);
   const [capabilityMutationErrors, setCapabilityMutationErrors] = useState<Map<string, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const mountedRef = useRef(false);
   const readGeneration = useRef(0);
   const pendingRules = useRef(new Set<string>());
@@ -41,8 +40,8 @@ export function AccessManager() {
       refreshAfterMutation.current = false;
       const request = ++readGeneration.current;
       void api.agentGetCapabilitySettings().then((next) => {
-        if (active && request === readGeneration.current) setCapabilitySettings(next);
-      }).catch((caught) => { if (active) setError(caught instanceof Error ? caught.message : String(caught)); });
+        if (active && request === readGeneration.current) { setCapabilitySettings(next); setError(null); }
+      }).catch((caught) => { if (active && request === readGeneration.current) setError(caught instanceof Error ? caught.message : String(caught)); });
     };
     refreshRef.current = refresh;
     refresh();
@@ -97,7 +96,7 @@ export function AccessManager() {
   }
 
   return <>
+    <ManagerFeedback error={error} />
     <AccessRules blocks={capabilityBlocks} blockErrors={capabilityMutationErrors} onRemoveBlock={(rule) => void removeCapabilityBlock(rule)} />
-    <ManagerFeedback error={error} notice={notice} />
   </>;
 }

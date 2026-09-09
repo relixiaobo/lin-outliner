@@ -22,6 +22,7 @@ import { Input } from '../primitives/Input';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import type { RowMenuAction } from './SettingsRowMenu';
 import type { ManagedConfirmAction, ManagedInstallReview, ManagedSkillsController } from './useManagedSkills';
+import { SettingsFeedback } from '../configuration/SettingsFeedback';
 
 interface ManagedSkillsAcquisitionProps {
   controller: ManagedSkillsController;
@@ -62,10 +63,8 @@ export function ManagedSkillsSettings({
   const {
     busy,
     catalog,
-    error,
     installedCatalogIds,
     loading,
-    notice,
     selectedCandidateId,
     selection,
     sourceUrl,
@@ -190,12 +189,7 @@ export function ManagedSkillsSettings({
               large, no SKILL.md — rendered into page flow under a dimming
               overlay, so the primary error path of this panel was invisible and
               the button simply returned from "Resolving…" to "Add". */}
-          {error ? (
-            <div className="agent-settings-alert" role="alert">
-              <WarningIcon size={ICON_SIZE.menu} />
-              <span>{managedSkillErrorMessage(error, t)}</span>
-            </div>
-          ) : null}
+          <SettingsFeedback feedback={controller.feedback.acquisition} />
           {/* Installing is not "confirming" this panel — each entry commits
               through its own review dialog — so the only action here is to
               dismiss it. Without a visible one, the panel could be left only by
@@ -207,14 +201,6 @@ export function ManagedSkillsSettings({
           </div>
         </Dialog>
       ) : null}
-
-      {error && !open ? (
-        <div className="agent-settings-alert" role="alert">
-          <WarningIcon size={ICON_SIZE.menu} />
-          <span>{managedSkillErrorMessage(error, t)}</span>
-        </div>
-      ) : null}
-      {notice ? <div className="agent-settings-notice">{notice}</div> : null}
 
       {selection ? (
         <CandidateSelectionDialog

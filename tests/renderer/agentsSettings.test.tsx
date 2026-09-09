@@ -132,7 +132,7 @@ async function renderAgents(options: { rejectWrite?: boolean } = {}) {
   await act(async () => {
     root.render(
       <I18nProvider>
-        <AgentConfigurationEditor onError={() => undefined} onNotice={() => undefined} />
+        <AgentConfigurationEditor />
       </I18nProvider>,
     );
   });

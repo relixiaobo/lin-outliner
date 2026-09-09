@@ -36,7 +36,7 @@ describe('Memory owner UI', () => {
     rendered.changed();
     await flush();
     expect(toggle.getAttribute('aria-checked')).toBe('false');
-    expect(rendered.document.body.textContent).toContain('Memory disabled.');
+    expect(rendered.document.body.textContent).toContain('Memory is off.');
     expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(3);
     enabled = true;
     rendered.changed();
@@ -64,6 +64,8 @@ describe('Memory owner UI', () => {
     await flush();
     expect(rendered.document.body.textContent).toContain('Memory reset.');
     expect(rendered.button('Reset Memory').disabled).toBe(false);
+    await act(async () => rendered.button('Use Memory').click());
+    expect(rendered.button('Reset Memory').closest('.inset-row')?.textContent).toContain('Memory reset.');
   });
 
   test('keeps cancellation, failure and navigation outcomes local', async () => {
@@ -76,8 +78,9 @@ describe('Memory owner UI', () => {
     await act(async () => rendered.button('Reset Memory').click());
     expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('cancelled');
     await act(async () => rendered.button('Open Memory').click());
-    expect(rendered.document.querySelector('[role="alert"]')).toBeNull();
-    expect(rendered.document.querySelector('[role="status"]')?.textContent).toContain('Try Open Memory again');
+    expect(rendered.button('Reset Memory').closest('.inset-row')?.textContent).toContain('cancelled');
+    expect(rendered.button('Open Memory').closest('.inset-row')?.textContent).toContain('Try Open Memory again');
+    expect(rendered.button('Open Memory').closest('.inset-row')?.textContent).not.toContain('cancelled');
   });
 
   test('owner events refresh without parent callback churn and release on close', async () => {

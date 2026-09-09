@@ -3,16 +3,10 @@ import {
   PreviewOperations,
   type PreviewOperationCaller,
 } from '../../src/main/hostDomain/previewOperations';
-import { createPreviewTools } from '../../src/main/agent/capabilities/previewTools';
-import { modelToolContract } from '../../src/core/agent/tools';
-import { evaluateAgentToolCapability } from '../../src/main/agent/capabilities/agentCapabilities';
 import {
-  DATA_INSPECT_OUTPUT_SCHEMA,
   type PreviewAction,
   type PreviewObservation,
 } from '../../src/core/previewOperations';
-import { compileToolParameters } from '../../src/main/agent/runtime/kernel/exactToolArguments';
-import type { TSchema } from 'typebox';
 
 function observation(paneId = 'pane-1'): PreviewObservation {
   return {
@@ -37,7 +31,7 @@ function fixture(
   let authorized = true;
   const caller: PreviewOperationCaller = {
     key: crypto.randomUUID(),
-    origin: { kind: 'agent', threadId: 'thread', turnId: 'turn', itemId: 'item' },
+    origin: { kind: 'window', windowId: 1 },
     authorize: async () => {
       if (!authorized) throw new Error('Revoked');
     },
@@ -239,13 +233,11 @@ describe('preview and data domain operations', () => {
     ).rejects.toMatchObject({ code: 'invalid_request' });
   });
 
-  test('inspection is bounded, schema-valid, and omits private source identities', async () => {
+  test('inspection is bounded and omits private source identities', async () => {
     const { host, caller } = fixture();
     host.register(1, observation());
     const data = await host.handle('data_inspect', { request: {} }, caller);
-    expect(
-      compileToolParameters(DATA_INSPECT_OUTPUT_SCHEMA as TSchema).Check({ result: data }),
-    ).toBe(true);
+    expect(data).toMatchObject({ translations: { logicalBytes: expect.any(Number) } });
     const previews = await host.handle('preview_inspect', { request: {} }, caller);
     expect(JSON.stringify(previews)).not.toContain('same-content');
     for (const input of [
@@ -256,23 +248,6 @@ describe('preview and data domain operations', () => {
         code: 'invalid_request',
       });
     }
-  });
-
-  test('canonical tools have root-only contracts and operation-specific action descriptors', async () => {
-    const { host, caller } = fixture();
-    for (const tool of createPreviewTools(host, () => caller))
-      expect(modelToolContract(tool.name)?.scope).toBe('rootThread');
-    const inspect = createPreviewTools(host, () => caller).find(
-      (tool) => tool.name === 'data_inspect',
-    )!;
-    const result = await inspect.execute('item', { request: {} });
-    expect(JSON.stringify(result)).toContain('logicalBytes');
-    const decision = evaluateAgentToolCapability({
-      toolName: 'preview_manage',
-      args: { request: { operation: 'configure' } },
-      policy: {},
-    });
-    expect(decision.descriptors?.map((entry) => entry.actionKind)).toEqual(['preview.control']);
   });
 
   test('settles admitted effects after caller loss and makes concurrent clears busy', async () => {

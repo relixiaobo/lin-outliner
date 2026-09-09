@@ -1,3 +1,4 @@
+import { SettingsFeedback, type SettingsFeedbackState } from '../configuration/SettingsFeedback';
 import { useEffect, useRef, useState } from 'react';
 import type { DataOperationView, PreviewDataStatus } from '../../../core/previewOperations';
 import { useT } from '../../i18n/I18nProvider';
@@ -11,8 +12,8 @@ export function PreviewDataPanel() {
   const t = useT();
   const labels = t.settings.general;
   const [status, setStatus] = useState<PreviewDataStatus | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null);
+  const [busy, setBusy] = useState<'translations' | 'websites' | null>(null);
+  const [feedback, setFeedback] = useState<Record<string, SettingsFeedbackState>>({});
   const [readFailed, setReadFailed] = useState(false);
   const live = useRef(false);
   const clearing = useRef(false);
@@ -50,35 +51,30 @@ export function PreviewDataPanel() {
     };
   }, [labels.translationDataUnavailable]);
 
-  const latestOperation = status?.operations.at(-1);
-  useEffect(() => {
-    if (!latestOperation || latestOperation.scope === 'content') return;
-    if (latestOperation.state === 'cleared' || latestOperation.state === 'failed')
-      showOutcome(latestOperation);
-    else setFeedback(null);
-  }, [latestOperation?.operationId, latestOperation?.state, latestOperation?.liveDisplays, labels]);
+  const latestTranslation = status?.operations.filter((operation) => operation.scope === 'translations').at(-1);
+  const latestWebsite = status?.operations.filter((operation) => operation.scope === 'websites').at(-1);
+  useEffect(() => { if (latestTranslation) showOutcome(latestTranslation); }, [latestTranslation?.operationId, latestTranslation?.state, latestTranslation?.liveDisplays, labels]);
+  useEffect(() => { if (latestWebsite) showOutcome(latestWebsite); }, [latestWebsite?.operationId, latestWebsite?.state, latestWebsite?.liveDisplays, labels]);
 
+  function report(scope: string, value: SettingsFeedbackState = {}) {
+    setFeedback((current) => ({ ...current, [scope]: value }));
+  }
   function showOutcome(result: DataOperationView) {
+    if (result.scope === 'content') return;
+    if (result.state !== 'cleared' && result.state !== 'failed') { report(result.scope); return; }
     const cleared = result.state === 'cleared';
-    const text =
-      result.scope === 'translations'
-        ? cleared
-          ? labels.translationDataClearedNotice
-          : labels.translationDataClearFailed
-        : cleared
-          ? labels.websiteDataClearedNotice
-          : labels.websiteDataClearFailed;
-    setFeedback({
-      text: result.liveDisplays === 'reload_failed' ? labels.websiteDataReloadFailed : text,
-      error: !cleared || result.liveDisplays === 'reload_failed',
-    });
+    const text = result.liveDisplays === 'reload_failed' ? labels.websiteDataReloadFailed
+      : result.scope === 'translations'
+        ? cleared ? labels.translationDataClearedNotice : labels.translationDataClearFailed
+        : cleared ? labels.websiteDataClearedNotice : labels.websiteDataClearFailed;
+    report(result.scope, !cleared || result.liveDisplays === 'reload_failed' ? { error: text } : { notice: text });
   }
 
   async function clear(scope: 'translations' | 'websites') {
     if (clearing.current || !window.lin?.previewOperation) return;
     clearing.current = true;
-    setBusy(true);
-    setFeedback(null);
+    setBusy(scope);
+    report(scope);
     try {
       const result = (await window.lin.previewOperation('data_manage', {
         request: { scope },
@@ -87,26 +83,19 @@ export function PreviewDataPanel() {
       showOutcome(result);
     } catch {
       if (live.current)
-        setFeedback({
-          text:
-            scope === 'translations'
-              ? labels.translationDataClearFailed
-              : labels.websiteDataClearFailed,
-          error: true,
-        });
+        report(scope, { error: scope === 'translations' ? labels.translationDataClearFailed : labels.websiteDataClearFailed });
     } finally {
       clearing.current = false;
       if (live.current) {
-        setBusy(false);
+        setBusy(null);
         refreshRef.current();
       }
     }
   }
-  const working =
-    busy ||
-    status?.operations.some(
-      (operation) => operation.state === 'confirming' || operation.state === 'running',
-    );
+  const workingFor = (scope: 'translations' | 'websites') => busy === scope || status?.operations.some(
+    (operation) => operation.scope === scope && (operation.state === 'confirming' || operation.state === 'running'),
+  );
+  const working = workingFor('translations') || workingFor('websites');
   const entries = status
     ? Object.values(status.translations.entries).reduce((sum, count) => sum + count, 0)
     : null;
@@ -119,6 +108,7 @@ export function PreviewDataPanel() {
         footnote={labels.translationDataClearConfirmDetail}
       >
         <InsetRow
+          feedback={<SettingsFeedback feedback={feedback.translations} />}
           label={labels.translationDataLabel}
           sublabel={
             entries === null
@@ -131,7 +121,7 @@ export function PreviewDataPanel() {
               onClick={() => void clear('translations')}
               variant="secondary"
             >
-              {working ? labels.translationDataClearing : labels.translationDataClearAction}
+              {workingFor('translations') ? labels.translationDataClearing : labels.translationDataClearAction}
             </Button>
           }
           wrap
@@ -139,6 +129,7 @@ export function PreviewDataPanel() {
       </InsetGroup>
       <InsetGroup label={labels.websiteDataGroup} id="websites" ariaLabel={labels.websiteDataGroup} footnote={labels.websiteDataClearConfirmDetail}>
         <InsetRow
+          feedback={<SettingsFeedback feedback={feedback.websites} />}
           label={labels.websiteDataLabel}
           sublabel={
             status?.websites.cacheBytes == null
@@ -154,13 +145,12 @@ export function PreviewDataPanel() {
               onClick={() => void clear('websites')}
               variant="secondary"
             >
-              {working ? labels.websiteDataClearing : labels.websiteDataClearAction}
+              {workingFor('websites') ? labels.websiteDataClearing : labels.websiteDataClearAction}
             </Button>
           }
           wrap
         />
       </InsetGroup>
-      {feedback ? <p role={feedback.error ? 'alert' : 'status'}>{feedback.text}</p> : null}
       {readFailed ? (
         <div role="alert">
           {labels.translationDataUnavailable}

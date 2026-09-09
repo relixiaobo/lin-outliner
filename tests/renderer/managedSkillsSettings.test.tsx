@@ -218,10 +218,8 @@ describe('Skill library — managed sources', () => {
     expect(rendered.document.body.textContent).toContain('Modified');
     expect(rendered.document.body.textContent).toContain('Recommended');
     expect(rendered.document.body.textContent).toContain('Unverified');
-    // Four rows: the empty-catalog row, the GitHub URL row, and one row per
-    // managed skill. The old fifth was the installed group's "check for
-    // updates" row, which no longer exists as a list row.
-    expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(4);
+    // Acquisition and file diagnostics do not add entries to the installed library.
+    expect(rendered.document.querySelectorAll('.settings-skills-section > .inset-group .inset-row')).toHaveLength(2);
   });
 
   // Every failure of the GitHub flow rendered into page flow, underneath the
@@ -293,11 +291,7 @@ function renderComponent(
         additionalSkillDirectories={[]}
         disabledSkills={options.disabledSkills ?? []}
         onDirectoriesChange={async (next) => next}
-        onSkillCountChange={() => undefined}
-        onUpdateCountChange={() => undefined}
         onApplied={async () => undefined}
-        onError={() => undefined}
-        onNotice={() => undefined}
         onToggleSkill={options.onToggleSkill ?? (() => undefined)}
       />}
     </I18nProvider>,

@@ -123,6 +123,9 @@
      ONE place, so each surface gets the fallback for free (no per-surface
      @media block to reinvent). */
   --material-backdrop: blur(var(--material-blur)) saturate(var(--material-saturate));
+  /* Feather only the Settings toolbar chrome over its scrolling content. */
+  --settings-scroll-edge-size: calc(var(--space-lg) * 2);
+  --settings-scroll-edge-mask: linear-gradient(to bottom, rgb(var(--ink) / 1) 0, rgb(var(--ink) / 1) calc(100% - var(--settings-scroll-edge-size)), rgb(var(--ink) / 0.88) calc(100% - var(--settings-scroll-edge-size) * 0.75), rgb(var(--ink) / 0.5) calc(100% - var(--settings-scroll-edge-size) * 0.5), rgb(var(--ink) / 0.12) calc(100% - var(--settings-scroll-edge-size) * 0.25), transparent 100%);
   --rail-edge: rgb(var(--ink) / 0.10);
 
   /* selection & focus = NEUTRAL (never brand, never system accent) */

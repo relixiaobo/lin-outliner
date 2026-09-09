@@ -71,12 +71,12 @@ test('search finds aliases and IDs and Modified includes explicit defaults', asy
   await expect(page.getByRole('textbox', { name: 'Maximum retry delay (ms)' })).toBeVisible();
   await search.press('Escape');
   await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
-  await page.getByText('Advanced Preferences', { exact: true }).click();
+  await page.getByText('Configuration Inspector', { exact: true }).click();
   await page.getByRole('radio', { name: 'Modified', exact: true }).click();
   await expect(page.locator('[data-preference-id]:visible')).toHaveCount(1);
   await expect(page.getByRole('radiogroup', { name: 'Appearance' })).toBeVisible();
   await page.getByRole('button', { name: 'Reset Appearance', exact: true }).click();
-  await expect(page.getByRole('status')).toHaveText('No matching settings');
+  await expect(page.getByRole('status')).toHaveText('No preferences have been customized.');
   expect(await page.evaluate(() => (window as any).__settingsTest.edits)).toEqual([{ id: 'appearance.theme', operation: 'reset', expectedDigest: 'one' }]);
   await page.getByRole('radio', { name: 'All', exact: true }).click();
   await search.fill('agent.provider.timeoutMs');
@@ -157,20 +157,18 @@ test('toolbar history preserves drafts, branches on a new category, and returns 
   expect(await page.evaluate(() => (window as any).__settingsTest.destinations)).toEqual([]);
 });
 
-test('content clicks stay visually quiet while keyboard scroll focus remains visible', async ({ page }) => {
+test('content clicks show no viewport frame and keyboard navigation reaches actual controls', async ({ page }) => {
   await install(page);
   const pane = page.getByRole('tabpanel', { name: 'General', exact: true });
   await pane.click({ position: { x: 20, y: 450 } });
-  await expect(pane).toBeFocused();
+  await expect(pane).not.toBeFocused();
   await expect(pane).toHaveCSS('outline-style', 'none');
-  await expect(page.locator('html')).toHaveAttribute('data-input-modality', 'pointer');
-  const pointerShadow = await pane.evaluate((element) => getComputedStyle(element).boxShadow);
+  await expect(pane).toHaveCSS('box-shadow', 'none');
   await page.getByRole('tab', { name: 'General', exact: true }).focus();
   await page.keyboard.press('Tab');
-  await expect(pane).toBeFocused();
+  await expect(page.getByRole('radio', { name: 'System', exact: true })).toBeFocused();
   await expect(page.locator('html')).toHaveAttribute('data-input-modality', 'keyboard');
-  expect(await pane.evaluate((element) => getComputedStyle(element).boxShadow)).not.toBe(pointerShadow);
-  await expect(pane).toHaveCSS('outline-style', 'none');
+  await expect(pane).toHaveCSS('box-shadow', 'none');
 });
 
 test('number edits preserve failed drafts, Escape cancels, and source errors survive filtering', async ({ page }) => {

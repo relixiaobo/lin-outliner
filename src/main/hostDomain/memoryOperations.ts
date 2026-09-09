@@ -8,14 +8,11 @@ import type { MemoryExtension } from '../agent/extensions/memory/MemoryExtension
 import { memoryResetReview } from '../agent/extensions/memory/MemoryResetTarget';
 import { AgentToolFailure } from '../agent/AgentToolFailure';
 import { compileToolParameters } from '../agent/runtime/kernel/exactToolArguments';
-import type { DeferredToolAuthority } from '../agent/runtime/ToolRuntime';
 
 export interface MemoryOperationCaller {
-  readonly origin: { readonly kind: 'window'; readonly windowId: number } | {
-    readonly kind: 'agent'; readonly threadId: string; readonly turnId: string; readonly itemId: string;
-  };
+  readonly origin: { readonly kind: 'window'; readonly windowId: number };
   readonly signal?: AbortSignal;
-  readonly authorize: DeferredToolAuthority;
+  readonly authorize: (name: string, input: unknown, signal?: AbortSignal) => Promise<void>;
 }
 
 export type ReviewMemoryReset = (review: MemoryResetReview, caller: MemoryOperationCaller) => Promise<boolean>;
@@ -30,17 +27,16 @@ export function createMemoryOperations(options: {
   async function authorize(caller: MemoryOperationCaller, name: string, request: MemoryInspectRequest | MemoryManageRequest) {
     caller.signal?.throwIfAborted();
     await caller.authorize(name, { request }, caller.signal);
-    if (caller.origin.kind === 'agent') memory.threadView(caller.origin.threadId);
   }
-  function targetThread(request: { readonly threadId?: string }, caller: MemoryOperationCaller): string | null {
-    return request.threadId ?? (caller.origin.kind === 'agent' ? caller.origin.threadId : null);
+  function targetThread(request: { readonly threadId?: string }): string | null {
+    return request.threadId ?? null;
   }
   return {
     async inspect(value: unknown, caller: MemoryOperationCaller): Promise<MemoryInspectResult> {
       const request = decode<MemoryInspectRequest>(value, MEMORY_INSPECT_SCHEMA);
       await authorize(caller, 'memory_inspect', request);
       return request.operation === 'status'
-        ? { operation: 'status', ...memory.view(targetThread(request, caller)) }
+        ? { operation: 'status', ...memory.view(targetThread(request)) }
         : { operation: 'reset', reset: memory.inspectReset(request.operationId) };
     },
     async manage(value: unknown, caller: MemoryOperationCaller): Promise<MemoryManageResult> {
@@ -50,7 +46,7 @@ export function createMemoryOperations(options: {
       switch (request.operation) {
         case 'open': return options.open(recheck);
         case 'set_thread_mode': {
-          const threadId = targetThread(request, caller);
+          const threadId = targetThread(request);
           if (!threadId) throw failure('memory_thread_required', 'Name the Thread whose Memory mode should change.');
           return { operation: request.operation, thread: await memory.setThreadMode(threadId, request.mode, request.expectedRevision, recheck) };
         }
@@ -70,6 +66,6 @@ function decode<T>(input: unknown, schema: object): T {
   return (input as { request: T }).request;
 }
 function failure(code: string, message: string): AgentToolFailure {
-  return new AgentToolFailure(code, message, 'Use memory_inspect for current state. Never edit the private Memory store.');
+  return new AgentToolFailure(code, message, 'Refresh Memory settings for current state. Never edit the private Memory store.');
 }
 export type MemoryOperations = ReturnType<typeof createMemoryOperations>;

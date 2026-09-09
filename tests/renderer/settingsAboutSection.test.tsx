@@ -107,8 +107,6 @@ async function renderAbout(
         appUpdate={appUpdate}
         loadRelease={async () => release}
         onAppUpdateChange={onAppUpdateChange}
-        onError={() => undefined}
-        onNotice={() => undefined}
       />,
     );
   });
@@ -395,8 +393,6 @@ describe('AboutContent', () => {
       root?.render(
         <AboutContent
           loadRelease={async () => createBundledApplicationReleaseResolver(CHANGELOG_FIXTURE)('0.1.0')}
-          onError={() => undefined}
-          onNotice={() => undefined}
         />,
       );
     });
@@ -422,8 +418,6 @@ describe('AboutContent', () => {
       root?.render(
         <AboutContent
           loadRelease={async () => createBundledApplicationReleaseResolver(CHANGELOG_FIXTURE)('0.1.0')}
-          onError={(message) => errors.push(message)}
-          onNotice={() => undefined}
         />,
       );
     });
@@ -435,7 +429,7 @@ describe('AboutContent', () => {
       await Promise.resolve();
     });
 
-    expect(errors.at(-1)).toBe('Could not copy version info.');
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('Could not copy version info.');
     expect(document.body.textContent).not.toContain('native clipboard detail');
     expect(reports).toHaveLength(1);
   });

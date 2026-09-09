@@ -301,8 +301,8 @@
   padding: 0 var(--space-5) var(--space-3);
 }
 
-.inset-row:has(.inset-row-feedback) .inset-row-main,
-.inset-row:has(.inset-row-feedback) .inset-row-trailing {
+.inset-row:has(.inset-row-feedback:not(:empty)) .inset-row-main,
+.inset-row:has(.inset-row-feedback:not(:empty)) .inset-row-trailing {
   padding-bottom: var(--space-1);
 }
 
@@ -383,3 +383,5 @@
 .settings-update-error {
   color: var(--status-danger);
 }
+
+.inset-row-feedback:empty { display: none; }

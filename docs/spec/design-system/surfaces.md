@@ -333,22 +333,32 @@ rail beside an opaque content canvas. The rail owns `--rail-surface-shadow`,
 shared material/fallback tokens, and a persistent pill-shaped search field below
 the native traffic-light spacer. The right toolbar is unboxed: its background
 merges with the content canvas, with no full-width capsule, border, or shadow.
+The opaque content viewport extends behind it; a shared-material chrome layer
+blurs the actual scrolling content and feathers its lower edge. A measured toolbar
+height keeps initial content and keyboard scroll targets clear of wrapped controls.
+Reduced Transparency and Increase Contrast replace the feathered glass with an
+opaque backing. The content viewport has no separate rounded frame.
+The chrome uses the canvas's concentric upper corners and a graduated lower mask;
+clipping introduces no viewport stroke, shadow, or extra focus stop.
 Only the Back/Forward button group has a compact pill outline beside the page
 title. Region spacing and rail corners use `--layout-gap` and `--panel-radius`.
 
 `Cmd+F` focuses sidebar search. Back/Forward traverse visited categories without
 reloading their panes; a new category clears the forward branch. Back from search
 first restores the selected pane. History is bounded to 50 entries. There is no
-in-content Close or new window per category. The focusable content scroller uses
-the shared inset neutral keyboard focus ring; pointer focus does not expose a
-browser-default viewport outline.
+in-content Close or new window per category. The content scroller is not an added tab stop. Keyboard navigation
+and search-result activation reach actual controls, which retain neutral focus
+indicators; clicking empty content never selects or outlines the whole viewport.
 
 **Organization and discovery.** General contains appearance, language, and
 automatic updates. Other categories are Models, Agents, Skills, Memory, Access,
 Data, Keyboard Shortcuts, and Advanced. Models folds request policy into Request
 Options; Agents folds delegation capacity limits into its advanced disclosure.
 Advanced contains diagnostics, public configuration files, and a collapsed scalar
-inspector with **All / Modified** filtering. Modified means an explicit source
+Configuration Inspector with **All / Modified** filtering, initially **Modified**.
+Its explanation identifies these as the same preferences shown in the categories;
+it supports troubleshooting and reset rather than presenting a second set of settings.
+Modified means an explicit source
 override, even when equal to its default.
 
 Search matches localized labels, descriptions, aliases, and stable IDs; IDs are
@@ -414,6 +424,28 @@ its owner underneath it, and an active in-app modal editor takes precedence over
 menu deep links. Closing Settings does not revoke accepted domain work;
 pre-acceptance reviews retain the owning service's cancellation rules.
 
+**Operation feedback.** Each row owns the progress, outcome, and failure of its
+operations. A single-Skill update check reports Checking, Up to date, Update
+available, or its failure directly on that Skill. A library-wide check reports a
+summary beside its list and specific failures on the affected rows. Acquisition
+feedback stays in its open dialog; a completed installation or removal names the
+Skill when its original row is absent. Read failures belong to the affected group
+or pane; only shared source acceptance/recovery failures span categories.
+
+Model changes, shortcut writes, delegation options, diagnostics actions, and
+source-file opening report beside their control. Reset All reports by its footer.
+A successful immediate toggle is confirmed by the resulting switch/status rather
+than an extra generic success banner. Memory enablement waits for owner application;
+reset evidence stays on Reset Memory even when another operation runs. Translation
+and website cleanup retain separate operation outcomes, and only the affected
+button says Clearing. Canceling clears that operation's pending feedback without
+reporting completion. Unrelated operations never erase or relocate each other's
+feedback. Existing queues, rollback rules, and stale-response guards remain in force.
+
+Settings operations are window-owned services. Agent edits use public
+configuration files, existing file tools, and the configuration Skill; its
+guidance routes non-declarative work to the appropriate UI.
+
 **Agent configuration and Access.** The root Agent editor handles the existing
 main persona, standing instructions, and capability ceiling. It does not restore
 retired Roles, per-type execution, or duplicated built-in Agents. Delegation
@@ -429,9 +461,15 @@ additional actions stay in the menu. Defaults stay disabled until the provider
 view arrives. Automatic selection is named in full rather than abbreviated.
 
 **Skills, Memory, and Data.** Skills owns acquisition, source bindings, enabled
-state, and updates. Skill descriptions stay clamped to two lines; menu/switch
-focus never expands a row. Skill review uses a labeled action rather than a
-search icon. Memory and Data own their inspection and confirmed maintenance
+state, and updates. Check All and Add live in the page toolbar;
+the list does not repeat the Skills title. Portaled actions disappear when the
+pane is inactive or global search is open; pending work still settles in its pane. Skill descriptions stay clamped to two lines; menu/switch
+focus never expands a row. Check Skill Files lives in a collapsed Troubleshooting
+section, with its scope explained before invocation: missing resources, exact
+duplicates, and retired tool names in unchanged Agent-written user/project Skills.
+It does not scan installed or built-in Skills, assess quality, or change files.
+The read-only report shows checked/skipped results and omits content hashes.
+Memory and Data own their inspection and confirmed maintenance
 actions. Memory separates resetting from ordinary use/open controls, explains
 the scope in terms of entries and nested notes, and states when new memories are
 not being saved. Data shows readable storage units and keeps the consequences of
@@ -447,8 +485,9 @@ Search Settings remains in the sidebar. The local filter stays owned by the pane
 and survives navigation; its toolbar controls disappear in other categories and
 global search results. At narrow widths or larger text the controls wrap within
 the toolbar, retaining usable field and title widths.
-One filled list surface contains an editing instruction, compact context headings,
-and alternating compact rows. Each row shows its command name and plain,
+One filled list surface contains an editing instruction and context headings.
+Rows have comfortable vertical padding and inset hairline separators; context
+groups have wider separation. There is no alternating fill or resting row selection. Each row shows its command name and plain,
 right-aligned key combinations, without checkboxes or per-row action buttons. IDs and default badges do not
 appear in ordinary rows; IDs and descriptions remain searchable, and descriptions
 are accessible help.
@@ -471,6 +510,8 @@ another category. Source rejection and effective-binding failure stay local.
 version, support, and legal. The native About item opens its independent window. Software
 Update shows checking, current, available, automatic-off, and explicit-failure
 states; an automatic-check switch and explicit Check now action apply immediately.
+Version-copy feedback stays with the version row; automatic-check, manual-check,
+and download/open failures stay beside their respective controls.
 Ambient failures render nothing and preserve cached availability. Explicit check
 and external-open failures stay inline in this group rather than using the manager
 alert, an app toast, dialog, banner, notification, dock badge, or main-

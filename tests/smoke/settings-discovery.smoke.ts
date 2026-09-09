@@ -29,7 +29,7 @@ test('Settings edits and resets the real source, tracks external errors, and kee
       await expect(appearance.getByRole('radio', { name: label, exact: true })).toBeChecked();
     }
     await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
-    await page.getByText('Advanced Preferences', { exact: true }).click();
+    await page.getByText('Configuration Inspector', { exact: true }).click();
     await page.getByRole('radio', { name: 'Modified', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Reset Appearance', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'Reset Appearance', exact: true }).click();
@@ -103,6 +103,14 @@ test('all Settings destinations reuse one native window with bounded admission a
     expect(models).toBe(settings);
     expect(await open(smoke, 'models')).toBe(settings);
     expect(smoke.app.windows().filter((page) => new URL(page.url()).searchParams.get('destination') === 'models')).toHaveLength(1);
+    const modelPane = models.getByRole('tabpanel', { name: 'Models', exact: true });
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await models.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+      await modelPane.evaluate((element) => { element.scrollTop = 180; });
+      await expect(models.locator('.settings-column')).toHaveAttribute('data-scrolled', 'true');
+      await models.screenshot({ path: testInfo.outputPath(`scrolling-models-${colorScheme}.png`), animations: 'disabled' });
+    }
+    await modelPane.evaluate((element) => { element.scrollTop = 0; });
     const admission = await models.evaluate(async () => {
       const commands = ['delete_node', 'agent_future_command', 'agent_set_provider_api_key'];
       return Promise.all(commands.map((command) => window.lin!.invoke(command, {}).then(() => 'allowed', () => 'denied')));
@@ -140,6 +148,18 @@ test('all Settings destinations reuse one native window with bounded admission a
       await expect(page.locator('.configuration-content:visible')).not.toBeEmpty();
       expect(smoke.app.windows().filter((window) => new URL(window.url()).searchParams.get('surface') === 'settings')).toHaveLength(1);
       await expect(page.getByRole('button', { name: 'Back', exact: true })).toHaveCount(destination === 'about' ? 0 : 1);
+      if (destination === 'skills') {
+        await expect(page.locator('.configuration-toolbar').getByRole('button', { name: 'Add a skill', exact: true })).toBeVisible();
+        await expect(page.getByRole('tabpanel', { name: 'Skills', exact: true }).locator('.inset-group-header')).toHaveCount(0);
+        for (const colorScheme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme });
+          await page.screenshot({ path: testInfo.outputPath(`skills-${colorScheme}.png`), animations: 'disabled' });
+        }
+        await page.getByText('Troubleshooting', { exact: true }).click();
+        await expect(page.getByRole('button', { name: 'Check Skill Files…', exact: true })).toBeVisible();
+        await page.getByRole('button', { name: 'Check Skill Files…', exact: true }).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: testInfo.outputPath('skill-file-diagnostics.png'), animations: 'disabled' });
+      }
       if (destination === 'shortcuts') {
         await expect(page.getByText('Go to Today', { exact: true })).toBeVisible();
         await expect(page.locator('.configuration-toolbar').getByRole('searchbox', { name: 'Search shortcuts' })).toBeVisible();

@@ -98,7 +98,7 @@ import {
 import { loadWindowState, trackWindowState } from '../windowState';
 import { windowMaterialKind } from '../../core/windowMaterial';
 import type { DiagnosticEnvironment, DiagnosticsActionResult, ErrorReport } from '../../core/errorObservability';
-import type { ApplicationOperation } from '../hostDomain/applicationOperations';
+import type { ApplicationOperation, ApplicationOperationCaller } from '../hostDomain/applicationOperations';
 import { createApplicationOperations } from '../hostDomain/applicationOperations';
 import { createBundledApplicationReleaseResolver } from '../hostDomain/bundledApplicationRelease';
 import type { DiagnosticLogStore } from '../diagnosticLog';
@@ -843,11 +843,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   };
-  const applicationOperationWindow = (caller: Parameters<ApplicationOperation['inspect']>[1]) => (
-    caller.origin.kind === 'window'
-      ? BrowserWindow.fromId(caller.origin.windowId)
-      : liveWindow(mainWindow) ?? null
-  );
+  const applicationOperationWindow = (caller: ApplicationOperationCaller) => BrowserWindow.fromId(caller.origin.windowId);
   const exportDiagnostics = createDiagnosticsExportHost({
     available: () => !released,
     operationWindow: applicationOperationWindow,
@@ -876,10 +872,8 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
   };
   const resolveBundledRelease = createBundledApplicationReleaseResolver(bundledChangelog);
   const applicationOperations = createApplicationOperations({
-    updates: appUpdateService,
     appInfo: applicationInfo,
     bundledRelease: async () => resolveBundledRelease((await applicationInfo()).version),
-    diagnostics: options.diagnosticLog,
     openExternal: (url) => shell.openExternal(url),
     revealDiagnostics,
     exportDiagnostics,

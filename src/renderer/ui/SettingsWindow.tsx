@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CONFIGURATION_LINKS, type PreferenceValue, type PreferencesView, type PreferenceId } from '../../core/settingsDefinitions';
 import { SETTINGS_PANES, settingsOpenTargetFromSearch, type SettingsPane } from '../../core/settingsWindow';
 import { createSerialMutationQueue } from '../../core/serialMutationQueue';
@@ -9,6 +9,7 @@ import { Button } from './primitives/Button';
 import { IconButton } from './primitives/IconButton';
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, SearchIcon, SettingsIcon, AgentIcon, SkillIcon, PasswordIcon, DatabaseIcon, CommandIcon, OptionsIcon, AppWindowIcon, RecentsIcon, ICON_SIZE } from './icons';
 import { PreferenceRow } from './configuration/PreferenceRow';
+import { SettingsFeedback } from './configuration/SettingsFeedback';
 import { ConfigurationPane } from './configuration/ManagerWindow';
 
 const PANE_ICONS = { settings: SettingsIcon, models: AppWindowIcon, agents: AgentIcon, skills: SkillIcon, memory: RecentsIcon, access: PasswordIcon, data: DatabaseIcon, shortcuts: CommandIcon, diagnostics: OptionsIcon };
@@ -30,7 +31,20 @@ export function SettingsWindow() {
   const [navigation, setNavigation] = useState(() => ({ panes: [initialPane()], index: 0 }));
   const pane = navigation.panes[navigation.index];
   const [visited, setVisited] = useState<Set<SettingsPane>>(() => new Set([initialPane()]));
+  const toolbarRef = useRef<HTMLElement>(null);
+  const columnRef = useRef<HTMLDivElement>(null);
   const [toolbarTarget, setToolbarTarget] = useState<HTMLDivElement | null>(null);
+  // Keep the real scroll viewport behind the chrome, including wrapped toolbars
+  // at large text sizes. ResizeObserver tracks geometry without scroll rerenders.
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current;
+    if (!toolbar) return;
+    const measure = () => columnRef.current?.style.setProperty('--settings-toolbar-height', `${toolbar.getBoundingClientRect().height}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(toolbar);
+    return () => observer.disconnect();
+  }, []);
   const navigate = useCallback((next: SettingsPane) => {
     setQuery('');
     setNavigation((previous) => {
@@ -42,6 +56,12 @@ export function SettingsWindow() {
     replacePaneUrl(next);
   }, []);
   const searching = query.trim().length > 0;
+  const syncScrollEdge = useCallback(() => {
+    const column = columnRef.current;
+    const scroller = column?.querySelector<HTMLElement>('.settings-pane:not([hidden])');
+    if (column) column.dataset.scrolled = String((scroller?.scrollTop ?? 0) > 0);
+  }, []);
+  useLayoutEffect(syncScrollEdge, [pane, searching, syncScrollEdge]);
   function traverse(direction: -1 | 1) {
     if (searching) { if (direction === -1) setQuery(''); return; }
     const index = navigation.index + direction;
@@ -49,9 +69,14 @@ export function SettingsWindow() {
     setNavigation({ ...navigation, index });
     replacePaneUrl(navigation.panes[index]);
   }
-  const [filter, setFilter] = useState<'all' | 'modified'>('all');
+  const [filter, setFilter] = useState<'all' | 'modified'>('modified');
   const [view, setView] = useState<PreferencesView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sourceActionErrors, setSourceActionErrors] = useState<Record<string, string | null>>({});
+  function sourceAction(key: string, action: () => Promise<unknown> | undefined) {
+    setSourceActionErrors((current) => ({ ...current, [key]: null }));
+    void action()?.catch((caught) => setSourceActionErrors((current) => ({ ...current, [key]: String(caught) })));
+  }
   const search = useRef<HTMLInputElement>(null);
   const current = useRef<PreferencesView | null>(null);
   const epoch = useRef(0);
@@ -117,20 +142,21 @@ export function SettingsWindow() {
   const links = CONFIGURATION_LINKS.filter(({ destination, paths }) => matches(copy.destinations[destination], copy.descriptions[destination], ...paths));
   const rows = (ids: readonly PreferenceId[]) => <div className="preference-list" role="list">{view?.entries.filter((entry) => ids.includes(entry.id)).map((entry) => <PreferenceRow key={entry.id} entry={entry}
     sourceDigest={view.source.digest} disabled={view.source.status === 'rejected'} edit={(operation, value, expectedDigest) => edit(entry.id, operation, value, expectedDigest)} />)}</div>;
-  const openFile = () => void window.lin?.preferences.openFile().catch((caught) => setError(String(caught)));
+  const openFile = () => sourceAction('preferences', () => window.lin?.preferences.openFile());
+  const openSource = (sourceId: NonNullable<PreferencesView['sources']>[number]['sourceId']) => sourceAction(sourceId, () => window.lin?.preferences.openSource(sourceId));
   const sourceFeedback = <>
     {error || view?.source.error || view?.source.recoveryError ? <div className="configuration-source-error" role="alert">
       {view?.source.status === 'rejected' ? <p>{copy.retained}</p> : null}
       <p>{error ?? view?.source.error ?? view?.source.recoveryError}</p>
       <Button size="sm" variant="secondary" onClick={() => void refresh()}>{copy.refresh}</Button>
       <Button size="sm" variant="ghost" onClick={openFile}>{copy.openFile}</Button>
+      <SettingsFeedback feedback={{ error: sourceActionErrors.preferences }} />
     </div> : null}
     {view?.sources?.filter((source) => source.error).map((source) => <div className="configuration-source-error" key={source.path} role="alert">
       <p>{copy.destinations[source.destination]}: {source.error}</p>
-      <Button size="sm" variant="secondary" onClick={() => void window.lin?.preferences.openSource(source.sourceId).catch((caught) => setError(String(caught)))}>{copy.openSource}</Button>
+      <Button size="sm" variant="secondary" onClick={() => openSource(source.sourceId)}>{copy.openSource}</Button>
+      <SettingsFeedback feedback={{ error: sourceActionErrors[source.sourceId] }} />
     </div>)}
-    {view?.application.status === 'failed' ? <p role="status">{copy.applyFailed} {view.application.error}</p>
-      : view?.application.status === 'pending' ? <p role="status">{copy.applyPending}</p> : null}
     {!view ? <p role="status">{copy.loading}</p> : null}
   </>;
   return <main className="configuration-window settings-window" aria-label={t.window.settingsTitle({ app: APP_NAME })}>
@@ -163,8 +189,10 @@ export function SettingsWindow() {
           })}
         </div>
       </aside>
-      <div className="settings-column">
-        <header className="configuration-toolbar">
+      <div className="settings-column" ref={columnRef} onScrollCapture={(event) => {
+        if (event.target instanceof Element && event.target.matches('.settings-pane')) syncScrollEdge();
+      }}>
+        <header className="configuration-toolbar" ref={toolbarRef}>
           <div className="settings-history settings-toolbar-control">
             <IconButton icon={ChevronLeftIcon} iconSize={ICON_SIZE.large} label={t.settings.navigation.back} variant="chrome"
               disabled={!searching && navigation.index === 0} onClick={() => traverse(-1)} />
@@ -176,9 +204,9 @@ export function SettingsWindow() {
           <div className="settings-toolbar-actions" ref={setToolbarTarget} />
         </header>
         <div className="settings-body">
-          <div className="settings-feedback">{sourceFeedback}</div>
           <section className="configuration-content settings-pane" hidden={!searching} aria-label={copy.searchResults}>
             {searching ? <>
+              <div className="settings-feedback">{sourceFeedback}</div>
               {entries.length ? rows(entries.map((entry) => entry.id)) : null}
               {links.length ? <section aria-label={copy.managers}>
                 <h2 className="configuration-group-title">{copy.managers}</h2>
@@ -186,7 +214,7 @@ export function SettingsWindow() {
                   <div className="preference-copy"><div className="preference-label">{copy.destinations[destination]}</div><p>{copy.descriptions[destination]}</p></div>
                   <Button size="sm" variant="secondary" aria-label={`${copy.open} ${copy.destinations[destination]}`} onClick={() => {
                     navigate(destination);
-                    requestAnimationFrame(() => document.getElementById(`settings-pane-${destination}`)?.focus());
+                    requestAnimationFrame(() => document.getElementById(`settings-pane-${destination}`)?.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), summary')?.focus());
                   }}>{copy.open}</Button>
                 </div>)}</div>
               </section> : null}
@@ -194,7 +222,8 @@ export function SettingsWindow() {
             </> : null}
           </section>
           {SETTINGS_PANES.map((destination) => <section key={destination} id={`settings-pane-${destination}`} role="tabpanel"
-            className="configuration-content settings-pane" aria-labelledby={`settings-tab-${destination}`} tabIndex={0} hidden={searching || pane !== destination}>
+            className="configuration-content settings-pane" aria-labelledby={`settings-tab-${destination}`} hidden={searching || pane !== destination}>
+            {!searching && pane === destination ? <div className="settings-feedback">{sourceFeedback}</div> : null}
             {visited.has(destination) ? destination === 'settings' ? <>
               <section aria-label={copy.appearanceGroup}>{rows(['appearance.theme', 'appearance.language'])}</section>
               <section aria-label={copy.updatesGroup}><h2 className="configuration-group-title">{copy.updatesGroup}</h2>{rows(['updates.checkAutomatically'])}</section>
@@ -206,16 +235,19 @@ export function SettingsWindow() {
               {destination === 'diagnostics' ? <>
                 <section aria-label={copy.sourceOptions}><h2 className="configuration-group-title">{copy.sourceOptions}</h2>
                   <Button size="sm" variant="secondary" onClick={openFile}>{copy.openFile}</Button>
+                  <SettingsFeedback feedback={{ error: sourceActionErrors.preferences }} />
                   {view?.sources?.length ? <div className="preference-list settings-source-list" role="list">{view.sources.map((source) => <div className="preference-row" role="listitem" key={source.sourceId}>
                     <div className="preference-copy"><div className="preference-label">{copy.destinations[source.destination]}{source.modified ? ` · ${copy.modified}` : ''}</div><p>{source.path}</p></div>
-                    <Button size="sm" variant="secondary" onClick={() => void window.lin?.preferences.openSource(source.sourceId).catch((caught) => setError(String(caught)))}>{copy.openSource}</Button>
+                    <Button size="sm" variant="secondary" onClick={() => openSource(source.sourceId)}>{copy.openSource}</Button>
+                    <SettingsFeedback feedback={{ error: sourceActionErrors[source.sourceId] }} />
                   </div>)}</div> : null}
                 </section>
                 <details className="settings-disclosure"><summary>{copy.customizedOptions}</summary>
+                  <p className="inset-group-footnote">{copy.inspectorDescription}</p>
                   <div className="configuration-filter"><SegmentedControl label={copy.filter} value={filter}
                     options={[{ value: 'all', label: copy.all }, { value: 'modified', label: copy.modified }]} onChange={setFilter} /></div>
                   {rows((view?.entries.filter((entry) => filter === 'all' || entry.modified) ?? []).map((entry) => entry.id))}
-                  {filter === 'modified' && !view?.entries.some((entry) => entry.modified) ? <p role="status">{copy.noResults}</p> : null}
+                  {filter === 'modified' && !view?.entries.some((entry) => entry.modified) ? <p role="status">{copy.noModified}</p> : null}
                 </details>
               </> : null}
             </> : null}

@@ -26,6 +26,8 @@
     --material-sidebar: var(--bg-window);
     --material-popover: var(--bg-elevated);
     --material-backdrop: none;
+    --settings-scroll-edge-size: 0px;
+    --settings-scroll-edge-mask: none;
     --media-hud-bg: rgb(46 46 50);
     --media-hud-hover-bg: rgb(31 31 35);
     --media-hud-active-bg: rgb(20 20 24);

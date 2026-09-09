@@ -3,14 +3,15 @@
 ## Goal
 
 People can discover, change, and recover Tenon's settings without learning its
-storage layout. Agents can perform the same jobs through public configuration
-files and domain operations, then report what actually took effect.
+storage layout. Agents change declarative preferences through public configuration
+files and verify what actually took effect. Non-declarative maintenance remains
+in the owning user interface, without additional model tools.
 
 This plan is a set of independently complete features, described in Delivery.
 Each feature includes its own consumers, failure recovery, and verification.
 
 - **OBJ-1:** Settings is a searchable, lightweight human entry over real sources.
-- **OBJ-2:** Every supported settings job has a human and an Agent route.
+- **OBJ-2:** Every preference has a human control and an Agent file-edit route.
 - **OBJ-3:** Saved, accepted, and effective configuration remain distinguishable.
 - **OBJ-4:** Theme and Skill/tool availability are ordinary file-editing jobs.
 - **OBJ-5:** Each value has one desired-state owner across all editing surfaces.
@@ -23,8 +24,8 @@ Each feature includes its own consumers, failure recovery, and verification.
 
 - No Settings or Configuration CLI, including discovery, validation, status,
   hidden helper executables, or read-only commands.
-- No universal Settings model tool, cross-domain mutation service, second
-  preference store, or fixed quota of domain tools.
+- No additional Settings/domain model tools, cross-domain Agent mutation
+  service, or second preference store.
 - No application configuration profiles, project overrides, includes,
   interpolation, executable settings, remote administration, or cloud sync.
   Root Configuration Profile scopes remain owned by the Agent domain.
@@ -45,7 +46,8 @@ Each feature includes its own consumers, failure recovery, and verification.
 ### Overview And Decision
 
 The selected target is public files for declarative configuration, a human UI
-over those files, domain tools for operations, and one small configuration Skill.
+over those files, UI-owned services for operations, and one small configuration
+Skill. No additional tools or CLI mediate Agent configuration.
 A domain can own configuration, credentials, resources, and runtime state
 without treating them as the same kind of data.
 
@@ -68,7 +70,7 @@ ten-key limit, and a mandatory ten-tool catalog do not constrain the target.
 File-only interaction loses discovery and first-model setup. A second Settings
 write API for Agents duplicates a task already served by ordinary file tools.
 The selected design accepts a bounded read/edit/verify workflow for declarative
-changes; semantic domain operations keep the canonical tool-result contract.
+changes; non-declarative domain operations stay in their user interfaces.
 
 Reference patterns, rather than requirements to copy:
 
@@ -236,8 +238,8 @@ a stale file from a prior process is never current application evidence.
 
 The built-in on-demand `configuration` Skill routes one user intent:
 
-1. Read the relevant schema, source, and status; query a domain catalog if an
-   identity is needed. Use advertised paths and formats.
+1. Read the relevant public schema, source, and status, including published
+   identities. Use advertised paths and formats; never invent a catalog API.
 2. Make the smallest generic file edit, preserving unrelated values and comments.
    Preserve invalid input unless repairing it is part of the user's request.
 3. Compute the saved digest and wait a bounded time for matching accepted input
@@ -252,10 +254,11 @@ the relevant failure separately and never describe the whole file as effective.
 No polling daemon, Settings receipt ledger, validator executable, or second
 Agent configuration writer is added.
 
-The Skill names routing rules and public owners, not a copied catalog of
-defaults and action schemas. Operation tools contribute their schemas through
-the canonical registry and return canonical bounded outcomes. Reuse existing
-domain routes where applicable; their number follows operations, not UI pages.
+The Skill names public files and verification steps, not a copied catalog of
+defaults or action schemas. For installation, Memory reset, data cleanup, update
+checks, and diagnostics export, it directs the user to the owning interface.
+These operations have no model-tool registration, runtime adapter, or replacement
+CLI. Internal IPC and native confirmation remain implementation details.
 
 ### Application Boundaries And Authority
 
@@ -277,8 +280,7 @@ root Profile ceilings, Task Profile restrictions, inherited Session ceilings,
 or explicit action blocks.
 Configuration reset needs no private disabled-tool baseline or approval digest.
 
-Root-only domain tools remain Host-enforced. Application configuration tasks
-are routed to root execution; descendants retain the no-permission-laundering
+Application configuration tasks use existing file tools in root execution; descendants retain the no-permission-laundering
 rule. Withholding a path or Skill is not filesystem enforcement. Same-account
 Full Access can access configuration and private stores through generic tools;
 tool selection and explicit blocks are not an OS sandbox.
@@ -392,15 +394,11 @@ accepted recovery input, configured/active connections, probes, or in-flight
 requests. Remove only unreferenced staging after a failed commit or crash.
 Saved unverified candidates survive restart without credential re-entry.
 
-An already runnable root Agent may supply the key explicitly present in its
-current renderer-authored user request to one sensitive Models operation.
-Validate that provenance and reject fabricated input, child traffic, and replay.
-That operation uses the same credential-plus-source workflow; it does not become
-a general settings setter. Redact before durable Tool/Trajectory recording and
-never echo the key in results, diagnostics, errors, or shared renderer state.
-The original user input remains original; no redundant credential prompt is
-shown. Without an explicit key, open the human credential form. OAuth, reveal,
-copy, and credential deletion remain owner operations with public outcomes only.
+Credential entry, OAuth, reveal, copy, and deletion stay in Models and its
+credential owner. The Agent directs the user to that interface instead of
+accepting credentials through a model tool or writing a private store.
+Credential values never enter public configuration, diagnostics, errors, or
+shared renderer state.
 
 ### Shortcuts And Contextual Translation
 
@@ -426,7 +424,7 @@ and reset on close/reopen. No hidden global Translation singleton or default
 preference is introduced. Reusable global Translation defaults would be a
 separate product decision, not a side effect of moving storage.
 
-The contextual tool must resolve exactly one preview, return unavailable for
+The contextual control must resolve exactly one preview, return unavailable for
 missing/ambiguous context, and clear saved translations for its current content.
 Saved entries are shared by content; both clearing scopes retain live displays
 and pending translation results while fencing older cache writes. A same-source
@@ -441,9 +439,9 @@ cache-maintenance scopes, not preservation of global default semantics.
 
 The following is a design/test ledger, not a runtime router. Each declarative
 field has one source; each operation has one semantic owner. Native interactions
-are Agent-initiated and return an outcome without exposing private input.
-All Agent routes remain subject to available tools and applicable capability
-ceilings. Missing authority is reported, never bypassed through private files.
+are user-initiated and return an outcome without exposing private input.
+Agent file edits remain subject to the existing file-tool capability boundary.
+A UI-only operation is an explicit product boundary, not missing tool coverage.
 
 | Job | Agent route | Human route / owner |
 | --- | --- | --- |
@@ -451,27 +449,27 @@ ceilings. Missing authority is reported, never bypassed through private files.
 | Appearance, Memory enablement, request/update policy | Settings edit | Settings / applying owner |
 | Skill/tool availability; default text/image model | Settings edit | Settings or Skills/Models/Access |
 | Connection create/edit/disable/remove and model declarations | Settings edit | Models source editor |
-| Provider/model catalog, readiness, test, refresh | Models operation | Models |
-| New key, current-request key, reveal/copy/delete, OAuth | Sensitive Models operation / native interaction | Models / credential owner |
+| Provider/model catalog, readiness, test, refresh | Use Models | Models |
+| New key, reveal/copy/delete, OAuth | Use Models | Models / credential owner |
 | Root Profile selection/editing, instructions, ceilings, model/effort defaults, and root-only presentation | Root configuration file edit | Agents / root configuration owner |
-| Delegation defaults, Runner selection, limits and scheduling policy | Settings edit; readiness inspection | Agents / delegation owner |
+| Delegation defaults, Runner selection, limits and scheduling policy | Settings edit | Agents / delegation owner |
 | Skill source bind/unbind | Settings edit with explicit binding mode | Skills / source owner |
-| Skill discovery/status, install/update/review/rollback/uninstall | Skill operation / acquisition interaction | Skills / lifecycle owner |
-| Undo an Agent-authored Skill edit | Provenance operation | Skills / provenance owner |
-| Memory status/open/reset and per-Thread mode | Memory operation | Memory and Thread details |
-| Effective access, persistent action/command blocks and removal | Access operation | Access / capability owner |
-| Website/session data, global translation-cache status/clear | Data operation | Privacy & Data |
-| Update status/check/release; app/build/version/changelog | Update/application operation | About |
-| Help/issues/license; reveal/export diagnostics | Help/diagnostics operation | Help / diagnostics owner |
-| Active Translation target/model/automatic/toggle/scoped clear | Contextual Translation operation | Active preview |
-| Command catalog/effective bindings/fixed grammar | Shortcut inspection / status | Keyboard Shortcuts |
-| Binding changes/reset and physical recording | Keybindings edit; native recording interaction | Keyboard Shortcuts |
+| Skill discovery/status, install/update/review/rollback/uninstall | Use Skills | Skills / lifecycle owner |
+| Undo an Agent-authored Skill edit | Use Skills | Skills / provenance owner |
+| Memory status/open/reset and per-Thread mode | Use Memory / Thread details | Memory and Thread details |
+| Effective access, persistent action/command blocks and removal | Use Access | Access / capability owner |
+| Website/session data, global translation-cache status/clear | Use Data | Privacy & Data |
+| Update status/check/release; app/build/version/changelog | Use About | About |
+| Help/issues/license; reveal/export diagnostics | Use Help / Advanced | Help / diagnostics owner |
+| Active Translation target/model/automatic/toggle/scoped clear | Use the active preview | Active preview |
+| Command catalog/effective bindings/fixed grammar | Public keybindings schema/status | Keyboard Shortcuts |
+| Binding changes/reset and physical recording | Keybindings edit; recording stays in the UI | Keyboard Shortcuts |
 
-A clean-userData Models bootstrap is the explicit prerequisite for model-driven
-routes. Every other limitation must be a named permission, missing resource,
-context, or operation result, not an unspecified future human-only capability.
+A clean-userData Models bootstrap uses the human interface. Once a model is
+available, the Agent can change declarative settings through existing file tools.
+No management tool is needed to make the Settings feature complete.
 Derive coverage tests from post-retirement controls, definition registries,
-canonical tool contracts, delegation policy, and command handlers. Include
+delegation policy, public schemas, and command handlers. Include
 hidden configurable fields, not just visible UI rows. Retired Role/Agent-type
 CRUD, per-type presentation/execution, and isolated-Skill fields are absence
 assertions, not capabilities to restore for coverage.
@@ -487,10 +485,10 @@ Protected shared interfaces still follow the repository's coordination rule.
 | A. File-backed preferences | Existing preference controls plus root Agent file edits, schema/status/recovery, configuration Skill, global availability, request/update policy | Configuration modules and preference consumers; FR-1 through FR-4, FR-6; removes migrated fields from old stores immediately |
 | B. Model configuration and bootstrap | File-backed connection/default definitions, shared composer/admission precedence, complete Models UI, auth/test/catalog operations, sensitive input, complete snapshot recovery | A; Provider/credential/catalog/image owners, root start defaults, and Tool/Trajectory boundary; FR-2, FR-5, FR-6, FR-12 |
 | C. Root configuration and delegation policy | Public root-source discovery/schema/status and structural UI edits, file-backed Runner/Session defaults, access inspection/block operations; no Agent-type editor | A and final delegation runtime; surviving root Profile/presentation, delegation policy, and Access owners; FR-2 through FR-6 |
-| D. [Skill lifecycle operations](archive/skill-lifecycle-operations.md) | Shared human/Agent install/update/reversal/provenance operations, with file-only availability and no managed enable writer | A, Skill identity foundation, and domain-owned declarative Skill settings; Skill owners; FR-2 through FR-6 |
-| E1. [Memory operations](archive/memory-operations.md) | Shared human/Agent status, Open Memory, confirmed Reset, and per-Thread mode; global enablement remains a file edit | A; Memory, Thread details, and root tool owners; FR-5, FR-6 |
+| D. [Skill lifecycle operations](archive/skill-lifecycle-operations.md) | Human Library install/update/reversal/provenance operations, with file-only availability and no managed enable writer | A, Skill identity foundation, and domain-owned declarative Skill settings; Skill owners; FR-2 through FR-6 |
+| E1. [Memory operations](archive/memory-operations.md) | Human status, Open Memory, confirmed Reset, and per-Thread mode; global enablement remains a file edit | A; Memory and Thread details owners; FR-5, FR-6 |
 | E2. [Preview translation and data operations](archive/preview-translation-data-operations.md) | Preview-local translation controls and scoped clearing, plus website/session and global translation-cache inspection/clearing | A; preview, session, and cache owners; FR-5 through FR-7 |
-| E3. Application and diagnostic operations | Shared human/Agent version/build/release information, update checking/opening, Help/license destinations, and local diagnostics reveal/export | A; application, Updates, and diagnostics owners; FR-5, FR-6 |
+| E3. Application and diagnostic operations | Human version/build/release information, update checking/opening, Help/license destinations, and local diagnostics reveal/export | A; application, Updates, and diagnostics owners; FR-5, FR-6 |
 | F. Configurable shortcuts | Full file/UI/Agent remapping, registry/hint parity, physical recording, safe system registration | A; shortcut and launcher owners; FR-8, FR-9 |
 | G. [Unified settings discovery](settings-discovery.md) | Single-window categories and search/modified/reset UI, direct pane destinations, no aggregate domain loading/state | A-F; coordinated domain-contract refactor, then complete discovery; Settings routing/components/preload and narrow owner events; FR-10, FR-11 |
 
@@ -509,7 +507,7 @@ they share request cancellation, cache identity, and clear-generation semantics.
 `PreviewTranslationCacheStore` remain the respective native resource, request,
 and durable cache owners. Active preview identity belongs to the preview
 lifecycle, not a URL, model request `sessionId`, latest focused window, or Agent
-task cwd. Agent actions resolve one live preview and revalidate its lifetime and
+task cwd. Window actions resolve one live preview and revalidate its lifetime and
 revision before applying; renderer acknowledgement distinguishes a sent action
 from an effective control change. A missing acknowledgement is unknown, not
 success. Provider completion remains a separate translation result.
@@ -541,7 +539,7 @@ Each E feature supplies owner-local observation and operation state. It does not
 extend the aggregate Settings DTO, broad `lin:settings-changed` notifications, or
 shared loading/error state. Its current human entry remains usable; G owns final
 single-window discovery and removal of aggregate Settings lifecycle ownership. The configuration
-Skill gains only routing for operations actually shipped in that feature.
+Skill names only public-file workflows and actual user-interface destinations.
 
 Existing human routes stay usable until their replacement ships. A-F consume
 the current UI where needed through the final source owner; no temporary second
@@ -579,7 +577,8 @@ replacement entity restores them.
   second preference store, or general Agent setter.
 - **FR-4:** The configuration Skill routes files and operations using current
   schemas, catalogs, and truthful settlement evidence.
-- **FR-5:** Every capability-ledger job has complete human and Agent reachability.
+- **FR-5:** Every ledger job has a complete human route; Agent configuration uses
+  public files, and non-declarative operations are explicitly UI-only.
 - **FR-6:** Credential handling and domain interactions preserve canonical
   authority contracts without claiming same-account isolation.
 - **FR-7:** Translation choices remain preview-local; contextual clearing targets
@@ -591,8 +590,8 @@ replacement entity restores them.
   discovery removes cross-domain Settings lifecycle ownership.
 - **FR-11:** Searchable human controls edit real sources, preserve user text, show
   failures, and reset by removing overrides.
-- **FR-12:** Human-first model bootstrap and Agent-supplied credentials use the
-  same source/credential workflow and complete connection snapshots.
+- **FR-12:** Human model bootstrap uses the source/credential workflow and
+  complete connection snapshots; credentials remain outside Agent configuration.
 - **NFR-1:** Source reads are bounded to 256 KiB; catalog/tool/status projections
   are bounded; watcher and remote work do not block startup or unrelated UI.
 - **NFR-2:** Renderers retain narrow preload bridges and no Node/file/private-store
@@ -623,7 +622,7 @@ replacement entity restores them.
 - **AC-8 (FR-5):** Artifact-derived coverage proves every ledger job has a source
   or operation, applying owner, human entry, bounded result, and failure route.
 - **AC-9 (FR-5):** Domain integration covers actual owners, identity discovery,
-  stale revisions, pagination, missing tools/resources, and truthful outcomes;
+  stale revisions, pagination, unavailable resources, and truthful outcomes;
   no failure falls back to private-store edits.
 - **AC-10 (FR-6):** Native interactions cover target revalidation, cancel,
   concurrent changes, caller/Host loss, and no false success or approval replay;

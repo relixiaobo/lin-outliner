@@ -39,7 +39,7 @@ function view(status: KeybindingsView['source']['status'] = 'accepted'): Keybind
   };
 }
 
-async function renderManager(initial: KeybindingsView): Promise<Rendered> {
+async function renderManager(initial: KeybindingsView, failUpdate = false): Promise<Rendered> {
   const parsed = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>') as unknown as {
     document: Document;
     window: Window & typeof globalThis;
@@ -68,7 +68,7 @@ async function renderManager(initial: KeybindingsView): Promise<Rendered> {
     initialLanguage: 'en',
     keybindings: {
       get: async () => initial,
-      update: async (input: KeybindingsUpdateInput) => { updates.push(input); return initial; },
+      update: async (input: KeybindingsUpdateInput) => { updates.push(input); if (failUpdate) throw new Error('Shortcut could not be saved'); return initial; },
       openFile: async () => { openCount += 1; },
       onChanged: (listener: (next: KeybindingsView) => void) => {
         changed = listener;
@@ -78,7 +78,7 @@ async function renderManager(initial: KeybindingsView): Promise<Rendered> {
   };
   const root: Root = createRoot(document.getElementById('root')!);
   await act(async () => {
-    root.render(<I18nProvider><ShortcutManager onError={() => {}} onNotice={() => {}} /></I18nProvider>);
+    root.render(<I18nProvider><ShortcutManager /></I18nProvider>);
   });
   await act(async () => {});
   const rendered: Rendered = {
@@ -134,6 +134,17 @@ describe('Shortcut Manager', () => {
       value: 'CommandOrControl+P',
       observedDigest: '1234abcd',
     });
+  });
+
+  test('keeps a failed shortcut write beside the command being edited', async () => {
+    const rendered = await renderManager(view(), true);
+    const change = rendered.document.querySelector<HTMLButtonElement>('[aria-label="Change CommandOrControl+M"]')!;
+    await act(async () => change.dispatchEvent(new rendered.window.Event('dblclick', { bubbles: true })));
+    await act(async () => rendered.document.querySelector('.settings-shortcut-key.is-recording')!.dispatchEvent(
+      keydown(rendered.window, { key: 'p', code: 'KeyP', metaKey: true }),
+    ));
+    expect(change.closest('.settings-shortcut-row')?.querySelector('[role="alert"]')?.textContent).toBe('Shortcut could not be saved');
+    expect(rendered.document.querySelector('[data-shortcut-id="global.new_thread"] [role="alert"]') === null).toBe(true);
   });
 
   test('Escape cancels recording without a write', async () => {

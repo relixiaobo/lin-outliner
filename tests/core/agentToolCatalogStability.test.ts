@@ -51,7 +51,7 @@ describe('canonical provider tool catalog', () => {
   });
 
   test('declares and compiles output-data validation for every catalog tool', () => {
-    expect(MODEL_TOOL_CATALOG).toHaveLength(35);
+    expect(MODEL_TOOL_CATALOG).toHaveLength(23);
     const failures: string[] = [];
     for (const contract of MODEL_TOOL_CATALOG) {
       const name = canonicalModelToolKey(contract.identity);
@@ -265,6 +265,25 @@ describe('canonical provider tool catalog', () => {
 
     expect(MODEL_TOOL_CATALOG.some((contract) => canonicalModelToolKey(contract.identity) === 'data_import')).toBe(false);
     expect((await runtime.createTools(RUNTIME_CONTEXT)).some((tool) => tool.name === 'data_import')).toBe(false);
+  });
+
+  test('keeps Settings operations out of the model catalog even when explicitly selected', async () => {
+    const retired = ['skill_inspect', 'skill_manage', 'memory_inspect', 'memory_manage',
+      'preview_inspect', 'preview_manage', 'data_inspect', 'data_manage',
+      'application_inspect', 'application_manage', 'diagnostics_inspect', 'diagnostics_manage'];
+    const runtime = new ToolRuntime(runtimeService(), {
+      capabilityTools: runtimeSchemaTools,
+      assembleRegistry: true,
+    });
+    const context = { ...RUNTIME_CONTEXT,
+      configuration: { ...CONFIGURATION, tools: [...CONFIGURATION.tools, ...retired] } };
+    const exposed = (await runtime.createTools(context)).map((tool) => tool.name);
+    const catalog = MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity));
+    for (const name of retired) {
+      expect(catalog).not.toContain(name);
+      expect(exposed).not.toContain(name);
+    }
+    for (const name of ['file_read', 'file_edit', 'file_write', 'skill']) expect(exposed).toContain(name);
   });
 
   test('applies global disabled tools after the Thread capability ceiling', async () => {

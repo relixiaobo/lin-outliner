@@ -82,9 +82,11 @@ const stateLayoutDeclarationAllowlist = new Map([
   ['src/renderer/styles/outliner.css|.row.selected:not(.drop-before):not(.drop-after)::before|left', 'Absolute selection overlay insets within the existing row box.'],
 ]);
 const materialSurfaceSelectors = new Map([
-  // Only the Settings rail uses material. The unboxed toolbar and content
-  // viewport share the opaque window canvas and remain outside this map.
+  // Settings opts only its navigation rail and scroll-edge chrome into glass;
+  // the content viewport retains the opaque window canvas.
   ['src/renderer/styles/configuration.css|:root[data-window-material] .settings-rail', 'Settings navigation rail chrome material.'],
+  // Scroll-edge chrome blurs real content passing underneath the fixed toolbar.
+  ['src/renderer/styles/configuration.css|.settings-window .configuration-toolbar::before', 'Settings toolbar scroll-edge chrome; shared opaque accessibility fallback.'],
   ['src/renderer/styles/agent-dock.css|:root[data-window-material] .agent-dock', 'Agent rail chrome material.'],
   ['src/renderer/styles/thread.css|.thread-action-menu', 'Thread action menu.'],
   // This transient navigation surface floats above the transcript viewport, so it

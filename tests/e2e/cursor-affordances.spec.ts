@@ -58,6 +58,15 @@ const chromeIconControlSelectors = [
   '.settings-row-menu-trigger',
 ];
 const focusVisibleRingSuppressionExceptions = new Map([
+  // The complete search capsule owns the visible keyboard ring, including its icon.
+  [
+    'src/renderer/styles/configuration.css|:root[data-input-modality="keyboard"] .configuration-search input:focus-visible',
+    'Sidebar search transfers its keyboard ring to .configuration-search:has(input:focus-visible).',
+  ],
+  [
+    'src/renderer/styles/settings-shortcuts.css|:root[data-input-modality="keyboard"] .settings-shortcuts-search input:focus-visible',
+    'Toolbar search transfers its keyboard ring to .settings-shortcuts-search:has(input:focus-visible).',
+  ],
   [
     'src/renderer/styles/automation.css|.automation-settings-group .time-picker-control:focus-within, :root[data-input-modality="keyboard"] .automation-settings-group .select-popup-input:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-date-trigger:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-multi-select-trigger:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-number-setting input:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-number-input:focus-visible',
     'Automation settings controls transfer the keyboard ring to the setting row (.automation-setting-row:focus-within).',

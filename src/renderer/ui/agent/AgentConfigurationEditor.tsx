@@ -21,15 +21,15 @@ import { Dialog } from '../primitives/Dialog';
 import { Input } from '../primitives/Input';
 import { SelectControl } from '../primitives/SelectControl';
 import { Textarea } from '../primitives/Textarea';
+import { SettingsFeedback } from '../configuration/SettingsFeedback';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 
 const EMPTY_CAPABILITIES: AgentCapabilityCatalog = { tools: [], skills: [] };
 
-export function AgentConfigurationEditor({ onError, onNotice }: {
-  readonly onError: (message: string | null) => void;
-  readonly onNotice: (message: string | null) => void;
-}) {
+export function AgentConfigurationEditor() {
   const t = useT();
+  const [error, onError] = useState<string | null>(null);
+  const [notice, onNotice] = useState<string | null>(null);
   const [view, setView] = useState<AgentEditorView | null>(null);
   const [editing, setEditing] = useState<AgentEditorView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -41,8 +41,8 @@ export function AgentConfigurationEditor({ onError, onNotice }: {
     const refresh = () => {
       const request = ++generation;
       void api.agentIdentityCatalog()
-        .then((next) => { if (active && request === generation) setView(next); })
-        .catch((caught: unknown) => { if (active) onError(errorText(caught)); });
+        .then((next) => { if (active && request === generation) { setView(next); onError(null); } })
+        .catch((caught: unknown) => { if (active && request === generation) onError(errorText(caught)); });
     };
     refresh();
     const off = window.lin?.onConfigurationChanged?.('agents', refresh);
@@ -84,6 +84,7 @@ export function AgentConfigurationEditor({ onError, onNotice }: {
   return (
     <section aria-label={t.settings.agents.sectionAriaLabel} className="agent-settings-section">
       <InsetGroup
+        headerFeedback={<SettingsFeedback feedback={{ error }} />}
         ariaLabel={t.settings.agents.builtInAriaLabel}
         footnote={t.settings.agents.builtInFootnote}
         id="agents"
@@ -93,6 +94,7 @@ export function AgentConfigurationEditor({ onError, onNotice }: {
           <InsetRow empty label={t.settings.agents.loading} />
         ) : (
           <InsetRow
+            feedback={<SettingsFeedback feedback={{ notice }} />}
             label={identity.name}
             leading={<AgentMark size={24} tint={identity.tint} />}
             onSelect={() => setEditing(view)}

@@ -1,3 +1,4 @@
+import { SettingsFeedback } from './SettingsFeedback';
 import { useEffect, useId, useRef, useState } from 'react';
 import { preferenceDefinition, preferenceDefault, validatePreference, type PreferenceObservation, type PreferenceValue } from '../../../core/settingsDefinitions';
 import { useT } from '../../i18n/I18nProvider';
@@ -87,7 +88,8 @@ export function PreferenceRow({ entry, sourceDigest, disabled, edit }: {
       {entry.modified ? <Button size="sm" variant="ghost" className="preference-reset" aria-label={`${copy.resetLabel} ${text.label}`}
         disabled={unavailable} onClick={() => void commit('reset')}>{copy.reset}</Button> : null}
     </div>
-    {entry.application?.status === 'failed' ? <p className="preference-error" role="status">{copy.applyFailed} {entry.application.error}</p> : null}
+    {entry.application?.status === 'failed' || entry.application?.status === 'pending' ? <div className="preference-status"><SettingsFeedback feedback={entry.application.status === 'failed'
+      ? { error: `${copy.applyFailed} ${entry.application.error ?? ''}` } : { notice: copy.applyPending }} /></div> : null}
     {error ? <p id={errorId} className="preference-error" role="alert">{error}</p> : null}
   </div>;
 }

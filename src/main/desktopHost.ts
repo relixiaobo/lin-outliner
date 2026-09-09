@@ -337,8 +337,7 @@ if (!hasExplicitAgentRoot) {
 }
 ensureAgentDir(agentScratchRoot);
 const resourcePreviewHost = createResourcePreviewHost({
-  operationWindow: (caller) => caller.origin.kind === 'window'
-    ? BrowserWindow.fromId(caller.origin.windowId) : windowApplicationHost.windows.main(),
+  operationWindow: (caller) => BrowserWindow.fromId(caller.origin.windowId),
   locale: () => windowApplicationHost.effectiveLocale(),
   dataChanged: () => {
     for (const target of [windowApplicationHost.windows.main(), windowApplicationHost.windows.settings()]) {
@@ -493,10 +492,7 @@ function startConfigurationWatcher(): void {
 }
 
 const agentImageObservationMutex = new Mutex();
-let applicationOperationsRef: import('./hostDomain/applicationOperations').ApplicationOperation | null = null;
 const agentHost = createAgentHost({
-  previewOperations: resourcePreviewHost.operations,
-  applicationOperations: () => applicationOperationsRef,
   reviewSkillOperation: (input) => windowApplicationHost.reviewSkillOperation(input),
   reviewProjectChange: (input) => windowApplicationHost.reviewProjectChange(input),
   reviewMemoryReset: (review, caller) => windowApplicationHost.reviewMemoryReset(review, caller),
@@ -697,7 +693,6 @@ const windowApplicationHost = createWindowApplicationHost({
   diagnosticEnvironment,
   initialLauncherBindings,
 });
-applicationOperationsRef = windowApplicationHost.applicationOperations;
 
 function applyKeybindings(candidate = loadKeybindings(resolvedUserDataDir)): KeybindingsView {
   const observed = retainLastAcceptedKeybindings(lastAcceptedKeybindings, candidate);
@@ -1408,8 +1403,8 @@ function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
 
   ipcMain.handle(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Reveal diagnostics');
-    const result = await windowApplicationHost.applicationOperations.diagnosticsManage(
-      { request: { operation: 'reveal' } },
+    const result = await windowApplicationHost.applicationOperations.diagnostics(
+      'reveal',
       { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
     );
     return result;
@@ -1417,20 +1412,12 @@ function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
 
   ipcMain.handle(LIN_APP_INFO_CHANNEL, async (event) => {
     windowApplicationHost.assertConfigurationSender(event, ['about'], 'Application information');
-    const result = await windowApplicationHost.applicationOperations.inspect(
-      { request: { operation: 'info' } },
-      { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
-    );
-    return result.operation === 'info' ? result.app : result;
+    return windowApplicationHost.applicationOperations.info();
   });
 
   ipcMain.handle(LIN_APP_RELEASE_CHANNEL, async (event) => {
     windowApplicationHost.assertConfigurationSender(event, ['about'], 'Bundled release information');
-    const result = await windowApplicationHost.applicationOperations.inspect(
-      { request: { operation: 'release' } },
-      { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
-    );
-    return result.operation === 'release' ? result.release : null;
+    return windowApplicationHost.applicationOperations.release();
   });
 
   ipcMain.handle(LIN_APP_OPEN_DESTINATION_CHANNEL, async (event, destination: unknown) => {
@@ -1443,8 +1430,8 @@ function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
 
   ipcMain.handle(LIN_EXPORT_DIAGNOSTICS_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Export diagnostics');
-    return windowApplicationHost.applicationOperations.diagnosticsManage(
-      { request: { operation: 'export' } },
+    return windowApplicationHost.applicationOperations.diagnostics(
+      'export',
       { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
     );
   });

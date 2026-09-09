@@ -335,15 +335,15 @@ search for `#d-memory`, so selecting a result opens the real Daily Notes context
 The Thread Details dialog exposes the per-Thread switch only for persistent root
 user Threads.
 
-Both human and root Agent operations call the Memory-owned Host facade:
+Settings and Thread Details use the internal Memory-owned Host facade. These
+operations are not model tools:
 
-- `memory_inspect` returns bounded status, an exact Thread mode/revision, or
+- Inspection returns bounded status, an exact Thread mode/revision, or
   settlement for one Reset operation identity. No prose, private paths, or Node
   inventory is exposed. Stray counts use the incremental mutation index.
-- `memory_manage` opens the ordinary saved Memory search, changes one Thread
-  mode using its observed revision, or requests native-confirmed Reset. An
-  omitted Thread ID means the calling Agent's persistent root user Thread; a
-  window must name its Thread Details target. Missing, hidden, ephemeral, child,
+- Management opens the ordinary saved Memory search, changes one Thread
+  mode using its observed revision, or requests native-confirmed Reset. The
+  window names its exact Thread Details target. Missing, hidden, ephemeral, child,
   or non-user targets are unavailable, never synthesized as enabled.
 - Global enablement remains `agent.memory.enabled` in `config/settings.jsonc`.
   The UI uses the existing comment-preserving file writer; only the file watcher

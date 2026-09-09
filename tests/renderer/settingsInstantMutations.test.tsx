@@ -440,7 +440,7 @@ async function renderSettings(
   if (!container) throw new Error('Missing root');
   const root = createRoot(container);
   await act(async () => {
-    root.render(target.destination === 'models' ? <ModelsManager /> : target.destination === 'skills' ? <SkillsManager /> : target.destination === 'access' ? <AccessManager /> : <PreviewDataPanel />);
+    root.render(target.destination === 'models' ? <ModelsManager /> : target.destination === 'skills' ? <SkillsManager active toolbarTarget={null} /> : target.destination === 'access' ? <AccessManager /> : <PreviewDataPanel />);
     await settle();
   });
   const rendered = { cleanup: () => act(() => root.unmount()), document, reports };

@@ -9,20 +9,21 @@
 :root[data-input-modality="keyboard"] .settings-shortcuts-search input:focus-visible { box-shadow: none; }
 .settings-shortcuts-source-error { display: grid; justify-items: start; gap: var(--space-4); color: var(--status-danger); font-size: var(--font-meta); line-height: var(--line-meta); }
 .settings-shortcuts-source-error p { margin: 0; }
-.settings-shortcuts-table { overflow: hidden; border-radius: var(--radius-lg); background: var(--fill-1); }
+.settings-shortcuts-table { overflow: hidden; padding-block: var(--space-4); border-radius: var(--radius-lg); background: var(--fill-1); }
 .settings-shortcuts-instruction { margin: 0; padding: var(--space-5); font-size: var(--font-meta); line-height: var(--line-meta); color: var(--text-secondary); }
 .settings-shortcuts-table .inset-group { gap: 0; }
-.settings-shortcuts-table .inset-group + .inset-group { margin-top: var(--space-4); }
+.settings-shortcuts-table .inset-group + .inset-group { margin-top: var(--space-8); }
 .settings-window .settings-shortcuts-table .inset-card { border-radius: var(--radius-none); background: transparent; }
-.settings-window .settings-shortcuts-table .inset-group-header { padding: var(--space-2) var(--space-5); font-size: var(--font-meta); }
+.settings-window .settings-shortcuts-table .inset-group-header { padding: var(--space-4) var(--space-5); font-size: var(--font-meta); }
 .settings-shortcut-row {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-4);
   align-items: center;
-  padding: var(--space-1) var(--space-5);
+  padding: var(--space-4) var(--space-5);
 }
-.settings-shortcut-row:nth-child(even) { background: var(--fill-1); }
+.settings-shortcut-row + .settings-shortcut-row::before { content: ''; position: absolute; inset: 0 var(--space-5) auto; height: var(--settings-row-separator-width); background: var(--settings-row-separator); }
 .settings-shortcut-label { min-width: 0; overflow-wrap: anywhere; }
 .settings-shortcut-bindings { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 .settings-shortcut-key {

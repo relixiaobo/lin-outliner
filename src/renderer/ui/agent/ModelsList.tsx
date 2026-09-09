@@ -1,3 +1,4 @@
+import { SettingsFeedback, type SettingsFeedbackState } from '../configuration/SettingsFeedback';
 import { memo, useMemo, useRef, useState } from 'react';
 import type { AgentProviderOption, AgentProviderSettingsView } from '../../api/types';
 import { api } from '../../api/client';
@@ -26,11 +27,13 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
   menuOpen,
   handlers,
   toggleError,
+  feedback,
 }: {
   provider: ProviderChoice;
   menuOpen: boolean;
   handlers: ProviderRowHandlers;
   toggleError?: string;
+  feedback?: SettingsFeedbackState;
 }) {
   const t = useT();
   const name = formatProviderName(provider.providerId);
@@ -70,7 +73,7 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
   return (
     <InsetRow
       ariaLabel={t.settings.providers.rowAriaLabel({ name, status: statusSentence })}
-      feedback={toggleError ? <span role="alert">{toggleError}</span> : undefined}
+      feedback={<SettingsFeedback feedback={toggleError ? { error: toggleError } : feedback} />}
       label={name}
       leading={<ProviderAvatar providerId={provider.providerId} />}
       onSelect={quickEnable
@@ -83,17 +86,15 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
 });
 
 interface ModelsListProps {
+  feedback?: Readonly<Record<string, SettingsFeedbackState>>;
   settings: AgentProviderSettingsView | null;
   draftProviderId: string;
   enabledOverrides: ReadonlyMap<string, boolean>;
   toggleErrors: ReadonlyMap<string, string>;
   onToggleProviderEnabled: (providerId: string, baseUrl: string | null) => void;
-  /**
-   * The shared mutation envelope. Provider rows commit through the parent because
-   * a provider mutation writes the settings, drafts, saving flag, and
-   * error/notice surface the whole page shares.
-   */
+  /** Serializes model writes while feedback remains with the affected row. */
   runProviderMutation: (
+    target: string,
     action: () => Promise<AgentProviderSettingsView>,
     successNotice: string,
     resetToInitial?: boolean,
@@ -106,6 +107,7 @@ interface ModelsListProps {
  * mutates goes through the parent's envelope.
  */
 export function ModelsList({
+  feedback = {},
   settings,
   draftProviderId,
   enabledOverrides,
@@ -160,15 +162,16 @@ export function ModelsList({
   }
 
   function activateProvider(providerId: string) {
-    runProviderMutation(() => api.agentSetActiveProvider(providerId), t.settings.providers.setActiveNotice);
+    runProviderMutation(providerId, () => api.agentSetActiveProvider(providerId), t.settings.providers.setActiveNotice);
   }
 
   function refreshProviderModels(providerId: string) {
-    runProviderMutation(() => api.agentRefreshProviderModels(providerId), t.settings.providers.modelsRefreshedNotice);
+    runProviderMutation(providerId, () => api.agentRefreshProviderModels(providerId), t.settings.providers.modelsRefreshedNotice);
   }
 
   function changeDefaultImageModel(defaultModel: string) {
     runProviderMutation(
+      'default-image',
       () => api.agentUpdateImageGenerationSettings({ defaultModel: defaultModel || null }),
       t.settings.providers.defaultImageModelSavedNotice,
     );
@@ -193,7 +196,7 @@ export function ModelsList({
   }
 
   function deleteProviderFor(providerId: string) {
-    runProviderMutation(() => api.agentDeleteProviderConfig(providerId), t.settings.providers.removedNotice, true);
+    runProviderMutation(providerId, () => api.agentDeleteProviderConfig(providerId), t.settings.providers.removedNotice, true);
   }
 
   // Open the per-provider config in its OWN native window (a modal child of
@@ -221,6 +224,7 @@ export function ModelsList({
 
   const renderProviderRow = (provider: ProviderChoice) => (
     <SettingsProviderRow
+      feedback={feedback[provider.providerId]}
       handlers={rowHandlers}
       key={provider.providerId}
       menuOpen={openRowMenu === provider.providerId}
@@ -239,6 +243,7 @@ export function ModelsList({
       <div className="settings-provider-groups">
         <InsetGroup ariaLabel={t.settings.providers.defaultModelsGroup} label={t.settings.providers.defaultModelsGroup}>
           <InsetRow
+            feedback={<SettingsFeedback feedback={feedback['default-text']} />}
             label={t.settings.providers.defaultModelLabel}
             sublabel={languageModelMenu.defaultUnavailable
               ? t.settings.providers.defaultModelUnavailable
@@ -248,6 +253,7 @@ export function ModelsList({
                 label={t.settings.providers.defaultModelLabel}
                 disabled={!settings}
                 onChange={(event) => runProviderMutation(
+                  'default-text',
                   () => api.agentUpdateModelDefault(event.target.value || null),
                   t.settings.providers.defaultModelSavedNotice,
                 )}
@@ -270,6 +276,7 @@ export function ModelsList({
             wrap
           />
           <InsetRow
+            feedback={<SettingsFeedback feedback={feedback['default-image']} />}
             label={t.settings.providers.defaultImageModelLabel}
             sublabel={imageModelMenu.defaultUnavailable
               ? t.settings.providers.defaultImageModelUnavailable

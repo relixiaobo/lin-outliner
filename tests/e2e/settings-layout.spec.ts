@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { emulateVisualMedia } from './emulatedMedia';
 import { SETTINGS_PANES } from '../../src/core/settingsWindow';
 import { getMessages } from '../../src/core/i18n';
 import { installElectronMock } from './outlinerMock';
@@ -23,11 +24,17 @@ for (const locale of ['en', 'zh-Hans'] as const) {
         expect(rail!.x).toBeGreaterThan(0);
         expect(rail!.y).toBeCloseTo(toolbar!.y);
         expect(toolbar!.x).toBeGreaterThan(rail!.x + rail!.width);
-        expect(content!.y).toBeGreaterThan(toolbar!.y + toolbar!.height);
+        expect(content!.y).toBeCloseTo(toolbar!.y);
+        const firstRow = await pane.getByRole('listitem').first().boundingBox();
+        expect(firstRow!.y).toBeGreaterThanOrEqual(toolbar!.y + toolbar!.height);
         expect(content!.x).toBeCloseTo(toolbar!.x);
         expect(content!.width).toBeCloseTo(toolbar!.width);
         await expect(page.locator('.settings-rail').getByRole('searchbox', { name: copy.search })).toBeVisible();
         await expect(page.locator('.configuration-toolbar').getByRole('searchbox')).toHaveCount(destination === 'shortcuts' ? 1 : 0);
+        if (destination === 'skills') {
+          await expect(page.locator('.configuration-toolbar').getByRole('button', { name: 'Add a skill', exact: true })).toHaveCount(locale === 'en' ? 1 : 0);
+          await expect(pane.locator('.inset-group-header')).toHaveCount(0);
+        }
         if (destination === 'shortcuts') {
           const controls = await page.locator('.settings-history, .settings-shortcuts-search').evaluateAll((elements) => elements.map((element) => {
             const style = getComputedStyle(element);
@@ -73,8 +80,10 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.screenshot({ path: testInfo.outputPath(`delegation-${colorScheme}.png`) });
 
     await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
-    await page.locator('summary', { hasText: 'Advanced Preferences' }).click();
+    await page.locator('summary', { hasText: 'Configuration Inspector' }).click();
     const inspector = page.getByRole('tabpanel', { name: 'Advanced', exact: true }).locator('.settings-disclosure[open]');
+    await expect(inspector.getByRole('radio', { name: 'Modified', exact: true })).toBeChecked();
+    await inspector.getByRole('radio', { name: 'All', exact: true }).click();
     await expect(inspector.getByRole('radiogroup', { name: 'Appearance', exact: true })).toBeVisible();
     for (const input of await inspector.locator('input, select').all()) {
       await input.scrollIntoViewIfNeeded();
@@ -85,5 +94,39 @@ for (const colorScheme of ['light', 'dark'] as const) {
       expect(overflow).toBe(false);
     }
     await page.screenshot({ path: testInfo.outputPath(`advanced-${colorScheme}.png`) });
+  });
+}
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`Settings content passes beneath a soft glass scroll edge in ${colorScheme}`, async ({ page }, testInfo) => {
+    await installElectronMock(page, { initialLanguage: 'en' });
+    await page.setViewportSize({ width: 860, height: 360 });
+    await emulateVisualMedia(page, { colorScheme, reducedTransparency: 'no-preference' });
+    await page.goto('/?surface=settings&destination=models');
+    const pane = page.getByRole('tabpanel', { name: 'Models', exact: true });
+    await expect(pane.getByRole('listitem').first()).toBeVisible();
+    await pane.evaluate((element) => { element.scrollTop = 170; });
+    await expect(page.locator('.settings-column')).toHaveAttribute('data-scrolled', 'true');
+    const edge = await page.locator('.configuration-toolbar').evaluate((element) => {
+      const style = getComputedStyle(element, '::before');
+      return { filter: style.backdropFilter, mask: style.maskImage, bottom: parseFloat(style.bottom), radius: parseFloat(style.borderTopLeftRadius) };
+    });
+    expect(edge.filter).toContain('blur(');
+    expect(edge.mask).toContain('linear-gradient');
+    expect(edge.bottom).toBeLessThan(-16);
+    expect(edge.radius).toBeGreaterThan(0);
+    const row = await pane.getByRole('listitem').first().boundingBox();
+    const toolbar = await page.locator('.configuration-toolbar').boundingBox();
+    expect(row!.y).toBeLessThan(toolbar!.y + toolbar!.height);
+    await page.screenshot({ path: testInfo.outputPath(`scroll-edge-${colorScheme}.png`) });
+    await emulateVisualMedia(page, { colorScheme, reducedTransparency: 'reduce' });
+    const opaque = await page.locator('.configuration-toolbar').evaluate((element) => {
+      const style = getComputedStyle(element, '::before');
+      return { filter: style.backdropFilter, mask: style.maskImage };
+    });
+    expect(opaque).toEqual({ filter: 'none', mask: 'none' });
+    await pane.evaluate((element) => { element.scrollTop = 0; });
+    await expect(page.locator('.settings-column')).toHaveAttribute('data-scrolled', 'false');
+    await page.screenshot({ path: testInfo.outputPath(`scroll-edge-opaque-${colorScheme}.png`) });
   });
 }

@@ -9,7 +9,7 @@ import { SkillLibrary } from '../agent/SkillLibrary';
 import { withMapValue, withoutMapKey, reportAppliedRefreshFailure, reportSettingsMutationError } from './mutationSupport';
 interface SkillDraft { disabledSkills: string[] }
 const EMPTY_SKILL_DRAFT: SkillDraft = { disabledSkills: [] };
-export function SkillsManager() {
+export function SkillsManager({ active, toolbarTarget }: { active: boolean; toolbarTarget: HTMLElement | null }) {
   const [skillDraft, setSkillDraft] = useState<SkillDraft>(EMPTY_SKILL_DRAFT);
   const [skillSources, setSkillSources] = useState<AgentSkillSettingsView['sourceBindings']>([]);
   const [skillToggleErrors, setSkillToggleErrors] = useState<Map<string, string>>(new Map());
@@ -20,7 +20,6 @@ export function SkillsManager() {
   const skillSettingsEpochRef = useRef(0);
   const skillSettingsPendingRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const mountedRef = useRef(false);
   const mutationGenerationsRef = useRef(new Map<string, number>());
   const t = useT();
@@ -67,8 +66,8 @@ export function SkillsManager() {
       const request = ++generation;
       const epoch = skillSettingsEpochRef.current;
       void api.agentGetSkillSettings().then((next) => {
-        if (active && request === generation) applyLoadedSkillSettings(next, epoch);
-      }).catch((caught) => { if (active) setError(caught instanceof Error ? caught.message : String(caught)); });
+        if (active && request === generation) { applyLoadedSkillSettings(next, epoch); setError(null); }
+      }).catch((caught) => { if (active && request === generation) setError(caught instanceof Error ? caught.message : String(caught)); });
     };
     refresh();
     const off = window.lin?.onConfigurationChanged('skills', refresh);
@@ -144,7 +143,6 @@ export function SkillsManager() {
             t.settings.skills.toggleFailed({ name: skillName }),
           ));
           reportSettingsMutationError('skill-toggle-write-failed', skillName, caught);
-          setNotice(null);
         }
         return false;
       } finally {
@@ -176,9 +174,10 @@ export function SkillsManager() {
   }
 
   return <>
+    <ManagerFeedback error={error} />
     <SkillLibrary additionalSkillDirectories={skillSources.map((source) => source.path)}
+      active={active} toolbarTarget={toolbarTarget}
       disabledSkills={skillDraft.disabledSkills} onApplied={onApplied} onDirectoriesChange={changeSkillDirectories}
-      onError={setError} onNotice={setNotice} onToggleSkill={toggleSkill} toggleErrors={skillToggleErrors} />
-    <ManagerFeedback error={error} notice={notice} />
+      onToggleSkill={toggleSkill} toggleErrors={skillToggleErrors} />
   </>;
 }
