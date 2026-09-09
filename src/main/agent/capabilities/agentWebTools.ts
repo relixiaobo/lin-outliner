@@ -73,7 +73,22 @@ export interface WebSearchData {
   durationMs?: number;
   hint?: WebToolHint;
   results: WebSearchResult[];
+  attempts?: WebSearchAttempt[];
+  cached?: boolean;
 }
+
+export interface WebSearchAttempt {
+  providerName: string;
+  status: 'success' | 'empty' | 'error' | 'skipped';
+  durationMs: number;
+  code?: string;
+}
+
+export type WebSearchOutcome = (
+  | { kind: 'ok'; finalUrl: string; results: WebSearchResult[]; responseBytes: number; truncated?: boolean }
+  | { kind: 'hint'; finalUrl: string; hint: WebToolHint }
+  | { kind: 'error'; finalUrl?: string; code: string; message: string; instructions?: string }
+) & { providerName?: string; attempts?: WebSearchAttempt[]; cached?: boolean };
 
 export interface WebPageMetadata {
   title?: string;
@@ -143,9 +158,8 @@ export interface NormalizedWebSearchParams {
   query: string;
   kind: WebSearchKind;
   limit: number;
-  // The query with any `site:` operator folded in. Each provider builds its own
-  // results URL from this; there is no provider-specific URL in these
-  // kind-agnostic params.
+  // The query with any `site:` operator folded in. Providers map this to their
+  // own requests; kind-agnostic params carry no provider-specific endpoint.
   effectiveQuery: string;
   site?: string;
   recencyDays?: number;
@@ -630,21 +644,9 @@ export function buildEffectiveSearchQuery(query: string, site?: string): string 
   return `${query} site:${site}`;
 }
 
-export function buildGoogleSearchUrl(query: string): string {
-  const params = new URLSearchParams({ q: query });
-  return `https://www.google.com/search?${params.toString()}`;
-}
-
 export function buildBingImagesSearchUrl(query: string): string {
   const params = new URLSearchParams({ q: query });
   return `https://www.bing.com/images/search?${params.toString()}`;
-}
-
-// DuckDuckGo's no-JS HTML endpoint: server-rendered results that scrape cleanly
-// and rarely gate, used as the secondary engine when Google is blocked or empty.
-export function buildDuckDuckGoSearchUrl(query: string): string {
-  const params = new URLSearchParams({ q: query });
-  return `https://html.duckduckgo.com/html/?${params.toString()}`;
 }
 
 function baseFetchData(
@@ -693,9 +695,9 @@ function normalizeOptionalSearchSite(value: unknown): ParamValueResult<string | 
 
   let host = '';
   try {
-    host = /^https?:\/\//i.test(withoutOperator)
-      ? new URL(withoutOperator).host
-      : withoutOperator.replace(/[/?#].*$/, '');
+    // URL canonicalization makes bare internationalized hosts match result URLs.
+    host = new URL(/^https?:\/\//i.test(withoutOperator)
+      ? withoutOperator : `https://${withoutOperator}`).host;
   } catch {
     return { ok: false, message: `invalid site host: ${site.value}` };
   }

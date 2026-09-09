@@ -523,28 +523,55 @@ feature does not add one or relax capability/worktree restrictions.
 - `web_fetch`: HTTP retrieval with redirect, size, and content extraction limits
 - `generate_image`: configured image-provider generation
 
-Web discovery uses a bounded Google → DuckDuckGo HTML provider chain. Each
-eligible engine receives at most one retry for a transient navigation fault,
-and the chain stops at the first non-empty result set. Google organic links that
-expose opaque `/goto` capabilities are resolved only inside the Google adapter:
-a dedicated JavaScript-disabled window requests an admitted
-`https://www.google.com/goto` URL, intercepts its first main-frame redirect, and
-prevents navigation before the external target is requested. Resolution has
-per-candidate and whole-batch time bounds; popups, same-host redirects, further
-navigations, invalid protocols, and malformed URLs are rejected. DuckDuckGo
-redirect targets are read locally from `uddg`. Every recovered target is
-revalidated as external HTTP(S) before admission.
+Ordinary web discovery uses fixed hosted search MCP endpoints over HTTP:
+Parallel first, then Exa when the primary fails or returns no usable results.
+The Host sends one JSON-RPC `tools/call` POST per eligible provider through a
+credential-free Electron `Session.fetch` partition. There is no BrowserWindow,
+homepage request, form submission, or page-script execution in this path.
+No MCP SDK or external process is needed. Optional `PARALLEL_API_KEY` and
+`EXA_API_KEY` process credentials are captured by the search client and sent
+only in provider-specific headers; requests otherwise use anonymous access.
+Endpoint redirects are rejected and credentials never enter result metadata.
 
-A successful empty search means every attempted provider that reached a normal
-SERP reported no organic results. A challenge, transport failure, SPA shell, or
-page with unextractable candidates remains a diagnostic hint/error; it never
-collapses into `ok: true` with an empty list. The provider that actually supplies
-results is retained in Host details, and fallback use produces a model-visible
-warning without exposing provider telemetry as result data. Search titles and
-snippets are untrusted discovery metadata, not factual evidence; when a result
-supports an answer, the Agent uses `web_fetch` to observe the admitted URL's
-actual final URL, status, and content before citing it. Image discovery
-continues to use Bing Images independently of this web provider chain.
+The search client owns a 20-second total deadline, with at most 10 seconds per
+provider including response-body reading. It accepts JSON and SSE envelopes,
+requires the matching response ID, checks both JSON-RPC and tool errors, and
+bounds each response to 512 KiB. Parallel's structured records and Exa's
+explicit title/URL/text records become the existing title/URL/snippet shape.
+Invalid or credential-bearing URLs are omitted, complete URLs are retained,
+fragments are removed for deduplication, and the selected records fit a 64 KiB
+JSON budget. Titles and excerpts are bounded; clipping is reported as truncated.
+The reported result count describes admitted candidates, not the size of the
+provider's search index. Bare and URL-form `site` inputs share URL domain
+canonicalization, including internationalized domains, before provider hints
+and exact/subdomain filtering. `recency_days` is encoded as a best-effort query
+hint and still requires date verification.
+
+A non-empty result set stops the chain. Empty success requires both providers
+to return valid empty candidate sets; an empty response never erases another
+provider's failure. Host details retain each provider's outcome and duration.
+Exa's complete known empty-result message is accepted as empty and does not
+trigger a provider cooldown; unrecognized trailing error text remains invalid.
+Transport errors, rate limits, and malformed responses produce bounded error
+categories without forwarding provider error text as instructions. Failed
+providers cool down for 30 seconds, extended by Retry-After up to five minutes.
+Repeated queries during an outage receive a useful failure instead of repeating
+the same blocked requests or suggesting a query rewrite.
+
+Successful non-empty searches are cached for 60 seconds, with at most 64
+entries per client. Cache identity includes the effective query, result limit,
+site, recency, and the date of a freshness cutoff; credentials are fixed per
+client. Identical in-flight calls share a request, while each caller can cancel
+independently. The underlying operation is cancelled when its final caller
+leaves; cancelled work and failures are never cached. Cache and attempt
+telemetry stay in Host details rather than the model result data.
+
+Search titles and snippets remain untrusted discovery metadata. The Agent uses
+`web_fetch` to observe a source URL's actual final URL, status, and content before
+using it as factual evidence. Image discovery continues independently through
+Bing Images, with its existing bounded browser extraction and transient retry.
+The real Electron web-tool probe verifies ordinary HTTP search, the original
+Chinese query, cache reuse without network, and no search-created windows.
 
 `web_fetch` uses a credential-free Electron `Session.fetch` partition with
 automatic redirect following, then applies its byte, timeout, and extraction
