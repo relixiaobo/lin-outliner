@@ -2,6 +2,35 @@ import { createHash } from 'node:crypto';
 import { open, stat } from 'node:fs/promises';
 import { StringDecoder } from 'node:string_decoder';
 
+export interface NormalizedTextCharacter {
+  readonly character: string;
+  readonly source: string;
+}
+
+/** Emit CRLF and CR as LF, keeping their original characters for byte accounting. */
+export class TextFileNewlines {
+  private pendingCarriageReturn = false;
+
+  *write(text: string): Iterable<NormalizedTextCharacter> {
+    for (const character of text) {
+      if (this.pendingCarriageReturn) {
+        this.pendingCarriageReturn = false;
+        yield { character: '\n', source: character === '\n' ? '\r\n' : '\r' };
+        if (character === '\n') continue;
+      }
+      if (character === '\r') this.pendingCarriageReturn = true;
+      else yield { character, source: character };
+    }
+  }
+
+  *end(): Iterable<NormalizedTextCharacter> {
+    if (this.pendingCarriageReturn) {
+      this.pendingCarriageReturn = false;
+      yield { character: '\n', source: '\r' };
+    }
+  }
+}
+
 export type CursorEncoding = 'utf8' | 'utf16le';
 export interface TextFileCursor {
   readonly version: 1;
@@ -86,6 +115,18 @@ export async function readTextFileContinuation(
   let stopped = false;
   try {
     const decoder = new StringDecoder(cursor.encoding);
+    const newlines = new TextFileNewlines();
+    const consume = (characters: Iterable<NormalizedTextCharacter>) => {
+      for (const { character, source } of characters) {
+        if (content.length + character.length > maxChars || line - cursor.line >= maxLines) {
+          stopped = true;
+          return;
+        }
+        content += character;
+        nextByte += Buffer.byteLength(source, cursor.encoding);
+        if (character === '\n') line++;
+      }
+    };
     const buffer = Buffer.alloc(16 * 1024);
     let position = cursor.nextByte;
     while (position < cursor.end && !stopped) {
@@ -100,16 +141,9 @@ export async function readTextFileContinuation(
       position += bytesRead;
       const decoded =
         decoder.write(buffer.subarray(0, bytesRead)) + (position === cursor.end ? decoder.end() : '');
-      for (const character of decoded) {
-        if (content.length + character.length > maxChars || line - cursor.line >= maxLines) {
-          stopped = true;
-          break;
-        }
-        content += character;
-        nextByte += Buffer.byteLength(character, cursor.encoding);
-        if (character === '\n') line++;
-      }
+      consume(newlines.write(decoded));
     }
+    if (!stopped) consume(newlines.end());
   } finally {
     await handle.close();
   }
@@ -123,8 +157,8 @@ export async function readTextFileContinuation(
   return {
     content,
     startLine: cursor.line,
-    numLines: content ? content.split('\n').length : 0,
-    totalLines: hasMore ? null : line,
+    numLines: content ? content.split('\n').length - (content.endsWith('\n') ? 1 : 0) : 0,
+    totalLines: hasMore ? null : line - (content.endsWith('\n') ? 1 : 0),
     hasMore,
     generation: cursor.generation,
     encoding: cursor.encoding,

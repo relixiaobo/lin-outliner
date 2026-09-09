@@ -1,4 +1,11 @@
-import { TextFileCursorError, textFileGeneration, encodeTextFileCursor, readTextFileContinuation } from './textFileCursor';
+import {
+  TextFileNewlines,
+  type NormalizedTextCharacter,
+  TextFileCursorError,
+  textFileGeneration,
+  encodeTextFileCursor,
+  readTextFileContinuation,
+} from './textFileCursor';
 import type { AgentTool, AgentToolTextReplacement } from '../runtime/kernel/types';
 import {
   type BashTaskStatus,
@@ -1473,17 +1480,18 @@ function createFileGrepTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
     ].join('\n'),
     parameters: FILE_GREP_PARAMETERS,
     executionMode: 'parallel',
-    execute: async (_toolCallId, rawParams: unknown) => {
+    execute: async (_toolCallId, rawParams: unknown, signal) => {
       const started = Date.now();
       try {
         const params = normalizeFileGrepParams(rawParams);
-        const data = await runGrep(workspace, params);
+        const data = await runGrep(workspace, params, signal);
         return agentToolResult(successEnvelope('file_grep', data, {
           status: data.appliedLimit !== undefined ? 'partial' : undefined,
           instructions: data.appliedLimit !== undefined ? `More results may be available. Call file_grep again with offset ${(data.appliedOffset ?? 0) + data.appliedLimit}.` : undefined,
           metrics: { ...metrics(started, data), truncated: data.appliedLimit !== undefined },
         }), visibleFileGrep(data));
       } catch (error) {
+        if (signal?.aborted) throw error;
         return localErrorResult('file_grep', error, started);
       }
     },
@@ -2019,7 +2027,8 @@ function normalizeBashParams(rawParams: unknown): BashParams {
   };
 }
 
-async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Promise<FileGrepData> {
+async function runGrep(workspace: WorkspaceContext, params: FileGrepParams, signal?: AbortSignal): Promise<FileGrepData> {
+  signal?.throwIfAborted();
   const target = params.path ? resolveWorkspacePath(workspace, params.path) : workspace.root;
   const targetStat = await stat(target).catch((error: unknown) => {
     throw localFsError(error, target);
@@ -2057,7 +2066,7 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
       const line = Number(lineText); const byteOffset = Number(byteText);
       rawLines[index] = `${targetStat.isFile() ? '' : `${relativeToWorkspace(workspace, filePath)}${kind}`}${params['-n'] === false ? '' : `${line}${kind}`}${snippet}`;
       if (kind !== ':') continue;
-      const located = await locateGrepSnippet(filePath, byteOffset, line, snippet ?? '');
+      const located = await locateGrepSnippet(filePath, byteOffset, line, snippet ?? '', signal);
       const cursor = located?.cursor ?? null;
       if (located) rawLines[index] = `${targetStat.isFile() ? '' : `${relativeToWorkspace(workspace, filePath)}:`}${params['-n'] === false ? '' : `${line}:`}${located.preview}`;
       locations.set(index, { filePath, line, byteOffset, cursor });
@@ -2122,36 +2131,134 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
   };
 }
 
-/** Inspect only a bounded region around a match, never deserialize a whole long line. */
-async function locateGrepSnippet(filePath: string, byteOffset: number, line: number, match: string) {
+/** Inspect a bounded matching region; transcoded offsets require streaming to that position. */
+async function locateGrepSnippet(
+  filePath: string,
+  byteOffset: number,
+  line: number,
+  match: string,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
   try {
     const source = await textFileGeneration(filePath);
     const handle = await open(filePath, 'r');
     try {
-      const prefix = Buffer.alloc(2);
-      await handle.read(prefix, 0, 2, 0);
-      // ripgrep transcodes UTF-16. Its offsets are not original byte positions;
-      // those results retain a line locator rather than advertising a false cursor.
-      if (detectTextEncoding(prefix) !== 'utf8') return null;
+      const prefix = Buffer.alloc(3);
+      await handle.read(prefix, 0, prefix.length, 0);
+      const encoding = detectTextEncoding(prefix);
+      // ripgrep strips a BOM and transcodes UTF-16. These offsets do not address
+      // original bytes; retain matching context and a line locator, without a cursor.
+      if (encoding !== 'utf8' || prefix.equals(Buffer.from([0xef, 0xbb, 0xbf]))) {
+        const preview = await readTranscodedGrepPreview(filePath, byteOffset, match, encoding, signal);
+        if (preview === null || (await textFileGeneration(filePath)).generation !== source.generation)
+          return null;
+        return { preview, cursor: null };
+      }
       const start = Math.max(0, byteOffset - 2_000);
       const buffer = Buffer.alloc(4_000);
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
       const atMatch = byteOffset - start;
       const expected = Buffer.from(match, 'utf8').subarray(0, 32);
-      if (!expected.length || !buffer.subarray(atMatch, atMatch + expected.length).equals(expected)) return null;
+      if (!buffer.subarray(atMatch, atMatch + expected.length).equals(expected)) return null;
       const before = buffer.subarray(0, atMatch).toString('utf8').split(/\r?\n/).at(-1)!;
       const after = buffer.subarray(atMatch, bytesRead).toString('utf8').split(/\r?\n/)[0]!;
-      const wholeLine = before.length + after.length <= 500;
-      const leading = wholeLine ? before : [...before].slice(-120).join('');
-      const trailing = wholeLine ? after : [...after].slice(0, 380).join('');
+      const { preview, leading } = boundedGrepPreview(before, after);
       const nextByte = byteOffset - Buffer.byteLength(leading);
       if ((await textFileGeneration(filePath)).generation !== source.generation) return null;
       return {
-        preview: `${leading}${trailing}${trailing.length < after.length ? ' … [preview truncated]' : ''}`,
-        cursor: encodeTextFileCursor(filePath, { generation: source.generation, end: source.size, encoding: 'utf8', nextByte, line }),
+        preview: preview.replace(/\r$/, ''),
+        // Empty matches still have useful line context, but no matched bytes
+        // with which to verify an original-byte continuation.
+        cursor: expected.length
+          ? encodeTextFileCursor(filePath, {
+              generation: source.generation,
+              end: source.size,
+              encoding: 'utf8',
+              nextByte,
+              line,
+            })
+          : null,
       };
-    } finally { await handle.close(); }
-  } catch { return null; }
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return null;
+  }
+}
+
+function boundedGrepPreview(before: string, after: string): { preview: string; leading: string } {
+  const wholeLine = before.length + after.length <= 500;
+  const leading = wholeLine ? before : [...before].slice(-120).join('');
+  const trailing = wholeLine ? after : [...after].slice(0, 380).join('');
+  return {
+    leading,
+    preview: `${leading}${trailing}${trailing.length < after.length ? ' … [preview truncated]' : ''}`,
+  };
+}
+
+/** Match ripgrep's BOM-free UTF-8 search offsets without retaining an entire long line. */
+async function readTranscodedGrepPreview(
+  filePath: string,
+  byteOffset: number,
+  match: string,
+  encoding: TextEncoding,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const decoder = new StringDecoder(encoding);
+  let first = true;
+  let position = 0;
+  let reached = false;
+  let stopped = false;
+  let before = '';
+  let after = '';
+  const consume = (decoded: string) => {
+    if (first && decoded.length) {
+      first = false;
+      if (decoded.charCodeAt(0) === 0xfeff) decoded = decoded.slice(1);
+    }
+    for (const character of decoded) {
+      if (position === byteOffset) reached = true;
+      if (reached) {
+        if (character === '\n') {
+          stopped = true;
+          return;
+        }
+        after += character;
+        if (after.length > 1_000) {
+          stopped = true;
+          return;
+        }
+      } else {
+        if (position > byteOffset) {
+          stopped = true;
+          return;
+        }
+        if (character === '\n') before = '';
+        else {
+          before += character;
+          if (before.length > 1_000) {
+            before = before.slice(-500);
+            // A bounded prefix must not begin with half a surrogate pair.
+            if (/^[\uDC00-\uDFFF]/u.test(before)) before = before.slice(1);
+          }
+        }
+      }
+      position += Buffer.byteLength(character, 'utf8');
+    }
+  };
+  const stream = createReadStream(filePath, { highWaterMark: 16 * 1024, signal });
+  for await (const chunk of stream) {
+    consume(decoder.write(chunk as Buffer));
+    if (stopped) break;
+  }
+  if (!stopped) consume(decoder.end());
+  if (!reached && position !== byteOffset) return null;
+  const expected = Buffer.from(match, 'utf8').subarray(0, 32);
+  if (!Buffer.from(after, 'utf8').subarray(0, expected.length).equals(expected)) return null;
+  return boundedGrepPreview(before, after).preview.replace(/\r$/, '');
 }
 
 function buildRipgrepArgs(workspace: WorkspaceContext, target: string, params: FileGrepParams): string[] {
@@ -4608,6 +4715,7 @@ async function readTextFileWindow(
   const hasBom = prefixText.charCodeAt(0) === 0xfeff;
   const lineEndings = detectLineEndings(hasBom ? prefixText.slice(1) : prefixText);
   const decoder = new StringDecoder(encoding);
+  const newlines = new TextFileNewlines();
   let nextByte = hasBom ? Buffer.byteLength("\ufeff", encoding) : 0;
   const selected: string[] = [];
   const lastRequestedLine = requestedStartLine + limit - 1;
@@ -4617,7 +4725,6 @@ async function readTextFileWindow(
   let captureStarted = false;
   let outputChars = 0;
   let completedLines = 0;
-  let pendingCarriageReturn = false;
   let endedWithNewline = false;
   let hasMore = false;
   let lineTruncated = false;
@@ -4672,29 +4779,21 @@ async function readTextFileWindow(
     currentLineHasChars = false;
     captureStarted = false;
   };
+  const consumeCharacters = (characters: Iterable<NormalizedTextCharacter>) => {
+    for (const { character, source } of characters) {
+      if (character === '\n') consumeNewline();
+      else consumeCharacter(character);
+      if (stopped) return;
+      nextByte += Buffer.byteLength(source, encoding);
+    }
+  };
   const consumeDecodedText = (decoded: string) => {
     let text = decoded;
     if (firstDecodedText && text.length > 0) {
       firstDecodedText = false;
       if (hasBom && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     }
-    for (const character of text) {
-      if (pendingCarriageReturn) {
-        pendingCarriageReturn = false;
-        consumeNewline();
-        if (stopped) return;
-        if (character === '\n') { nextByte += Buffer.byteLength(character, encoding); continue; }
-      }
-      if (character === '\r') {
-        pendingCarriageReturn = true;
-      } else if (character === '\n') {
-        consumeNewline();
-      } else {
-        consumeCharacter(character);
-      }
-      if (stopped) return;
-      nextByte += Buffer.byteLength(character, encoding);
-    }
+    consumeCharacters(newlines.write(text));
   };
 
   signal?.throwIfAborted();
@@ -4705,10 +4804,7 @@ async function readTextFileWindow(
   }
   if (!stopped) {
     consumeDecodedText(decoder.end());
-    if (pendingCarriageReturn) {
-      pendingCarriageReturn = false;
-      consumeNewline();
-    }
+    if (!stopped) consumeCharacters(newlines.end());
   }
   if (!stopped && !endedWithNewline && currentLineHasChars) {
     if (currentLine <= lastRequestedLine && currentLine >= requestedStartLine) {

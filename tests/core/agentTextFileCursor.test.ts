@@ -68,6 +68,105 @@ describe('ordinary file continuations', () => {
     });
   });
 
+  for (const encoding of ['utf8', 'utf16le'] as const) {
+    for (const newline of ['\r\n', '\r']) {
+      test(`normalizes ${JSON.stringify(newline)} in ${encoding} across page and decoding boundaries`, async () => {
+        await fixture(async (root, call) => {
+          const width = encoding === 'utf16le' ? 2 : 1;
+          const bomBytes = Buffer.byteLength('\ufeff', encoding);
+          const scenarios = [
+            'x'.repeat(199_999) + newline + 'ab' + newline + 'cd',
+            'x'.repeat((65_536 - bomBytes) / width - 1) + newline + '😀'.repeat(105_000),
+            'x'.repeat(200_000 + 16_384 / width - 1) + newline + 'ab' + newline + 'cd',
+            'x'.repeat(399_999) + newline + 'tail',
+            'x'.repeat(200_010) + newline,
+          ];
+          for (const [index, content] of scenarios.entries()) {
+            const file = join(root, `newlines-${index}.txt`);
+            await writeFile(file, Buffer.from('\ufeff' + content, encoding));
+            let page = await call('file_read', { file_path: file });
+            let joined = '';
+            let pages = 0;
+            do {
+              expect(page.ok).toBe(true);
+              expect(page.data.file.content).not.toContain('\r');
+              expect(page.data.file.content.length).toBeLessThanOrEqual(200_000);
+              joined += page.data.file.content;
+              expect(++pages).toBeLessThan(10);
+              if (!page.data.file.nextCursor) break;
+              page = await call('file_read', { file_path: file, cursor: page.data.file.nextCursor });
+            } while (true);
+            expect(pages).toBeGreaterThan(1);
+            expect(joined === content.replace(/\r\n?/g, '\n')).toBe(true);
+          }
+        });
+      });
+    }
+    test(`counts standalone CR lines in ${encoding} continuation windows`, async () => {
+      await fixture(async (root, call) => {
+        const file = join(root, 'line-limits.txt');
+        const content = 'x'.repeat(200_010) + '\rab\rcd';
+        await writeFile(file, Buffer.from('\ufeff' + content, encoding));
+        let page = await call('file_read', { file_path: file });
+        let joined = page.data.file.content;
+        for (let line = 1; line <= 3; line++) {
+          page = await call('file_read', { file_path: file, cursor: page.data.file.nextCursor, limit: 1 });
+          expect(page.ok).toBe(true);
+          expect(page.data.file.startLine).toBe(line);
+          expect(page.data.file.numLines).toBe(1);
+          joined += page.data.file.content;
+        }
+        expect(page.data.file.nextCursor).toBeNull();
+        expect(page.data.file.totalLines).toBe(3);
+        expect(joined === content.replace(/\r/g, '\n')).toBe(true);
+      });
+    });
+  }
+
+  for (const encoding of ['utf8', 'utf16le'] as const) {
+    for (const withBom of encoding === 'utf8' ? [false, true] : [true]) {
+      test(`keeps matching-line context for zero-width and ordinary matches in ${encoding}, BOM=${withBom}`, async () => {
+        await fixture(async (root, call) => {
+          const file = join(root, 'context.txt');
+          for (const newline of ['\n', '\r\n']) {
+            await writeFile(
+              file,
+              Buffer.from(
+                (withBom ? '\ufeff' : '') + `original decision${newline}next action${newline}`,
+                encoding,
+              ),
+            );
+            for (const pattern of ['^', '$', 'decision']) {
+              const found = await call('file_grep', { path: file, pattern, output_mode: 'content' });
+              expect(found.ok).toBe(true);
+              expect(found.data.content).toContain('1:original decision');
+              if (pattern !== 'decision') expect(found.data.content).toContain('2:next action');
+            }
+          }
+        });
+      });
+    }
+  }
+
+  test('keeps bounded context around a deep UTF-16 match without advertising a raw-byte cursor', async () => {
+    await fixture(async (root, call) => {
+      const file = join(root, 'long-utf16.txt');
+      await writeFile(
+        file,
+        Buffer.from(
+          '\ufeffheader\r\n' + '界😀'.repeat(50_000) + ' original decision: next action ' + 'y'.repeat(1_000),
+          'utf16le',
+        ),
+      );
+      const found = await call('file_grep', { path: file, pattern: 'decision', output_mode: 'content' });
+      expect(found.ok).toBe(true);
+      expect(found.data.content).toContain('original decision: next action');
+      expect(found.data.content.length).toBeLessThan(1_000);
+      expect(found.data.content).not.toContain('\ufffd');
+      expect(found.data.readLocations[0]).toMatchObject({ filePath: file, line: 2, cursor: null });
+    });
+  });
+
   test('rejects replacement, a cursor for another file, conflicting windows, and cancellation', async () => {
     await fixture(async (root, call) => {
       const file = join(root, 'detail.txt');
@@ -81,6 +180,9 @@ describe('ordinary file continuations', () => {
       expect((await call('file_read', { file_path: file, cursor, offset: 1 })).error.code).toBe(
         'invalid_args',
       );
+      await expect(
+        call('file_grep', { path: file, pattern: '^', output_mode: 'content' }, AbortSignal.abort()),
+      ).rejects.toMatchObject({ name: 'AbortError' });
       await expect(call('file_read', { file_path: file, cursor }, AbortSignal.abort())).rejects.toMatchObject(
         { name: 'AbortError' },
       );

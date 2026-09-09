@@ -274,8 +274,11 @@ normalization path: it accepts at most 256 MiB of source data and emits at most
 A long-line partial read includes `nextCursor` and a file generation. Passing that
 cursor with the same `file_path` continues inside the line without a shell byte-range
 workaround. The cursor carries path identity, generation, original encoding, next
-byte position, line and observed end. UTF-8 and UTF-16LE code points are not split;
-changed sources return `source_changed`. Cursors cannot combine with `offset` or
+byte position, line and observed end. Initial reads and continuations share CRLF/CR
+to LF normalization and line counting while advancing through original encoded
+bytes. Both readers join code points and CRLF pairs across decoding blocks and
+place cursors only after complete units. UTF-8 and UTF-16LE are supported; changed
+sources return `source_changed`. Cursors cannot combine with `offset` or
 `pages`. Ordinary line windows remain available. New Turn tool assembly and actual
 context compaction invalidate read freshness on the active tool closures, so a file
 whose earlier contents left model context can return its text again.
@@ -284,8 +287,11 @@ whose earlier contents left model context can return its text again.
 and emits bounded regions around actual matches, including matches deep inside a
 long line, plus `readLocations` with path, line, match byte offset and a `file_read`
 cursor when the source bytes can be verified. UTF-16 search offsets are transcoded
-by ripgrep, so those matches retain a line locator and no misleading byte cursor;
-ordinary UTF-16 reads can continue through the line. Previews may be truncated and
+by ripgrep, so those matches retain a line locator and no misleading byte cursor.
+BOM-adjusted offsets use the same bounded streaming preview fallback; it retains
+context around deep matches without keeping the full line in memory. Zero-width
+matches still expose their matching line context, including at CRLF line endings.
+Ordinary UTF-16 reads can continue through the line. Previews may be truncated and
 multiple matches on one line may produce separate regions. Files/count modes remain
 unchanged. Context rows stay distinct from match locations. Pages fit the shared
 4,096-entry and 256 KiB serialized result-data limits including cursor metadata,
