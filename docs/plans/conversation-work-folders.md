@@ -48,6 +48,11 @@ Project/location status appears immediately beside Add only when a Project or
 work folder is selected. This follows the PM's explicit interaction direction
 for the expected majority of conversations without a Project.
 
+**DEC-3:** The model control uses a compact model name and reasoning label, such
+as `Sonnet 5 · Med`. Full model/connection identity and reasoning labels remain
+available in its menu and tooltip. This presentation shares the toolbar space
+with the optional Project/location chip.
+
 | Option | Benefit | Cost / decision |
 | --- | --- | --- |
 | Per-call cwd only, as today | Simple task ownership and flexible cross-directory work | No durable conversation location; insufficient for OBJ-1 |
@@ -211,6 +216,34 @@ identity; full text is accessible in details. At supported narrow widths the
 chip stays in the toolbar without displacing send/stop controls or adding a
 permanent row. Hover never changes geometry.
 
+**FR-8:** The composer model button displays a compact form of the model already
+resolved by the existing selection owner. For recognized Claude family labels,
+omit the redundant `Claude` prefix, for example `Claude Sonnet 5` becomes
+`Sonnet 5`. Keep the family, version, and meaningful variant suffixes. Unrecognized
+or custom labels without a recognized form retain their supplied name; do not
+blindly remove a first word, version, or suffix. The full catalog/configured name
+remains unchanged in menus and configuration.
+
+Use explicit localized short reasoning labels in the button: English `Medium`
+becomes `Med`, `Minimal` becomes `Min`, and `XHigh`/`Extra High` becomes `XH`;
+already short `Low`, `High`, and `Max` remain readable. Chinese labels such as
+`中` remain short localized text. Abbreviation follows the existing resolved
+display label, including a provider-specific label, rather than assuming that
+a generic effort key always names the provider's displayed level. Preserve
+unrecognized provider labels instead of guessing an equivalent standard level.
+The full reasoning label appears in the menu and tooltip. Retain the existing
+hidden badge for reasoning off; the menu/details still expose that state.
+
+Model name and compact effort stay visible at rest, with quieter effort text.
+The button's accessible label and inspectable details expose the full model name,
+connection identity, and reasoning level; hover is not the only way to recover
+the full information. Model selection, current connection, floating versus pinned
+selection, effort support/fallback, and execution remain owned by the existing
+selection path. This adds no model resolver, catalog rewrite, or configuration
+mutation. The row composes as Add, optional Project/location chip, flexible space,
+compact model/effort, and send/stop. Supported narrow layouts retain the location
+distinctions from FR-7 and usable model and send/stop controls without hover reflow.
+
 ### Execution and change rules
 
 **BR-1:** Resolve each operation from its explicit cwd override, otherwise the
@@ -264,9 +297,13 @@ existing chat's Project alters cwd, so FR-3 is a Tenon recommendation.
 Tenon screenshot directing replacement of the attachment icon with Add, Project
 selection inside its menu, and selected status beside Add. This is the supplied
 product direction, not a measured usage statistic.
+**EVD-5:** The PM requested shortening the adjacent model control, explicitly
+giving `Sonnet 5` as sufficient for a Claude model and asking to abbreviate
+`Medium`, considered together with the Add/status toolbar interaction.
 **ASM-1:** Add remains discoverable without an empty Project prompt. Validate with
 ordinary chat, attachment use, a folder-less Project, a multi-folder Project, two
-worktrees, cross-directory inspection, keyboard navigation, and a narrow composer.
+worktrees, cross-directory inspection, keyboard navigation, and a narrow composer
+with compact model/effort labels.
 
 Implementation suggestions: use the existing persistent Thread metadata owner
 for one revisioned folder setting; extend Host admission and the current-context
@@ -282,7 +319,8 @@ they do not acquire conversation-default lookup or multi-folder fan-out.
 Expected areas: Agent Thread protocol and metadata persistence, Thread service
 operations, resource/default-directory resolution, local-tool admission and
 context publication, packaged CLI/Skill admission, ThreadView's composer toolbar,
-ThreadDock/ThreadList, composer/Project styles, attachment-menu integration, and
+ThreadComposerModelControl and its private display formatting, ThreadDock/ThreadList,
+composer/Project styles, attachment-menu integration, and
 Project catalog/service/storage/editing and membership flow, Automation Project
 directory resolution, localization, and focused Core/renderer/Electron tests.
 Update Agent Core, tool design, rendering, and affected context specs together.
@@ -364,6 +402,17 @@ durable work-folder selection.
   settings removes it. Pending/failure states remain truthful. Long names and a
   narrow light/dark composer retain location distinctions and accessible send/stop
   controls, and menu dismissal preserves input/focus. Covers FR-4/7.
+- **AC-15:** A resolved `Claude Sonnet 5` with displayed effort `Medium` shows
+  `Sonnet 5 · Med`; menus, tooltip, and accessible details retain full model,
+  connection, and effort identity. Check localized short labels, retained version/
+  variant suffixes, unknown/custom names, and provider-specific effort labels.
+  Floating and pinned selections still display the actual resolved model without
+  changing the selection or reasoning behavior. Covers FR-8.
+- **AC-16:** With no context selection and with each FR-7 chip state, a narrow
+  light/dark composer fits the compact model control and usable send/stop controls.
+  Model and effort remain visible at rest; keyboard users can inspect full labels,
+  change supported selections, and restore focus without losing the draft.
+  Covers FR-7/8.
 
 Run typecheck, relevant owner/integration tests, real CLI discovery, focused
 Electron interaction and restart checks, docs checks, and light/dark verification
