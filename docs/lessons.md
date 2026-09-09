@@ -2867,3 +2867,14 @@ binding and its source digest, or display an obsolete read error.
 snapshot arrives.** Scope that fence to the subscription lifetime and retain
 unmount cleanup. Verify the next edit uses the live snapshot's concurrency token,
 as well as checking the visible value and recovery from a genuine initial error.
+
+## Queued UI writes must capture values during the input event
+
+PR #666 fixes a default-model save that read `event.target.value` only when its
+queued callback ran. React had already restored the previous controlled value,
+so the command saved Automatic and truthfully reported success for the wrong input.
+
+**Copy the selected value before scheduling work; never defer reading mutable
+event targets.** Verify the exact command payload and persisted selection through
+consecutive choices, failure/retry, and restart, rather than accepting a success
+notice as proof that the user's choice was saved.
