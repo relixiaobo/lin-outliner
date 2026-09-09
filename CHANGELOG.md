@@ -719,6 +719,20 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Global Memory and Agent profile design integrated (PR #665)** - approved
+  independently complete Node-retention quality and profile-file/direct-learning
+  units. Current personal context has one `USER.md` authority; explicit identity
+  and style use profile components, while valuable dated experience remains in
+  Outline Nodes and original evidence remains in conversation history. The
+  handoff requires demonstrated component precedence and next-Turn activation
+  without changing frozen permissions, and Reset UI must reflect its actually
+  shipped Node ownership. The board sequences startup, unified records, profile
+  learning and targeted recovery; recovery now includes the final profile owner.
+  Optional views, temporal work and narrower Node Reset do not extend that chain.
+  This integration changes documentation only; implementation and quality/cost
+  validation remain pending. The integration gate passed typecheck, docs/diff
+  checks, and 34 existing configuration-loader/Memory Reset tests (99 assertions).
+
 - **Recovery/records delivery now follows the complete approved workbench series** -
   corrected the #653/#654 integration order to finish Settings G and workbench
   C/D/E before startup isolation, unified records, and targeted recovery. The

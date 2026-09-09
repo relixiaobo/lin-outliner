@@ -154,6 +154,14 @@ Consume [startup fault isolation](startup-fault-isolation.md) first under the se
 
 This feature owns shared exact-source resolution (FR-1), durable recovered-history provenance (BR-4), and record publication invalidation/cleanup (BR-5), integrated with existing Thread lifecycle owners. [Targeted conversation recovery](targeted-thread-recovery.md) follows and consumes these final mechanisms for verified rebuild/removal, preserving the only surviving projection and unrelated resources. It adds no independent source interpretation or publication cleanup coordinator. Its startup dependency is a capability prerequisite; the selected order around this record refactor follows A7.
 
+[Profile files and direct learning](memory-agent-profile.md#implementation-ownership-and-complete-delivery-units)
+consumes these final source coordinates and availability/provenance contracts
+before targeted recovery. The profile owner determines learning eligibility and
+invalidation; this resolver reports original evidence and never grants source
+access or interprets a retained preference as execution authority. Node retention
+quality has its own complete delivery boundary and actual Memory/source collision
+check. Optional profile-plan additions do not delay this record refactor.
+
 Consume the final workbench Tool Task, context, artifact and isolation contracts.
 Git and verification Skills use native commands and generic results, not private
 review/check evidence producers. Resolve retained history through generic source

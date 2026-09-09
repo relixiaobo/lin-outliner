@@ -2845,3 +2845,15 @@ bounded prefix from its beginning, suppress unfinished blocks, and withhold raw
 text on scan failure. Verify both missing-footer and tail-inside-block cases
 through the model-visible result, on stdout and stderr, while proving that reads
 leave the process running and its raw capture unchanged.
+
+## Destructive-action promises follow complete delivery boundaries
+
+PR #665's plan separates profile learning from a later, narrower Node Reset.
+An aggregate design's preservation rule must not become UI copy in an earlier
+feature that still calls the original subtree deletion owner.
+
+**State destructive scope for each independently shipped unit.** Name the
+actual affected owners and ordinary descendants in review and confirmation;
+promise preservation only when its transaction and recovery behavior ship.
+Optional refinements must neither silently widen an earlier action nor become
+an undeclared prerequisite for an otherwise complete feature.

@@ -36,6 +36,15 @@ recovered-history provenance, and publication invalidation mechanisms from
 [unified session records](unified-session-records.md). These are required
 predecessor contracts, not implementation details to reconstruct from an archive.
 
+The selected order also consumes
+[profile files and direct learning](memory-agent-profile.md#implementation-ownership-and-complete-delivery-units)
+before this feature. Bind closure inspection to its final accepted file revisions,
+admission, provenance, pending-work and retained-source contracts. A source Thread
+becoming unavailable does not itself forget an accepted user-wide preference;
+explicit forgetting, correction and rollback retain their distinct invalidation
+semantics. Optional views, temporal enhancements and narrower Node Reset are
+outside this predecessor boundary.
+
 CON-2: Source resolution and completeness validation are distinct. A retained
 value being readable does not prove a complete reconstructable history. A
 reconstructed projection remains usable with its recovery provenance, but does
@@ -64,6 +73,7 @@ without providing a readable history for the failed Thread.
 | `GoalStore`, `ToolTaskStore`, `DelegationSessionStore` | Goals/tasks share `goals.sqlite`. Reconcile process, lease, continuation, cancellation and delivery ownership; include actual blocking work in the preview. Compact execution truth is not a cache. |
 | `AutomationStore` | Preserve definitions and occurrence/claim/run evidence outside the proven scope. Fence affected dispatch/continuity through the existing owner rather than guessing from Thread files. |
 | `MemoryControlStore`, `TimelineMemoryStore` | Include affected admission, extraction, publication, rollback and reset control in the closure. Preserve generated Outline Memory Nodes and unrelated control state; respect cross-store recovery. |
+| Profile file and learning owner | Preserve accepted `USER.md`, explicit identity/style, attributable revisions and source provenance. Reconcile affected learning/publication jobs and source availability through the owner without treating conversation removal as profile Reset. |
 | `AgentResourceStore`, ContentStore, Outline assets | Preserve required bytes and anchors before unlinking. Keep shared attachments and every independently retained reference. Incomplete ownership evidence must not enable garbage collection. |
 | Configuration, credentials, Skills, Outline | Preserve these categories; neither `agent/` nor `content/` defines a removable domain. Outline reset has no recovery action here. |
 | Unified record publisher | Fence, invalidate/drain, and remove affected derived entries through its existing lifecycle owner; rebuild only from retained originals. Publishing/navigation do not adopt historical originals into another Thread. |
@@ -170,6 +180,13 @@ Memory/Automation dependency, live/ambiguous-process, WAL snapshot, disk-full,
 stale-confirmation and duplicate-submit cases. Crash after each retained-copy,
 staging, swap, domain-removal and publication-cleanup boundary; reopen production
 owners to verify no loss of protected data or duplicate admission/collection.
+
+Include accepted profile entries whose source Thread is removed, a pending
+profile update during recovery, and an explicitly invalidated or forgotten
+source. Verify that ordinary source removal preserves accepted independent
+profile content with unavailable evidence, while invalidated work cannot replay
+through an old file snapshot. Interrupted recovery must settle through the final
+profile owner without duplicate writes or a new learning/admission authority.
 
 Run typecheck, relevant Core/renderer suites, focused Electron recovery smoke,
 docs/diff checks, and light/dark/accessibility verification. No fixture reads or

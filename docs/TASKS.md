@@ -24,6 +24,16 @@ record plan separates historical originals from new reading-Thread image/PDF
 observations. Runtime behavior has not shipped. Record-discovery eligibility
 remains gated on the explicit product decision in that plan's OQ-1.
 
+PR #665 integrates the global Memory/profile design. Its two core delivery
+units remain unimplemented: Node retention quality, and profile files/direct
+learning. Startup fault isolation is claimed by #664. Unified records precedes
+profile learning, and targeted recovery follows the final profile owner so its
+closure includes file acceptance, provenance, pending work and retention.
+Optional views, richer temporal behavior and narrower Node Reset remain outside
+that chain. Component-source/precedence examples are required before profile
+consumers are built; core Reset UI retains the existing Node subtree scope until
+the optional narrower behavior ships.
+
 Workbench Units A-E shipped through #658. PR #660 subsequently simplified the
 workbench to UI-owned Projects, native Git/test commands guided by Skills, and
 generic Goal/Task state. Private verification and Git evidence, Project model
@@ -74,7 +84,8 @@ stay active until their implementation, spec fold, and archive move complete.
 ## Primary Delivery Queue
 
 This queue is executable: **every row is one substantial, independently
-reviewable PR and one active plan**. Internal build stages stay inside that PR.
+reviewable PR backed by an active design**. A multi-unit plan may supply several
+named complete features; internal build stages stay inside each feature's PR.
 Named consumers fan out only after their last predecessor merges; collision-
 ordered pairs remain linear.
 
@@ -91,7 +102,7 @@ protocol, security rule, user flow, or acceptance criterion.
 
 ```text
 Parallel now eligible:
-  startup-fault-isolation
+  startup-fault-isolation (#664 claimed)
   file-preview-office
   url-static-reader
   computer-pilot-managed-skill
@@ -99,7 +110,11 @@ Parallel now eligible:
 Selected integration order:
   Settings G (#656, shipped) ~> startup-fault-isolation
   Workbench (#660, shipped) ~> startup-fault-isolation
-  startup-fault-isolation ~> unified-session-records ~> targeted-thread-recovery
+  startup-fault-isolation ~> unified-session-records
+  unified-session-records ~> memory-agent-profile: profile files/direct learning
+  memory-agent-profile: profile files/direct learning ~> targeted-thread-recovery
+  startup-fault-isolation ~> memory-agent-profile: Node retention quality
+  memory-agent-profile: Node retention quality ~> profile files/direct learning
 
 Capability prerequisite:
   startup-fault-isolation -> targeted-thread-recovery
@@ -107,9 +122,11 @@ Capability prerequisite:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [startup-fault-isolation](plans/startup-fault-isolation.md) | `draft` | **Now; Settings G (#656) and workbench simplification (#660) shipped**; consume their Settings routes, generic Goal/Task, Host admission and process restart ownership. |
+| P1 | [startup-fault-isolation](plans/startup-fault-isolation.md) | `in-progress` | #664 claims the complete feature over shipped Settings G (#656), workbench simplification (#660) and generic process ownership (#663). |
 | P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | After startup fault isolation; cover generic Task outputs, context, artifacts and isolation, and settle OQ-1 before claiming implementation |
-| P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | After startup issue/lifecycle and unified source/provenance/publication mechanisms; one complete verified rebuild/removal feature |
+| P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | After startup fault isolation; independent complete Node quality feature. Recheck actual overlap with unified records and land shared Memory changes before the selected profile unit. |
+| P2 | [memory-agent-profile: Profile files and direct learning](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | After unified records and selected Node-quality shared changes; demonstrate component sources/precedence before consumers. One complete profile, direct-learning, activation and lifecycle feature. |
+| P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | After startup, unified records and the profile owner; include final profile file/admission/provenance/pending-work/retention contracts in verified rebuild/removal. |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | **Now; Agent resource lifecycle shipped in #607** |
@@ -137,8 +154,20 @@ Git-review manifest producer to recover. Native-state reconciliation precedes
 new mutations after uncertain outcomes. A future terminal or additional sandbox
 backend does not extend the completed workbench integration gate.
 
+The Memory/profile rows are the two selected complete units of #665, with
+separate PRs and status. Their shared design remains active until those units
+are implemented and folded into the specs. Optional additions need their own
+exact scope and claim; they are not prerequisite work for this queue.
+
 Collision lanes remain claim-time constraints alongside the selected order:
 
+- Profile learning consumes final startup admission and exact-record sources;
+  targeted recovery consumes the resulting profile owner rather than assuming
+  all retained Memory is in Nodes. Node quality can proceed independently of
+  unified records where actual files permit. Its selected order before profile
+  learning avoids reworking shared Memory mechanisms, not a functional
+  prerequisite between the two complete features. Neither broadens the record
+  plan's still-pending discovery decision or source-Thread access.
 - #656 settles shared Host/preload and domain destinations before startup fault
   isolation rewires fallible construction and failure routes. PR #660 supplies
   the final generic Task/runtime evidence and process lifecycle for that sequence.
@@ -295,6 +324,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **memory-agent-profile design integration** (`done`, #665, 2026-09-09) - two complete core units and their activation/Reset boundaries are approved; profile learning precedes targeted recovery, and runtime remains pending.
 - **development-process-lifecycle** (`done`, #663, 2026-09-09) - requested background servers retain ownership without a default deadline, running logs preserve multiline secret context, and nested desktops resolve their own Runtime launch; [plan archived](plans/archive/development-process-lifecycle.md).
 - **web-search-http** (`done`, #662, 2026-09-09) - bounded Parallel/Exa HTTP search replaces Google/DuckDuckGo browser search, preserving independent Bing Images and #661's web-fetch contract; [plan archived](plans/archive/web-search-http.md).
 - **tool-output-boundaries** (`done`, #661, 2026-09-09) - partial reads and oversized search, web, image, and task results now satisfy the shared output contract while preserving continuation, artifacts, and terminal state; current behavior is recorded in the tool specification.
