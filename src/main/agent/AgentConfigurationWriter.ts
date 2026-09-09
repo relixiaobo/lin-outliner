@@ -61,7 +61,7 @@ export class AgentConfigurationWriter {
     const path = this.layerPath(target, cwd);
     const original = readSource(path);
     const observedDigest = original === null ? null : createHash('sha256').update(original).digest('hex');
-    if (expectedDigest !== undefined && expectedDigest !== observedDigest) throw new Error('Agent source changed; reopen the editor before retrying');
+    if (expectedDigest !== undefined && expectedDigest !== observedDigest) throw new Error('Agent source changed; refresh before retrying');
     let current: JsonObject = {};
     if (original !== null) {
       let parsed: unknown;

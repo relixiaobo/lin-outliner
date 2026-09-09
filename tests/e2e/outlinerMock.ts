@@ -726,6 +726,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       presentationOverrides: agentPresentationOverrides,
       profile: { ...agentProfile },
       capabilities: agentCapabilityCatalog,
+      sources: [
+        { layer: 'user', path: '/mock/config/agent.json', schemaPath: '/mock/config/agent.schema.json', state: 'missing', digest: null, error: null },
+        { layer: 'project', path: '/mock/workspace/.tenon/agent.json', schemaPath: '/mock/workspace/.tenon/agent.schema.json', state: 'missing', digest: null, error: null },
+      ],
     });
     const agentSkills = [{
       name: 'workspace-review',

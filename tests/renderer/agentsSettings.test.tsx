@@ -123,6 +123,62 @@ describe('the main Agent editor', () => {
     expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('Refused');
   });
 
+  test.each(['user', 'project'] as const)('retains the %s draft and retries only on an explicit Save with a fresh observation', async (layer) => {
+    const rendered = await renderAgents({ enforceDigest: true });
+    await rendered.click(rendered.document.querySelector('.inset-row-main')!);
+    await rendered.input(rendered.document.querySelector('select[aria-label="Apply to"]')!, layer);
+    await rendered.input(rendered.document.querySelector('input[aria-label="Name"]')!, 'Juniper');
+    await rendered.input(rendered.document.querySelector('textarea')!, 'Keep my draft.');
+    await rendered.input(rendered.document.querySelector('select[aria-label="Skills"]')!, 'custom');
+    await rendered.click([...rendered.document.querySelectorAll('button')].find((button) => button.textContent === 'Deselect All')!);
+    await rendered.refresh({ ...VIEW, profile: { ...VIEW.profile, developerInstructions: 'External instructions.' },
+      sources: VIEW.sources.map((source) => ({ ...source, digest: 'external-change' })) });
+    const save = rendered.document.querySelector('button[type="submit"]')!;
+    await rendered.click(save);
+    expect(rendered.calls.filter((call) => call.name === 'agent_write_profile')).toHaveLength(1);
+    expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('Save again');
+    expect((rendered.document.querySelector('textarea') as HTMLTextAreaElement).value).toBe('Keep my draft.');
+    expect((rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement).value).toBe('Juniper');
+    await rendered.click(save);
+    expect(rendered.calls.at(-1)?.args).toMatchObject({ layer, sourceDigest: 'external-change',
+      presentation: { persona: 'Juniper' }, profile: { developerInstructions: 'Keep my draft.', tools: null, skills: [] } });
+    expect(rendered.document.querySelector('.agent-editor-dialog')).toBeNull();
+  });
+
+  test('does not admit another layer when refreshing a rejected write', async () => {
+    const rendered = await renderAgents({ enforceDigest: true });
+    await rendered.click(rendered.document.querySelector('.inset-row-main')!);
+    await rendered.refresh({ ...VIEW, sources: VIEW.sources.map((source) => ({ ...source, digest: 'external-change' })) });
+    const save = rendered.document.querySelector('button[type="submit"]')!;
+    await rendered.click(save);
+    await rendered.input(rendered.document.querySelector('select[aria-label="Apply to"]')!, 'project');
+    await rendered.click(save);
+    expect(rendered.calls.filter((call) => call.name === 'agent_write_profile').map((call) => call.args))
+      .toMatchObject([{ layer: 'user', sourceDigest: null }, { layer: 'project', sourceDigest: null }]);
+    expect(rendered.document.querySelector('.agent-editor-dialog')).not.toBeNull();
+    await rendered.click(save);
+    expect(rendered.calls.at(-1)?.args).toMatchObject({ layer: 'project', sourceDigest: 'external-change' });
+    expect(rendered.document.querySelector('.agent-editor-dialog')).toBeNull();
+  });
+
+  test('keeps the draft and old observation if refreshing after rejection fails', async () => {
+    const rendered = await renderAgents({ enforceDigest: true });
+    await rendered.click(rendered.document.querySelector('.inset-row-main')!);
+    await rendered.input(rendered.document.querySelector('textarea')!, 'Keep my draft.');
+    await rendered.refresh({ ...VIEW, sources: VIEW.sources.map((source) => ({ ...source, digest: 'external-change' })) });
+    rendered.failNextRead();
+    const save = rendered.document.querySelector('button[type="submit"]')!;
+    await rendered.click(save);
+    expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('Could not refresh');
+    expect((rendered.document.querySelector('textarea') as HTMLTextAreaElement).value).toBe('Keep my draft.');
+    await rendered.click(save);
+    expect(rendered.calls.filter((call) => call.name === 'agent_write_profile').map((call) => call.args))
+      .toMatchObject([{ sourceDigest: null }, { sourceDigest: null }]);
+    await rendered.click(save);
+    expect(rendered.calls.at(-1)?.args).toMatchObject({ sourceDigest: 'external-change', profile: { developerInstructions: 'Keep my draft.' } });
+    expect(rendered.document.querySelector('.agent-editor-dialog')).toBeNull();
+  });
+
   test('preserves an explicit full selection when only the name changes', async () => {
     const rendered = await renderAgents({ view: { ...VIEW, profile: { ...VIEW.profile,
       tools: ['file_read', 'bash'], skills: ['review'] } } });
@@ -153,10 +209,11 @@ describe('the main Agent editor', () => {
   });
 });
 
-async function renderAgents(options: { rejectWrite?: boolean; view?: AgentEditorView; disabledSkills?: string[] } = {}) {
+async function renderAgents(options: { rejectWrite?: boolean; enforceDigest?: boolean; view?: AgentEditorView; disabledSkills?: string[] } = {}) {
   const calls: Array<{ name: string; args: unknown }> = [];
   let currentView = options.view ?? VIEW;
   let refresh: (() => void) | undefined;
+  let failNextRead = false;
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   if (savedGlobals.length === 0) {
@@ -174,6 +231,14 @@ async function renderAgents(options: { rejectWrite?: boolean; view?: AgentEditor
       calls.push({ name, args });
       if (name === 'agent_get_skill_settings') return { disabledSkills: options.disabledSkills ?? [], sourceBindings: [] };
       if (options.rejectWrite && name === 'agent_write_profile') throw new Error('Refused by test');
+      if (options.enforceDigest && name === 'agent_write_profile') {
+        const { layer, sourceDigest } = args as { layer: 'user' | 'project'; sourceDigest: string | null };
+        if (currentView.sources.find((source) => source.layer === layer)?.digest !== sourceDigest) throw new Error('Agent source changed');
+      }
+      if (failNextRead && name === 'agent_identity_catalog') {
+        failNextRead = false;
+        throw new Error('Read unavailable');
+      }
       return currentView;
     },
   };
@@ -194,6 +259,7 @@ async function renderAgents(options: { rejectWrite?: boolean; view?: AgentEditor
   return {
     document: document as unknown as Document,
     calls,
+    failNextRead: () => { failNextRead = true; },
     refresh: async (next: AgentEditorView) => { currentView = next; await act(async () => { refresh?.(); }); },
     click: async (element: Element) => {
       await act(async () => {

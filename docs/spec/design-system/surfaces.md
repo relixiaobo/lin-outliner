@@ -461,6 +461,12 @@ standing instructions, then capability restrictions. Colour choices have complet
 circular selection rings, support roving arrow navigation, and update the header
 preview. Default name/colour previews follow the loader's whole-object presentation
 override rules. Saving locks editing and dismissal; errors preserve the draft.
+Source observations stay separate from the draft. After a rejected write, the
+editor refreshes only that layer's observation and requires an explicit Save to
+retry against it. Background refreshes never advance an open editor's admission
+token; another source change rejects again. Retrying preserves unrelated source
+fields and JSONC comments. A failed observation refresh keeps the previous token
+and the draft, without issuing another write.
 
 Tools defaults to All available; Skills defaults to Follow Skill Library. Only
 Custom selection expands a searchable membership checklist. Library-disabled

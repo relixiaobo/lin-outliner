@@ -565,6 +565,8 @@ export const en = {
       skills: 'Skills',
       duplicate: 'Duplicate as my own',
       mainInstructionsFootnote: 'Guidance for how this agent responds.',
+      sourceChanged: 'Settings changed outside this editor. Your draft is kept. Save again to apply it to the latest file.',
+      sourceRefreshFailed: 'Could not refresh the settings file. Your draft is kept; try saving again.',
       mainInstructionsPlaceholder: 'For example, keep answers concise and explain unfamiliar terms.',
       identityGroup: 'Identity',
       identityAriaLabel: 'How this agent appears',

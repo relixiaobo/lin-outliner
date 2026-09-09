@@ -532,6 +532,8 @@ export const zhHans: PartialMessages = {
       skills: '技能',
       duplicate: '复制一份给我自己',
       mainInstructionsFootnote: '告诉智能体你希望它如何回复。',
+      sourceChanged: '设置文件已在其他地方修改。草稿已保留，再次保存即可应用到最新文件。',
+      sourceRefreshFailed: '无法刷新设置文件。草稿已保留，请再次尝试保存。',
       mainInstructionsPlaceholder: '例如：回答简洁，遇到专业术语时先解释。',
       identityGroup: '身份',
       identityAriaLabel: '这个智能体的外观',

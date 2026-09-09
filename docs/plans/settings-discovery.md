@@ -197,6 +197,11 @@ The Library explains that its switches govern shared availability, while the
 Agent's custom selection can only narrow it. Colour choices use complete circular
 selection rings, and the header previews the selected identity. Saving disables
 editing and dismissal until the write settles; failed drafts remain editable.
+Source observations are independent of the draft. A rejected write refreshes only
+its target layer's observation, then waits for an explicit Save; background
+refreshes do not admit stale drafts. Further source changes reject again, and
+unrelated fields/comments survive the eventual retry. A failed refresh retains
+the old observation and the draft without automatically writing.
 
 ### Acceptance Criteria
 

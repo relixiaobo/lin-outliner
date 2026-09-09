@@ -36,6 +36,13 @@ export function AgentConfigurationEditor() {
   const [busy, setBusy] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
   const saving = useRef(false);
+  const sourceObservations = useRef<AgentEditorView['sources']>([]);
+
+  const openEditor = (next: AgentEditorView) => {
+    sourceObservations.current = next.sources;
+    setEditorError(null);
+    setEditing(next);
+  };
 
   useEffect(() => {
     let active = true;
@@ -59,10 +66,11 @@ export function AgentConfigurationEditor() {
     onError(null);
     onNotice(null);
     setEditorError(null);
+    const observation = sourceObservations.current.find((source) => source.layer === layer);
     try {
       const next = await api.agentWriteProfile({
         layer,
-        sourceDigest: editing.sources?.find((source) => source.layer === layer)?.digest ?? null,
+        sourceDigest: observation?.digest ?? null,
         name: editing.profile.name,
         presentation: { persona: draft.persona, color: draft.color },
         profile: {
@@ -76,7 +84,22 @@ export function AgentConfigurationEditor() {
       onNotice(t.settings.agents.saved({ name: next.entries.find((entry) => entry.agentType === MAIN_PRESENTATION_KEY)?.persona
         || draft.persona || DEFAULT_AGENT_PRESENTATIONS[MAIN_PRESENTATION_KEY]!.persona }));
     } catch (caught) {
-      setEditorError(errorText(caught));
+      let message = errorText(caught);
+      try {
+        const latest = await api.agentIdentityCatalog();
+        const source = latest.sources.find((candidate) => candidate.layer === layer);
+        // Refresh only the rejected write's admission token. Keep the dialog's
+        // initial values and draft intact, and require another explicit Save.
+        // Background refreshes must never silently admit a stale draft.
+        if (source && source.path === observation?.path && source.digest !== observation.digest) {
+          sourceObservations.current = sourceObservations.current.map((candidate) => candidate.layer === layer ? source : candidate);
+          if (source.state !== 'rejected') message = t.settings.agents.sourceChanged;
+        }
+        setView(latest);
+      } catch {
+        message = `${message} ${t.settings.agents.sourceRefreshFailed}`;
+      }
+      setEditorError(message);
     } finally {
       saving.current = false;
       setBusy(false);
@@ -102,9 +125,9 @@ export function AgentConfigurationEditor() {
             feedback={<SettingsFeedback feedback={{ notice }} />}
             label={identity.name}
             leading={<AgentMark size={24} tint={identity.tint} />}
-            onSelect={() => setEditing(view)}
+            onSelect={() => openEditor(view)}
             sublabel={t.settings.agents.mainSublabel}
-            trailing={<Button size="sm" variant="secondary" onClick={() => setEditing(view)}>{t.settings.agents.editAction}</Button>}
+            trailing={<Button size="sm" variant="secondary" onClick={() => openEditor(view)}>{t.settings.agents.editAction}</Button>}
           />
         )}
       </InsetGroup>
