@@ -726,8 +726,8 @@ const BASH_PARAMETERS = {
         'For piped commands or obscure flags, add enough context to clarify what the command does.',
       ].join('\n'),
     },
-    timeout: { type: 'integer', minimum: 1, maximum: BASH_MAX_TIMEOUT_MS, description: `Optional timeout in milliseconds. Maximum ${BASH_MAX_TIMEOUT_MS}.` },
-    run_in_background: { type: 'boolean', description: 'Set to true only when the next useful action does not depend on this command result. Otherwise leave it false and wait for completion regardless of expected duration. You do not need to append "&"; use task_stop to finalize durable background output.' },
+    timeout: { type: 'integer', minimum: 1, maximum: BASH_MAX_TIMEOUT_MS, description: `Optional process lifetime in milliseconds. Foreground default: 120000. Background default: no elapsed-time limit. An explicit timeout also stops background work. Maximum ${BASH_MAX_TIMEOUT_MS}.` },
+    run_in_background: { type: 'boolean', description: 'Use true for a server that must remain available for user testing, or when useful work can continue independently. Without an explicit timeout it runs until stopped, application Quit, process exit, or a resource limit. Inspect startup output with task_status and verify readiness; keep a requested server running after verification. Do not append "&" or daemonize. Use task_stop only when the owned process should end.' },
   },
 };
 
@@ -1671,7 +1671,7 @@ function createBashTool(
       'Use file_read, file_edit, file_write, file_glob, and file_grep for filesystem operations when possible.',
       'Use Bash commands such as rm, rmdir, or git rm to delete files and directories. Deletion follows the command semantics; no automatic trash copy is created.',
       'For document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).',
-      'Set run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.',
+      'Use run_in_background for servers that must remain available for user testing or independent work. Omit timeout to keep background work running until stopped. Foreground commands retain their 120-second default timeout.',
       'You do not need to append "&"; use task_stop if a background task needs to be stopped.',
       'Commands should include a clear description of what they do in active voice.',
     ].join('\n'),
@@ -1729,7 +1729,7 @@ function createBashTool(
               metrics: metrics(started, data),
             })
             : successEnvelope('bash', data, {
-              instructions: `Command is running in the background as ${data.backgroundTaskId}. Use task_stop with task_id if it needs to be stopped.`,
+              instructions: `Command is running in the background as ${data.backgroundTaskId}. Use task_status to inspect startup output and verify readiness without stopping it. Keep requested servers running; use task_stop only when they should end.`,
               metrics: metrics(started, data),
             });
           return agentToolResult(envelope, visibleBash(data));
@@ -1992,7 +1992,7 @@ function normalizeBashParams(rawParams: unknown): BashParams {
     command,
     ...(typeof input.stdin === 'string' ? { stdin: input.stdin } : {}),
     description: optionalNormalizedString(input.description),
-    timeout: clampInteger(input.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS),
+    ...(input.timeout === undefined ? {} : { timeout: clampInteger(input.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS) }),
     run_in_background: input.run_in_background === true,
   };
 }
@@ -2491,7 +2491,7 @@ async function startSupervisedBackgroundCommand(
     parentTaskId: workspace.parentTaskId,
     onAdmitted: workspace.onTaskAdmitted,
     ...(params.stdin === undefined ? {} : { stdin: params.stdin }),
-    timeoutMs: delegateScheduling?.timeoutMs ?? params.timeout ?? BASH_DEFAULT_TIMEOUT_MS,
+    timeoutMs: delegateScheduling?.timeoutMs ?? params.timeout ?? null,
     env,
     sandbox: workspaceShellSandbox(workspace),
     producerContext: encodeDeclaredOutputArtifactPlan(declaredOutputRoots, declaredOutputSnapshot),

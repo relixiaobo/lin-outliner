@@ -4,7 +4,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
 "[
   {
     "name": "bash",
-    "description": "Executes a shell command in the call working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_glob, and file_grep for filesystem operations when possible.\\nUse Bash commands such as rm, rmdir, or git rm to delete files and directories. Deletion follows the command semantics; no automatic trash copy is created.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nSet run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.\\nYou do not need to append \\"&\\"; use task_stop if a background task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
+    "description": "Executes a shell command in the call working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_glob, and file_grep for filesystem operations when possible.\\nUse Bash commands such as rm, rmdir, or git rm to delete files and directories. Deletion follows the command semantics; no automatic trash copy is created.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nUse run_in_background for servers that must remain available for user testing or independent work. Omit timeout to keep background work running until stopped. Foreground commands retain their 120-second default timeout.\\nYou do not need to append \\"&\\"; use task_stop if a background task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
     "parameters": {
       "type": "object",
       "additionalProperties": false,
@@ -29,11 +29,11 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
           "type": "integer",
           "minimum": 1,
           "maximum": 600000,
-          "description": "Optional timeout in milliseconds. Maximum 600000."
+          "description": "Optional process lifetime in milliseconds. Foreground default: 120000. Background default: no elapsed-time limit. An explicit timeout also stops background work. Maximum 600000."
         },
         "run_in_background": {
           "type": "boolean",
-          "description": "Set to true only when the next useful action does not depend on this command result. Otherwise leave it false and wait for completion regardless of expected duration. You do not need to append \\"&\\"; use task_stop to finalize durable background output."
+          "description": "Use true for a server that must remain available for user testing, or when useful work can continue independently. Without an explicit timeout it runs until stopped, application Quit, process exit, or a resource limit. Inspect startup output with task_status and verify readiness; keep a requested server running after verification. Do not append \\"&\\" or daemonize. Use task_stop only when the owned process should end."
         },
         "cwd": {
           "type": "string",
@@ -461,7 +461,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "task_status",
-    "description": "Read one background Tool Task owned by this Thread.\\nCompletion is delivered automatically; use this only for an explicit status request or recovery, not polling.",
+    "description": "Read one background Tool Task owned by this Thread.\\nRead bounded running logs to verify startup readiness without stopping the process. Running observations are separate from terminal results. Use for readiness, an explicit status request, or recovery; avoid repetitive polling. Completion is delivered automatically.",
     "parameters": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

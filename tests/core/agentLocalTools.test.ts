@@ -143,6 +143,24 @@ async function withPrependedPath<T>(binDir: string, fn: () => Promise<T>): Promi
   }
 }
 
+test('ordinary shells omit ambient Electron controls while retaining explicit overrides and Outline CLI context', () => {
+  const keys = ['ELECTRON_EXEC_PATH', 'ELECTRON_RENDERER_URL', 'ELECTRON_CLI_ARGS',
+    'ELECTRON_MAJOR_VER', 'ELECTRON_USER_DATA_DIR', 'ELECTRON_RUN_AS_NODE', 'TENON_OUTLINE_RUNTIME_ENTRY'];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    for (const key of keys) process.env[key] = `host-${key}`;
+    const ordinary = buildAgentLocalToolProcessEnv();
+    for (const key of keys.filter((key) => key.startsWith('ELECTRON_'))) expect(ordinary[key]).toBeUndefined();
+    expect(ordinary.TENON_OUTLINE_RUNTIME_ENTRY).toBe('host-TENON_OUTLINE_RUNTIME_ENTRY');
+    expect(buildAgentLocalToolProcessEnv({ env: { ELECTRON_USER_DATA_DIR: '/project/data' } }).ELECTRON_USER_DATA_DIR)
+      .toBe('/project/data');
+  } finally {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key];
+    }
+  }
+});
+
 test('agent local tool process env includes configured, standard, and bundled ripgrep paths', () => {
   const originalPath = process.env.PATH;
   const originalExtraPath = process.env.LIN_AGENT_EXTRA_TOOL_PATH;
@@ -1417,8 +1435,10 @@ describe('agent local tools', () => {
     expect(JSON.stringify(bash.parameters)).toContain('Do not use vague words');
     expect(JSON.stringify(bash.parameters)).not.toContain('dangerouslyDisableSandbox');
     expect(JSON.stringify(bash.parameters).toLowerCase()).not.toContain('sandbox');
-    expect(bash.description).toContain('next useful action does not depend');
-    expect(JSON.stringify(bash.parameters)).toContain('regardless of expected duration');
+    // Server readiness must not require terminal settlement or a finite lifetime.
+    expect(bash.description).toContain('servers that must remain available for user testing');
+    expect(JSON.stringify(bash.parameters)).toContain('Background default: no elapsed-time limit');
+    expect(JSON.stringify(bash.parameters)).toContain('keep a requested server running after verification');
     expect(bash.description).toContain('use task_stop if a background task needs to be stopped');
     expect(tools.some((tool) => tool.name === 'bash_stop' || tool.name === 'task_stop')).toBe(false);
   });

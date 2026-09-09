@@ -239,7 +239,11 @@ desktop asset adapter, and the private node-access ranking store. It exports the
 Runtime/content/export roots plus narrow document, asset, startup, observation,
 authenticated Agent-shell, quit, flush, and close capabilities. The concrete
 supervisor, client, document service, asset service, and ranking store never
-leave the Host. Runtime document initialization remains separate
+leave the Host. The desktop launch resolves its own source entry plus Bun in
+development, or its own bundled entry plus executable when packaged. Inherited
+`TENON_OUTLINE_RUNTIME_ENTRY` exports belong to the parent application's CLI
+context and never override the child desktop's Runtime launch.
+Runtime document initialization remains separate
 from best-effort personal-ranking load and synchronization. Node-access loading
 runs beside document initialization; synchronization waits for both. Personally
 ranked searches and access recording wait for that synchronization boundary.

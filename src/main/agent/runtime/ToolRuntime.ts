@@ -332,7 +332,8 @@ export class ToolRuntime {
             'Use a task_id returned by a background-producing tool in this Thread.',
           );
         }
-        const output = await toolTasks.output(task.taskId, threadId);
+        const observation = await toolTasks.observeOutput(task.taskId, threadId);
+        const output = observation ?? await toolTasks.output(task.taskId, threadId);
         const combined = [output?.stdout, output?.stderr].filter(Boolean).join('\n');
         return toolResult('task_status', {
           taskId: task.taskId,
@@ -348,6 +349,7 @@ export class ToolRuntime {
           reason: task.outcomeReason,
           error: task.error,
           output: combined || null,
+          observedAt: observation?.observedAt ?? null,
           outputTruncated: Boolean(output?.stdoutTruncated || output?.stderrTruncated),
           detailState: task.detailState,
           artifacts: task.artifacts.map((artifact) => ({
@@ -655,6 +657,11 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
         message: details.progress.message ?? null,
         fraction: details.progress.fraction ?? null,
       } : null,
+      observation: !terminal && typeof details.observedAt === 'number' ? {
+        observedAt: details.observedAt,
+        output: null as string | null,
+        outputTruncated: Boolean(details.outputTruncated),
+      } : null,
       result: terminal ? {
         exitCode: details.exitCode ?? null,
         signal: details.signal ?? null,
@@ -667,14 +674,15 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
         storagePressure: details.storagePressure ?? null,
       } : null,
     };
-    if (visible.result && typeof details.output === 'string') {
+    const capture = visible.result ?? visible.observation;
+    if (capture && typeof details.output === 'string') {
       const remaining = MAX_TENON_RESULT_DATA_BYTES - jsonByteLength(visible) + 4;
-      visible.result.output = boundJsonString(details.output, Math.max(2, remaining));
-      visible.result.outputTruncated ||= visible.result.output !== details.output;
+      capture.output = boundJsonString(details.output, Math.max(2, remaining));
+      capture.outputTruncated ||= capture.output !== details.output;
     }
     return agentToolResult(successEnvelope(tool, details, {
       instructions: details.state === 'running' || details.state === 'settling'
-        ? 'The task is still active. Do not poll; completion will be delivered automatically.'
+        ? 'The task is still active. This bounded log observation is not a terminal result or proof of readiness. Verify the requested service, keep it running for user testing, and use task_stop only when it should end. Avoid repetitive polling; completion is delivered automatically.'
         : undefined,
     }), visible);
   }

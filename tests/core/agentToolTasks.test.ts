@@ -4,7 +4,7 @@ import { Database } from 'bun:sqlite';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -237,6 +237,56 @@ describe('ToolTaskService', () => {
     const task = await startHidden(service, "printf 'fast-stdout'; printf 'fast-stderr' >&2; exit 7");
     expect((await service.waitForTerminal(task.taskId, OWNER_ID, 6_000))?.state).toBe('failed');
     expect(await service.output(task.taskId, OWNER_ID)).toMatchObject({ stdout: 'fast-stdout', stderr: 'fast-stderr' });
+  });
+
+  test('retains a persistent process across observation and reattachment until explicit stop', async () => {
+    const fixture = await createFixture();
+    const first = await createService(fixture, passiveHost());
+    const task = await first.start(startInput("printf 'ready\\n'; sleep 30", { timeoutMs: null }));
+    expect(fixture.store.read(task.taskId)?.timeoutMs).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(await first.observeOutput(task.taskId, OWNER_ID)).toMatchObject({ stdout: 'ready\n' });
+    expect(await first.output(task.taskId, OWNER_ID)).toBeNull();
+    expect(await first.observeOutput(task.taskId, 'other-thread' as ThreadId)).toBeNull();
+    expect(fixture.store.read(task.taskId)?.state).toBe('running');
+    const second = await createService(fixture, passiveHost());
+    expect(second.readOwned(task.taskId, OWNER_ID)).toMatchObject({ state: 'running', timeoutMs: null });
+    expect((await second.stop(task.taskId, OWNER_ID))?.state).toBe('cancelled');
+    expect(await second.observeOutput(task.taskId, OWNER_ID)).toBeNull();
+    expect(await second.output(task.taskId, OWNER_ID)).toMatchObject({ stdout: 'ready\n' });
+  });
+
+  test('bounds and sanitizes complete running log lines without finalizing raw output', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const task = await service.start(startInput('sleep 30', { timeoutMs: null }));
+    const raw = `${'old line\n'.repeat(20_000)}token=sk-${'a'.repeat(48)}\nready 中文\npartial-secret`;
+    await writeFile(path.join(task.detailPath, 'stdout.log'), raw);
+    const output = await service.observeOutput(task.taskId, OWNER_ID);
+    expect(output?.stdout).toContain('ready 中文\n');
+    expect(output?.stdout).not.toContain(`sk-${'a'.repeat(48)}`);
+    expect(output?.stdout).not.toContain('partial-secret');
+    expect(output?.stdoutTruncated).toBe(true);
+    expect(Buffer.byteLength(output?.stdout ?? '')).toBeLessThanOrEqual(64 * 1024);
+    expect(await readFile(path.join(task.detailPath, 'stdout.log'), 'utf8')).toBe(raw);
+    expect(service.readOwned(task.taskId, OWNER_ID)?.state).toBe('running');
+    await service.close(2_000);
+    expect(service.readOwned(task.taskId, OWNER_ID)?.state).toBe('cancelled');
+  });
+
+  test('withholds oversized running captures instead of scanning a contextless raw tail', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const task = await service.start(startInput('sleep 30', { timeoutMs: null }));
+    const log = path.join(task.detailPath, 'stdout.log');
+    await truncate(log, 64 * 1024 * 1024 + 1);
+    const observed = await service.observeOutput(task.taskId, OWNER_ID);
+    expect(observed).toMatchObject({
+      stdout: '[Running output withheld: capture exceeds its byte limit.]', stdoutTruncated: true,
+    });
+    expect(service.readOwned(task.taskId, OWNER_ID)?.state).toBe('running');
+    // Restore the test-created sparse file before ordinary terminal settlement.
+    await truncate(log, 0);
   });
 
   test('supervises exact stdin and preserves factual success, failure, and timeout outcomes', async () => {

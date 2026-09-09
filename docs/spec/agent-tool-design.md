@@ -328,6 +328,14 @@ Admission rejects non-strings, unpaired UTF-16 surrogates, and more than 64 MiB 
 The Host creates task state and capture first, writes with backpressure, and closes stdin;
 early exit or write failure settles that same Tool Task.
 
+Explicit-background Bash without `timeout` has no elapsed-time deadline. It stays
+owned and running after the initiating Turn ends, until process exit, explicit Stop,
+orderly application Quit, or a resource limit. A positive timeout bounds foreground
+and background processes alike; foreground Bash defaults to 120 seconds. Delegated
+Agent jobs retain their configured scheduling deadline. A nullable timeout is persisted
+with the Task and passed to its supervisor; it is not an extremely large timer.
+The pre-release Task store requires fresh development data for this format change.
+
 Background execution is explicit. When `run_in_background` is omitted or false, the
 `bash` Tool call waits for terminal settlement regardless of elapsed wall-clock time;
 duration never changes the control flow because subsequent Agent work may depend on the
@@ -355,6 +363,30 @@ bounded drain. No command is replayed during recovery.
 even when JSON escaping makes the captured output preview exceed the shared
 result-data budget. It clips only the visible output prefix and sets
 `outputTruncated`; stored stdout/stderr and task details remain unchanged.
+
+`task_status` exposes active-process logs through a timestamped `observation`, while
+`result` remains null until terminal settlement. Each observation freezes a log prefix
+at its observed byte length, bounded by the existing Task detail ceiling. Scan the
+complete-line prefix from its beginning before choosing the visible tail, so a display
+boundary cannot lose multiline secret context. Growing captures also redact an unmatched
+private-key opening marker through the observation's end; complete-value scanning keeps
+its existing behavior. Large captures use the existing secret-scanner worker. Scanner
+failure withholds raw text; an oversized or shortened capture yields a bounded omission
+notice instead of falling back to an unsafe raw tail. Apply the existing JSON output
+budget after redaction. Truncated or incomplete lines are omitted with an explicit truncation
+flag. Reading does not stop the producer, rewrite raw logs, finalize artifacts, or create
+a receipt. Terminal output continues to use the immutable sanitized capture.
+The development Skill uses observations plus an appropriate endpoint/Runtime/UI check;
+process existence alone is not readiness. It leaves verified servers running for the user
+and continues authorized diagnosis if a completion event reveals a failure.
+
+Ordinary tool environments omit ambient Electron development control variables
+(`ELECTRON_EXEC_PATH`, `ELECTRON_RENDERER_URL`, `ELECTRON_CLI_ARGS`,
+`ELECTRON_MAJOR_VER`, `ELECTRON_USER_DATA_DIR`, and `ELECTRON_RUN_AS_NODE`). Explicit
+admitted environment overrides still apply. Outline CLI exports remain available for
+operating the owning application; a nested desktop resolves its own Runtime entry and
+interpreter from its source/package instead of consuming a parent's CLI export as a
+launch override.
 
 Packaged execution may add Host-only environment such as `ELECTRON_RUN_AS_NODE` to start
 the standalone supervisor. The supervisor removes those control keys before launching
