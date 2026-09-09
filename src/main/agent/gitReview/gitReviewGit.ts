@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { GitBaseline, GitReviewEvidence, GitReviewPath, GitPublicationPreview } from '../../../core/agent/gitReview';
 import { decodeGitReviewEvidence, GIT_REVIEW_MAX_PATHS } from '../../../core/agent/gitReview';
 import { redactSecretLikeContent } from '../capabilities/agentSecretStringScanner';
+import { assertNoExecutableGitFilters, GIT_FILTER_CONFIG_ARGS, GIT_INSPECTION_ARGS } from '../tasks/gitInspectionPolicy';
 
 const LIMIT = 8 * 1024 * 1024;
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -13,14 +14,15 @@ export type GitCli = (executable: 'git' | 'gh', args: string[], input?: string |
 
 /** Every subprocess belongs to the supervised helper's process group. Never shell-expand inputs. */
 export function gitCli(cwd: string): GitCli {
-  return (executable, args, input, extraEnv) => new Promise((resolve, reject) => {
-    const env = { ...process.env, ...extraEnv, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C', GH_PROMPT_DISABLED: '1' };
+  const run: GitCli = (executable, args, input, extraEnv) => new Promise((resolve, reject) => {
+    const env = { ...process.env, ...extraEnv, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0',
+      GIT_NO_LAZY_FETCH: '1', LC_ALL: 'C', GH_PROMPT_DISABLED: '1' };
     // Ambient Git overrides must not silently redirect an admitted address.
     for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_NAMESPACE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES']) {
       delete (env as NodeJS.ProcessEnv)[key];
     }
     if (extraEnv?.GIT_INDEX_FILE) (env as NodeJS.ProcessEnv).GIT_INDEX_FILE = extraEnv.GIT_INDEX_FILE;
-    const child = execFile(executable, executable === 'git' ? ['--literal-pathspecs', ...args] : args, {
+    const child = execFile(executable, executable === 'git' ? ['--literal-pathspecs', ...GIT_INSPECTION_ARGS, ...args] : args, {
       cwd, env, encoding: 'buffer', maxBuffer: LIMIT, timeout: 30_000,
     }, (error, stdout) => {
       if (error && (typeof error.code !== 'number' || error.killed)) { reject(new Error(`${executable} did not produce a bounded, settled result`)); return; }
@@ -29,6 +31,18 @@ export function gitCli(cwd: string): GitCli {
     child.stdin?.on('error', () => {});
     child.stdin?.end(input);
   });
+  return async (executable, args, input, extraEnv) => {
+    if (executable === 'git' && ['status', 'diff', 'ls-files', 'read-tree', 'update-index', 'write-tree'].includes(args[0]!)) {
+      // --no-ext-diff/--no-textconv do not prevent clean/process filters during
+      // status, index refresh, or worktree diff. Inspect effective configuration
+      // (including includes and environment) before each such command. Filtered
+      // repositories require an explicitly authorized ordinary Bash workflow.
+      const filters = await run('git', GIT_FILTER_CONFIG_ARGS, undefined, extraEnv);
+      if (![0, 1].includes(filters.code)) throw new Error('Git filter configuration is unavailable');
+      assertNoExecutableGitFilters(filters.stdout.toString('utf8'));
+    }
+    return run(executable, args, input, extraEnv);
+  };
 }
 async function checked(cli: GitCli, args: string[], input?: string | Buffer, env?: NodeJS.ProcessEnv): Promise<Buffer> {
   const result = await cli('git', args, input, env);
@@ -108,7 +122,9 @@ async function worktreeEntry(root: string, name: string): Promise<Pick<GitReview
   return { canonicalPath, kind, bytes: bytes.length, mode: stat.mode & 0o777, digest: hash(bytes), binary: bytes.includes(0) };
 }
 async function gitStatus(cli: GitCli): Promise<Map<string, { status: string; previousPath: string | null }>> {
-  const output = await checked(cli, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=none']);
+  // Report changed gitlinks, but never recurse into submodule worktree status:
+  // that would inspect a different repository's executable filter configuration.
+  const output = await checked(cli, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=dirty']);
   if (!Buffer.from(output.toString('utf8')).equals(output)) throw new Error('Non-UTF-8 Git paths require ordinary Bash review');
   const parts = output.toString('utf8').split('\0');
   const result = new Map<string, { status: string; previousPath: string | null }>();
@@ -127,8 +143,8 @@ async function inspectPaths(root: string, cli: GitCli, baseline: GitBaseline | n
     const entry = await worktreeEntry(root, name);
     const index = baseline ? (await checked(cli, ['ls-files', '--stage', '-z', '--', name])).toString('utf8') : '';
     const diff = baseline ? Buffer.concat([
-      await checked(cli, ['diff', '--no-ext-diff', '--no-textconv', '--binary', '--', name]),
-      await checked(cli, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--binary', '--', name]),
+      await checked(cli, ['diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', '--submodule=short', '--binary', '--', name]),
+      await checked(cli, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', '--submodule=short', '--binary', '--', name]),
     ]) : Buffer.alloc(0);
     let snippet = diff.toString('utf8');
     const binary = entry.binary || /(?:^|\n)GIT binary patch(?:\n|$)/u.test(snippet);
@@ -216,7 +232,7 @@ export async function commitReview(cwd: string, review: GitReviewEvidence, paths
     sha = text(await checked(rootCli, ['commit-tree', tree, ...(baseline.head ? ['-p', baseline.head] : []), ...(text(signing.stdout) === 'true' ? ['-S'] : []), '-F', '-'], message));
     if (!validOid(sha)) throw new Error('Git did not return a commit OID');
     await lock.writeFile(await readFile(nextIndex)); await lock.sync();
-    // Preparation can execute Git filters/signing. Recheck after all preparation.
+    // Signing can execute a configured signer. Recheck after all preparation.
     await validate();
     const currentIndex = await readFile(index).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
     if (!same(originalIndex ? hash(originalIndex) : null, currentIndex ? hash(currentIndex) : null)) throw new Error('Git index changed outside its lock; refresh the review');

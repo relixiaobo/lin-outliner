@@ -1144,6 +1144,13 @@ database is introduced. Captures/previews classify as reads, commits as local
 writes, and push/PR as `git.publish_remote`; configured blocks and delegation
 ceilings still apply. Full Access remains the default authority.
 
+The Host resolves the immutable prior reference into bounded Task stdin data.
+After admission, the private control channel carries only command/cwd plus the
+stdin byte count and SHA-256. The helper verifies that binding before parsing
+or executing anything. Full evidence fits without widening the Task's 64 KiB
+private-control limit or creating another resource store; provider-visible
+arguments and results retain the original reference and bounded presentation.
+
 A capture records canonical execution cwd, worktree, per-worktree Git directory,
 common Git directory, exact HEAD OID and symbolic ref (or detached/unborn state),
 plus selected index entries, file kind/mode/size, working digest, diff digest,
@@ -1154,6 +1161,16 @@ or inconsistent Git evidence refuses commit. Limits are 256 paths, 8 MiB per
 file, 1 MiB full evidence, bounded CLI output, and short redacted diff excerpts;
 binary bytes are represented by digests. Omitted display paths require focused
 review for selection. Ordinary Bash remains available for complete inspection.
+
+All helper Git invocations disable fsmonitor, hooks, and implicit lazy fetching.
+Before status, diff, or index operations, effective Git configuration (including
+includes and environment configuration) is checked for nonempty clean/process
+filter commands; configured executable filters refuse this workflow before
+inspection. External diffs and textconv are disabled. Submodule status does not
+recurse into dirty worktrees; changed gitlinks remain visible, and selected
+submodules cannot be committed. Automatic Task Git context discovery uses the
+same inspection policy and degrades to unavailable when filters prevent safe
+inspection. Ordinary Bash remains the explicit route for filtered repositories.
 
 Commit requires the immutable capture reference, explicit exact paths, and a
 message. Paths are relative to the worktree root, with literal Git pathspecs;

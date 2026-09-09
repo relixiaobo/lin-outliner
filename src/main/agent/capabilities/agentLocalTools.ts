@@ -1,5 +1,5 @@
 import { gitReviewOperation } from '../../../core/agent/gitReview';
-import { collectGitReviewResult, parseGitReviewInput, prepareGitReviewProcess, type GitReviewRuntime } from '../gitReview/GitReviewRuntime';
+import { collectGitReviewResult, parseGitReviewInput, prepareGitReviewProcess, prepareGitReviewStdin, type GitReviewRuntime } from '../gitReview/GitReviewRuntime';
 import type { AgentTool, AgentToolTextReplacement } from '../runtime/kernel/types';
 import {
   type BashTaskStatus,
@@ -2667,6 +2667,9 @@ async function runSupervisedForegroundCommand(
   const timeoutMs = params.timeout ?? BASH_DEFAULT_TIMEOUT_MS;
   const gitOperation = gitReviewOperation(params.command);
   const env = buildWorkspaceShellProcessEnv(shellEnvironment);
+  const stdin = gitOperation && workspace.gitReviewRuntime
+    ? await prepareGitReviewStdin(params.command, params.stdin, workspace.gitReviewRuntime)
+    : params.stdin;
   const task = await service.start({
     ownerThreadId: workspace.threadId!,
     sourceTurnId: turnId,
@@ -2678,12 +2681,12 @@ async function runSupervisedForegroundCommand(
     executionContext: workspace.executionContext,
     inheritedClaimTaskId: workspace.inheritedClaimTaskId,
     onAdmitted: workspace.onTaskAdmitted,
-    ...(params.stdin === undefined ? {} : { stdin: params.stdin }),
+    ...(stdin === undefined ? {} : { stdin }),
     timeoutMs,
     env,
     ...(gitOperation && workspace.gitReviewRuntime ? {
       prepareProcess: (context: ToolTaskProcessPreparationContext) => prepareGitReviewProcess({
-        ...context, command: params.command, env, runtime: workspace.gitReviewRuntime!,
+        ...context, command: params.command, env,
       }),
     } : {}),
     sandbox: workspaceShellSandbox(workspace),

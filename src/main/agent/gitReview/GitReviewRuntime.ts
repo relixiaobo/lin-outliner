@@ -1,5 +1,6 @@
 /// <reference types="electron-vite/node" />
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { GitReviewEvidence } from '../../../core/agent/gitReview';
 import { decodeGitReviewEvidence, GIT_REVIEW_MAX_BYTES, gitReviewOperation } from '../../../core/agent/gitReview';
 import type { ThreadContextPayloadReference } from '../../../core/agent/protocol';
@@ -25,16 +26,25 @@ export function parseGitReviewInput(command: string, stdin: string | undefined):
   if (['commit', 'push', 'create-pr'].includes(operation) && !priorRef) throw new Error('Git operation requires its immutable review reference');
   return { input: record, priorRef };
 }
+/** Historical evidence is data: use the Task's bounded, file-backed stdin. */
+export async function prepareGitReviewStdin(command: string, stdin: string | undefined, runtime: GitReviewRuntime): Promise<string> {
+  const parsed = parseGitReviewInput(command, stdin);
+  const prior = parsed.priorRef ? decodeGitReviewEvidence(await runtime.read(parsed.priorRef)) : null;
+  return JSON.stringify({ input: parsed.input, prior });
+}
 export async function prepareGitReviewProcess(input: ToolTaskProcessPreparationContext & {
-  command: string; env: NodeJS.ProcessEnv; runtime: GitReviewRuntime;
+  command: string; env: NodeJS.ProcessEnv;
 }): Promise<PreparedToolTaskProcess> {
-  const parsed = parseGitReviewInput(input.command, input.stdin);
-  const prior = parsed.priorRef ? await input.runtime.read(parsed.priorRef) : null;
+  const bytes = Buffer.from(input.stdin);
+  if (bytes.length > GIT_REVIEW_MAX_BYTES + 128_064) throw new Error('Prepared Git review input exceeds its bound');
   const entry = process.versions.bun ? path.join(import.meta.dirname, 'gitReviewWorker.ts')
     : (await import('./gitReviewWorker?modulePath')).default;
   return { process: { kind: 'exec', executable: process.execPath, args: [entry],
     env: { ...input.env, ELECTRON_RUN_AS_NODE: '1' }, privateControl: true },
-    privateControlInput: Buffer.from(JSON.stringify({ command: input.command, cwd: input.cwd, input: parsed.input, prior })) };
+    // Only this Host-created binding crosses the 64 KiB private channel. The
+    // worker verifies the complete stdin before inspecting Git or mutating it.
+    privateControlInput: Buffer.from(JSON.stringify({ command: input.command, cwd: input.cwd,
+      stdinBytes: bytes.length, stdinSha256: createHash('sha256').update(bytes).digest('hex') })) };
 }
 export async function collectGitReviewResult(service: ToolTaskService, runtime: GitReviewRuntime, task: ToolTaskRecord, command: string, stdin: string | undefined): Promise<string> {
   const output = await service.output(task.taskId, task.ownerThreadId, GIT_REVIEW_MAX_BYTES);

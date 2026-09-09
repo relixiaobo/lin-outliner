@@ -171,6 +171,10 @@ continuation, checking frozen earlier diffs and explicit renewed review needs.
 - Full bounded manifests use the existing context payload store. Bounded
   observations publish through Execution Context Publication, with dependency
   references retained through compaction. No separate Git database is added.
+  Historical evidence travels through Task stdin; the private Host channel
+  binds its byte count and SHA-256 after admission. The helper verifies the
+  complete input before execution, keeping the 1 MiB evidence budget independent
+  of the Task's 64 KiB private-control limit.
 - Selected-file commits build a temporary Git index, preserve unrelated real
   index entries, and use an index lock plus a Git compare-and-swap on the explicitly reviewed
   ref. HEAD attachment is revalidated immediately before and after the update;
@@ -178,6 +182,12 @@ continuation, checking frozen earlier diffs and explicit renewed review needs.
   repository commit hooks and clean filters are not run by this workflow.
   The committed blobs contain the exact reviewed bytes. Signing follows Git's
   `commit.gpgSign` setting. Ordinary Bash remains available for custom workflows.
+  All helper Git calls disable fsmonitor, hooks, and implicit lazy fetching.
+  Status, diff, and index operations first reject configured executable
+  clean/process filters. External diffs, textconv, and recursive submodule dirty
+  status are disabled; automatic Task discovery shares this inspection policy
+  and degrades instead of executing extensions. Filtered repositories use
+  ordinary Bash explicitly.
 - The tool result offers unchecked path selection and a copyable explicit
   commit request, plus a publication preview. Publication is requested through
   the existing composer and Skill; rendering historical evidence never executes

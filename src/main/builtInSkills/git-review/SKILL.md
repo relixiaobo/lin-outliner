@@ -21,6 +21,10 @@ commands with shell syntax. Supply literal JSON using Bash `stdin`.
    list are bounded. Request a focused capture for omitted paths. Capture does
    not authorize commit. Never substitute optional discovered branch metadata
    for the captured baseline.
+   Capture disables fsmonitor, external diff and textconv, and refuses configured
+   executable clean/process filters before inspection. Submodule dirty contents
+   are not inspected recursively. Use ordinary Bash explicitly for filtered
+   repositories; do not retry the helper to bypass this refusal.
 2. **Commit:** only after the user requests a commit of an explicit file set,
    use `git-review commit --input - --output json` with
    `{ "review": <exact reference object>, "paths": [...], "message": "..." }`.

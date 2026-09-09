@@ -57,7 +57,7 @@ export function gitReviewOperation(command: string): GitReviewEvidence['operatio
 /** Persistence boundary: refuse malformed/oversized evidence, including unknown fields. */
 export function decodeGitReviewEvidence(value: unknown): GitReviewEvidence {
   const record = object(value, ['version', 'operation', 'outcome', 'cwd', 'observedAt', 'baseline', 'paths', 'preview', 'commit', 'parent', 'pullRequest', 'message']);
-  if (record.version !== 1 || JSON.stringify(value).length > GIT_REVIEW_MAX_BYTES) fail();
+  if (record.version !== 1 || new TextEncoder().encode(JSON.stringify(value)).byteLength > GIT_REVIEW_MAX_BYTES) fail();
   member(record.operation, ['capture', 'commit', 'preview', 'push', 'create-pr']);
   member(record.outcome, ['reviewed', 'previewed', 'succeeded', 'reconciled', 'rejected', 'uncertain']);
   absolute(record.cwd); number(record.observedAt); string(record.message);
