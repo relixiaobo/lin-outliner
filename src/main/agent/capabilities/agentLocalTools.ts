@@ -2055,6 +2055,7 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams, sign
   const rawLines = result.lines.slice(0, page.limit);
   const locations = new Map<number, NonNullable<FileGrepData['readLocations']>[number]>();
   if (mode === 'content') {
+    const matchesByFile = new Map<string, GrepPreviewRequest[]>();
     for (let index = 0; index < rawLines.length; index++) {
       const raw = rawLines[index]!;
       const separator = raw.indexOf('\0');
@@ -2066,10 +2067,17 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams, sign
       const line = Number(lineText); const byteOffset = Number(byteText);
       rawLines[index] = `${targetStat.isFile() ? '' : `${relativeToWorkspace(workspace, filePath)}${kind}`}${params['-n'] === false ? '' : `${line}${kind}`}${snippet}`;
       if (kind !== ':') continue;
-      const located = await locateGrepSnippet(filePath, byteOffset, line, snippet ?? '', signal);
-      const cursor = located?.cursor ?? null;
-      if (located) rawLines[index] = `${targetStat.isFile() ? '' : `${relativeToWorkspace(workspace, filePath)}:`}${params['-n'] === false ? '' : `${line}:`}${located.preview}`;
-      locations.set(index, { filePath, line, byteOffset, cursor });
+      const matches = matchesByFile.get(filePath) ?? [];
+      matches.push({ index, byteOffset, line, match: snippet ?? '' });
+      matchesByFile.set(filePath, matches);
+    }
+    for (const [filePath, matches] of matchesByFile) {
+      const previews = await locateGrepSnippets(filePath, matches, signal);
+      for (const { index, byteOffset, line } of matches) {
+        const located = previews.get(index);
+        if (located) rawLines[index] = `${targetStat.isFile() ? '' : `${relativeToWorkspace(workspace, filePath)}:`}${params['-n'] === false ? '' : `${line}:`}${located.preview}`;
+        locations.set(index, { filePath, line, byteOffset, cursor: located?.cursor ?? null });
+      }
     }
   }
   const candidates = rawLines.map((line) => mode === 'files_with_matches'
@@ -2098,7 +2106,7 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams, sign
       numFiles: 0,
       filenames: [],
       content: items.join('\n'),
-      readLocations: [...locations].filter(([index]) => index < items.length).map(([, location]) => location),
+      readLocations: [...locations].filter(([index]) => index < items.length).sort(([a], [b]) => a - b).map(([, location]) => location),
       numLines: items.length,
       ...(appliedLimit !== undefined ? { appliedLimit } : {}),
       ...(appliedOffset !== undefined ? { appliedOffset } : {}),
@@ -2131,61 +2139,88 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams, sign
   };
 }
 
-/** Inspect a bounded matching region; transcoded offsets require streaming to that position. */
-async function locateGrepSnippet(
+interface GrepPreviewRequest {
+  readonly index: number;
+  readonly byteOffset: number;
+  readonly line: number;
+  readonly match: string;
+}
+
+interface GrepPreview {
+  readonly preview: string;
+  readonly cursor: string | null;
+}
+
+/** One file generation per request: bounded positional reads, or one transcoded scan. */
+async function locateGrepSnippets(
   filePath: string,
-  byteOffset: number,
-  line: number,
-  match: string,
+  matches: readonly GrepPreviewRequest[],
   signal?: AbortSignal,
-) {
+): Promise<ReadonlyMap<number, GrepPreview>> {
   signal?.throwIfAborted();
   try {
     const source = await textFileGeneration(filePath);
     const handle = await open(filePath, 'r');
+    const previews = new Map<number, GrepPreview>();
     try {
       const prefix = Buffer.alloc(3);
       await handle.read(prefix, 0, prefix.length, 0);
       const encoding = detectTextEncoding(prefix);
-      // ripgrep strips a BOM and transcodes UTF-16. These offsets do not address
-      // original bytes; retain matching context and a line locator, without a cursor.
-      if (encoding !== 'utf8' || prefix.equals(Buffer.from([0xef, 0xbb, 0xbf]))) {
-        const preview = await readTranscodedGrepPreview(filePath, byteOffset, match, encoding, signal);
-        if (preview === null || (await textFileGeneration(filePath)).generation !== source.generation)
-          return null;
-        return { preview, cursor: null };
+      if (encoding !== 'utf8') {
+        for (const [index, preview] of await readTranscodedGrepPreviews(
+          filePath,
+          matches,
+          encoding,
+          signal,
+        )) {
+          previews.set(index, { preview, cursor: null });
+        }
+      } else {
+        // ripgrep omits a UTF-8 BOM from offsets. Adding its three bytes restores
+        // exact original positions without decoding the prefix before each match.
+        const bomBytes = prefix.equals(Buffer.from([0xef, 0xbb, 0xbf])) ? 3 : 0;
+        const buffer = Buffer.alloc(4_000);
+        for (const request of matches) {
+          signal?.throwIfAborted();
+          const byteOffset = request.byteOffset + bomBytes;
+          if (byteOffset > source.size) continue;
+          const start = Math.max(bomBytes, byteOffset - 2_000);
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+          const atMatch = byteOffset - start;
+          const expected = Buffer.from(request.match, 'utf8').subarray(0, 32);
+          if (
+            atMatch + expected.length > bytesRead ||
+            !buffer.subarray(atMatch, atMatch + expected.length).equals(expected)
+          )
+            continue;
+          const before = buffer.subarray(0, atMatch).toString('utf8').split(/\r?\n/).at(-1)!;
+          const after = buffer.subarray(atMatch, bytesRead).toString('utf8').split(/\r?\n/)[0]!;
+          const { preview, leading } = boundedGrepPreview(before, after);
+          previews.set(request.index, {
+            preview: preview.replace(/\r$/, ''),
+            // Empty matches expose line context without claiming verified bytes.
+            cursor: expected.length
+              ? encodeTextFileCursor(filePath, {
+                  generation: source.generation,
+                  end: source.size,
+                  encoding: 'utf8',
+                  nextByte: byteOffset - Buffer.byteLength(leading),
+                  line: request.line,
+                })
+              : null,
+          });
+        }
       }
-      const start = Math.max(0, byteOffset - 2_000);
-      const buffer = Buffer.alloc(4_000);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
-      const atMatch = byteOffset - start;
-      const expected = Buffer.from(match, 'utf8').subarray(0, 32);
-      if (!buffer.subarray(atMatch, atMatch + expected.length).equals(expected)) return null;
-      const before = buffer.subarray(0, atMatch).toString('utf8').split(/\r?\n/).at(-1)!;
-      const after = buffer.subarray(atMatch, bytesRead).toString('utf8').split(/\r?\n/)[0]!;
-      const { preview, leading } = boundedGrepPreview(before, after);
-      const nextByte = byteOffset - Buffer.byteLength(leading);
-      if ((await textFileGeneration(filePath)).generation !== source.generation) return null;
-      return {
-        preview: preview.replace(/\r$/, ''),
-        // Empty matches still have useful line context, but no matched bytes
-        // with which to verify an original-byte continuation.
-        cursor: expected.length
-          ? encodeTextFileCursor(filePath, {
-              generation: source.generation,
-              end: source.size,
-              encoding: 'utf8',
-              nextByte,
-              line,
-            })
-          : null,
-      };
+      signal?.throwIfAborted();
+      // Never combine previews from one generation with locators for another.
+      if ((await textFileGeneration(filePath)).generation !== source.generation) return new Map();
+      return previews;
     } finally {
       await handle.close();
     }
   } catch (error) {
     if (signal?.aborted) throw error;
-    return null;
+    return new Map();
   }
 }
 
@@ -2199,66 +2234,82 @@ function boundedGrepPreview(before: string, after: string): { preview: string; l
   };
 }
 
-/** Match ripgrep's BOM-free UTF-8 search offsets without retaining an entire long line. */
-async function readTranscodedGrepPreview(
+/** Satisfy the requested windows in offset order, retaining only bounded nearby text. */
+async function readTranscodedGrepPreviews(
   filePath: string,
-  byteOffset: number,
-  match: string,
+  matches: readonly GrepPreviewRequest[],
   encoding: TextEncoding,
   signal?: AbortSignal,
-): Promise<string | null> {
+): Promise<ReadonlyMap<number, string>> {
+  const requests = [...matches].sort((a, b) => a.byteOffset - b.byteOffset || a.index - b.index);
+  const previews = new Map<number, string>();
+  const active: Array<{ request: GrepPreviewRequest; before: string; after: string }> = [];
   const decoder = new StringDecoder(encoding);
   let first = true;
   let position = 0;
-  let reached = false;
-  let stopped = false;
+  let next = 0;
   let before = '';
-  let after = '';
+  const remember = (text: string) => {
+    const newline = text.lastIndexOf('\n');
+    before = newline < 0 ? before + text : text.slice(newline + 1);
+    if (before.length > 1_000) {
+      before = before.slice(-500);
+      if (/^[\uDC00-\uDFFF]/u.test(before)) before = before.slice(1);
+    }
+  };
+  const admit = () => {
+    while (next < requests.length && requests[next]!.byteOffset < position) next++;
+    while (next < requests.length && requests[next]!.byteOffset === position) {
+      active.push({ request: requests[next++]!, before, after: '' });
+    }
+  };
+  const finish = (window: (typeof active)[number]) => {
+    const expected = Buffer.from(window.request.match, 'utf8').subarray(0, 32);
+    if (!Buffer.from(window.after, 'utf8').subarray(0, expected.length).equals(expected)) return;
+    previews.set(
+      window.request.index,
+      boundedGrepPreview(window.before, window.after).preview.replace(/\r$/, ''),
+    );
+  };
   const consume = (decoded: string) => {
     if (first && decoded.length) {
       first = false;
       if (decoded.charCodeAt(0) === 0xfeff) decoded = decoded.slice(1);
     }
+    const bytes = Buffer.byteLength(decoded, 'utf8');
+    if (!active.length && next < requests.length && position + bytes <= requests[next]!.byteOffset) {
+      remember(decoded);
+      position += bytes;
+      return;
+    }
     for (const character of decoded) {
-      if (position === byteOffset) reached = true;
-      if (reached) {
-        if (character === '\n') {
-          stopped = true;
-          return;
-        }
-        after += character;
-        if (after.length > 1_000) {
-          stopped = true;
-          return;
-        }
-      } else {
-        if (position > byteOffset) {
-          stopped = true;
-          return;
-        }
-        if (character === '\n') before = '';
-        else {
-          before += character;
-          if (before.length > 1_000) {
-            before = before.slice(-500);
-            // A bounded prefix must not begin with half a surrogate pair.
-            if (/^[\uDC00-\uDFFF]/u.test(before)) before = before.slice(1);
-          }
+      admit();
+      for (let index = active.length - 1; index >= 0; index--) {
+        const window = active[index]!;
+        if (character !== '\n') window.after += character;
+        if (character === '\n' || window.after.length > 1_000) {
+          finish(window);
+          active.splice(index, 1);
         }
       }
+      remember(character);
       position += Buffer.byteLength(character, 'utf8');
+      if (next === requests.length && !active.length) return;
     }
   };
   const stream = createReadStream(filePath, { highWaterMark: 16 * 1024, signal });
   for await (const chunk of stream) {
+    signal?.throwIfAborted();
     consume(decoder.write(chunk as Buffer));
-    if (stopped) break;
+    if (next === requests.length && !active.length) break;
   }
-  if (!stopped) consume(decoder.end());
-  if (!reached && position !== byteOffset) return null;
-  const expected = Buffer.from(match, 'utf8').subarray(0, 32);
-  if (!Buffer.from(after, 'utf8').subarray(0, expected.length).equals(expected)) return null;
-  return boundedGrepPreview(before, after).preview.replace(/\r$/, '');
+  // This also admits a zero-width match at EOF without reading another byte.
+  if (next < requests.length || active.length) {
+    consume(decoder.end());
+    admit();
+    for (const window of active) finish(window);
+  }
+  return previews;
 }
 
 function buildRipgrepArgs(workspace: WorkspaceContext, target: string, params: FileGrepParams): string[] {

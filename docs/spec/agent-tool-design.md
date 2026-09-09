@@ -288,8 +288,11 @@ and emits bounded regions around actual matches, including matches deep inside a
 long line, plus `readLocations` with path, line, match byte offset and a `file_read`
 cursor when the source bytes can be verified. UTF-16 search offsets are transcoded
 by ripgrep, so those matches retain a line locator and no misleading byte cursor.
-BOM-adjusted offsets use the same bounded streaming preview fallback; it retains
-context around deep matches without keeping the full line in memory. Zero-width
+UTF-8 BOM offsets are adjusted by three bytes and use bounded positional reads.
+UTF-16 matches are grouped by file within the search request and share one forward
+decoding pass, stopping after the last requested preview window. Retained windows
+are bounded; work does not grow with the sum of matching offsets. Each file batch
+keeps its generation check and cancellation signal. Zero-width
 matches still expose their matching line context, including at CRLF line endings.
 Ordinary UTF-16 reads can continue through the line. Previews may be truncated and
 multiple matches on one line may produce separate regions. Files/count modes remain
