@@ -2903,3 +2903,13 @@ slot for every continuation.** Pending work stays with the existing delivery
 owner and its canonical batch identity. Verify a late completion while a newer
 run is active, including cancellation and archive, without assigning old output
 to the latest run or creating a second delivery queue.
+
+## Unset defaults and saved choices retain distinct identities
+
+PR #670's initial history rule could display the same Project label for a saved
+primary folder and an unset conversation folder that uses the application default.
+
+**Display the setting's source as well as its resolved value.** An unset default
+and an explicit choice remain different even when their current paths coincide.
+Verify clearing, membership-only reassignment, default changes, unavailability
+and restart without silently persisting or substituting a displayed default.

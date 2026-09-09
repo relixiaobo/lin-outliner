@@ -725,6 +725,20 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Project and conversation work-folder design integrated (PR #670)** - one
+  complete feature defines multiple Project source folders and a primary,
+  independently saved conversation work folders, immutable task addresses, and
+  Agent Project operations through a packaged CLI and Skill. Composer Add/status
+  controls and compact model/effort labels preserve location and model identity.
+  Review resolved the missing application-default display state, including
+  clearing a folder, membership-only assignment, coincident paths and restart.
+  The board orders implementation after #669 and records shared-owner collision
+  checks; OQ-1 remains the product ratification before code. This merge changes
+  design documents only; runtime, packaged CLI and light/dark UI acceptance
+  remain pending implementation. The integration tree passed typecheck,
+  `docs:check`, whitespace checks and 37 existing Project, reasoning, model-choice
+  and composer attachment tests (122 assertions).
+
 - **Agent continuation and question-recovery plans recorded** - two independent
   complete-feature plans define service handoff versus finite-result delivery,
   Host-owned continuation decisions, and recoverable pending questions with
