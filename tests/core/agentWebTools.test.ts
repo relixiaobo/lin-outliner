@@ -358,8 +358,8 @@ describe('web tool model-visible projections', () => {
       effectiveQuery: 'chengdu weather',
       kind: 'web',
       provider: 'provider',
-      providerName: 'google_serp',
-      finalUrl: 'https://www.google.com/search?q=chengdu+weather',
+      providerName: 'parallel',
+      finalUrl: 'https://search.parallel.ai/mcp',
       resultCount: 1,
       totalResults: 14,
       truncated: true,
@@ -414,18 +414,19 @@ describe('web tool model-visible projections', () => {
     const data: WebSearchData = {
       query: 'q',
       effectiveQuery: 'q',
-      kind: 'web',
+      kind: 'image',
       provider: 'provider',
-      providerName: 'google_serp',
+      providerName: 'bing_images',
       resultCount: 0,
       truncated: false,
       results: [],
-      hint: { type: 'search_blocked', reason: 'captcha', origin: 'https://www.google.com' },
+      hint: { type: 'search_blocked', reason: 'captcha', origin: 'https://www.bing.com' },
     };
 
     expect(webSearchModelData(data)).toEqual({
+      kind: 'image',
       results: [],
-      hint: { type: 'search_blocked', reason: 'captcha', origin: 'https://www.google.com' },
+      hint: { type: 'search_blocked', reason: 'captcha', origin: 'https://www.bing.com' },
     });
   });
 

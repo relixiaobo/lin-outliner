@@ -2808,3 +2808,15 @@ background refreshes must not silently admit stale drafts. Preserve the draft
 when refresh fails and reject again if the source changes before retry. Verify
 both user and project layers through the real UI and writer, including unrelated
 JSONC fields/comments and repeated conflicts.
+
+## Tool success must survive the model-visible output contract
+
+PR #661 fixed valid partial reads and oversized search, image, web, and task
+results that the Kernel rejected after their producers had succeeded. Tests
+that inspected only private details could not detect that failure boundary.
+
+**Validate real producer results against the output schema and serialized byte
+budget.** Admit intentionally unknown values explicitly, size UTF-8 after JSON
+escaping, and clip presentation before validation while preserving artifacts
+and terminal truth. Derive continuation from the entries actually returned and
+prove stable ordering across consecutive pages of an unchanged source.

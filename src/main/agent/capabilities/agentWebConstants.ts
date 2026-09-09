@@ -11,11 +11,7 @@ export const WEB_FETCH_CLIENT_HINT_UA =
   `"Chromium";v="${CHROME_MAJOR}", "Google Chrome";v="${CHROME_MAJOR}", "Not?A_Brand";v="24"`;
 export const WEB_FETCH_CLIENT_HINT_PLATFORM = '"macOS"';
 
-// The off-screen search window renders Google/Bing/DuckDuckGo with a real Chrome
-// desktop identity (not Electron's default UA, which advertises "Electron" and
-// the app name) so the engines serve the standard desktop layout the SERP
-// scrapers target and are marginally less likely to gate the session. Shares the
-// same bundled-Chromium major as the web_fetch identity above.
+// Image discovery still renders Bing Images with the bundled Chromium identity.
 export const WEB_SEARCH_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) '
   + `Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
