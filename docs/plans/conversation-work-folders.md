@@ -217,22 +217,57 @@ chip stays in the toolbar without displacing send/stop controls or adding a
 permanent row. Hover never changes geometry.
 
 **FR-8:** The composer model button displays a compact form of the model already
-resolved by the existing selection owner. For recognized Claude family labels,
-omit the redundant `Claude` prefix, for example `Claude Sonnet 5` becomes
-`Sonnet 5`. Keep the family, version, and meaningful variant suffixes. Unrecognized
-or custom labels without a recognized form retain their supplied name; do not
-blindly remove a first word, version, or suffix. The full catalog/configured name
-remains unchanged in menus and configuration.
+resolved by the existing selection owner. Apply the following naming rules to
+recognized display-name forms, independently of whether the connection is direct,
+a gateway, or custom. These are formatting examples, not a new model inventory
+or a claim that a particular connection offers every family.
 
-Use explicit localized short reasoning labels in the button: English `Medium`
-becomes `Med`, `Minimal` becomes `Min`, and `XHigh`/`Extra High` becomes `XH`;
-already short `Low`, `High`, and `Max` remain readable. Chinese labels such as
-`中` remain short localized text. Abbreviation follows the existing resolved
-display label, including a provider-specific label, rather than assuming that
-a generic effort key always names the provider's displayed level. Preserve
-unrecognized provider labels instead of guessing an equivalent standard level.
-The full reasoning label appears in the menu and tooltip. Retain the existing
-hidden badge for reasoning off; the menu/details still expose that state.
+| Model family / input form | Compact-name rule |
+| --- | --- |
+| Claude Sonnet, Opus, Haiku | Omit a redundant vendor/`Claude` prefix; `Claude Sonnet 5` becomes `Sonnet 5`. Retain family, version, and variant. |
+| OpenAI GPT and o-series | Omit a redundant `OpenAI` provider prefix when present. Keep `GPT` or the o-series identity, version, and variants such as mini, nano, Pro, Codex, or named variants. |
+| Google Gemini | Omit a redundant `Google` provider prefix when present. Keep `Gemini`, version, and Pro, Flash, or Flash-Lite distinctions. |
+| DeepSeek | Keep the DeepSeek family and version/variant, including R/V-series and reasoning/coder distinctions when supplied. |
+| Qwen | Keep Qwen, version, parameter-size identifiers, and Coder/VL/Thinking/Instruct distinctions when supplied. |
+| Kimi, GLM, Grok | Keep the family, version, and meaningful variants; already concise names need no further abbreviation. |
+| MiniMax, Mistral, MiMo, and other families | Keep the supplied model identity; remove only a separately recognized redundant provider prefix, never a model-family word by position. |
+| Unknown IDs and user-defined names | Preserve the supplied display name, or the existing model-ID fallback. Do not invent a family or parse an unknown name into a guessed version. |
+
+Do not shorten different models to generic labels such as `Pro`, `Flash`, or
+`Chat`. Snapshot/date, preview, context-window, quantization, and other suffixes
+remain when they distinguish models. If two different IDs in one connection
+would acquire the same compact label, retain a distinguishing source qualifier
+or fall back to the original name/ID. Across connections, existing menu origin
+labels and full connection details distinguish the same model name. The full
+catalog/configured name remains unchanged in menus and configuration. Width
+ellipsis is presentation only; it never rewrites identity or supplies a new ID.
+
+All seven current canonical reasoning levels have an explicit button policy:
+
+| Standard full display label | Compact English button label |
+| --- | --- |
+| Off | No effort badge; Off remains inspectable in the menu/details |
+| Minimal | Min |
+| Low | Low |
+| Medium | Med |
+| High | High |
+| XHigh / Extra High | XH |
+| Max | Max |
+
+Use locale-specific compact copy; already short localized labels remain short
+rather than being replaced with English initials. Minimal and Medium, and XHigh
+and Max, remain distinct. Show only the levels actually supported by the selected
+model; a model does not acquire seven choices merely because the shared ladder
+has seven entries. The existing Default marker describes a supported selection
+and does not become an eighth effort level.
+
+Resolve a provider-specific full display label before applying the abbreviation
+table. For example, a canonical slot exposed by its provider as `max` displays
+`Max`, even if that slot's canonical key is `xhigh`. Unknown labels, including
+Auto/Adaptive/Thinking/Ultra if actually supplied by the owner, retain their
+meaning and are not guessed to equal Medium, High, or Max. The formatter neither
+creates these choices nor changes the underlying level. The full reasoning label
+appears in the menu and tooltip; canonical off retains the existing hidden badge.
 
 Model name and compact effort stay visible at rest, with quieter effort text.
 The button's accessible label and inspectable details expose the full model name,
@@ -299,7 +334,8 @@ selection inside its menu, and selected status beside Add. This is the supplied
 product direction, not a measured usage statistic.
 **EVD-5:** The PM requested shortening the adjacent model control, explicitly
 giving `Sonnet 5` as sufficient for a Claude model and asking to abbreviate
-`Medium`, considered together with the Add/status toolbar interaction.
+`Medium`, considered together with the Add/status toolbar interaction. The PM
+also requested coverage of other model families and all reasoning levels.
 **ASM-1:** Add remains discoverable without an empty Project prompt. Validate with
 ordinary chat, attachment use, a folder-less Project, a multi-folder Project, two
 worktrees, cross-directory inspection, keyboard navigation, and a narrow composer
@@ -413,6 +449,16 @@ durable work-folder selection.
   Model and effort remain visible at rest; keyboard users can inspect full labels,
   change supported selections, and restore focus without losing the draft.
   Covers FR-7/8.
+- **AC-17:** Naming fixtures cover every FR-8 family row through direct and gateway
+  connections, meaningful version/variant/size/snapshot suffixes, two IDs that
+  would otherwise collapse to the same label, same-name models across connections,
+  and unknown/custom names. Compact labels and full details identify the selected
+  model without changing its canonical ID. Covers FR-8.
+- **AC-18:** Effort fixtures cover all seven standard display policies, a model
+  supporting only a subset, reasoning off, localized labels, provider mappings
+  whose native label differs from the canonical key, and unknown native labels.
+  Minimal/Medium and XHigh/Max remain distinguishable, unsupported levels never
+  appear, and shortening does not change the saved or admitted effort. Covers FR-8.
 
 Run typecheck, relevant owner/integration tests, real CLI discovery, focused
 Electron interaction and restart checks, docs checks, and light/dark verification
