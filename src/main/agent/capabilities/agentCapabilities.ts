@@ -314,9 +314,7 @@ function derivePathToolActionDescriptor(
 
   const callRoot = resolveCapabilityPath(policy.workspaceRoot, getStringArg(args, 'cwd') ?? '.');
   const resolvedPath = resolveCapabilityPath(callRoot, rawPath);
-  const targetPath = toolName === 'file_delete'
-    ? path.join(canonicalPathPreservingSuffix(path.dirname(resolvedPath)), path.basename(resolvedPath))
-    : canonicalPathPreservingSuffix(resolvedPath);
+  const targetPath = canonicalPathPreservingSuffix(resolvedPath);
   const sensitive = isSensitivePath(targetPath);
   const scope: ToolAccessScope = 'local_system';
   const actionKind = fileActionKind(toolName, write, sensitive ? 'sensitive_local_path' : 'local_path');
@@ -600,7 +598,7 @@ function longestOutlineCapability(words: readonly string[]): OutlineCapability |
 
 export function toolPathArgumentName(toolNameInput: string): string | null {
   const toolName = normalizeToolName(toolNameInput);
-  if (toolName === 'file_read' || toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete') return 'file_path';
+  if (toolName === 'file_read' || toolName === 'file_edit' || toolName === 'file_write') return 'file_path';
   if (toolName === 'file_glob' || toolName === 'file_grep') return 'path';
   return null;
 }
@@ -620,7 +618,6 @@ function fileActionKind(
 ): AgentToolActionKind {
   if (!write) return `file.read.${scope}`;
   if (scope !== 'local_path') return `file.write.${scope}`;
-  if (toolName === 'file_delete') return 'file.delete.local_path';
   if (toolName === 'file_edit') return 'file.edit.local_path';
   return 'file.write.local_path';
 }

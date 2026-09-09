@@ -1087,7 +1087,7 @@ export class ToolTaskService {
       });
       this.supervisors.delete(task.taskId);
       this.clearMonitor(task.taskId);
-    this.publish(terminal);
+      this.publish(terminal);
       if (terminal.backgroundEnabled) this.wakeDelivery(terminal.ownerThreadId);
     } catch (error) {
       this.publish(this.store.setCoordinationError(

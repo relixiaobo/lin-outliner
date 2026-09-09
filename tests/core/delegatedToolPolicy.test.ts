@@ -43,7 +43,7 @@ describe('delegated tool policy', () => {
         'file_read', 'file_glob', 'file_grep', 'bash', 'web_search', 'web_fetch', 'skill', 'update_plan',
       ]));
       expect(keys).not.toEqual(expect.arrayContaining([
-        'file_edit', 'file_write', 'file_delete', 'generate_image',
+        'file_edit', 'file_write', 'generate_image',
       ]));
     }
   });

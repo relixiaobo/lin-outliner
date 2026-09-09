@@ -30,6 +30,10 @@ by #656 and remains the prerequisite before starting the recovery/records
 implementation queue. Planning and read-only collision checks need not wait
 for that merge.
 
+PR #659 retired the dedicated file deletion tool. When rebasing #656, resolve
+the catalog-count assertion to 22 and retain the assertion that `file_delete`
+is absent; its twelve Settings-tool removals compose with this retirement.
+
 PR #639 approved the capability-first development workbench design; #645 revised
 its cache/publication contract. Unit A shipped in #646 as one complete
 execution-context refactor over the shipped delegation/native-launcher and
@@ -306,6 +310,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **remove-file-delete-tool** (`done`, #659, 2026-09-09) - local deletion now uses Bash command semantics without automatic Agent trash; existing policy/isolation and canonical deletion history remain, and the [plan is archived](plans/archive/remove-file-delete-tool.md).
 - **execution-sandbox-process / workbench complete** (`done`, #658, 2026-09-09) - actual isolation evidence and bounded tmux lifecycle measurements complete Units A-E; [Unit E](plans/archive/execution-sandbox-process.md) and the [aggregate](plans/archive/project-development-workbench.md) are archived.
 - **git-review-publication** (`done`, #657, 2026-09-09) - reviewed selected-file commits, immutable evidence, and explicit push/PR publication with remote reconciliation shipped; [plan archived](plans/archive/git-review-publication.md).
 - **verification-self-iteration** (`done`, #655, 2026-09-08) - source-bound checks, bounded correction, evidence recovery and delegation-aware mutation fencing shipped; [plan archived](plans/archive/verification-self-iteration.md).

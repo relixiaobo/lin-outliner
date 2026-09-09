@@ -4,7 +4,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
 "[
   {
     "name": "bash",
-    "description": "Executes a shell command in the call working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nSet run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.\\nYou do not need to append \\"&\\"; use task_stop if a background task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
+    "description": "Executes a shell command in the call working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_glob, and file_grep for filesystem operations when possible.\\nUse Bash commands such as rm, rmdir, or git rm to delete files and directories. Deletion follows the command semantics; no automatic trash copy is created.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nSet run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.\\nYou do not need to append \\"&\\"; use task_stop if a background task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
     "parameters": {
       "type": "object",
       "additionalProperties": false,
@@ -62,29 +62,6 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "objective"
       ],
       "additionalProperties": false
-    }
-  },
-  {
-    "name": "file_delete",
-    "description": "Moves a local file or directory to agent trash instead of permanently deleting it.\\nUse this for reversible cleanup. It cannot delete the call working directory root.\\nThe result includes the trash path so the item can be recovered if needed.",
-    "parameters": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "file_path"
-      ],
-      "properties": {
-        "file_path": {
-          "type": "string",
-          "minLength": 1,
-          "description": "An absolute path or a path relative to the call working directory to move to agent trash."
-        },
-        "cwd": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls."
-        }
-      }
     }
   },
   {
