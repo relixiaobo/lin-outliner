@@ -3,6 +3,7 @@ import {
   containsSecretLikeContent,
   elideLargeBlobs,
   redactSecretLikeContent,
+  redactRunningToolOutput,
   redactSecretLikeJsonAsync,
 } from '../../src/main/agent/capabilities/agentSecretRedaction';
 
@@ -134,6 +135,29 @@ describe('agent secret redaction', () => {
 
     expect(containsSecretLikeContent(content)).toBe(true);
     expect(redactSecretLikeContent(content)).toBe(content);
+  });
+
+  test('redacts unfinished private-key blocks only for growing process observations', async () => {
+    for (const label of ['PRIVATE KEY', 'RSA PRIVATE KEY', 'EC PRIVATE KEY', 'OPENSSH PRIVATE KEY', 'ENCRYPTED PRIVATE KEY']) {
+      const open = `-----BEGIN ${label}-----\nprivate material\n`;
+      expect(redactSecretLikeContent(open)).toBe(open);
+      expect(await redactRunningToolOutput(`before\n${open}`)).toBe('before\n[redacted secret-like content]');
+      expect(await redactRunningToolOutput(`before\n${open}-----END ${label}-----\nafter\n`))
+        .toBe('before\n[redacted secret-like content]\nafter\n');
+      // A footer before the opener cannot close the new block.
+      expect(await redactRunningToolOutput(`-----END ${label}-----\n${open}`))
+        .not.toContain('private material');
+    }
+  });
+
+  test('withholds running text when its scanner fails or returns an incomplete batch', async () => {
+    const input = 'before\n-----BEGIN PRIVATE KEY-----\nprivate material\n';
+    expect(await redactRunningToolOutput(input, async () => { throw new Error('scanner unavailable'); })).toBe('[redacted]');
+    expect(await redactRunningToolOutput(input, async () => [])).toBe('[redacted]');
+    expect(await redactRunningToolOutput(input, async (jobs) => {
+      expect(jobs).toEqual([{ content: input, inspectEncodedJson: false, redactIncompletePrivateKeys: true }]);
+      return null;
+    })).not.toContain('private material');
   });
 
   test('does not hard-block ambiguous credential-like prose', () => {

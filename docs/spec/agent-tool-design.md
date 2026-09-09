@@ -365,9 +365,15 @@ result-data budget. It clips only the visible output prefix and sets
 `outputTruncated`; stored stdout/stderr and task details remain unchanged.
 
 `task_status` exposes active-process logs through a timestamped `observation`, while
-`result` remains null until terminal settlement. Observations read a bounded tail of
-complete stdout/stderr lines, redact secrets before presentation, and apply the existing
-JSON output budget. Truncated or incomplete lines are omitted with an explicit truncation
+`result` remains null until terminal settlement. Each observation freezes a log prefix
+at its observed byte length, bounded by the existing Task detail ceiling. Scan the
+complete-line prefix from its beginning before choosing the visible tail, so a display
+boundary cannot lose multiline secret context. Growing captures also redact an unmatched
+private-key opening marker through the observation's end; complete-value scanning keeps
+its existing behavior. Large captures use the existing secret-scanner worker. Scanner
+failure withholds raw text; an oversized or shortened capture yields a bounded omission
+notice instead of falling back to an unsafe raw tail. Apply the existing JSON output
+budget after redaction. Truncated or incomplete lines are omitted with an explicit truncation
 flag. Reading does not stop the producer, rewrite raw logs, finalize artifacts, or create
 a receipt. Terminal output continues to use the immutable sanitized capture.
 The development Skill uses observations plus an appropriate endpoint/Runtime/UI check;

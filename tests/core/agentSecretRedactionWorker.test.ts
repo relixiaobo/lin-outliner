@@ -54,9 +54,15 @@ describe('agent secret redaction worker', () => {
         '-----END OPENSSH PRIVATE KEY-----',
       ].join('\n'),
       inspectEncodedJson: false,
+    }, {
+      content: 'before\n-----BEGIN PRIVATE KEY-----\nprivate material\n',
+      inspectEncodedJson: false,
+      redactIncompletePrivateKeys: true,
     }];
 
-    await expect(pool.scan(jobs)).resolves.toEqual(scanSecretStrings(jobs));
+    const outputs = await pool.scan(jobs);
+    expect(outputs).toEqual(scanSecretStrings(jobs));
+    expect(outputs[1]).toBe('before\n[redacted secret-like content]');
   });
 
   test('dispatches concurrent batches to separate bounded workers', async () => {

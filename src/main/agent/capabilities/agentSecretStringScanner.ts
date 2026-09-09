@@ -96,6 +96,8 @@ interface JsonReplacement {
 export interface SecretStringScanJob {
   readonly content: string;
   readonly inspectEncodedJson: boolean;
+  /** Growing process captures must hide a private-key block before its footer arrives. */
+  readonly redactIncompletePrivateKeys?: boolean;
 }
 
 export function containsSecretLikeContent(content: string): boolean {
@@ -113,8 +115,8 @@ export function redactSecretLikeContent(content: string): string {
 
 export function scanSecretStrings(jobs: readonly SecretStringScanJob[]): string[] {
   return jobs.map((job) => job.inspectEncodedJson
-    ? redactJsonEncodedSecretValues(job.content)
-    : redactKnownCredentialText(job.content));
+    ? redactJsonEncodedSecretValues(job.content, job.redactIncompletePrivateKeys)
+    : redactKnownCredentialText(job.content, job.redactIncompletePrivateKeys));
 }
 
 export function secretStringFieldConfidence(key: string): SecretFieldConfidence | null {
@@ -163,14 +165,14 @@ export function isJsonEncodedArgumentField(key: string): boolean {
   return terminal !== undefined && JSON_ENCODED_ARGUMENT_FIELD_TERMINALS.has(terminal);
 }
 
-function redactJsonEncodedSecretValues(content: string): string {
+function redactJsonEncodedSecretValues(content: string, redactIncompletePrivateKeys = false): string {
   const tokens = jsonStringTokens(content);
-  if (!tokens) return redactKnownCredentialText(content);
+  if (!tokens) return redactKnownCredentialText(content, redactIncompletePrivateKeys);
   const replacements: JsonReplacement[] = [];
   for (const token of tokens) {
     const redacted = token.confidence && isCredentialCandidateString(token.value, token.confidence)
       ? REDACTED_SECRET
-      : redactKnownCredentialText(token.value);
+      : redactKnownCredentialText(token.value, redactIncompletePrivateKeys);
     if (redacted !== token.value) {
       replacements.push({ start: token.start, end: token.end, value: JSON.stringify(redacted) });
     }
@@ -178,8 +180,8 @@ function redactJsonEncodedSecretValues(content: string): string {
   return applyJsonReplacements(content, replacements);
 }
 
-function redactKnownCredentialText(content: string): string {
-  const ranges = credentialTextRanges(content);
+function redactKnownCredentialText(content: string, redactIncompletePrivateKeys = false): string {
+  const ranges = credentialTextRanges(content, redactIncompletePrivateKeys);
   if (ranges.length === 0) return content;
   let redacted = content;
   for (const range of ranges.sort((left, right) => right.start - left.start)) {
@@ -188,16 +190,16 @@ function redactKnownCredentialText(content: string): string {
   return redacted;
 }
 
-function credentialTextRanges(content: string): TextRange[] {
+function credentialTextRanges(content: string, redactIncompletePrivateKeys = false): TextRange[] {
   return mergeRanges([
     ...secretlintRanges(content),
-    ...privateKeyRanges(content),
+    ...privateKeyRanges(content, redactIncompletePrivateKeys),
     ...patternRanges(content, SUPPLEMENTAL_HIGH_CONFIDENCE_PATTERNS),
     ...environmentAssignmentRanges(content),
   ]);
 }
 
-function privateKeyRanges(content: string): TextRange[] {
+function privateKeyRanges(content: string, redactIncompletePrivateKeys = false): TextRange[] {
   const begins: Array<{ readonly start: number; readonly end: number; readonly label: string }> = [];
   const ends = new Map<string, Array<{ readonly start: number; readonly end: number }>>();
   PRIVATE_KEY_MARKER_PATTERN.lastIndex = 0;
@@ -221,10 +223,14 @@ function privateKeyRanges(content: string): TextRange[] {
   for (const begin of begins) {
     if (begin.start < nextSearchStart) continue;
     const matchingEnds = ends.get(begin.label);
-    if (!matchingEnds) continue;
-    const endIndex = lowerBoundMarkerStart(matchingEnds, begin.end);
-    const end = matchingEnds[endIndex];
-    if (!end) continue;
+    const end = matchingEnds?.[lowerBoundMarkerStart(matchingEnds, begin.end)];
+    if (!end) {
+      if (redactIncompletePrivateKeys) {
+        ranges.push({ start: begin.start, end: content.length });
+        break;
+      }
+      continue;
+    }
     ranges.push({ start: begin.start, end: end.end });
     nextSearchStart = end.end;
   }

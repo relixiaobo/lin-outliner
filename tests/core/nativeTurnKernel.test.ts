@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { generateKeyPairSync } from 'node:crypto';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, spyOn, test } from 'bun:test';
@@ -557,6 +558,93 @@ describe('native turn kernel parity', () => {
       await tasks.close(2_000); database.close(); await rm(root, { recursive: true, force: true });
     }
   }, 15_000);
+
+  for (const stream of ['stdout', 'stderr'] as const) {
+    for (const boundary of ['unfinished', 'tail-inside-key'] as const) {
+      test(`redacts ${boundary} PEM context from running ${stream} and the model header`, async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'tenon-key-observation-'));
+        const database = new Database(':memory:');
+        const store = new ToolTaskStore(database as unknown as SqliteDatabase);
+        const tasks = new ToolTaskService(store, path.join(root, 'tasks'));
+        tasks.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+          startCompletionTurn: async () => false, taskChanged: () => {} });
+        await tasks.initialize();
+        try {
+          // Disposable fixture material only: no user credentials or external model.
+          const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey
+            .export({ type: 'pkcs8', format: 'pem' }).toString();
+          const lines = pem.trimEnd().split('\n');
+          const body = lines.slice(1, -1);
+          const prefix = boundary === 'unfinished'
+            ? `before\n${lines.slice(0, -1).join('\n')}\n`
+            : `before\n${pem}${'ordinary log line\n'.repeat(1640)}ready\n`;
+          const suffix = boundary === 'unfinished' ? `${lines.at(-1)}\nafter\n` : 'after\n';
+          if (boundary === 'tail-inside-key') {
+            expect(prefix.slice(-30_000).includes('BEGIN PRIVATE KEY')).toBe(false);
+            expect(body.some((line) => prefix.slice(-30_000).includes(line))).toBe(true);
+          }
+          await writeFile(path.join(root, 'prefix.txt'), prefix, { mode: 0o600 });
+          await writeFile(path.join(root, 'suffix.txt'), suffix, { mode: 0o600 });
+          await writeFile(path.join(root, 'writer.mjs'), `
+            import { existsSync, readFileSync } from 'node:fs';
+            const output = process[process.argv[2]];
+            output.write(readFileSync('prefix.txt'));
+            while (!existsSync('release')) await new Promise((resolve) => setTimeout(resolve, 10));
+            output.write(readFileSync('suffix.txt'));
+            setInterval(() => {}, 1000);
+          `);
+          const context = toolRuntimeContext();
+          const task = await tasks.start({
+            ownerThreadId: context.thread.id, sourceTurnId: context.turn.id, sourceItemId: 'key-log',
+            producer: 'bash', description: 'Disposable multiline secret fixture', command: 'Run log fixture',
+            cwd: root, env: process.env, timeoutMs: null,
+            process: { kind: 'exec', executable: process.execPath, args: ['writer.mjs', stream],
+              env: Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== undefined)), privateControl: false },
+          });
+          const waitForBytes = async (size: number) => {
+            const deadline = Date.now() + 5_000;
+            while ((await stat(path.join(task.detailPath, `${stream}.log`))).size < size) {
+              if (Date.now() >= deadline) throw new Error('Log fixture did not publish its bytes');
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+          };
+          await waitForBytes(Buffer.byteLength(prefix));
+          const controls = await new ToolRuntime(toolRuntimeService({ toolTaskService: () => tasks }), {
+            capabilityTools: () => [], capabilityConfig: { blocks: [] },
+          }).createTools({ ...context, configuration: { ...context.configuration, tools: ['task_status'] } });
+          const status = controls.find((candidate) => candidate.name === 'task_status')!;
+          const observed = await tasks.observeOutput(task.taskId, context.thread.id);
+          const { gateway } = await executeToolWithArguments(status, { task_id: task.taskId });
+          const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+          const headerText = (result.content[0] as { text: string }).text;
+          const header = JSON.parse(headerText);
+          expectToolOutputContract('task_status', header.data);
+          expect(header.ok).toBe(true);
+          expect(header.data.state).toBe('running');
+          expect(header.data.result).toBeNull();
+          // Boolean assertions avoid printing even disposable key material on failure.
+          expect({
+            serviceLeaks: body.some((line) => observed?.[stream].includes(line)),
+            modelLeaks: body.some((line) => headerText.includes(line)),
+          }).toEqual({ serviceLeaks: false, modelLeaks: false });
+          expect(observed?.[stream]).toContain(boundary === 'unfinished' ? 'before' : 'ready');
+          expect(header.data.observation.output).toContain(boundary === 'unfinished' ? 'before' : 'ready');
+          await writeFile(path.join(root, 'release'), 'continue');
+          await waitForBytes(Buffer.byteLength(prefix + suffix));
+          const after = await tasks.observeOutput(task.taskId, context.thread.id);
+          expect(body.some((line) => after?.[stream].includes(line))).toBe(false);
+          expect(after?.[stream]).toContain('after');
+          expect((await readFile(path.join(task.detailPath, `${stream}.log`), 'utf8')) === prefix + suffix).toBe(true);
+          expect(tasks.readOwned(task.taskId, context.thread.id)?.state).toBe('running');
+          expect((await tasks.stop(task.taskId, context.thread.id))?.state).toBe('cancelled');
+          const terminal = await tasks.output(task.taskId, context.thread.id);
+          expect(body.some((line) => terminal?.[stream].includes(line))).toBe(false);
+        } finally {
+          await tasks.close(2_000); database.close(); await rm(root, { recursive: true, force: true });
+        }
+      }, 15_000);
+    }
+  }
 
   test('retains terminal task status when escaped process output exceeds the JSON byte limit', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-task-output-'));

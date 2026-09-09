@@ -24,10 +24,14 @@ and carry it unchanged to the standalone supervisor. Stop, output ceilings,
 ownership reconciliation, and orderly Quit still apply.
 
 Expose bounded, sanitized running output through `task_status` as a timestamped
-observation, separate from its terminal result. Read complete lines from a bounded
-tail without changing the producer's output files or publishing a final receipt.
-Apply the existing secret redaction, untrusted-output treatment, and serialized
-result budget. A running observation does not prove application readiness.
+observation, separate from its terminal result. Freeze a log prefix bounded by the
+Task detail ceiling and redact its complete lines from the beginning before selecting
+the visible tail. Preserve multiline secret context and redact unfinished private-key
+blocks through the observation's end. Use the existing scanner worker for large
+captures; withhold raw text on scan failure or an oversized/shortened capture.
+Do not change the producer's output files or publish a final receipt. Apply the
+existing untrusted-output treatment and serialized result budget. A running
+observation does not prove application readiness.
 
 ### Nested application startup
 
@@ -55,7 +59,7 @@ agent/Outline specifications. Do not change dependencies, core document commands
 the shared board, or the changelog.
 
 This feature follows PR #661 and preserves its bounded output projections.
-The open PR #662 owns web search; it shares the tool specification but none of
+PR #662 owns web search; it shares the tool specification but none of
 this feature's implementation functions. Its search changes remain independent.
 
 ### Risks and validation

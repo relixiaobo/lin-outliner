@@ -15,7 +15,7 @@ import type {
   TurnId,
 } from '../../../core/agent/protocol';
 import { getAgentProcessExecutor, prepareAgentProcessIsolation, type AgentProcessWriteSandbox } from '../capabilities/agentProcessExecutor';
-import { redactSecretLikeContent } from '../capabilities/agentSecretRedaction';
+import { redactRunningToolOutput, redactSecretLikeContent } from '../capabilities/agentSecretRedaction';
 import { uuidV7 } from '../uuid';
 import {
   projectToolTask,
@@ -748,8 +748,8 @@ export class ToolTaskService {
     if (!task || isToolTaskTerminal(task.state) || task.detailState !== 'available') return null;
     const paths = taskPaths(task.detailPath);
     const [stdout, stderr] = await Promise.all([
-      readRunningPreview(paths.stdout, TASK_OUTPUT_PREVIEW_BYTES),
-      readRunningPreview(paths.stderr, TASK_OUTPUT_PREVIEW_BYTES),
+      readRunningPreview(paths.stdout, TASK_OUTPUT_PREVIEW_BYTES, this.limits.taskDetailBytes),
+      readRunningPreview(paths.stderr, TASK_OUTPUT_PREVIEW_BYTES, this.limits.taskDetailBytes),
     ]);
     return {
       stdout: stdout.text, stderr: stderr.text,
@@ -1813,22 +1813,39 @@ async function atomicBufferWrite(target: string, value: Buffer): Promise<void> {
   await rename(temporary, target);
 }
 
-async function readRunningPreview(filePath: string, maxBytes: number): Promise<{ text: string; truncated: boolean }> {
+async function readRunningPreview(
+  filePath: string,
+  maxBytes: number,
+  maxSnapshotBytes: number,
+): Promise<{ text: string; truncated: boolean }> {
   let file;
   try {
     file = await open(filePath, 'r');
     const { size } = await file.stat();
-    const start = Math.max(0, size - maxBytes);
-    const buffer = Buffer.alloc(Math.min(size, maxBytes));
-    const { bytesRead } = await file.read(buffer, 0, buffer.length, start);
-    const bytes = buffer.subarray(0, bytesRead);
-    // Never expose a partial first/last line, which could split a secret before redaction.
-    const first = start > 0 ? bytes.indexOf(10) + 1 : 0;
-    const last = bytes.lastIndexOf(10) + 1;
-    const complete = start > 0 && first === 0 ? Buffer.alloc(0) : bytes.subarray(first, Math.max(first, last));
+    if (size > maxSnapshotBytes) {
+      return { text: '[Running output withheld: capture exceeds its byte limit.]', truncated: true };
+    }
+    // Freeze an append-only prefix at the observed size. A raw tail can begin inside
+    // a multiline secret, so preserve all preceding context until redaction finishes.
+    const buffer = Buffer.alloc(size);
+    let offset = 0;
+    while (offset < size) {
+      const { bytesRead } = await file.read(buffer, offset, size - offset, offset);
+      if (bytesRead === 0) {
+        return { text: '[Running output withheld: capture changed during observation.]', truncated: true };
+      }
+      offset += bytesRead;
+    }
+    const completeLength = buffer.lastIndexOf(10) + 1;
+    const redacted = Buffer.from(scanUntrustedOutput(await redactRunningToolOutput(
+      buffer.subarray(0, completeLength).toString('utf8'),
+    )));
+    const start = Math.max(0, redacted.length - maxBytes);
+    const tail = redacted.subarray(start);
+    const first = start > 0 ? tail.indexOf(10) + 1 : 0;
     return {
-      text: scanUntrustedOutput(redactSecretLikeContent(complete.toString('utf8'))),
-      truncated: start > 0 || last < bytesRead,
+      text: start > 0 && first === 0 ? '' : tail.subarray(first).toString('utf8'),
+      truncated: start > 0 || completeLength < size,
     };
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return { text: '', truncated: false };

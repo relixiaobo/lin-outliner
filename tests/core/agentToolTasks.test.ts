@@ -4,7 +4,7 @@ import { Database } from 'bun:sqlite';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -272,6 +272,21 @@ describe('ToolTaskService', () => {
     expect(service.readOwned(task.taskId, OWNER_ID)?.state).toBe('running');
     await service.close(2_000);
     expect(service.readOwned(task.taskId, OWNER_ID)?.state).toBe('cancelled');
+  });
+
+  test('withholds oversized running captures instead of scanning a contextless raw tail', async () => {
+    const fixture = await createFixture();
+    const service = await createService(fixture, passiveHost());
+    const task = await service.start(startInput('sleep 30', { timeoutMs: null }));
+    const log = path.join(task.detailPath, 'stdout.log');
+    await truncate(log, 64 * 1024 * 1024 + 1);
+    const observed = await service.observeOutput(task.taskId, OWNER_ID);
+    expect(observed).toMatchObject({
+      stdout: '[Running output withheld: capture exceeds its byte limit.]', stdoutTruncated: true,
+    });
+    expect(service.readOwned(task.taskId, OWNER_ID)?.state).toBe('running');
+    // Restore the test-created sparse file before ordinary terminal settlement.
+    await truncate(log, 0);
   });
 
   test('supervises exact stdin and preserves factual success, failure, and timeout outcomes', async () => {
