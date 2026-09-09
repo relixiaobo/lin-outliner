@@ -739,6 +739,9 @@ or cloud work would require a different delivery commitment and scope.
 The recommended behavior is DEC-2 and TRD-1; this deliberately removes the need
 to choose a Thread destination or configure project fan-out.
 
-The unified-record plan's discovery OQ-1 remains with that plan. This design
-requires eligible task-owned results and explicit handoff references and does
-not assume blanket cross-profile or delegated discovery permission.
+Discovery follows the delivered
+[published conversation record contract](../spec/agent-core.md#published-conversation-records):
+non-excluded persistent roots across Profiles, Automation roots and self, with
+delegated/ephemeral isolation and file-capability checks. This design requires
+eligible task-owned results and explicit handoff references; it does not broaden
+that authority or introduce another record-discovery approval gate.

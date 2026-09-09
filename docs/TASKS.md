@@ -84,6 +84,15 @@ not separately releasable scaffolding. The PM reviews at most two significant
 changes at once. Planning, fixtures and disjoint implementation can proceed in
 parallel; shared-owner mutations need an explicit integration order.
 
+Immediate recommendation after #669: claim **question recovery** in the shared
+Agent lane and **Node retention quality** on Memory-local owners. Each remains
+one complete feature PR. Prepare background policy's service-exit decision and
+fixtures concurrently, then integrate it after question recovery. Profile
+learning follows the selected Node-quality changes; refresh exact context and
+configuration overlap before running it beside the Agent lane. This is execution
+advice, not a claim that a dev has started either feature or that retained product
+questions have been ratified.
+
 ### Contract dependencies and selected order
 
 `->` means the successor consumes the predecessor's required final contract.

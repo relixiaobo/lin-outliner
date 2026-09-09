@@ -727,6 +727,13 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Post-record execution advice clarified** - the board recommends question
+  recovery and independent Memory Node quality as the next complete claims, with
+  background Task policy following the shared lifecycle changes. Office and
+  scheduled-work designs consume the delivered #669 contract instead of retaining
+  an obsolete record-merge or discovery-approval prerequisite. No downstream
+  feature implementation or new product ratification is claimed.
+
 - **Active plan validity audited against current implementation** - classified
   all 15 active designs as one completed runtime aggregate to archive, five
   targeted design revisions and nine retained goals. Delegation's shipped Task,

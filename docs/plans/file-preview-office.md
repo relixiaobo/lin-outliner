@@ -63,7 +63,8 @@ an `agent-payload` target or requiring an Outline Node projection.
 Consume the current Source, preview and Desktop Host contracts from
 #598/#599/#603. Coordinate `agentFileIngestion`, `agentPptxIngestion`,
 `agentLocalTools`, format/cache/result consumers and any dependency/build edits;
-the unified-record file-tool claim must settle before overlapping mutations.
+preserve the delivered ordinary-file/record contract and refresh live claims
+before overlapping mutations.
 Only one claim may own shared preview registry/shell files at a time, and this
 plan also serializes with
 relevant translation-geometry work.
