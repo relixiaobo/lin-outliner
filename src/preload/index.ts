@@ -1,3 +1,4 @@
+import type { ProviderApiKeyReadMode, ProviderApiKeyReadResult } from '../core/providerApiKeyPreview';
 import type { PreferenceEdit, PreferencesView } from '../core/settingsDefinitions';
 import type { DelegationSettingsView } from '../core/delegationSettings';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
@@ -60,7 +61,6 @@ import {
 } from '../core/agent/automation';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
-  type AgentProviderStoredApiKey,
   type OAuthLoginEventEnvelope,
 } from '../core/types';
 import { windowMaterialKind } from '../core/windowMaterial';
@@ -482,8 +482,8 @@ const api = {
   openProviderConfig: (params: { providerId: string; mode: 'configure' | 'custom' }) =>
     ipcRenderer.invoke('lin:open-provider-config', params) as Promise<void>,
   closeProviderConfig: () => ipcRenderer.invoke('lin:close-provider-config') as Promise<void>,
-  getProviderApiKey: (providerId: string) =>
-    ipcRenderer.invoke('lin:get-provider-api-key', { providerId }) as Promise<AgentProviderStoredApiKey>,
+  getProviderApiKey: <Mode extends ProviderApiKeyReadMode>(providerId: string, mode: Mode) =>
+    ipcRenderer.invoke('lin:get-provider-api-key', { providerId, mode }) as Promise<ProviderApiKeyReadResult<Mode>>,
   preferences: {
     get: () => ipcRenderer.invoke('lin:preferences/get') as Promise<PreferencesView>,
     edit: (input: PreferenceEdit) => ipcRenderer.invoke('lin:preferences/edit', input) as Promise<PreferencesView>,

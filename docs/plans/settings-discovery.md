@@ -167,7 +167,16 @@ Dual-auth providers support switching both ways without losing the key draft;
 OAuth account maintenance belongs with connected status. The native child grows
 to 520 × 400 (480 high for custom providers), with a scrolling body and stable
 actions. Cover stored keys, local servers, managed credentials, dual auth, interrupted tests, failed writes, and
-light/dark layout at normal and enlarged text. No new Agent tools or IPC contracts.
+light/dark layout at normal and enlarged text.
+
+Keep Show/Copy inside the key field, with accessible hit targets. Main supplies a
+preview containing up to four characters at either end, the actual mask length,
+and a total count. Short keys conceal at least half their characters; long keys
+keep both ends visible with an exact count beside a concise replacement hint.
+The preview is presentation-only: empty input preserves a saved key, and input
+replaces it directly. The existing sender-checked key IPC requires explicit preview
+or reveal mode; full reads occur only on Show/Copy. Remove generic connection copy
+and the separate replacement action. No Agent tools or IPC channels are added.
 
 ### Acceptance Criteria
 
@@ -220,9 +229,11 @@ in-flight work on navigation, and eager catalog loading behind a shared shell.
 Tests target these boundaries directly. PR #655 shares only the existing
 `docs/spec/agent-model-runtime.md` scope, in distinct ownership paragraphs; its
 execution-contract/ThreadService implementation is outside this change. It has
-merged. The current open claim #658 owns process execution, Tool Tasks, and
-related specification/locale sections; it does not claim Settings or these model
-tool adapters. Keep shared specification edits in their respective sections.
+merged, as has #658 (process execution and Tool Tasks). Open #659 retires
+file_delete and shares catalog/specification surfaces with this PR's tool retirement;
+its author has checked integration against this claim. Open #660 is a documentation
+plan for further tool retirement. Neither claims Provider forms or credential
+preview code. Keep shared specification edits in their respective sections.
 
 ## Open questions
 

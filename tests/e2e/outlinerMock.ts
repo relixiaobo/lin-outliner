@@ -1,3 +1,4 @@
+import type { ProviderApiKeyReadMode, ProviderApiKeyReadResult } from '../../src/core/providerApiKeyPreview';
 import { PREFERENCE_DEFINITIONS, preferenceDefault } from '../../src/core/settingsDefinitions';
 import { expect, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
@@ -74,6 +75,7 @@ interface MockFixtureOptions {
   /** Delays provider settings so Settings chrome can be asserted before settings data arrives. */
   providerSettingsDelayMs?: number;
   providerSettingsUnavailable?: boolean;
+  savedProviderApiKeys?: Record<string, string>;
   /** Delays only the first automatic Thread creation request. */
   initialThreadStartDelayMs?: number;
   /** Keeps translated blocks pending long enough for loader assertions. */
@@ -136,7 +138,7 @@ type E2EWindow = Window & {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
     agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T>;
     automationRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T>;
-    getProviderApiKey: (providerId: string) => Promise<{ providerId: string; apiKey?: string }>;
+    getProviderApiKey: <Mode extends ProviderApiKeyReadMode>(providerId: string, mode: Mode) => Promise<ProviderApiKeyReadResult<Mode>>;
     onAgentCoreNotification: (listener: (notification: unknown) => void) => () => void;
     onAutomationNotification: (listener: (notification: unknown) => void) => () => void;
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
@@ -484,6 +486,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       options.agentProviderUsable === false ? [] : [['openai', 'sk-openai-saved']],
     );
     if (options.oauthApiKeyProvider) providerApiKeys.set('openrouter', 'sk-or-saved');
+    for (const [providerId, key] of Object.entries(options.savedProviderApiKeys ?? {})) providerApiKeys.set(providerId, key);
     // An in-flight sign-in's resolve/reject, keyed by providerId. The spec drives
     // the event stream (emitOAuthEvent) and completes it (resolveOAuthLogin), so
     // the flow is fully deterministic — no real provider, timers, or network.
@@ -5308,10 +5311,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         return { file: null };
       },
-      getProviderApiKey: async (providerId) => {
-        const args = { providerId };
-        calls.push({ cmd: 'lin:get-provider-api-key', args: clone(args) });
-        return clone({ providerId, apiKey: providerApiKeys.get(providerId) });
+      getProviderApiKey: async <Mode extends ProviderApiKeyReadMode>(providerId: string, mode: Mode): Promise<ProviderApiKeyReadResult<Mode>> => {
+        calls.push({ cmd: 'lin:get-provider-api-key', args: { providerId, mode } });
+        const apiKey = providerApiKeys.get(providerId);
+        if (mode === 'preview') {
+          const chars = Array.from(apiKey ?? '');
+          const visible = Math.min(4, Math.floor(chars.length / 4));
+          return clone({ providerId, ...(apiKey ? { preview: {
+            prefix: chars.slice(0, visible).join(''), mask: '•'.repeat(chars.length - visible * 2),
+            suffix: visible ? chars.slice(-visible).join('') : '', length: chars.length,
+          } } : {}) }) as ProviderApiKeyReadResult<Mode>;
+        }
+        return clone({ providerId, apiKey }) as ProviderApiKeyReadResult<Mode>;
       },
       invoke: async <T,>(cmd: string, args: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd, args: clone(args) });

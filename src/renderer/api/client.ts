@@ -1,3 +1,4 @@
+import type { ProviderApiKeyReadMode } from '../../core/providerApiKeyPreview';
 import type { ConfigurationDomain } from '../../core/settingsWindow';
 import type { DelegationSettingsView } from '../../core/delegationSettings';
 import type {
@@ -7,7 +8,6 @@ import type {
   Backlink,
   AgentProviderConfigInput,
   AgentProviderSecretStatus,
-  AgentProviderStoredApiKey,
   AgentProviderSettingsView,
   AgentImageGenerationSettingsInput,
   AgentRuntimeSettingsInput,
@@ -208,8 +208,8 @@ export const api = {
     command<AgentProviderSecretStatus>('agent_delete_provider_api_key', { providerId }),
   agentGetProviderSecretStatus: (providerId: string) =>
     command<AgentProviderSecretStatus>('agent_get_provider_secret_status', { providerId }),
-  agentGetProviderApiKey: (providerId: string) =>
-    bridge((lin) => lin.getProviderApiKey(providerId)),
+  agentGetProviderApiKey: <Mode extends ProviderApiKeyReadMode>(providerId: string, mode: Mode) =>
+    bridge((lin) => lin.getProviderApiKey(providerId, mode)),
   agentOAuthLogin: (providerId: string) =>
     command<AgentProviderSettingsView>('agent_oauth_login', { providerId }),
   agentOAuthLogout: (providerId: string) =>

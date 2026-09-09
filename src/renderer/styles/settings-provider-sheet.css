@@ -61,8 +61,48 @@
 .settings-sheet-field-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
 .settings-sheet-field > input,
 .settings-sheet-key > input { width: 100%; min-width: 0; }
-.settings-sheet-replace-key { align-self: flex-start; }
-.settings-sheet-key { display: flex; align-items: center; gap: var(--space-2); }
+.settings-sheet-key {
+  --key-actions-width: calc(var(--control-size-md) * 2 + var(--space-2) * 2);
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.settings-sheet-key > input {
+  padding-inline-end: var(--key-actions-width);
+  font-family: var(--font-family-mono);
+}
+.settings-sheet-key[data-preview="true"] > input { color: transparent; }
+.settings-sheet-key-preview {
+  position: absolute;
+  inset-inline-start: var(--space-4);
+  inset-inline-end: var(--key-actions-width);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  white-space: pre;
+  color: var(--text-soft);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+.settings-sheet-key-preview > span { flex: 0 0 auto; }
+/* Long keys retain both ends; the caption always gives the exact length. */
+.settings-sheet-key-preview > .settings-sheet-key-mask { flex: 0 1 auto; overflow: hidden; }
+.settings-sheet-key-controls {
+  position: absolute;
+  inset-inline-end: var(--space-2);
+  display: flex;
+  align-items: center;
+}
+.settings-sheet-key-caption {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  min-height: var(--line-meta);
+}
+.settings-sheet-key-caption > :last-child { margin-inline-start: auto; }
 .settings-sheet-reveal {
   display: inline-flex;
   align-items: center;
@@ -70,7 +110,8 @@
   flex: 0 0 auto;
   border-radius: var(--radius-pill);
   color: var(--text-secondary);
-  padding: var(--space-3);
+  width: var(--control-size-md);
+  height: var(--control-size-md);
 }
 .settings-sheet-reveal:hover:not(:disabled) { color: var(--text-strong); }
 .settings-sheet-advanced summary {

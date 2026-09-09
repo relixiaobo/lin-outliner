@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { CopyIcon, HideIcon, ICON_SIZE, LoaderIcon, OpenInBrowserIcon, ShowIcon } from '../icons';
+import { ICON_SIZE, LoaderIcon, OpenInBrowserIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { ErrorState } from '../primitives/FeedbackState';
 import { Input } from '../primitives/Input';
+import { ProviderApiKeyField } from './ProviderApiKeyField';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
 
 // Empty apiKey retains the saved credential. This draft belongs to the window so
@@ -38,7 +39,6 @@ interface ProviderConfigFormProps {
   docsUrl?: string;
   onValidate: (draft: ProviderConfigDraft) => Promise<ProviderConfigValidation>;
   onSubmit: (draft: ProviderConfigDraft) => Promise<void>;
-  onLoadStoredApiKey?: () => Promise<string | undefined>;
   onActivityChange: (activity: ProviderFormActivity) => void;
   onOpenExternal: (url: string) => Promise<unknown>;
   onClose: () => void;
@@ -47,7 +47,7 @@ interface ProviderConfigFormProps {
 export function ProviderConfigForm({
   mode, autoFocus, draft, onDraftChange, initialBaseUrl, reservedProviderIds, hasExisting, defaultBaseUrl,
   requiresEndpoint, allowEndpointOverride, previousCheck, hasCredential, hasStoredKey, authNote, docsUrl,
-  onValidate, onSubmit, onLoadStoredApiKey, onActivityChange, onOpenExternal, onClose,
+  onValidate, onSubmit, onActivityChange, onOpenExternal, onClose,
 }: ProviderConfigFormProps) {
   const t = useT();
   const ids = useId();
@@ -57,10 +57,8 @@ export function ProviderConfigForm({
   const [activity, setActivity] = useState<ProviderFormActivity>('idle');
   const [result, setResult] = useState<ProviderConfigValidation | null>(null);
   const [saveError, setSaveError] = useState('');
-  const [keyFeedback, setKeyFeedback] = useState<ProviderConfigValidation | null>(null);
+  const [docsError, setDocsError] = useState('');
   const [keyLoading, setKeyLoading] = useState(false);
-  const [reveal, setReveal] = useState(false);
-  const [storedApiKey, setStoredApiKey] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(Boolean(draft.baseUrl && draft.baseUrl !== defaultBaseUrl));
   const saving = activity === 'saving';
   const testing = activity === 'testing';
@@ -75,7 +73,6 @@ export function ProviderConfigForm({
   const dirty = !hasExisting || Boolean(draft.apiKey.trim()) || endpoint !== initialBaseUrl.trim();
   const canSave = complete && dirty && !saving && !keyLoading;
   const displayedResult = result ?? (!dirty && activity === 'idle' ? previousCheck : null);
-  const showingStoredKey = reveal && !draft.apiKey && storedApiKey !== null;
 
   useEffect(() => {
     if (autoFocus) firstFieldRef.current?.focus();
@@ -91,40 +88,12 @@ export function ProviderConfigForm({
     if (testing) updateActivity('idle');
     setResult(null);
     setSaveError('');
-    if ('apiKey' in patch) setKeyFeedback(null);
     onDraftChange({ ...draft, ...patch });
   }
-  async function loadStoredApiKey() {
-    if (storedApiKey !== null) return storedApiKey;
-    if (!hasStoredKey || !onLoadStoredApiKey) return null;
-    setKeyLoading(true);
-    try {
-      const key = await onLoadStoredApiKey();
-      if (!key) throw new Error(t.providerConfig.savedKeyUnavailable);
-      setStoredApiKey(key);
-      return key;
-    } catch (caught) {
-      setKeyFeedback({ success: false, message: String(caught instanceof Error ? caught.message : caught) });
-      return null;
-    } finally { setKeyLoading(false); }
-  }
-  async function toggleReveal() {
-    if (!reveal && hasStoredKey && !draft.apiKey && !await loadStoredApiKey()) return;
-    setReveal((value) => !value);
-  }
-  async function copyApiKey() {
-    const key = draft.apiKey.trim() || await loadStoredApiKey();
-    if (!key) return;
-    try {
-      await navigator.clipboard.writeText(key);
-      setKeyFeedback({ success: true, message: t.providerConfig.keyCopied });
-    } catch (caught) {
-      setKeyFeedback({ success: false, message: String(caught instanceof Error ? caught.message : caught) });
-    }
-  }
   async function openDocs(url: string) {
+    setDocsError('');
     try { await onOpenExternal(url); }
-    catch (caught) { setKeyFeedback({ success: false, message: String(caught instanceof Error ? caught.message : caught) }); }
+    catch (caught) { setDocsError(String(caught instanceof Error ? caught.message : caught)); }
   }
   async function testConnection() {
     if (!complete || saving || testing) return;
@@ -197,46 +166,15 @@ export function ProviderConfigForm({
                 {authNote.docsLabel ?? t.providerConfig.learnMore}<OpenInBrowserIcon size={ICON_SIZE.tiny} />
               </ButtonControl>
             ) : null}
+            {docsError ? <ErrorState message={docsError} size="inline" /> : null}
           </div>
         ) : (
-          <div className="settings-sheet-field">
-            <div className="settings-sheet-field-heading">
-              <label htmlFor={`${ids}-key`}>{t.providerConfig.apiKeyLabel}</label>
-              {docsUrl ? <ButtonControl className="agent-settings-doc-link" onClick={() => void openDocs(docsUrl)}>
-                {t.providerConfig.getApiKey}<OpenInBrowserIcon size={ICON_SIZE.tiny} />
-              </ButtonControl> : null}
-            </div>
-            <div className="settings-sheet-key">
-              <Input id={`${ids}-key`} ref={!isCustom && !requiresEndpoint ? firstFieldRef : undefined}
-                label={t.providerConfig.apiKeyLabel} value={draft.apiKey || (showingStoredKey ? storedApiKey : '')}
-                type={reveal ? 'text' : 'password'} disabled={saving || keyLoading} readOnly={showingStoredKey}
-                placeholder={hasStoredKey ? t.providerConfig.apiKeySavedPlaceholder : t.providerConfig.apiKeyPlaceholder}
-                aria-describedby={`${ids}-key-hint`} autoComplete="off" autoCapitalize="none" spellCheck={false}
-                onChange={(event) => updateDraft({ apiKey: event.target.value })} />
-              <ButtonControl className="settings-sheet-reveal" disabled={saving || keyLoading}
-                aria-label={reveal ? t.providerConfig.hideKey : t.providerConfig.showKey}
-                title={reveal ? t.providerConfig.hideKey : t.providerConfig.showKey} onClick={() => void toggleReveal()}>
-                {reveal ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
-              </ButtonControl>
-              {hasStoredKey || draft.apiKey ? (
-                <ButtonControl className="settings-sheet-reveal" disabled={saving || keyLoading}
-                  aria-label={t.providerConfig.copyKey} title={t.providerConfig.copyKey} onClick={() => void copyApiKey()}>
-                  <CopyIcon size={ICON_SIZE.menu} />
-                </ButtonControl>
-              ) : null}
-            </div>
-            {showingStoredKey ? <Button className="settings-sheet-replace-key" size="sm" disabled={saving || keyLoading}
-              onClick={() => { setReveal(false); document.getElementById(`${ids}-key`)?.focus(); }}>
-              {t.providerConfig.replaceKey}
-            </Button> : null}
-            <p className="settings-sheet-help" id={`${ids}-key-hint`}>
-              {hasStoredKey ? t.providerConfig.savedKeyHint : isLocalBaseUrl(endpoint) ? t.providerConfig.localKeyHint : hasCredential ? t.providerConfig.availableKeyHint : t.providerConfig.keyHint}
-            </p>
-          </div>
+          <ProviderApiKeyField providerId={draft.providerId} value={draft.apiKey}
+            hasStoredKey={hasStoredKey} hasCredential={hasCredential} local={isLocalBaseUrl(endpoint)}
+            disabled={saving} inputRef={!isCustom && !requiresEndpoint ? firstFieldRef : undefined}
+            docsUrl={docsUrl} onChange={(apiKey) => updateDraft({ apiKey })}
+            onBusyChange={setKeyLoading} onOpenExternal={onOpenExternal} />
         )}
-        {keyFeedback ? keyFeedback.success
-          ? <p className="settings-sheet-help" role="status">{keyFeedback.message}</p>
-          : <ErrorState message={keyFeedback.message} size="inline" /> : null}
         {allowEndpointOverride && !requiresEndpoint ? (
           <details className="settings-sheet-advanced" open={advanced} onToggle={(event) => setAdvanced(event.currentTarget.open)}>
             <summary>{t.providerConfig.advanced}</summary>
@@ -249,7 +187,6 @@ export function ProviderConfigForm({
               {testing ? <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} /> : null}
               {testing ? t.providerConfig.validating : t.providerConfig.validate}
             </Button>
-            <p className="settings-sheet-help">{t.providerConfig.testHint}</p>
           </div>
           {displayedResult ? displayedResult.success
             ? <p className="settings-sheet-test-success" role="status">{displayedResult.message}</p>

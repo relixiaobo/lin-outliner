@@ -79,6 +79,7 @@ const {
   getProviderSecretStatus,
   getActiveProviderRuntimeConfig,
   getStoredProviderApiKey,
+  getStoredProviderApiKeyPreview,
   providerStreamOptionsFromRuntimeSettings,
   persistOAuthCredential,
   rankedModels,
@@ -705,6 +706,7 @@ describe('provider credential resolver', () => {
       apiKey: undefined,
     });
 
+    expect(await getStoredProviderApiKeyPreview(CC_SWITCH_LOCAL_PROVIDER_ID)).toEqual({ providerId: CC_SWITCH_LOCAL_PROVIDER_ID });
     const model = rankedModels(CC_SWITCH_LOCAL_PROVIDER_ID)[0];
     expect(model?.id).toBe(runtime?.modelId);
     expect(model ? await piResolveAuthApiKey(model) : undefined).toBe('registry-key');
@@ -976,6 +978,9 @@ describe('provider credential resolver', () => {
     expect(await getProviderApiKey('openai')).toBe('sk-test');
     expect(await getProviderSecretStatus('openai')).toEqual({ providerId: 'openai', hasApiKey: true });
     expect(await getStoredProviderApiKey('openai')).toEqual({ providerId: 'openai', apiKey: 'sk-test' });
+    expect(await getStoredProviderApiKeyPreview('openai')).toEqual({
+      providerId: 'openai', preview: { prefix: 's', mask: '•••••', suffix: 't', length: 7 },
+    });
   });
 
   test('credential store lists non-secret provider metadata', async () => {
@@ -1002,6 +1007,7 @@ describe('provider credential resolver', () => {
     expect(await getProviderApiKey('anthropic')).toBe('oauth-key');
     expect(await getProviderSecretStatus('anthropic')).toEqual({ providerId: 'anthropic', hasApiKey: false });
     expect(await getStoredProviderApiKey('anthropic')).toEqual({ providerId: 'anthropic', apiKey: undefined });
+    expect(await getStoredProviderApiKeyPreview('anthropic')).toEqual({ providerId: 'anthropic' });
   });
 
   test('oauth credential auto-refreshes and persists the rotated tokens', async () => {
@@ -1114,6 +1120,7 @@ describe('provider credential resolver', () => {
       process.env.AWS_PROFILE = 'test-profile';
       expect(await getProviderApiKey('openai')).toBe('env-key');
       expect(await getStoredProviderApiKey('openai')).toEqual({ providerId: 'openai', apiKey: undefined });
+      expect(await getStoredProviderApiKeyPreview('openai')).toEqual({ providerId: 'openai' });
       expect(await getProviderApiKey('amazon-bedrock')).toBeUndefined();
       expect(await getProviderApiKey('definitely-not-a-provider')).toBeUndefined();
     } finally {

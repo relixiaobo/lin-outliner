@@ -598,8 +598,8 @@ populate its model choices. Refresh remains an explicit network action; ordinary
 settings loading uses only the last persisted catalog.
 
 **Provider config.** Per-provider config is a focused native modal child window
-(`?surface=provider-config`, 520 × 400 logical pixels; 480 high for custom providers). A stable provider title and
-purpose replace model marketing and capability tables. The scrolling body owns
+(`?surface=provider-config`, 520 × 400 logical pixels; 480 high for custom providers). A stable provider icon/title replaces model marketing and capability tables;
+ordinary connections omit a generic purpose subtitle. The scrolling body owns
 connection inputs; the fixed footer owns Cancel and Save. Default-provider and
 removal actions stay in the Models list so they cannot discard a connection draft.
 Before settings resolve, the title and Cancel remain available with a loading
@@ -610,10 +610,22 @@ providers show the key first, with the optional Base URL under Advanced; an
 existing override opens that disclosure. Custom and local API servers show the
 endpoint prominently. Custom providers require a unique ID and a complete HTTP(S) endpoint;
 loopback servers may omit the key. Managed providers explain their credential
-source instead of asking for a key. Saved user-pasted keys remain masked until an
-explicit show/copy; an empty key field retains the saved key. Raw-key reads use the
-narrow IPC admitted only from this owned child window. Externally managed keys
-such as CC Switch registry credentials are never read into the form.
+source instead of asking for a key. Show/Hide and Copy live inside the key input,
+with separate keyboard stops and room reserved for their hit targets. Saved keys
+show up to four characters at each end, one mask character per concealed character,
+and the exact total character count; short keys keep at least half concealed.
+Long masks clip only their middle display so both ends remain visible; the count
+always reports the full length. New input uses password editing and the same
+preview on blur. A short replacement hint takes the place of repeated instructions.
+The display-only preview never becomes the input draft. Pasting replaces the key;
+clearing the field retains the saved credential, including after an explicit reveal.
+
+The existing owned-child-only key IPC requires an explicit `preview` or `reveal`
+mode. Main computes previews without returning concealed characters; only explicit
+Show/Copy actions request the complete user-pasted key. Missing previews fall back
+to a truthful Saved key placeholder without blocking editing. Externally managed,
+environment and OAuth credentials never enter this display/read path. No Agent
+tool is involved.
 
 Test Connection is optional and has adjacent pending/result feedback; it does not
 save draft inputs. Editing the draft invalidates a pending or completed result.

@@ -1,3 +1,4 @@
+import { previewProviderApiKey, type ProviderApiKeyReadResult } from '../../../core/providerApiKeyPreview';
 import { MAX_DELEGATION_CONCURRENCY, MAX_DELEGATION_GLOBAL_QUEUE, MAX_DELEGATION_THREAD_QUEUE } from '../../../core/delegationSettings';
 import * as electron from 'electron';
 import {
@@ -741,6 +742,12 @@ export async function getStoredProviderApiKey(providerIdInput: string): Promise<
     providerId,
     apiKey: credential?.type === 'api_key' ? credential.key : undefined,
   };
+}
+
+/** Preview only the user-pasted credential, using the same source exclusions. */
+export async function getStoredProviderApiKeyPreview(providerId: string): Promise<ProviderApiKeyReadResult<'preview'>> {
+  const stored = await getStoredProviderApiKey(providerId);
+  return { providerId: stored.providerId, ...(stored.apiKey ? { preview: previewProviderApiKey(stored.apiKey) } : {}) };
 }
 
 /**

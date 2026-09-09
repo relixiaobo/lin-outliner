@@ -55,7 +55,7 @@ export function ProviderConfigWindow() {
         </span>
         <div className="settings-sheet-head-text">
           <h2 className="settings-sheet-title" id={titleId}>{providerName}</h2>
-          <p className="settings-sheet-subtitle">{mode === 'custom' ? t.providerCatalog.openAiCompatible : t.providerConfig.connectionHint}</p>
+          {mode === 'custom' ? <p className="settings-sheet-subtitle">{t.providerCatalog.openAiCompatible}</p> : null}
         </div>
       </header>
       {settings ? (
@@ -149,7 +149,6 @@ function ProviderConnection({ settings, onSettingsChange, providerId, providerNa
           } : undefined}
           authNote={authNote} docsUrl={mode === 'custom' ? undefined : PROVIDER_DOCS_URL[providerId]}
           hasCredential={dualAuth ? hasApiKeyCredential : providerHasCredential(existing, catalog)} hasStoredKey={hasStoredKey}
-          onLoadStoredApiKey={hasStoredKey ? async () => (await api.agentGetProviderApiKey(providerId)).apiKey : undefined}
           onClose={onClose} onOpenExternal={api.openExternalUrl} onActivityChange={activityChanged}
           onSubmit={handleSubmit} onValidate={handleValidate} />
       )}

@@ -572,7 +572,8 @@ test.describe('provider config windows', () => {
   test('renders the saved connection — connection only, no model/reasoning controls', async ({ page }) => {
     const config = await openProviderConfig(page, 'openai');
     await expect(config.getByRole('heading', { name: /OpenAI/ })).toBeVisible();
-    await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', 'sk*****************');
+    await expect(config.locator('.settings-sheet-key-preview')).toHaveText('sk-•••••••••ved');
+    await expect(config.getByText('15 characters', { exact: true })).toBeVisible();
     await expect(config.getByLabel('Base URL')).not.toBeVisible();
     // Model and effort moved to the Configuration Profile; neither control lives here now.
     await expect(config.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
@@ -587,14 +588,15 @@ test.describe('provider config windows', () => {
     const config = await openProviderConfig(page, 'openai');
     const keyField = config.getByLabel('API key');
     await expect(keyField).toHaveValue('');
-    await expect(keyField).toHaveAttribute('placeholder', 'sk*****************');
+    await expect(config.locator('.settings-sheet-key-preview')).toHaveText('sk-•••••••••ved');
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'lin:get-provider-api-key').every((call) => call.args?.mode === 'preview')).toBe(true);
 
     await config.getByRole('button', { name: 'Show key' }).click();
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'lin:get-provider-api-key')?.args;
-    }).toMatchObject({ providerId: 'openai' });
+    }).toMatchObject({ providerId: 'openai', mode: 'reveal' });
     await expect(keyField).toHaveAttribute('type', 'text');
     await expect(keyField).toHaveValue('sk-openai-saved');
 

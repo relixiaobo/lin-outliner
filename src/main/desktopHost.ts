@@ -133,6 +133,7 @@ import {
   getAgentSkillSettings,
   getProviderSecretStatus,
   getStoredProviderApiKey,
+  getStoredProviderApiKeyPreview,
   getProviderSettings,
   rankedModels,
   reconcileProviderConfig,
@@ -1362,12 +1363,15 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
     if (!windowApplicationHost.isProviderConfigSender(event) || event.senderFrame !== event.sender.mainFrame) throw new Error('Provider configuration window required');
     windowApplicationHost.closeProviderConfig();
   });
-  ipcMain.handle('lin:get-provider-api-key', async (event, args?: { providerId?: unknown }) => {
+  ipcMain.handle('lin:get-provider-api-key', async (event, args?: { providerId?: unknown; mode?: unknown }) => {
     if (!windowApplicationHost.isProviderConfigSender(event) || event.senderFrame !== event.sender.mainFrame) {
       throw new Error('Provider API keys are only available to the provider config window.');
     }
     await lifecycle.ready('provider-configuration');
-    return getStoredProviderApiKey(String(args?.providerId ?? ''));
+    const providerId = String(args?.providerId ?? '');
+    if (args?.mode === 'preview') return getStoredProviderApiKeyPreview(providerId);
+    if (args?.mode === 'reveal') return getStoredProviderApiKey(providerId);
+    throw new Error('A provider key read mode is required.');
   });
   ipcMain.handle('lin:preferences/get', (event): PreferencesView => {
     windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Preference discovery');
