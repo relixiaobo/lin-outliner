@@ -1,5 +1,4 @@
 import type { AgentTool, AgentToolResult } from './kernel/types';
-import { decodeVerificationConfiguration } from '../../../core/agent/verification';
 import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from '../capabilities/agentToolEnvelope';
 import type { TSchema } from 'typebox';
 import {
@@ -113,24 +112,6 @@ export class ToolRuntime {
       capability: delegationPolicy?.access === 'read-only' ? 'read-only' as const : 'full-access' as const,
       ...(automationBoundary ? { writeBoundary: automationBoundary } : {}),
       ...(validateAutomationIsolation ? { validateIsolation: validateAutomationIsolation } : {}),
-      gitReviewRuntime: {
-        read: async (ref: import('../../../core/agent/protocol').ThreadContextPayloadReference) => {
-          const payload = await context.readContext(ref);
-          if (payload?.kind !== 'gitReviewEvidence') throw new Error('Historical Git review is unavailable; capture a new review');
-          return payload.evidence;
-        },
-        persist: async (evidence: import('../../../core/agent/gitReview').GitReviewEvidence, task: import('../tasks/toolTaskTypes').ToolTaskRecord,
-          priorRef: import('../../../core/agent/protocol').ThreadContextPayloadReference | null) => {
-          const item = await context.persistContextEvidence({
-            schemaVersion: 1, kind: 'gitReviewEvidence', evidence, taskId: task.taskId,
-            executionContext: task.executionContext, evidenceRefs: priorRef ? [priorRef] : [],
-            facts: [{ source: 'git-review', kind: 'git', authority: 'host', purpose: 'observation', scope: evidence.cwd,
-              version: task.taskId, observedAt: evidence.observedAt, invalidated: ['rejected', 'uncertain'].includes(evidence.outcome),
-              text: `${evidence.operation}: ${evidence.outcome}. ${evidence.message} Task ${task.taskId}; historical evidence requires live validation.` }],
-          }, `Git ${evidence.operation}: ${evidence.outcome}`);
-          return item.payloadRef;
-        },
-      },
       onTaskAdmitted: async (task: import('../tasks/toolTaskTypes').ToolTaskRecord) => {
         await context.persistContextEvidence({
           schemaVersion: 1, kind: 'taskExecutionContext', taskId: task.taskId,
@@ -327,7 +308,6 @@ export class ToolRuntime {
           turnId,
           requiredString(input.objective, 'create_goal.objective'),
           optionalPositiveInteger(input.token_budget, 'create_goal.token_budget'),
-          input.verification === undefined ? undefined : decodeVerificationConfiguration(input.verification),
         );
       }),
       coreTool('update_goal', 'Update Goal', async (_itemId, params) => {

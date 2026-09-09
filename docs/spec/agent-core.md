@@ -348,12 +348,11 @@ Threads have no durable catalog membership. An explicit root reassignment traver
 its complete descendant lineage and checks both Project and membership revisions.
 A missing intermediate membership row never truncates that traversal.
 
-Root-Agent `project_manage` proposals require native Host confirmation displaying
-the canonical directory, operation, Project, affected Chat, and consequences.
-Cancellation or abort closes the pending native confirmation and writes nothing;
-commit revalidates the confirmed revision and directory identity, then checks
-cancellation again before writing. Agents propose durable grouping only for lasting user intent.
-The renderer's explicit Project forms use the same service and confirm deletion.
+Project forms are UI-owned and call the Host service directly, with explicit
+confirmation for deletion. The service revalidates directory identity and revision
+inside its lifecycle lock before writing. Models have no Project inspection,
+management or proposal-confirmation entry point. Directory work remains independent
+of Project binding.
 
 Deletion persists a fence before checking Automation dependencies. New membership
 and live Project resolution reject fenced Projects; a child born during deletion
@@ -562,16 +561,12 @@ boundary; the next real idle boundary clears it and retries the same Goal
 generation. `waitForIdle` follows the whole continuation chain, including an
 admitted wrap-up, rather than returning after only its first Turn.
 
-Verification Goals additionally persist source revisions, immutable Tool Task
-bindings and bounded attempts in `goals.sqlite`; they do not own a second
-process-result ledger. See [source-bound verification](agent-tool-design.md#source-bound-verification).
-A verification stop durably blocks continuation and clears pending admission
-and wrap-up eligibility before idle notification. Turn failure, including
-active-Turn context-capacity exhaustion, cannot repeatedly resubmit the same
-oversized input after idle or restart. Explicit resumption requires a new user
-Turn and source reconciliation, retains the original budget, and starts a new
-revision. Preparing history rollback also stops verification conservatively;
-rollback or compaction never rewinds attempts or replays settled edits.
+Coding verification uses the built-in Skill and ordinary command receipts. Goals
+retain objective/status, budgets and generic continuation accounting, without
+source revisions, private check bindings, verification retries or Host-certified
+completion. See [native verification](agent-tool-design.md#native-verification).
+History rollback and compaction do not rewind the Goal ledger or authorize replay
+of settled edits. Goal completion remains the Agent's evidence-backed judgment.
 
 Archiving or deleting a root Thread is an ownership-tree operation over
 `parentThreadId` lineage. `ThreadService` first fences the complete tree against

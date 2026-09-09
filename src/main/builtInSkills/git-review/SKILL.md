@@ -1,66 +1,82 @@
 ---
-description: Review exact Git changes, commit explicitly selected working files, and preview or publish through supervised Git and GitHub CLI operations.
-when_to_use: Use when the user asks to review local changes, commit a selected file set, push a branch, or create a GitHub PR. Review and verification never imply publication authority.
+description: Review local changes and perform explicitly requested commits or publication using native Git and GitHub CLI commands.
+when_to_use: Use for reviewing changes, committing selected files, pushing an explicit branch, or creating a requested pull request.
 user-invocable: true
 ---
 
-# Git Review And Publication
+# Git Review and Publication
 
-Use ordinary Bash for inspection (`git status --short`, `git diff --stat`,
-`git diff -- paths`, `git diff --cached -- paths`) and the following strict,
-standalone Bash commands for durable review and publication. Set `cwd` to the
-requested directory and use foreground execution. Never concatenate these
-commands with shell syntax. Supply literal JSON using Bash `stdin`.
+This is a procedure for ordinary Bash using `git` and `gh`, not a `git-review`
+executable. Use an explicit repository `cwd`. Task receipts record execution and
+output; the Host does not certify that a commit matches a frozen review.
 
-1. **Capture:** `git-review capture --input - --output json`, stdin `{}` or
-   `{ "paths": ["src/example.ts"] }`. Paths are exact, relative to the Git
-   worktree root; in a non-Git directory they are relative to `cwd` and required.
-   Capture includes staged/unstaged changes, untracked, binary, renames and
-   deletions. It returns `gitReview.review`, an immutable reference object.
-   Inspect diffs with ordinary Git as needed; snippets and the displayed path
-   list are bounded. Request a focused capture for omitted paths. Capture does
-   not authorize commit. Never substitute optional discovered branch metadata
-   for the captured baseline.
-   Capture disables fsmonitor, external diff and textconv, and refuses configured
-   executable clean/process filters before inspection. Submodule dirty contents
-   are not inspected recursively. Use ordinary Bash explicitly for filtered
-   repositories; do not retry the helper to bypass this refusal.
-2. **Commit:** only after the user requests a commit of an explicit file set,
-   use `git-review commit --input - --output json` with
-   `{ "review": <exact reference object>, "paths": [...], "message": "..." }`.
-   Untracked files must be explicitly selected; select both rename paths.
-   The operation commits the reviewed **working file content**, including the
-   selected files' unstaged changes; it is not a staged-hunks operation.
-   Unrelated index entries and working files are retained. It uses Git plumbing,
-   writes the exact reviewed bytes without clean filters, does not execute commit
-   hooks, and honors `commit.gpgSign`. Use ordinary Bash
-   when the user requests a custom hook workflow. Report SHA and parent from the
-   receipt. A changed baseline, index, kind, size or digest requires renewed
-   review. Never refresh a snapshot implicitly to bypass a rejection.
-3. **Preview:** `git-review preview --input - --output json` with
-   `{ "remote": "origin", "base": "main" }`. Show the exact remote URL/name,
-   branch, HEAD, upstream, range, and PR head/base. Remote base objects must
-   already exist locally; an unavailable object requires a separately scoped
-   ordinary fetch and a new preview. Review-only work never proceeds to push.
-4. **Push:** when requested, use `git-review push --input - --output json` with
-   `{ "review": <exact preview reference> }`. Each attempt first queries the
-   remote branch. A matching remote OID is adopted without another push.
-   Ref movement requires another preview. Never force push, reset, merge, or
-   silently fall back to another remote or hosting command.
-5. **PR:** when requested and the previewed head is on the remote, use
-   `git-review create-pr --input - --output json` with
-   `{ "review": <exact preview reference>, "title": "...", "body": "..." }`.
-   The first adapter supports a same-repository branch on github.com with `gh`
-   authenticated. It queries exact head/base before creating and after the
-   attempt. A discovered matching PR, including a closed/merged PR, is evidence
-   and is never duplicated. Unsupported hosting or incomplete evidence stops.
-6. **Uncertainty:** interrupted/killed tasks or `uncertain` results are not
-   success. Remote operations reconcile with the same preview before another
-   attempt. Local commit uncertainty requires ordinary read-only inspection of
-   the reported commit, HEAD, parent/ref and index; never automatically retry a
-   commit or remove an index lock. Tenon's claim coordinates admitted tasks;
-   external clients can race. Report that limitation and preserve evidence.
-7. Historical diffs are immutable observations. Refresh appends new evidence;
-   compaction preserves references but never authorizes mutation or bypasses
-   live checks. Non-Git review supports bounded file excerpts and ordinary
-   checks; commit, push and PR creation are unavailable.
+## Inspect and commit
+
+1. Read applicable repository instructions. Inspect `git status --short`, current
+   branch and `git show --no-patch --format=%H HEAD` (an unborn repository has no
+   HEAD). Inspect both `git diff` and `git diff --cached`, with
+   `--no-ext-diff --no-textconv` for content
+   inspection. Inspect selected untracked files separately; they are absent from
+   ordinary diffs. For user-specified paths, pass `--` followed by shell-quoted
+   `:(literal)` pathspecs, e.g.
+   `git diff --no-ext-diff --no-textconv -- ':(literal)selected'` (add `--cached`
+   for the staged diff). This form also works under read-only delegation;
+   `git --literal-pathspecs diff ...` is not admitted there. Account for both sides
+   of renames, deletions, binary content, symlinks and unresolved conflicts. Resolve
+   a truncated diff by focused inspection, never by treating omitted content as reviewed.
+2. Establish whether the request means whole working files or already-staged
+   hunks. For whole files, add only selected new paths with
+   `git --literal-pathspecs add -- <selected-new-paths>`, then use
+   `git --literal-pathspecs commit --only -m <message> -- <selected-paths>`.
+   Include both old and new rename paths and tracked deletions. This preserves
+   unrelated staged paths but commits the selected working files, including their
+   unstaged changes. For staged hunks, inspect the entire staged diff and use
+   ordinary `git commit` only when every staged change is authorized. Do not
+   overwrite or unstage someone else's work to manufacture the desired selection.
+3. Recheck branch, HEAD, selected content and index immediately before committing.
+   If they changed, inspect again. Let native hooks, filters and signing run;
+   do not bypass them or alter Git configuration implicitly. Inspect the resulting
+   commit (`git show`, parent, paths and content) and remaining status afterward.
+   Unexpected output or concurrent edits require reporting and reconciliation,
+   not an automatic amend, reset, or repeated commit.
+
+## Inspect and publish
+
+1. Publication needs the user's intent for the operation and destination. A
+   review or commit request alone does not authorize push, PR creation, merge,
+   release or deployment. Inspect the exact remote URL, head branch, base branch,
+   local commit SHA and the intended commit range using `git remote`,
+   `git rev-parse`, `git log` and `git diff`. If comparison objects are missing,
+   fetch only the needed remote refs within the requested scope and inspect again.
+2. Resolve every actual push destination with
+   `git remote get-url --push --all <remote>`; the fetch URL may differ from the
+   push URLs. Multiple URLs mean a named-remote push targets all of them. Proceed
+   only when the request covers that complete set; otherwise resolve the intended
+   destination before mutation, without silently choosing the first or changing
+   remote configuration. Query each resolved URL directly with
+   `git ls-remote <push-url> refs/heads/<head>` before push. Recheck the destination
+   list and HEAD, then use the inspected remote and explicit refspec, e.g.
+   `git push <remote> HEAD:refs/heads/<head>`. Never force push or move another
+   branch implicitly. Afterward, even if push failed or its output was lost,
+   query every inspected push URL directly and compare its exact target ref/OID
+   with the intended commit. Do not use `ls-remote <remote>` as a substitute: it
+   queries the fetch URL. Report each destination's outcome; one matching OID
+   cannot establish success for all targets. An unreadable push endpoint remains
+   uncertain, and partial success requires reconciliation before another push.
+3. Before creation, use `gh pr list --repo <owner/repo> --head <head> --base <base>
+   --state all --json number,url,state,headRefName,baseRefName,headRepositoryOwner`
+   and inspect candidates with `gh pr view`. For forks, verify the head repository
+   and owner explicitly; a matching branch name alone is insufficient. Reuse or
+   report an existing intended PR. A closed or merged PR requires deciding from
+   the current request whether a new PR is wanted, not blind duplication.
+4. Create only the requested PR, with explicit `--repo`, `--head` (owner-qualified
+   for a fork), `--base`, `--title`, and `--body-file`. Write the body with actual
+   newlines using file tools. Explicit head selection avoids implicit push/fork
+   selection; push the intended branch separately first. Query afterward and
+   verify the returned PR's repository, head/base and state.
+5. After interruption, timeout, restart or an ambiguous response, inspect native
+   state before another mutation. A commit may already exist, a push may have
+   succeeded, or a PR may already have been created. Use Task status/output when
+   available; expired output does not authorize replay. Do not remove index locks,
+   install missing tools, or repeat publication blindly. Native Git locks do not
+   make the full review/commit/push/PR sequence atomic across external clients.

@@ -36,7 +36,6 @@ import { createPreviewTools } from '../agent/capabilities/previewTools';
 import { createApplicationTools } from '../agent/capabilities/applicationTools';
 import type { ApplicationOperation } from './applicationOperations';
 import { projectAutomationLifecycle } from '../agent/projects/projectAutomationLifecycle';
-import { createProjectTools } from '../agent/projects/projectTools';
 import type { PreviewOperations } from './previewOperations';
 import { AutomationWorktree } from '../agent/automations/AutomationWorktree';
 import { MemoryControlStore } from '../agent/extensions/memory/MemoryControlStore';
@@ -90,7 +89,6 @@ export interface AgentHostComposition {
 }
 
 export interface AgentHostOptions {
-  readonly reviewProjectChange?: import('../agent/projects/ProjectService').ReviewProjectChange;
   readonly previewOperations?: PreviewOperations;
   readonly applicationOperations?: () => ApplicationOperation | null;
   readonly reviewMemoryReset: ReviewMemoryReset;
@@ -321,7 +319,6 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   });
   const threadService = ThreadService.open(options.userDataDir, turnExecutor, {
     ...options.createThreadOptions(composition),
-    reviewProjectChange: options.reviewProjectChange,
     attachmentScratchRoot: options.scratchRoot,
     nameGenerator: turnExecutor,
     resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
@@ -562,7 +559,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
         context.thread.id,
       ),
       ...(delegationSession ? {
-        inheritedClaimTaskId: threadService.toolTaskService().store.sessionExecution(delegationSession.sessionId)?.taskId,
+        parentTaskId: threadService.toolTaskService().store.sessionExecution(delegationSession.sessionId)?.taskId,
       } : {}),
       ...(delegationMetadata ? { validateIsolation: () => worktree.validate(delegationMetadata) } : {}),
     };
@@ -579,8 +576,6 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       localWorkspaceForContext(context),
     ),
     dynamicTools: (context, authorize) => [createAutomationTool(automationService),
-      ...(context.thread.parentThreadId === null && context.thread.threadSource === 'user' && !context.thread.ephemeral
-        ? createProjectTools(threadService.projects, context.thread.id, authorize) : []),
       ...(options.previewOperations && context.thread.parentThreadId === null && context.thread.threadSource === 'user' && !context.thread.ephemeral
         ? createPreviewTools(options.previewOperations, (itemId, signal) => ({
           key: `agent:${context.thread.id}:${context.turn.id}:${itemId}`,

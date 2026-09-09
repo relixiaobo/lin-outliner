@@ -51,7 +51,7 @@ describe('execution context discovery', () => {
         }
         const result = await discoverExecutionContext(pendingExecutionContext(
           await resolveExecutionAddress({ defaultCwd: root }), {
-            capability: 'read-only', mutation: false, isolation: 'unsandboxed', writablePaths: [],
+            capability: 'read-only', isolation: 'unsandboxed', writablePaths: [],
           }));
         expect(await stat(path.join(root, 'extension-ran')).then(() => true, () => false)).toBe(false);
         expect(result.context.snapshot.discovery).toBe(extension === 'fsmonitor' ? 'complete' : 'unavailable');
@@ -72,7 +72,7 @@ describe('execution context discovery', () => {
         git('commit', '-m', 'Initial fixture');
         const result = await discoverExecutionContext(pendingExecutionContext(
           await resolveExecutionAddress({ defaultCwd: root }), {
-            capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+            capability: 'full-access', isolation: 'unsandboxed', writablePaths: [],
           }));
         expect(result.context.snapshot.discovery).toBe('complete');
         expect(result.context.snapshot.facts.find((fact) => fact.kind === 'git')?.text).toContain('(clean)');
@@ -158,7 +158,7 @@ describe('execution context discovery', () => {
       await service.initialize();
       await service.runHostOperation({ ownerThreadId: 'thread', sourceTurnId, sourceItemId: 'fixture', producer: 'test',
         executionContext: pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root }), {
-          capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+          capability: 'full-access', isolation: 'unsandboxed', writablePaths: [],
         }), onAdmitted: async (task) => { taskId = task.taskId; },
         execute: async () => ({ result: null, success: true }) });
       await waitUntil(() => paused);
@@ -198,7 +198,7 @@ describe('execution context discovery', () => {
         await service.runHostOperation({ ownerThreadId: 'thread', sourceTurnId,
           sourceItemId: `fixture-${index}`, producer: 'test',
           executionContext: pendingExecutionContext(address, {
-            capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+            capability: 'full-access', isolation: 'unsandboxed', writablePaths: [],
           }), onAdmitted: async (task) => { taskIds.push(task.taskId); },
           execute: async () => { operations += 1; return { result: null, success: true }; } });
         await service.consumeForeground(taskIds[index]!, 'thread');
@@ -260,7 +260,7 @@ describe('execution context discovery', () => {
       await writeFile(path.join(nested, 'AGENTS.md'), 'Keep source changes typed.');
       const address = await resolveExecutionAddress({ defaultCwd: nested });
       const admitted = pendingExecutionContext(address, {
-        capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+        capability: 'full-access', isolation: 'unsandboxed', writablePaths: [],
       });
       const result = await discoverExecutionContext(admitted);
 
@@ -284,7 +284,7 @@ describe('execution context discovery', () => {
       await writeFile(path.join(root, 'AGENTS.md'), 'x'.repeat(100));
       const address = await resolveExecutionAddress({ defaultCwd: root });
       const result = await discoverExecutionContext(pendingExecutionContext(address, {
-        capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+        capability: 'full-access', isolation: 'unsandboxed', writablePaths: [],
       }), { maxSourceBytes: 12 });
 
       expect(result.context.snapshot.discovery).toBe('unavailable');
@@ -318,7 +318,7 @@ describe('execution context discovery', () => {
       await service.runHostOperation({
         ownerThreadId: 'thread', sourceTurnId: '00000000-0000-7000-8000-000000000002', sourceItemId: 'item', producer: 'test',
         executionContext: pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root }), {
-          capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+          capability: 'full-access', isolation: 'unsandboxed', writablePaths: [],
         }),
         onAdmitted: async (task) => { taskId = task.taskId; },
         execute: async () => ({ result: null, success: true }),
@@ -371,7 +371,7 @@ describe('execution context discovery', () => {
       await first.initialize();
       await first.runHostOperation({ ownerThreadId: 'thread', sourceTurnId, sourceItemId: 'restart', producer: 'test',
         executionContext: pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root }), {
-          capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+          capability: 'full-access', isolation: 'unsandboxed', writablePaths: [],
         }), onAdmitted: async (task) => { taskId = task.taskId; }, execute: async () => ({ result: null, success: true }) });
       for (let attempt = 0; attempt < 50 && !firstStore.contextSuccessor(taskId!); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
       const before = firstStore.contextSuccessor(taskId!);

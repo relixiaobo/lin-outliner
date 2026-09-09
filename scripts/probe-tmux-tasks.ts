@@ -41,7 +41,7 @@ if (process.argv[2] === '--host') {
       if (request.op === 'start') result = await service.start({
         ownerThreadId: owner, sourceTurnId: turn, sourceItemId: request.id.toString(),
         producer: 'bash', description: request.description ?? 'tmux experiment',
-        command: request.command, cwd: path.join(root, request.control ? 'control' : 'work'), env: process.env,
+        command: request.command, cwd: path.join(root, 'work'), env: process.env,
         timeoutMs: 90_000, backgroundEnabled: Boolean(request.background),
         ...(request.sandbox ? { sandbox: { writablePaths: [path.join(root, 'work')] } } : {}),
       });
@@ -62,10 +62,8 @@ const tmux = await realpath(process.argv[2] ?? '');
 if (process.platform !== 'darwin') throw new Error('This experiment records the macOS backend only');
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'tenon-tmux-')));
 await mkdir(path.join(root, 'work'));
-await mkdir(path.join(root, 'control'));
 const reportPath = path.resolve(process.argv[3] ?? path.join(root, 'report.json'));
 let serial = 0;
-let control = false;
 let host: ChildProcessWithoutNullStreams;
 let ready: Promise<void>;
 const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
@@ -110,7 +108,7 @@ async function rpc(op: string, data: Record<string, unknown> = {}): Promise<any>
   });
 }
 async function run(command: string, extra: Record<string, unknown> = {}) {
-  const task = await rpc('start', { command, control: control && !extra.background, ...extra }) as ToolTaskRecord;
+  const task = await rpc('start', { command, ...extra }) as ToolTaskRecord;
   commands.push({ command, taskId: task.taskId, cwd: task.cwd, owner: task.ownerThreadId,
     context: task.executionContext, isolation: task.isolation, ...extra });
   if (extra.background) return { task, stdout: '', stderr: '' };
@@ -125,16 +123,12 @@ const socketFor = (name: string) => { const socket = path.join(root, 'work', nam
 async function foreground(socket: string, sandbox = false) {
   const result = await run('exec ' + quote(tmux) + ' -D -S ' + quote(socket) + ' -f /dev/null', { background: true, sandbox });
   for (let i = 0; i < 40; i++) {
-    let check;
-    try { check = await run(client(socket, 'show-options -g exit-empty')); }
-    catch (error) {
-      if (!String(error).includes('Execution scope is busy')) throw error;
-      observations.sameDirectoryControl = { admitted: false, reason: String(error),
-        diagnosticContinuation: 'Remaining clients use a separate control cwd in this Full Access fixture. No capability or worktree boundary is relaxed.' };
-      control = true;
-      check = await run(client(socket, 'show-options -g exit-empty'));
+    const check = await run(client(socket, 'show-options -g exit-empty'));
+    if (check.task.state === 'succeeded') {
+      observations.sameDirectoryControl = { admitted: true, cwd: check.task.cwd,
+        sameCwd: check.task.cwd === result.task.cwd, serverTaskId: result.task.taskId, controlTaskId: check.task.taskId };
+      return result.task;
     }
-    if (check.task.state === 'succeeded') return result.task;
     if ((await rpc('read', { taskId: result.task.taskId })).state !== 'running') throw new Error('tmux server failed to start');
     await delay(50);
   }

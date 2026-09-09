@@ -474,7 +474,7 @@ ownership or recovery gap is measured.
   and [Optional Project catalog](../../spec/agent-core.md#optional-project-catalog)
   define Unit B's context collection and Project catalog boundary. Its original
   design remains in [Project context runtime](project-context-runtime.md).
-- [Source-bound verification](../../spec/agent-tool-design.md#source-bound-verification)
+- [Source-bound verification](../../spec/agent-tool-design.md#native-verification)
   defines the current check and Goal contracts; the
   [archived verification design](verification-self-iteration.md)
   preserves Unit C's design rationale.

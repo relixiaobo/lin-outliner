@@ -1,5 +1,3 @@
-import { gitReviewOperation } from '../../../core/agent/gitReview';
-import { collectGitReviewResult, parseGitReviewInput, prepareGitReviewProcess, prepareGitReviewStdin, type GitReviewRuntime } from '../gitReview/GitReviewRuntime';
 import type { AgentTool, AgentToolTextReplacement } from '../runtime/kernel/types';
 import {
   type BashTaskStatus,
@@ -137,7 +135,7 @@ export interface AgentLocalWorkspaceContext {
   root: string;
   executionContext?: TaskExecutionContext;
   capability?: 'full-access' | 'read-only';
-  inheritedClaimTaskId?: string;
+  parentTaskId?: string;
   onTaskAdmitted?: (task: ToolTaskRecord) => Promise<void>;
   /** Revalidate the Host-owned isolation resource, independently of tool cwd. */
   validateIsolation?: () => Promise<void>;
@@ -152,7 +150,6 @@ export interface AgentLocalWorkspaceContext {
   /** Thread that owns background shell processes started from this workspace. */
   threadId?: string;
   delegateCommandRuntime?: DelegateCommandRuntime;
-  gitReviewRuntime?: GitReviewRuntime;
 }
 
 export interface DelegateCommandRuntime {
@@ -796,12 +793,8 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
           if (capability === 'read-only' && ['file_edit', 'file_write'].includes(tool.name)) {
             throw new LocalToolFailure('operation_unavailable', 'This task has read-only authority.');
           }
-          const delegateControl = tool.name === 'bash' && workspace.delegateCommandRuntime
-            && typeof params.command === 'string' && parsePrivilegedDelegateCommand(params.command) !== null;
-          const gitRead = tool.name === 'bash' && typeof params.command === 'string' && ['capture', 'preview'].includes(gitReviewOperation(params.command) ?? '');
-          const mutation = !gitRead && !delegateControl && capability !== 'read-only' && ['bash', 'file_edit', 'file_write'].includes(tool.name);
           const pendingContext = pendingExecutionContext(address, {
-            capability, mutation,
+            capability,
             isolation: workspace.writeBoundary
               ? tool.name === 'bash' ? 'macos-write-sandbox' : 'host-write-boundary'
               : 'unsandboxed',
@@ -817,7 +810,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
             }
           };
           // Preserve logical aliases for the existing file/Skill APIs; the task
-          // owns their independently resolved canonical address and claim keys.
+          // owns their independently resolved canonical address and scope identities.
           const onTaskAdmitted = async (task: ToolTaskRecord) => {
             await workspace.onTaskAdmitted?.(task);
             await validateAddress();
@@ -838,7 +831,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
           return await options.toolTaskService.runHostOperation({
             ownerThreadId: workspace.threadId, sourceTurnId: options.turnId, sourceItemId: itemId,
             producer: tool.name, executionContext, signal,
-            inheritedClaimTaskId: workspace.inheritedClaimTaskId,
+            parentTaskId: workspace.parentTaskId,
             onAdmitted: onTaskAdmitted,
             execute: async (executionSignal) => {
               const result = await execute(executionSignal);
@@ -1697,13 +1690,6 @@ function createBashTool(
       const started = Date.now();
       try {
         const params = normalizeBashParams(rawParams);
-        const gitOperation = gitReviewOperation(params.command);
-        if (gitOperation) {
-          if (!workspace.gitReviewRuntime || !toolTaskService || !workspace.threadId || !turnId) throw new Error('Git review requires the supervised Host runtime');
-          if (params.run_in_background) throw new Error('Git review commands require foreground settlement');
-          if (workspace.capability === 'read-only' && !['capture', 'preview'].includes(gitOperation)) throw new Error('This task has read-only authority');
-          parseGitReviewInput(params.command, params.stdin);
-        }
         const delegateCommand = workspace.delegateCommandRuntime
           ? parsePrivilegedDelegateCommand(params.command)
           : null;
@@ -2486,7 +2472,7 @@ async function startSupervisedBackgroundCommand(
     command: params.command,
     cwd: workspace.root,
     executionContext: workspace.executionContext,
-    inheritedClaimTaskId: workspace.inheritedClaimTaskId,
+    parentTaskId: workspace.parentTaskId,
     onAdmitted: workspace.onTaskAdmitted,
     ...(params.stdin === undefined ? {} : { stdin: params.stdin }),
     timeoutMs: delegateScheduling?.timeoutMs ?? params.timeout ?? BASH_DEFAULT_TIMEOUT_MS,
@@ -2556,11 +2542,7 @@ async function runSupervisedForegroundCommand(
   const declaredOutputRoots = shellEnvironment?.declaredOutputRoots ?? [];
   const declaredOutputSnapshot = await snapshotDeclaredOutputRoots(declaredOutputRoots);
   const timeoutMs = params.timeout ?? BASH_DEFAULT_TIMEOUT_MS;
-  const gitOperation = gitReviewOperation(params.command);
   const env = buildWorkspaceShellProcessEnv(shellEnvironment);
-  const stdin = gitOperation && workspace.gitReviewRuntime
-    ? await prepareGitReviewStdin(params.command, params.stdin, workspace.gitReviewRuntime)
-    : params.stdin;
   const task = await service.start({
     ownerThreadId: workspace.threadId!,
     sourceTurnId: turnId,
@@ -2570,16 +2552,11 @@ async function runSupervisedForegroundCommand(
     command: params.command,
     cwd: workspace.root,
     executionContext: workspace.executionContext,
-    inheritedClaimTaskId: workspace.inheritedClaimTaskId,
+    parentTaskId: workspace.parentTaskId,
     onAdmitted: workspace.onTaskAdmitted,
-    ...(stdin === undefined ? {} : { stdin }),
+    ...(params.stdin === undefined ? {} : { stdin: params.stdin }),
     timeoutMs,
     env,
-    ...(gitOperation && workspace.gitReviewRuntime ? {
-      prepareProcess: (context: ToolTaskProcessPreparationContext) => prepareGitReviewProcess({
-        ...context, command: params.command, env,
-      }),
-    } : {}),
     sandbox: workspaceShellSandbox(workspace),
     backgroundEnabled: false,
     // Cancellation can leave teardown settling after the foreground wait, at
@@ -2638,9 +2615,7 @@ async function runSupervisedForegroundCommand(
               ? { message: `Command killed: output exceeded ${formatBytes(BASH_MAX_OUTPUT_BYTES)}.` }
               : { message: settled.error ?? `Command failed: ${settled.outcomeReason ?? 'unknown failure'}.` };
     return {
-      stdout: gitOperation && workspace.gitReviewRuntime
-        ? await collectGitReviewResult(service, workspace.gitReviewRuntime, settled, params.command, params.stdin)
-        : output?.stdout ?? '',
+      stdout: output?.stdout ?? '',
       stderr: output?.stderr ?? '',
       interrupted,
       exitCode: settled.exitCode,

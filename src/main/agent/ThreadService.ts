@@ -1,6 +1,4 @@
 import type { Stats } from 'node:fs';
-import { VerificationCoordinator } from './verification/VerificationCoordinator';
-import type { VerificationConfiguration } from '../../core/agent/verification';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -148,7 +146,7 @@ import {
 } from './thread/TurnLifecycle';
 import { ToolTaskService } from './tasks/ToolTaskService';
 import { ToolTaskStore } from './tasks/ToolTaskStore';
-import { ProjectService, type ReviewProjectChange } from './projects/ProjectService';
+import { ProjectService } from './projects/ProjectService';
 import type { ToolTaskSupervisorRuntime } from './tasks/toolTaskRuntime';
 import {
   collectDeclaredOutputArtifacts,
@@ -185,7 +183,6 @@ export interface ThreadServiceStores {
 }
 
 export interface ThreadServiceOptions {
-  readonly reviewProjectChange?: ReviewProjectChange;
   readonly stores: ThreadServiceStores;
   readonly executor: TurnExecutor;
   readonly attachmentScratchRoot: string;
@@ -331,7 +328,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly goals: GoalExtension;
   private readonly goalStore: GoalStore;
   private readonly toolTasks: ToolTaskService;
-  private readonly verification: VerificationCoordinator;
   private readonly delegationCoordinator: () => DelegationCoordinator | null;
   private readonly reportError: (report: ErrorReport) => Promise<void>;
   private readonly startupQuarantinedThreadIds = new Set<ThreadId>();
@@ -394,7 +390,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
     this.projects = new ProjectService(options.stores.metadata.projects,
-      (id) => this.core.metadata.read(id)?.thread ?? null, options.reviewProjectChange, this.now);
+      (id) => this.core.metadata.read(id)?.thread ?? null, this.now);
     this.delegationCoordinator = options.delegationCoordinator ?? (() => null);
     this.goalStore = options.stores.goals;
     this.toolTasks = new ToolTaskService(
@@ -463,11 +459,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       (thread) => this.resolvePersona(thread),
       {
         addUsage: (...args) => this.goals.addUsage(...args),
-        verificationPublication: async (threadId) => {
-          const payload = await this.verification.publication(threadId);
-          const owner = this.verification.evidenceOwner(threadId);
-          return payload ? { payload, owner: owner ?? threadId } : null;
-        },
       },
       options.normalizeOutputImage,
       this.now,
@@ -500,21 +491,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       (threadId) => this.goals.clear(threadId),
       (message) => new ThreadBusyError(message),
     );
-    this.verification = new VerificationCoordinator(this.goalStore, this.toolTasks, {
-      deleteEvidence: (prefix) => this.core.payloads.deleteContextOwnersWithPrefix(prefix),
-      write: (owner, payload) => this.core.payloads.writeContext(owner, payload),
-      read: (owner, ref) => this.core.payloads.readContext(owner, ref),
-      ancestors: (threadId) => {
-        const parents: string[] = [];
-        let parent = this.core.metadata.read(threadId)?.thread.parentThreadId;
-        while (parent && !parents.includes(parent) && parents.length < 64) {
-          parents.push(parent);
-          parent = this.core.metadata.read(parent)?.thread.parentThreadId;
-        }
-        return parents;
-      },
-    });
-    this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification), this.verification);
+    this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification));
     this.goals.bindHost(
       this,
       (threadId) => this.core.requireThread(threadId).thread,
@@ -522,21 +499,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
     );
     this.extensions.register(this.goals, { applicationInstructions: true });
     this.toolTasks.bindHost({
-      admissionFailed: (owner, error) => this.verification.admissionFailed(owner, error),
-      beforeTask: (task) => this.verification.beforeTask(task),
-      afterTask: (task) => this.verification.afterTask(task),
       contextEvidence: {
         write: (owner, payload) => this.core.payloads.writeContext(owner, payload),
         read: (owner, ref) => this.core.payloads.readContext(owner, ref),
         prune: (owner) => this.core.payloads.pruneUnreferencedContexts(owner, [], []),
       },
       ownerExists: (threadId) => this.core.metadata.read(threadId) !== null || this.core.ephemeral.has(threadId),
-      canInheritClaim: (ownerThreadId, task) => {
-        if (task.producer === 'delegate_execution' && task.ownerThreadId === ownerThreadId && task.inheritedClaimTaskId) {
-          const launcher = this.toolTasks.store.read(task.inheritedClaimTaskId);
-          return Boolean(launcher && this.delegationCoordinator()?.ownsExecutionClaim(ownerThreadId, launcher.taskId, launcher.ownerThreadId));
+      canInheritExecution: (ownerThreadId, task) => {
+        if (task.producer === 'delegate_execution' && task.ownerThreadId === ownerThreadId && task.parentTaskId) {
+          const launcher = this.toolTasks.store.read(task.parentTaskId);
+          return Boolean(launcher && this.delegationCoordinator()?.ownsExecution(ownerThreadId, launcher.taskId, launcher.ownerThreadId));
         }
-        return this.delegationCoordinator()?.ownsExecutionClaim(ownerThreadId, task.taskId, task.ownerThreadId) === true;
+        return this.delegationCoordinator()?.ownsExecution(ownerThreadId, task.taskId, task.ownerThreadId) === true;
       },
       readDeliveryAdmission: async (threadId, turnId) => {
         const rollout = await this.core.rollout.read(threadId);
@@ -824,7 +798,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
       }
     }
     await this.toolTasks.initialize();
-    await this.verification.initialize();
     await this.beforeInitialTurnAdmission();
     this.initialized = true;
     for (const thread of resumableThreads) {
@@ -1276,7 +1249,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           decoded as AgentCoreRequestByMethod['turn/rerun'],
         ) as AgentCoreResponseByMethod[Method];
       case 'goal/get':
-        return await this.getVerifiedGoal((decoded as AgentCoreRequestByMethod['goal/get']).threadId) as AgentCoreResponseByMethod[Method];
+        return this.goals.get(decoded as AgentCoreRequestByMethod['goal/get']) as AgentCoreResponseByMethod[Method];
       case 'goal/create':
         return await this.goals.create(decoded as AgentCoreRequestByMethod['goal/create']) as AgentCoreResponseByMethod[Method];
       case 'goal/update':
@@ -1779,21 +1752,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async getGoalForTurn(threadId: ThreadId, turnId: string): Promise<GetGoalResponse> {
     this.turnLifecycle.requireActiveTurn(threadId, turnId);
-    return this.getVerifiedGoal(threadId);
-  }
-  private async getVerifiedGoal(threadId: ThreadId): Promise<GetGoalResponse> {
-    const verification = await this.verification.inspect(threadId);
-    return { ...this.goals.get({ threadId }), ...(verification ? { verification } : {}) };
+    return this.goals.get({ threadId });
   }
   async createGoalForTurn(
     threadId: ThreadId,
     turnId: string,
     objective: string,
     tokenBudget?: number,
-    verification?: VerificationConfiguration,
   ): Promise<CreateGoalResponse> {
     this.turnLifecycle.requireActiveTurn(threadId, turnId);
-    return this.goals.create({ threadId, objective, ...(tokenBudget === undefined ? {} : { tokenBudget }), ...(verification ? { verification } : {}) }, turnId);
+    return this.goals.create({ threadId, objective, ...(tokenBudget === undefined ? {} : { tokenBudget }) }, turnId);
   }
   async updateGoalForTurn(
     threadId: ThreadId,

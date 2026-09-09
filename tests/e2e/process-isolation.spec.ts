@@ -19,7 +19,7 @@ for (const theme of ['light', 'dark'] as const) {
         executionContext: { addressRef: 'a'.repeat(64), policyRef: 'b'.repeat(64), snapshotRef: 'c'.repeat(64),
           address: { requestedCwd: cwd, cwd, targets: [], targetMode: 'follow', coverage: 'cwd-only',
             scopes: [{ key: cwd, directory: cwd, worktree: null, gitDirectory: null }] },
-          policy: { capability: 'full-access', isolation: 'macos-write-sandbox', mutation: true, writablePaths: [cwd] },
+          policy: { capability: 'full-access', isolation: 'macos-write-sandbox', writablePaths: [cwd] },
           snapshot: { seriesId: 'test', capturedAt: 1, generation: 0, predecessorRef: null, discovery: 'pending', degradation: null, facts: [] } },
         isolation: { requested: 'macos-write-sandbox', state: 'sandboxed', platform: 'darwin', backend: 'macos-sandbox-exec',
           dependency: 'available', network: 'unrestricted', writablePaths: [cwd], protectedGitObjectStores: [], profileDigest: 'd'.repeat(64), reason: null },

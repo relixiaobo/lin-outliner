@@ -66,7 +66,7 @@ test('sandboxed command can write its root but cannot write outside or forge Tas
 test('required isolation without a backend request fails before command activation', async () => {
   const f = await fixture();
   const context = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: f.cwd }), {
-    capability: 'full-access', mutation: true, isolation: 'macos-write-sandbox', writablePaths: [f.cwd],
+    capability: 'full-access', isolation: 'macos-write-sandbox', writablePaths: [f.cwd],
   });
   const task = await f.service.start({ ...f.input, command: 'touch must-not-start', executionContext: context });
   expect(task).toMatchObject({ state: 'failed', childPid: null, supervisorPid: null, outcomeReason: 'isolation_unavailable' });
@@ -122,11 +122,12 @@ test('a backend profile activation failure produces unavailable evidence and nev
   expect(await access(path.join(f.cwd, 'must-not-start')).then(() => true, () => false)).toBe(false);
 }, 10_000);
 
-test('old Task storage fails explicitly without a legacy reader or automatic data deletion', () => {
+test.each(['task_id TEXT PRIMARY KEY', 'task_id TEXT PRIMARY KEY, isolation_json TEXT, inherited_claim_task_id TEXT'])(
+  'old Task storage fails explicitly without a legacy reader or automatic data deletion (%s)', (columns) => {
   const db = new Database(':memory:');
   try {
-    db.exec('CREATE TABLE tool_tasks(task_id TEXT PRIMARY KEY)');
-    db.exec("INSERT INTO tool_tasks VALUES ('retained-old-data')");
+    db.exec(`CREATE TABLE tool_tasks(${columns})`);
+    db.exec("INSERT INTO tool_tasks(task_id) VALUES ('retained-old-data')");
     expect(() => new ToolTaskStore(db as unknown as SqliteDatabase)).toThrow('fresh userData');
     expect(db.query('SELECT task_id FROM tool_tasks').get()).toEqual({ task_id: 'retained-old-data' });
   } finally { db.close(); }

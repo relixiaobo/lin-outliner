@@ -23,8 +23,6 @@ export function useProjectCatalog(threadIds: readonly string[] = []) {
     window.addEventListener('focus', refresh);
     const unsubscribe = api.onAgentCoreNotification((notification) => {
       if (notification.type === 'turn/completed' || notification.type === 'thread/started') refresh();
-      if (notification.type === 'item/completed' && notification.item.type === 'dynamicToolCall'
-        && notification.item.tool === 'project_manage') refresh();
     });
     return () => { changed.delete(refresh); window.removeEventListener('focus', refresh); unsubscribe(); };
   }, [refresh]);

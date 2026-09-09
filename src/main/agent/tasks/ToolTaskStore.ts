@@ -1,6 +1,6 @@
 import { decodeProcessIsolationEvidence, pendingProcessIsolation, sameIsolationRequest, type ProcessIsolationEvidence } from '../../../core/agent/processIsolation';
 import { createHash } from 'node:crypto';
-import { ExecutionAdmissionError, validateExecutionContext } from './ExecutionContext';
+import { validateExecutionContext } from './ExecutionContext';
 import type { ThreadContextPayloadReference, ThreadId, ThreadResourceReference, TurnId } from '../../../core/agent/protocol';
 import { decodeThreadContextPayloadReference } from '../../../core/agent/codec';
 import type { SqliteDatabase } from '../persistence/sqlite';
@@ -33,7 +33,7 @@ interface ToolTaskRow {
   execution_context_json: string;
   isolation_json: string;
   operation_kind: 'process' | 'host';
-  inherited_claim_task_id: string | null;
+  parent_task_id: string | null;
   nonce: string;
   detail_path: string;
   background_enabled: number;
@@ -113,7 +113,7 @@ interface ToolTaskLeaseRow {
 export class ToolTaskStore {
   constructor(private readonly db: SqliteDatabase) {
     const columns = this.db.prepare('PRAGMA table_info(tool_tasks)').all() as Array<{ name: string }>;
-    if (columns.length > 0 && !columns.some(({ name }) => name === 'isolation_json')) {
+    if (columns.length > 0 && (!columns.some(({ name }) => name === 'isolation_json') || !columns.some(({ name }) => name === 'parent_task_id'))) {
       throw new Error('Tool Task storage format changed. Start this pre-release build with fresh userData.');
     }
     this.db.exec(`
@@ -129,7 +129,7 @@ export class ToolTaskStore {
         execution_context_json TEXT NOT NULL,
         isolation_json TEXT NOT NULL,
         operation_kind TEXT NOT NULL CHECK (operation_kind IN ('process', 'host')),
-        inherited_claim_task_id TEXT,
+        parent_task_id TEXT,
         nonce TEXT NOT NULL,
         detail_path TEXT NOT NULL,
         background_enabled INTEGER NOT NULL CHECK (background_enabled IN (0, 1)),
@@ -174,15 +174,6 @@ export class ToolTaskStore {
         ON tool_tasks(state, updated_at, task_id);
       CREATE INDEX IF NOT EXISTS tool_tasks_delivery_idx
         ON tool_tasks(owner_thread_id, delivery_state, completed_at, task_id);
-
-      CREATE TABLE IF NOT EXISTS tool_task_address_claims (
-        task_id TEXT NOT NULL REFERENCES tool_tasks(task_id) ON DELETE CASCADE,
-        scope_key TEXT NOT NULL,
-        active INTEGER NOT NULL CHECK (active IN (0, 1)),
-        PRIMARY KEY(task_id, scope_key)
-      ) STRICT;
-      CREATE UNIQUE INDEX IF NOT EXISTS tool_task_active_address_claim
-        ON tool_task_address_claims(scope_key) WHERE active = 1;
 
       CREATE TABLE IF NOT EXISTS tool_task_delivery_batches (
         batch_id TEXT PRIMARY KEY,
@@ -428,33 +419,23 @@ export class ToolTaskStore {
     if (isolation.requested !== input.executionContext.policy.isolation) throw new Error('Task isolation differs from admitted policy');
     if (input.cwd !== input.executionContext.address.cwd) throw new Error('Task cwd differs from admitted address');
     return this.transaction(() => {
-      if (input.inheritedClaimTaskId) {
-        const owner = this.read(input.inheritedClaimTaskId);
-        if (!owner || isToolTaskTerminal(owner.state)) throw new Error('Execution claim owner is unavailable');
+      if (input.parentTaskId) {
+        const owner = this.read(input.parentTaskId);
+        if (!owner || isToolTaskTerminal(owner.state)) throw new Error('Execution owner is unavailable');
       }
       this.db.prepare(`
       INSERT INTO tool_tasks(
         task_id, owner_thread_id, source_turn_id, source_item_id, producer, description,
-        command_digest, cwd, execution_context_json, isolation_json, operation_kind, inherited_claim_task_id,
+        command_digest, cwd, execution_context_json, isolation_json, operation_kind, parent_task_id,
         nonce, detail_path, background_enabled, state, delivery_state, detail_state,
         timeout_ms, started_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', 'pending', 'available', ?, ?, ?)
     `).run(
       input.taskId, input.ownerThreadId, input.sourceTurnId, input.sourceItemId,
       input.producer, input.description, input.commandDigest, input.cwd,
-      JSON.stringify(input.executionContext), JSON.stringify(isolation), input.operationKind, input.inheritedClaimTaskId, input.nonce,
+      JSON.stringify(input.executionContext), JSON.stringify(isolation), input.operationKind, input.parentTaskId, input.nonce,
       input.detailPath, input.backgroundEnabled ? 1 : 0, input.timeoutMs, input.startedAt, input.startedAt,
     );
-      if (input.executionContext.policy.mutation) {
-        for (const scope of input.executionContext.address.scopes) {
-          const held = this.db.prepare('SELECT task_id FROM tool_task_address_claims WHERE scope_key = ? AND active = 1')
-            .get(scope.key) as { task_id: string } | undefined;
-          if (held && (held.task_id === input.inheritedClaimTaskId || held.task_id === input.taskId)) continue;
-          if (held) throw new ExecutionAdmissionError('worktree_busy', `Execution scope is busy: ${scope.directory}. Use an isolated worktree or wait for the owning task.`);
-          this.db.prepare('INSERT INTO tool_task_address_claims(task_id, scope_key, active) VALUES (?, ?, 1)')
-            .run(input.taskId, scope.key);
-        }
-      }
       return this.read(input.taskId)!;
     });
   }
@@ -537,7 +518,7 @@ export class ToolTaskStore {
 
   coveredChildren(taskId: string): readonly ToolTaskRecord[] {
     return (this.db.prepare(`
-      SELECT * FROM tool_tasks WHERE inherited_claim_task_id = ? AND state IN ('running', 'settling')
+      SELECT * FROM tool_tasks WHERE parent_task_id = ? AND state IN ('running', 'settling')
       ORDER BY started_at DESC, task_id
     `).all(taskId) as ToolTaskRow[]).map(taskFromRow);
   }
@@ -597,7 +578,7 @@ export class ToolTaskStore {
     if (!current.artifactsSettled) {
       throw new Error(`Tool Task artifacts must settle before terminal commit: ${taskId}`);
     }
-    if (this.coveredChildren(taskId).length > 0) throw new Error('Covered child execution must settle before releasing its owner claim');
+    if (this.coveredChildren(taskId).length > 0) throw new Error('Covered child execution must settle before releasing its owner execution');
     if (receipt.taskId !== taskId || receipt.nonce !== current.nonce) {
       throw new Error(`Tool Task receipt identity mismatch: ${taskId}`);
     }
@@ -624,7 +605,6 @@ export class ToolTaskStore {
         receipt.quiescedAt, receipt.quiescedAt, now, taskId,
       );
       this.releaseLease(taskId, now);
-      this.db.prepare('UPDATE tool_task_address_claims SET active = 0 WHERE task_id = ?').run(taskId);
     });
     return this.require(taskId);
   }
@@ -997,7 +977,7 @@ function taskFromRow(row: ToolTaskRow): ToolTaskRecord {
     executionContext: validateExecutionContext(JSON.parse(row.execution_context_json)),
     isolation: decodeProcessIsolationEvidence(JSON.parse(row.isolation_json)),
     operationKind: row.operation_kind,
-    inheritedClaimTaskId: row.inherited_claim_task_id,
+    parentTaskId: row.parent_task_id,
     nonce: row.nonce,
     detailPath: row.detail_path,
     backgroundEnabled: row.background_enabled === 1,
@@ -1038,7 +1018,7 @@ export function projectToolTask(task: ToolTaskRecord): ToolTaskProjection {
     commandDigest: _commandDigest,
     cwd: _cwd,
     operationKind: _operationKind,
-    inheritedClaimTaskId: _inheritedClaimTaskId,
+    parentTaskId: _parentTaskId,
     nonce: _nonce,
     detailPath: _detailPath,
     supervisorPid: _supervisorPid,

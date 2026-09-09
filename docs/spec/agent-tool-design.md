@@ -170,7 +170,7 @@ Every local file/process call uses its Tool Task's admitted `ExecutionAddress`.
 The Host resolves an optional task-scoped `cwd` against its documented default,
 then resolves relative file paths from that address's `cwd`. An explicit
 absolute file path is canonicalized as the task's target independently of cwd.
-File instruction/profile collection follows that canonical target's parent and
+File instruction collection follows that canonical target's parent and
 ancestors, with nested applicability retained per target. Directory searches
 use their canonical search root and label deeper uninspected scopes as unknown;
 later file edits admit those exact target scopes. Following a symlink for a
@@ -203,7 +203,7 @@ execution. File operations use `ToolTaskService.runHostOperation`; Bash and nati
 launchers use supervised process tasks. Both retain the same immutable context
 through terminal settlement and recovery. After task creation, the Host performs
 bounded best-effort discovery for each admitted scope. It walks canonical
-ancestors for `AGENTS.md`, `CLAUDE.md`, `AGENT.md`, and `.tenon/checks.json`,
+ancestors for `AGENTS.md`, `CLAUDE.md`, and `AGENT.md`,
 records source hashes and Git observations, and persists one immutable generation-1
 successor keyed by the S0 snapshot reference. Missing optional sources are a
 complete empty observation; read or byte-limit failures mark the successor
@@ -219,7 +219,7 @@ drain outstanding discovery writes before pruning, without publishing evidence.
 Restart recovery pages the persisted tasks lacking a committed successor with
 bounded concurrency until all pages have been attempted; a failed payload write
 remains eligible on the next restart. Committed successors are never recollected.
-Snapshot reuse within five seconds revalidates both instruction/profile sources
+Snapshot reuse within five seconds revalidates both instruction sources
 and the captured scopes' Git HEAD, ref, and status; a changed or unavailable
 observation requires fresh discovery.
 
@@ -230,15 +230,19 @@ later canonical execution-context publications, never the private digest tuple.
 Relative renderer links use the completed Item's admitted cwd. Before admission,
 relative paths have no invented base; absolute file links remain usable.
 
-Task address claims cover typed file targets and the admitted cwd for Bash.
-They coordinate matching declared scopes only. Arbitrary Full Access shell
-effects or native CLI calls outside that cwd are not inferred, contained, or
-serialized by the claim; the receipt marks that coverage as `cwd-only`.
-Claims are acquired transactionally for all known scope keys and collide with
-`worktree_busy`. A child may inherit only its active Session owner's covered
-claim; extra scopes require new claims. Settlement, cancellation and restart
-drain covered child work before releasing the owner. A Host operation recovered
-without terminal evidence becomes `lost` and is never replayed by assumption.
+Task addresses record typed file targets and the admitted Bash cwd, but do not
+reserve those directories. Capability ceilings and isolation govern permission;
+there is no separate mutation-classification flag or process-lifetime directory
+exclusivity for a development server, Git inspection, edits or checks. Native tools own their locks; external commands and
+concurrent edits require normal inspection and coordination. Address evidence
+marks Bash coverage as `cwd-only`, not arbitrary shell-effect containment.
+
+A child's `parentTaskId` is an execution ownership relationship. Admission checks
+that the active Session owns that parent; it does not grant a directory lock or
+additional authority. Settlement, cancellation and restart drain child work before
+releasing its parent's execution resources. A Host operation recovered without
+terminal evidence becomes `lost` and is never replayed by assumption. Scheduler
+capacity leases remain independent of directory identity.
 
 Inherited worktree isolation comes from the explicit Host-owned Session or run
 worktree metadata; the admitted `ExecutionPolicy` records the applied write
@@ -364,7 +368,8 @@ previously admitted object-creation operations.
 Isolation request fields and a resolved outcome are immutable. Terminal receipt
 version 3 and supervisor identity version 2 retain the activation result through
 Host restart, terminal settlement, and output-detail expiry. Task storage includes
-`isolation_json`; this is a pre-release format cut without legacy readers or a
+`isolation_json` and the execution-ownership `parent_task_id`. Retired directory
+claims, private Git evidence and verification payloads have no legacy readers or
 migration. Development runs need fresh clone-specific userData; never reset or
 reuse installed Tenon data to test this change.
 
@@ -484,7 +489,7 @@ The macOS arm64 experiment with tmux 3.7c measured these properties:
 |---|---|
 | Default detached server ownership | Failed: the launch Task succeeds while tmux remains alive; stopping that terminal Task does not stop tmux. |
 | Foreground `tmux -D` ownership | Host crash/reopen reconciles the same Task, supervisor, server PID, and named session without another start. |
-| Same-directory control | Failed: the foreground server owns the directory write claim, so subsequent Bash control Tasks conflict. Remaining diagnostic clients use a separate Full Access control directory, not a weaker capability or worktree policy. |
+| Same-directory control | Admitted independently of the foreground server. The probe records both Task IDs and the identical cwd; no alternate control directory or capability fallback is used. |
 | Duplicate named session | The second create fails; exactly one session remains. |
 | Input and capture | `send-keys` is observed by the pane. Explicit `capture-pane` Tasks retain frozen earlier output; a 10,000-line workload yields a bounded tail within a 4 KiB preview. |
 | Raw pane output ownership | Failed: pane output is not the server Task's stdout; uncaptured pane history is not retained as Task output. |
@@ -633,105 +638,24 @@ rejected before process launch, so the public CLI cannot bypass worktree policy.
 - `automation_update`: create, update, view, or delete a host-owned Automation
   on a root Thread
 
-#### Source-bound verification
+#### Native verification
 
-An explicitly requested coding Goal can opt in through
-`create_goal({ objective, verification: { roots, maxAttempts } })`. `roots` is
-one to eight absolute directory roots; the Host canonicalizes them. The attempt
-limit is 1–20. The same limit caps automatic Goal continuation admissions,
-so never starting a check cannot produce an unbounded cross-Turn loop. A Project is optional. Ordinary Goals keep their existing
-behavior, and verification requires a persistent Chat. The built-in
-`verification` Skill describes the procedural workflow without adding an
-execution or permission surface.
+The built-in `verification` Skill reads the acceptance criteria, repository
+instructions and existing build/test configuration, then runs native commands
+through ordinary Bash at explicit cwd. It inspects exit status and output,
+corrects failures within the request, and reruns affected checks and required
+gates. It bounds correction cycles procedurally and reports blockers and material
+uncertainty. No check profile, exact-command registry, source manifest, private
+verification database or completion admission engine exists.
 
-Checks come from the enclosing `.tenon/checks.json` profiles discovered by the
-existing execution-context mechanism. Each exact Bash command and canonical cwd
-pair identifies one declaration; ambiguous pairs, incomplete discovery, and a
-profile without required checks are unavailable prerequisites. Each check is
-one ordinary Tool Task with its own immutable address, context snapshot, process
-receipt and output. The supervisor attaches output capture before yielding to
-identity publication or private-control transfer, so a fast exit cannot silently
-drain output needed for failure comparison. Checks initially run sequentially.
-Child/delegated tasks keep their own admitted context and capability ceiling;
-an ancestor's active verification Goal can bind a matching check.
-Such a check may execute inside its own live `delegate` launcher and
-`delegate_execution` Host containers. The exception follows immutable inherited
-claim edges validated at Task admission, the matching child Turn, and direct
-Thread ancestry; producer labels alone grant no exception. Nested coordinating
-pairs follow the same rule. Actual child writes, native processes and unrelated
-unfinished work remain fenced. Inspection preserves the check's applicability
-while its containers finish, but reports verification as running and waits for
-their settlement before completing the Goal. Unsuccessful coordinating
-settlement stops verification. Historical claim ancestry remains evidence after
-the Session stops admitting new inherited claims.
-
-`get_goal` revalidates source evidence and returns `verification` with the run
-and revision, attempts used/limit, current check list, required/optional flags,
-canonical outcomes, applicability, bounded output, changed-path preview, source
-reference, limitations and stop reason. Required checks must all be passed and
-current at one revision before `update_goal(complete)` accepts completion.
-Optional failures remain visible. A missing, running, failed, stopped, lost,
-stale or unavailable required check cannot satisfy completion. A historical
-passing receipt is never rewritten when its applicability changes.
-
-Each attempt references a full immutable source manifest in the existing
-context-payload store. Capture includes canonical root/worktree identities,
-Git HEAD/ref and index state, sorted file paths/kinds/modes/lengths/digests,
-untracked and ignored content, explicit deletion entries, and symlink target
-identity/content. Non-Git roots use the same file capture. Secret contents are
-not persisted. Profile commands, required flags, inputs and exclusions are part
-of the definition digest. Absolute inputs extend the measured roots; external
-symlink targets must be declared, and cycles or unsupported inputs are
-unavailable. Only Git administration is structurally excluded; every other
-exclusion is an explicit profile limitation.
-Explicit input patterns prune unrelated subtrees before resolving their entries
-or validating symlinks, while ancestors needed to reach selected descendants
-remain traversable. A parent inferred solely to capture an absolute file input
-does not select that file's siblings; an explicitly declared directory root
-still carries its own scope.
-
-Two complete capture passes must agree. The initial limits are 32 measured
-roots, 20,000 entries, 64 MiB of reads across both passes and five seconds.
-Each input may expand to at most 256 cross-segment glob alternatives.
-Unreadable paths, concurrent changes or exhausted capture limits produce
-unavailable evidence, never a partial successful fingerprint. These are
-observations of local inputs, not isolation against invisible external
-write-and-restore races or proof about unmeasured services.
-
-Capture runs at baseline admission, before/after each check, and aggregation.
-Known typed writes invalidate overlapping revisions before side effects.
-Unclassified processes in a workflow invalidate it even with another cwd.
-Unfinished workflow processes and overlapping typed mutations fence new
-baselines and completion until their canonical Tool Tasks settle. A check's own
-validated coordinating containers permit check admission as described above.
-This fence is derived from nonterminal Task records across revisions and
-coordinator restart, including Tasks admitted before the first check.
-Independent mutation settlement also invalidates the latest revision, even if
-the Task was never bound to a check.
-Observed writes followed by restoration cannot revive a revision. A check that
-changes included source invalidates itself. Any source/profile change,
-invalidation or repeated settled check starts a fresh bounded attempt and
-requires **all required checks** to rerun. Thus A-pass/B-fail at R0 followed by
-correction and B-pass at R1 leaves A outstanding, including across restart.
-
-Goal storage owns append-only attempt metadata, failure lineage, token usage at
-attempt admission, changed paths, invalidations, resumptions and evidence
-references. Tool Tasks remain the sole process-result owner. Canonical task
-bindings and settled source evidence cannot be rewritten. Source evidence is
-retained per Goal generation; deleting the owning Chat reclaims its private
-evidence, while published context dependencies obey ordinary history retention.
-
-Equivalent failures use check identity, exit/Host reason and normalized bounded
-diagnostics. A repeated failure, exhausted attempts/tokens, missing prerequisite,
-user stop, Host admission failure or Turn failure stops automatic continuation.
-Restart reconciles Tool Tasks first and revalidates source; missing terminal
-evidence remains lost/unavailable. It never replays an edit. A still-valid
-revision may resume only missing checks. After a new explicit user request to
-resume a stopped run, `create_goal` with the same objective, roots and limits
-admits a fresh attempt within the original remaining budget. Feature-generated
-continuations and the stopped Turn cannot renew admission or reset budgets.
-Exhausted budgets require a separately requested Goal. Verification does not
-authorize commit, push, PR creation, merge, deployment or publication.
+Ordinary Goal objective/status, explicitly requested token budgets, continuation
+accounting and budget wrap-up remain available. `create_goal` accepts no
+verification configuration; `get_goal` reports Goal state/usage. Completion is an
+Agent judgment supported by current evidence, not Host certification of a source
+revision. Task receipts retain what ran and when; they do not authenticate every
+later file state. Failed, missing or interrupted output is never a passing result.
+Source changes can require reinspection/reruns; harmless reads do not mechanically
+invalidate past results. Verification does not authorize publication.
 
 `request_user_input` is not an authorization tool. It supports an optional
 bounded auto-resolution timeout only for useful, non-blocking questions. Each
@@ -759,21 +683,10 @@ standing authorization are specified in
 
 ### Project Organization
 
-`project_inspect` and `project_manage` are root-only Host tools for persistent user
-Chats. Inspection pages the optional catalog (50 Projects per page) and returns the
-current root membership with exact revisions. It is read-only. Management takes a
-closed operation-specific request nested under `request`; it invokes the same
-`ProjectService` as the renderer, after capability authorization, and always asks for
-native Host confirmation on the Agent path. Agents propose persistent grouping only
-when the user expresses lasting organizational intent. Cancellation ends the proposal
-until a new user request. Results contain the saved Project and affected Thread count.
-
-Project metadata grants no filesystem access and never supplies an implicit task cwd.
-Bindings require both the Project and root-membership revision; root edits and deletion
-require the Project revision. Stale approval fails instead of overwriting another
-change. Deletion preserves Chats, files, and running tasks and refuses live Automation
-dependencies. The persistence and recovery contract lives in
-[Agent Core](agent-core.md#optional-project-catalog).
+Project creation, editing, grouping and deletion are UI actions backed by the
+Host-owned `ProjectService`. Projects have no model-tool surface or Agent proposal
+confirmation route. The service retains canonical root/revision checks, lineage
+membership and Automation deletion fences. See [Project catalog](agent-core.md#optional-project-catalog).
 
 ### Delegation And Tool Tasks
 
@@ -1195,79 +1108,43 @@ an approval mode or a second filesystem sandbox.
 
 ### Git Review And Explicit Publication
 
-The built-in `git-review` Skill uses ordinary Bash and Git inspection plus a
-strict standalone `git-review <capture|commit|preview|push|create-pr> --input -
---output json` command with literal JSON stdin. The Host prepares a bundled
-Node helper after Tool Task address admission. Its Git/`gh` children belong to
-that same supervised process group; Task output, stop, timeout, and settlement
-remain canonical. No new model tool, native Git engine, process runner, or Git
-database is introduced. Captures/previews classify as reads, commits as local
-writes, and push/PR as `git.publish_remote`; configured blocks and delegation
-ceilings still apply. Full Access remains the default authority.
+The built-in `git-review` Skill is a procedure over native `git` and `gh` through
+ordinary Bash. There is no executable or Host-dispatched command named
+`git-review`, private review-reference protocol, Git operation store or special
+result card. Generic Task arguments, bounded output/artifacts, canonical history,
+stop/recovery, capability blocks and observed process isolation remain in force.
+Passive Host Git discovery still disables executable extensions and degrades
+when safe inspection is unavailable; explicit native commands use ordinary Git
+configuration, hooks, filters and signing under the admitted policy.
 
-The Host resolves the immutable prior reference into bounded Task stdin data.
-After admission, the private control channel carries only command/cwd plus the
-stdin byte count and SHA-256. The helper verifies that binding before parsing
-or executing anything. Full evidence fits without widening the Task's 64 KiB
-private-control limit or creating another resource store; provider-visible
-arguments and results retain the original reference and bounded presentation.
+Review includes branch/HEAD, staged and unstaged diffs, selected untracked files,
+binary content, renames, deletions and literal pathspecs. Literal-path inspection
+uses shell-quoted `:(literal)` pathspecs after `--`, e.g.
+`git diff --no-ext-diff --no-textconv -- ':(literal)selected'`, so it remains
+admissible under read-only delegation without broadening the capability classifier.
+A whole-file commit uses
+explicit paths (`git --literal-pathspecs commit --only ... -- <paths>`), adding
+only selected new paths first. This includes unstaged content of selected files
+and preserves unrelated staged paths. A staged-hunk request instead requires
+inspecting the full authorized index before ordinary `git commit`; the Agent
+must not silently stage unrelated working content. Inspect immediately before
+and after mutation, including the resulting commit and remaining status.
 
-A capture records canonical execution cwd, worktree, per-worktree Git directory,
-common Git directory, exact HEAD OID and symbolic ref (or detached/unborn state),
-plus selected index entries, file kind/mode/size, working digest, diff digest,
-status and rename source. It queries baseline directly, twice, independently of
-optional discovery. Path inspection is repeated to detect changes during capture.
-Non-Git roots require explicit file paths and support review/checks only. Missing
-or inconsistent Git evidence refuses commit. Limits are 256 paths, 8 MiB per
-file, 1 MiB full evidence, bounded CLI output, and short redacted diff excerpts;
-binary bytes are represented by digests. Omitted display paths require focused
-review for selection. Ordinary Bash remains available for complete inspection.
+Publication requires intent for the operation and destination. Inspect the remote
+URLs (`git remote get-url --push --all`), head/base, SHA and range; a named remote
+may publish to multiple URLs, all of which must be covered by the request. Recheck
+that list before the explicit-refspec push and query each actual push URL directly
+before/afterward, including after a failed or interrupted push. A fetch-URL query
+cannot establish the push destination's state. Track exact target refs/OIDs per
+destination; partial or unreadable outcomes cannot become aggregate success.
+Use explicit `gh pr create --repo --head --base --title --body-file`. Query
+matching PRs before/after mutation, checking repository/head owner as well as branch
+names. An interrupted response requires native-state reconciliation before another
+mutation. Existing intended PRs are reused/reported; a closed/merged PR does not
+implicitly authorize a new one. Missing or ambiguous results remain uncertain.
 
-All helper Git invocations disable fsmonitor, hooks, and implicit lazy fetching.
-Before status, diff, or index operations, effective Git configuration (including
-includes and environment configuration) is checked for nonempty clean/process
-filter commands; configured executable filters refuse this workflow before
-inspection. External diffs and textconv are disabled. Submodule status does not
-recurse into dirty worktrees; changed gitlinks remain visible, and selected
-submodules cannot be committed. Automatic Task Git context discovery uses the
-same inspection policy and degrades to unavailable when filters prevent safe
-inspection. Ordinary Bash remains the explicit route for filtered repositories.
-
-Commit requires the immutable capture reference, explicit exact paths, and a
-message. Paths are relative to the worktree root, with literal Git pathspecs;
-parent escapes, Git metadata, unresolved stages and submodules are refused.
-Renames require both paths. The operation commits **reviewed working bytes**,
-including the selected files' unstaged content; it does not commit staged hunks.
-It holds the admitted worktree claim and Git index lock, builds a temporary tree
-from HEAD using reviewed blobs, and preserves unrelated index entries. Clean
-filters and commit hooks are not run; `commit.gpgSign` is honored. A custom hook
-or filtered-content workflow uses ordinary Bash explicitly.
-
-After preparation, Host-supervised code revalidates exact baseline and selected
-state immediately before Git's old-OID comparison on the explicitly reviewed
-ref. It verifies resulting HEAD attachment, commit parent, and selected working
-bytes after the update. The claim does not exclude external clients. A detected
-race or interrupted ref/index settlement is non-success and requires read-only
-reconciliation, never automatic commit retry, index-lock deletion, reset, or
-force push. Git ref and index updates are not claimed to be one transaction.
-A successfully committed receipt records SHA, parent, ref, paths, address and
-execution context. Older evidence remains immutable.
-
-Publication preview requires an explicit remote and base. It records the sole
-push URL, local HEAD/branch, upstream, observed remote branch/base OIDs, provider,
-and exact local commit range. It never silently fetches missing base objects.
-Supported transports are credential-free HTTPS/SSH and absolute local remotes;
-multiple push URLs and embedded credentials are refused. Each push first queries
-the exact remote ref, adopts an already-matching OID, and otherwise validates the
-preview again before pushing its exact OID without force. Each GitHub PR attempt
-queries bounded `gh` JSON for the exact same-repository head/base before creating
-and after the attempt. Existing matching PRs, including closed/merged ones, are
-retained as evidence instead of duplicated. Missing, truncated, ambiguous or
-unexpected provider evidence is not success. Uncertain remote attempts reconcile
-against the same preview; hosting failures never authorize a fallback adapter.
-The initial PR adapter supports same-repository branches on github.com only.
-
-The renderer shows inert historical evidence, initially unchecked file selection,
-a commit-message field, a copyable explicit request for the composer, and remote
-preview details. Rendering or copying never mutates Git. Commit, push and PR
-creation require user intent; review/check completion never implies publication.
+The Skill guides this procedure; the Host does not enforce immutable reviewed
+bytes, authenticate a selected commit against a private snapshot, or guarantee
+exactly-once publication across external clients. UI uses ordinary command results,
+retained artifacts and the composer. Review and successful checks alone do not
+authorize commit, push, PR creation, merge, release or deployment.

@@ -672,11 +672,17 @@ install path's `SKILL_NAME_PATTERN`, and caps total bytes at
 because it parses bytes it did not author.
 
 
-### Git Review Skill
+### Development workflow Skills
 
-The built-in `git-review` Skill supplies the review, selected-file commit,
-publication-preview, push and GitHub PR workflow through ordinary Bash and Tool
-Tasks. It distinguishes review from publication intent, teaches exact evidence
-references and literal stdin, and requires reconciliation after uncertain
-results. Its supervised command and evidence contracts are defined in
+The built-in `git-review` Skill uses native Git/GitHub commands through ordinary
+Bash for inspection, selected commits and explicitly requested publication. It
+teaches explicit paths/targets and native-state reconciliation after uncertainty;
+it does not introduce a command wrapper or Host-certified review references. See
 [Git Review And Explicit Publication](agent-tool-design.md#git-review-and-explicit-publication).
+
+The built-in `verification` Skill selects checks from repository instructions and
+normal build/test configuration, inspects Task outcomes and corrects authorized
+work. It requires no proprietary check profile or Goal configuration. Goal budgets
+and Task receipts remain generic. See [native verification](agent-tool-design.md#native-verification).
+The `development` Skill covers explicit cwd, background ownership, status/stop and
+actual isolation; background Tasks do not reserve directories.

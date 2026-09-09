@@ -51,7 +51,7 @@ describe('canonical provider tool catalog', () => {
   });
 
   test('declares and compiles output-data validation for every catalog tool', () => {
-    expect(MODEL_TOOL_CATALOG).toHaveLength(34);
+    expect(MODEL_TOOL_CATALOG).toHaveLength(32);
     expect(MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity))).not.toContain('file_delete');
     const failures: string[] = [];
     for (const contract of MODEL_TOOL_CATALOG) {

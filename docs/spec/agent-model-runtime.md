@@ -309,8 +309,8 @@ authority.
 
 ## Execution Context Publication
 
-This is the shared contract for execution context and its discovery, verification,
-Git, process, delegation, and Automation consumers. The runtime implements common
+This is the shared contract for execution context, passive discovery, process, delegation, and Automation
+consumers. Native Git/test workflows retain ordinary tool results. The runtime implements common
 publication and restore with pending generation-0 snapshots. Later discovery
 generations follow this same contract; their collectors belong to Unit B.
 
@@ -460,36 +460,22 @@ failure; bounded Goal continuation may proceed through later Turns under its own
 admission/recovery rules, never by replaying settled mutations or retrying an
 unchanged oversized request indefinitely.
 
-Verification uses `verificationObservation` evidence through this same
-publication reducer. Its bounded Host fact is scoped to the owning Thread and
-includes the current run/revision, required work, applicability and stop reason.
-The referenced `verificationSource` payloads contain complete manifests and have
-no direct model projection. Publication and compaction dependencies retain those
-payloads; ordinary correction deltas preserve prior provider prefixes and never
-rewrite a previous check outcome. A restored fact is historical until the Goal
-coordinator revalidates the source. Missing source or attempt evidence cannot
-revive an earlier passing aggregate. Capacity failure durably disables the
-verification Goal's automatic continuation before idle; only fresh user
-admission can resume a stopped run within its remaining budget.
-
-Git review uses `gitReviewEvidence` through this same publication boundary.
-The payload contains the full bounded immutable manifest, canonical Task ID,
-admitted execution context, dependencies on prior reviewed evidence, and bounded
-facts. Direct projection omits the full manifest. Publication appends the exact
-review resource reference and current applicability to the observation, without
-rewriting prior provider messages or diffs. The compaction checkpoint retains
-publication dependencies and exact review references. Neither a historical tool
-result nor a restored summary bypasses live commit/publication validation.
+Git and test workflows use ordinary tool arguments/results, artifacts and generic
+Task/process observations. There are no Git review manifests or verification
+source payloads. Compaction and fork preserve their generic canonical history and
+resource dependencies under the normal retention contract. Missing observations
+never authorize replay; retained results describe historical execution and require
+current inspection before claims about later source or remote state.
 
 ### Cache Contract And Verification
 
 With the same provider/model, effective configuration, retained context, and
-available evidence, task-directory changes, discovery, check invalidation, Project
+available evidence, task-directory changes, discovery, Project
 grouping, and process updates preserve the already-published model-input prefix.
 The stable prompt and canonical tool schemas contain no task-specific paths, Git
 state, snapshots, or changing process policy. Cache affinity follows only the
 Thread/context-reset epoch contract below, not Project, cwd, task, snapshot,
-Automation hint, or verification revision. Separate Threads have separate affinity
+or Automation hint. Separate Threads have separate affinity
 and announced-state baselines; no parent or previous run's cache hit proves that a
 new Session received its context. External native CLIs own their provider caching.
 

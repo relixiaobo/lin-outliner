@@ -24,7 +24,7 @@ export type {
 
 export interface ToolTaskRecord extends ToolTaskProjection {
   readonly operationKind: 'process' | 'host';
-  readonly inheritedClaimTaskId: string | null;
+  readonly parentTaskId: string | null;
   readonly backgroundEnabled: boolean;
   readonly commandDigest: string;
   readonly cwd: string;
