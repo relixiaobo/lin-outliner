@@ -295,6 +295,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **web-search-http** (`done`, #662, 2026-09-09) - bounded Parallel/Exa HTTP search replaces Google/DuckDuckGo browser search, preserving independent Bing Images and #661's web-fetch contract; [plan archived](plans/archive/web-search-http.md).
 - **tool-output-boundaries** (`done`, #661, 2026-09-09) - partial reads and oversized search, web, image, and task results now satisfy the shared output contract while preserving continuation, artifacts, and terminal state; current behavior is recorded in the tool specification.
 - **settings-discovery / Settings complete** (`done`, #656, 2026-09-09) - unified Settings, file-based Agent configuration, safe credential previews and draft-preserving conflict retry complete Units A-G; [discovery](plans/archive/settings-discovery.md) and the [aggregate](plans/archive/settings-control-plane.md) are archived.
 - **workbench-tool-boundaries** (`done`, #660, 2026-09-09) - UI Projects and native Git/test Skills replace private workbench tools and directory claims while preserving generic Task ownership/isolation; [plan archived](plans/archive/workbench-tool-boundaries.md).
@@ -383,11 +384,7 @@ One line per recent shipped integration. Older history and review detail live in
   complete readable Pane targets, truthful focus/selection state, and distinct
   viewed versus supplied content; plan archived at
   [agent-model-context-language-contract](plans/archive/agent-model-context-language-contract.md).
-- **web-search-serp-recovery** (`done`, #615, 2026-09-02) — Google organic
-  discovery now resolves bounded provider-private `/goto` capabilities without
-  requesting result content, while the Google/DuckDuckGo chain distinguishes
-  authoritative empty SERPs from diagnostic failures; plan archived at
-  [web-search-serp-recovery](plans/archive/web-search-serp-recovery.md).
+- **web-search-serp-recovery** (`done`, #615, 2026-09-02) - original Google/DuckDuckGo recovery shipped here; #662 replaced that implementation with HTTP providers while preserving truthful empty/failure outcomes; [original plan archived](plans/archive/web-search-serp-recovery.md).
 - **agent-tool-result-envelope-contract** (`done`, #613, 2026-09-02) — all
   Tenon-owned model tools now share one Kernel-enforced semantic result envelope,
   bounded model projection, private Host details, and first-header-only durable
