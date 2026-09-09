@@ -124,7 +124,7 @@ in the same complete feature. It adds no replacement model tool.
 | Time plan | Once or repeating, local time, timezone, enabled/paused/ended | Scheduling owner |
 | Run | One accepted scheduled or manual invocation, its initiating Turn and owner-linked continuation Turns, with captured brief/source identities | Scheduling reference plus canonical execution owners |
 | Result | Delivered answer, output references, availability, and links to exact process/history | Canonical Turn, Item, and resource owners; rebuildable presentation |
-| Attention | A question, failed/interrupted execution, or unresolved outcome requiring action | Reference to its actual cause plus user acknowledgement |
+| Attention | A live question, failed/interrupted execution, or unresolved outcome requiring action | Exact canonical cause and lifecycle; explicit acknowledgement where applicable |
 | Background process | Owned work that can remain live after the initiating Turn | Generic Tool Task owner |
 
 Task lifecycle (available/archived), timing (enabled/paused/no future time),
@@ -373,12 +373,27 @@ its exact Turn position. A contextual Back returns to the task. Long content
 uses the normal reader. Files preserve their canonical availability and retention.
 
 Current execution displays its latest meaningful activity and **Stop run**.
-Questions use the existing user-input interaction in place. A delivered result
+Questions use the shared user-input interaction in place. A delivered result
 with a surviving process also displays **Background work: running** with the
 shared status/log and Stop process actions. One status never stands for both.
-Stopping displays Stopping until the actual owner settles. A live question closes
-only when its answer is accepted or its run ends; answering continues that same
-run. Generic recovery owns stale question and unknown-effect handling.
+Stopping displays Stopping until the actual owner settles. The shared
+[user-input lifecycle](user-input-request-recovery.md#answer-drafts-and-settlement-presentation)
+owns question answerability, original deadline, and answered/timed-out/cancelled/
+failed settlement. An accepted answer or a timeout closes the live form and
+continues the same active Turn/run; interruption or owner failure closes/fences
+it through that execution owner. Unsent answer content uses the shared renderer
+recovery entry, independent of live answerability. Run termination is not required
+to close an expired question. Timeout alone neither ends the run nor releases its
+foreground slot, marks a result read, or dismisses another issue.
+
+Active-question attention derives from the exact pending request, so it clears
+on that request's authoritative settlement. A timeout remains inspectable as
+no answer submitted; it is not a live question, user acknowledgement, or evidence
+of run success/failure. Separately established unresolved-input, failure, and
+uncertainty causes retain their own attention. A delayed settlement cannot clear
+a newer question or another run's cause. Scheduling adds no question timer,
+answer ledger, text-based outcome inference, or automatic re-ask. Generic
+recovery continues to own stale questions and unknown effects.
 
 **SCREEN-3: Create/edit sheet.** A compact modal form contains task text,
 materials, and a readable time builder; Advanced is collapsed. Once, hourly,
@@ -434,6 +449,10 @@ live question, repair a missing dependency, inspect an uncertain side effect,
 run again explicitly, or acknowledge a terminal failure. Acknowledgement changes
 attention only. It never retries execution, fabricates success, or clears a
 runtime ownership fence. Repair uses the original owner and reports its result.
+If the shared question deadline elapses first, show its no-answer outcome and
+remove only that live-question cause. Retained unsent text remains recoverable
+through the shared composer flow; it is not sent into the expired tool. The
+existing run keeps executing, and a late reply cannot admit another occurrence.
 
 **FLOW-5: Change or end the arrangement.** Edit affects future accepted runs;
 Pause affects future automatic admission; Run now is independent; Stop run
@@ -455,13 +474,13 @@ Definition edits also require restoration; both entry paths enforce this rule.
 | BR-2: Repeated catch-up | After involuntary unavailability, run current-state work once for the latest missed occurrence. Older missed times form a visible skipped range. |
 | BR-3: One-off missed time | If Tenon was unavailable at the one-off time and did not accept that run, show Time passed with Run this time / Skip this time. Either action resolves that exact occurrence; ordinary Run now remains a separate manual invocation. |
 | BR-4: Intentional pause | Resume schedules future occurrences from resume time. The intentionally paused interval is not backfilled. Run now remains available while paused or ended. |
-| BR-5: Concurrent work | One foreground execution per task; live questions and unsettled foreground work occupy it. Further repeated times coalesce. Repeated Run now activation returns the existing active run. |
+| BR-5: Concurrent work | One foreground execution per task; live questions and unsettled foreground work occupy it. Answer/timeout resumes that same execution without releasing its slot. Further repeated times coalesce. Repeated Run now activation returns the existing active run. |
 | BR-6: Background lifecycle | Explicit background processes use generic Task ownership and can outlive result delivery. Their liveness is visible separately. They do not by themselves hold the foreground slot forever or authorize replacing an existing service. |
 | BR-7: Delivery truth | Dispatch acceptance, a running log observation, Turn termination, and verified requested outcome are distinct facts. Missing/partial output retains successful canonical operations and shows bounded omission. |
 | BR-8: Recovery and retry | Service Retry restores owner readiness and reconciles admitted work. Run again creates a new invocation. Unknown effects or process ownership block unsafe replay; the UI links to recorded effects and the existing recovery owner. |
 | BR-9: Timing versus execution | Pause does not cancel accepted work. Manual execution does not advance recurrence or reactivate an ended plan. Stopping is nonterminal until its owning processes/tasks settle or report uncertainty. |
 | BR-10: Edits | Canonical acceptance freezes execution inputs. Name-only edits do not cancel due work; content edits refresh unaccepted preparation. Timing changes replace unaccepted timing and report the next occurrence. UI draft saves never overwrite live run state. |
-| BR-11: Attention | Questions, failures, missed one-off decisions, empty expected terminal delivery, and unresolved outcomes remain actionable. Unread results are independent. Starting or completing another run never dismisses an older unresolved issue. |
+| BR-11: Attention | Live questions, failures, missed one-off decisions, empty expected terminal delivery, and unresolved outcomes remain actionable. A shared request settlement removes only that live-question cause; timeout remains factual no-answer history, with unsent draft recovery. Unread results and separately established issues are independent. Starting or completing another run never dismisses an older unresolved issue. |
 | BR-12: Notices | Persist results in the task. Use existing native-notification preferences for new questions/failures; deduplicate each attention transition. No per-task notification settings or completion-notification storm. |
 | BR-13: Time semantics | A saved IANA timezone anchors local wall time. Travel does not silently move it. Skip nonexistent DST times, run ambiguous times once, and preview the next actual occurrence. Monthly dates absent from a month skip that month. |
 | BR-14: Scope and history | Task archive, conversation removal, Project removal, and resource expiry follow their own ownership. Unavailable old records remain labelled; future work depends on current explicit material, not hidden historical aliases. |
@@ -611,6 +630,19 @@ functional requirements above.
   its resource update shall remain attached to the original run. Any Agent
   continuation shall wait for shared foreground admission, retain delivery
   provenance, and honor cancellation without starting another scheduled occurrence.
+- **AC-39:** When a question reaches its shared Host deadline, the scheduled
+  surface shall close that live form, remove only its active-question attention,
+  and show the factual no-answer outcome. The same run shall continue and retain
+  its foreground slot until its execution owner releases it; Run now shall return
+  that existing run, with no extra occurrence or model Turn admitted by timeout.
+- **AC-40:** When expiry, interruption, or a delayed reply closes a dirty question,
+  the scheduled surface shall use the shared unsent-draft recovery entry. Explicit
+  recovery shall preserve the ordinary composer draft; no old-tool submission,
+  automatic send, or independent scheduled input store shall be created.
+- **AC-41:** When an expired question coexists with unread results, another issue,
+  or a newer question, reconciliation shall preserve those independent states.
+  Lost notifications/reload shall recover the canonical request outcome without
+  inferring acceptance from absence or showing a historical timeout as answerable.
 
 ### Recent iteration dependencies and implementation ownership
 
@@ -631,6 +663,7 @@ and file scopes before implementation.
 | [Unified session records](unified-session-records.md), #654 | Design integrated; runtime absent | Build result process navigation, history access, continuity, and handoff on its final exact-source/publication contract. Do not add another transcript tree or new history model tools. Its OQ-1 discovery membership still requires its own decision. |
 | [Memory/profile](memory-agent-profile.md), #665 | Design integrated; runtime absent | Global preferences, identity, style, and learning remain with that owner. Task briefs contain work-specific instructions. Consume accepted configuration without a direct USER.md reader or task-local learned profile. |
 | [Targeted conversation recovery](targeted-thread-recovery.md) | Design only | Preserve definition/run fences and shared references. Coordinate final new assignment and run references with its recovery closure; no separate repair action or cleanup interpretation. |
+| [Bounded user input](user-input-request-recovery.md) | Design only | Consume its request settlement, 60-second default deadline, session-local answer drafts, and exact active-question attention rules. Whichever consumer lands later verifies AC-39/40/41 against the final shared owner; no parallel timeout or input ledger. |
 | [Delegation](../spec/agent-delegation.md), #628/#637 | Implemented common mechanisms | Internal/external delegated work remains owned by generic Task/session mechanisms and keeps existing discovery and cancellation boundaries. |
 
 **Implementation suggestions:** Keep the existing scheduling and Agent execution
@@ -677,13 +710,17 @@ and one delivered result with a live development server. Check that the reader
 can identify next timing, actual outcome, relevant materials, and the next action.
 Prototype observations validate comprehension, not runtime behavior.
 
-Implementation verification maps AC-1 through AC-38 to meaningful owner and
+Implementation verification maps AC-1 through AC-41 to meaningful owner and
 cross-layer fixtures. Run required typecheck, relevant tests, docs and diff
 checks, real Electron light/dark interaction, and interruption/restart fixtures.
 Include a packaged CLI/Skill discovery smoke test, command/receipt validation,
 UI/CLI conflict, lost-reply/restart idempotency, and direct-invocation admission
 checks. Verify removal from the default catalog and active built-in instructions;
 archived documentation remains provenance.
+Include question expiry while typing, shared draft recovery, late-answer/snapshot
+ordering, unrelated attention/unread preservation, and Run now while the resumed
+run still owns foreground admission. Coordinate this fixture with the user-input
+plan's AC-18; consume its final owner rather than duplicate its state machine.
 Use clone-isolated test data; the design work never resets installed data.
 
 ## Open questions

@@ -79,13 +79,20 @@ keep it current. Reuse the existing owners instead of introducing another ledger
 
 DEC-1: Make current input state a bounded Host-readable snapshot, with no pending
 request as an explicit value. Include the pending question's exact identity and
-an ordering token sufficient to reject stale reads/events. Supply it on initial
-conversation load and reattachment, not only when the tool first asks.
+an ordering token sufficient to reject stale reads/events. Cleared state carries
+the exact request identity and its answered, timed-out, cancelled, or failed
+outcome; absence alone does not prove which outcome occurred. Reconciliation can
+resolve the exact previously observed request through the same owner when newer
+requests have superseded it, without returning an unbounded settlement history.
+Supply state on initial conversation load and reattachment, not only when the
+tool first asks.
 
 DEC-2: Preserve the existing in-composer question form. Receiving or restoring a
 question replaces the editor with the established step flow, retaining the
 ordinary draft. There is no separate popup. Hiding the dock does not cancel or
-answer the request; reopening restores it and its current Host validity.
+answer the request; reopening restores it and its current Host validity. Request
+answerability belongs to the Host; unsubmitted answer drafts belong to the
+renderer session and are retained independently of the live form under FR-13.
 
 DEC-3: Every question request has a finite deadline. Use 60 seconds for the whole
 one-to-three-question request by default; an explicit duration may use the
@@ -178,9 +185,54 @@ FR-12: Serialize answer, timeout, and cancellation against the same request.
 Answer acceptance checks the Host clock and pending state; a delayed timer does
 not make a reply after the deadline valid. An answer accepted before expiry wins;
 otherwise timeout wins, and an interrupt cannot be undone by a late timer. A
-response received after expiry shows that the question expired, preserves local
-unsent text, and offers the normal conversation path for a new explicit user
-message. It does not resubmit into the old tool or start another Turn on its own.
+response received after expiry shows that the question expired and uses the same
+draft-recovery path as timer-driven expiry. It does not resubmit into the old tool
+or start another Turn on its own.
+
+### Answer drafts and settlement presentation
+
+FR-13: Keep answer drafts in the renderer's Thread state owner, keyed by exact
+Host generation, Thread, Turn, and request Item identity, outside the form
+component's lifetime. Update selections, Other text, and step position as the
+user edits them; do not wait for Submit or an unmount callback to capture them.
+Only the Host snapshot/lifecycle determines whether that request is answerable.
+The ordinary composer draft, attachments, and a newer question's answers remain
+separate and are never replaced by settlement of an older request.
+
+| Observed request state | Live form | Local answer draft |
+| --- | --- | --- |
+| Pending | Display or restore the exact request | Preserve edits across step navigation, reconciliation, Thread switches, and dock/form remounts within the same renderer session |
+| Answer accepted, including acceptance reconciled after a lost reply | Close the matching form | Release that request's draft only after authoritative acceptance is known |
+| Timed out, by timer, resume, snapshot reconciliation, or rejected late submission | Close the matching form and show that no answer was submitted | Retain every unsubmitted selection and Other text as an unsent recovery entry, including earlier question steps |
+| Cancelled, interrupted, failed, or invalidated by Host restart | Close/fence the matching form and show the known reason | Retain unsent content for manual recovery; it grants no authority to revive the tool |
+| Settlement cannot be determined | Disable submission and reconcile through the existing recovery state | Preserve the draft without claiming acceptance or automatically retrying submission |
+
+An unsent recovery entry remains reachable beside the composer even while a
+newer question is displayed. It offers Review/copy and Discard for that exact
+request. When the ordinary composer is available, an explicit Add to message
+action inserts the selected recovery content with its question context, preserving
+existing text and attachments. It never sends the message. Only the ordinary
+Send action can steer or start execution. Keep the recovery entry until the user
+discards it or that explicit message is accepted; send failure retains it. A new
+question or a delayed old event cannot clear another entry.
+
+Draft retention is session-local: full renderer reload or application exit may
+discard unsent content, as in the existing draft contract. Neither is required
+for automatic expiry, Thread switching, or form remounting, which must preserve
+it. Thread deletion removes only that Thread's drafts. Unsubmitted drafts remain
+renderer-local: do not persist them in Rollout, transmit them to the Host/model
+before explicit submission, or add an independent request database.
+Retained content from an old Host generation remains unsent text, never a live
+request; ordinary current Thread visibility still governs its recovery surface.
+
+FR-14: Conversation and scheduled-run surfaces consume the same ordered request
+settlement. Timeout closes the live question and clears its waiting/active-question
+attention cause while retaining the factual no-answer outcome. It does not mark
+the run completed, release an executing run's foreground slot, acknowledge other
+issues, or mark results read. Independently established unresolved-input, failure,
+or uncertainty causes remain actionable under their existing owners. There is no
+scheduled-request timer or separate answer ledger; the scheduled-work plan owns
+only run presentation and admission around this shared lifecycle.
 
 ### Flows, UI behavior, and recovery
 
@@ -191,9 +243,9 @@ ordinary draft while the same Turn continues.
 
 FLOW-2: The notification occurs before a new renderer subscribes, or while its
 subscription is absent. Initialization/reattachment reads the live snapshot and
-renders the same request. Closing and reopening the dock under the same renderer
-retains unsent answers where the existing form remains mounted. A full reload
-may reset unsent option selections; it must restore the question and answerability.
+renders the same request. Closing/reopening the dock and switching Threads retain
+unsent answers through the renderer state owner even if the form remounts. A full
+reload may reset unsent drafts; it must restore the question and answerability.
 
 FLOW-3: Stop or Turn termination races with submission or a delayed snapshot.
 The Host's accepted ordering decides whether an answer committed. Both sides
@@ -209,9 +261,19 @@ existing execution recovery state, not a restored historical question.
 FLOW-5: The user gives no answer. The form shows its remaining wait time and
 explains that the Agent will continue without an answer. At the original deadline
 the Host returns the no-answer outcome once; the form closes and the ordinary
-composer returns. The Agent continues within the boundaries above. A hidden or
-failed form follows the same deadline; no UI acknowledgement is needed to release
-the wait. Unsubmitted option selections or partial Other text are not answers.
+composer returns with its existing draft intact. Any unsubmitted answer content
+remains in the recovery entry defined by FR-13, even if the user was typing when
+the timer fired and never pressed Submit. The Agent continues within the
+boundaries above. A hidden or failed form follows the same deadline; no UI
+acknowledgement is needed to release the wait. Unsubmitted option selections or
+partial Other text are not answers.
+
+FLOW-6: The deadline expires while the user is writing Other on a later question
+step. The live form closes; the recovery entry retains every edited step. The
+user reviews or copies it, or explicitly adds it to the ordinary message draft
+without replacing existing content. The user can then edit and send that new
+message. A newer question, a delayed snapshot, and failed Send do not destroy the
+unsent entry or submit it as an answer to another request.
 
 Respect focus within a displayed question step. Newly restored questions receive
 the existing question focus behavior; background updates must not repeatedly
@@ -245,7 +307,9 @@ coordination required by the repository.
   isolation and renderer visibility boundaries intact.
 - `src/renderer/agent/store/threadStore.ts`, `components/ThreadDock.tsx`,
   `ThreadView.tsx`, and `UserInputRequest.tsx`: recovery, merge ordering, exact
-  clear semantics, draft/focus preservation, and localized inline failure states.
+  clear semantics, session-owned per-request answer drafts, explicit recovery into
+  the ordinary composer, draft/focus preservation, and localized settlement/error
+  states. Make the form a consumer of draft state rather than its lifetime owner.
 - Current core, model-runtime, tool-design, and Thread-rendering specifications:
   fold the final request lifecycle and snapshot behavior in the same feature PR.
 
@@ -259,9 +323,12 @@ This feature and [background continuation](background-task-continuation-policy.m
 can each ship alone. Select an integration order for their shared
 `ThreadService`, `TurnLifecycle`, protocol, and renderer-store edits; reliable
 questions do not depend on adopting new background agreements. The
-[scheduled-work plan](scheduled-work-redesign.md) must continue to distinguish
-an answered/cancelled question from unread results and preserve its own run
-admission. Do not create a second scheduled input owner.
+[scheduled-work plan](scheduled-work-redesign.md) consumes FR-14's answered,
+timed-out, cancelled, and failed settlements, distinct from unread results and
+run termination. It preserves its own run admission and introduces no second
+scheduled input owner. Whichever implementation lands later adapts the final
+shared lifecycle and verifies the scheduled consumer; this plan does not depend
+on the future scheduling UI to ship the conversation feature.
 
 ### Acceptance and verification
 
@@ -281,6 +348,10 @@ admission. Do not create a second scheduled input owner.
 | AC-12 | Timeout clears the form/waiting flag, returns a typed no-answer result, and resumes the same active Turn once without selecting an option, fabricating Other text, or creating another Turn. |
 | AC-13 | Answer versus deadline, delayed timer, system sleep/resume, cancellation, and late-response races yield one settlement; a stopped Turn is never revived. |
 | AC-14 | After timeout the Agent can continue reversible independent work, retains genuinely required decisions as unresolved, and does not automatically re-ask the same question or treat silence as approval. |
+| AC-15 | Automatic expiry while typing Other on a later step retains every edited step without Submit; hiding/remounting the form, Thread switching, and delayed snapshots do not lose that draft within the same renderer session. |
+| AC-16 | After expiry or interruption, Review/copy, Add to message, and Discard address the exact recovery entry. Adding preserves existing composer text/attachments and makes no model call; only explicit Send can execute, and failed Send retains the recovery content. |
+| AC-17 | A newer request, late settlement, or lost acceptance reply never moves or deletes another request's draft. Reconciled acceptance clears only its own draft; unavailable settlement retains content without claiming a submitted answer. |
+| AC-18 | Timeout of a scheduled-run question removes its live form and active-question attention while preserving the same run and occupied foreground slot until actual execution settles. Unread results and unrelated issues remain unchanged; no timer or input owner is duplicated. |
 
 Extend the service test titled `round-trips request_user_input through the control
 plane and active Thread flag`, codec/projection tests, renderer `ThreadStore`
@@ -292,6 +363,11 @@ alive, then cancellation and late replies with controlled ordering.
 Use a controlled Host clock for deadline tests, plus one real tool-to-renderer
 timeout smoke; include missing `autoResolutionMs`, explicit bounds, no form
 delivery, multi-question partial drafts, and timer callbacks delayed by sleep.
+Drive draft tests through actual keystrokes, timer expiry without Submit, form
+unmount/remount, a newer request, and explicit ordinary Send with failure/retry.
+Verify recovery preserves rich composer content and never emits an old-tool answer
+or a model request on its own. The later scheduled implementation must run AC-18
+through its shared owner and attention projection as well as the conversation UI.
 
 Use sanitized synthetic fixtures matching the observed sequence, not committed
 user conversations or machine-specific paths. Run typecheck, relevant
@@ -315,5 +391,5 @@ collision check before dev writes against it.
 ## Implementation checklist
 
 - [ ] Reproduce delivery, recovery/cleanup failures, and the missing-deadline case using synthetic fixtures (EVD-1 through EVD-4, AC-1/2/10/11).
-- [ ] Settle the shared snapshot/ordering/timeout contract, then implement Host lifecycle and all consumers in one PR (FR-1 through FR-12).
-- [ ] Verify AC-1 through AC-14, investigate the original loss boundary, fold specs, and complete the board/archive lifecycle.
+- [ ] Settle the shared snapshot/ordering/timeout and independent draft-lifecycle contracts, then implement Host lifecycle and all existing consumers in one PR (FR-1 through FR-14).
+- [ ] Verify AC-1 through AC-18 against the consumers present at implementation, investigate the original loss boundary, fold specs, and complete the board/archive lifecycle; the later scheduled-work consumer owns its AC-18 integration fixture.
