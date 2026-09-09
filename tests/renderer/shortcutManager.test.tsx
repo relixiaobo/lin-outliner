@@ -39,7 +39,11 @@ function view(status: KeybindingsView['source']['status'] = 'accepted'): Keybind
   };
 }
 
-async function renderManager(initial: KeybindingsView, failUpdate = false): Promise<Rendered> {
+async function renderManager(
+  initial: KeybindingsView,
+  failUpdate = false,
+  readInitial: () => Promise<KeybindingsView> = async () => initial,
+): Promise<Rendered> {
   const parsed = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>') as unknown as {
     document: Document;
     window: Window & typeof globalThis;
@@ -67,7 +71,7 @@ async function renderManager(initial: KeybindingsView, failUpdate = false): Prom
   (window as unknown as { lin: unknown }).lin = {
     initialLanguage: 'en',
     keybindings: {
-      get: async () => initial,
+      get: readInitial,
       update: async (input: KeybindingsUpdateInput) => { updates.push(input); if (failUpdate) throw new Error('Shortcut could not be saved'); return initial; },
       openFile: async () => { openCount += 1; },
       onChanged: (listener: (next: KeybindingsView) => void) => {
@@ -216,6 +220,51 @@ describe('Shortcut Manager', () => {
       status: 'applied',
     }));
     expect(rendered.document.querySelector('[aria-label="Change Control+P"]')).not.toBeNull();
+  });
+
+  for (const outcome of ['success', 'failure'] as const) {
+    test(`keeps newer bindings and their digest after a late initial read ${outcome}`, async () => {
+      const initial = view();
+      const pending = Promise.withResolvers<KeybindingsView>();
+      const rendered = await renderManager(initial, false, () => pending.promise);
+      const next = withEntry(view(), 'global.open_page_in_pane', {
+        desired: 'Control+P',
+        effective: ['Control+P'],
+        status: 'applied',
+      });
+      await rendered.emit({
+        ...next,
+        source: { ...next.source, observedDigest: '8765dcba', acceptedDigest: '8765dcba' },
+      });
+      await act(async () => {
+        if (outcome === 'success') pending.resolve(initial);
+        else pending.reject(new Error('Initial read failed'));
+      });
+
+      const key = rendered.document.querySelector<HTMLButtonElement>('[aria-label="Change Control+P"]');
+      expect(key).not.toBeNull();
+      expect(rendered.document.querySelector('[aria-label="Change CommandOrControl+M"]')).toBeNull();
+      expect(rendered.document.body.textContent).not.toContain('Initial read failed');
+
+      await act(async () => key!.dispatchEvent(new rendered.window.Event('dblclick', { bubbles: true })));
+      await act(async () => key!.dispatchEvent(keydown(rendered.window, { key: 'k', code: 'KeyK', ctrlKey: true, altKey: true })));
+      expect(rendered.updates.at(-1)).toEqual({
+        id: 'global.open_page_in_pane',
+        value: 'Control+Alt+K',
+        observedDigest: '8765dcba',
+      });
+    });
+  }
+
+  test('shows an initial read failure and recovers when a source change arrives', async () => {
+    const pending = Promise.withResolvers<KeybindingsView>();
+    const rendered = await renderManager(view(), false, () => pending.promise);
+    await act(async () => pending.reject(new Error('Initial read failed')));
+    expect(rendered.document.body.textContent).toContain('Initial read failed');
+
+    await rendered.emit(view());
+    expect(rendered.document.body.textContent).not.toContain('Initial read failed');
+    expect(rendered.document.querySelector('[aria-label="Change CommandOrControl+M"]')).not.toBeNull();
   });
 
   test('keeps file access out of ordinary shortcut controls', async () => {

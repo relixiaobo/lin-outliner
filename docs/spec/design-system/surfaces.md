@@ -522,6 +522,8 @@ right-click or Shift+F10/Context Menu on a key field. Open File lives in Advance
 Configuration Files group; the shortcuts toolbar has no permanent overflow menu.
 A rejected source shows a direct Open Keybindings File action beside its error.
 Restore Defaults sits below the list at the leading edge.
+Live source changes supersede a pending initial read, including its errors.
+The pane retains the latest bindings and source digest for subsequent edits.
 
 Key combinations have no resting button bezel. Double-clicking starts recording
 in fixed field dimensions; keyboard and assistive activation use Return or Space.
