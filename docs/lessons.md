@@ -2878,3 +2878,16 @@ so the command saved Automatic and truthfully reported success for the wrong inp
 event targets.** Verify the exact command payload and persisted selection through
 consecutive choices, failure/retry, and restart, rather than accepting a success
 notice as proof that the user's choice was saved.
+
+## Recovery must retain healthy consumers and reconcile missed state
+
+PR #664's issue pane initially unmounted healthy conversations, discarding unsent
+drafts and disconnecting notifications. Independently restarting a configuration
+watcher also left settings unapplied because its initial application belonged to
+a different, already-complete startup milestone.
+
+**Hide healthy consumers without disposing their state or subscriptions, and make
+each retried owner reconcile the current source before reporting recovery.**
+Exercise the interval around an issue: preserve drafts, deliver background changes,
+apply edits made while observation was unavailable, and verify the effective
+owner state rather than accepting a ready badge as evidence.

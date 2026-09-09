@@ -16,17 +16,18 @@ the latest published train is `v0.7.0`.
 
 ## In Flight
 
-PRs #653 and #654 integrated the startup-recovery and unified-record designs.
-Execution is now three complete plans: startup fault isolation, unified session
-records, and targeted conversation recovery. The original recovery aggregate is
-archived as provenance; each active plan carries its own full contract. The
-record plan separates historical originals from new reading-Thread image/PDF
-observations. Runtime behavior has not shipped. Record-discovery eligibility
-remains gated on the explicit product decision in that plan's OQ-1.
+PRs #653 and #654 split recovery into three complete features. Startup fault
+isolation ships in #664; its current owner contracts live in the
+[Desktop Host lifecycle](spec/architecture.md#desktop-host-lifecycle) and
+[Agent startup availability](spec/agent-thread-rendering.md#startup-availability).
+Unified session records and targeted conversation recovery remain unimplemented.
+The record plan separates historical originals from new reading-Thread image/PDF
+observations; record-discovery eligibility remains gated on its OQ-1 product
+decision. The original recovery aggregate remains archived as provenance.
 
 PR #665 integrates the global Memory/profile design. Its two core delivery
 units remain unimplemented: Node retention quality, and profile files/direct
-learning. Startup fault isolation is claimed by #664. Unified records precedes
+learning. Their startup predecessor is complete in #664. Unified records precedes
 profile learning, and targeted recovery follows the final profile owner so its
 closure includes file acceptance, provenance, pending work and retention.
 Optional views, richer temporal behavior and narrower Node Reset remain outside
@@ -102,31 +103,31 @@ protocol, security rule, user flow, or acceptance criterion.
 
 ```text
 Parallel now eligible:
-  startup-fault-isolation (#664 claimed)
+  unified-session-records (settle OQ-1 before implementation)
+  memory-agent-profile: Node retention quality
   file-preview-office
   url-static-reader
   computer-pilot-managed-skill
 
 Selected integration order:
-  Settings G (#656, shipped) ~> startup-fault-isolation
-  Workbench (#660, shipped) ~> startup-fault-isolation
-  startup-fault-isolation ~> unified-session-records
+  Settings G (#656, shipped) ~> startup-fault-isolation (#664, shipped)
+  Workbench (#660, shipped) ~> startup-fault-isolation (#664, shipped)
+  startup-fault-isolation (#664, shipped) ~> unified-session-records
   unified-session-records ~> memory-agent-profile: profile files/direct learning
   memory-agent-profile: profile files/direct learning ~> targeted-thread-recovery
-  startup-fault-isolation ~> memory-agent-profile: Node retention quality
+  startup-fault-isolation (#664, shipped) ~> memory-agent-profile: Node retention quality
   memory-agent-profile: Node retention quality ~> profile files/direct learning
 
 Capability prerequisite:
-  startup-fault-isolation -> targeted-thread-recovery
+  startup-fault-isolation (#664, shipped) -> targeted-thread-recovery
 ```
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [startup-fault-isolation](plans/startup-fault-isolation.md) | `in-progress` | #664 claims the complete feature over shipped Settings G (#656), workbench simplification (#660) and generic process ownership (#663). |
-| P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | After startup fault isolation; cover generic Task outputs, context, artifacts and isolation, and settle OQ-1 before claiming implementation |
-| P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | After startup fault isolation; independent complete Node quality feature. Recheck actual overlap with unified records and land shared Memory changes before the selected profile unit. |
+| P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | **Startup predecessor complete (#664)**; cover generic Task outputs, context, artifacts and isolation, and settle OQ-1 before claiming implementation |
+| P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | **Now; startup predecessor complete (#664)**; independent complete Node quality feature. Recheck actual overlap with unified records and land shared Memory changes before the selected profile unit. |
 | P2 | [memory-agent-profile: Profile files and direct learning](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | After unified records and selected Node-quality shared changes; demonstrate component sources/precedence before consumers. One complete profile, direct-learning, activation and lifecycle feature. |
-| P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | After startup, unified records and the profile owner; include final profile file/admission/provenance/pending-work/retention contracts in verified rebuild/removal. |
+| P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | After unified records and the profile owner; startup is complete in #664; include final profile file/admission/provenance/pending-work/retention contracts in verified rebuild/removal. |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | **Now; Agent resource lifecycle shipped in #607** |
@@ -168,11 +169,10 @@ Collision lanes remain claim-time constraints alongside the selected order:
   learning avoids reworking shared Memory mechanisms, not a functional
   prerequisite between the two complete features. Neither broadens the record
   plan's still-pending discovery decision or source-Thread access.
-- #656 settles shared Host/preload and domain destinations before startup fault
-  isolation rewires fallible construction and failure routes. PR #660 supplies
-  the final generic Task/runtime evidence and process lifecycle for that sequence.
-  Actual file overlap still requires a claim-time check with exact symbols;
-  the selected series order does not depend on an open PR already listing it.
+- #664 completes startup fault isolation over the shared Host/preload and domain
+  destinations from #656 and generic Task/runtime evidence from #660/#663.
+  Consumers use the current startup admission, issue and retry contracts; actual
+  file overlap still requires a claim-time check with exact symbols.
 - Readable records consume generic Task/context/artifact retention; they do not
   grant publication or process-adoption authority, or authenticate a current
   source revision. Further delegation retains its own collision check and
@@ -324,6 +324,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **startup-fault-isolation** (`done`, #664, 2026-09-09) - scoped startup recovery preserves healthy notes, chat drafts and notifications; owner retry and configuration recovery are specified, and the [plan is archived](plans/archive/startup-fault-isolation.md).
 - **default-model-selection** (`done`, #666, 2026-09-09) - queued saves retain each chosen text model, display the persisted result, and preserve the selection across Settings reopening and app restart.
 - **shortcut-initial-read** (`done`, #667, 2026-09-09) - live shortcut changes supersede late initial reads and errors, preserving the latest bindings and source digest for subsequent edits.
 - **memory-agent-profile design integration** (`done`, #665, 2026-09-09) - two complete core units and their activation/Reset boundaries are approved; profile learning precedes targeted recovery, and runtime remains pending.

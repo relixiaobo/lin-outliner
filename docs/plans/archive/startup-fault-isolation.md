@@ -228,8 +228,8 @@ settlement and process restart/cancellation against the final generic owners whe
 establishing readiness and Retry. Displaying a recoverable startup error does not
 require every workbench capability.
 
-[Unified session records](unified-session-records.md) follows this final startup
-mechanism under the selected A7 order. [Targeted conversation recovery](targeted-thread-recovery.md)
+[Unified session records](../unified-session-records.md) follows this final startup
+mechanism under the selected A7 order. [Targeted conversation recovery](../targeted-thread-recovery.md)
 consumes the shipped issue/lifecycle contract plus unified record-source and
 publication contracts. This feature does not wait for either consumer.
 

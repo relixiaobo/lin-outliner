@@ -30,7 +30,7 @@ DEC-1: Offer recovery only when existing owners can prove the source or exact
 removal closure. An uncertain repair is an unavailable action, never permission
 to widen the reset. Preserve bytes before changing active records.
 
-CON-1: Consume the shipped [startup fault isolation](startup-fault-isolation.md)
+CON-1: Consume the shipped [startup fault isolation](../spec/architecture.md#desktop-host-lifecycle)
 issue/action identity and capability readiness. Use the exact-source resolution,
 recovered-history provenance, and publication invalidation mechanisms from
 [unified session records](unified-session-records.md). These are required
