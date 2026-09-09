@@ -191,7 +191,7 @@ function task(
     executionContext: {
       addressRef: 'a'.repeat(64), policyRef: 'b'.repeat(64), snapshotRef: 'c'.repeat(64),
       address: { requestedCwd: null, cwd: '/actual/task-directory', targets: [], targetMode: 'follow', coverage: 'cwd-only', scopes: [] },
-      policy: { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [], mutation: true },
+      policy: { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [] },
       snapshot: { seriesId: 'fixture', capturedAt: 0, generation: 0, predecessorRef: null, discovery: 'pending', degradation: 'Not inspected', facts: [] },
     },
     ownerThreadId: OWNER_ID,

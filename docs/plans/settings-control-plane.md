@@ -118,8 +118,8 @@ field. An unavailable selected source reports its ordinary missing/rejected
 state instead of silently using another task's repository configuration.
 
 Root Configuration Profiles (instructions, model, tools, and identity) are
-distinct from discovered project check profiles (commands and measured inputs).
-The latter are scoped context evidence and cannot change the former. Skill
+distinct from repository instructions and native build/test configuration.
+Those scoped inputs cannot change the selected root configuration. Skill
 discovery/lifecycle remains under the Skill owner and its canonical catalog.
 The shared
 [Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)

@@ -1,19 +1,12 @@
 import { realpath, stat } from 'node:fs/promises';
 import {
   decodeProjectInspectRequest, decodeProjectManageRequest,
-  type Project, type ProjectCatalogView, type ProjectManageRequest, type ProjectManageResult,
+  type ProjectCatalogView, type ProjectManageResult,
 } from '../../../core/agent/project';
 import type { Thread } from '../../../core/agent/protocol';
 import { ProjectCatalogStore } from '../persistence/ProjectCatalogStore';
 import { Mutex } from '../Mutex';
 
-export interface ProjectReview {
-  readonly request: ProjectManageRequest;
-  readonly project: Project | null;
-  readonly threadName: string | null;
-  readonly signal?: AbortSignal;
-}
-export type ReviewProjectChange = (review: ProjectReview) => Promise<boolean>;
 export interface ProjectAutomationLifecycle {
   runExclusive<T>(operation: () => Promise<T>): Promise<T>;
   reconcileAcceptedClaims(): Promise<void>;
@@ -27,7 +20,6 @@ export class ProjectService {
   constructor(
     readonly store: ProjectCatalogStore,
     private readonly readThread: (id: string) => Thread | null,
-    private readonly review: ReviewProjectChange = async () => false,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -53,24 +45,17 @@ export class ProjectService {
       return this.store.membership(id);
     }) };
   }
-  async manage(raw: unknown, origin: 'window' | 'agent' = 'window', signal?: AbortSignal): Promise<ProjectManageResult> {
+  async manage(raw: unknown, signal?: AbortSignal): Promise<ProjectManageResult> {
     let request = decodeProjectManageRequest(raw);
     signal?.throwIfAborted();
-    // Canonicalize before confirmation so the user sees exactly what is saved.
+    // Canonicalize now, then revalidate inside the lifecycle lock before writing.
     if (request.operation === 'create' || request.operation === 'update') {
       request = { ...request, rootHint: await canonicalRoot(request.rootHint) };
     }
-    const project = request.operation === 'create' || request.projectId === null
-      ? null : this.store.require(request.projectId, request.expectedRevision!);
-    const thread = request.operation === 'bind' ? this.requireRoot(request.threadId) : null;
-    if (origin === 'agent' && !await this.review({ request, project, threadName: thread?.name ?? thread?.preview ?? null, signal })) {
-      return { outcome: 'cancelled', project, affectedThreadIds: [] };
-    }
-    signal?.throwIfAborted();
     return this.exclusive(async () => {
       signal?.throwIfAborted();
       if (request.operation === 'create' || request.operation === 'update') {
-        if (await canonicalRoot(request.rootHint) !== request.rootHint) throw new Error('Project directory changed after confirmation');
+        if (await canonicalRoot(request.rootHint) !== request.rootHint) throw new Error('Project directory changed during update');
         signal?.throwIfAborted();
         const saved = request.operation === 'create'
           ? this.store.create(request.name, request.rootHint, this.now())

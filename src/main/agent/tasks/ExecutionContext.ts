@@ -14,7 +14,7 @@ import {
 const run = promisify(execFile);
 
 export class ExecutionAdmissionError extends Error {
-  constructor(readonly code: 'invalid_cwd' | 'invalid_target' | 'worktree_busy' | 'isolation_unavailable', message: string) {
+  constructor(readonly code: 'invalid_cwd' | 'invalid_target' | 'isolation_unavailable', message: string) {
     super(message);
     this.name = 'ExecutionAdmissionError';
   }
@@ -66,7 +66,7 @@ export function pendingExecutionContext(address: ExecutionAddress, policy: Execu
     generation: 0,
     predecessorRef: null,
     discovery: 'pending' as const,
-    degradation: 'Repository instruction and profile discovery has not completed.',
+    degradation: 'Repository instruction discovery has not completed.',
     facts: address.scopes.map((scope) => ({
       source: 'host:execution-discovery',
       kind: 'discovery' as const,
@@ -74,7 +74,7 @@ export function pendingExecutionContext(address: ExecutionAddress, policy: Execu
       purpose: 'observation' as const,
       scope: scope.directory,
       version: 'pending:0',
-      text: 'Repository instructions and check profiles have not been inspected. Read applicable instructions before relying on project guidance.',
+      text: 'Repository instructions have not been inspected. Read applicable instructions before relying on project guidance.',
       invalidated: false,
     })),
   };

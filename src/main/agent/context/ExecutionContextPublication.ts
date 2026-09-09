@@ -69,7 +69,7 @@ export async function planExecutionContextPublication(
         // Only the bundle's exact dependencies have crossed this boundary.
         const published = new Set(item.contextRefs.map((ref) => ref.id));
         pending = pending.filter((ref) => !published.has(ref.id));
-      } else if (item.kind === 'taskExecutionContext' || item.kind === 'automationDispatch' || item.kind === 'executionContextObservation' || item.kind === 'verificationObservation' || item.kind === 'gitReviewEvidence' || item.kind === 'processObservation') {
+      } else if (item.kind === 'taskExecutionContext' || item.kind === 'automationDispatch' || item.kind === 'executionContextObservation' || item.kind === 'processObservation') {
         pending.push(item.payloadRef);
       }
     }
@@ -82,14 +82,10 @@ export async function planExecutionContextPublication(
   let omitted = 0;
   let omittedReplacement = false;
   for (const ref of pending) {
-    if (ref.kind !== 'taskExecutionContext' && ref.kind !== 'automationDispatch' && ref.kind !== 'executionContextObservation' && ref.kind !== 'verificationObservation' && ref.kind !== 'gitReviewEvidence' && ref.kind !== 'processObservation') continue;
+    if (ref.kind !== 'taskExecutionContext' && ref.kind !== 'automationDispatch' && ref.kind !== 'executionContextObservation' && ref.kind !== 'processObservation') continue;
     const payload = await read(ref).catch(() => null);
-    if (payload?.kind !== 'taskExecutionContext' && payload?.kind !== 'automationDispatch' && payload?.kind !== 'executionContextObservation' && payload?.kind !== 'verificationObservation' && payload?.kind !== 'gitReviewEvidence' && payload?.kind !== 'processObservation') { omitted += 1; continue; }
-    const facts = (payload.kind === 'verificationObservation' || payload.kind === 'gitReviewEvidence' || payload.kind === 'processObservation') ? [...payload.facts] : [...payload.executionContext.snapshot.facts];
-    if (payload.kind === 'gitReviewEvidence') {
-      for (let i = 0; i < facts.length; i++) facts[i] = { ...facts[i]!,
-        text: `${facts[i]!.text} Review reference: ${JSON.stringify(ref)}. Revalidate live state before commit or publication.` };
-    }
+    if (payload?.kind !== 'taskExecutionContext' && payload?.kind !== 'automationDispatch' && payload?.kind !== 'executionContextObservation' && payload?.kind !== 'processObservation') { omitted += 1; continue; }
+    const facts = payload.kind === 'processObservation' ? [...payload.facts] : [...payload.executionContext.snapshot.facts];
     if (payload.kind === 'executionContextObservation') {
       for (const { fact } of state.values()) {
         if (fact.authority !== 'repository' || facts.some((current) => executionFactKey(current) === executionFactKey(fact))) continue;
@@ -150,7 +146,7 @@ export async function checkpointExecutionContext(turns: readonly Turn[], read: R
     text += body;
     entries.push(entry);
   }
-  if (text) text = `Restored execution observations at their recorded state; checks, Git and process observations require fresh validation.\n${text}`;
+  if (text) text = `Restored execution observations at their recorded state; Git and process observations require fresh validation.\n${text}`;
   if (omitted) text += `${omitted} prior scoped observations were omitted; their bodies are not available in this input.\n`;
   return { entries, text, omitted };
 }

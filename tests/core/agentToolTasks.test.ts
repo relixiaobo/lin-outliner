@@ -655,7 +655,7 @@ describe('ToolTaskService', () => {
     const startedAt = Date.now();
     const config: ToolTaskSupervisorConfig = {
       version: 3,
-      isolation: pendingProcessIsolation({ capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [] }, process.platform),
+      isolation: pendingProcessIsolation({ capability: 'full-access', isolation: 'unsandboxed', writablePaths: [] }, process.platform),
       sandboxProfile: null,
       taskId: 'task-identity-failure',
       nonce: 'nonce-identity-failure',
@@ -1360,7 +1360,7 @@ async function seedRunningTask(
     writeFile(path.join(detailPath, 'stderr.log'), ''),
   ]);
   const executionContext = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: fixture.root }), {
-    capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+    capability: 'full-access', isolation: 'unsandboxed', writablePaths: [],
   });
   return fixture.store.create({
     taskId,
@@ -1373,7 +1373,7 @@ async function seedRunningTask(
     cwd: executionContext.address.cwd,
     executionContext,
     operationKind: 'process',
-    inheritedClaimTaskId: null,
+    parentTaskId: null,
     nonce: `nonce-${taskId}`,
     detailPath,
     backgroundEnabled: false,

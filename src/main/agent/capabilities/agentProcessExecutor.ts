@@ -64,7 +64,7 @@ function sandboxedCommand(
 export function prepareAgentProcessIsolation(sandbox: AgentProcessWriteSandbox | undefined, requested: ExecutionPolicy['isolation'], platform = process.platform): {
   readonly evidence: ProcessIsolationEvidence; readonly profile: string | null;
 } {
-  let evidence = pendingProcessIsolation({ capability: 'full-access', mutation: true, isolation: requested, writablePaths: [] }, platform);
+  let evidence = pendingProcessIsolation({ capability: 'full-access', isolation: requested, writablePaths: [] }, platform);
   const fail = (state: 'unavailable' | 'rejected', reason: string) => ({ evidence: { ...evidence, state, reason } as ProcessIsolationEvidence, profile: null });
   if (requested !== 'macos-write-sandbox') {
     if (sandbox) return fail('rejected', 'The process sandbox differs from its admitted policy.');

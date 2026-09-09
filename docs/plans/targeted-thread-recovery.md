@@ -130,16 +130,13 @@ reports unavailable scope rather than killing healthy user work. Apply the
 publisher's fence to queued writes before removal so a late write cannot recreate
 deleted history. Rebuild invalidates only affected publication generations.
 
-Verification checks and Git publication continue to use their immutable evidence
-and current applicability checks; retained recovery copies cannot authorize a
-check pass, commit, continuation or process adoption. The board places the
-approved workbench series before this recovery sequence. Closure inspection and
-interruption fixtures must therefore include its final check/attempt evidence,
-review/publication evidence, and owned interactive processes/captures. Reuse
-their retention, settlement and cleanup owners; deleting a conversation cannot
-undo a Git publication or delete an external repository. An image/PDF observation
-already recorded in another Thread follows that reader's Item retention, even
-when the original source Thread is in the confirmed recovery scope.
+Recovery consumes the final generic Tool Task, process-isolation, context and
+artifact contracts. Native Git and verification workflows use ordinary commands;
+there are no private check/attempt or Git-review manifest owners to recover.
+Fixtures cover retained/expired outputs, current process settlement, referenced
+artifacts and interrupted native-command outcomes without replaying mutations.
+Readable records follow the reader's Item retention even when the original source
+Thread is in the confirmed recovery scope.
 
 Fold the final behavior into architecture, Agent Core, Thread rendering and error
 observability specs, plus the affected domain lifecycle specs. Keep the existing

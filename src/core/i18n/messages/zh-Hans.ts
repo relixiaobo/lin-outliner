@@ -6,14 +6,6 @@ import type { PartialMessages } from '../types';
 // en.ts — the coverage test (test/core/i18n-coverage) reports any drift.
 
 export const zhHans: PartialMessages = {
-  gitReview: {
-    title: 'Git 审查', historical: '这是已保存的审查记录。提交前会重新检查文件和 Git 状态。',
-    detached: '分离的 HEAD', unborn: '尚无提交', nonGit: '此目录仅支持文件审查，无法提交或发布。',
-    binary: '二进制', diff: '差异摘录', message: '提交说明', rename: '请同时选择重命名的两个路径。',
-    copy: '复制提交请求', copied: '已复制。粘贴到对话中以请求提交。', copyFailed: '无法复制请求。',
-    omitted: ({ count }: { count: number }) => `此处省略了 ${count} 个路径。请请求针对这些文件的审查后再选择。`,
-    remote: '远端', upstream: '上游', none: '无', branches: '来源 → 目标分支', provider: '托管平台', range: '提交范围', commits: '提交列表',
-  },
   startup: {
     failed: '无法启动 Tenon',
     documentFailed: '无法打开工作区',

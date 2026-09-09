@@ -21,7 +21,10 @@ user-invocable: true
    output is not a finalized capture. Terminal output has a bounded preview;
    retained output and artifacts can later expire while the compact receipt
    remains. Treat every capture as an immutable observation.
-5. After a restart, retry, or compaction, reconcile the original Task before any
+5. A background Task does not reserve its directory. Other commands and file
+   operations can run there; native tool locks and ordinary coordination handle
+   conflicts. Use separate worktrees for independent edits when appropriate.
+6. After a restart, retry, or compaction, reconcile the original Task before any
    new start. Historical `running` means running at observation time. It is not
    proof of current liveness. Repeat neither an unchanged Skill body nor a full
    process list in model context.
@@ -34,8 +37,8 @@ The measured macOS workflow is **not a supported persistent terminal**:
 
 - Default detached tmux outlives its completed Task and is not stopped by stopping
   that Task.
-- A foreground `tmux -D` server can be owned by a Task, but its directory claim
-  rejects subsequent same-directory Bash control commands.
+- A foreground `tmux -D` server can be owned by a Task. Same-directory control
+  commands are admitted independently; that does not confer ownership of panes.
 - Terminal pane contents are not the server Task's stdout. Only explicit
   `capture-pane` calls create retained Tool Task output.
 - The required macOS write profile rejects pane creation in the measured build.

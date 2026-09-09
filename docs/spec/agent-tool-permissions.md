@@ -144,8 +144,8 @@ Local task admission and its pre-execution check revalidate logical path aliases
 canonical targets and Git scope identities. Dedicated delegation worktrees also
 revalidate their recorded source, registration and Git metadata through
 `AgentWorktree.validate`; isolated Automation calls revalidate the frozen dispatch
-contexts. These checks do not turn a known-address claim into a universal
-filesystem lock or remove the external-native-CLI enforcement limits.
+contexts. These checks validate addresses and isolation; they do not reserve directories
+or remove the external-native-CLI enforcement limits.
 
 The phases remain observable and separate:
 

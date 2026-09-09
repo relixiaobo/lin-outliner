@@ -126,7 +126,7 @@ export class DelegationCoordinator {
     this.now = options.now ?? Date.now;
   }
 
-  ownsExecutionClaim(sessionId: ThreadId, taskId: string, rootThreadId: ThreadId): boolean {
+  ownsExecution(sessionId: ThreadId, taskId: string, rootThreadId: ThreadId): boolean {
     const session = this.options.store.readSession(sessionId);
     return session?.currentTaskId === taskId && session.ownerThreadId === rootThreadId;
   }

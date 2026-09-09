@@ -3035,7 +3035,7 @@ test.describe('canonical agent Thread surface', () => {
     const executionContext = pendingExecutionContext({
       requestedCwd: directory, cwd: directory, targets: [], targetMode: 'follow', coverage: 'cwd-only',
       scopes: [{ key: `directory:${directory}`, directory, worktree: null, gitDirectory: null }],
-    }, { capability: 'full-access', isolation: 'unsandboxed', mutation: true, writablePaths: [] });
+    }, { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [] });
     const fixture = await page.evaluate(async (executionContext) => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
@@ -3045,8 +3045,11 @@ test.describe('canonical agent Thread surface', () => {
       const threadId = response?.data[0]?.id;
       if (!threadId) throw new Error('Mock root Thread not found');
       const now = Date.now();
+      const isolation = { requested: 'unsandboxed', state: 'unsandboxed', platform: 'darwin', backend: null,
+        dependency: 'not-required', network: 'unrestricted', writablePaths: [], protectedGitObjectStores: [],
+        profileDigest: null, reason: null };
       const task = (input: Record<string, unknown>) => ({
-        executionContext,
+        executionContext, isolation,
         taskId: input.taskId,
         ownerThreadId: threadId,
         sourceTurnId: '01910000-0000-7000-8000-00000000ed01',
@@ -3077,7 +3080,7 @@ test.describe('canonical agent Thread surface', () => {
         progress: { phase: 'render', message: 'Frame 12', fraction: 0.5, updatedAt: now },
       });
       target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'toolTask/changed', threadId, task: running });
-      return { threadId, now, executionContext };
+      return { threadId, now, executionContext, isolation };
     }, executionContext);
 
     const pill = page.locator('.thread-work-strip-pill');
@@ -3105,12 +3108,12 @@ test.describe('canonical agent Thread surface', () => {
     )).toEqual({ threadId: fixture.threadId, taskId: 'task-e2e-running' });
     await expect(runningRow).toContainText('Cancelled');
 
-    await page.evaluate(({ threadId, now, executionContext }) => {
+    await page.evaluate(({ threadId, now, executionContext, isolation }) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
       };
       const base = {
-        executionContext,
+        executionContext, isolation,
         ownerThreadId: threadId,
         sourceTurnId: '01910000-0000-7000-8000-00000000ed01',
         producer: 'video',

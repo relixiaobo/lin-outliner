@@ -128,7 +128,6 @@ export interface WindowApplicationHostOptions {
 
 export interface WindowApplicationHost {
   reviewMemoryReset: import('../hostDomain/memoryOperations').ReviewMemoryReset;
-  reviewProjectChange: import('../agent/projects/ProjectService').ReviewProjectChange;
   openMemoryNode(nodeId: string, authorize: () => Promise<void>): Promise<'opened' | 'unavailable' | 'unknown'>;
   reviewSkillOperation: import('../hostDomain/skillLifecycle').ReviewSkillOperation;
   readSkillReview(event: IpcMainInvokeEvent): import('../../core/agent/skillOperations').SkillReview;
@@ -858,23 +857,6 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
   });
 
   const host: WindowApplicationHost = {
-    reviewProjectChange: async ({ request, project, threadName, signal }) => {
-      signal?.throwIfAborted();
-      const parent = liveWindow(mainWindow);
-      if (released || !parent || parent.isDestroyed()) throw new Error('The Project review window is unavailable');
-      const strings = getMessages(effectiveLocale());
-      const t = strings.agent.projects;
-      const editable = request.operation === 'create' || request.operation === 'update' ? request : null;
-      const result = await dialog.showMessageBox(parent, {
-        type: 'question', message: t.reviewTitle,
-        detail: t.reviewDetail({ operation: t.operations[request.operation], name: editable?.name ?? project?.name ?? t.none,
-          root: editable ? editable.rootHint ?? t.none : project?.rootHint ?? t.none, thread: threadName || t.none }),
-        buttons: [strings.dialog.cancel, strings.dialog.confirm], defaultId: 0, cancelId: 0,
-        noLink: true, signal,
-      });
-      signal?.throwIfAborted();
-      return !released && !parent.isDestroyed() && result.response === 1;
-    },
     reviewMemoryReset: async (review, caller) => {
       caller.signal?.throwIfAborted();
       const parent = caller.origin.kind === 'window' ? BrowserWindow.fromId(caller.origin.windowId) : liveWindow(mainWindow);

@@ -32,8 +32,9 @@ Agent Core. It is a contract checklist, not project status.
   data, not a second configuration snapshot.
 - Under the workbench refactor, resolve root configuration from its explicitly
   selected source, not a task cwd or newly discovered repository. Project
-  grouping alone cannot apply a configuration change; check profiles and Skill
-  discovery remain separate scoped inputs.
+  grouping alone cannot apply a configuration change; repository instructions and Skill
+  discovery remain separate scoped inputs; native test configuration is read by
+  the Agent rather than a proprietary check registry.
 
 - Use Thread, Turn, Item, Goal, Tool Task, Agent Session, launcher, and Task Profile
   as distinct product vocabulary.

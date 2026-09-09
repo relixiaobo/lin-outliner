@@ -68,10 +68,10 @@ Thread cwd or a second execution ledger. Every initial and continued Tool Task
 admits its own `ExecutionAddress`, `ExecutionPolicy`, and `ContextSnapshot`;
 Session configuration and settlement records retain only the relevant links.
 The Session execution is a Host Tool Task; native subprocesses and internal local
-calls inherit its covered claims. External results complete a canonical delegated
+calls retain its validated execution ownership; this does not reserve directories. External results complete a canonical delegated
 Turn through a Host-only executor before settlement. Worktree registration and
 source identity are validated again for local admissions; cancellation/recovery
-settle covered child tasks before releasing the owner claim. No native process
+settle covered child tasks before releasing the execution owner. No native process
 uses a second supervision path.
 Future consumers use that task-scoped contract and the existing launcher baseline.
 Context delivery and caching follow
