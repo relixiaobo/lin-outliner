@@ -161,7 +161,7 @@ settlement contract.
 ### Local Files And Commands
 
 - `file_read`, `file_glob`, and `file_grep`
-- `file_edit`, `file_write`, and `file_delete`
+- `file_edit` and `file_write`
 - `bash`
 - `task_status`
 - `task_stop`, shared with Agent orchestration
@@ -174,12 +174,8 @@ File instruction/profile collection follows that canonical target's parent and
 ancestors, with nested applicability retained per target. Directory searches
 use their canonical search root and label deeper uninspected scopes as unknown;
 later file edits admit those exact target scopes. Following a symlink for a
-content edit uses its referent; deleting the link uses the link's parent.
-New files resolve through the nearest existing canonical parent plus suffix.
-Deletion admission records both the source entry and the reserved trash
-destination. Isolated calls keep `.agent-trash` under the validated writable
-resource even when cwd is elsewhere, reject redirected trash ancestors, and
-cannot delete the resource root. Moving a symlink affects its entry only.
+content edit uses its referent. New files resolve through the nearest existing
+canonical parent plus suffix.
 Bash instruction scope remains its admitted cwd. Neither an unrelated cwd nor
 Project membership supplies the rules for an absolute file target.
 Full Access permits absolute host paths unless an explicit block removes the
@@ -190,6 +186,14 @@ File tools return bounded content and persist oversized output in app-owned
 scratch space. Relative attachment paths resolve from the same Host default;
 per-Thread attachment edit copies and observations remain in managed scratch
 storage with their own deletion lifecycle.
+
+Agents delete local files and directories through ordinary Bash commands such
+as `rm`, `rmdir`, or `git rm`. There is no dedicated deletion tool or automatic
+Agent-trash copy. Removal follows the invoked command's semantics, including
+symlink-entry behavior, under the existing Bash action blocks, delegated access
+policy, execution isolation, and audit. Prior trash contents are ordinary local
+files and are not automatically removed. Outline deletion continues through the
+public Outline commands and its own operation history.
 
 `resolveExecutionAddress` captures canonical targets and Git/directory scope
 identities. `pendingExecutionContext` creates a frozen generation-0 snapshot

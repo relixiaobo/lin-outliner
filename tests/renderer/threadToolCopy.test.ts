@@ -95,7 +95,6 @@ describe('every built-in tool says what it did, not which API was called', () =>
   const cases: ReadonlyArray<readonly [string, ThreadToolItem, string]> = [
     ['file_write', dynamic('file_write', { file_path: '/w/src/out.md' }), 'Wrote out.md'],
     ['file_edit', dynamic('file_edit', { file_path: '/w/ThreadItemView.tsx' }), 'Edited ThreadItemView.tsx'],
-    ['file_delete', dynamic('file_delete', { file_path: '/w/tmp/old.log' }), 'Deleted old.log'],
     ['file_read', dynamic('file_read', { file_path: '/w/OEBPS/intro.xhtml' }), 'Read intro.xhtml'],
     ['file_read via path', dynamic('file_read', { path: '/w/notes.md' }), 'Read notes.md'],
     ['file_glob', dynamic('file_glob', { pattern: '**/*.epub' }), 'Searched for "**/*.epub"'],

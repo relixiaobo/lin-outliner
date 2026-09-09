@@ -1400,7 +1400,6 @@ describe('agent local tools', () => {
     const tools = createLocalTools({ localRoot: process.cwd() });
     const fileRead = tools.find((tool) => tool.name === 'file_read')!;
     const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
-    const fileDelete = tools.find((tool) => tool.name === 'file_delete')!;
     const bash = tools.find((tool) => tool.name === 'bash')!;
 
     expect(fileRead.description).toContain('relative paths resolve from the call working directory');
@@ -1410,8 +1409,8 @@ describe('agent local tools', () => {
     expect(JSON.stringify(fileRead.parameters)).toContain('Maximum 20 pages per request');
     expect(fileEdit.description).toContain('Performs exact string replacements in files');
     expect(fileEdit.description).not.toContain('notebook_edit');
-    expect(fileDelete.description).toContain('agent trash');
-    expect(JSON.stringify(fileDelete.parameters)).toContain('move to agent trash');
+    expect(tools.map((tool) => tool.name)).not.toContain('file_delete');
+    expect(bash.description).toContain('rm, rmdir, or git rm');
     expect(JSON.stringify(bash.parameters)).toContain('Clear, concise description');
     expect(JSON.stringify(bash.parameters)).toContain('Do not use vague words');
     expect(JSON.stringify(bash.parameters)).not.toContain('dangerouslyDisableSandbox');
@@ -2347,57 +2346,31 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_delete moves files and directories to agent trash instead of unlinking', async () => {
+  posixBashProcessTest('Bash removes files, directories, and symlink entries without a trash copy', async () => {
     await withWorkspace(async (workspaceRoot) => {
-      const filePath = path.join(workspaceRoot, 'dist', 'bundle.js');
-      await mkdir(path.dirname(filePath), { recursive: true });
-      await writeFile(filePath, 'console.log("old");\n', 'utf8');
+      await mkdir(path.join(workspaceRoot, 'old-dir'));
+      await mkdir(path.join(workspaceRoot, 'empty-dir'));
+      await writeFile(path.join(workspaceRoot, 'old.txt'), 'old');
+      await writeFile(path.join(workspaceRoot, 'old-dir', 'nested.txt'), 'nested');
+      await writeFile(path.join(workspaceRoot, 'keep.txt'), 'preserved');
+      await symlink('keep.txt', path.join(workspaceRoot, 'link'));
+      await executeTool(workspaceRoot, 'file_read', { file_path: 'old.txt' });
 
-      await executeTool(workspaceRoot, 'file_read', { file_path: filePath });
-      const deleted = await executeTool<{ filePath: string; trashPath: string; kind: string }>(workspaceRoot, 'file_delete', {
-        file_path: filePath,
+      const result = await executeTool<BashData>(workspaceRoot, 'bash', {
+        command: 'rm -- "old.txt" "link" && rm -r -- "old-dir" && rmdir -- "empty-dir"',
+        description: 'Remove obsolete fixture files and directories',
       });
-
-      expect(deleted.ok).toBe(true);
-      expect(deleted.data).toMatchObject({ filePath, kind: 'file' });
-      expect(await readFile(deleted.data!.trashPath, 'utf8')).toBe('console.log("old");\n');
-      await expect(readFile(filePath, 'utf8')).rejects.toThrow();
-
+      expect(result.ok).toBe(true);
+      expect(result.data?.exitCode).toBe(0);
+      const remaining = await readdir(workspaceRoot);
+      for (const removed of ['old.txt', 'old-dir', 'empty-dir', 'link', '.agent-trash']) {
+        expect(remaining).not.toContain(removed);
+      }
+      expect(await readFile(path.join(workspaceRoot, 'keep.txt'), 'utf8')).toBe('preserved');
       const editAfterDelete = await executeTool(workspaceRoot, 'file_edit', {
-        file_path: filePath,
-        old_string: 'old',
-        new_string: 'new',
+        file_path: 'old.txt', old_string: 'old', new_string: 'new',
       });
-      expect(editAfterDelete.ok).toBe(false);
-      expect(editAfterDelete.error?.code).toBe('file_not_found');
-
-      const dirPath = path.join(workspaceRoot, 'old-dir');
-      await mkdir(dirPath, { recursive: true });
-      await writeFile(path.join(dirPath, 'note.txt'), 'recoverable\n', 'utf8');
-      const deletedDir = await executeTool<{ trashPath: string; kind: string }>(workspaceRoot, 'file_delete', {
-        file_path: dirPath,
-      });
-      expect(deletedDir.ok).toBe(true);
-      expect(deletedDir.data!.kind).toBe('directory');
-      expect(await readFile(path.join(deletedDir.data!.trashPath, 'note.txt'), 'utf8')).toBe('recoverable\n');
-    });
-  });
-
-  test('file_delete refuses the call working directory root and the agent trash itself', async () => {
-    await withWorkspace(async (workspaceRoot) => {
-      const rootDelete = await executeTool(workspaceRoot, 'file_delete', {
-        file_path: workspaceRoot,
-      });
-      expect(rootDelete.ok).toBe(false);
-      expect(rootDelete.error?.code).toBe('root_delete_forbidden');
-
-      const trashPath = path.join(workspaceRoot, '.agent-trash', 'manual');
-      await mkdir(trashPath, { recursive: true });
-      const trashDelete = await executeTool(workspaceRoot, 'file_delete', {
-        file_path: trashPath,
-      });
-      expect(trashDelete.ok).toBe(false);
-      expect(trashDelete.error?.code).toBe('trash_delete_forbidden');
+      expect(editAfterDelete).toMatchObject({ ok: false, error: { code: 'file_not_found' } });
     });
   });
 
@@ -2922,20 +2895,6 @@ describe('agent local tools', () => {
       } finally {
         await rm(outsideRoot, { recursive: true, force: true });
       }
-    });
-  });
-
-  test('file_delete refuses self-definition content', async () => {
-    await withWorkspace(async (workspaceRoot) => {
-      const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'delete-skill', 'SKILL.md');
-      await mkdir(path.dirname(skillFile), { recursive: true });
-      await writeFile(skillFile, '---\ndescription: Delete skill fixture\n---\nBody\n', 'utf8');
-
-      const fileDelete = createLocalTools({ localRoot: workspaceRoot }).find((tool) => tool.name === 'file_delete')!;
-      const skillDelete = await (fileDelete.execute as any)('delete-skill', { file_path: skillFile });
-
-      expect((skillDelete.details as ToolEnvelope<unknown>).ok).toBe(false);
-      expect((skillDelete.details as ToolEnvelope<unknown>).error?.code).toBe('self_definition_delete_not_supported');
     });
   });
 
