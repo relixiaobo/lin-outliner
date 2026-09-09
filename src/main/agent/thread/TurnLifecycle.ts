@@ -1,3 +1,4 @@
+import { planProcessObservations } from '../context/ProcessObservations';
 import { decodePrivilegedTurnStartRequest,decodePrivilegedTurnSteerRequest,decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createHostRootTurnAdmissionBarrierSnapshot,createThreadAdmissionBarrierSnapshot } from '../../../core/agent/extensions';
@@ -1366,6 +1367,14 @@ export class TurnLifecycle {
       const located = turns.flatMap((turn) => turn.items.map((item) => ({ turn, item })));
       let reset = -1;
       located.forEach(({ item }, index) => { if (item.type === 'contextReset') reset = index; });
+      try {
+        const observations = await planProcessObservations(turns, this.toolTasks.store.listAll(active.threadId),
+          (ref) => this.core.payloads.readContext(active.threadId, ref));
+        for (const payload of observations) await this.persistExecutionContextEvidenceLocked(active, thread, payload,
+          'Recorded process isolation and lifecycle');
+      } catch (error) {
+        console.warn('[agent] Optional process observation delivery deferred', error);
+      }
       const verification = await this.goalUsage.verificationPublication?.(active.threadId);
       if (verification) {
         const previous = located.slice(reset + 1).reverse().find(({ item }) => item.type === 'contextEvidence' && item.kind === 'verificationObservation');

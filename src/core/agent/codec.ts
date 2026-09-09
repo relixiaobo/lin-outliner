@@ -1,3 +1,4 @@
+import { decodeProcessIsolationEvidence } from './processIsolation';
 import { decodeGitReviewEvidence } from './gitReview';
 import { decodeProjectSelection, decodeProjectInspectRequest, decodeProjectManageRequest, decodeProjectCatalogView, decodeProjectManageResult } from './project';
 import { decodeExecutionContextFact, decodeTaskExecutionContext } from './executionContext';
@@ -2213,7 +2214,7 @@ function decodeToolTaskProjection(value: unknown, path: string): import('./proto
     'taskId', 'ownerThreadId', 'sourceTurnId', 'sourceItemId', 'producer', 'description',
     'state', 'deliveryState', 'progress', 'exitCode', 'signal', 'outcomeReason', 'error',
     'detailState', 'artifacts', 'artifactWarnings', 'outputBytes', 'detailBytes', 'storagePressure',
-    'startedAt', 'completedAt', 'deliveryTurnId', 'executionContext',
+    'startedAt', 'completedAt', 'deliveryTurnId', 'executionContext', 'isolation',
   ], path);
   let progress: import('./protocol').ToolTaskProgress | null = null;
   if (record.progress !== null) {
@@ -2253,6 +2254,7 @@ function decodeToolTaskProjection(value: unknown, path: string): import('./proto
   return {
     taskId: boundedUtf8String(record.taskId, `${path}.taskId`, 256),
     executionContext: decodeTaskExecutionContext(record.executionContext),
+    isolation: decodeProcessIsolationEvidence(record.isolation),
     ownerThreadId: uuidV7(record.ownerThreadId, `${path}.ownerThreadId`),
     sourceTurnId: uuidV7(record.sourceTurnId, `${path}.sourceTurnId`),
     sourceItemId: boundedUtf8String(record.sourceItemId, `${path}.sourceItemId`, 256),
@@ -3720,6 +3722,17 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
   const kind = enumValue(record.kind, CONTEXT_PAYLOAD_KINDS, 'contextPayload.kind');
 
   switch (kind) {
+    case 'processObservation': {
+      const isolation = decodeProcessIsolationEvidence(record.isolation);
+      if (isolation.state === null) fail('contextPayload.isolation', 'expected an observed isolation result');
+      exactKeys(record, ['schemaVersion', 'kind', 'taskId', 'state', 'executionContext', 'isolation', 'facts'], 'contextPayload');
+      return deepFreeze({ schemaVersion: 1, kind,
+        taskId: stringValue(record.taskId, 'contextPayload.taskId'),
+        state: enumValue(record.state, ['running', 'settling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'lost'], 'contextPayload.state'),
+        executionContext: decodeTaskExecutionContext(record.executionContext),
+        isolation,
+        facts: arrayValue(record.facts, 'contextPayload.facts').map(decodeExecutionContextFact) });
+    }
     case 'gitReviewEvidence':
       exactKeys(record, ['schemaVersion', 'kind', 'evidence', 'taskId', 'executionContext', 'evidenceRefs', 'facts'], 'contextPayload');
       return deepFreeze({ schemaVersion: 1, kind, evidence: decodeGitReviewEvidence(record.evidence),

@@ -273,6 +273,7 @@ export function contextPayloadDependencies(payload: ThreadContextPayload): Conte
       return emptyDependencies({ contexts: [payload.admissionRef] });
     case 'executionContextPublication':
       return emptyDependencies({ contexts: payload.evidenceRefs });
+    case 'processObservation':
     case 'taskExecutionContext':
     case 'automationDispatch':
       return emptyDependencies();

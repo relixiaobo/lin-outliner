@@ -1,3 +1,4 @@
+import { decodeProcessIsolationEvidence, pendingProcessIsolation, sameIsolationRequest, type ProcessIsolationEvidence } from '../../../core/agent/processIsolation';
 import { createHash } from 'node:crypto';
 import { ExecutionAdmissionError, validateExecutionContext } from './ExecutionContext';
 import type { ThreadContextPayloadReference, ThreadId, ThreadResourceReference, TurnId } from '../../../core/agent/protocol';
@@ -30,6 +31,7 @@ interface ToolTaskRow {
   command_digest: string;
   cwd: string;
   execution_context_json: string;
+  isolation_json: string;
   operation_kind: 'process' | 'host';
   inherited_claim_task_id: string | null;
   nonce: string;
@@ -110,6 +112,10 @@ interface ToolTaskLeaseRow {
 
 export class ToolTaskStore {
   constructor(private readonly db: SqliteDatabase) {
+    const columns = this.db.prepare('PRAGMA table_info(tool_tasks)').all() as Array<{ name: string }>;
+    if (columns.length > 0 && !columns.some(({ name }) => name === 'isolation_json')) {
+      throw new Error('Tool Task storage format changed. Start this pre-release build with fresh userData.');
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tool_tasks (
         task_id TEXT PRIMARY KEY,
@@ -121,6 +127,7 @@ export class ToolTaskStore {
         command_digest TEXT NOT NULL,
         cwd TEXT NOT NULL,
         execution_context_json TEXT NOT NULL,
+        isolation_json TEXT NOT NULL,
         operation_kind TEXT NOT NULL CHECK (operation_kind IN ('process', 'host')),
         inherited_claim_task_id TEXT,
         nonce TEXT NOT NULL,
@@ -414,9 +421,11 @@ export class ToolTaskStore {
     | 'stopRequestedAt' | 'terminalDigest' | 'stdoutBytes' | 'stderrBytes'
     | 'outputBytes' | 'completedAt' | 'quiescedAt' | 'deliveryTurnId' | 'updatedAt'
     | 'artifacts' | 'artifactWarnings' | 'artifactsSettled' | 'reservationBytes' | 'deliveredAt'
-    | 'detailBytes' | 'storagePressure'
-  >): ToolTaskRecord {
+    | 'detailBytes' | 'storagePressure' | 'isolation'
+  > & { isolation?: ProcessIsolationEvidence }): ToolTaskRecord {
     validateExecutionContext(input.executionContext);
+    const isolation = decodeProcessIsolationEvidence(input.isolation ?? pendingProcessIsolation(input.executionContext.policy, process.platform));
+    if (isolation.requested !== input.executionContext.policy.isolation) throw new Error('Task isolation differs from admitted policy');
     if (input.cwd !== input.executionContext.address.cwd) throw new Error('Task cwd differs from admitted address');
     return this.transaction(() => {
       if (input.inheritedClaimTaskId) {
@@ -426,14 +435,14 @@ export class ToolTaskStore {
       this.db.prepare(`
       INSERT INTO tool_tasks(
         task_id, owner_thread_id, source_turn_id, source_item_id, producer, description,
-        command_digest, cwd, execution_context_json, operation_kind, inherited_claim_task_id,
+        command_digest, cwd, execution_context_json, isolation_json, operation_kind, inherited_claim_task_id,
         nonce, detail_path, background_enabled, state, delivery_state, detail_state,
         timeout_ms, started_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', 'pending', 'available', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', 'pending', 'available', ?, ?, ?)
     `).run(
       input.taskId, input.ownerThreadId, input.sourceTurnId, input.sourceItemId,
       input.producer, input.description, input.commandDigest, input.cwd,
-      JSON.stringify(input.executionContext), input.operationKind, input.inheritedClaimTaskId, input.nonce,
+      JSON.stringify(input.executionContext), JSON.stringify(isolation), input.operationKind, input.inheritedClaimTaskId, input.nonce,
       input.detailPath, input.backgroundEnabled ? 1 : 0, input.timeoutMs, input.startedAt, input.startedAt,
     );
       if (input.executionContext.policy.mutation) {
@@ -448,6 +457,18 @@ export class ToolTaskStore {
       }
       return this.read(input.taskId)!;
     });
+  }
+
+  setIsolation(taskId: string, evidence: ProcessIsolationEvidence): ToolTaskRecord {
+    decodeProcessIsolationEvidence(evidence);
+    const current = this.require(taskId);
+    if (!sameIsolationRequest(current.isolation, evidence)) throw new Error('Process isolation request is immutable');
+    if (current.isolation.state !== null || isToolTaskTerminal(current.state)) {
+      if (current.isolation.state !== evidence.state || current.isolation.reason !== evidence.reason) throw new Error('Process isolation result is immutable');
+      return current;
+    }
+    this.db.prepare('UPDATE tool_tasks SET isolation_json = ? WHERE task_id = ?').run(JSON.stringify(evidence), taskId);
+    return this.require(taskId);
   }
 
   reserveDetail(
@@ -588,6 +609,7 @@ export class ToolTaskStore {
       throw new Error(`Invalid Tool Task settled detail size: ${taskId}`);
     }
     this.transaction(() => {
+      this.setIsolation(taskId, receipt.isolation);
       this.db.prepare(`
         UPDATE tool_tasks SET
           state = ?, exit_code = ?, signal = ?, outcome_reason = ?, error_message = ?,
@@ -973,6 +995,7 @@ function taskFromRow(row: ToolTaskRow): ToolTaskRecord {
     commandDigest: row.command_digest,
     cwd: row.cwd,
     executionContext: validateExecutionContext(JSON.parse(row.execution_context_json)),
+    isolation: decodeProcessIsolationEvidence(JSON.parse(row.isolation_json)),
     operationKind: row.operation_kind,
     inheritedClaimTaskId: row.inherited_claim_task_id,
     nonce: row.nonce,
@@ -1092,10 +1115,12 @@ function leaseFromRow(row: ToolTaskLeaseRow): ToolTaskLease {
 }
 
 function assertFinalReceipt(task: ToolTaskRecord, receipt: ToolTaskFinalReceipt): void {
+  decodeProcessIsolationEvidence(receipt.isolation);
+  if (receipt.isolation.state === null) throw new Error('Terminal isolation evidence must be resolved');
   const { receiptDigest, ...unsigned } = receipt;
   const digest = createHash('sha256').update(JSON.stringify(unsigned)).digest('hex');
   if (receipt.taskId !== task.taskId || receipt.nonce !== task.nonce
-    || receipt.version !== 2
+    || receipt.version !== 3
     || !['succeeded', 'failed', 'cancelled', 'timed_out', 'lost'].includes(receipt.state)
     || receipt.startedAt !== task.startedAt || !Number.isFinite(receipt.quiescedAt)
     || receipt.quiescedAt < task.startedAt || !/^[0-9a-f]{64}$/u.test(receiptDigest)
