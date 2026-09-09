@@ -2832,3 +2832,16 @@ Verify that recognized empty responses leave later calls eligible while unknown
 error text remains an error. Normalize host identities through the same URL
 rules before exact/subdomain comparisons, and cover Unicode, punycode, URL-form,
 and lookalike inputs together.
+
+## Redaction boundaries can span complete log lines
+
+PR #663's running-log tail retained complete lines but discarded the opening
+marker of a multiline private key; observations taken before its closing marker
+arrived also exposed the key body. Terminal sanitization hid both failures by
+scanning the complete capture before clipping.
+
+**Preserve secret-block context before selecting an observation window.** Scan a
+bounded prefix from its beginning, suppress unfinished blocks, and withhold raw
+text on scan failure. Verify both missing-footer and tail-inside-block cases
+through the model-visible result, on stdout and stderr, while proving that reads
+leave the process running and its raw capture unchanged.

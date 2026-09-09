@@ -188,15 +188,15 @@ contract or user-visible decision.
 
 - **Persisted-schema cutover verification** (release gate) — before the next
   packaged train, stop every Tenon process, manually reset installed and clone-
-  scoped pre-#658 Agent stores plus pre-#619 Outline storage-v2 workspaces, and
+  scoped pre-#663 Agent stores plus pre-#619 Outline storage-v2 workspaces, and
   verify fresh packaged/dev first launch. This covers the input-author, context
   dependency-manifest, unified Agent resource-reference, whole-Turn
   `history/rerun` event-name, #611 user-view/additional-context payload-shape,
   #619 required Operation-intent identity, and #646/#649 execution-context
   snapshot shape cuts (including series and capture identity), plus #658's
   required Task isolation evidence, terminal receipt v3, and supervisor identity
-  v2. Use fresh clone-specific userData for development verification; no migration
-  or automatic deletion ships.
+  v2, plus #663's nullable Task timeout. Use fresh clone-specific userData for
+  development verification; no migration or automatic deletion ships.
 - **Launcher NSPanel packaged verification** — one `.dmg` pass for Cmd+Tab,
   fullscreen floating, focus, dock icon, and light/dark behavior.
 
@@ -295,6 +295,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **development-process-lifecycle** (`done`, #663, 2026-09-09) - requested background servers retain ownership without a default deadline, running logs preserve multiline secret context, and nested desktops resolve their own Runtime launch; [plan archived](plans/archive/development-process-lifecycle.md).
 - **web-search-http** (`done`, #662, 2026-09-09) - bounded Parallel/Exa HTTP search replaces Google/DuckDuckGo browser search, preserving independent Bing Images and #661's web-fetch contract; [plan archived](plans/archive/web-search-http.md).
 - **tool-output-boundaries** (`done`, #661, 2026-09-09) - partial reads and oversized search, web, image, and task results now satisfy the shared output contract while preserving continuation, artifacts, and terminal state; current behavior is recorded in the tool specification.
 - **settings-discovery / Settings complete** (`done`, #656, 2026-09-09) - unified Settings, file-based Agent configuration, safe credential previews and draft-preserving conflict retry complete Units A-G; [discovery](plans/archive/settings-discovery.md) and the [aggregate](plans/archive/settings-control-plane.md) are archived.
