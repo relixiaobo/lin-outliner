@@ -2770,3 +2770,15 @@ boundary before promising a persistent session.** Record failed properties
 without widening capability rules to make the experiment pass. Prove actual
 OS isolation separately from requested policy, and preserve trusted receipt
 ownership outside the command's writable roots.
+
+## Retiring an executable tool does not retire its historical evidence kind
+
+PR #659 removed the dedicated file deletion tool while canonical `fileChange`
+records still represented deletion. Removing the shared delete glyph or tying
+history decoding to the current catalog would erase valid evidence consumers.
+
+**Sweep executable names separately from canonical outcomes, and verify the
+replacement through its real policy and execution path.** Keep shared history
+rendering covered after removing tool-specific branches. Include current
+permission prose in the retirement sweep; its symlink-entry admission example
+outlived the tool even after the owning tool specification was updated.

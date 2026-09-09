@@ -616,6 +616,10 @@ Entries reference the pull request that introduced them when one exists.
   the comparison retained one unrelated 1/5 workspace-layout signal on this
   renderer-free diff under the repository's non-gating E2E policy.
 
+### Changed
+
+- **Local file deletion now uses Bash (PR #659)** - Agents remove files and directories with ordinary commands such as `rm`, `rmdir`, and `git rm`; the dedicated `file_delete` tool and automatic Agent-trash copy are retired. Existing Bash blocks, delegated read-only policy, execution isolation, audit, and canonical deletion-history presentation remain in place. Existing trash contents are preserved. Gate verification passed typecheck, `docs:check`, whitespace checks, 319 focused Core/renderer/process tests (5 environment-gated skips), and two light/dark browser tests with inspected screenshots. Full remote E2E sampling was still queued/running at the gate. The owning specs are synchronized and the plan is archived.
+
 ### Fixed
 
 - **Crashed Outline Runtimes no longer block startup on stale descriptors (PR #651)** - a definitively exited process is treated as unavailable before contract/development-session checks, allowing the existing writer-lock recovery to start a replacement and retain the workspace. Live-owner authentication remains required, while status and no-start inspection remain observational. Process tests cover old contracts and development sessions after a durable write and forced test-process exit.
