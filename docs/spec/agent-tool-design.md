@@ -527,12 +527,16 @@ Invalid or credential-bearing URLs are omitted, complete URLs are retained,
 fragments are removed for deduplication, and the selected records fit a 64 KiB
 JSON budget. Titles and excerpts are bounded; clipping is reported as truncated.
 The reported result count describes admitted candidates, not the size of the
-provider's search index. `site` admits its host and subdomains; `recency_days`
-is encoded as a best-effort query hint and still requires date verification.
+provider's search index. Bare and URL-form `site` inputs share URL domain
+canonicalization, including internationalized domains, before provider hints
+and exact/subdomain filtering. `recency_days` is encoded as a best-effort query
+hint and still requires date verification.
 
 A non-empty result set stops the chain. Empty success requires both providers
 to return valid empty candidate sets; an empty response never erases another
 provider's failure. Host details retain each provider's outcome and duration.
+Exa's complete known empty-result message is accepted as empty and does not
+trigger a provider cooldown; unrecognized trailing error text remains invalid.
 Transport errors, rate limits, and malformed responses produce bounded error
 categories without forwarding provider error text as instructions. Failed
 providers cool down for 30 seconds, extended by Retry-After up to five minutes.

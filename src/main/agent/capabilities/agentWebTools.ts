@@ -608,9 +608,9 @@ function normalizeOptionalSearchSite(value: unknown): ParamValueResult<string | 
 
   let host = '';
   try {
-    host = /^https?:\/\//i.test(withoutOperator)
-      ? new URL(withoutOperator).host
-      : withoutOperator.replace(/[/?#].*$/, '');
+    // URL canonicalization makes bare internationalized hosts match result URLs.
+    host = new URL(/^https?:\/\//i.test(withoutOperator)
+      ? withoutOperator : `https://${withoutOperator}`).host;
   } catch {
     return { ok: false, message: `invalid site host: ${site.value}` };
   }

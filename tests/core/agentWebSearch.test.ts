@@ -122,6 +122,22 @@ describe('HTTP search provider contract', () => {
     expect(outcome.results.map((entry) => entry.url)).toEqual(['https://electronjs.org/docs', 'https://www.electronjs.org/api']);
   });
 
+  test.each(['m\u00fcnchen.de', 'site:m\u00fcnchen.de', 'https://m\u00fcnchen.de', 'xn--mnchen-3ya.de'])(
+    'matches internationalized site %s and its subdomains without admitting lookalike hosts', async (site) => {
+      const normalized = params({ site });
+      expect(normalized.site).toBe('xn--mnchen-3ya.de');
+      expect(normalized.effectiveQuery).toEndWith('site:xn--mnchen-3ya.de');
+      const outcome = await searchMcpProvider(async (_url, init) => hits(init, [
+        hit('https://m\u00fcnchen.de/'), hit('https://www.xn--mnchen-3ya.de/info'),
+        hit('https://service.m\u00fcnchen.de/info'), hit('https://notm\u00fcnchen.de/'),
+        hit('https://m\u00fcnchen.de.evil.test/'),
+      ]), 'parallel', normalized, new AbortController().signal, Date.now());
+      expect(outcome.results.map((entry) => entry.url)).toEqual([
+        'https://xn--mnchen-3ya.de/', 'https://www.xn--mnchen-3ya.de/info', 'https://service.xn--mnchen-3ya.de/info',
+      ]);
+    },
+  );
+
   test('bounds large escaped records and keeps complete URLs in the existing model projection', async () => {
     const outcome = await searchMcpProvider(async (_url, init) => hits(init, Array.from({ length: 20 }, (_, index) => ({
       title: '\u0000'.repeat(350), url: `https://example.com/${index}/${'x'.repeat(2000)}`,
@@ -167,6 +183,35 @@ describe('HTTP search provider contract', () => {
 });
 
 describe('HTTP search lifecycle', () => {
+  test('accepts the complete Exa empty response without cooling down subsequent queries', async () => {
+    let exaCalls = 0;
+    const calls: string[] = [];
+    const search = createHttpWebSearch({ now: () => Date.parse('2026-09-09T12:00:00Z'), fetch: async (url, init) => {
+      calls.push(url);
+      if (url === SEARCH_MCP_ENDPOINTS.parallel) return hits(init, []);
+      if (++exaCalls > 1) return exa(init);
+      return reply(init, { content: [{
+        type: 'text', text: 'No search results found. Please try a different query.',
+      }] });
+    } });
+    expect(await search(params())).toMatchObject({ kind: 'ok', results: [], attempts: [
+      { providerName: 'parallel', status: 'empty' }, { providerName: 'exa', status: 'empty' },
+    ] });
+    expect(await search(params({ query: 'different query' }))).toMatchObject({ kind: 'ok', providerName: 'exa', attempts: [
+      { providerName: 'parallel', status: 'empty' }, { providerName: 'exa', status: 'success' },
+    ] });
+    expect(calls).toEqual([
+      SEARCH_MCP_ENDPOINTS.parallel, SEARCH_MCP_ENDPOINTS.exa, SEARCH_MCP_ENDPOINTS.parallel, SEARCH_MCP_ENDPOINTS.exa,
+    ]);
+  });
+
+  test('rejects extra provider text after an empty-result prefix', async () => {
+    await expect(searchMcpProvider(async (_url, init) => reply(init, { content: [{
+      type: 'text', text: 'No search results found. Upstream service unavailable.',
+    }] }), 'exa', params(), new AbortController().signal, Date.now()))
+      .rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
   test('returns empty only when both providers returned valid empty results', async () => {
     const empty = createHttpWebSearch({ fetch: async (_url, init) => hits(init, []) });
     expect(await empty(params())).toMatchObject({ kind: 'ok', results: [], attempts: [{ status: 'empty' }, { status: 'empty' }] });

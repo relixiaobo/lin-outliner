@@ -155,7 +155,8 @@ function searchRecords(result: Record<string, unknown>, provider: SearchMcpProvi
   if (provider !== 'exa' || texts.length === 0) throw new SearchMcpError('invalid_response');
 
   const text = texts.join('\n').replace(/\r\n/g, '\n').trim();
-  if (/^No (?:search )?results found[.!]?$/i.test(text)) return [];
+  if (text === 'No search results found. Please try a different query.'
+    || /^No (?:search )?results found[.!]?$/i.test(text)) return [];
   // Exa emits bounded source records separated by a Title/URL header. Anchor
   // both lines together so ordinary headings in an excerpt do not split it.
   const headers = [...text.matchAll(/^Title: ([^\n]+)\nURL: (https?:\/\/[^\n]+)\n/gm)];
