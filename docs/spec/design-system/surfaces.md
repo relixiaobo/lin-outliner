@@ -485,6 +485,10 @@ blocks; removal commits on its row. The boundary explanation is a footnote.
 Models exposes a visible Configure action on connections and catalog rows;
 additional actions stay in the menu. Defaults stay disabled until the provider
 view arrives. Automatic selection is named in full rather than abbreviated.
+Each default-model choice is captured before its save enters the shared provider
+queue. The displayed selection follows the stored result, including after reopening
+Settings or restarting; a failed save keeps the previous selection and reports the
+error on that row.
 
 **Skills, Memory, and Data.** Skills owns acquisition, source bindings, enabled
 state, and updates. Check All and Add live in the page toolbar;

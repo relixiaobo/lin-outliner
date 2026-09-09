@@ -169,6 +169,14 @@ export function ModelsList({
     runProviderMutation(providerId, () => api.agentRefreshProviderModels(providerId), t.settings.providers.modelsRefreshedNotice);
   }
 
+  function changeDefaultTextModel(defaultModel: string) {
+    runProviderMutation(
+      'default-text',
+      () => api.agentUpdateModelDefault(defaultModel || null),
+      t.settings.providers.defaultModelSavedNotice,
+    );
+  }
+
   function changeDefaultImageModel(defaultModel: string) {
     runProviderMutation(
       'default-image',
@@ -252,11 +260,7 @@ export function ModelsList({
               <SelectControl
                 label={t.settings.providers.defaultModelLabel}
                 disabled={!settings}
-                onChange={(event) => runProviderMutation(
-                  'default-text',
-                  () => api.agentUpdateModelDefault(event.target.value || null),
-                  t.settings.providers.defaultModelSavedNotice,
-                )}
+                onChange={(event) => changeDefaultTextModel(event.target.value)}
                 value={settings?.defaultModel === 'auto' ? '' : settings?.defaultModel ?? ''}
                 variant="popup"
               >
