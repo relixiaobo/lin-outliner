@@ -4,265 +4,153 @@ import { api } from '../../api/client';
 import { providerConfigParamsFromSearch } from '../../../core/settingsWindow';
 import { localGatewayProviderDefinition } from '../../../core/localGatewayProviders';
 import { useT } from '../../i18n/I18nProvider';
-import {
-  formatProviderName,
-  oauthSignInInfo,
-  providerAuthInfo,
-  PROVIDER_DOCS_URL,
-  ProviderAvatar,
-  providerDescription,
-  providerHasCredential,
-  resolveUsableActiveProvider,
-} from './providerCatalog';
+import { formatProviderName, oauthSignInInfo, providerAuthInfo, PROVIDER_DOCS_URL, ProviderAvatar, providerHasCredential } from './providerCatalog';
 import { OAUTH_API_KEY_FALLBACK } from './providerOAuthCapabilities';
-import { ProviderConfigForm, type ProviderConfigDraft } from './ProviderConfigForm';
-import { providerCheckedAtText, resolveProviderStatus } from './providerStatus';
-import { buildProviderChoices } from './settingsProviderModel';
+import { ProviderConfigForm, type ProviderConfigDraft, type ProviderFormActivity } from './ProviderConfigForm';
 import { ProviderOAuthForm } from './ProviderOAuthForm';
 import { Button } from '../primitives/Button';
 import { ErrorState } from '../primitives/FeedbackState';
 import { AddIcon, ICON_SIZE } from '../icons';
 
-// Root rendered in the dedicated per-provider config window (?surface=provider-config),
-// a modal child of the settings window. It fetches its own provider settings, derives
-// the connection context for the target provider (from the URL query), and commits via
-// the existing agent IPC — then tells the main process to broadcast a settings-changed
-// so the settings list (and the main window) re-fetch. Closing is delegated to the
-// main process (the window has no chrome of its own — it is a dialog).
 export function ProviderConfigWindow() {
   const t = useT();
   const { providerId, mode } = providerConfigParamsFromSearch(window.location.search);
-  const isCustom = mode === 'custom';
   const titleId = useId();
   const [settings, setSettings] = useState<AgentProviderSettingsView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // Anthropic accepts both a sign-in and a console key; this escape hatch swaps the
-  // OAuth surface for the standard key form within the session.
-  const [useApiKey, setUseApiKey] = useState(false);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [activity, setActivity] = useState<ProviderFormActivity>('idle');
+  const close = () => { void window.lin?.closeProviderConfig?.(); };
+  const providerName = mode === 'custom' ? t.providerCatalog.customProvider : formatProviderName(providerId);
 
   useEffect(() => {
     let active = true;
+    setError('');
     api.agentGetProviderSettings()
       .then((next) => { if (active) setSettings(next); })
-      .catch((caught) => { if (active) setError(caught instanceof Error ? caught.message : String(caught)); });
+      .catch((caught) => { if (active) setError(String(caught instanceof Error ? caught.message : caught)); });
     return () => { active = false; };
-  }, []);
+  }, [attempt]);
 
-  const close = () => { void window.lin?.closeProviderConfig?.(); };
-
-  // Escape closes the dialog (mirrors the native Cancel), like every other overlay.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); close(); }
+      if (event.isComposing || event.defaultPrevented || event.key !== 'Escape') return;
+      event.preventDefault();
+      // A committed credential/config write must finish before this window goes
+      // away. Testing and browser sign-in may still be cancelled by closing.
+      if (activity !== 'saving') close();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
-
-  if (error) {
-    return (
-      <main className="provider-config-window" aria-label={t.window.providerConfigTitle}>
-        <ErrorState message={error} />
-      </main>
-    );
-  }
-  if (!settings) {
-    return (
-      <main className="provider-config-window" aria-busy="true" aria-labelledby={titleId}>
-        <ProviderConfigLoadingShell
-          isCustom={isCustom}
-          onClose={close}
-          providerId={providerId}
-          titleId={titleId}
-        />
-      </main>
-    );
-  }
-
-  const catalog = settings.availableProviders.find((provider) => provider.providerId === providerId);
-  const existing = settings.providers.find((provider) => provider.providerId === providerId);
-  const activeId = resolveUsableActiveProvider(settings)?.providerId ?? '';
-  const isActive = Boolean(providerId) && providerId === activeId;
-  const hasCredential = providerHasCredential(existing, catalog);
-  const hasStoredKey = Boolean(existing?.auth?.hasStoredKey ?? existing?.hasApiKey);
-  const authNote = isCustom ? undefined : providerAuthInfo(providerId, t);
-  const docsUrl = isCustom ? undefined : PROVIDER_DOCS_URL[providerId];
-  // Auth class comes from main (`authKind`), falling back to the configured view's
-  // descriptor for a provider with no catalog row. Custom providers are always api-key.
-  const authKind = isCustom ? 'api-key' : (catalog?.authKind ?? existing?.auth?.authKind ?? 'api-key');
-  const showOAuth = authKind === 'oauth' && !hasStoredKey && !useApiKey;
-  const oauthInfo = oauthSignInInfo(providerId, t);
-  // The same status the list row shows, derived from the same model — this page
-  // used to show none of the ten states the list computed, so a row that said
-  // "Needs key" opened a window that never mentioned it.
-  const choice = settings.providers.length || settings.availableProviders.length
-    ? buildProviderChoices(settings, providerId, new Map(
-      settings.availableProviders.map((provider) => [provider.providerId, provider]),
-    )).find((candidate) => candidate.providerId === providerId)
-    : undefined;
-  const status = choice ? resolveProviderStatus(choice) : undefined;
-  const checkedAt = existing?.connectionCheck
-    ? providerCheckedAtText(existing.connectionCheck.at, Date.now(), t)
-    : undefined;
-  const initialBaseUrl = existing?.baseUrl
-    ?? (localGatewayProviderDefinition(providerId) ? catalog?.defaultBaseUrl ?? '' : '');
-
-  async function handleValidate(draft: ProviderConfigDraft) {
-    const pid = draft.providerId.trim() || providerId;
-    const result = await api.agentTestProviderConnection({
-      providerId: pid,
-      // Empty is meaningful: test the provider's official endpoint after the
-      // user clears a previously stored custom Base URL.
-      baseUrl: draft.baseUrl.trim(),
-      ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
-    });
-    return { success: result.success, message: result.message };
-  }
-
-  // Commit the connection only. Which model/effort runs is owned by the agent
-  // profile (the built-in assistant's default, or a user/project agent), set in
-  // Agent settings — never here.
-  async function handleSubmit(draft: ProviderConfigDraft) {
-    const pid = draft.providerId.trim() || providerId;
-    if (!pid) return;
-    // Store the credential BEFORE creating the row, so a crash between the two
-    // writes leaves no keyless orphan row (and the row is durably credentialed the
-    // moment it exists). The Save button is gated on a credential or base URL
-    // (ProviderConfigForm), so a keyless no-op row is never created here.
-    if (draft.apiKey.trim()) {
-      await api.agentSetProviderApiKey(pid, draft.apiKey.trim());
-    }
-    await api.agentUpsertProviderConfig({
-      providerId: pid,
-      baseUrl: draft.baseUrl.trim() || null,
-      enabled: existing?.enabled ?? true,
-    }, { probeConnection: true });
-    await window.lin?.notifySettingsChanged?.();
-  }
-
-  async function runMutation(action: () => Promise<unknown>) {
-    try {
-      await action();
-      await window.lin?.notifySettingsChanged?.();
-      close();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    }
-  }
-
-  if (showOAuth) {
-    return (
-      <main className="provider-config-window" aria-labelledby={titleId}>
-        <ProviderOAuthForm
-          avatar={<ProviderAvatar large providerId={providerId} />}
-          connected={Boolean(existing?.auth?.oauth?.connected)}
-          description={providerDescription(catalog, t)}
-          docsLabel={oauthInfo?.docsLabel}
-          docsUrl={oauthInfo?.docsUrl}
-          expiresAt={existing?.auth?.oauth?.expiresAt}
-          isActive={isActive}
-          onClose={close}
-          onOpenExternal={(url) => void api.openExternalUrl(url)}
-          onSetActive={existing && existing.enabled && hasCredential && !isActive
-            ? () => void runMutation(() => api.agentSetActiveProvider(providerId))
-            : undefined}
-          onSettingsChanged={(next) => { setSettings(next); void window.lin?.notifySettingsChanged?.(); }}
-          onUseApiKey={OAUTH_API_KEY_FALLBACK.has(providerId) ? () => setUseApiKey(true) : undefined}
-          providerId={providerId}
-          providerName={formatProviderName(providerId)}
-          signInHint={oauthInfo?.hint}
-          titleId={titleId}
-        />
-      </main>
-    );
-  }
+  }, [activity]);
 
   return (
-    <main className="provider-config-window" aria-labelledby={titleId}>
-      <ProviderConfigForm
-        authNote={authNote}
-        avatar={isCustom
-          ? <span className="settings-provider-avatar is-large" aria-hidden="true"><AddIcon size={ICON_SIZE.panel} /></span>
-          : <ProviderAvatar large providerId={providerId} />}
-        baseUrlPlaceholder={catalog?.defaultBaseUrl ?? 'https://api.example.com/v1'}
-        capabilities={catalog?.capabilities}
-        defaultBaseUrl={catalog?.defaultBaseUrl}
-        description={isCustom ? t.providerCatalog.openAiCompatible : providerDescription(catalog, t)}
-        docsUrl={docsUrl}
-        checkedAt={checkedAt}
-        hasCredential={hasCredential}
-        hasStoredKey={hasStoredKey}
-        status={status}
-        initial={{
-          providerId,
-          baseUrl: initialBaseUrl,
-        }}
-        isActive={isActive}
-        mode={mode}
-        onClose={close}
-        onOpenExternal={(url) => void api.openExternalUrl(url)}
-        onRemoveProvider={!isCustom && existing
-          ? () => void runMutation(() => api.agentDeleteProviderConfig(providerId))
-          : undefined}
-        onLoadStoredApiKey={hasStoredKey ? async () => (await api.agentGetProviderApiKey(providerId)).apiKey : undefined}
-        onSetActive={!isCustom && existing && existing.enabled && hasCredential && !isActive
-          ? () => void runMutation(() => api.agentSetActiveProvider(providerId))
-          : undefined}
-        onSubmit={handleSubmit}
-        onValidate={handleValidate}
-        providerName={isCustom ? t.providerCatalog.customProvider : (providerId ? formatProviderName(providerId) : t.providerCatalog.customProvider)}
-        titleId={titleId}
-      />
-    </main>
-  );
-}
-
-function ProviderConfigLoadingShell({
-  isCustom,
-  onClose,
-  providerId,
-  titleId,
-}: {
-  isCustom: boolean;
-  onClose: () => void;
-  providerId: string;
-  titleId: string;
-}) {
-  const t = useT();
-  const providerName = isCustom
-    ? t.providerCatalog.customProvider
-    : (providerId ? formatProviderName(providerId) : t.window.providerConfigTitle);
-
-  // Deliberately NOT a mock of the form. The old skeleton always drew an API-key
-  // field and a base URL, but a managed-credential provider (Bedrock, Vertex)
-  // resolves to a note with no key field at all, and an OAuth provider resolves
-  // to a completely different sign-in surface — so the skeleton showed people a
-  // form that then vanished or transformed. Which shape is right is not known
-  // until the settings arrive, so this waits rather than guessing.
-  return (
-    <>
+    <main className="provider-config-window" aria-labelledby={titleId} aria-busy={!settings && !error}>
       <header className="settings-sheet-head">
         <span aria-hidden="true" className="settings-sheet-avatar">
-          {isCustom
+          {mode === 'custom'
             ? <span className="settings-provider-avatar is-large"><AddIcon size={ICON_SIZE.panel} /></span>
             : <ProviderAvatar large providerId={providerId} />}
         </span>
         <div className="settings-sheet-head-text">
           <h2 className="settings-sheet-title" id={titleId}>{providerName}</h2>
-          <p className="settings-sheet-subtitle">{isCustom ? t.providerCatalog.openAiCompatible : t.common.loading}</p>
+          {mode === 'custom' ? <p className="settings-sheet-subtitle">{t.providerCatalog.openAiCompatible}</p> : null}
         </div>
       </header>
+      {settings ? (
+        <ProviderConnection settings={settings} onSettingsChange={setSettings} providerId={providerId}
+          mode={mode} onClose={close} onActivityChange={setActivity} providerName={providerName} />
+      ) : (
+        <>
+          <div className="settings-sheet-body provider-config-loading-body">
+            {error ? <ErrorState message={error} /> : <p className="settings-sheet-help" role="status">{t.common.loading}</p>}
+          </div>
+          <div className="settings-sheet-actions">
+            <Button onClick={close} variant="ghost">{t.providerConfig.cancel}</Button>
+            {error ? <Button onClick={() => setAttempt((value) => value + 1)}>{t.providerConfig.retry}</Button> : null}
+          </div>
+        </>
+      )}
+    </main>
+  );
+}
 
-      <div className="settings-sheet-body provider-config-loading-body" aria-busy="true" />
+function ProviderConnection({ settings, onSettingsChange, providerId, providerName, mode, onClose, onActivityChange }: {
+  settings: AgentProviderSettingsView;
+  onSettingsChange: (settings: AgentProviderSettingsView) => void;
+  providerId: string;
+  providerName: string;
+  mode: 'configure' | 'custom';
+  onClose: () => void;
+  onActivityChange: (activity: ProviderFormActivity) => void;
+}) {
+  const t = useT();
+  const catalog = settings.availableProviders.find((provider) => provider.providerId === providerId);
+  const existing = settings.providers.find((provider) => provider.providerId === providerId);
+  const hasStoredKey = Boolean(existing?.auth?.hasStoredKey ?? existing?.hasApiKey);
+  const authKind = mode === 'custom' ? 'api-key' : (catalog?.authKind ?? existing?.auth?.authKind ?? 'api-key');
+  const dualAuth = authKind === 'oauth' && OAUTH_API_KEY_FALLBACK.has(providerId);
+  const hasApiKeyCredential = hasStoredKey || Boolean(existing?.hasEnvApiKey || catalog?.hasEnvApiKey);
+  const [method, setMethod] = useState<'account' | 'key'>(authKind === 'oauth' && !(dualAuth && hasApiKeyCredential) ? 'account' : 'key');
+  const [busy, setBusy] = useState(false);
+  const [autoFocus, setAutoFocus] = useState(true);
+  const localGateway = localGatewayProviderDefinition(providerId);
+  const initialBaseUrl = existing?.baseUrl ?? (localGateway ? catalog?.defaultBaseUrl ?? '' : '');
+  const [draft, setDraft] = useState<ProviderConfigDraft>({ providerId, baseUrl: initialBaseUrl, apiKey: '' });
+  const oauthInfo = oauthSignInInfo(providerId, t);
+  const authNote = mode === 'custom' ? undefined : providerAuthInfo(providerId, t);
 
-      <div className="settings-sheet-actions">
-        <div className="settings-sheet-actions-left" />
-        <div className="settings-sheet-actions-right">
-          <Button onClick={onClose} variant="ghost">
-            {t.providerConfig.cancel}
-          </Button>
-        </div>
-      </div>
+  function activityChanged(activity: ProviderFormActivity) {
+    setBusy(activity !== 'idle');
+    onActivityChange(activity);
+  }
+  async function handleValidate(next: ProviderConfigDraft) {
+    return api.agentTestProviderConnection({ providerId: next.providerId.trim(), baseUrl: next.baseUrl.trim(),
+      ...(next.apiKey.trim() ? { apiKey: next.apiKey.trim() } : {}) });
+  }
+  async function handleSubmit(next: ProviderConfigDraft) {
+    const pid = next.providerId.trim();
+    // Credential first: the durable row must never precede its credential. The
+    // explicit test is optional; the existing background probe follows Save.
+    if (next.apiKey.trim()) await api.agentSetProviderApiKey(pid, next.apiKey.trim());
+    await api.agentUpsertProviderConfig({ providerId: pid, baseUrl: next.baseUrl.trim() || null,
+      enabled: existing?.enabled ?? true }, { probeConnection: true });
+  }
+
+  return (
+    <>
+      {dualAuth ? (
+        <fieldset className="settings-sheet-auth-method" disabled={busy}>
+          <legend>{t.providerConfig.authentication}</legend>
+          <label><input type="radio" name="authentication" checked={method === 'account'}
+            onChange={() => { setAutoFocus(false); setMethod('account'); }} />{t.providerConfig.account}</label>
+          <label><input type="radio" name="authentication" checked={method === 'key'}
+            onChange={() => { setAutoFocus(false); setMethod('key'); }} />{t.providerConfig.apiKeyLabel}</label>
+        </fieldset>
+      ) : null}
+      {authKind === 'oauth' && method === 'account' ? (
+        <ProviderOAuthForm connected={Boolean(existing?.auth?.oauth?.connected)}
+          expiresAt={existing?.auth?.oauth?.expiresAt} docsLabel={oauthInfo?.docsLabel} docsUrl={oauthInfo?.docsUrl}
+          providerId={providerId} providerName={providerName} signInHint={oauthInfo?.hint}
+          onClose={onClose} onOpenExternal={api.openExternalUrl} onProviderChange={onSettingsChange}
+          onActivityChange={onActivityChange} onBusyChange={setBusy} />
+      ) : (
+        <ProviderConfigForm mode={mode} autoFocus={autoFocus} draft={draft} onDraftChange={setDraft}
+          initialBaseUrl={initialBaseUrl} reservedProviderIds={[...settings.providers, ...settings.availableProviders].map((provider) => provider.providerId)}
+          hasExisting={Boolean(existing)} defaultBaseUrl={catalog?.defaultBaseUrl}
+          requiresEndpoint={!authNote && (mode === 'custom' || !catalog || Boolean(localGateway))}
+          allowEndpointOverride={providerId !== 'cc-switch'}
+          previousCheck={existing?.connectionCheck ? {
+            success: existing.connectionCheck.outcome === 'ok',
+            message: existing.connectionCheck.message ?? (existing.connectionCheck.outcome === 'ok'
+              ? t.providerConfig.connectionSuccessful : t.providerConfig.validationFailed),
+            checkedAt: existing.connectionCheck.at,
+          } : undefined}
+          authNote={authNote} docsUrl={mode === 'custom' ? undefined : PROVIDER_DOCS_URL[providerId]}
+          hasCredential={dualAuth ? hasApiKeyCredential : providerHasCredential(existing, catalog)} hasStoredKey={hasStoredKey}
+          onClose={onClose} onOpenExternal={api.openExternalUrl} onActivityChange={activityChanged}
+          onSubmit={handleSubmit} onValidate={handleValidate} />
+      )}
     </>
   );
 }

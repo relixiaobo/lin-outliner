@@ -2795,3 +2795,40 @@ admission, and a remote alias does not identify one transport destination.
 Exercise distinct fetch/push URLs, multiple destinations and partial success;
 test literal-path inspections through the capability and execution path without
 broadening authority to make the recipe pass.
+
+## Conflict recovery must retain the draft and renew only its admission token
+
+PR #656 correctly rejected stale Agent configuration writes but retried with the
+same captured digest forever; reopening obtained a fresh digest by discarding
+the user's draft.
+
+**Keep editable intent separate from source observations.** After rejection,
+refresh only the target layer's observation and require an explicit retry;
+background refreshes must not silently admit stale drafts. Preserve the draft
+when refresh fails and reject again if the source changes before retry. Verify
+both user and project layers through the real UI and writer, including unrelated
+JSONC fields/comments and repeated conflicts.
+
+## Tool success must survive the model-visible output contract
+
+PR #661 fixed valid partial reads and oversized search, image, web, and task
+results that the Kernel rejected after their producers had succeeded. Tests
+that inspected only private details could not detect that failure boundary.
+
+**Validate real producer results against the output schema and serialized byte
+budget.** Admit intentionally unknown values explicitly, size UTF-8 after JSON
+escaping, and clip presentation before validation while preserving artifacts
+and terminal truth. Derive continuation from the entries actually returned and
+prove stable ordering across consecutive pages of an unchanged source.
+
+## Provider adapters need authoritative boundary fixtures
+
+PR #662's initial fixtures shortened Exa's actual empty-result message and used
+only ASCII site hosts. The adapter consequently treated a normal empty search
+as a provider outage and discarded valid internationalized-domain results.
+
+**Use exact provider responses and canonical identity pairs in adapter tests.**
+Verify that recognized empty responses leave later calls eligible while unknown
+error text remains an error. Normalize host identities through the same URL
+rules before exact/subdomain comparisons, and cover Unicode, punycode, URL-form,
+and lookalike inputs together.

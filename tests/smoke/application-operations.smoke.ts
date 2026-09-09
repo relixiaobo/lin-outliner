@@ -5,11 +5,11 @@ test('reads bounded bundled release information through the real Settings bridge
   const smoke = await launchSmokeApp();
   try {
     await expect.poll(() => smoke.window.evaluate(() => typeof window.lin?.openSettings)).toBe('function');
-    await smoke.window.evaluate(() => window.lin!.openSettings({ category: 'about' }));
+    await smoke.window.evaluate(() => window.lin!.openSettings({ destination: 'about' }));
     await expect.poll(() => (
-      smoke.app.windows().some((page) => page.url().includes('surface=settings'))
+      smoke.app.windows().some((page) => page.url().includes('destination=about'))
     )).toBe(true);
-    const settings = smoke.app.windows().find((page) => page.url().includes('surface=settings'));
+    const settings = smoke.app.windows().find((page) => page.url().includes('destination=about'));
     if (!settings) throw new Error('Missing Settings window');
     const result = await settings.evaluate(async () => {
       if (!window.lin) throw new Error('Missing preload API');

@@ -1,169 +1,3 @@
-/* Floating settings rail — the macOS System Settings sidebar, rendered as the
-   app's own floating glass panel (mirrors the main window's .sidebar-dock):
-   elevated surface, soft elevation, rounded, hairline edge. So the categories read
-   as a rail that floats off the window base, the same way the main sidebar does —
-   not a flat column blended into the background. */
-.settings-rail {
-  display: flex;
-  flex: 0 0 auto;
-  /* Same width / radius / float as the main window sidebar so the two read
-     identically (--sidebar-width, --panel-radius, --rail-pad inset). */
-  width: var(--sidebar-width);
-  flex-direction: column;
-  gap: var(--space-5);
-  border-radius: var(--panel-radius);
-  background: var(--bg-elevated);
-  box-shadow: var(--rail-surface-shadow);
-  /* Top padding clears the inset traffic lights (frameless window): the lights
-     overlay the rail's top, the "Settings" title sits below them. */
-  padding: var(--chrome-height) var(--rail-pad) var(--rail-pad);
-  /* Chrome labels are navigation, not content — not user-selectable (B10). */
-  user-select: none;
-}
-
-.settings-rail-title {
-  margin: 0;
-  padding: 0 var(--space-3);
-  color: var(--text-strong);
-  font-size: var(--font-content);
-  font-weight: 600;
-  line-height: var(--line-ui-md);
-}
-
-.settings-nav {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.settings-nav-item {
-  display: flex;
-  min-height: var(--settings-row-min-height);
-  align-items: center;
-  gap: var(--space-3);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: var(--space-2) var(--space-3);
-  text-align: left;
-}
-
-.settings-nav-item:hover {
-  background: var(--fill-1);
-}
-
-.settings-nav-item.is-active {
-  background: var(--fill-2);
-  color: var(--text-strong);
-}
-
-.settings-nav-icon {
-  display: inline-flex;
-  width: var(--settings-tile-size);
-  height: var(--settings-tile-size);
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md);
-  background: var(--fill-1);
-  color: var(--text-tertiary);
-}
-
-.settings-nav-item.is-active .settings-nav-icon {
-  background: var(--fill-2);
-  color: var(--text-strong);
-}
-
-.settings-nav-copy {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-}
-
-.settings-nav-label {
-  font-size: var(--font-ui-sm);
-  font-weight: 600;
-  line-height: var(--line-ui-sm-tight);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* A count of Skills with an update waiting. It reports a quantity, not a status,
-   so it stays on the neutral --fill ladder (B3/B4) rather than borrowing a status
-   or accent colour. Pushed to the end of the row and sized by its own text, so
-   its appearance never reflows the nav item (B7). */
-.settings-nav-badge {
-  display: inline-flex;
-  min-width: var(--settings-badge-size);
-  height: var(--settings-badge-size);
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  margin-left: auto;
-  border-radius: var(--radius-pill);
-  background: var(--fill-2);
-  color: var(--text-secondary);
-  font-size: var(--font-ui-2xs);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  padding: 0 var(--space-2);
-}
-
-.settings-nav-item.is-active .settings-nav-badge {
-  background: var(--fill-3);
-  color: var(--text-strong);
-}
-
-/* The content pane is the single scroll container (the rail stays put). It is the
-   flat window base — no card wrapper — so the grouped cards float on it the same
-   way the rail does (shared --bg-elevated). */
-.settings-content {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: var(--space-6);
-  /* The toolbar is fixed chrome. Keep the SCROLLPORT below it with margin, not
-     padding: padding scrolls away and lets dense rows pass under the history
-     capsule/title. This structural exclusion keeps the opaque content layer from
-     bleeding through the chrome controls. */
-  /* `--chrome-height` is measured from the WINDOW's top edge, but this margin
-     applies inside `.settings-window`'s padding, so adding the two counted that
-     padding twice and pushed the first card 32px below the toolbar where the
-     ladder rung is 24px. Subtracting the inset puts the gap where it was meant
-     to be. */
-  margin-top: calc(var(--chrome-height) - var(--layout-gap) + var(--space-lg));
-  padding-bottom: var(--space-6);
-  overflow-y: auto;
-  /* The scrollport reaches into the window's right padding and puts that inset
-     back as its own, so the overlay scrollbar has a lane of its own. Without it
-     the scrollport ended where the cards did, and macOS draws overlay scrollbars
-     ON TOP of content — invisible while the window was wider than
-     --settings-content-max-width and the cards were capped short of the edge,
-     but at the default 760px width the cards fill the scrollport and the
-     scrollbar sat across their right edge.
-     `scrollbar-gutter` cannot solve this: it reserves nothing for overlay
-     scrollbars, which is exactly the kind this surface gets. */
-  margin-right: calc(-1 * var(--layout-gap));
-  padding-right: max(var(--layout-gap), var(--scrollbar-lane));
-  scrollbar-gutter: stable;
-}
-
-.settings-content > .agent-settings-section,
-.settings-content > .agent-settings-alert,
-.settings-content > .agent-settings-notice,
-.settings-content > .agent-settings-footer {
-  width: min(100%, var(--settings-content-max-width));
-}
-
-/* ── Providers: a constrained grouped list on the flat content base (native System
-   Settings Wi-Fi model). The per-provider config opens in a sheet, so there is no
-   permanent side detail pane, and no surrounding panel competes with the rail. The
-   pane is flat by default now (.agent-settings-section), so no section override is
-   needed — every pane shares that flat base. */
-
 /* Leading slot for the "Add custom provider" row — a quiet `+` aligned to the
    brand-avatar column (icon only, no box). */
 .settings-provider-add-leading {
@@ -174,18 +8,6 @@
   align-items: center;
   justify-content: center;
   color: var(--text-tertiary);
-}
-
-/* Single-action provider configure button: shared Button skin, hidden at rest and
-   revealed on row hover / keyboard focus because clicking the row does the same
-   thing. Its reveal is the row's hover locator. */
-.settings-provider-configure {
-  opacity: 0;
-}
-
-.inset-row:hover .settings-provider-configure,
-.settings-provider-configure:focus-visible {
-  opacity: 1;
 }
 
 .settings-provider-row-actions {
@@ -200,7 +22,10 @@
 .settings-provider-groups {
   display: flex;
   flex-direction: column;
+  gap: var(--space-lg);
 }
+
+.settings-provider-groups > .inset-group + .inset-group { margin-top: 0; }
 
 /* Row separators sit WITHIN the row content, not bleeding to the panel edge: the
    left edge aligns with the brand tile (the row's content padding, where the icon

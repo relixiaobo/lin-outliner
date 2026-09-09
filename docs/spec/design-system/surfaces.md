@@ -322,112 +322,225 @@ filled-default idiom; secondary actions remain neutral.
 ### Settings Window
 
 The settings surface follows the Preference Window pattern in
-[patterns.md](./patterns.md#preference-window): macOS System Settings interaction,
-Tenon foundations, no Apple chrome copying.
+[patterns.md](./patterns.md#preference-window): macOS System Settings interaction
+and container hierarchy expressed through Tenon's foundation tokens.
 
-**Window shell.** Settings is a standalone frameless window with inset traffic
-lights, the shared 24px native corner, and a renderer top drag region. Geometry
-matches the main shell: `--layout-gap`, `--sidebar-width`, `--panel-radius`, and
-traffic-light centreline alignment.
+**Window shell.** `Cmd+,` and the App menu open/focus one **Tenon Settings**
+window. The Host keeps its native title stable, uses real inset traffic lights,
+and disables minimize, maximize, and fullscreen. Bounded resizing and vertical
+scrolling keep larger text reachable. The shell uses an inset floating category
+rail beside an opaque content canvas. The rail owns `--rail-surface-shadow`,
+shared material/fallback tokens, and a persistent pill-shaped search field below
+the native traffic-light spacer. The right toolbar is unboxed: its background
+merges with the content canvas, with no full-width capsule, border, or shadow.
+The opaque content viewport extends behind it; a shared-material chrome layer
+blurs the actual scrolling content and feathers its lower edge. A measured toolbar
+height keeps initial content and keyboard scroll targets clear of wrapped controls.
+Reduced Transparency and Increase Contrast replace the feathered glass with an
+opaque backing. The content viewport has no separate rounded frame.
+The chrome uses the canvas's concentric upper corners and a graduated lower mask;
+clipping introduces no viewport stroke, shadow, or extra focus stop.
+Only the Back/Forward button group has a compact pill outline beside the page
+title. Region spacing and rail corners use `--layout-gap` and `--panel-radius`.
 
-**Toolbar.** The drag region carries the settings history capsule (`‹ ›`) and the
-selected category title. History controls reuse the main chrome control family
-inside one neutral `--radius-pill` capsule with a center divider. The content
-scrollport starts below fixed chrome via margin, not scroll padding.
+`Cmd+F` focuses sidebar search. Back/Forward traverse visited categories without
+reloading their panes; a new category clears the forward branch. Back from search
+first restores the selected pane. History is bounded to 50 entries. There is no
+in-content Close or new window per category. The content scroller is not an added tab stop. Keyboard navigation
+and search-result activation reach actual controls, which retain neutral focus
+indicators; clicking empty content never selects or outlines the whole viewport.
 
-**Category rail and content.** The left rail lists General, Agent, and Preview,
-cut along user intent rather than implementation subsystem. The content pane is
-an opaque Preferences base constrained to `--settings-content-max-width` (920px).
-Rail, toolbar, and category render immediately; provider/runtime data loads locally.
+**Organization and discovery.** General contains appearance, language, and
+automatic updates. Other categories are Models, Agents, Skills, Memory, Access,
+Data, Keyboard Shortcuts, and Advanced. Models contains connections and default
+model choices; Agents folds delegation capacity limits into its advanced disclosure.
+Advanced contains diagnostics, a collapsed Model Requests group for timeout,
+retry and prompt-cache preferences, public configuration files, and a collapsed scalar
+Configuration Inspector with **All / Modified** filtering, initially **Modified**.
+Its explanation identifies these as the same preferences shown in the categories;
+it supports troubleshooting and reset rather than presenting a second set of settings.
+Modified means an explicit source
+override, even when equal to its default.
 
-**Pages.** Model services, Agents, and Skills sit under Agent; Keyboard Shortcuts
-and About sit under General.
-An unbounded collection the user installs or connects becomes a page; bounded
-settings stay inline. Page rows carry chevrons, history walks real routes, and
-per-provider configuration remains a native child window. Entering, leaving, or
-switching a secondary page resets the content scrollport before paint; ordinary
-category-to-category navigation does not trigger that reset. An explicit deep-
-link anchor then positions its requested group.
+Search matches localized labels, descriptions, aliases, and stable IDs; IDs are
+not ordinary row labels. Results expose matching scalar controls and category
+destinations, which navigate locally. Clearing search restores the selected pane.
+Public source observations report modified state/errors without loading runtime
+catalogs. Source repair remains visible across category and search changes.
 
-**Deep links.** Categories are `general|agent|preview`; pages are
-`agent/services`, `agent/agents`, `agent/skills`, `general/shortcuts`, and
-`general/about`. An optional bounded
-lowercase-slug anchor (`[a-z0-9][a-z0-9-]{0,63}`) scrolls to and briefly
-highlights a group. Category/page mismatches do not route; retired ids have no
-aliases. Explicit targets retarget an open window, while `Cmd+,` only focuses it.
+**Commit model.** Choices commit immediately. Numeric edits validate on Return
+or blur; Escape restores the uncommitted value, and failed writes preserve the
+entered value. Ordinary category and search rows show only their setting control.
+Source-level Reset belongs in Configuration Inspector, where it deletes only that
+scalar declaration. Its named action has an accessible label and appears only for
+explicit overrides. Appearance returns to following macOS by choosing System.
+Source rejection disables that source's structural controls while
+showing its retained effective values and an Open File repair action regardless
+of query/filter. Runtime application and file acceptance are separate facts;
+per-owner failures preserve only the affected owner's previous effective values.
+There is no window-wide Save/Apply footer.
 
-**Commit model.** Controls apply immediately with no footer or draft. Optimistic
-writes revert on failure, show a localized row-owned `role="alert"`, and record
-raw errors only in diagnostics. Writes serialize per key; independent Agent
-mutations use independent keys and a shared pending count. Provider commands
-also share a response queue because they return full settings snapshots, so an
-older Set active, Remove, Refresh, or image-model response cannot overwrite a
-later enable intent. Composite Preview writes serialize from the last persisted
-snapshot: failure rolls back only its field, later pending fields stay visible,
-and broadcasts merge below pending values. Settings and the preview popover use
-the same failure contract. Only the modal provider form retains Cancel/Save.
+**Controls and accessibility.** Appearance uses three labeled, miniature Tenon
+window previews in a native radio group. System combines light and dark samples;
+Light and Dark show their fixed palettes regardless of the current OS theme.
+These decorative samples do not change the renderer theming mechanism. A neutral
+outline marks the selected preview; native arrow keys change selection, and a
+pending write immediately marks the requested preview and retains focus while
+preventing another edit. Failure restores the effective choice and shows its error. General omits the
+duplicate Appearance group heading and lets the previews explain the choices.
+Language and other mutually exclusive choices use native pop-up selects.
+Immediate on/off settings, including provider connections, Skills, and delegation
+runners, use compact trailing switches. An off service retains readable labels
+and its Configure action. Only selecting members of an Agent capability set uses
+checkboxes. These controls follow the `--control-on` exception in Foundations.
+Settings pop-up selectors size to the selected value, cap long labels, align
+consistently at the trailing edge, and show a value and menu indicator without a
+resting bezel. Domain and scalar rows share low-contrast filled groups without an
+outer stroke, the large inset radius, separators inset on both sides, regular
+weight row labels, and semibold section headings; default
+text/image model choices share one Default models group. Ordinary copy describes
+the user action rather than naming internal tool functions. Settings separators
+use a half-pixel line on the quiet fill rung, strengthening to the separator token
+and a full pixel with Increase Contrast. Integer fields show their accepted bounds
+beside their existing unit/default explanation. Search,
+controls, and Reset remain keyboard reachable with neutral focus indicators.
+Escape belongs first to IME, an editor, or a menu/sheet; otherwise it clears a
+focused nonempty search. `Cmd+W` closes the active native window. Closing a child
+restores its invoking control. Text wraps at narrow widths and 200% text size;
+chrome is nonselectable and the hand cursor is reserved for content links.
 
-**General.** Appearance (Theme and Language), Keyboard Shortcuts, Diagnostics,
-and About. Theme is a
-neutral `SegmentedControl` radiogroup with roving tabindex and arrow navigation;
-Language is `SelectControl variant="popup"`. When a verified stable app release
-is newer than the running build and automatic checks remain enabled, General in
-the category rail and the About row each show the same fixed 6px rose status dot.
-It has a non-live accessible update-available name and no count or animation. Its
-fixed slot is reserved while hidden so async state cannot move adjacent content.
-This is a presence-based status, not unread state: opening About does not clear it; catching
-up to the release or disabling automatic checks does.
+**Navigation and domain ownership.** `SettingsOpenTarget.destination` selects
+`settings|models|agents|skills|memory|access|data|shortcuts|diagnostics` in the same
+Settings renderer; `about` opens the separate App-menu window. An optional
+`settingId` filters Settings to its matching row. Untargeted reopening preserves
+selection, search, scroll, and focus. The vertical tablist has roving keyboard
+focus with Up/Down/Home/End; Tab follows the toolbar and content controls. Each
+visited pane stays mounted but hidden when inactive, preserving drafts, errors,
+scroll, and accepted work;
+unvisited panes never load their catalogs. Hidden panes do not enter the focus
+order or accessibility tree.
 
-Keyboard Shortcuts is a purpose-built inset-list page over the public keybindings
-source. A compact search field and Open File / Reset All commands precede grouped
-system, application, and preview rows. Each row keeps its label, description,
-stable ID, default/modified state, enable switch, alternate key controls, and
-Reset action in one scan line. Key caps use neutral fills and a visible focus
-ring; recording changes copy inside stable dimensions instead of resizing the
-row. Source rejection and effective-binding failure stay at their action point.
+Each domain owns its loads, errors, queues, and subscriptions. Provider responses
+share a model queue; Skill availability writes retain keyed generation guards and
+their own queue. The navigation shell owns no live counts, badges, or polling.
+Credential editing is a modal child of Settings. Explicit navigation cannot switch
+its owner underneath it, and an active in-app modal editor takes precedence over
+menu deep links. Closing Settings does not revoke accepted domain work;
+pre-acceptance reviews retain the owning service's cancellation rules.
 
-**Agent.** Model services, Agents, and Skills are pages; Memory and Permissions
-stay inline. Permissions states the Full Access boundary, lists explicit blocks,
-and commits removal on the row; boundary explanation is a footnote under that row.
-The Skill library is a scan-and-toggle surface: descriptions stay clamped to two
-lines, and focusing or operating a row's menu or switch never expands the row.
+**Operation feedback.** Each row owns the progress, outcome, and failure of its
+operations. A single-Skill update check reports Checking, Up to date, Update
+available, or its failure directly on that Skill. A library-wide check reports a
+summary beside its list and specific failures on the affected rows. Acquisition
+feedback stays in its open dialog; a completed installation or removal names the
+Skill when its original row is absent. Read failures belong to the affected group
+or pane; only shared source acceptance/recovery failures span categories.
 
-The Agents page lists the Roles a user wrote above the built-in types, each row
-wearing the same generated mark the transcript draws for it, so the editor and
-the conversation are visibly about one participant. A row opens a level-2 editor
-dialog rather than a third route, remounted per subject so it never holds the
-previous agent's fields. Identity (name, colour) for every agent; **the
-conversation agent** additionally gets its standing instructions and the
-capability ceiling; a Role gets definition (type, use-it-for, instructions,
-layer) and its own narrowing. Capabilities are checkbox lists of everything the
-install has, all checked, because unchecking is the whole gesture — a list can
-only narrow what the agent handing out work already had, never grant. Colour swatches
-are the mark itself, so a hue is chosen against what it produces; the chosen
-swatch is marked on the neutral ladder, never by tinting the mark. A leading
-**Default** swatch shows what would be inherited and is the only way to send an
-empty colour — without it the documented reset is unreachable from the UI. A built-in
-shows identity only and offers no Delete, because there is nothing of the user's
-to remove — instead it offers **Duplicate**, which seeds a new Role from the
-built-in's real description and instructions rather than a blank form. An existing Role's type is fixed — it is the key both dispatch and
-identity are stored under — and a new Role whose type is already taken says so
-in the card rather than at the write boundary, where finding out would cost the
-user the rest of what they typed. A refused write leaves the dialog standing
-with its values and reports the write boundary's own sentence **inside the
-dialog**: the pane's shared feedback block is a sticky element at `z-index: 1`
-and the modal backdrop is fixed at `--z-modal`, so an error raised there landed
-behind it and Save read as doing nothing at all.
+Model changes, shortcut writes, delegation options, diagnostics actions, and
+source-file opening report beside their control. Reset All reports by its footer.
+A successful immediate toggle is confirmed by the resulting switch/status rather
+than an extra generic success banner. Memory enablement waits for owner application;
+reset evidence stays on Reset Memory even when another operation runs. Translation
+and website cleanup retain separate operation outcomes, and only the affected
+button says Clearing. Canceling clears that operation's pending feedback without
+reporting completion. Unrelated operations never erase or relocate each other's
+feedback. Existing queues, rollback rules, and stale-response guards remain in force.
 
-**Preview.** Translation owns target language, webpage/EPUB auto-translation,
-model, and clearing saved translations; Websites clears URL-preview session data.
-The preview Languages popover writes the same cross-window preference store.
+Settings operations are window-owned services. Agent edits use public
+configuration files, existing file tools, and the configuration Skill; its
+guidance routes non-declarative work to the appropriate UI.
+
+**Agent configuration and Access.** The root Agent editor handles the existing
+main persona, standing instructions, and capability ceiling. It does not restore
+retired Roles, per-type execution, or duplicated built-in Agents. Delegation
+preferences and runner readiness load through their own projection within Agents,
+separately from Models. A visible Edit action opens the root editor; its copy
+names editable instructions and capabilities. The editor keeps its header and
+Save/Cancel footer outside its scrolling body. Identity and Apply to precede
+standing instructions, then capability restrictions. Colour choices have complete
+circular selection rings, support roving arrow navigation, and update the header
+preview. Default name/colour previews follow the loader's whole-object presentation
+override rules. Saving locks editing and dismissal; errors preserve the draft.
+Source observations stay separate from the draft. After a rejected write, the
+editor refreshes only that layer's observation and requires an explicit Save to
+retry against it. Background refreshes never advance an open editor's admission
+token; another source change rejects again. Retrying preserves unrelated source
+fields and JSONC comments. A failed observation refresh keeps the previous token
+and the draft, without issuing another write.
+
+Tools defaults to All available; Skills defaults to Follow Skill Library. Only
+Custom selection expands a searchable membership checklist. Library-disabled
+Skills are labelled Off in Skill Library; selecting one does not turn it on.
+Explicit lists remain exact even when they currently contain every catalog member;
+only choosing the default option restores inheritance. An empty custom list allows
+none. Library status is read separately through its existing service and never
+blocks editing or rewrites profile selections when unavailable. The library page
+explains that its switches govern shared availability and Agent selections can
+only narrow that availability. No new model tool or IPC channel is introduced.
+
+Delegation explains its purpose and names the runner to which the
+model/access/time options apply. Access states the Full Access boundary and lists explicit
+blocks; removal commits on its row. The boundary explanation is a footnote.
+
+Models exposes a visible Configure action on connections and catalog rows;
+additional actions stay in the menu. Defaults stay disabled until the provider
+view arrives. Automatic selection is named in full rather than abbreviated.
+
+**Skills, Memory, and Data.** Skills owns acquisition, source bindings, enabled
+state, and updates. Check All and Add live in the page toolbar;
+the list does not repeat the Skills title. Portaled actions disappear when the
+pane is inactive or global search is open; pending work still settles in its pane. Skill descriptions stay clamped to two lines; menu/switch
+focus never expands a row. Check Skill Files lives in a collapsed Troubleshooting
+section, with its scope explained before invocation: missing resources, exact
+duplicates, and retired tool names in unchanged Agent-written user/project Skills.
+It does not scan installed or built-in Skills, assess quality, or change files.
+The read-only report shows checked/skipped results and omits content hashes.
+Memory and Data own their inspection and confirmed maintenance
+actions. Memory separates resetting from ordinary use/open controls, explains
+the scope in terms of entries and nested notes, and states when new memories are
+not being saved. Data shows readable storage units and keeps the consequences of
+clearing visible before the native confirmation. Translation controls remain
+contextual in previews; Data owns global translation-cache and website-data cleanup.
+
+**Keyboard Shortcuts.** The searchable pane owns the public keybindings source.
+Its compact Search shortcuts field occupies the trailing edge of
+the page toolbar, leaving the content scroller to start with the list. Search and
+the Back/Forward group share their height, pill radius, neutral fill, and inset
+hairline; their height accommodates larger text. Global
+Search Settings remains in the sidebar. The local filter stays owned by the pane
+and survives navigation; its toolbar controls disappear in other categories and
+global search results. At narrow widths or larger text the controls wrap within
+the toolbar, retaining usable field and title widths.
+One filled list surface contains an editing instruction and context headings.
+Rows have comfortable vertical padding and inset hairline separators; context
+groups have wider separation. There is no alternating fill or resting row selection. Each row shows its command name and plain,
+right-aligned key combinations, without checkboxes or per-row action buttons. IDs and default badges do not
+appear in ordinary rows; IDs and descriptions remain searchable, and descriptions
+are accessible help.
+Alternate/removal/per-command reset actions live in a contextual menu opened by
+right-click or Shift+F10/Context Menu on a key field. Open File lives in Advanced's
+Configuration Files group; the shortcuts toolbar has no permanent overflow menu.
+A rejected source shows a direct Open Keybindings File action beside its error.
+Restore Defaults sits below the list at the leading edge.
+
+Key combinations have no resting button bezel. Double-clicking starts recording
+in fixed field dimensions; keyboard and assistive activation use Return or Space.
+A single pointer click focuses without recording. Only editing adds a neutral
+field fill; keyboard focus keeps its neutral ring. Delete clears the edited
+binding, Escape cancels, and Tab leaves the recorder. An unassigned command
+shows an editable None field, so assigning it uses the same double-click gesture. Recording
+captures only the focused field, and blur or leaving the pane ends recording. It cannot intercept typing in
+another category. Source rejection and effective-binding failure stay local.
 
 **About.** Identity/version with copy, Software Update, What's New for the running
-version, support, and legal. The native About item opens this page. Software
+version, support, and legal. The native About item opens its independent window. Software
 Update shows checking, current, available, automatic-off, and explicit-failure
 states; an automatic-check switch and explicit Check now action apply immediately.
+Version-copy feedback stays with the version row; automatic-check, manual-check,
+and download/open failures stay beside their respective controls.
 Ambient failures render nothing and preserve cached availability. Explicit check
-and external-open failures stay inline in this group rather than using the shared
-Settings alert, an app toast, dialog, banner, notification, dock badge, or main-
+and external-open failures stay inline in this group rather than using the manager
+alert, an app toast, dialog, banner, notification, dock badge, or main-
 window surface.
 
 An available release shows only the newest stable version and its exact-tag
@@ -510,30 +623,64 @@ so a dynamic provider with an empty initial catalog can still recover and then
 populate its model choices. Refresh remains an explicit network action; ordinary
 settings loading uses only the last persisted catalog.
 
-**Provider config.** Per-provider config is a native modal child window
-(`?surface=provider-config`) and owns connection only. It has no traffic lights,
-no in-renderer backdrop, and closes through Cancel / Save / Escape. One inset card
-holds credential mode, key/base URL/provider id as needed, and async
-non-blocking validation. Model and effort belong to the Thread Configuration Profile, not the
-provider connection. Saved user-pasted keys stay masked until explicit show/copy;
-externally managed keys such as CC Switch registry keys are never shown or copied.
-Raw-key show/copy is available only inside the provider config child window, and
-main rejects the dedicated key-read IPC from all other windows. Before provider
-settings resolve, the window still paints the provider title/avatar, reserved
-credential/base-URL rows, and disabled footer actions with `aria-busy`; it never
-falls back to a whole-window loading page.
+**Provider config.** Per-provider config is a focused native modal child window
+(`?surface=provider-config`, 520 × 400 logical pixels; 480 high for custom providers). A stable provider icon/title replaces model marketing and capability tables;
+ordinary connections omit a generic purpose subtitle. The scrolling body owns
+connection inputs; the fixed footer owns Cancel and Save. Default-provider and
+removal actions stay in the Models list so they cannot discard a connection draft.
+Before settings resolve, the title and Cancel remain available with a loading
+status; a failed load offers Try Again without guessing the authentication form.
 
-Credential mode follows main's provider auth descriptor. OAuth-capable providers
-show the shared sign-in flow for browser URLs, device codes, progress, selection,
-and manual-code prompts; closing or cancelling the flow aborts outstanding
-prompts. When that same provider accepts a normal user API key, the sheet offers
-"Use an API key instead" and returns to the standard key form. Reopening a
-provider that already has a stored API key starts on that key form rather than
-presenting it as a disconnected OAuth account. OAuth-only providers omit the
-fallback. A completed sign-in may populate a dynamic model catalog without
-changing the sheet's connection-only ownership. Capability rows render only
-non-empty model groups; provider-level refreshability remains available to the
-settings row when a dynamic catalog is empty.
+Every input has a visible label and its own framed keyboard focus. Standard API
+providers show the key first, with the optional Base URL under Advanced; an
+existing override opens that disclosure. Custom and local API servers show the
+endpoint prominently. Custom providers require a unique ID and a complete HTTP(S) endpoint;
+loopback servers may omit the key. Managed providers explain their credential
+source instead of asking for a key. Show/Hide and Copy live inside the key input,
+with separate keyboard stops and room reserved for their hit targets. Saved keys
+show up to four characters at each end, one mask character per concealed character,
+and the exact total character count; short keys keep at least half concealed.
+Long masks clip only their middle display so both ends remain visible; the count
+always reports the full length. New input uses password editing and the same
+preview on blur. A short replacement hint takes the place of repeated instructions.
+The display-only preview never becomes the input draft. Pasting replaces the key;
+clearing the field retains the saved credential, including after an explicit reveal.
+
+The existing owned-child-only key IPC requires an explicit `preview` or `reveal`
+mode. Main computes previews without returning concealed characters; only explicit
+Show/Copy actions request the complete user-pasted key. Missing previews fall back
+to a truthful Saved key placeholder without blocking editing. Externally managed,
+environment and OAuth credentials never enter this display/read path. No Agent
+tool is involved.
+
+Test Connection is an optional stateful button without a separate result panel.
+It changes from Test Connection to Testing, then Connection successful (checkmark)
+or Retry Connection (warning). Completed results remain actionable; normal form
+validity and busy-state restrictions still apply. Status icons carry status color
+while the button keeps its neutral styling. A polite live label announces changes. The completed
+check's absolute time and repeat-test hint belong in the button tooltip. Only a
+failure exposes its full explanation beside the button, wrapping when necessary.
+Testing does not save draft inputs. Editing the draft invalidates a pending or
+completed result and restores the Test Connection action.
+The key caption renders only when it has a hint, character count, or copy feedback;
+an empty key reserves no description line. Connection fields use `--space-8`
+between fields and `--space-3` within a field. Settings section stacks own their
+`--space-lg` group separation, without adding child group/disclosure margins.
+Inline shortcut errors reset paragraph margins so feedback uses only its row gap.
+Copy feedback stays with the key, and save failures stay next to the footer while
+preserving input. Return submits a valid changed draft. Save disables editing and
+Cancel/Escape until the write completes and rejects duplicate submissions. Save
+does not require a successful test.
+
+Credential mode follows main's provider auth descriptor. Dual-auth providers have
+an Account / API key choice that works in both directions and preserves an
+unfinished key/endpoint draft. An existing stored key selects the key form on
+opening. OAuth-only providers show sign-in directly. Browser URLs, device codes,
+progress, selection, and manual-code prompts share the same header and footer;
+closing or cancelling aborts outstanding prompts. Failed replies remain
+cancellable. Connected-account maintenance stays with its status; Done is the
+footer action. Completing OAuth can populate a dynamic model catalog without
+turning the connection sheet into a model browser.
 
 Save commits before its non-blocking probe; OAuth completion follows the same
 path, while opening Settings never probes. Using the stored Base URL, the probe
@@ -557,7 +704,6 @@ The stored verdict is displayed as an age ("Checked just now", "Checked 5 minute
 ago"), localized as a whole sentence rather than an English fragment placed in a
 localized frame.
 
-Every framed content block in the config window uses `--radius-md`; row-level
-field focus uses `:focus-within` on the row because inset cards clip outer rings.
-Validation success/failure uses status colour for status only. The primary footer
+OAuth step cards use `--radius-md`; inputs retain their own visible focus rings.
+Connection test success/failure uses status colour for status only. The primary footer
 action uses the neutral filled-default idiom; destructive actions use danger text.

@@ -1,3 +1,5 @@
+import { previewProviderApiKey, type ProviderApiKeyReadResult } from '../../../core/providerApiKeyPreview';
+import { MAX_DELEGATION_CONCURRENCY, MAX_DELEGATION_GLOBAL_QUEUE, MAX_DELEGATION_THREAD_QUEUE } from '../../../core/delegationSettings';
 import * as electron from 'electron';
 import {
   getSupportedThinkingLevels,
@@ -189,9 +191,6 @@ const DELEGATION_POOL_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_DELEGATION_RUNNERS = 32;
 const MIN_DELEGATION_TIMEOUT_MS = 10_000;
 const MAX_DELEGATION_TIMEOUT_MS = 24 * 60 * 60_000;
-const MAX_DELEGATION_CONCURRENCY = 64;
-const MAX_DELEGATION_GLOBAL_QUEUE = 1_024;
-const MAX_DELEGATION_THREAD_QUEUE = 128;
 const DEFAULT_INTERNAL_DELEGATION_RUNNER: AgentDelegationRunnerSettings = {
   enabled: true,
   model: null,
@@ -286,7 +285,10 @@ export async function refreshProviderModels(providerIdInput: string): Promise<Ag
 }
 
 export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
-  const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
+  return agentRuntimeSettingsFromPreferences(loadFilePreferences(electron.app.getPath('userData')).preferences);
+}
+
+export function agentRuntimeSettingsFromPreferences(preferences: import('../../../core/filePreferences').FilePreferences): AgentRuntimeSettings {
   const stored = normalizeAgentRuntimeSettings({ delegation: preferences.agent.delegation });
   const sourceBindings = [...preferences.agent.skills.sources];
   return normalizeAgentRuntimeSettings({
@@ -466,7 +468,7 @@ export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInpu
       { path: ['agent', 'delegation'], value: delegation },
     ]);
   }
-  return getProviderSettings();
+  return getAgentRuntimeSettings();
 }
 
 export async function updateImageGenerationSettings(input: AgentImageGenerationSettingsInput) {
@@ -742,6 +744,12 @@ export async function getStoredProviderApiKey(providerIdInput: string): Promise<
   };
 }
 
+/** Preview only the user-pasted credential, using the same source exclusions. */
+export async function getStoredProviderApiKeyPreview(providerId: string): Promise<ProviderApiKeyReadResult<'preview'>> {
+  const stored = await getStoredProviderApiKey(providerId);
+  return { providerId: stored.providerId, ...(stored.apiKey ? { preview: previewProviderApiKey(stored.apiKey) } : {}) };
+}
+
 /**
  * Resolve only the concrete API-key field from pi auth. This is for legacy
  * callsites/tests that truly need a string key, not for provider requests:
@@ -832,11 +840,9 @@ async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Pr
   const availableProviders = await getAvailableProviders(file.providers);
   const availableProviderById = new Map(availableProviders.map((provider) => [provider.providerId, provider]));
   const preferences = loadFilePreferences(electron.app.getPath('userData')).preferences;
-  const { additionalSkillDirectories: _directories, additionalSkillSourceModes: _modes, disabledSkills: _disabled, ...agent } = await getAgentRuntimeSettings();
   return {
     activeProviderId: file.activeProviderId,
     defaultModel: preferences.models.default,
-    agent,
     imageGeneration: normalizeImageGenerationSettings(file.imageGeneration),
     providers: await Promise.all(file.providers.map(async (provider): Promise<AgentProviderConfigView> => {
       const catalogProvider = availableProviderById.get(provider.providerId);

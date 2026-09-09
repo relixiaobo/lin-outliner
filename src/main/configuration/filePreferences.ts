@@ -1,3 +1,6 @@
+import { PREFERENCE_DEFINITIONS, configurationValue, validatePreference } from '../../core/settingsDefinitions';
+import { DEFAULT_FILE_PREFERENCES, type FilePreferences } from '../../core/filePreferences';
+export { DEFAULT_FILE_PREFERENCES, type FilePreferences } from '../../core/filePreferences';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -16,39 +19,6 @@ export const FILE_PREFERENCES_RELATIVE_PATH = join('config', 'settings.jsonc');
 export const MAX_FILE_PREFERENCES_BYTES = 256 * 1024;
 const RECOVERY_FILE = join('config', 'settings.last-known-good.json');
 
-export interface FilePreferences {
-  readonly appearance: {
-    readonly theme: 'system' | 'light' | 'dark';
-    readonly language: string | null;
-  };
-  readonly agent: {
-    readonly memory: { readonly enabled: boolean };
-    readonly skills: {
-      readonly disabled: readonly string[];
-      readonly sources: readonly AgentSkillSourceBinding[];
-    };
-    readonly tools: { readonly disabled: readonly string[] };
-    readonly provider: {
-      readonly timeoutMs: number | null;
-      readonly maxRetries: number | null;
-      readonly maxRetryDelayMs: number;
-      readonly cacheRetention: 'none' | 'short' | 'long';
-    };
-    readonly delegation: AgentDelegationSettings;
-  };
-  readonly updates: { readonly checkAutomatically: boolean };
-  readonly models: {
-    readonly connections: readonly {
-      readonly providerId: string;
-      readonly baseUrl: string | null;
-      readonly enabled: boolean;
-      readonly models: readonly string[];
-    }[];
-    readonly default: string;
-    readonly imageDefault: string | null;
-  };
-}
-
 export type FilePreferencesSourceStatus = 'missing' | 'accepted' | 'rejected';
 
 export interface FilePreferencesLoadResult {
@@ -61,32 +31,6 @@ export interface FilePreferencesLoadResult {
   readonly preferences: FilePreferences;
   readonly error: string | null;
 }
-
-export const DEFAULT_FILE_PREFERENCES: FilePreferences = Object.freeze({
-  appearance: Object.freeze({ theme: 'system', language: null }),
-  agent: Object.freeze({
-    memory: Object.freeze({ enabled: true }),
-    skills: Object.freeze({ disabled: Object.freeze([]), sources: Object.freeze([]) }),
-    tools: Object.freeze({ disabled: Object.freeze([]) }),
-    provider: Object.freeze({
-      timeoutMs: null,
-      maxRetries: null,
-      maxRetryDelayMs: 60_000,
-      cacheRetention: 'short',
-    }),
-    delegation: Object.freeze({
-      enabled: false,
-      defaultRunnerId: 'internal',
-      maxConcurrentGlobal: 8,
-      maxConcurrentThread: 4,
-      maxQueuedGlobal: 32,
-      maxQueuedThread: 8,
-      runners: Object.freeze({}),
-    }),
-  }),
-  updates: Object.freeze({ checkAutomatically: true }),
-  models: Object.freeze({ connections: Object.freeze([]), default: 'auto', imageDefault: null }),
-});
 
 const TOP_LEVEL_KEYS = new Set(['appearance', 'agent', 'updates', 'models']);
 const APPEARANCE_KEYS = new Set(['theme', 'language']);
@@ -112,8 +56,7 @@ export function loadFilePreferences(userDataDir: string): FilePreferencesLoadRes
     sourceBytes = readFileSync(path, 'utf8');
   } catch (error) {
     if (isNotFoundError(error)) {
-      const recovery = readRecovery(userDataDir);
-      return result(path, 'missing', null, DEFAULT_FILE_PREFERENCES, null, recovery.sourceDigest, recovery.error);
+      return result(path, 'missing', null, DEFAULT_FILE_PREFERENCES, null);
     }
     const recovery = readRecovery(userDataDir);
     return result(path, 'rejected', null, recovery.preferences, errorMessage(error), recovery.sourceDigest, recovery.error);
@@ -161,15 +104,21 @@ export function writeFilePreferences(userDataDir: string, preferences: FilePrefe
 export function updateFilePreferences(
   userDataDir: string,
   updates: readonly { readonly path: readonly (string | number)[]; readonly value: unknown }[],
+  expectedDigest?: string | null,
 ): void {
   const loaded = loadFilePreferences(userDataDir);
   if (loaded.sourceStatus === 'rejected') {
     throw new Error(`Cannot write rejected settings source: ${loaded.error ?? 'invalid source'}`);
   }
+  if (expectedDigest !== undefined && expectedDigest !== loaded.sourceDigest) {
+    throw new Error('Settings source changed; refresh before retrying this edit');
+  }
   let source = loaded.sourceBytes ?? '{}';
   for (const update of updates) {
     source = modify(source, update.path, update.value);
   }
+  if (Buffer.byteLength(source, 'utf8') > MAX_FILE_PREFERENCES_BYTES) throw new Error('Settings source exceeds the size limit');
+  decodeFilePreferences(parseJsonc(source));
   const observed = readSourceIfPresent(filePreferencesPath(userDataDir));
   if (observed !== loaded.sourceBytes) {
     throw new Error('Settings source changed while preparing an update; retry against the latest file');
@@ -212,6 +161,10 @@ function assertUniqueKeys(node: Node, path: string): void {
 function decodeFilePreferences(value: unknown): FilePreferences {
   const root = record(value, 'settings');
   exactKeys(root, TOP_LEVEL_KEYS, 'settings');
+  for (const definition of PREFERENCE_DEFINITIONS) {
+    const scalar = configurationValue(root, definition.id);
+    if (scalar !== undefined) validatePreference(definition, scalar);
+  }
   const appearance = recordOrDefault(root.appearance, DEFAULT_FILE_PREFERENCES.appearance, 'settings.appearance');
   exactKeys(appearance, APPEARANCE_KEYS, 'settings.appearance');
   const agent = recordOrDefault(root.agent, DEFAULT_FILE_PREFERENCES.agent, 'settings.agent');

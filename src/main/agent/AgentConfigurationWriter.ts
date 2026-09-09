@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { IDENTITY_COLORS, MAIN_PRESENTATION_KEY, type IdentityColor } from '../../core/agent/configuration';
 import type { AgentProfileDraft } from '../../core/types';
 import { applyEdits, modify as jsoncModify } from 'jsonc-parser';
-import { atomicWriteFile } from '../jsonFileStore';
+import { createHash } from 'node:crypto';
+import { atomicWriteFileSync } from '../jsonFileStore';
 import {
   decodeConfigurationLayer,
   parseAgentConfigurationSource,
@@ -29,6 +30,7 @@ export class AgentConfigurationWriter {
     name: string,
     draft: AgentProfileDraft,
     presentation?: PresentationDraft,
+    expectedDigest?: string | null,
   ): Promise<void> {
     await this.edit(target, cwd, (config) => {
       if (presentation !== undefined) config = applyMainPresentation(config, presentation);
@@ -43,7 +45,7 @@ export class AgentConfigurationWriter {
       return Object.keys(profiles).length > 0
         ? { ...config, profiles }
         : withoutKey(config, 'profiles');
-    });
+    }, expectedDigest);
   }
 
   private layerPath(target: ConfigurationLayerTarget, cwd: string): string {
@@ -54,25 +56,22 @@ export class AgentConfigurationWriter {
     target: ConfigurationLayerTarget,
     cwd: string,
     change: (config: JsonObject) => JsonObject,
+    expectedDigest?: string | null,
   ): Promise<void> {
     const path = this.layerPath(target, cwd);
+    const original = readSource(path);
+    const observedDigest = original === null ? null : createHash('sha256').update(original).digest('hex');
+    if (expectedDigest !== undefined && expectedDigest !== observedDigest) throw new Error('Agent source changed; refresh before retrying');
     let current: JsonObject = {};
-    if (existsSync(path)) {
-      const original = readFileSync(path, 'utf8');
-      if (original.trim().length > 0) {
-        let parsed: unknown;
-        try {
-          parsed = parseAgentConfigurationSource(original, path);
-        } catch (error) {
-          throw new Error(`Cannot edit ${path}: ${errorText(error)}`);
-        }
-        try {
-          decodeConfigurationLayer(parsed, target, path);
-        } catch (error) {
-          throw new Error(`Cannot edit ${path}: ${errorText(error)}`);
-        }
-        current = parsed as JsonObject;
+    if (original !== null) {
+      let parsed: unknown;
+      try {
+        parsed = parseAgentConfigurationSource(original, path);
+        decodeConfigurationLayer(parsed, target, path);
+      } catch (error) {
+        throw new Error(`Cannot edit ${path}: ${errorText(error)}`);
       }
+      current = parsed as JsonObject;
     }
     const next = change(current);
     try {
@@ -80,9 +79,10 @@ export class AgentConfigurationWriter {
     } catch (error) {
       throw new Error(`Refused: ${errorText(error)}`);
     }
-    let source = existsSync(path) ? readFileSync(path, 'utf8') : '{}';
+    let source = original ?? '{}';
     source = applyJsonObjectDiff(source, current, next);
-    await atomicWriteFile(path, source.endsWith('\n') ? source : `${source}\n`);
+    if (readSource(path) !== original) throw new Error('Agent source changed while preparing the edit');
+    atomicWriteFileSync(path, source.endsWith('\n') ? source : `${source}\n`);
     if (target === 'project') writeProjectAgentConfigurationSchema(cwd);
   }
 }
@@ -165,4 +165,9 @@ function assertColor(value: string): IdentityColor {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function readSource(path: string): string | null {
+  try { return readFileSync(path, 'utf8'); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }

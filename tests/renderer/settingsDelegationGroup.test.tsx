@@ -1,3 +1,4 @@
+import type { DelegationSettingsView } from '../../src/core/delegationSettings';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -6,7 +7,7 @@ import type {
   AgentDelegationSettingsInput,
   AgentProviderSettingsView,
 } from '../../src/renderer/api/types';
-import { SettingsDelegationGroup } from '../../src/renderer/ui/agent/SettingsDelegationGroup';
+import { DelegationPreferences } from '../../src/renderer/ui/agent/DelegationPreferences';
 
 const mounted: Array<() => void> = [];
 const GLOBAL_KEYS = ['document', 'Event', 'HTMLElement', 'Node', 'window'] as const;
@@ -21,7 +22,7 @@ afterEach(() => {
   savedGlobals = [];
 });
 
-describe('SettingsDelegationGroup', () => {
+describe('DelegationPreferences', () => {
   test('shows only the experiment switch while delegation is off', async () => {
     const calls: AgentDelegationSettingsInput[] = [];
     const { document, click } = await render(settings(false), async (input) => { calls.push(input); });
@@ -48,10 +49,23 @@ describe('SettingsDelegationGroup', () => {
     ]);
   });
 
+  test('keeps a failed model change beside Model when another setting succeeds', async () => {
+    const rendered = await render(settings(true), async (input) => {
+      if (input.runners?.internal?.model) throw new Error('Model write failed');
+    });
+    const model = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Model"]')!;
+    const limit = rendered.document.querySelector<HTMLSelectElement>('[aria-label="Running globally"]')!;
+    await rendered.change(model, 'openai/gpt-test');
+    expect(model.closest('.inset-row')?.querySelector('[role="alert"]')?.textContent).toBe('Model write failed');
+    await rendered.change(limit, '16');
+    expect(model.closest('.inset-row')?.querySelector('[role="alert"]')?.textContent).toBe('Model write failed');
+    expect(limit.closest('.inset-row')?.querySelector('[role="alert"]') === null).toBe(true);
+  });
+
   test('keeps an unavailable explicit model visible as not ready', async () => {
     const configured = settings(true);
-    configured.agent.delegation.runners.internal!.model = 'openai/missing';
-    configured.agent.delegation.runners.internal!.effort = 'xhigh';
+    configured.runtime.delegation.runners.internal!.model = 'openai/missing';
+    configured.runtime.delegation.runners.internal!.effort = 'xhigh';
     const { document } = await render(configured, async () => undefined);
 
     expect(document.body.textContent).toContain('The selected model is unavailable.');
@@ -68,8 +82,8 @@ describe('SettingsDelegationGroup', () => {
     expect(claudeSwitch).not.toBeNull();
     expect(rendered.document.querySelector<HTMLSelectElement>('[aria-label="Model"]')?.disabled).toBe(false);
 
-    await rendered.click(codexSwitch);
-    await rendered.click(claudeSwitch);
+    await act(async () => codexSwitch?.click());
+    await act(async () => claudeSwitch?.click());
 
     expect(calls).toEqual([
       { runners: { codex: { enabled: true } } },
@@ -107,7 +121,7 @@ describe('SettingsDelegationGroup', () => {
   });
 });
 
-function settings(enabled: boolean): AgentProviderSettingsView {
+function settings(enabled: boolean) {
   return {
     activeProviderId: 'openai',
     providers: [{
@@ -130,13 +144,7 @@ function settings(enabled: boolean): AgentProviderSettingsView {
         maxTokens: 16_000,
       }],
     }],
-    agent: {
-      additionalSkillDirectories: [],
-      providerTimeoutMs: null,
-      providerMaxRetries: null,
-      providerMaxRetryDelayMs: 60_000,
-      providerCacheRetention: 'short',
-      disabledSkills: [],
+    runtime: {
       delegation: {
         enabled,
         defaultRunnerId: 'internal',
@@ -187,28 +195,19 @@ function settings(enabled: boolean): AgentProviderSettingsView {
         },
       },
       },
-    },
-    imageGeneration: {},
-    delegationRunners: [
+      runners: [
       { id: 'internal', version: '1', detected: true, ready: true, enabled: true, diagnostic: null },
       { id: 'codex', version: 'future', detected: true, ready: true, enabled: false, diagnostic: null },
       { id: 'claude', version: 'future', detected: true, ready: true, enabled: false, diagnostic: null },
       { id: 'openclaw', version: null, detected: false, ready: false, enabled: false, diagnostic: 'not found' },
     ],
-  } as AgentProviderSettingsView & {
-    delegationRunners: readonly {
-      id: string;
-      version: string | null;
-      detected: boolean;
-      ready: boolean;
-      enabled: boolean;
-      diagnostic: string | null;
-    }[];
-  };
+    } satisfies DelegationSettingsView,
+    imageGeneration: {},
+  } satisfies AgentProviderSettingsView & { runtime: DelegationSettingsView };
 }
 
 async function render(
-  settingsView: AgentProviderSettingsView,
+  settingsView: ReturnType<typeof settings>,
   onChange: (input: AgentDelegationSettingsInput) => Promise<void>,
 ) {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
@@ -217,7 +216,7 @@ async function render(
   if (!container) throw new Error('Missing root container');
   const root = createRoot(container);
   await act(async () => {
-    root.render(<SettingsDelegationGroup onChange={onChange} settings={settingsView} />);
+    root.render(<DelegationPreferences onChange={onChange} settings={settingsView} runtime={settingsView.runtime} />);
   });
   mounted.push(() => { act(() => root.unmount()); });
   return {

@@ -21,6 +21,8 @@ interface InsetGroupProps {
    * icon-only per B6: colour deepens on hover, no box.
    */
   headerAction?: ReactNode;
+  /** Feedback for a group-wide action or a failure to load this group. */
+  headerFeedback?: ReactNode;
   /** Optional explanatory footnote under the card. */
   footnote?: ReactNode;
   /** Accessible name for the list region; falls back to `label`. */
@@ -34,7 +36,7 @@ interface InsetGroupProps {
   children: ReactNode;
 }
 
-export function InsetGroup({ label, headerAction, footnote, ariaLabel, id, className, children }: InsetGroupProps) {
+export function InsetGroup({ label, headerAction, headerFeedback, footnote, ariaLabel, id, className, children }: InsetGroupProps) {
   return (
     <div className={cx('inset-group', className)} data-settings-anchor={id}>
       {/* Without an action the header keeps its original single-element shape, so
@@ -45,6 +47,7 @@ export function InsetGroup({ label, headerAction, footnote, ariaLabel, id, class
           <span className="inset-group-header-action">{headerAction}</span>
         </div>
       ) : label ? <div className="inset-group-header">{label}</div> : null}
+      {headerFeedback}
       <div aria-label={ariaLabel ?? label} className="inset-card" role="list">
         {children}
       </div>

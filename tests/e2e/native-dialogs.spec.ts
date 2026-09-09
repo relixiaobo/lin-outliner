@@ -49,7 +49,7 @@ test.describe('in-app dialogs replace native browser prompts', () => {
     await page.goto('/?surface=settings');
 
     // The settings surface renders its own full-window page, not the outliner.
-    await expect(page.locator('.settings-window')).toBeVisible();
+    await expect(page.locator('.configuration-window')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
     await expect(page.locator('.app-shell')).toHaveCount(0);
     await expect(row(page, ids.alpha)).toHaveCount(0);

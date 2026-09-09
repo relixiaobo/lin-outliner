@@ -26,6 +26,8 @@
     --material-sidebar: var(--bg-window);
     --material-popover: var(--bg-elevated);
     --material-backdrop: none;
+    --settings-scroll-edge-size: 0px;
+    --settings-scroll-edge-mask: none;
     --media-hud-bg: rgb(46 46 50);
     --media-hud-hover-bg: rgb(31 31 35);
     --media-hud-active-bg: rgb(20 20 24);
@@ -37,6 +39,9 @@
    strengthen the neutral focus ring. Alpha-on-ink, so this is correct in both
    themes. (Opaque materials are handled by the shared block above.) */
 @media (prefers-contrast: more) {
+  .preference-list, .preference-row + .preference-row, .configuration-toolbar {
+    border-color: var(--text-secondary);
+  }
   :root {
     /* text levels — push the quieter labels toward full contrast */
     --text-secondary: rgb(var(--ink) / 0.72);
@@ -45,6 +50,8 @@
 
     /* separators / borders gain real presence */
     --separator: rgb(var(--ink) / 0.32);
+    --settings-row-separator: var(--separator);
+    --settings-row-separator-width: var(--space-hairline);
     --border-emphasis: rgb(var(--ink) / 0.42);
     --border-strong: rgb(var(--ink) / 0.55);
 
@@ -77,4 +84,8 @@
     transition-duration: var(--motion-reduced-duration) !important;
     scroll-behavior: auto !important;
   }
+}
+
+@media (prefers-contrast: more) {
+  .settings-sidebar [role="tab"][aria-selected="true"] { outline: var(--space-hairline) solid var(--text-secondary); outline-offset: calc(-1 * var(--space-hairline)); }
 }

@@ -31,12 +31,12 @@ describe('managed skill runtime integration', () => {
         scratchRoot: path.join(fixture.userData, 'scratch'), appVersion: '0.1.0',
         loadRuntimeSettings: async () => settings, reviewSkillOperation: async () => false, onLibraryChanged: () => {},
       });
-      for (const mode of ['available', 'lifecycle_only', 'skill_ceiling', 'disabled_skill', 'disabled_tool']) {
+      for (const mode of ['available', 'without_invocation', 'skill_ceiling', 'disabled_skill', 'disabled_tool']) {
         settings.disabledSkills = mode === 'disabled_skill' ? ['browser-pilot'] : [];
         settings.disabledTools = mode === 'disabled_tool' ? ['skill'] : [];
         host.updateRuntimeSettings(settings);
         const context = { turn: { id: mode }, thread: { id: 'thread' },
-          configuration: { tools: mode === 'lifecycle_only' ? ['skill_manage'] : ['skill'] },
+          configuration: { tools: mode === 'without_invocation' ? ['file_read'] : ['skill'] },
           historyBeforeTurn: [], recorder: { orderedItems: () => [] },
         } as unknown as TurnExecutionContext;
         await host.prepareTurnRuntime(context, { localRoot: fixture.workspace, includeUserSkills: false,

@@ -1,3 +1,4 @@
+import { configureSmokeProvider } from './configurationHelpers';
 import { expect, test, type Page } from '@playwright/test';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -29,9 +30,6 @@ test.describe('persistent preview translation cache', () => {
   let origin = '';
   let smoke: SmokeApp;
   const batches: TranslationBatch[] = [];
-  let nextAgentTool: { name: string; input: unknown } | null = null;
-  const agentToolOutputs: string[] = [];
-  const exposedTools = new Set<string>();
   let holdTranslations = false;
   const heldTranslations: Array<() => void> = [];
 
@@ -58,48 +56,6 @@ test.describe('persistent preview translation cache', () => {
           model?: string;
           tools?: Array<{ function: { name: string } }>;
         };
-        if (body.tools?.length) {
-          for (const tool of body.tools) exposedTools.add(tool.function.name);
-          for (const message of body.messages ?? [])
-            if (message.role === 'tool') agentToolOutputs.push(messageText(message.content));
-          const tool = nextAgentTool;
-          nextAgentTool = null;
-          const delta = tool
-            ? {
-                role: 'assistant',
-                tool_calls: [
-                  {
-                    index: 0,
-                    id: `call_${Date.now()}`,
-                    type: 'function',
-                    function: { name: tool.name, arguments: JSON.stringify(tool.input) },
-                  },
-                ],
-              }
-            : { role: 'assistant', content: 'Preview operation observed.' };
-          response.writeHead(200, { 'content-type': 'text/event-stream', connection: 'close' });
-          response.write(
-            `data: ${JSON.stringify({
-              id: 'agent-preview',
-              object: 'chat.completion.chunk',
-              created: 1,
-              model: body.model,
-              choices: [{ index: 0, delta, finish_reason: null }],
-            })}\n\n`,
-          );
-          response.write(
-            `data: ${JSON.stringify({
-              id: 'agent-preview',
-              object: 'chat.completion.chunk',
-              created: 1,
-              model: body.model,
-              choices: [{ index: 0, delta: {}, finish_reason: tool ? 'tool_calls' : 'stop' }],
-              usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
-            })}\n\n`,
-          );
-          response.end('data: [DONE]\n\n');
-          return;
-        }
         const userMessage = [...(body.messages ?? [])]
           .reverse()
           .find((message) => message.role === 'user');
@@ -157,14 +113,12 @@ test.describe('persistent preview translation cache', () => {
 
   test.beforeEach(async () => {
     batches.length = 0;
-    agentToolOutputs.length = 0;
-    exposedTools.clear();
-    nextAgentTool = null;
     holdTranslations = false;
     smoke = await launchSmokeApp();
     smoke.window = await findMainWindow(smoke);
     await smoke.window.locator('#root').waitFor();
-    await configureTranslation(smoke.window, `${origin}/v1`);
+    await configureSmokeProvider(smoke, `${origin}/v1`);
+    await smoke.window.evaluate(() => window.lin!.setLanguage('en'));
     await smoke.app.evaluate(({ BrowserWindow }, url) => {
       const window = BrowserWindow.getAllWindows().find(
         (entry) => entry.webContents.getURL() === url,
@@ -329,7 +283,7 @@ test.describe('persistent preview translation cache', () => {
       .toContain('Cached:');
   });
 
-  test('real root tools configure same-source previews, clear saved data without losing pending results, and isolate website deletion', async ({}, testInfo) => {
+  test('window-owned operations configure same-source previews, clear saved data without losing pending results, and isolate website deletion', async ({}, testInfo) => {
     test.setTimeout(90_000);
     const main = smoke.window;
     const inspect = () =>
@@ -348,37 +302,11 @@ test.describe('persistent preview translation cache', () => {
             request: {},
           })) as PreviewDataStatus,
       );
-    const agent = async (name: string, input: unknown) => {
-      nextAgentTool = { name, input };
-      const previous = agentToolOutputs.length;
-      const threadId = await main.evaluate(async () => {
-        const { thread } = await window.lin!.agentCoreRequest('thread/start', {
-          name: 'Preview operation fixture',
-          modelProvider: 'groq',
-        });
-        await window.lin!.agentCoreRequest('turn/submit', {
-          threadId: thread.id,
-          input: [{ type: 'text', text: 'Run the preview operation fixture.' }],
-          clientUserMessageId: crypto.randomUUID(),
-        });
-        return thread.id;
-      });
-      await expect
-        .poll(
-          async () => {
-            const result = await main.evaluate(
-              (threadId) => window.lin!.agentCoreRequest('thread/turns/list', { threadId }),
-              threadId,
-            );
-            return result.data[0]?.status;
-          },
-          { timeout: 20_000 },
-        )
-        .toBe('completed');
-      expect(exposedTools.has(name)).toBe(true);
-      const outputs = agentToolOutputs.slice(previous).join('\n');
-      expect(outputs).not.toContain(origin);
-      return outputs;
+    const operate = async (name: import('../../src/core/previewOperations').PreviewOperationName, input: unknown) => {
+      const result = await main.evaluate(({ name, input }) => window.lin!.previewOperation(name, input), { name, input });
+      const output = JSON.stringify(result);
+      expect(output).not.toContain(origin);
+      return output;
     };
     const target = { kind: 'url', url: `${origin}/article`, label: 'Shared translation article' };
     await openTarget(main, target);
@@ -392,9 +320,9 @@ test.describe('persistent preview translation cache', () => {
       automatic: false,
       display: 'automatic',
     });
-    expect(await agent('preview_inspect', { request: {} })).toContain(a.previewId);
+    expect(await operate('preview_inspect', { request: {} })).toContain(a.previewId);
     expect(
-      await agent('preview_manage', {
+      await operate('preview_manage', {
         request: {
           operation: 'configure',
           previewId: a.previewId,
@@ -455,7 +383,7 @@ test.describe('persistent preview translation cache', () => {
     await smoke.app.evaluate(() => {
       (globalThis as any).previewReviewResponse = 0;
     });
-    expect(await agent('preview_manage', clear)).toContain('cleared');
+    expect(await operate('preview_manage', clear)).toContain('cleared');
     expect(await guestOrNull<string>(first, visibleTranslation)).toContain('Cached:');
     const afterClear = (await data()).translations;
     holdTranslations = false;
@@ -468,8 +396,8 @@ test.describe('persistent preview translation cache', () => {
     expect(
       (await inspect()).find((entry) => entry.previewId === b.previewId)?.controls.language,
     ).toBe('ja');
-    expect(await agent('data_inspect', { request: {} })).toContain('logicalBytes');
-    expect(await agent('data_manage', { request: { scope: 'translations' } })).toContain('cleared');
+    expect(await operate('data_inspect', { request: {} })).toContain('logicalBytes');
+    expect(await operate('data_manage', { request: { scope: 'translations' } })).toContain('cleared');
     expect((await data()).translations.entries).toEqual({ page: 0, caption: 0, document: 0 });
     expect(await guestOrNull<string>(first, visibleTranslation)).toContain('Cached:');
 
@@ -509,7 +437,7 @@ test.describe('persistent preview translation cache', () => {
         .cookies.set({ url, name: 'preview-fixture', value: 'preview' });
       await session.defaultSession.cookies.set({ url, name: 'preview-fixture', value: 'default' });
     }, origin);
-    expect(await agent('data_manage', { request: { scope: 'websites' } })).toContain(
+    expect(await operate('data_manage', { request: { scope: 'websites' } })).toContain(
       'reload_requested',
     );
     expect(
@@ -534,31 +462,15 @@ test.describe('persistent preview translation cache', () => {
   });
 });
 
-async function configureTranslation(page: Page, baseUrl: string): Promise<void> {
-  await page.evaluate(
-    async ({ baseUrl }) => {
-      const lin = window.lin;
-      if (!lin) throw new Error('Missing preload API');
-      const providerId = 'groq';
-      await lin.invoke('agent_upsert_provider_config', {
-        provider: { providerId, baseUrl, enabled: true },
-      });
-      await lin.invoke('agent_set_provider_api_key', { providerId, apiKey: 'smoke-key' });
-      await lin.invoke('agent_set_active_provider', { providerId });
-      await lin.setLanguage('en');
-    },
-    { baseUrl },
-  );
-}
 
 async function openGeneralSettings(smoke: SmokeApp): Promise<Page> {
   await smoke.window.evaluate(async () => {
-    await window.lin?.openSettings({ category: 'preview' });
+    await window.lin?.openSettings({ destination: 'data' });
   });
   await expect
-    .poll(() => smoke.app.windows().filter((page) => surfaceFor(page) === 'settings').length)
+    .poll(() => smoke.app.windows().filter((page) => surfaceFor(page) === 'settings' && page.url().includes('destination=data')).length)
     .toBe(1);
-  const settings = smoke.app.windows().find((page) => surfaceFor(page) === 'settings');
+  const settings = smoke.app.windows().find((page) => surfaceFor(page) === 'settings' && page.url().includes('destination=data'));
   if (!settings) throw new Error('Missing Settings window');
   await settings.locator('#root').waitFor();
   return settings;
@@ -716,7 +628,7 @@ async function findMainWindow(smoke: SmokeApp): Promise<Page> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const mainWindow = smoke.app
       .windows()
-      .find((page) => page.url().endsWith('/index.html') || page.url().includes('/index.html?'));
+      .find((page) => page.url().endsWith('/index.html'));
     if (mainWindow) return mainWindow;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

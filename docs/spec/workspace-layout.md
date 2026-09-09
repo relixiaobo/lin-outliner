@@ -513,11 +513,11 @@ external browser profile, expose cookies to the renderer, provide
 password/autofill storage, or claim passkey-only authentication. Main configures
 the partition once, allows only fullscreen and sanitized clipboard writes,
 flushes DOM storage and cookies inside the bounded before-quit drain, and rejects
-a guest attached to any other session. Settings > Preview provides one
+a guest attached to any other session. Settings > Data provides one
 native-confirmed **Clear website data** action that closes live connections,
 removes auth/cache/cookies/site storage for only this partition, and reloads
-attached Preview guests. The same native-confirmed operation is available to
-root Agents through `data_manage`. Per-stage deletion and guest reload outcomes
+attached Preview guests. This is a window-owned operation and is not exposed
+as a model tool. Per-stage deletion and guest reload outcomes
 are separate; partial failure never claims rollback or external-browser logout.
 
 URL previews also expose one neutral `Languages` icon immediately before the
@@ -710,7 +710,7 @@ Retention has no fixed expiry. Least-recently-used entries are bounded globally
 to 64 MiB of logical data and 50,000 entries, with small per-scope shards loaded
 on demand; one scope is additionally capped at 4 MiB and 4,000 entries so an
 exceptionally large book or page cannot turn each recency update into a large
-main-thread rewrite. Settings > Preview > Translation Data exposes aggregate
+main-thread rewrite. Settings > Data > Saved translations exposes aggregate
 passage counts, logical bytes and one secondary **Clear** action. Its native,
 cancel-default confirmation explains that pages,
 captions, and books will need translation again while current visible translations
@@ -722,7 +722,8 @@ and pending results belong to each preview and remain intact for both clear scop
 Neither clear cancels provider work, reloads, hides, or retranslates a preview.
 Other-source cache entries survive content clearing.
 
-Both operations use `PreviewOperations`, also reached by root Agent domain tools.
+Both user-interface operations use the internal `PreviewOperations` service;
+it has no model-tool adapter.
 Native confirmation, caller authority and exact content lifetime/revision are
 checked again immediately before serialized deletion. Outstanding write tickets
 are captured at request admission before model resolution and invalidated by

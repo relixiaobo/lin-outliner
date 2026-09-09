@@ -212,7 +212,7 @@ export const ThreadDock = memo(function ThreadDock({
     void threadStore.initialize();
     void refreshProviderSettings();
     void refreshSlashCommands();
-    const unsubscribeSettings = window.lin?.onSettingsChanged?.(() => {
+    const unsubscribeSettings = window.lin?.onConfigurationChanged?.('models', () => {
       void refreshProviderSettings();
       void refreshSlashCommands();
     });
@@ -429,7 +429,7 @@ export const ThreadDock = memo(function ThreadDock({
             <button
               className="button button-primary"
               disabled={creating}
-              onClick={() => void window.lin?.openSettings?.({ page: 'services' })}
+              onClick={() => void window.lin?.openSettings?.({ destination: 'models' })}
               type="button"
             >
               <SettingsIcon size={ICON_SIZE.menu} />

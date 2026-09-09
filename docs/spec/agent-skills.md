@@ -298,7 +298,8 @@ Final Agent answers link an ordinary persisted `node:UUID` as
 The built-in `configuration` Skill guides ordinary file edits for declarative
 preferences and root Agent configuration. It routes credentials, connection
 tests, Skill lifecycle, Memory reset, data deletion, application/update actions,
-and diagnostics to their semantic owners instead of inventing general setters.
+and diagnostics to their owning user-interface controls. It adds no management
+tools or CLI and does not recreate those operations through private-file edits.
 For every file edit it reads the generated schema, preserves unrelated JSONC,
 and verifies the addressed desired/effective state against a status record from
 the current Host session; a completed write alone is not proof of application.
@@ -317,14 +318,16 @@ history.
 Configurable command bindings use the sibling `config/keybindings.jsonc` source
 and generated `keybindings.schema.json`. The configuration Skill edits that file
 directly for a known chord, alternates, disable, or reset-by-property-removal.
-Physical recording remains a human interaction in the Keyboard Shortcuts page,
+Physical recording remains a human interaction in the Keyboard Shortcuts manager,
 not a prerequisite for an Agent that already knows the chord. The Skill verifies
 the `keybindings` member of `status.json`, including desired/effective divergence
 after a failed global registration. No command, model tool, or CLI edits or
 validates shortcut settings.
 
-The Skills page has an explicit **Review Skills** action that generates a
-read-only curation report from the current loaded registry. The report is bound
+The Skills page places **Check Skill Files…** inside collapsed
+**Troubleshooting**, with an explanation of its limited scope. It generates a
+read-only report from the current loaded registry, labels rows Checked/Skipped,
+and omits internal fingerprints from the user interface. The report is bound
 to a registry fingerprint containing each Skill identity, source, current
 content hash, and recorded Agent-write hash; it is not a second settings store
 and it never writes, enables, disables, deletes, or rewrites a Skill. Only
@@ -421,26 +424,20 @@ Skill source bindings and disabled identities are exposed through a Skill-owned
 settings view and update route. They still persist under
 `config/settings.jsonc`, but the Skill Library does not edit the aggregate Agent
 runtime settings DTO; the Host applies the accepted file result to the active
-Skill runtime and broadcasts the normal settings refresh. This keeps Skill
+Skill runtime and publishes the scoped `skills` configuration event. This keeps Skill
 configuration ownership local while preserving one source of desired state.
 
-### Lifecycle owner and Agent tools
+### Lifecycle owner and user interface
 
-`createManagedSkillsHost` exposes one lifecycle facade over the managed service,
-provenance store, and Skill runtimes. Human IPC and root Agent tools use that
-owner; neither calls the other. `skill_inspect` lists the library, inspects exact
-targets and provenance, browses the catalog, discovers sources, checks and
-previews updates, and reads curation reports. `skill_manage` installs, applies
-updates, rolls back, uninstalls, or undoes an Agent definition edit. Preference
-changes remain ordinary public configuration edits; no settings CLI exists.
-
-Both tools have strict object-rooted schemas with nested operation variants.
-They are root-only, independently selected and globally disableable. Admission
-and deferred commit checks enforce the active Turn, selection, global tool
-disablement, and action blocks. `agent.skill.inspect` and `agent.skill.manage`
-are distinct actions. Network-bearing operations add `web.fetch`; local
-rollback and undo do not. Undo also evaluates the Host-resolved file-write path,
-including sensitive-path blocks. A lifecycle tool never grants `skill` invocation.
+`createManagedSkillsHost` exposes the managed service, provenance store, and
+Skill runtimes to the Library. Human Library IPC reads catalog, discovery,
+target/provenance inspection, update checks/previews, and file diagnostics
+directly from those owners. Installation, rollback, uninstall, and recorded
+Agent-edit undo share a window-owned mutation path with strict internal IPC
+validation. There are no
+model-facing lifecycle tools or Agent runtime adapters. Agent preference changes
+use ordinary public configuration edits; no Settings CLI exists. The Library's
+registry does not grant `skill` invocation authority.
 
 Managed mutations bind identity, revision, and active hash. Update adds a
 preview and candidate hash; rollback adds the retained previous hash. Discovery
@@ -449,22 +446,21 @@ body must match the full reviewed body. No model-provided approval, private
 path, or display-name fallback can select or authorize a mutation.
 
 Install, update, rollback, and uninstall open the same Skill-owned native review
-window for human and Agent callers. It shows full admissible instructions as
+window for Library callers. It shows full admissible instructions as
 inert text, source, commit, scripts, and bounded update differences. The window
 fills its native frame; content scrolls independently of its action footer.
 Only its designated main frame may submit a boolean decision through the
-narrow preload. The Host binds it to its originating window or Thread/Turn/Item,
+narrow preload. The Host binds it to its originating window,
 exact target, and the remaining 30-minute discovery/preview lifetime. Caller
 loss, cancellation, renderer/window/Host loss, or timeout writes nothing. Target
 and authority are checked again under the mutation guard; no lock is held while
 waiting for the user. Concurrent reviews remain independent and unrelated Turns
 can progress. Undo's validated one-step restore needs no new review prompt.
 
-Lists and curation reports default to 20 entries and cap at 50, with cursors
-bound to the caller view and snapshot. Discovery, update summaries, and preview
-paths are byte-bounded with explicit omission counts and narrower-query
-guidance. Model truncation never shortens the human instruction review.
-Canonical results distinguish cancellation, expiry, stale targets, unavailable
+The Library reads lists and file reports from their existing services; the
+retired model-specific query and pagination layer is removed. The review keeps
+full admissible instruction text and the service's bounded update differences.
+Operation results distinguish cancellation, expiry, stale targets, unavailable
 resources, conflicts, and denial. Success reports the committed version,
 removal, or restored hash separately from observed availability and runtime
 refresh. Post-commit cleanup or refresh failure does not reverse saved content
@@ -478,7 +474,7 @@ refresh generations and pending-mutation fences preserve newer user changes.
 
 ### Acquisition behind `+`
 
-Acquiring a Skill is occasional, so it does not occupy the page. The list header
+Acquiring a Skill is occasional, so it does not occupy the page. The page toolbar
 carries an icon-only `+` (B6) whose menu has two entries:
 
 1. **Add Skill** — one panel holding the recommended catalog *and* a GitHub URL
@@ -640,8 +636,8 @@ absent, not disabled, when no managed Skill is installed.
 
 There is no periodic polling, no background download, and no auto-apply.
 
-Availability surfaces as a **count badge on the Skills row in the settings
-navigation** — a neutral count, not a status colour.
+Availability is shown inside the Skills pane. General and settings search do not
+load an unvisited Skills pane or maintain an update-count badge.
 
 A failed check records an `update_failed` diagnostic on that record and does
 nothing else (A12): it never blocks launch, raises an alert, or changes any

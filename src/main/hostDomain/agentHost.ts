@@ -28,15 +28,9 @@ import { AutomationScheduler } from '../agent/automations/AutomationScheduler';
 import { AutomationService } from '../agent/automations/AutomationService';
 import { AutomationStore } from '../agent/automations/AutomationStore';
 import { createAutomationTool } from '../agent/automations/AutomationTool';
-import { createSkillLifecycleTools } from '../agent/capabilities/skillLifecycleTools';
 import type { SkillOperationCaller } from './skillLifecycle';
 import { createMemoryOperations, type MemoryOperations, type OpenMemory, type ReviewMemoryReset } from './memoryOperations';
-import { createMemoryTools } from '../agent/capabilities/memoryTools';
-import { createPreviewTools } from '../agent/capabilities/previewTools';
-import { createApplicationTools } from '../agent/capabilities/applicationTools';
-import type { ApplicationOperation } from './applicationOperations';
 import { projectAutomationLifecycle } from '../agent/projects/projectAutomationLifecycle';
-import type { PreviewOperations } from './previewOperations';
 import { AutomationWorktree } from '../agent/automations/AutomationWorktree';
 import { MemoryControlStore } from '../agent/extensions/memory/MemoryControlStore';
 import { MemoryExtension } from '../agent/extensions/memory/MemoryExtension';
@@ -89,8 +83,6 @@ export interface AgentHostComposition {
 }
 
 export interface AgentHostOptions {
-  readonly previewOperations?: PreviewOperations;
-  readonly applicationOperations?: () => ApplicationOperation | null;
   readonly reviewMemoryReset: ReviewMemoryReset;
   readonly openMemory: OpenMemory;
   readonly onMemoryChanged: () => void;
@@ -575,28 +567,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       context,
       localWorkspaceForContext(context),
     ),
-    dynamicTools: (context, authorize) => [createAutomationTool(automationService),
-      ...(options.previewOperations && context.thread.parentThreadId === null && context.thread.threadSource === 'user' && !context.thread.ephemeral
-        ? createPreviewTools(options.previewOperations, (itemId, signal) => ({
-          key: `agent:${context.thread.id}:${context.turn.id}:${itemId}`,
-          origin: { kind: 'agent', threadId: context.thread.id, turnId: context.turn.id, itemId }, authorize, signal,
-        })) : []),
-      ...(options.applicationOperations?.() && context.thread.parentThreadId === null && context.thread.threadSource === 'user' && !context.thread.ephemeral
-        ? createApplicationTools(options.applicationOperations()!, (itemId, signal) => ({
-          origin: { kind: 'agent', threadId: context.thread.id, turnId: context.turn.id, itemId },
-          authorize,
-          signal,
-        })) : []),
-      ...(context.thread.parentThreadId === null && context.thread.threadSource === 'user' && !context.thread.ephemeral
-        ? createMemoryTools(memoryOperations, (itemId, signal) => ({
-          origin: { kind: 'agent', threadId: context.thread.id, turnId: context.turn.id, itemId }, authorize, signal,
-        })) : []),
-      ...createSkillLifecycleTools(managedSkills.lifecycle, (itemId, signal) => ({
-        key: `agent:${context.thread.id}:${context.turn.id}`,
-        origin: { kind: 'agent', threadId: context.thread.id, turnId: context.turn.id, itemId },
-        runtime: managedSkills.runtimeForTurn(context.turn.id), authorize, signal,
-      })),
-    ],
+    dynamicTools: () => [createAutomationTool(automationService)],
     delegationPolicy: (threadId) => {
       const session = delegationStore.readSession(threadId);
       return session ? { profile: session.policy.profile, access: session.policy.access } : null;

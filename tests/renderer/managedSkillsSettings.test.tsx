@@ -11,7 +11,7 @@ import type {
 } from '../../src/core/types';
 import type { Locale } from '../../src/core/locale';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
-import { SettingsSkillLibrarySection } from '../../src/renderer/ui/agent/SettingsSkillLibrarySection';
+import { SkillLibrary } from '../../src/renderer/ui/agent/SkillLibrary';
 import { SkillReviewWindow } from '../../src/renderer/ui/agent/SkillReviewWindow';
 import type { SkillReview } from '../../src/core/agent/skillOperations';
 
@@ -63,7 +63,7 @@ describe('Skill library — managed sources', () => {
     await clickText(rendered, 'Install');
     expect(requests).toEqual([{ operation: 'install', discoveryId: 'discovery', candidateId: 'candidate', expectedCommit: 'a'.repeat(40) }]);
     expect(toggles).toEqual([]);
-    expect(rendered.document.querySelector('[aria-label="Enable demo-skill"]')?.getAttribute('aria-checked')).toBe(String(!disabled));
+    expect(rendered.document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Enable demo-skill"]')?.getAttribute('aria-checked')).toBe(String(!disabled));
     expect(rendered.document.body.textContent).toContain('demo-skill installed.');
     expect(rendered.document.body.textContent).not.toContain('installed and enabled');
   });
@@ -218,10 +218,8 @@ describe('Skill library — managed sources', () => {
     expect(rendered.document.body.textContent).toContain('Modified');
     expect(rendered.document.body.textContent).toContain('Recommended');
     expect(rendered.document.body.textContent).toContain('Unverified');
-    // Four rows: the empty-catalog row, the GitHub URL row, and one row per
-    // managed skill. The old fifth was the installed group's "check for
-    // updates" row, which no longer exists as a list row.
-    expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(4);
+    // Acquisition and file diagnostics do not add entries to the installed library.
+    expect(rendered.document.querySelectorAll('.settings-skills-section > .inset-group .inset-row')).toHaveLength(2);
   });
 
   // Every failure of the GitHub flow rendered into page flow, underneath the
@@ -289,15 +287,11 @@ function renderComponent(
   // surface that shares its state, so the section is the renderable unit.
   act(() => root.render(
     <I18nProvider>
-      {options.review || options.loadReview ? <SkillReviewWindow /> : <SettingsSkillLibrarySection
+      {options.review || options.loadReview ? <SkillReviewWindow /> : <SkillLibrary
         additionalSkillDirectories={[]}
         disabledSkills={options.disabledSkills ?? []}
         onDirectoriesChange={async (next) => next}
-        onSkillCountChange={() => undefined}
-        onUpdateCountChange={() => undefined}
         onApplied={async () => undefined}
-        onError={() => undefined}
-        onNotice={() => undefined}
         onToggleSkill={options.onToggleSkill ?? (() => undefined)}
       />}
     </I18nProvider>,

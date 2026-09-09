@@ -11,7 +11,9 @@ truthful progressive copy, and settle into the existing success or failure
 state.
 
 The Thread/Plan working-state foundation already shipped in #531 and is current
-spec authority. This plan contains only the unimplemented Settings consumer.
+spec authority. The Settings surface uses the single-window domain managers and
+per-operation feedback from #656. This plan contains only the unimplemented
+WorkingText consumer over those owners.
 
 ## Non-goals
 
@@ -38,18 +40,20 @@ spec authority. This plan contains only the unimplemented Settings consumer.
 
 Use `WorkingText` only while these actions are actively executing:
 
-- `ProviderConfigForm`: `Validating...` in the cancellable result row and
-  `Saving...` in the save action;
+- `ProviderConfigForm`: `Testing…` in the connection-test button and
+  `Saving…` in the save action;
 - `ManagedSkillsSettings`: `Resolving...`, `Installing...`, and `Applying...`;
   and
 - managed-Skill reversal/destructive actions with explicit `Uninstalling...`
-  and `Rolling back...` English and Simplified Chinese messages.
+  and `Rolling back...` English and Simplified Chinese messages, published
+  through `useManagedSkills` to the affected operation's feedback owner.
 
 The visible command keeps its stable `AddIcon`, `RefreshIcon`, `TrashIcon`, or
 `UndoIcon`; progress does not replace identity with `LoaderIcon`. Provider
-validation has exactly one animated owner in its result row. A disabled button
-may repeat the progressive label statically but must not create a second moving
-copy.
+validation has exactly one animated owner in its connection-test button. Keep
+its result and retry interaction there instead of restoring a separate result
+row. Skill feedback or disabled buttons may repeat the progressive label
+statically but must not create a second moving copy.
 
 ### Retained states
 
@@ -68,10 +72,10 @@ the only indication that the command is in progress.
 ### Ownership and verification
 
 Expected product ownership is limited to `ManagedSkillsSettings`,
-`ProviderConfigForm`, the English and Simplified Chinese Agent settings message
-catalogs, focused renderer/E2E tests, and the current Settings/Skill specs. The
-PR consumes the public `WorkingText` contract without changing its component or
-CSS.
+`useManagedSkills`, `ProviderConfigForm`, the English and Simplified Chinese
+Agent settings message catalogs, focused renderer/E2E tests, and the current
+Settings/Skill specs. The PR consumes the public `WorkingText` contract without
+changing its component or CSS.
 
 Automated evidence covers these test titles or their current equivalents:
 
@@ -88,8 +92,8 @@ motion, increased contrast, and success/error settlement without layout shift.
 
 - **AC-1:** Provider validation/save and managed-Skill mutations show the
   specified progressive copy and settle into existing success/error states.
-- **AC-2:** Provider validation has one animated result-row owner; repeated
-  disabled-button copy is static.
+- **AC-2:** Provider validation has one animated owner in the connection-test
+  button; repeated disabled-button copy is static.
 - **AC-3:** Install/update/uninstall/rollback retain their action glyphs and do
   not substitute a loader glyph.
 - **AC-4:** Reduced motion and increased contrast keep every working phrase

@@ -1,17 +1,12 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { mkdirSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { createAssistantMessageEventStream, type AssistantMessage, type Model } from '@earendil-works/pi-ai';
 import {
   decodeMemoryConsolidationOutput,
   decodeMemoryStage1Output,
   MEMORY_TAG_DEFINITIONS,
 } from '../../src/core/agent/memory';
 import type { Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
-import { createTextSearchIndex } from '../../src/core/textSearchIndex';
 import {
   MemoryControlStore,
   type MemoryGeneratedNodeRecord,
@@ -56,21 +51,6 @@ import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 import { createMemoryOperations, type MemoryOperationCaller } from '../../src/main/hostDomain/memoryOperations';
 import { captureMemoryResetTarget } from '../../src/main/agent/extensions/memory/MemoryResetTarget';
 import { AgentToolFailure } from '../../src/main/agent/AgentToolFailure';
-import { ThreadService, type ThreadServiceStores } from '../../src/main/agent/ThreadService';
-import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentConfigurationLoader';
-import { ExtensionRegistry } from '../../src/main/agent/ExtensionRegistry';
-import { PiTurnExecutor } from '../../src/main/agent/runtime/PiTurnExecutor';
-import { PiModelGateway } from '../../src/main/agent/runtime/kernel/ModelGateway';
-import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
-import { createMemoryTools } from '../../src/main/agent/capabilities/memoryTools';
-import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
-import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
-import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
-import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
-import { AgentResourceStore } from '../../src/main/agent/persistence/AgentResourceStore';
-import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
-import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
-import { AgentStartupContextStore } from '../../src/main/agent/context/AgentStartupContext';
 
 const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc';
 const TURN_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd';
@@ -1677,7 +1657,7 @@ describe('Codex Memory contracts', () => {
   });
 });
 
-describe('Memory human and Agent operations', () => {
+describe('Memory window-owned operations', () => {
   function fixture(behavior: { failAfterCommitOnce?: boolean } = {}) {
     const store = memoryStore();
     const state = mutableTimelineHost(memoryProjection(), behavior);
@@ -1686,7 +1666,7 @@ describe('Memory human and Agent operations', () => {
     const host = memoryThreadHost(rootThread([]));
     memory.bindHost(host);
     const caller: MemoryOperationCaller = {
-      origin: { kind: 'agent', threadId: THREAD_ID, turnId: TURN_ID, itemId: ITEM_ID },
+      origin: { kind: 'window', windowId: 1 },
       authorize: async () => {},
     };
     const operations = createMemoryOperations({ memory, review: async () => true,
@@ -1697,21 +1677,21 @@ describe('Memory human and Agent operations', () => {
   test('shares exact Thread identity and revision checks without requiring global enablement', async () => {
     const { store, operations, caller } = fixture();
     store.setFeatureMode('disabled', []);
-    expect(await operations.inspect({ request: { operation: 'status' } }, caller)).toMatchObject({ thread: { threadId: THREAD_ID, mode: 'enabled', revision: 0 } });
-    expect(await operations.manage({ request: { operation: 'set_thread_mode', mode: 'disabled', expectedRevision: 0 } }, caller)).toMatchObject({ thread: { revision: 1, appliesAt: 'subsequent_admissions' } });
-    await expect(operations.manage({ request: { operation: 'set_thread_mode', mode: 'enabled', expectedRevision: 0 } }, caller)).rejects.toMatchObject({ code: 'stale_memory_thread' });
+    expect(await operations.inspect({ request: { operation: 'status', threadId: THREAD_ID } }, caller)).toMatchObject({ thread: { threadId: THREAD_ID, mode: 'enabled', revision: 0 } });
+    expect(await operations.manage({ request: { operation: 'set_thread_mode', threadId: THREAD_ID, mode: 'disabled', expectedRevision: 0 } }, caller)).toMatchObject({ thread: { revision: 1, appliesAt: 'subsequent_admissions' } });
+    await expect(operations.manage({ request: { operation: 'set_thread_mode', threadId: THREAD_ID, mode: 'enabled', expectedRevision: 0 } }, caller)).rejects.toMatchObject({ code: 'stale_memory_thread' });
     expect(store.threadMode(THREAD_ID)).toBe('disabled');
     await expect(operations.inspect({ request: { operation: 'status', threadId: 'missing' } }, caller)).rejects.toMatchObject({ code: 'memory_thread_unavailable' });
   });
 
-  test('rejects ineligible callers and never accepts model-supplied confirmation or private targets', async () => {
+  test('rejects ineligible Thread targets and never accepts supplied confirmation or private targets', async () => {
     const { operations, caller, host } = fixture();
     for (const request of [{ operation: 'reset', approved: true }, { operation: 'reset', target: {} }, { operation: 'set_feature_mode', mode: 'disabled' }]) {
       await expect(operations.manage({ request }, caller)).rejects.toMatchObject({ code: 'invalid_request' });
     }
     const read = host.readThread;
     host.readThread = () => ({ thread: { ...read({ threadId: THREAD_ID }).thread, parentThreadId: 'parent' } });
-    await expect(operations.manage({ request: { operation: 'open' } }, caller)).rejects.toMatchObject({ code: 'memory_thread_ineligible' });
+    await expect(operations.inspect({ request: { operation: 'status', threadId: THREAD_ID } }, caller)).rejects.toMatchObject({ code: 'memory_thread_ineligible' });
   });
 
   test('cancellation admits no Reset and changed reviewed content is never deleted', async () => {
@@ -1900,126 +1880,8 @@ describe('Memory human and Agent operations', () => {
     await memory.stopWorker();
   });
 
-  test('a provider-driven root Turn inspects, changes mode, opens and settles Reset through the real owner', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tenon-memory-turn-'));
-    const store = memoryStore();
-    const state = mutableTimelineHost(memoryProjection());
-    const memory = new MemoryExtension(store, new TimelineMemoryStore(state.host));
-    const extensions = new ExtensionRegistry();
-    extensions.register(memory, { applicationInstructions: true });
-    let toolRuntime!: ToolRuntime;
-    let index = 0;
-    let reviews = 0;
-    const outcomes: any[] = [];
-    const inspect = (request: object) => ({ name: 'memory_inspect', args: { request } });
-    const manage = (request: object) => ({ name: 'memory_manage', args: { request } });
-    const steps = [
-      () => inspect({ operation: 'status' }),
-      () => manage({ operation: 'set_thread_mode', mode: 'disabled', expectedRevision: outcomes[0].thread.revision }),
-      () => inspect({ operation: 'status' }),
-      () => manage({ operation: 'set_thread_mode', mode: 'enabled', expectedRevision: outcomes[2].thread.revision }),
-      () => manage({ operation: 'open' }),
-      () => manage({ operation: 'reset' }),
-      () => inspect({ operation: 'reset', operationId: outcomes[5].reset.operationId }),
-      () => inspect({ operation: 'status' }),
-    ];
-    const model: Model<'openai-responses'> = {
-      id: 'fixture-model', name: 'Fixture', api: 'openai-responses', provider: 'openai',
-      baseUrl: 'https://provider.invalid', reasoning: false, input: ['text'],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128_000, maxTokens: 8_192,
-    };
-    const executor = new PiTurnExecutor({
-      resolveRuntime: async () => ({ model, thinkingLevel: 'off', getApiKey: async () => undefined }),
-      resolveRuntimeSettings: async () => ({ additionalSkillDirectories: [], disabledSkills: [],
-        providerTimeoutMs: null, providerMaxRetries: 0, providerMaxRetryDelayMs: 1, providerCacheRetention: 'short' }),
-      createTools: (context) => toolRuntime.createTools(context),
-      beforeProviderContext: (context) => toolRuntime.prepareProviderContext(context),
-      createGateway: (hooks) => new PiModelGateway({ ...hooks, streamSimple: (_model, context) => {
-        if (index > 0) {
-          const result = context.messages.findLast((message) => message.role === 'toolResult');
-          if (!result || result.role !== 'toolResult') throw new Error('Missing tool result');
-          const header = JSON.parse((result.content[0] as { text: string }).text.split('\n', 1)[0]!);
-          expect(header).not.toHaveProperty('error');
-          expect(result.isError).toBe(false);
-          outcomes.push(header.data.result);
-        }
-        const next = steps[index++]?.();
-        const message: AssistantMessage = {
-          role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(),
-          content: next ? [{ type: 'toolCall', id: `memory-fixture-${index}`, name: next.name, arguments: next.args }]
-            : [{ type: 'text', text: 'Memory operations completed.' }],
-          stopReason: next ? 'toolUse' : 'stop',
-          usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-        };
-        const stream = createAssistantMessageEventStream();
-        queueMicrotask(() => { stream.push({ type: 'done', reason: next ? 'toolUse' : 'stop', message }); stream.end(message); });
-        return stream;
-      } }),
-    });
-    const service = new ThreadService({ stores: memoryTurnStores(root), executor, extensions,
-      attachmentScratchRoot: join(root, 'scratch'), transcriptRoot: join(root, 'transcripts'),
-      resolveConfiguration: () => ({ ...defaultEffectiveThreadConfiguration(), tools: ['memory_inspect', 'memory_manage'] }),
-    });
-    memory.bindHost(service);
-    const operations = createMemoryOperations({ memory,
-      review: async (review, caller) => { expect(caller.origin.kind).toBe('agent'); expect(review.nodeCount).toBe(3); reviews++; return true; },
-      open: async (authorize) => { await authorize(); return { operation: 'open', nodeId: 'node:search', navigation: 'unknown' }; },
-    });
-    toolRuntime = new ToolRuntime(service, { capabilityTools: () => [], capabilityConfig: { blocks: [] },
-      dynamicTools: (context, authorize) => createMemoryTools(operations, (itemId, signal) => ({
-        origin: { kind: 'agent', threadId: context.thread.id, turnId: context.turn.id, itemId }, authorize, signal,
-      })),
-    });
-    try {
-      await service.initialize();
-      await memory.prepareForTurnAdmission();
-      const { thread } = await service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', cwd: root });
-      const completed = Promise.withResolvers<Turn>();
-      const unsubscribe = service.subscribe((notification) => {
-        if (notification.type === 'turn/completed') completed.resolve(notification.turn);
-      });
-      await service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Inspect Memory, change this Thread mode, open Memory, then request Reset.' }] });
-      const turn = await completed.promise;
-      unsubscribe();
-      expect(turn.error).toBeNull();
-      expect(turn.status).toBe('completed');
-      expect(outcomes).toHaveLength(steps.length);
-      expect(outcomes[0].thread.threadId).toBe(thread.id);
-      expect(outcomes[2].thread).toMatchObject({ mode: 'disabled', revision: 1 });
-      expect(outcomes[4].navigation).toBe('unknown');
-      expect(outcomes[5].reset).toMatchObject({ state: 'finalized', targetEpoch: 1 });
-      expect(outcomes[6].reset).toEqual(outcomes[5].reset);
-      expect(outcomes[7].status.resetEpoch).toBe(1);
-      expect(store.isTurnExcluded(turn.id)).toBe(true);
-      expect(state.deletedNodeIds).toEqual([MEMORY_NODE_ID]);
-      expect(reviews).toBe(1);
-      const calls = turn.items.filter((item) => item.type === 'dynamicToolCall');
-      expect(calls).toHaveLength(steps.length);
-      expect(calls.every((item) => item.status === 'completed' && item.modelCall?.disposition === 'replayable')).toBe(true);
-    } finally {
-      await memory.stopWorker();
-      await service.close();
-      await rm(root, { recursive: true, force: true });
-    }
-  }, 20_000);
-});
 
-function memoryTurnStores(root: string): ThreadServiceStores {
-  const directory = join(root, 'agent');
-  mkdirSync(directory, { recursive: true });
-  const database = (name: string) => new Database(join(directory, name), { create: true }) as unknown as SqliteDatabase;
-  const goals = database('goals.sqlite');
-  return {
-    metadata: new ThreadMetadataStore(join(directory, 'state.sqlite'), database('state.sqlite')),
-    history: new ThreadHistoryProjectionStore(join(directory, 'history.sqlite'), database('history.sqlite')),
-    rollout: new RolloutStore(join(directory, 'rollouts')),
-    goals: new GoalStore(join(directory, 'goals.sqlite'), goals), toolTasks: new ToolTaskStore(goals),
-    agentStartupContexts: new AgentStartupContextStore(goals), payloads: new ToolPayloadStore(join(directory, 'payloads')),
-    resources: new AgentResourceStore(join(directory, 'resources.sqlite'), join(root, 'content'),
-      join(root, 'scratch'), Date.now, database('resources.sqlite')),
-  };
-}
+});
 
 function memoryStore(): MemoryControlStore {
   const store = new MemoryControlStore(

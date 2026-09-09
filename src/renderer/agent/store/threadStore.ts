@@ -115,7 +115,7 @@ export class ThreadStore {
 
   constructor(
     private readonly client: Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'>
-      & Partial<Pick<typeof api, 'onSettingsChanged'>> = api,
+      & Partial<Pick<typeof api, 'onConfigurationChanged'>> = api,
     private readonly scheduleListenerFlush: ThreadStoreListenerScheduler = scheduleOnNextFrame,
   ) {}
 
@@ -135,7 +135,7 @@ export class ThreadStore {
     // would keep its old name in an open transcript until the reader switched
     // conversations.
     if (!this.unsubscribeSettings) {
-      this.unsubscribeSettings = this.client.onSettingsChanged?.(() => {
+      this.unsubscribeSettings = this.client.onConfigurationChanged?.('agents', () => {
         this.reloadLoadedIdentityCatalogs();
       }) ?? null;
     }

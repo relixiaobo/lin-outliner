@@ -260,14 +260,24 @@ before side effects, without falling back to an unrestricted address. See
 Ordinary text `file_read` bounds the observation rather than the source. It
 classifies encoding and binary content from an 8 KiB prefix, streams only until
 the requested line window, an extra-content signal, or the 200,000-character
-projection budget is reached, then closes the stream. `totalLines` is known only
-when the scan reaches EOF; `hasMore` and `lineTruncated` make incomplete views
-explicit. The active Turn's `AbortSignal` reaches the reader; cancellation closes
+projection budget is reached, then closes the stream. `totalLines` is an integer
+only when the scan reaches EOF and is `null` otherwise, including in the
+model-visible output schema. These bounded reads remain successful partial
+results; `hasMore` and `lineTruncated` make incomplete views explicit. The active
+Turn's `AbortSignal` reaches the reader; cancellation closes
 the stream and propagates as cancellation rather than being rewritten as a file
 failure. Editing and notebook parsing still require their independent 10 MiB
 whole-file budget. Image `file_read` uses main's globally serialized native
 normalization path: it accepts at most 256 MiB of source data and emits at most
 2,000 px / 4.5 MiB of model input rather than base64-encoding the original file.
+
+`file_grep` sorts paths before applying offsets so consecutive pages on an
+unchanged tree neither repeat nor skip files. Each page retains complete lines
+or filenames within the shared 4,096-entry and 256 KiB serialized result-data
+limits, including UTF-8 and JSON escaping. A clipped page is a successful partial
+result; its continuation offset advances by the number of entries actually
+returned, including when the byte limit is reached before the requested limit.
+
 PDF and rich-document reads retain their own page, byte, output, and timeout
 budgets; PDF source size is rejected before whole-file buffering, and rendered
 page images are normalized serially through the same bounded image path. A PDF
@@ -318,6 +328,14 @@ Admission rejects non-strings, unpaired UTF-16 surrogates, and more than 64 MiB 
 The Host creates task state and capture first, writes with backpressure, and closes stdin;
 early exit or write failure settles that same Tool Task.
 
+Explicit-background Bash without `timeout` has no elapsed-time deadline. It stays
+owned and running after the initiating Turn ends, until process exit, explicit Stop,
+orderly application Quit, or a resource limit. A positive timeout bounds foreground
+and background processes alike; foreground Bash defaults to 120 seconds. Delegated
+Agent jobs retain their configured scheduling deadline. A nullable timeout is persisted
+with the Task and passed to its supervisor; it is not an extremely large timer.
+The pre-release Task store requires fresh development data for this format change.
+
 Background execution is explicit. When `run_in_background` is omitted or false, the
 `bash` Tool call waits for terminal settlement regardless of elapsed wall-clock time;
 duration never changes the control flow because subsequent Agent work may depend on the
@@ -340,6 +358,35 @@ reattaches to a matching live supervisor or consumes its receipt; authenticated 
 absence without one becomes `lost`, while ambiguous identity remains occupied rather
 than being treated as free capacity. Orderly Quit requests process-group teardown and
 bounded drain. No command is replayed during recovery.
+
+`task_status` keeps terminal state, exit status, and artifact references available
+even when JSON escaping makes the captured output preview exceed the shared
+result-data budget. It clips only the visible output prefix and sets
+`outputTruncated`; stored stdout/stderr and task details remain unchanged.
+
+`task_status` exposes active-process logs through a timestamped `observation`, while
+`result` remains null until terminal settlement. Each observation freezes a log prefix
+at its observed byte length, bounded by the existing Task detail ceiling. Scan the
+complete-line prefix from its beginning before choosing the visible tail, so a display
+boundary cannot lose multiline secret context. Growing captures also redact an unmatched
+private-key opening marker through the observation's end; complete-value scanning keeps
+its existing behavior. Large captures use the existing secret-scanner worker. Scanner
+failure withholds raw text; an oversized or shortened capture yields a bounded omission
+notice instead of falling back to an unsafe raw tail. Apply the existing JSON output
+budget after redaction. Truncated or incomplete lines are omitted with an explicit truncation
+flag. Reading does not stop the producer, rewrite raw logs, finalize artifacts, or create
+a receipt. Terminal output continues to use the immutable sanitized capture.
+The development Skill uses observations plus an appropriate endpoint/Runtime/UI check;
+process existence alone is not readiness. It leaves verified servers running for the user
+and continues authorized diagnosis if a completion event reveals a failure.
+
+Ordinary tool environments omit ambient Electron development control variables
+(`ELECTRON_EXEC_PATH`, `ELECTRON_RENDERER_URL`, `ELECTRON_CLI_ARGS`,
+`ELECTRON_MAJOR_VER`, `ELECTRON_USER_DATA_DIR`, and `ELECTRON_RUN_AS_NODE`). Explicit
+admitted environment overrides still apply. Outline CLI exports remain available for
+operating the owning application; a nested desktop resolves its own Runtime entry and
+interpreter from its source/package instead of consuming a parent's CLI export as a
+launch override.
 
 Packaged execution may add Host-only environment such as `ELECTRON_RUN_AS_NODE` to start
 the standalone supervisor. The supervisor removes those control keys before launching
@@ -508,28 +555,55 @@ feature does not add one or relax capability/worktree restrictions.
 - `web_fetch`: HTTP retrieval with redirect, size, and content extraction limits
 - `generate_image`: configured image-provider generation
 
-Web discovery uses a bounded Google → DuckDuckGo HTML provider chain. Each
-eligible engine receives at most one retry for a transient navigation fault,
-and the chain stops at the first non-empty result set. Google organic links that
-expose opaque `/goto` capabilities are resolved only inside the Google adapter:
-a dedicated JavaScript-disabled window requests an admitted
-`https://www.google.com/goto` URL, intercepts its first main-frame redirect, and
-prevents navigation before the external target is requested. Resolution has
-per-candidate and whole-batch time bounds; popups, same-host redirects, further
-navigations, invalid protocols, and malformed URLs are rejected. DuckDuckGo
-redirect targets are read locally from `uddg`. Every recovered target is
-revalidated as external HTTP(S) before admission.
+Ordinary web discovery uses fixed hosted search MCP endpoints over HTTP:
+Parallel first, then Exa when the primary fails or returns no usable results.
+The Host sends one JSON-RPC `tools/call` POST per eligible provider through a
+credential-free Electron `Session.fetch` partition. There is no BrowserWindow,
+homepage request, form submission, or page-script execution in this path.
+No MCP SDK or external process is needed. Optional `PARALLEL_API_KEY` and
+`EXA_API_KEY` process credentials are captured by the search client and sent
+only in provider-specific headers; requests otherwise use anonymous access.
+Endpoint redirects are rejected and credentials never enter result metadata.
 
-A successful empty search means every attempted provider that reached a normal
-SERP reported no organic results. A challenge, transport failure, SPA shell, or
-page with unextractable candidates remains a diagnostic hint/error; it never
-collapses into `ok: true` with an empty list. The provider that actually supplies
-results is retained in Host details, and fallback use produces a model-visible
-warning without exposing provider telemetry as result data. Search titles and
-snippets are untrusted discovery metadata, not factual evidence; when a result
-supports an answer, the Agent uses `web_fetch` to observe the admitted URL's
-actual final URL, status, and content before citing it. Image discovery
-continues to use Bing Images independently of this web provider chain.
+The search client owns a 20-second total deadline, with at most 10 seconds per
+provider including response-body reading. It accepts JSON and SSE envelopes,
+requires the matching response ID, checks both JSON-RPC and tool errors, and
+bounds each response to 512 KiB. Parallel's structured records and Exa's
+explicit title/URL/text records become the existing title/URL/snippet shape.
+Invalid or credential-bearing URLs are omitted, complete URLs are retained,
+fragments are removed for deduplication, and the selected records fit a 64 KiB
+JSON budget. Titles and excerpts are bounded; clipping is reported as truncated.
+The reported result count describes admitted candidates, not the size of the
+provider's search index. Bare and URL-form `site` inputs share URL domain
+canonicalization, including internationalized domains, before provider hints
+and exact/subdomain filtering. `recency_days` is encoded as a best-effort query
+hint and still requires date verification.
+
+A non-empty result set stops the chain. Empty success requires both providers
+to return valid empty candidate sets; an empty response never erases another
+provider's failure. Host details retain each provider's outcome and duration.
+Exa's complete known empty-result message is accepted as empty and does not
+trigger a provider cooldown; unrecognized trailing error text remains invalid.
+Transport errors, rate limits, and malformed responses produce bounded error
+categories without forwarding provider error text as instructions. Failed
+providers cool down for 30 seconds, extended by Retry-After up to five minutes.
+Repeated queries during an outage receive a useful failure instead of repeating
+the same blocked requests or suggesting a query rewrite.
+
+Successful non-empty searches are cached for 60 seconds, with at most 64
+entries per client. Cache identity includes the effective query, result limit,
+site, recency, and the date of a freshness cutoff; credentials are fixed per
+client. Identical in-flight calls share a request, while each caller can cancel
+independently. The underlying operation is cancelled when its final caller
+leaves; cancelled work and failures are never cached. Cache and attempt
+telemetry stay in Host details rather than the model result data.
+
+Search titles and snippets remain untrusted discovery metadata. The Agent uses
+`web_fetch` to observe a source URL's actual final URL, status, and content before
+using it as factual evidence. Image discovery continues independently through
+Bing Images, with its existing bounded browser extraction and transient retry.
+The real Electron web-tool probe verifies ordinary HTTP search, the original
+Chinese query, cache reuse without network, and no search-created windows.
 
 `web_fetch` uses a credential-free Electron `Session.fetch` partition with
 automatic redirect following, then applies its byte, timeout, and extraction
@@ -555,6 +629,14 @@ metadata and removes the path. Artifact
 admission failure reports partial success and a warning without reclassifying the
 completed HTTP request as a network failure.
 
+`web_fetch` budgets model-visible find results after UTF-8 encoding and JSON
+escaping. It retains complete match snippets and advances `nextMatchOffset` to
+the first omitted match. Metadata text is bounded independently: individual
+text fields use a 4 KiB JSON allowance and metadata uses 64 KiB overall. URLs
+are kept whole or omitted, never shortened into a different address. Clipped
+projections report partial status and truncation guidance; complete extracted
+metadata and the original match window remain in Host details.
+
 `generate_image` separates the provider's original artifact from the bounded image shown
 to the model. It validates provider MIME/base64 against the 256 MiB source-image safety
 boundary and admits the original into the shared ContentStore through an opaque Agent
@@ -575,6 +657,11 @@ the tool result. Original or observation admission failure omits only that outpu
 leaves unreferenced writes for normal Turn cleanup. Typed Thread-resource quota and
 filesystem-capacity errors degrade generic image persistence to `quotaExceeded`;
 unrelated storage errors retain their identity.
+
+Provider text accompanying generated images fits at most 16 parts within the
+remaining 256 KiB serialized result-data budget. Truncation preserves Unicode
+characters, reports partial status and a warning, and leaves saved images,
+preview content, and complete provider text in Host details intact.
 
 Generated local images are displayed automatically, so the tool returns no Markdown image
 syntax and does not ask the model to repeat them. When the user names a destination, the
@@ -710,73 +797,25 @@ is untrusted command output with a stable Session handle, terminal outcome,
 bounded text/error, usage, artifacts, and worktree disposition. Only an explicit
 later `delegate send` invocation continues that Session.
 
-### Memory Management
+### Application Configuration
 
-Memory management has two independent root-only contracts, `memory_inspect` and
-`memory_manage`, backed by the same domain facade as the human UI. Their closed,
-object-rooted schemas carry nested `request` variants and bounded `result`
-variants. Status, exact Thread revision, Reset settlement, and acknowledged
-navigation are management data; content retrieval/editing remains ordinary
-Outline work. Global Memory enablement is a configuration file edit. Reset
-accepts neither model approval nor a supplied deletion target. See
-[`agent-memory.md`](agent-memory.md#user-surface) for ownership and settlement.
+Agent configuration uses the existing ordinary file tools and the built-in
+configuration Skill. Public source files, schemas, and current-Host status are
+the contract: preserve unrelated content and distinguish saved, accepted, and
+effective values. No Settings-specific model tools or Configuration CLI exist.
 
-### Preview And Data Operations
+Skill acquisition/maintenance, Memory opening/reset, preview-local translation,
+data cleanup, update checks, and diagnostics export remain user-interface
+operations. Their internal Host services and IPC preserve live-window admission,
+exact targets, native confirmation, cancellation, and settlement. They are not
+published in the model catalog and have no Agent runtime adapters. The Skill
+directs users to Settings, the preview controls, or App/Help menus for these
+operations rather than inventing keys or touching private stores.
 
-`preview_inspect`, `preview_manage`, `data_inspect`, and `data_manage` are
-independent root-only domain tools. Their closed object-rooted schemas use a
-nested `request` and bounded `result`; they share the same Host facade as human
-controls, not a settings-command dispatcher or private-file interface.
-
-Preview inspection returns up to four opaque lifetime IDs, pane IDs, revisions,
-controls, effective language, readiness and cache availability, never source text,
-URLs or paths. Management requires an inspected revision; an omitted ID is valid
-only for exactly one eligible preview. Configure patches language/model (null
-restores Follow UI/Agent), automatic enablement and display intent
-(`automatic`, `translated`, `original`). Only a matching renderer controller
-acknowledgement returns `applied`; missing acknowledgement is `unknown`, and
-unavailable/stale lifetimes require reinspection. Provider completion is separate.
-
-`clear_cache` selects the registered current source, never an Agent-supplied path.
-`data_manage` accepts only `translations` or `websites`. Every deletion requires
-cancel-default native review. Translation clearing removes shared saved entries
-but retains every live display and pending result. Website clearing affects only
-Tenon's preview partition and reports each stage and reload outcome separately.
-Data inspection exposes counts, logical/Chromium bytes, session availability,
-guest count and up to 32 Host-lifetime receipts. Re-delivery of a recorded
-maintenance invocation cannot clear fresh data again. After caller loss, inspect
-settlement; after restart, inspect current data rather than inventing a receipt.
-
-See [Preview translation](workspace-layout.md) for lifetime, cache-ticket, and UI
-ownership. None of these tools writes durable translation preferences or adds a
-Settings/Configuration CLI.
-
-### Application And Diagnostics Operations
-
-`application_inspect`, `application_manage`, `diagnostics_inspect`, and
-`diagnostics_manage` are root-only operations backed by the same Host facade as
-the About and Help surfaces. Application inspection returns bounded version/build
-facts, bundled release information, cached update state, and the fixed
-Help/Issues/License destinations. Bundled release inspection resolves the
-current build's packaged changelog with
-the same current-version/newest-noted fallback used by About, and remains
-separate from remote update state. `check_updates` is explicitly fresh; cached
-availability is never described as a successful check, including when it is
-returned alongside a failed fresh check. Management can open only a validated
-release/download or one of those fixed destinations and cannot install updates
-or accept an arbitrary URL. Domain unavailability, failed opening, and explicit
-check errors produce failed semantic outcomes with stable recovery guidance.
-
-Diagnostics inspection returns aggregate record counts and severity totals only.
-Reveal flushes and shows the Host-owned local log; export always uses a native
-save dialog, returns the redacted artifact outcome, and accepts no model-supplied
-path. After a path is selected, export obtains the diagnostic environment and
-then revalidates the caller signal, current operation authority, originating
-window identity, and Host lifetime immediately before writing. Cancellation is
-a cancellation outcome; reveal/export failures are failed semantic outcomes.
-Neither operation uploads or posts diagnostics. All four tools expose closed,
-bounded, operation-discriminated output data. They do not create a
-Settings/Configuration CLI or expand the aggregate Settings DTO.
+Global Memory enablement and Skill availability/source bindings remain public
+file preferences. Memory content is ordinary Outline data. See
+[Memory](agent-memory.md#user-surface), [Skills](agent-skills.md), and
+[Preview translation](workspace-layout.md) for the retained user workflows.
 
 ### Skills
 
@@ -787,21 +826,10 @@ current Thread catalog and explicit blocks.
 The effective presence of `skill` gates instruction invocation. When absent or
 globally disabled, the Host emits no instruction catalog or Skill stable-prompt
 module and does not recognize direct slash or natural-language Skill invocation.
-A configured Skill name cannot bypass that gate. A registry may still exist for
-separately admitted lifecycle inspection; it grants no invocation authority.
-
-`skill_inspect` and `skill_manage` are independent root-only domain tools with
-strict nested operation schemas. They call the same lifecycle owner as the
-human Library. Inspection owns bounded discovery, exact targets, update previews,
-and diagnostics; management owns install, apply update, rollback, uninstall, and
-hash-bound Agent-edit undo. Tool selection, global disablement, and explicit
-action blocks are checked at admission and again before delayed commit. Network
-descriptors follow the selected operation; undo checks its Host-resolved mutable
-file target. Human review is sender-bound native UI, never a model argument.
-Results separate committed content, observed availability, and refresh failure.
-Preference edits still use public configuration files, with no settings CLI or
-private-store fallback. The full lifecycle contract lives in
-[`agent-skills.md`](agent-skills.md).
+A configured Skill name cannot bypass that gate. The human Skill Library retains
+its independent registry and lifecycle service without granting instruction
+invocation authority. Availability and source bindings use public configuration
+files; installation and maintenance use the Library's reviewed operations.
 
 A successful invocation returns only `{"status":"loaded"}` before its
 supplemental instruction content is projected canonically. The result has no

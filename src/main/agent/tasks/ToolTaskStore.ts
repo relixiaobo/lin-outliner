@@ -47,7 +47,7 @@ interface ToolTaskRow {
   outcome_reason: string | null;
   error_message: string | null;
   detail_state: string;
-  timeout_ms: number;
+  timeout_ms: number | null;
   stop_requested_at: number | null;
   terminal_digest: string | null;
   stdout_bytes: number;
@@ -147,7 +147,7 @@ export class ToolTaskStore {
         outcome_reason TEXT,
         error_message TEXT,
         detail_state TEXT NOT NULL CHECK (detail_state IN ('available', 'expired', 'cleared', 'storage_pressure')),
-        timeout_ms INTEGER NOT NULL CHECK (timeout_ms > 0),
+        timeout_ms INTEGER CHECK (timeout_ms IS NULL OR timeout_ms > 0),
         stop_requested_at INTEGER,
         terminal_digest TEXT,
         stdout_bytes INTEGER NOT NULL DEFAULT 0 CHECK (stdout_bytes >= 0),

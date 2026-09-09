@@ -1,5 +1,6 @@
 import type { AgentTool, AgentToolResult } from './kernel/types';
-import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from '../capabilities/agentToolEnvelope';
+import { agentToolResult, errorEnvelope, MAX_TENON_RESULT_DATA_BYTES, successEnvelope, type ToolEnvelope } from '../capabilities/agentToolEnvelope';
+import { boundJsonString, jsonByteLength } from '../capabilities/agentToolResultBudget';
 import type { TSchema } from 'typebox';
 import {
   assembleModelToolRegistry,
@@ -40,7 +41,7 @@ import {
   type DelegatedToolPolicy,
 } from '../delegation/delegatedToolPolicy';
 
-export type DeferredToolAuthority = (toolName: string, args: unknown, signal?: AbortSignal, fileWritePath?: string) => Promise<void>;
+export type DeferredToolAuthority = (toolName: string, args: unknown, signal?: AbortSignal) => Promise<void>;
 
 export interface ToolRuntimeOptions {
   readonly localWorkspace?: AgentLocalWorkspaceContext | ((context: TurnExecutionContext) => AgentLocalWorkspaceContext);
@@ -136,7 +137,7 @@ export class ToolRuntime {
           turnId: context.turn.id,
           ...(delegateCommandRuntime === undefined ? {} : { delegateCommandRuntime }),
         });
-    const dynamicTools = await this.options.dynamicTools?.(context, (name, args, signal, fileWritePath) => this.authorizeDeferredTool(context, name, args, signal, fileWritePath)) ?? [];
+    const dynamicTools = await this.options.dynamicTools?.(context, (name, args, signal) => this.authorizeDeferredTool(context, name, args, signal)) ?? [];
     const dynamicToolSet = new Set(dynamicTools);
     const tools = [
       ...capabilityTools,
@@ -331,7 +332,8 @@ export class ToolRuntime {
             'Use a task_id returned by a background-producing tool in this Thread.',
           );
         }
-        const output = await toolTasks.output(task.taskId, threadId);
+        const observation = await toolTasks.observeOutput(task.taskId, threadId);
+        const output = observation ?? await toolTasks.output(task.taskId, threadId);
         const combined = [output?.stdout, output?.stderr].filter(Boolean).join('\n');
         return toolResult('task_status', {
           taskId: task.taskId,
@@ -347,6 +349,7 @@ export class ToolRuntime {
           reason: task.outcomeReason,
           error: task.error,
           output: combined || null,
+          observedAt: observation?.observedAt ?? null,
           outputTruncated: Boolean(output?.stdoutTruncated || output?.stderrTruncated),
           detailState: task.detailState,
           artifacts: task.artifacts.map((artifact) => ({
@@ -384,7 +387,7 @@ export class ToolRuntime {
     ];
   }
 
-  private async authorizeDeferredTool(context: TurnExecutionContext, name: string, args: unknown, signal?: AbortSignal, fileWritePath?: string): Promise<void> {
+  private async authorizeDeferredTool(context: TurnExecutionContext, name: string, args: unknown, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     const contract = modelToolContract(name);
     const turn = this.service.readTurnForHost(context.thread.id, context.turn.id);
@@ -394,7 +397,7 @@ export class ToolRuntime {
       || !turn || turn.status !== 'inProgress') {
       throw new AgentToolFailure('operation_unavailable', 'This operation is no longer available in the initiating Turn.', 'Inspect the current configuration before retrying.');
     }
-    const decision = evaluateAgentToolCapability({ toolName: name, args, fileWritePath, policy: {
+    const decision = evaluateAgentToolCapability({ toolName: name, args, policy: {
       workspaceRoot: this.service.defaultExecutionDirectory(), capabilityConfig: await this.capabilityConfig(),
     } });
     if (decision.behavior === 'unavailable') {
@@ -646,11 +649,7 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
   }
   if (tool === 'task_status' && isRecord(details)) {
     const terminal = details.state !== 'running' && details.state !== 'settling';
-    return agentToolResult(successEnvelope(tool, details, {
-      instructions: details.state === 'running' || details.state === 'settling'
-        ? 'The task is still active. Do not poll; completion will be delivered automatically.'
-        : undefined,
-    }), {
+    const visible = {
       taskId: details.taskId,
       state: details.state,
       progress: details.progress && isRecord(details.progress) ? {
@@ -658,18 +657,34 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
         message: details.progress.message ?? null,
         fraction: details.progress.fraction ?? null,
       } : null,
+      observation: !terminal && typeof details.observedAt === 'number' ? {
+        observedAt: details.observedAt,
+        output: null as string | null,
+        outputTruncated: Boolean(details.outputTruncated),
+      } : null,
       result: terminal ? {
         exitCode: details.exitCode ?? null,
         signal: details.signal ?? null,
         reason: details.reason ?? null,
         error: details.error ?? null,
-        output: details.output ?? null,
+        output: null as string | null,
         outputTruncated: Boolean(details.outputTruncated),
         detailState: details.detailState,
         artifacts: Array.isArray(details.artifacts) ? details.artifacts : [],
         storagePressure: details.storagePressure ?? null,
       } : null,
-    });
+    };
+    const capture = visible.result ?? visible.observation;
+    if (capture && typeof details.output === 'string') {
+      const remaining = MAX_TENON_RESULT_DATA_BYTES - jsonByteLength(visible) + 4;
+      capture.output = boundJsonString(details.output, Math.max(2, remaining));
+      capture.outputTruncated ||= capture.output !== details.output;
+    }
+    return agentToolResult(successEnvelope(tool, details, {
+      instructions: details.state === 'running' || details.state === 'settling'
+        ? 'The task is still active. This bounded log observation is not a terminal result or proof of readiness. Verify the requested service, keep it running for user testing, and use task_stop only when it should end. Avoid repetitive polling; completion is delivered automatically.'
+        : undefined,
+    }), visible);
   }
   return agentToolResult(successEnvelope(tool, details), details);
 }

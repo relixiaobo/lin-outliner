@@ -9,7 +9,7 @@ import type {
   SkillDefinition,
 } from '../../src/core/types';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
-import { SettingsSkillLibrarySection } from '../../src/renderer/ui/agent/SettingsSkillLibrarySection';
+import { SkillLibrary } from '../../src/renderer/ui/agent/SkillLibrary';
 
 /**
  * The library is one list over every source. What matters here is that a row's
@@ -162,15 +162,19 @@ describe('skill library list', () => {
       curationReport: report,
     });
     const review = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.getAttribute('aria-label') === 'Review Skills');
-    if (!review) throw new Error('Missing Review Skills control');
+      .find((button) => button.textContent === 'Check Skill Files…');
+    if (!review) throw new Error('Missing Skill file diagnostic control');
+    expect(review.closest('details')?.querySelector('summary')?.textContent).toBe('Troubleshooting');
+    expect(review.closest('details')?.hasAttribute('open')).toBe(false);
     await act(async () => {
+      review.closest('details')?.setAttribute('open', '');
       review.click();
       await Promise.resolve();
     });
     expect(rendered.calls.map((call) => call.command)).toContain('agent_skill_curation_report');
-    expect(rendered.document.body.textContent).toContain('Skill curation report');
+    expect(rendered.document.body.textContent).toContain('Skill File Diagnostics');
     expect(rendered.document.body.textContent).toContain('Use `bash` instead.');
+    expect(rendered.document.body.textContent).not.toContain('b'.repeat(64));
     expect(rendered.document.body.textContent).toContain('No reliable Agent-write provenance is recorded.');
     expect([...rendered.document.querySelectorAll('button')].some((button) => /apply|fix|write/i.test(button.textContent ?? ''))).toBe(false);
   });
@@ -223,7 +227,7 @@ describe('skill library list', () => {
     expect(rendered.document.body.textContent).toContain('No skills yet.');
     // Exactly one empty row, and it stays inside the group so the `+` that fixes
     // the empty state is still reachable from it.
-    expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(1);
+    expect(rendered.document.querySelectorAll('.settings-skills-section > .inset-group .inset-row')).toHaveLength(1);
     expect(rendered.document.querySelector('.inset-group-header-action button[aria-haspopup="menu"]')).not.toBeNull();
   });
 
@@ -325,48 +329,9 @@ describe('skill library list', () => {
       .not.toContain('is-muted');
   });
 
-  test('the badge is not zeroed before the installed list is read', async () => {
-    // The shell computed a real count already. Reporting the initial empty
-    // array as "none" wiped it, and a failed read never restored it.
-    const counts: number[] = [];
-    await render({
-      skills: [],
-      managed: [managedSkill({ status: 'update-available', updateCommit: 'b'.repeat(40) })],
-      onUpdateCountChange: (count) => { counts.push(count); },
-    });
 
-    expect(counts[0]).not.toBe(0);
-    expect(counts.at(-1)).toBe(1);
-  });
 
-  test('counts every managed record once and refreshes after the managed list changes', async () => {
-    const counts: number[] = [];
-    const incompatible = managedSkill({
-      id: 'managed-incompatible',
-      name: 'incompatible',
-      status: 'failed',
-      compatibility: { status: 'incompatible', appVersion: '0.1.0' },
-    });
-    const rendered = await render({
-      skills: [localSkill('notes', 'user'), localSkill('pdf', 'managed')],
-      managed: [managedSkill(), incompatible],
-      onSkillCountChange: (count) => { counts.push(count); },
-    });
 
-    expect(counts.at(-1)).toBe(3);
-
-    rendered.setManaged([managedSkill()]);
-    const check = rendered.document.querySelector<HTMLButtonElement>(
-      '.inset-group-header-action button[aria-label="Check managed skills for updates"]',
-    );
-    if (!check) throw new Error('Missing check-for-updates control');
-    await act(async () => {
-      check.click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(counts.at(-1)).toBe(2);
-  });
 
   test('enabling a managed skill keeps other pending toggles', async () => {
     const drafted: string[] = [];
@@ -394,35 +359,7 @@ describe('skill library list', () => {
     expect(rendered.document.querySelector('.settings-skill-diagnostic')).toBeNull();
   });
 
-  test('reports the update count up, and revises it when one is applied', async () => {
-    // The shell reads the count once, before the ambient check has run and
-    // before anything is applied. Left at that, the badge reported work that no
-    // longer existed until the window was reopened.
-    const counts: number[] = [];
-    const withUpdate = managedSkill({ status: 'update-available', updateCommit: 'b'.repeat(40) });
-    const rendered = await render({
-      skills: [],
-      managed: [withUpdate],
-      onUpdateCountChange: (count) => { counts.push(count); },
-    });
 
-    expect(counts.at(-1)).toBe(1);
-
-    // Applying an update clears updateCommit on the record. Re-listing is what
-    // every managed mutation does, so drive that and require the count to follow.
-    rendered.setManaged([managedSkill()]);
-    const check = rendered.document.querySelector<HTMLButtonElement>(
-      '.inset-group-header-action button[aria-label="Check managed skills for updates"]',
-    );
-    if (!check) throw new Error('Missing check-for-updates control');
-    await act(async () => {
-      check.click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(counts.at(-1)).toBe(0);
-  });
 
   test('offers an explicit check that the ambient throttle cannot suppress', async () => {
     const rendered = await render({ skills: [], managed: [managedSkill()] });
@@ -520,7 +457,7 @@ describe('skill library list', () => {
   });
 
   test('every managed row can be checked on its own', async () => {
-    const rendered = await render({ skills: [], managed: [managedSkill()] });
+    const rendered = await render({ skills: [], managed: [managedSkill(), managedSkill({ id: 'managed-doc', name: 'document' })] });
 
     await act(async () => {
       rendered.document.querySelector<HTMLButtonElement>('[aria-label="pdf actions"]')?.click();
@@ -539,6 +476,25 @@ describe('skill library list', () => {
     const call = rendered.calls.filter((entry) => entry.command === 'agent_managed_skill_check_updates').at(-1);
     expect(call?.args?.skillId).toBe('managed-pdf');
     expect(call?.args?.ambient).toBeUndefined();
+    const row = switchFor(rendered.document, 'Enable pdf').closest('.inset-row')!;
+    expect(row.querySelector('[role="status"]')?.textContent).toBe('Up to date');
+    expect(switchFor(rendered.document, 'Enable document').closest('.inset-row')?.textContent).not.toContain('Up to date');
+    expect(rendered.document.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+
+  test('an explicit failed update check reports the diagnostic once on its Skill', async () => {
+    const rendered = await render({ skills: [], managed: [managedSkill({ diagnostic: { code: 'github_rate_limited' } })] });
+    await act(async () => {
+      rendered.document.querySelector<HTMLButtonElement>('[aria-label="pdf actions"]')?.click();
+      await settle();
+    });
+    const check = [...rendered.document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Check for updates');
+    if (!check) throw new Error('Missing per-skill check action');
+    await act(async () => { check.click(); await settle(); });
+    const row = switchFor(rendered.document, 'Enable pdf').closest('.inset-row')!;
+    expect(row.querySelector('[role="alert"]')?.textContent).toBe('GitHub request limit reached. Try again later.');
+    expect(row.textContent?.split('GitHub request limit reached.').length).toBe(2);
   });
 
   test('a recommendation whose name is already taken offers no Install', async () => {
@@ -708,7 +664,7 @@ describe('skill library list', () => {
 
     await openAddMenu(rendered, 'Add Local Directory…');
 
-    expect(errors.at(-1)).toContain('at most');
+    expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('at most');
   });
 
   test('unbinding a directory only drops the pointer', async () => {
@@ -869,16 +825,12 @@ async function render(input: {
   await act(async () => {
     root.render(
       <I18nProvider>
-        <SettingsSkillLibrarySection
+        <SkillLibrary
           additionalSkillDirectories={input.directories ?? []}
           disabledSkills={input.disabledSkills ?? []}
           onDirectoriesChange={input.onDirectoriesChange ?? (async (next) => next)}
           onApplied={async () => undefined}
-          onError={input.onError ?? (() => undefined)}
-          onNotice={input.onNotice ?? (() => undefined)}
-          onSkillCountChange={input.onSkillCountChange ?? (() => undefined)}
           onToggleSkill={input.onToggleSkill ?? (() => undefined)}
-          onUpdateCountChange={input.onUpdateCountChange ?? (() => undefined)}
         />
       </I18nProvider>,
     );

@@ -1,8 +1,11 @@
 import {
+  MAX_TENON_RESULT_DATA_BYTES,
+  agentToolResult,
   successEnvelope,
   type ToolEnvelope,
   type ToolMetrics,
 } from './agentToolEnvelope';
+import { boundJsonString, jsonByteLength } from './agentToolResultBudget';
 import {
   DEFAULT_FETCH_CHARS,
   DEFAULT_SEARCH_LIMIT,
@@ -70,7 +73,22 @@ export interface WebSearchData {
   durationMs?: number;
   hint?: WebToolHint;
   results: WebSearchResult[];
+  attempts?: WebSearchAttempt[];
+  cached?: boolean;
 }
+
+export interface WebSearchAttempt {
+  providerName: string;
+  status: 'success' | 'empty' | 'error' | 'skipped';
+  durationMs: number;
+  code?: string;
+}
+
+export type WebSearchOutcome = (
+  | { kind: 'ok'; finalUrl: string; results: WebSearchResult[]; responseBytes: number; truncated?: boolean }
+  | { kind: 'hint'; finalUrl: string; hint: WebToolHint }
+  | { kind: 'error'; finalUrl?: string; code: string; message: string; instructions?: string }
+) & { providerName?: string; attempts?: WebSearchAttempt[]; cached?: boolean };
 
 export interface WebPageMetadata {
   title?: string;
@@ -140,9 +158,8 @@ export interface NormalizedWebSearchParams {
   query: string;
   kind: WebSearchKind;
   limit: number;
-  // The query with any `site:` operator folded in. Each provider builds its own
-  // results URL from this; there is no provider-specific URL in these
-  // kind-agnostic params.
+  // The query with any `site:` operator folded in. Providers map this to their
+  // own requests; kind-agnostic params carry no provider-specific endpoint.
   effectiveQuery: string;
   site?: string;
   recencyDays?: number;
@@ -504,11 +521,15 @@ export function webSearchModelData(data: WebSearchData): unknown {
   return visible;
 }
 
-export function webFetchModelData(data: WebFetchData): unknown {
+export function webFetchModelData(data: WebFetchData): Record<string, unknown> {
   const visible: Record<string, unknown> = {};
-  if (data.title) visible.title = data.title;
+  if (data.title) {
+    visible.title = boundJsonString(data.title, 4_096);
+    if (visible.title !== data.title) visible.truncated = true;
+  }
   if (data.finalUrl && data.finalUrl !== data.url) visible.finalUrl = data.finalUrl;
   if (data.statusCode && data.statusCode !== 200) visible.statusCode = data.statusCode;
+  if (data.hint) visible.hint = data.hint;
 
   if (data.binaryFile) {
     visible.binaryFile = {
@@ -517,16 +538,33 @@ export function webFetchModelData(data: WebFetchData): unknown {
       mimeType: data.binaryFile.mimeType,
       byteLength: data.binaryFile.byteLength,
     };
-    if (data.hint) visible.hint = data.hint;
     return visible;
   }
 
   if (data.mode === 'metadata') {
-    if (data.metadata) visible.metadata = data.metadata;
+    if (data.metadata) {
+      const bounded = boundedWebMetadata(data.metadata);
+      visible.metadata = bounded.metadata;
+      if (bounded.truncated) visible.truncated = true;
+    }
   } else if (data.mode === 'find') {
-    visible.matches = (data.matches ?? []).map((match) => ({ snippet: match.snippet }));
+    const matches: Array<{ snippet: string }> = [];
+    visible.matches = matches;
     visible.totalMatches = data.totalMatches ?? 0;
     if (data.nextMatchOffset !== undefined) visible.nextMatchOffset = data.nextMatchOffset;
+    // Reserve the continuation fields before selecting complete snippets.
+    let visibleBytes = jsonByteLength({ ...visible, truncated: true, nextMatchOffset: Number.MAX_SAFE_INTEGER });
+    for (const match of data.matches ?? []) {
+      const projected = { snippet: match.snippet };
+      const itemBytes = jsonByteLength(projected) + (matches.length > 0 ? 1 : 0);
+      if (visibleBytes + itemBytes > MAX_TENON_RESULT_DATA_BYTES) {
+        visible.nextMatchOffset = match.index;
+        visible.truncated = true;
+        break;
+      }
+      matches.push(projected);
+      visibleBytes += itemBytes;
+    }
   } else {
     if (data.truncated) {
       visible.truncated = true;
@@ -534,8 +572,71 @@ export function webFetchModelData(data: WebFetchData): unknown {
       if (data.nextOffset !== undefined) visible.nextOffset = data.nextOffset;
     }
   }
-  if (data.hint) visible.hint = data.hint;
   return visible;
+}
+
+function boundedWebMetadata(source: WebPageMetadata): { metadata: WebPageMetadata; truncated: boolean } {
+  const metadata: WebPageMetadata = {};
+  let truncated = false;
+  const maxBytes = 64 * 1024;
+  for (const key of ['title', 'description', 'siteName', 'language'] as const) {
+    const value = source[key];
+    if (value === undefined) continue;
+    metadata[key] = boundJsonString(value, 4_096);
+    truncated ||= metadata[key] !== value;
+  }
+  if (source.canonicalUrl !== undefined) {
+    if (jsonByteLength({ ...metadata, canonicalUrl: source.canonicalUrl }) <= maxBytes) {
+      metadata.canonicalUrl = source.canonicalUrl;
+    } else truncated = true;
+  }
+  if (source.headings) {
+    metadata.headings = [];
+    for (const heading of source.headings) {
+      const text = boundJsonString(heading, 4_096);
+      truncated ||= text !== heading;
+      metadata.headings.push(text);
+      if (jsonByteLength(metadata) > maxBytes) {
+        metadata.headings.pop();
+        truncated = true;
+        break;
+      }
+    }
+  }
+  if (source.links) {
+    metadata.links = [];
+    for (const link of source.links) {
+      const text = boundJsonString(link.text, 4_096);
+      truncated ||= text !== link.text;
+      // URLs remain complete and actionable; omit an entry that cannot fit.
+      metadata.links.push({ text, url: link.url });
+      if (jsonByteLength(metadata) > maxBytes) {
+        metadata.links.pop();
+        truncated = true;
+      }
+    }
+  }
+  return { metadata, truncated };
+}
+
+export function webFetchToolResult(envelope: ToolEnvelope<WebFetchData>) {
+  const supplemental = envelope.data?.mode === 'read' && envelope.data.content !== undefined
+    ? [{ type: 'text' as const, text: envelope.data.content }]
+    : [];
+  const visible = envelope.data ? webFetchModelData(envelope.data) : undefined;
+  const clipped = visible?.truncated === true;
+  const result = agentToolResult(
+    clipped ? {
+      ...envelope,
+      ...(envelope.ok ? { status: 'partial' as const } : {}),
+      warnings: [...(envelope.warnings ?? []), 'The visible page was truncated. Use its continuation offset, or read the page content for omitted metadata.'],
+      metrics: { ...envelope.metrics, truncated: true },
+    } : envelope,
+    visible,
+    supplemental,
+  );
+  const resourceRef = envelope.data?.binaryFile?.resourceRef;
+  return resourceRef ? { ...result, resourceRefs: [resourceRef] } : result;
 }
 
 export function buildEffectiveSearchQuery(query: string, site?: string): string {
@@ -543,21 +644,9 @@ export function buildEffectiveSearchQuery(query: string, site?: string): string 
   return `${query} site:${site}`;
 }
 
-export function buildGoogleSearchUrl(query: string): string {
-  const params = new URLSearchParams({ q: query });
-  return `https://www.google.com/search?${params.toString()}`;
-}
-
 export function buildBingImagesSearchUrl(query: string): string {
   const params = new URLSearchParams({ q: query });
   return `https://www.bing.com/images/search?${params.toString()}`;
-}
-
-// DuckDuckGo's no-JS HTML endpoint: server-rendered results that scrape cleanly
-// and rarely gate, used as the secondary engine when Google is blocked or empty.
-export function buildDuckDuckGoSearchUrl(query: string): string {
-  const params = new URLSearchParams({ q: query });
-  return `https://html.duckduckgo.com/html/?${params.toString()}`;
 }
 
 function baseFetchData(
@@ -606,9 +695,9 @@ function normalizeOptionalSearchSite(value: unknown): ParamValueResult<string | 
 
   let host = '';
   try {
-    host = /^https?:\/\//i.test(withoutOperator)
-      ? new URL(withoutOperator).host
-      : withoutOperator.replace(/[/?#].*$/, '');
+    // URL canonicalization makes bare internationalized hosts match result URLs.
+    host = new URL(/^https?:\/\//i.test(withoutOperator)
+      ? withoutOperator : `https://${withoutOperator}`).host;
   } catch {
     return { ok: false, message: `invalid site host: ${site.value}` };
   }

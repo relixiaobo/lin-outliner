@@ -2,6 +2,7 @@ import type { AgentTool, AgentToolTextReplacement } from '../runtime/kernel/type
 import {
   type BashTaskStatus,
   bashTaskStatusForToolTaskState,
+  MAX_TOOL_OUTPUT_ARRAY_LENGTH,
 } from '../../../core/agent/tools';
 import type {
   ThreadResourceReference,
@@ -43,6 +44,7 @@ import {
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
+import { jsonByteLength } from './agentToolResultBudget';
 import type { AgentSkillContentTarget, AgentSkillRuntime } from './agentSkills';
 import {
   AgentSkillAuthoringError,
@@ -724,8 +726,8 @@ const BASH_PARAMETERS = {
         'For piped commands or obscure flags, add enough context to clarify what the command does.',
       ].join('\n'),
     },
-    timeout: { type: 'integer', minimum: 1, maximum: BASH_MAX_TIMEOUT_MS, description: `Optional timeout in milliseconds. Maximum ${BASH_MAX_TIMEOUT_MS}.` },
-    run_in_background: { type: 'boolean', description: 'Set to true only when the next useful action does not depend on this command result. Otherwise leave it false and wait for completion regardless of expected duration. You do not need to append "&"; use task_stop to finalize durable background output.' },
+    timeout: { type: 'integer', minimum: 1, maximum: BASH_MAX_TIMEOUT_MS, description: `Optional process lifetime in milliseconds. Foreground default: 120000. Background default: no elapsed-time limit. An explicit timeout also stops background work. Maximum ${BASH_MAX_TIMEOUT_MS}.` },
+    run_in_background: { type: 'boolean', description: 'Use true for a server that must remain available for user testing, or when useful work can continue independently. Without an explicit timeout it runs until stopped, application Quit, process exit, or a resource limit. Inspect startup output with task_status and verify readiness; keep a requested server running after verification. Do not append "&" or daemonize. Use task_stop only when the owned process should end.' },
   },
 };
 
@@ -1459,8 +1461,9 @@ function createFileGrepTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         const params = normalizeFileGrepParams(rawParams);
         const data = await runGrep(workspace, params);
         return agentToolResult(successEnvelope('file_grep', data, {
+          status: data.appliedLimit !== undefined ? 'partial' : undefined,
           instructions: data.appliedLimit !== undefined ? `More results may be available. Call file_grep again with offset ${(data.appliedOffset ?? 0) + data.appliedLimit}.` : undefined,
-          metrics: metrics(started, data),
+          metrics: { ...metrics(started, data), truncated: data.appliedLimit !== undefined },
         }), visibleFileGrep(data));
       } catch (error) {
         return localErrorResult('file_grep', error, started);
@@ -1668,7 +1671,7 @@ function createBashTool(
       'Use file_read, file_edit, file_write, file_glob, and file_grep for filesystem operations when possible.',
       'Use Bash commands such as rm, rmdir, or git rm to delete files and directories. Deletion follows the command semantics; no automatic trash copy is created.',
       'For document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).',
-      'Set run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.',
+      'Use run_in_background for servers that must remain available for user testing or independent work. Omit timeout to keep background work running until stopped. Foreground commands retain their 120-second default timeout.',
       'You do not need to append "&"; use task_stop if a background task needs to be stopped.',
       'Commands should include a clear description of what they do in active voice.',
     ].join('\n'),
@@ -1726,7 +1729,7 @@ function createBashTool(
               metrics: metrics(started, data),
             })
             : successEnvelope('bash', data, {
-              instructions: `Command is running in the background as ${data.backgroundTaskId}. Use task_stop with task_id if it needs to be stopped.`,
+              instructions: `Command is running in the background as ${data.backgroundTaskId}. Use task_status to inspect startup output and verify readiness without stopping it. Keep requested servers running; use task_stop only when they should end.`,
               metrics: metrics(started, data),
             });
           return agentToolResult(envelope, visibleBash(data));
@@ -1989,7 +1992,7 @@ function normalizeBashParams(rawParams: unknown): BashParams {
     command,
     ...(typeof input.stdin === 'string' ? { stdin: input.stdin } : {}),
     description: optionalNormalizedString(input.description),
-    timeout: clampInteger(input.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS),
+    ...(input.timeout === undefined ? {} : { timeout: clampInteger(input.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS) }),
     run_in_background: input.run_in_background === true,
   };
 }
@@ -2019,11 +2022,25 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
   }
 
   const rawLines = result.lines.slice(0, page.limit);
-  const appliedLimit = result.truncated || result.lines.length > page.limit ? page.limit : undefined;
+  const candidates = rawLines.map((line) => mode === 'files_with_matches'
+    ? relativeToWorkspace(workspace, path.resolve(workspace.root, line))
+    : relativizeRipgrepLine(workspace, line, mode));
+  const items: string[] = [];
+  let visibleBytes = jsonByteLength(mode === 'files_with_matches' ? { filenames: [] }
+    : mode === 'count' ? { content: '', numMatches: Number.MAX_SAFE_INTEGER } : { content: '' });
+  for (const item of candidates) {
+    const itemBytes = mode === 'files_with_matches'
+      ? jsonByteLength(item) + (items.length > 0 ? 1 : 0)
+      : jsonByteLength(item) - 2 + (items.length > 0 ? 2 : 0);
+    if (items.length >= MAX_TOOL_OUTPUT_ARRAY_LENGTH || visibleBytes + itemBytes > MAX_TENON_RESULT_DATA_BYTES) break;
+    items.push(item);
+    visibleBytes += itemBytes;
+  }
+  const appliedLimit = result.truncated || result.lines.length > page.limit || items.length < rawLines.length
+    ? items.length : undefined;
   const appliedOffset = page.offset > 0 ? page.offset : undefined;
 
   if (mode === 'content') {
-    const items = rawLines.map((line) => relativizeRipgrepLine(workspace, line, 'content'));
     return {
       mode: 'content',
       numFiles: 0,
@@ -2036,7 +2053,6 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
   }
 
   if (mode === 'count') {
-    const items = rawLines.map((line) => relativizeRipgrepLine(workspace, line, 'count'));
     const numMatches = items.reduce((sum, line) => {
       const colonIndex = line.lastIndexOf(':');
       const parsed = colonIndex >= 0 ? Number(line.slice(colonIndex + 1)) : Number.NaN;
@@ -2053,11 +2069,10 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
     };
   }
 
-  const filenames = rawLines.map((line) => relativeToWorkspace(workspace, path.resolve(workspace.root, line)));
   return {
     mode: 'files_with_matches',
-    numFiles: filenames.length,
-    filenames,
+    numFiles: items.length,
+    filenames: items,
     ...(appliedLimit !== undefined ? { appliedLimit } : {}),
     ...(appliedOffset !== undefined ? { appliedOffset } : {}),
   };
@@ -2065,7 +2080,8 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
 
 function buildRipgrepArgs(workspace: WorkspaceContext, target: string, params: FileGrepParams): string[] {
   const mode = params.output_mode ?? 'files_with_matches';
-  const args = ['--hidden', '--max-columns', '500'];
+  // Offset pagination must preserve file order across calls on an unchanged tree.
+  const args = ['--hidden', '--max-columns', '500', '--sort', 'path'];
   for (const dir of ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules']) {
     args.push('--glob', `!**/${dir}/**`);
   }
@@ -2475,7 +2491,7 @@ async function startSupervisedBackgroundCommand(
     parentTaskId: workspace.parentTaskId,
     onAdmitted: workspace.onTaskAdmitted,
     ...(params.stdin === undefined ? {} : { stdin: params.stdin }),
-    timeoutMs: delegateScheduling?.timeoutMs ?? params.timeout ?? BASH_DEFAULT_TIMEOUT_MS,
+    timeoutMs: delegateScheduling?.timeoutMs ?? params.timeout ?? null,
     env,
     sandbox: workspaceShellSandbox(workspace),
     producerContext: encodeDeclaredOutputArtifactPlan(declaredOutputRoots, declaredOutputSnapshot),
@@ -4466,10 +4482,6 @@ function metrics(started: number, data: unknown) {
 
 function elapsed(started: number): number {
   return Date.now() - started;
-}
-
-function jsonByteLength(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
 function errorMessage(error: unknown): string {

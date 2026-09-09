@@ -31,12 +31,12 @@ tools, and directory claims are retired. Execution context, passive instruction
 discovery, actual isolation, and validated parent/child Task ownership remain.
 The workbench plans are archived and current contracts live in the specs.
 
-Settings Unit G is claimed by #656 and remains the prerequisite before starting
-the recovery/records implementation queue. Planning and read-only collision
-checks need not wait for that merge. Rebase #656 over #659 and #660: its twelve
-Settings-tool removals leave 20 catalog tools. Retain the absence of
-`file_delete`, `project_inspect`, and `project_manage`, and reconcile the shared
-runtime/spec edits against the generic workbench contracts.
+Settings Unit G shipped in #656 over #659 and #660, completing the file-first
+Settings series and releasing the startup-fault-isolation predecessor. Settings
+operations remain UI-owned; Agent configuration uses public files and the
+configuration Skill. The final catalog has 20 tools, with the twelve Settings
+tools and `file_delete`, `project_inspect`, and `project_manage` retired. New
+claims consume the merged Settings and generic workbench contracts.
 
 PR #628 shipped internal Agent delegation and complete Subagent/isolated-Skill
 retirement under the design merged in #620. Generic Background Tool Tasks
@@ -58,9 +58,10 @@ declarative settings ownership; Unit D's Agent-facing lifecycle/provenance
 operations shipped in #644, E1 Memory operations shipped in #647, E2 preview
 translation/data operations shipped in #648, and E3 application/diagnostics
 operations shipped in #650. Unit F's configurable shortcuts shipped in #652.
-Unit G is now eligible under its declared collision checks.
-The aggregate plan remains their design authority under its dependency and
-collision checks.
+Unit G's unified navigation, source discovery, domain managers, and tool
+retirement shipped in #656. The aggregate and discovery plans are archived;
+current behavior lives in the specs. The separate Settings WorkingText consumer
+remains in the active working-state plan.
 
 Trajectory paging shipped in #625 and exact-or-unavailable evidence completed
 in #627; the plan is archived and its shared-file claim is released. Bounded
@@ -90,13 +91,14 @@ protocol, security rule, user flow, or acceptance criterion.
 
 ```text
 Parallel now eligible:
+  startup-fault-isolation
   file-preview-office
   url-static-reader
   computer-pilot-managed-skill
 
 Selected integration order:
-  Settings G (#656) ~> startup-fault-isolation
-  Workbench (simplified in #660) ~> startup-fault-isolation
+  Settings G (#656, shipped) ~> startup-fault-isolation
+  Workbench (#660, shipped) ~> startup-fault-isolation
   startup-fault-isolation ~> unified-session-records ~> targeted-thread-recovery
 
 Capability prerequisite:
@@ -105,7 +107,7 @@ Capability prerequisite:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [startup-fault-isolation](plans/startup-fault-isolation.md) | `draft` | After Settings G (#656); consume #660's generic Goal/Task, Host admission and process restart ownership. |
+| P1 | [startup-fault-isolation](plans/startup-fault-isolation.md) | `draft` | **Now; Settings G (#656) and workbench simplification (#660) shipped**; consume their Settings routes, generic Goal/Task, Host admission and process restart ownership. |
 | P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | After startup fault isolation; cover generic Task outputs, context, artifacts and isolation, and settle OQ-1 before claiming implementation |
 | P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | After startup issue/lifecycle and unified source/provenance/publication mechanisms; one complete verified rebuild/removal feature |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
@@ -156,10 +158,9 @@ Collision lanes remain claim-time constraints alongside the selected order:
   resource.
 ## Other Active Plans
 
-These plans retain their own delivery contracts. Settings supplies the remaining
-predecessor above; the other plans keep their separate
-start conditions. Any multi-PR aggregate is reshaped to claim-sized plans
-before implementation.
+These plans retain their own delivery contracts and separate start conditions.
+The Settings predecessor above is complete. Any multi-PR aggregate is reshaped
+to claim-sized plans before implementation.
 
 | Priority | Plan | Status | Start condition and collision boundary |
 | --- | --- | --- | --- |
@@ -169,9 +170,9 @@ before implementation.
 | P2 | [git-review-publication](plans/archive/git-review-publication.md) | `done` | Reviewed selected-file commits, immutable evidence, and explicit push/PR publication with remote reconciliation shipped in #657. |
 | P2 | [execution-sandbox-process](plans/archive/execution-sandbox-process.md) | `done` | Actual isolation receipts, context observations, and the bounded tmux experiment shipped in #658; measured lifecycle limits do not establish a persistent-terminal capability. |
 | P1 | [agent-delegation-runtime](plans/agent-delegation-runtime.md) | `in-progress` | Generic Tool Tasks Unit 1 shipped in #623, internal delegation plus Subagent/isolated-Skill retirement shipped in #628, and the external Runner adapter feature shipped in #637. Remaining work follows the aggregate plan's declared boundaries. |
-| P2 | [settings-control-plane](plans/settings-control-plane.md) | `in-progress` | Units A-F are shipped, with F in #652. #656 claims Unit G's final discovery/domain-manager cut; it precedes startup fault isolation on shared Host/preload/routes and does not wait for recovery. |
+| P2 | [settings-control-plane](plans/archive/settings-control-plane.md) | `done` | Units A-G completed through #656; the aggregate and discovery plans are archived and current contracts live in the specs. |
 | P2 | [interaction-jank-cleanups](plans/archive/interaction-jank-cleanups.md) | `done` | PR-1 chrome scroll batching shipped in #630, PR-2 definition caches in #632, the Runtime-index unit shipped in #633, and PR-3 translation geometry shipped in #634. |
-| P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Settings redesign landed in #626; Provider/managed-Skill working-state behavior is absorbed by Units B and D, so claim it through those units rather than as a separate implementation. |
+| P2 | [semantic-working-state](plans/semantic-working-state.md) | `draft` | Remaining Settings WorkingText consumer; target #656's connection-test button and per-operation Skill feedback. Units B/D/G's domain behavior is already shipped. |
 | P3 | [floating-toolbar-polish](plans/floating-toolbar-polish.md) | `draft` | Heading toggle is build-ready and renderer-only. Atomic tagged extraction is eligible after #598. |
 | P3 | [icon-semantics](plans/archive/icon-semantics.md) | `done` | Shipped in PR #631: semantic Iconoir presentation and renderer tool-summary cleanup. |
 | P3 | [performance-optimization](plans/performance-optimization.md) | `draft` | Three measured tails only. Core mutation indexes are eligible after #598; filename-fallback reuse and text normalization are independent. |
@@ -294,16 +295,19 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **web-search-http** (`done`, #662, 2026-09-09) - bounded Parallel/Exa HTTP search replaces Google/DuckDuckGo browser search, preserving independent Bing Images and #661's web-fetch contract; [plan archived](plans/archive/web-search-http.md).
+- **tool-output-boundaries** (`done`, #661, 2026-09-09) - partial reads and oversized search, web, image, and task results now satisfy the shared output contract while preserving continuation, artifacts, and terminal state; current behavior is recorded in the tool specification.
+- **settings-discovery / Settings complete** (`done`, #656, 2026-09-09) - unified Settings, file-based Agent configuration, safe credential previews and draft-preserving conflict retry complete Units A-G; [discovery](plans/archive/settings-discovery.md) and the [aggregate](plans/archive/settings-control-plane.md) are archived.
 - **workbench-tool-boundaries** (`done`, #660, 2026-09-09) - UI Projects and native Git/test Skills replace private workbench tools and directory claims while preserving generic Task ownership/isolation; [plan archived](plans/archive/workbench-tool-boundaries.md).
 - **remove-file-delete-tool** (`done`, #659, 2026-09-09) - local deletion now uses Bash command semantics without automatic Agent trash; existing policy/isolation and canonical deletion history remain, and the [plan is archived](plans/archive/remove-file-delete-tool.md).
 - **execution-sandbox-process / workbench complete** (`done`, #658, 2026-09-09) - actual isolation evidence and bounded tmux lifecycle measurements complete Units A-E; [Unit E](plans/archive/execution-sandbox-process.md) and the [aggregate](plans/archive/project-development-workbench.md) are archived.
 - **git-review-publication** (`done`, #657, 2026-09-09) - reviewed selected-file commits, immutable evidence, and explicit push/PR publication with remote reconciliation shipped; [plan archived](plans/archive/git-review-publication.md).
 - **verification-self-iteration** (`done`, #655, 2026-09-08) - source-bound checks, bounded correction, evidence recovery and delegation-aware mutation fencing shipped; [plan archived](plans/archive/verification-self-iteration.md).
 - **recovery/records design integration** (`done`, #653/#654, 2026-09-08) - three complete plans define startup isolation, unified records and targeted recovery after Settings G and workbench A-E; runtime remains pending.
-- **settings-control-plane Unit F** (`done`, #652, 2026-09-08) - public keybindings, the Keyboard Shortcuts editor, live handlers/hints, conflict-safe native replacement, and restart recovery shipped; Unit G remains in the active aggregate plan.
+- **settings-control-plane Unit F** (`done`, #652, 2026-09-08) - public keybindings, the Keyboard Shortcuts editor, live handlers/hints, conflict-safe native replacement, and restart recovery shipped.
 - **project-context-runtime complete** (`done`, #651, 2026-09-08) - optional Projects, confirmed Chat grouping and lineage inheritance, durable deletion fencing, immutable Automation hints, and stale Runtime startup recovery shipped; [plan archived](plans/archive/project-context-runtime.md).
 - **project-context-runtime discovery** (`done`, #649, 2026-09-08) - bounded scoped discovery, immutable successor publication, foreground evidence retention, Git/source freshness validation, and paged restart recovery shipped; Project catalog/lifecycle completed in #651.
-- **settings-control-plane Unit E3** (`done`, #650, 2026-09-08) - people and root Agents share bounded application/release/update inspection, fixed support destinations, and local diagnostics reveal/export through the Host; Unit G remains in the active aggregate plan.
+- **settings-control-plane Unit E3** (`done`, #650, 2026-09-08) - Host-owned application/release/update information, fixed support destinations and diagnostics reveal/export shipped; #656 later retired the model tools while retaining UI operations.
 - **workbench context-publication design gate** (`done`, #645, 2026-09-07) - approved immutable model-facing publications, scoped baselines, and compaction recovery across the plan series; runtime delivery followed in #646 and #649.
 - **project-development-workbench Unit A** (`done`, #646, 2026-09-07) - task-owned execution context, scoped admission and receipts, canonical publication/compaction recovery, Thread consumers, delegation/native launchers, Automation dispatch, and renderer details shipped; B-E completed in #649/#651, #655, #657, and #658.
 - **project-development-workbench design gate** (`done`, #639, 2026-09-07) - approved task-scoped execution, context, verification, publication, and process designs; all implementation units followed in #646, #649/#651, #655, #657, and #658.
@@ -313,7 +317,7 @@ One line per recent shipped integration. Older history and review detail live in
 - **preview-translation-data-operations** (`done`, #648, 2026-09-08) - preview-local translation controls, native-confirmed saved-translation and website-data clearing, and root-Agent inspection/management tools now share Host-owned lifecycle and revision boundaries; [plan archived](plans/archive/preview-translation-data-operations.md).
 - **agent-skill-curation-report** (`done`, #642, 2026-09-06) - Settings now offers an opt-in, read-only report over the loaded Skill registry; unchanged user/project Skills with reliable Agent-write provenance are analyzed for broken or root-escaping Markdown resources, exact content duplicates, and retired tool names, while excluded sources and hashes remain visible; [plan archived](plans/archive/agent-skill-curation-report.md).
 - **agent-skill-authoring-foundation** (`done`, #641, 2026-09-06) - local Skill sources now persist explicit `skill` or `container` modes, exact Skill bindings stay scoped to the selected directory, and discovery, reload, authoring, and unbind share that identity; [plan archived](plans/archive/agent-skill-authoring-foundation.md).
-- **settings-control-plane Unit A** (`done`, #636, 2026-09-05) - file-backed JSONC preferences, schema/status/recovery, global Skill/tool controls, and the configuration Skill now converge through the Host; Units B-G remain in the active plan.
+- **settings-control-plane Unit A** (`done`, #636, 2026-09-05) - file-backed JSONC preferences, schema/status/recovery, global Skill/tool controls, and the configuration Skill converge through the Host.
 - **settings-control-plane Unit B** (`done`, #638, 2026-09-06) - model connections, exact model declarations, image defaults, and application model selection now use the public JSONC settings source while credentials, catalogs, and runtime state remain domain-owned; [plan archived](plans/archive/settings-model-configuration.md).
 - **settings-control-plane Unit C** (`done`, #640, 2026-09-06) - layered root Agent configuration now has source inspection, generated schemas, comment-preserving JSONC edits, and public delegation policy in `config/settings.jsonc`; [plan archived](plans/archive/settings-root-configuration.md).
 - **codex-cli-adapter** (`done`, #637, 2026-09-06) - user-enabled Codex, Claude Code, and OpenClaw launchers now run through the generic Tool Task path with stdin delivery, PATH readiness checks, sanitized provider environments, cancellation, bounded output, and managed worktrees; [plan archived](plans/archive/codex-cli-adapter.md).
@@ -380,11 +384,7 @@ One line per recent shipped integration. Older history and review detail live in
   complete readable Pane targets, truthful focus/selection state, and distinct
   viewed versus supplied content; plan archived at
   [agent-model-context-language-contract](plans/archive/agent-model-context-language-contract.md).
-- **web-search-serp-recovery** (`done`, #615, 2026-09-02) — Google organic
-  discovery now resolves bounded provider-private `/goto` capabilities without
-  requesting result content, while the Google/DuckDuckGo chain distinguishes
-  authoritative empty SERPs from diagnostic failures; plan archived at
-  [web-search-serp-recovery](plans/archive/web-search-serp-recovery.md).
+- **web-search-serp-recovery** (`done`, #615, 2026-09-02) - original Google/DuckDuckGo recovery shipped here; #662 replaced that implementation with HTTP providers while preserving truthful empty/failure outcomes; [original plan archived](plans/archive/web-search-serp-recovery.md).
 - **agent-tool-result-envelope-contract** (`done`, #613, 2026-09-02) — all
   Tenon-owned model tools now share one Kernel-enforced semantic result envelope,
   bounded model projection, private Host details, and first-header-only durable

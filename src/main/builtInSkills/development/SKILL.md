@@ -9,25 +9,40 @@ user-invocable: true
 1. Inspect the project instructions and choose the intended Bash `cwd`. Use the
    existing capability and worktree assignment. A worktree redirects relative
    work; it does not contain arbitrary absolute-path shell effects.
-2. Run dependent commands in the foreground. Set `run_in_background: true` only
-   when useful work can continue independently. Keep the returned Task ID. Do not
-   append `&`, daemonize, or start another process to reconstruct missing context.
+2. Run finite dependent commands in the foreground. For a development server the
+   user wants to use or test, set `run_in_background: true` and omit `timeout` so
+   it remains running after the Turn. Explicit timeouts also terminate background
+   work; foreground commands default to 120 seconds. Keep the Task ID. Do not
+   append `&` or daemonize. Independent finite work may also run in the background.
+   Delegated Agent jobs retain their configured deadlines.
 3. Inspect that Task with `task_status`. Requested policy, observed OS isolation,
    capability, and worktree identity are different facts. `unsandboxed` is normal
    Full Access. The macOS write sandbox does not restrict network access.
    `unavailable` or `rejected` requires addressing the reported requirement; do
    not rerun unrestricted or broaden roots implicitly.
-4. Stop owned work with `task_stop` and inspect the terminal result. Running
-   output is not a finalized capture. Terminal output has a bounded preview;
+4. Verify startup with `task_status` running logs and an appropriate native check:
+   a server endpoint, Runtime connection, or the actual application surface.
+   Process existence, a listening frontend, and passing typechecks alone do not
+   establish that the requested application works. Running observations contain
+   bounded, sanitized complete log lines; they are not final captures. Inspect
+   only when readiness, recovery, or the user needs it; avoid repetitive polling.
+5. Leave a verified server running for the user. Do not call `task_stop` merely
+   to obtain output or finish your reply. Stop owned work only when requested or
+   necessary for an explained restart/cleanup, then inspect the terminal result.
+   Orderly application Quit also stops owned processes. Terminal output has a
+   bounded preview;
    retained output and artifacts can later expire while the compact receipt
    remains. Treat every capture as an immutable observation.
-5. A background Task does not reserve its directory. Other commands and file
+6. A background Task does not reserve its directory. Other commands and file
    operations can run there; native tool locks and ordinary coordination handle
    conflicts. Use separate worktrees for independent edits when appropriate.
-6. After a restart, retry, or compaction, reconcile the original Task before any
+7. After a restart, retry, or compaction, reconcile the original Task before any
    new start. Historical `running` means running at observation time. It is not
    proof of current liveness. Repeat neither an unchanged Skill body nor a full
-   process list in model context.
+   process list in model context. A completion notification does not cancel the
+   original request: if it reveals a startup failure, continue diagnosis and
+   reversible fixes within the user's existing authorization. Report a concrete
+   blocker only when progress requires a new decision or unavailable access.
 
 ## Interactive tmux Experiment
 

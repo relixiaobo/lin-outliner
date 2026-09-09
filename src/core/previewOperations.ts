@@ -105,21 +105,6 @@ export const PREVIEW_OBSERVATION_SCHEMA = object({
   ...observation,
   sourceId: nullable({ type: 'string', minLength: 1, maxLength: 2048 }),
 });
-const view = object({ ...observation, previewId: id, cacheAvailable: { type: 'boolean' } });
-const operation = object({
-  operationId: id,
-  scope: enumeration(['content', 'translations', 'websites']),
-  state: enumeration(['confirming', 'running', 'cleared', 'failed', 'canceled']),
-  liveDisplays: enumeration(['retained', 'reload_requested', 'reload_failed']),
-  steps: {
-    type: 'array',
-    maxItems: 8,
-    items: object({
-      name: { type: 'string', maxLength: 64 },
-      state: enumeration(['completed', 'failed']),
-    }),
-  },
-});
 export const PREVIEW_INSPECT_SCHEMA = object({ request: object({ previewId: id }, []) });
 export const PREVIEW_MANAGE_SCHEMA = object({
   request: {
@@ -147,32 +132,4 @@ export const PREVIEW_MANAGE_SCHEMA = object({
 export const DATA_INSPECT_SCHEMA = object({ request: object({}) });
 export const DATA_MANAGE_SCHEMA = object({
   request: object({ scope: enumeration(['translations', 'websites']) }),
-});
-export const PREVIEW_INSPECT_OUTPUT_SCHEMA = object({
-  result: object({ previews: { type: 'array', maxItems: 4, items: view } }),
-});
-export const PREVIEW_MANAGE_OUTPUT_SCHEMA = object({
-  result: {
-    anyOf: [
-      operation,
-      object({ state: enumeration(['applied', 'unavailable', 'unknown']), preview: view }),
-    ],
-  },
-});
-export const DATA_MANAGE_OUTPUT_SCHEMA = object({ result: operation });
-export const DATA_INSPECT_OUTPUT_SCHEMA = object({
-  result: object({
-    translations: object({
-      entries: object({ page: count, caption: count, document: count }),
-      logicalBytes: count,
-      maxBytes: count,
-      maxEntries: count,
-    }),
-    websites: object({
-      available: { type: 'boolean' },
-      cacheBytes: nullable(count),
-      activeGuests: count,
-    }),
-    operations: { type: 'array', maxItems: 32, items: operation },
-  }),
 });

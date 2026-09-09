@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { openConfiguration } from './configurationHelpers';
 import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
 
 test('real Memory transport, file application, native review target, navigation and durable Reset', async ({}, testInfo) => {
@@ -30,7 +31,8 @@ test('real Memory transport, file application, native review target, navigation 
       expect(await main.evaluate((command) => window.lin!.invoke(command, { mode: 'disabled' }).then(() => 'accepted', () => 'rejected'), command)).toBe('rejected');
     }
     expect(await main.evaluate(() => window.lin!.invoke('memory_manage', { request: { operation: 'reset', approved: true } }).then(() => 'accepted', () => 'rejected'))).toBe('rejected');
-    await main.evaluate(() => window.lin!.openProviderConfig({ providerId: 'fixture', mode: 'custom' }));
+    const models = await openConfiguration(smoke, 'models');
+    await models.evaluate(() => window.lin!.openProviderConfig({ providerId: 'fixture', mode: 'custom' }));
     await expect.poll(() => app.windows().find((page) => page.url().includes('provider=fixture'))?.url()).toBeTruthy();
     const provider = app.windows().find((page) => page.url().includes('provider=fixture'))!;
     await provider.waitForLoadState('domcontentloaded');
@@ -40,13 +42,14 @@ test('real Memory transport, file application, native review target, navigation 
       if (!provider.isClosed()) throw error;
     });
     await providerClosed;
+    await models.close();
 
     const ids = await seedMemory(main);
     const opened = await main.evaluate(() => window.lin!.invoke('memory_manage', { request: { operation: 'open' } }));
     expect(opened).toMatchObject({ operation: 'open', navigation: 'opened' });
-    await main.evaluate(() => window.lin!.openSettings({ category: 'agent', anchor: 'memory' }));
-    await expect.poll(() => app.windows().find((page) => page.url().includes('surface=settings'))?.url()).toBeTruthy();
-    const settings = app.windows().find((page) => page.url().includes('surface=settings'))!;
+    await main.evaluate(() => window.lin!.openSettings({ destination: 'memory' }));
+    await expect.poll(() => app.windows().find((page) => page.url().includes('destination=memory'))?.url()).toBeTruthy();
+    const settings = app.windows().find((page) => page.url().includes('destination=memory'))!;
     await expect(settings.getByRole('list', { name: 'Memory', exact: true })).toBeVisible();
     for (const theme of ['light', 'dark'] as const) {
       await app.evaluate(({ nativeTheme }, theme) => { nativeTheme.themeSource = theme; }, theme);
@@ -72,7 +75,7 @@ test('real Memory transport, file application, native review target, navigation 
       const value = (globalThis as any).memoryReviews.at(-1);
       return { type: value.type, detail: value.detail, defaultId: value.defaultId, cancelId: value.cancelId };
     });
-    expect(review).toEqual({ type: 'warning', detail: 'Containers: 1. Nodes: 2, including ordinary notes: 1.', defaultId: 1, cancelId: 1 });
+    expect(review).toEqual({ type: 'warning', detail: 'Memory sections: 1. Notes to delete: 2, including 1 ordinary notes.', defaultId: 1, cancelId: 1 });
     await app.evaluate(() => { (globalThis as any).memoryReviewResponse = 0; });
     await settings.getByRole('button', { name: 'Reset Memory', exact: true }).click();
     await expect(settings.getByRole('status')).toContainText('Memory reset.');

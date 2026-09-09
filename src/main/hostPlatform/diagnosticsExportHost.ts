@@ -44,11 +44,7 @@ export function createDiagnosticsExportHost<Window extends DiagnosticsExportWind
     }
 
     caller.signal?.throwIfAborted();
-    await caller.authorize(
-      'diagnostics_manage',
-      { request: { operation: 'export' } },
-      caller.signal,
-    );
+    await caller.authorize();
     caller.signal?.throwIfAborted();
     const currentParent = liveOperationWindow(options, caller);
     if (currentParent !== parent) throw unavailable();
@@ -78,7 +74,7 @@ function unavailable(): AgentToolFailure {
   return new AgentToolFailure(
     'interaction_unavailable',
     'The originating window or application Host is no longer available.',
-    'Start a new diagnostics export only from a live root Turn or Settings window.',
+    'Start a new diagnostics export from a live Settings window.',
   );
 }
 

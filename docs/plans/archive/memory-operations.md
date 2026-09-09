@@ -2,7 +2,7 @@
 
 ## Goal
 
-Complete Unit E1 of [File-First Settings](../settings-control-plane.md) in one PR:
+Complete Unit E1 of [File-First Settings](settings-control-plane.md) in one PR:
 people and root Agents can inspect Memory, open the real Memory Nodes, change
 one persistent root user Thread's mode, and request the same confirmed Reset.
 Ship the owner, human and Agent routes, recovery, tests, and spec changes

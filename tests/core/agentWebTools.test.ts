@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { agentToolResult } from '../../src/main/agent/capabilities/agentToolEnvelope';
+import { expectToolOutputContract } from '../helpers/toolOutputContract';
 import {
   buildWebFetchSuccessEnvelope,
   isWebFetchUrl,
   normalizeWebFetchParams,
   normalizeWebSearchParams,
   webFetchModelData,
+  webFetchToolResult,
   webSearchModelData,
   type FetchTextResult,
   type WebFetchData,
@@ -40,6 +42,48 @@ function fetchedText(body: string, contentType = 'text/html; charset=utf-8'): Fe
 }
 
 describe('agent web tools', () => {
+  test('paginates UTF-8 find snippets by serialized bytes without skipping matches', async () => {
+    const body = Array.from({ length: 60 }, (_, index) => `${'文'.repeat(2100)}needle${index} ${'文'.repeat(2100)}`).join('\n');
+    const seen: number[] = [];
+    let offset = 0;
+    for (let page = 0; page < 5; page += 1) {
+      const params = expectParams(normalizeWebFetchParams({
+        url: 'https://example.com/docs/page', query: 'needle', context: 2000, head_limit: 50, match_offset: offset,
+      }));
+      const envelope = await buildWebFetchSuccessEnvelope(fetchedText(body, 'text/plain'), params, 0);
+      const result = webFetchToolResult(envelope);
+      expect(result.outcome.ok).toBe(true);
+      expectToolOutputContract('web_fetch', result.data);
+      const data = result.data as { matches: Array<{ snippet: string }>; nextMatchOffset?: number; totalMatches: number };
+      expect(data.totalMatches).toBe(60);
+      seen.push(...data.matches.map((match) => Number(match.snippet.match(/needle(\d+)/)?.[1])));
+      if (data.nextMatchOffset === undefined) break;
+      expect(result.outcome).toMatchObject({ ok: true, status: 'partial' });
+      expect(data.nextMatchOffset).toBe(offset + data.matches.length);
+      expect(data.nextMatchOffset).toBeGreaterThan(offset);
+      offset = data.nextMatchOffset;
+    }
+    expect(seen).toEqual(Array.from({ length: 60 }, (_, index) => index));
+  });
+
+  test('bounds metadata text while retaining complete usable URLs and private source metadata', async () => {
+    const label = '文😀'.repeat(60_000);
+    const oversizedUrl = `https://example.com/${'x'.repeat(70_000)}`;
+    const body = `<html><title>${label}</title><body><a href="${oversizedUrl}">Too large</a><a href="/kept">${label}</a></body></html>`;
+    const params = expectParams(normalizeWebFetchParams({ url: 'https://example.com/docs/page', format: 'metadata' }));
+    const envelope = await buildWebFetchSuccessEnvelope(fetchedText(body), params, 0);
+    const result = webFetchToolResult(envelope);
+    expect(result.outcome).toMatchObject({ ok: true, status: 'partial' });
+    expectToolOutputContract('web_fetch', result.data);
+    const data = result.data as { title: string; metadata: { title: string; links: Array<{ text: string; url: string }> } };
+    expect(data.title.length).toBeLessThan(label.length);
+    expect(data.title.endsWith('\ud83d')).toBe(false);
+    expect(data.metadata.links).toEqual([{ text: expect.any(String), url: 'https://example.com/kept' }]);
+    expect(data.metadata.links[0]!.text.endsWith('\ud83d')).toBe(false);
+    expect(result.details.data!.metadata!.links![1]!.text).toBe(label);
+    expect(result.warnings).toContain('The visible page was truncated. Use its continuation offset, or read the page content for omitted metadata.');
+  });
+
   test('web tool descriptions guide source discovery, verification, and fetch modes', () => {
     expect(WEB_SEARCH_DESCRIPTION).toContain('Use web_search when you do not already have a specific URL');
     expect(WEB_SEARCH_DESCRIPTION).toContain('Use web_fetch on result URLs when you need details');
@@ -314,8 +358,8 @@ describe('web tool model-visible projections', () => {
       effectiveQuery: 'chengdu weather',
       kind: 'web',
       provider: 'provider',
-      providerName: 'google_serp',
-      finalUrl: 'https://www.google.com/search?q=chengdu+weather',
+      providerName: 'parallel',
+      finalUrl: 'https://search.parallel.ai/mcp',
       resultCount: 1,
       totalResults: 14,
       truncated: true,
@@ -370,18 +414,19 @@ describe('web tool model-visible projections', () => {
     const data: WebSearchData = {
       query: 'q',
       effectiveQuery: 'q',
-      kind: 'web',
+      kind: 'image',
       provider: 'provider',
-      providerName: 'google_serp',
+      providerName: 'bing_images',
       resultCount: 0,
       truncated: false,
       results: [],
-      hint: { type: 'search_blocked', reason: 'captcha', origin: 'https://www.google.com' },
+      hint: { type: 'search_blocked', reason: 'captcha', origin: 'https://www.bing.com' },
     };
 
     expect(webSearchModelData(data)).toEqual({
+      kind: 'image',
       results: [],
-      hint: { type: 'search_blocked', reason: 'captcha', origin: 'https://www.google.com' },
+      hint: { type: 'search_blocked', reason: 'captcha', origin: 'https://www.bing.com' },
     });
   });
 

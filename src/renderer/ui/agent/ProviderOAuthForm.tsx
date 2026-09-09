@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useReducer, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useReducer, useRef, useState } from 'react';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { api } from '../../api/client';
 import { CheckIcon, ICON_SIZE, LoaderIcon, OpenInBrowserIcon } from '../icons';
@@ -7,6 +7,7 @@ import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { ErrorState } from '../primitives/FeedbackState';
 import { Input } from '../primitives/Input';
+import type { ProviderFormActivity } from './ProviderConfigForm';
 import {
   formatCountdown,
   formatRelativeExpiry,
@@ -25,22 +26,17 @@ import {
 interface ProviderOAuthFormProps {
   providerId: string;
   providerName: string;
-  description: string;
-  avatar: ReactNode;
-  titleId: string;
-  isActive: boolean;
   connected: boolean;
   /** Absolute ms expiry of the stored credential, when connected. */
   expiresAt?: number;
   signInHint?: string;
   docsUrl?: string;
   docsLabel?: string;
-  /** When set, offer "Use an API key instead" for a provider with dual auth. */
-  onUseApiKey?: () => void;
-  onSetActive?: () => void;
-  onOpenExternal: (url: string) => void;
+  onOpenExternal: (url: string) => Promise<unknown>;
+  onBusyChange: (busy: boolean) => void;
+  onActivityChange: (activity: ProviderFormActivity) => void;
   /** Settings after a successful sign-in / sign-out — the window re-renders from these. */
-  onSettingsChanged: (settings: AgentProviderSettingsView) => void;
+  onProviderChange: (settings: AgentProviderSettingsView) => void;
   onClose: () => void;
 }
 
@@ -49,10 +45,11 @@ interface ProviderOAuthFormProps {
 // reply-needed steps. The login promise resolves with fresh settings on success.
 function useOAuthLogin(
   providerId: string,
-  onSettingsChanged: (settings: AgentProviderSettingsView) => void,
+  onProviderChange: (settings: AgentProviderSettingsView) => void,
 ) {
   const [flow, dispatch] = useReducer(oauthFlowReducer, INITIAL_OAUTH_FLOW);
   const [busy, setBusy] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const runningRef = useRef(false);
   const cancelledRef = useRef(false);
   const mountedRef = useRef(true);
@@ -74,18 +71,19 @@ function useOAuthLogin(
     if (runningRef.current) return;
     runningRef.current = true;
     cancelledRef.current = false;
+    setSigningIn(true);
     setBusy(true);
     dispatch({ type: 'start' });
     api.agentOAuthLogin(providerId)
-      .then((settings) => { if (!mountedRef.current) return; dispatch({ type: 'done' }); onSettingsChanged(settings); })
+      .then((settings) => { if (!mountedRef.current) return; dispatch({ type: 'done' }); onProviderChange(settings); })
       .catch((caught) => {
         if (!mountedRef.current) return;
         // A user-initiated cancel rejects the login too — fold it back to idle, not an error.
         if (cancelledRef.current) dispatch({ type: 'reset' });
         else dispatch({ type: 'error', message: caught instanceof Error ? caught.message : String(caught) });
       })
-      .finally(() => { runningRef.current = false; if (mountedRef.current) setBusy(false); });
-  }, [providerId, onSettingsChanged]);
+      .finally(() => { runningRef.current = false; if (mountedRef.current) { setBusy(false); setSigningIn(false); } });
+  }, [providerId, onProviderChange]);
 
   const respond = useCallback((requestId: string, value: string | undefined) => {
     dispatch({ type: 'responded' });
@@ -98,18 +96,24 @@ function useOAuthLogin(
 
   const cancel = useCallback(() => {
     cancelledRef.current = true;
-    void api.agentOAuthCancel(providerId);
+    api.agentOAuthCancel(providerId).catch((caught) => {
+      cancelledRef.current = false;
+      if (mountedRef.current) dispatch({ type: 'error', message: String(caught instanceof Error ? caught.message : caught) });
+    });
   }, [providerId]);
 
   const signOut = useCallback(() => {
+    if (runningRef.current) return;
+    runningRef.current = true;
+    dispatch({ type: 'reset' });
     setBusy(true);
     api.agentOAuthLogout(providerId)
-      .then((settings) => { if (mountedRef.current) onSettingsChanged(settings); })
+      .then((settings) => { if (mountedRef.current) onProviderChange(settings); })
       .catch((caught) => { if (mountedRef.current) dispatch({ type: 'error', message: caught instanceof Error ? caught.message : String(caught) }); })
-      .finally(() => { if (mountedRef.current) setBusy(false); });
-  }, [providerId, onSettingsChanged]);
+      .finally(() => { runningRef.current = false; if (mountedRef.current) setBusy(false); });
+  }, [providerId, onProviderChange]);
 
-  return { flow, busy, signIn, respond, cancel, signOut };
+  return { flow, busy, signingIn, signIn, respond, cancel, signOut };
 }
 
 // A live "expires in M:SS" countdown for the device-code TTL. Returns null once
@@ -177,13 +181,13 @@ function ReplyStep({ pending, onRespond }: {
       <div className="settings-sheet-oauth-reply">
         <Input
           autoFocus
-          className="settings-sheet-row-input"
+          className="settings-sheet-reply-input"
           id={fieldId}
           label={label}
           onChange={(event) => setValue(event.target.value)}
           placeholder={placeholder}
           value={value}
-          variant="bare"
+          variant="boxed"
         />
         <Button disabled={!value.trim()} type="submit" variant="primary">
           {t.providerOAuth.continue}
@@ -196,24 +200,30 @@ function ReplyStep({ pending, onRespond }: {
 export function ProviderOAuthForm({
   providerId,
   providerName,
-  description,
-  avatar,
-  titleId,
-  isActive,
   connected,
   expiresAt,
   signInHint,
   docsUrl,
   docsLabel,
-  onUseApiKey,
-  onSetActive,
   onOpenExternal,
-  onSettingsChanged,
+  onBusyChange,
+  onActivityChange,
+  onProviderChange,
   onClose,
 }: ProviderOAuthFormProps) {
   const t = useT();
-  const { flow, busy, signIn, respond, cancel, signOut } = useOAuthLogin(providerId, onSettingsChanged);
-  const running = flow.status === 'running';
+  const { flow, busy, signingIn, signIn, respond, cancel, signOut } = useOAuthLogin(providerId, onProviderChange);
+  const running = signingIn;
+  const [browserError, setBrowserError] = useState('');
+  useEffect(() => { setBrowserError(''); }, [running]);
+  // Signing out commits immediately; browser sign-in can still be cancelled.
+  useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
+  useEffect(() => { onActivityChange(busy && !running ? 'saving' : 'idle'); }, [busy, running, onActivityChange]);
+  const openBrowser = useCallback(async (url: string) => {
+    setBrowserError('');
+    try { await onOpenExternal(url); }
+    catch (caught) { setBrowserError(String(caught instanceof Error ? caught.message : caught)); }
+  }, [onOpenExternal]);
   const countdown = useCountdown(
     running ? flow.deviceCode?.expiresInSeconds : undefined,
     running ? flow.deviceCodeNonce : undefined,
@@ -225,24 +235,13 @@ export function ProviderOAuthForm({
     const url = flow.auth?.url;
     if (running && url && openedAuthRef.current !== url) {
       openedAuthRef.current = url;
-      onOpenExternal(url);
+      void openBrowser(url);
     }
     if (!running) openedAuthRef.current = null;
-  }, [running, flow.auth?.url, onOpenExternal]);
+  }, [running, flow.auth?.url, openBrowser]);
 
   return (
     <>
-      <header className="settings-sheet-head">
-        <span aria-hidden="true" className="settings-sheet-avatar">{avatar}</span>
-        <div className="settings-sheet-head-text">
-          <h2 className="settings-sheet-title" id={titleId}>
-            {providerName}
-            {isActive ? <span className="settings-chip">{t.providerOAuth.activeChip}</span> : null}
-          </h2>
-          <p className="settings-sheet-subtitle">{description}</p>
-        </div>
-      </header>
-
       <div className="settings-sheet-body">
         {connected && !running ? (
           <div className="settings-sheet-oauth-connected" role="group">
@@ -253,6 +252,10 @@ export function ProviderOAuthForm({
                 <p className="settings-sheet-oauth-connected-sub">{t.providerOAuth.accessRenews({ when: formatRelativeExpiry(expiresAt, Date.now()) })}</p>
               ) : null}
             </div>
+            <div className="settings-sheet-account-actions">
+              <Button disabled={busy} onClick={signIn}>{t.providerOAuth.reauthenticate}</Button>
+              <Button disabled={busy} onClick={signOut} variant="danger">{t.providerOAuth.signOut}</Button>
+            </div>
           </div>
         ) : running ? (
           <div className="settings-sheet-oauth-running" role="group">
@@ -262,7 +265,7 @@ export function ProviderOAuthForm({
                 <p className="settings-sheet-oauth-code">{flow.deviceCode.userCode}</p>
                 <ButtonControl
                   className="agent-settings-doc-link"
-                  onClick={() => onOpenExternal(flow.deviceCode!.verificationUri)}
+                  onClick={() => void openBrowser(flow.deviceCode!.verificationUri)}
                 >
                   <span>{flow.deviceCode.verificationUri}</span>
                   <OpenInBrowserIcon size={ICON_SIZE.tiny} />
@@ -278,7 +281,7 @@ export function ProviderOAuthForm({
                 <p className="settings-sheet-oauth-step-label">
                   {flow.auth.instructions ?? t.providerOAuth.continueInBrowser}
                 </p>
-                <ButtonControl className="agent-settings-doc-link" onClick={() => onOpenExternal(flow.auth!.url)}>
+                <ButtonControl className="agent-settings-doc-link" onClick={() => void openBrowser(flow.auth!.url)}>
                   <span>{t.providerOAuth.openSignInPage}</span>
                   <OpenInBrowserIcon size={ICON_SIZE.tiny} />
                 </ButtonControl>
@@ -301,7 +304,7 @@ export function ProviderOAuthForm({
           <div className="settings-sheet-oauth-intro">
             {signInHint ? <p className="settings-sheet-oauth-hint">{signInHint}</p> : null}
             {docsUrl ? (
-              <ButtonControl className="agent-settings-doc-link" onClick={() => onOpenExternal(docsUrl)}>
+              <ButtonControl className="agent-settings-doc-link" onClick={() => void openBrowser(docsUrl)}>
                 <span>{docsLabel ?? t.providerOAuth.learnMore}</span>
                 <OpenInBrowserIcon size={ICON_SIZE.tiny} />
               </ButtonControl>
@@ -309,9 +312,9 @@ export function ProviderOAuthForm({
           </div>
         )}
 
+        {browserError ? <ErrorState message={browserError} size="inline" /> : null}
         {flow.status === 'error' && flow.error ? (
           <ErrorState
-            className="settings-sheet-result"
             message={flow.error}
             size="inline"
           />
@@ -319,41 +322,13 @@ export function ProviderOAuthForm({
       </div>
 
       <div className="settings-sheet-actions">
-        <div className="settings-sheet-actions-left">
-          {connected && !running ? (
-            <Button disabled={busy} onClick={signOut} variant="danger">
-              {t.providerOAuth.signOut}
-            </Button>
-          ) : null}
-          {connected && !running && onSetActive && !isActive ? (
-            <Button disabled={busy} onClick={onSetActive} variant="secondary">
-              {t.providerOAuth.setActive}
-            </Button>
-          ) : null}
-          {onUseApiKey && !running ? (
-            <Button disabled={busy} onClick={onUseApiKey} variant="secondary">
-              {t.providerOAuth.useApiKeyInstead}
-            </Button>
-          ) : null}
-        </div>
         <div className="settings-sheet-actions-right">
           {running ? (
             <Button onClick={cancel} variant="ghost">
               {t.providerOAuth.cancelSignIn}
             </Button>
           ) : connected ? (
-            // Connected: finishing is the main action, so Done is the (rightmost)
-            // primary; re-authenticating is a rare maintenance action and steps back
-            // to secondary. Without this the strong-neutral primary sat on
-            // Re-authenticate, reading as "you must sign in again".
-            <>
-              <Button disabled={busy} onClick={signIn} variant="secondary">
-                {t.providerOAuth.reauthenticate}
-              </Button>
-              <Button disabled={busy} onClick={onClose} variant="primary">
-                {t.providerOAuth.done}
-              </Button>
-            </>
+            <Button disabled={busy} onClick={onClose} variant="primary">{t.providerOAuth.done}</Button>
           ) : (
             // Disconnected: signing in is the main action.
             <>

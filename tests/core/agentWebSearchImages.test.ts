@@ -4,7 +4,7 @@ import type { WebSearchResult } from '../../src/main/agent/capabilities/agentWeb
 import {
   bingImagesExtractorExpression,
   extractBingImages,
-} from '../../src/main/agent/capabilities/agentWebSearchSerp';
+} from '../../src/main/agent/capabilities/agentWebSearchImages';
 
 function runBingImagesExtractor(html: string, max = 10): { htmlLength: number; results: WebSearchResult[] } {
   const { document } = parseHTML(html);

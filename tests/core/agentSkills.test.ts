@@ -1024,6 +1024,21 @@ describe('agent skills', () => {
     ]);
   });
 
+  test('teaches public configuration files without dedicated Settings tools', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const configuration = await runtime.getSkill('configuration');
+    expect(configuration?.body).toContain('TENON_CONFIG_DIR');
+    expect(configuration?.body).toContain('settings.schema.json');
+    expect(configuration?.body).toContain('status.json');
+    expect(configuration?.body).toContain('ordinary file');
+    expect(configuration?.body).toContain('A successful file write alone is not');
+    expect(configuration?.body).toContain('Settings > Skills');
+    expect(configuration?.body).toContain('Settings > Memory');
+    expect(configuration?.body).toContain('Settings > Data');
+    expect(configuration?.body).toContain('About Tenon');
+    expect(configuration?.body).not.toMatch(/\b(?:skill|memory|preview|data|application|diagnostics)_(?:inspect|manage)\b/);
+  });
+
   test('ships public outline workflows without legacy document authorities', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const outline = await runtime.getSkill('outline');

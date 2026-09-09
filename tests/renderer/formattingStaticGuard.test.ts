@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const MIGRATED_RENDERER_FILES = [
-  'src/renderer/ui/agent/AgentSettingsView.tsx',
+  'src/renderer/ui/SettingsWindow.tsx',
+  'src/renderer/ui/configuration/ModelsManager.tsx',
+  'src/renderer/ui/configuration/SkillsManager.tsx',
   'src/renderer/agent/components/ThreadDock.tsx',
   'src/renderer/agent/components/ThreadView.tsx',
   'src/renderer/agent/components/items/ThreadItemView.tsx',

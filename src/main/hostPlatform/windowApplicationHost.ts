@@ -49,18 +49,17 @@ import {
 } from '../../core/launcher/commands';
 import type { ExternalContext } from '../../core/launcher/context';
 import {
-  isSettingsAnchorTarget,
-  isSettingsCategoryTarget,
-  isSettingsPageTarget,
+  CONFIGURATION_CHANGED_CHANNEL,
+  sanitizeSettingsOpenTarget,
+  settingsWindowQuery,
   LIN_SETTINGS_NAVIGATE_CHANNEL,
   PROVIDER_CONFIG_MODE_PARAM,
   PROVIDER_CONFIG_PROVIDER_PARAM,
-  SETTINGS_ANCHOR_PARAM,
-  SETTINGS_CATEGORY_PARAM,
-  settingsTargetPath,
   WINDOW_SURFACE_QUERY_PARAM,
   type ProviderConfigMode,
   type SettingsOpenTarget,
+  type ConfigurationWindowSurface,
+  type ConfigurationDomain,
 } from '../../core/settingsWindow';
 import { isThemeMode, type ThemeMode } from '../../core/theme';
 import { LIN_WINDOW_ACTIVE_CHANNEL } from '../../core/windowActivity';
@@ -99,7 +98,7 @@ import {
 import { loadWindowState, trackWindowState } from '../windowState';
 import { windowMaterialKind } from '../../core/windowMaterial';
 import type { DiagnosticEnvironment, DiagnosticsActionResult, ErrorReport } from '../../core/errorObservability';
-import type { ApplicationOperation } from '../hostDomain/applicationOperations';
+import type { ApplicationOperation, ApplicationOperationCaller } from '../hostDomain/applicationOperations';
 import { createApplicationOperations } from '../hostDomain/applicationOperations';
 import { createBundledApplicationReleaseResolver } from '../hostDomain/bundledApplicationRelease';
 import type { DiagnosticLogStore } from '../diagnosticLog';
@@ -135,6 +134,8 @@ export interface WindowApplicationHost {
   readonly windows: {
     main(): BrowserWindow | null;
     settings(): BrowserWindow | null;
+    about(): BrowserWindow | null;
+    configuration(): readonly BrowserWindow[];
     providerConfig(): BrowserWindow | null;
     launcher(): BrowserWindow | null;
     focusedOrMain(): BrowserWindow | null;
@@ -167,15 +168,16 @@ export interface WindowApplicationHost {
   closeSettingsFrom(event: IpcMainInvokeEvent): void;
   windowCommand(command: string): void;
   isMainSender(event: IpcMainInvokeEvent): boolean;
+  configurationSender(event: IpcMainInvokeEvent): ConfigurationWindowSurface | 'main' | 'provider-config' | null;
   isSettingsSender(event: IpcMainInvokeEvent): boolean;
   isProviderConfigSender(event: IpcMainInvokeEvent): boolean;
   assertMainSender(event: IpcMainInvokeEvent, capability: string): void;
-  assertSettingsSender(event: IpcMainInvokeEvent, capability: string): void;
-  notifySettingsChanged(origin?: BrowserWindow | null): void;
+  assertConfigurationSender(event: IpcMainInvokeEvent, destinations: readonly ConfigurationWindowSurface[], capability: string): void;
+  notifyConfigurationChanged(domain: ConfigurationDomain): void;
   effectiveLocale(): Locale;
   theme(): ThemeMode;
-  setTheme(raw: unknown): void;
-  setLocale(raw: unknown): void;
+  setTheme(raw: unknown, persist?: boolean): void;
+  setLocale(raw: unknown, persist?: boolean): void;
   launcherHotkey(): string | null;
   launcherHotkeys(): readonly string[];
   launcherHotkeyError(): string | null;
@@ -189,6 +191,7 @@ export interface WindowApplicationHost {
 export function createWindowApplicationHost(options: WindowApplicationHostOptions): WindowApplicationHost {
   let mainWindow: BrowserWindow | null = null;
   let settingsWindow: BrowserWindow | null = null;
+  let aboutWindow: BrowserWindow | null = null;
   let providerConfigWindow: BrowserWindow | null = null;
   let cachedLocale: Locale | null = null;
   let launcherHotkeyAccelerators: readonly string[] = Object.freeze([]);
@@ -563,27 +566,47 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     }
   };
 
+  const configurationSender = (event: IpcMainInvokeEvent): ReturnType<WindowApplicationHost['configurationSender']> => {
+    if (event.sender.isDestroyed() || event.senderFrame !== event.sender.mainFrame) return null;
+    if (event.sender === liveWindow(mainWindow)?.webContents) return 'main';
+    if (event.sender === liveWindow(settingsWindow)?.webContents) return 'settings';
+    if (event.sender === liveWindow(providerConfigWindow)?.webContents) return 'provider-config';
+    if (event.sender === liveWindow(aboutWindow)?.webContents) return 'about';
+    return null;
+  };
+
   const openSettings = (raw: unknown = {}): void => {
     const openTarget = sanitizeSettingsOpenTarget(raw);
-    const existing = liveWindow(settingsWindow);
+    const destination = openTarget.destination ?? 'settings';
+    const existing = liveWindow(destination === 'about' ? aboutWindow : settingsWindow);
     if (existing) {
+      const child = destination !== 'about' ? liveWindow(providerConfigWindow) : null;
+      if (child) { child.show(); child.focus(); return; }
       if (existing.isMinimized()) existing.restore();
       existing.show();
       existing.focus();
-      if (openTarget.category || openTarget.page) {
+      if (openTarget.destination || openTarget.settingId) {
         existing.webContents.send(LIN_SETTINGS_NAVIGATE_CHANNEL, openTarget);
       }
       return;
     }
     const icon = nativeImage.createFromPath(options.appIconPath);
+    const material = destination === 'about' ? null : windowMaterialKind(process.platform);
     const target = new BrowserWindow({
-      title: getMessages(effectiveLocale()).window.settingsTitle({ app: APP_NAME }),
-      width: 760,
-      height: 620,
-      minWidth: 560,
+      title: destination !== 'about'
+        ? getMessages(effectiveLocale()).window.settingsTitle({ app: APP_NAME })
+        : getMessages(effectiveLocale()).settings.discovery.destinations[destination],
+      width: destination === 'about' ? 620 : 860,
+      height: 660,
+      minWidth: destination === 'about' ? 560 : 680,
       minHeight: 480,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
       show: false,
-      backgroundColor: prePaintBackgroundColor(),
+      backgroundColor: material ? '#00000000' : prePaintBackgroundColor(),
+      ...(material === 'vibrancy' ? { vibrancy: 'under-window' as const } : {}),
+      ...(material === 'mica' ? { backgroundMaterial: 'mica' as const } : {}),
       ...(icon.isEmpty() ? {} : { icon }),
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
@@ -594,8 +617,9 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         sandbox: true,
       },
     });
-    settingsWindow = target;
-    registerRendererCapabilities(target.webContents, APP_RENDERER_CAPABILITIES);
+    if (destination === 'about') aboutWindow = target;
+    else settingsWindow = target;
+    registerRendererCapabilities(target.webContents, ['appCommands']);
     options.hardenWebContents(target.webContents);
     attachNativeContextMenu(target.webContents);
     applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
@@ -605,9 +629,11 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     });
     target.on('enter-full-screen', () => applyMacWindowCorner(target, 0));
     target.on('leave-full-screen', () => applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS));
+    target.on('page-title-updated', (event) => event.preventDefault());
     loadRendererSurface(target, settingsWindowQuery(openTarget));
     target.on('closed', () => {
       if (settingsWindow === target) settingsWindow = null;
+      if (aboutWindow === target) aboutWindow = null;
     });
   };
 
@@ -646,7 +672,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         sandbox: true,
       },
     });
-    if (!config.skillReview) registerRendererCapabilities(target.webContents, APP_RENDERER_CAPABILITIES);
+    if (!config.skillReview) registerRendererCapabilities(target.webContents, ['appCommands']);
     options.hardenWebContents(target.webContents);
     attachNativeContextMenu(target.webContents);
     applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
@@ -674,10 +700,11 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       current.close();
     }
     providerConfigWindow = null;
+    openSettings({ destination: 'models' });
     const target = createConfigChildWindow({
       title: getMessages(effectiveLocale()).window.providerConfigTitle,
-      width: 460,
-      height: 384,
+      width: 520,
+      height: mode === 'custom' ? 480 : 400,
       parent: liveWindow(settingsWindow),
       query: {
         [WINDOW_SURFACE_QUERY_PARAM]: 'provider-config',
@@ -715,10 +742,10 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       template.push({
         label: APP_NAME,
         submenu: [
-          { label: t.about({ app: APP_NAME }), click: () => openSettings({ page: 'about' }) },
+          { label: t.about({ app: APP_NAME }), click: () => openSettings({ destination: 'about' }) },
           { type: 'separator' },
           { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettings() },
-          { label: t.keyboardShortcuts, click: () => openSettings({ page: 'shortcuts' }) },
+          { label: t.keyboardShortcuts, click: () => openSettings({ destination: 'shortcuts' }) },
           { type: 'separator' }, { role: 'services' }, { type: 'separator' },
           { role: 'hide', label: t.hide({ app: APP_NAME }) }, { role: 'hideOthers' }, { role: 'unhide' },
           { type: 'separator' }, { role: 'quit', label: t.quit({ app: APP_NAME }) },
@@ -729,7 +756,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
         label: t.file,
         submenu: [
           { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettings() },
-          { label: t.keyboardShortcuts, click: () => openSettings({ page: 'shortcuts' }) },
+          { label: t.keyboardShortcuts, click: () => openSettings({ destination: 'shortcuts' }) },
           { type: 'separator' }, { role: 'quit' },
         ],
       });
@@ -774,6 +801,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       submenu: [
         { label: t.help({ app: APP_NAME }), click: () => void applicationOperations.openDestination('help') },
         { label: t.reportIssue, click: () => void applicationOperations.openDestination('issues') },
+        { label: getMessages(effectiveLocale()).settings.discovery.destinations.diagnostics, click: () => openSettings({ destination: 'diagnostics' }) },
       ],
     });
     return Menu.buildFromTemplate(template);
@@ -794,7 +822,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     defaultAutomaticChecksEnabled: app.isPackaged,
     store: appUpdateStore,
     openExternal: (url) => shell.openExternal(url),
-    onChanged: (view) => liveWindow(settingsWindow)?.webContents.send(LIN_APP_UPDATE_CHANGED_CHANNEL, view),
+    onChanged: (view) => liveWindow(aboutWindow)?.webContents.send(LIN_APP_UPDATE_CHANGED_CHANNEL, view),
     onError: (error, operation) => options.reportError({
       domain: 'app-update',
       severity: 'warn',
@@ -814,11 +842,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   };
-  const applicationOperationWindow = (caller: Parameters<ApplicationOperation['inspect']>[1]) => (
-    caller.origin.kind === 'window'
-      ? BrowserWindow.fromId(caller.origin.windowId)
-      : liveWindow(mainWindow) ?? null
-  );
+  const applicationOperationWindow = (caller: ApplicationOperationCaller) => BrowserWindow.fromId(caller.origin.windowId);
   const exportDiagnostics = createDiagnosticsExportHost({
     available: () => !released,
     operationWindow: applicationOperationWindow,
@@ -847,10 +871,8 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
   };
   const resolveBundledRelease = createBundledApplicationReleaseResolver(bundledChangelog);
   const applicationOperations = createApplicationOperations({
-    updates: appUpdateService,
     appInfo: applicationInfo,
     bundledRelease: async () => resolveBundledRelease((await applicationInfo()).version),
-    diagnostics: options.diagnosticLog,
     openExternal: (url) => shell.openExternal(url),
     revealDiagnostics,
     exportDiagnostics,
@@ -896,6 +918,8 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     windows: {
       main: () => liveWindow(mainWindow) ?? null,
       settings: () => liveWindow(settingsWindow) ?? null,
+      about: () => liveWindow(aboutWindow) ?? null,
+      configuration: () => [settingsWindow, aboutWindow].filter(isLiveWindow),
       providerConfig: () => liveWindow(providerConfigWindow) ?? null,
       launcher: () => liveWindow(getLauncherWindow()) ?? null,
       focusedOrMain: () => BrowserWindow.getFocusedWindow() ?? liveWindow(mainWindow) ?? null,
@@ -937,8 +961,8 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     openProviderConfig,
     closeProviderConfig: () => liveWindow(providerConfigWindow)?.close(),
     closeSettingsFrom: (event) => {
-      const target = liveWindow(settingsWindow);
-      if (target && event.sender === target.webContents) target.close();
+      const target = [settingsWindow, aboutWindow].find((window) => isLiveWindow(window) && event.sender === window.webContents);
+      if (target && event.senderFrame === event.sender.mainFrame) target.close();
     },
     windowCommand: (command) => {
       const target = BrowserWindow.getFocusedWindow() ?? liveWindow(mainWindow);
@@ -948,35 +972,39 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       if (command === 'close') target.close();
     },
     isMainSender: (event) => event.sender === liveWindow(mainWindow)?.webContents,
-    isSettingsSender: (event) => event.sender === liveWindow(settingsWindow)?.webContents,
+    configurationSender,
+    isSettingsSender: (event) => configurationSender(event) === 'settings',
     isProviderConfigSender: (event) => event.sender === liveWindow(providerConfigWindow)?.webContents,
     assertMainSender: (event, capability) => {
       if (event.sender !== liveWindow(mainWindow)?.webContents) {
         throw new Error(`${capability} is available only to the main application window.`);
       }
     },
-    assertSettingsSender: (event, capability) => {
-      if (event.sender !== liveWindow(settingsWindow)?.webContents) {
-        throw new Error(`${capability} is only available from Settings.`);
+    assertConfigurationSender: (event, destinations, capability) => {
+      const destination = configurationSender(event);
+      if (!destination || !(destinations as readonly string[]).includes(destination)) {
+        throw new Error(`${capability} is unavailable to this window.`);
       }
     },
-    notifySettingsChanged: (origin) => {
-      for (const target of [liveWindow(mainWindow), liveWindow(settingsWindow)]) {
-        if (target && target !== origin) target.webContents.send('lin:settings-changed');
+    notifyConfigurationChanged: (domain) => {
+      // Publication belongs to the Host after a write, never to an arbitrary renderer.
+      for (const target of [mainWindow, settingsWindow, aboutWindow, providerConfigWindow]) {
+        if (isLiveWindow(target) && !target.webContents.isDestroyed()) target.webContents.send(CONFIGURATION_CHANGED_CHANNEL, domain);
       }
     },
     effectiveLocale,
     theme: () => nativeTheme.themeSource,
-    setTheme: (raw) => {
+    setTheme: (raw, persist = true) => {
       if (!isThemeMode(raw)) return;
       if (nativeTheme.themeSource === raw) return;
       nativeTheme.themeSource = raw;
-      saveThemePreference(raw);
+      if (persist) saveThemePreference(raw);
     },
-    setLocale: (raw) => {
+    setLocale: (raw, persist = true) => {
+      if (raw === null) raw = resolveSystemLocale(app.getLocale());
       if (!isLocale(raw)) return;
       if (cachedLocale === raw) return;
-      saveLanguagePreference(raw);
+      if (persist) saveLanguagePreference(raw);
       cachedLocale = raw;
       for (const window of BrowserWindow.getAllWindows()) {
         window.webContents.send(LIN_LANGUAGE_CHANGED_CHANNEL, raw);
@@ -985,6 +1013,7 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
       const messages = getMessages(raw);
       liveWindow(settingsWindow)?.setTitle(messages.window.settingsTitle({ app: APP_NAME }));
       liveWindow(providerConfigWindow)?.setTitle(messages.window.providerConfigTitle);
+      liveWindow(aboutWindow)?.setTitle(messages.settings.discovery.destinations.about);
     },
     launcherHotkey: () => launcherHotkeyAccelerators[0] ?? null,
     launcherHotkeys: () => launcherHotkeyAccelerators,
@@ -1060,28 +1089,6 @@ export function createWindowApplicationHost(options: WindowApplicationHostOption
     },
   };
   return host;
-}
-
-function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
-  if (!raw || typeof raw !== 'object') return {};
-  const input = raw as { category?: unknown; page?: unknown; anchor?: unknown };
-  const category = isSettingsCategoryTarget(input.category) ? input.category : undefined;
-  const page = isSettingsPageTarget(input.page) ? input.page : undefined;
-  const anchor = (category || page) && isSettingsAnchorTarget(input.anchor) ? input.anchor : undefined;
-  return {
-    ...(category ? { category } : {}),
-    ...(page ? { page } : {}),
-    ...(anchor ? { anchor } : {}),
-  };
-}
-
-function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, string> {
-  const path = settingsTargetPath(target);
-  return {
-    [WINDOW_SURFACE_QUERY_PARAM]: 'settings',
-    ...(path ? { [SETTINGS_CATEGORY_PARAM]: path } : {}),
-    ...(path && target.anchor ? { [SETTINGS_ANCHOR_PARAM]: target.anchor } : {}),
-  };
 }
 
 function isLiveWindow(window: BrowserWindow | null | undefined): window is BrowserWindow {

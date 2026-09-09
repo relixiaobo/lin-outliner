@@ -45,6 +45,22 @@ export async function redactSecretLikeJsonAsync<T>(
   }
 }
 
+/** Redact a complete prefix of a growing process log, including unterminated key blocks. */
+export async function redactRunningToolOutput(
+  content: string,
+  scanOffMain: ScanSecretStringsOffMain = scanSecretStringsOffMain,
+): Promise<string> {
+  const jobs = [{ content, inspectEncodedJson: false, redactIncompletePrivateKeys: true }];
+  try {
+    const outputs = await scanOffMain(jobs) ?? scanSecretStrings(jobs);
+    if (outputs.length !== 1 || typeof outputs[0] !== 'string') return REDACTED_SECRET;
+    return outputs[0];
+  } catch {
+    // An observation can omit its text; scanner failure must never expose raw output.
+    return REDACTED_SECRET;
+  }
+}
+
 export async function redactSecretLikeTextAsync(value: string): Promise<SecretRedactionResult<string>> {
   return scanSecretLikeJson(value, scanSecretStringsOffMain);
 }

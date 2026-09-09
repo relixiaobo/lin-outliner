@@ -13,7 +13,9 @@ test('real native Skill review has a narrow bridge, inert content, exact decisio
     env: { ...process.env, ELECTRON_USER_DATA_DIR: userDataDir, ELECTRON_RENDERER_URL: '', VITE_DEV_SERVER_URL: '' },
   });
   try {
-    const main = await app.firstWindow();
+    await app.firstWindow();
+    await expect.poll(() => app.windows().some((page) => page.url().endsWith('/index.html'))).toBe(true);
+    const main = app.windows().find((page) => page.url().endsWith('/index.html'))!;
     await expect.poll(() => main.evaluate(() => window.lin?.startup.get())).toEqual({ status: 'ready' });
     const found = await main.evaluate(() => window.lin!.invoke('agent_managed_skill_discover', {
       sourceUrl: 'https://github.com/tenon-fixtures/skills',

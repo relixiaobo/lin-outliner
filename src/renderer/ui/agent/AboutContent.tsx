@@ -1,0 +1,357 @@
+import { useEffect, useState, type ComponentPropsWithoutRef } from 'react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import type { AppUpdateErrorCode, AppUpdateView } from '../../../core/appUpdate';
+import type { BundledApplicationRelease } from '../../../core/applicationOperations';
+import { serializeUnknownError, type AppInfo } from '../../../core/errorObservability';
+import { api } from '../../api/client';
+import { useI18n } from '../../i18n/I18nProvider';
+import { Button } from '../primitives/Button';
+import { ICON_SIZE, OpenInBrowserIcon } from '../icons';
+import { SettingsFeedback, type SettingsFeedbackState } from '../configuration/SettingsFeedback';
+import { InsetGroup, InsetRow } from './SettingsInsetList';
+import { SwitchControl } from '../primitives/SwitchControl';
+import { SwitchMark } from '../primitives/SwitchMark';
+
+const HELP_URL = 'https://github.com/relixiaobo/lin-outliner';
+const ISSUES_URL = 'https://github.com/relixiaobo/lin-outliner/issues';
+
+function openFixedDestination(destination: 'help' | 'issues' | 'license', fallback: string): void {
+  if (window.lin?.openApplicationDestination) {
+    void window.lin.openApplicationDestination(destination);
+    return;
+  }
+  void api.openExternalUrl(fallback);
+}
+
+interface AboutContentProps {
+  appUpdate?: AppUpdateView | null;
+  onAppUpdateChange?: (view: AppUpdateView) => void;
+  readError?: string | null;
+  loadRelease?: () => Promise<BundledApplicationRelease | null>;
+}
+
+const RELEASE_NOTE_REMARK_PLUGINS = [remarkGfm];
+
+async function loadBundledApplicationRelease(): Promise<BundledApplicationRelease | null> {
+  const release = await window.lin?.bundledApplicationRelease?.();
+  if (release === undefined) throw new Error('Bundled release bridge unavailable.');
+  return release;
+}
+
+function ReleaseNoteLink({ children, href, ...props }: ComponentPropsWithoutRef<'a'>) {
+  return (
+    <a
+      {...props}
+      href={href}
+      onClick={(event) => {
+        event.preventDefault();
+        if (href) void api.openExternalUrl(href);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+function ReleaseNoteImage({ alt }: ComponentPropsWithoutRef<'img'>) {
+  return alt ? <span>{alt}</span> : null;
+}
+
+const RELEASE_NOTE_COMPONENTS = { a: ReleaseNoteLink, img: ReleaseNoteImage };
+
+function ReleaseNote({ note }: { note: string }) {
+  return (
+    <div className="settings-about-release-note-row" role="listitem">
+      <div className="file-preview-markdown settings-about-release-note">
+        <Markdown
+          components={RELEASE_NOTE_COMPONENTS}
+          remarkPlugins={RELEASE_NOTE_REMARK_PLUGINS}
+          skipHtml
+        >
+          {note}
+        </Markdown>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * About: what this is, what changed, and how to reach us.
+ *
+ * The native About panel is not a second home for this — the menu item opens
+ * this page instead. Two About surfaces would be the duplication this redesign
+ * exists to remove, and the OS panel cannot hold release notes or support links.
+ *
+ * What's New shows the running version's user note and nothing else. The
+ * changelog's `### Added` … `### Internal` categories are an engineering ledger —
+ * hundreds of entries per release, most about work no user experiences — so they
+ * stay on GitHub behind one link rather than being rendered here, collapsed or
+ * not. There is no version picker either: browsing other releases' notes is a
+ * maintainer's errand, and the control existed mainly to surface `Unreleased`,
+ * which is the repo's word for itself and meant nothing to the person reading it.
+ * Nothing here can select that section any more — a build ahead of the last
+ * release shows the newest release that has a note.
+ *
+ * Slots the product has not filled — a contact channel beyond the two GitHub
+ * links, the one-paragraph description — are omitted rather than stubbed. An
+ * empty row that says nothing is worse than a page that does not claim to.
+ */
+export function AboutContent({
+  appUpdate = null,
+  onAppUpdateChange = () => undefined,
+  readError,
+  loadRelease = loadBundledApplicationRelease,
+}: AboutContentProps) {
+  const { locale, t } = useI18n();
+  const [info, setInfo] = useState<AppInfo | null>(null);
+  const [release, setRelease] = useState<BundledApplicationRelease | null>(null);
+  const [feedback, setFeedback] = useState<Record<string, SettingsFeedbackState>>({});
+  function report(key: string, value: SettingsFeedbackState = {}) { setFeedback((current) => ({ ...current, [key]: value })); }
+  const [automaticBusy, setAutomaticBusy] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void window.lin?.appInfo?.()
+      .then((next) => { if (active) setInfo(next); })
+      .catch(() => { /* the version row simply does not render */ });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void loadRelease()
+      .then((next) => { if (active) { setRelease(next); report('release'); } })
+      .catch(() => {
+        if (active) report('release', { error: t.settings.about.releaseNotesUnavailable });
+      });
+    return () => { active = false; };
+  }, [loadRelease, t.settings.about.releaseNotesUnavailable]);
+
+  // The heading names the release whose note is shown. For anyone running a
+  // published build that is their own version; on a build ahead of the last
+  // release the two differ, and naming the release is the honest reading —
+  // the identity group directly above states what is installed.
+  const releaseVersion = release?.version ?? '';
+  const whatsNewLabel = releaseVersion
+    ? t.settings.about.whatsNewInVersion({ version: releaseVersion })
+    : t.settings.about.whatsNewGroup;
+
+  // The triple a bug report needs, in the order a person reads it back.
+  async function copyVersionInfo(): Promise<void> {
+    if (!info) return;
+    report('copy');
+    const text = [
+      `${info.name} ${info.version}`,
+      `${info.platform} ${info.arch}`,
+      `Electron ${info.electron} · Chrome ${info.chrome} · Node ${info.node}`,
+    ].join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      report('copy', { notice: t.settings.about.copiedNotice });
+    } catch (caught) {
+      window.lin?.reportRendererError?.({
+        domain: 'persistence',
+        severity: 'error',
+        code: 'settings-about-copy-version-failed',
+        message: 'Failed to copy app version information.',
+        error: serializeUnknownError(caught),
+      });
+      report('copy', { error: t.settings.about.copyFailed });
+    }
+  }
+
+  async function checkForUpdates(): Promise<void> {
+    report('check');
+    try {
+      const next = await window.lin?.appUpdate?.check();
+      if (!next) throw new Error('App update bridge unavailable.');
+      if (next.manualError) {
+        report('check', { error: updateErrorMessage(next.manualError, t.settings.about) });
+      }
+      onAppUpdateChange({ ...next, manualError: null });
+    } catch {
+      report('check', { error: t.settings.about.updateCheckFailed });
+    }
+  }
+
+  async function setAutomaticChecksEnabled(enabled: boolean): Promise<void> {
+    if (!appUpdate || automaticBusy) return;
+    setAutomaticBusy(true);
+    report('automatic');
+    onAppUpdateChange({ ...appUpdate, automaticChecksEnabled: enabled });
+    try {
+      const next = await window.lin?.appUpdate?.setAutomaticChecksEnabled(enabled);
+      if (!next) throw new Error('App update bridge unavailable.');
+      onAppUpdateChange(next);
+    } catch {
+      onAppUpdateChange(appUpdate);
+      report('automatic', { error: t.settings.about.updatePreferenceFailed });
+    } finally { setAutomaticBusy(false); }
+  }
+
+  async function openAvailableUpdate(): Promise<void> {
+    report('open');
+    try {
+      const result = await window.lin?.appUpdate?.open();
+      if (!result?.ok) report('open', { error: t.settings.about.updateOpenFailed });
+    } catch {
+      report('open', { error: t.settings.about.updateOpenFailed });
+    }
+  }
+
+  const availableUpdate = appUpdate?.availableRelease ?? null;
+  const hasSuccessfulCheck = appUpdate?.lastSuccessfulCheckAt !== null
+    && appUpdate?.lastSuccessfulCheckAt !== undefined;
+  const lastChecked = appUpdate?.lastSuccessfulCheckAt !== null && appUpdate?.lastSuccessfulCheckAt !== undefined
+    ? t.settings.about.updateLastChecked({
+        date: new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
+          .format(new Date(appUpdate.lastSuccessfulCheckAt)),
+      })
+    : t.settings.about.updateNeverChecked;
+  const updateStatusLabel = appUpdate?.phase === 'checking'
+    ? t.settings.about.updateChecking
+    : availableUpdate
+      ? t.settings.about.updateAvailable({ version: availableUpdate.version })
+      : hasSuccessfulCheck
+        ? t.settings.about.updateCurrent
+        : appUpdate?.automaticChecksEnabled
+          ? t.settings.about.updateNotChecked
+          : t.settings.about.updateAutomaticOff;
+  const updateStatusSublabel = availableUpdate
+    ? t.settings.about.updateReleased({
+        date: new Intl.DateTimeFormat(locale, { dateStyle: 'medium' })
+          .format(new Date(availableUpdate.publishedAt)),
+      })
+    : t.settings.about.updateInstalledVersion({ version: appUpdate?.currentVersion ?? info?.version ?? '' });
+
+  return (
+    <section className="agent-settings-section" aria-label={t.settings.about.sectionAriaLabel}>
+      {info ? (
+        <InsetGroup ariaLabel={t.settings.about.sectionAriaLabel} id="version">
+          <InsetRow
+            feedback={<SettingsFeedback feedback={feedback.copy} />}
+            label={info.name}
+            sublabel={`${t.settings.about.version} ${info.version}`}
+            trailing={(
+              <Button onClick={() => void copyVersionInfo()} variant="secondary">
+                {t.settings.about.copyVersionInfo}
+              </Button>
+            )}
+            wrap
+          />
+        </InsetGroup>
+      ) : null}
+
+      <SettingsFeedback feedback={{ error: readError }} />
+      {appUpdate ? (
+        <InsetGroup ariaLabel={t.settings.about.updateGroup} id="software-update" label={t.settings.about.updateGroup}>
+          <InsetRow
+            feedback={<SettingsFeedback feedback={feedback.open} />}
+            label={updateStatusLabel}
+            sublabel={updateStatusSublabel}
+            trailing={availableUpdate ? (
+              <Button onClick={() => void openAvailableUpdate()} variant="secondary">
+                {availableUpdate.downloadAvailable
+                  ? t.settings.about.updateDownloadAction
+                  : t.settings.about.updateViewReleaseAction}
+              </Button>
+            ) : undefined}
+            wrap
+          />
+          {availableUpdate?.note ? (
+            <ReleaseNote note={availableUpdate.note} />
+          ) : null}
+          <InsetRow
+            feedback={<SettingsFeedback feedback={feedback.check} />}
+            label={t.settings.about.updateCheckLabel}
+            sublabel={lastChecked}
+            trailing={(
+              <Button
+                disabled={appUpdate.phase === 'checking'}
+                onClick={() => void checkForUpdates()}
+                variant="secondary"
+              >
+                {appUpdate.phase === 'checking'
+                  ? t.settings.about.updateCheckingAction
+                  : t.settings.about.updateCheckAction}
+              </Button>
+            )}
+            wrap
+          />
+          <InsetRow
+            feedback={<SettingsFeedback feedback={feedback.automatic} />}
+            label={t.settings.about.updateAutomaticLabel}
+            sublabel={t.settings.about.updateAutomaticSublabel}
+            trailing={(
+              <SwitchControl
+                disabled={automaticBusy}
+                checked={appUpdate.automaticChecksEnabled}
+                label={t.settings.about.updateAutomaticLabel}
+                onCheckedChange={(enabled) => void setAutomaticChecksEnabled(enabled)}
+              >
+                <SwitchMark checked={appUpdate.automaticChecksEnabled} />
+              </SwitchControl>
+            )}
+            wrap
+          />
+        </InsetGroup>
+      ) : null}
+
+      <SettingsFeedback feedback={feedback.release} />
+      {release ? (
+        <InsetGroup ariaLabel={whatsNewLabel} id="whats-new" label={whatsNewLabel}>
+          {/* A section written before the note convention degrades to the link
+              alone — better an honest pointer than a dump of category detail. */}
+          {release.note ? (
+            <ReleaseNote note={release.note} />
+          ) : null}
+          <InsetRow
+            label={t.settings.about.fullChangelogAction}
+            onSelect={() => void api.openExternalUrl(release.changelogUrl)}
+            trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
+          />
+        </InsetGroup>
+      ) : null}
+
+      <InsetGroup ariaLabel={t.settings.about.supportGroup} id="support" label={t.settings.about.supportGroup}>
+        <InsetRow
+          label={t.settings.about.helpAction}
+          onSelect={() => openFixedDestination('help', HELP_URL)}
+          trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
+        />
+        <InsetRow
+          label={t.settings.about.reportIssueAction}
+          onSelect={() => openFixedDestination('issues', ISSUES_URL)}
+          trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
+        />
+      </InsetGroup>
+
+      <InsetGroup
+        ariaLabel={t.settings.about.legalGroup}
+        footnote={t.settings.about.privacyNote}
+        id="legal"
+        label={t.settings.about.legalGroup}
+      >
+        <InsetRow
+          label={t.settings.about.license}
+          onSelect={() => openFixedDestination('license', `${HELP_URL}/blob/main/LICENSE`)}
+          trailing={<OpenInBrowserIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
+        />
+      </InsetGroup>
+    </section>
+  );
+}
+
+function updateErrorMessage(
+  code: AppUpdateErrorCode,
+  messages: {
+    updateCheckFailed: string;
+    updateCheckTimedOut: string;
+    updateResponseInvalid: string;
+  },
+): string {
+  if (code === 'timeout') return messages.updateCheckTimedOut;
+  if (code === 'invalid-response') return messages.updateResponseInvalid;
+  return messages.updateCheckFailed;
+}

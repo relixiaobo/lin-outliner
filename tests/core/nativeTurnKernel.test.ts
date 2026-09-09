@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { generateKeyPairSync } from 'node:crypto';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, spyOn, test } from 'bun:test';
@@ -26,6 +27,7 @@ import {
   type ToolEnvelope,
 } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { createLocalTools } from '../../src/main/agent/capabilities/agentLocalTools';
+import { expectToolOutputContract } from '../helpers/toolOutputContract';
 import { Database } from 'bun:sqlite';
 import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
 import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
@@ -216,6 +218,14 @@ describe('native turn kernel parity', () => {
       result: { kind: 'tenon', outcome: { ok: true }, data: 'wrong', content: [], details: {} },
       expectedMessage: 'Tenon tool result data does not match its output schema.',
     }, {
+      name: 'file_read',
+      result: {
+        kind: 'tenon', outcome: { ok: true },
+        data: { file: { filePath: '/notes.txt', totalLines: 'unknown' } },
+        content: [], details: {},
+      },
+      expectedMessage: 'Tenon tool result data does not match its output schema.',
+    }, {
       name: 'update_plan',
       result: { kind: 'tenon', outcome: { ok: true }, data: {}, content: [], details: {} },
       expectedMessage: 'A Tenon tool declared no output data but returned data.',
@@ -297,6 +307,125 @@ describe('native turn kernel parity', () => {
     });
     expect(runtime.state.messages.at(-1)).toMatchObject({ role: 'assistant', content: [{ text: 'complete' }] });
   });
+
+  test('preserves bounded file_read pages and continuation through Kernel output validation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-file-pages-'));
+    try {
+      const filePath = path.join(root, 'notes.txt');
+      const lines = Array.from({ length: 176 }, (_, index) => `line ${index + 1}`);
+      await writeFile(filePath, lines.join('\n'), 'utf8');
+      const fileRead = createLocalTools({ localRoot: root })
+        .find((candidate) => candidate.name === 'file_read')!;
+
+      for (const page of [
+        { args: { limit: 45 }, startLine: 1, totalLines: null, hasMore: true,
+          content: lines.slice(0, 45).join('\n'), instruction: 'offset 46' },
+        { args: { offset: 46, limit: 200 }, startLine: 46, totalLines: 176, hasMore: false,
+          content: lines.slice(45).join('\n'), instruction: 'Reached the end of the file' },
+      ]) {
+        const { runtime, gateway } = await executeToolWithArguments(fileRead, {
+          file_path: filePath, cwd: root, ...page.args,
+        });
+        const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+        const providerResult = gateway.requests[1]?.context.messages
+          .find((message) => message.role === 'toolResult');
+        expect(result?.isError).toBe(false);
+        expect(providerResult?.content).toHaveLength(2);
+        const header = JSON.parse((providerResult!.content[0] as { text: string }).text);
+        expect(header).toMatchObject({
+          ok: true, status: 'partial',
+          data: { file: { filePath, startLine: page.startLine, totalLines: page.totalLines, hasMore: page.hasMore } },
+          instructions: expect.stringContaining(page.instruction),
+        });
+        expect(providerResult!.content[1]).toEqual({ type: 'text', text: page.content });
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('preserves a character-bounded file_read with an unknown line count through Kernel output validation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-long-line-'));
+    try {
+      const filePath = path.join(root, 'long-line.txt');
+      await writeFile(filePath, 'x'.repeat(250_000), 'utf8');
+      const fileRead = createLocalTools({ localRoot: root })
+        .find((candidate) => candidate.name === 'file_read')!;
+      const { runtime, gateway } = await executeToolWithArguments(fileRead, { file_path: filePath });
+      const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+      const providerResult = gateway.requests[1]?.context.messages
+        .find((message) => message.role === 'toolResult');
+      expect(result?.isError).toBe(false);
+      expect(providerResult?.content).toHaveLength(2);
+      const header = JSON.parse((providerResult!.content[0] as { text: string }).text);
+      expect(header).toMatchObject({
+        ok: true, status: 'partial',
+        data: { file: { filePath, totalLines: null, lineTruncated: true } },
+        instructions: expect.stringContaining('A single line exceeded'),
+      });
+      expect(providerResult!.content[1]).toEqual({ type: 'text', text: 'x'.repeat(200_000) });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('paginates broad file_grep results within Kernel count and byte limits without losing matches', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-grep-pages-'));
+    try {
+      for (let index = 0; index < 4_200; index += 1) {
+        await writeFile(path.join(root, `match-${index.toString().padStart(4, '0')}.txt`), 'hit\n');
+      }
+      const fileGrep = createLocalTools({ localRoot: root })
+        .find((candidate) => candidate.name === 'file_grep')!;
+      const collected: string[] = [];
+      let offset = 0;
+      for (let page = 0; page < 3; page += 1) {
+        const { runtime, gateway } = await executeToolWithArguments(fileGrep, {
+          pattern: 'hit', output_mode: 'files_with_matches', head_limit: 0, offset,
+        });
+        expect(runtime.state.messages.find((message) => message.role === 'toolResult')?.isError).toBe(false);
+        const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+        const header = JSON.parse((result.content[0] as { text: string }).text);
+        expect(header.ok).toBe(true);
+        expectToolOutputContract('file_grep', header.data);
+        collected.push(...header.data.filenames);
+        if (!header.instructions) break;
+        expect(header.status).toBe('partial');
+        const next = Number(header.instructions.match(/offset (\d+)/)?.[1]);
+        expect(next).toBe(offset + header.data.filenames.length);
+        expect(next).toBeGreaterThan(offset);
+        offset = next;
+      }
+      expect(collected).toHaveLength(4_200);
+      expect(new Set(collected).size).toBe(4_200);
+
+      const lines = Array.from({ length: 2_000 }, (_, index) => `hit ${index} ${'x\\"'.repeat(150)}`);
+      await writeFile(path.join(root, 'wide.txt'), lines.join('\n'));
+      const readLines: string[] = [];
+      offset = 0;
+      for (let page = 0; page < 10; page += 1) {
+        const { runtime, gateway } = await executeToolWithArguments(fileGrep, {
+          pattern: 'hit', path: 'wide.txt', output_mode: 'content', head_limit: 0, offset, '-n': false,
+        });
+        expect(runtime.state.messages.find((message) => message.role === 'toolResult')?.isError).toBe(false);
+        const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+        const header = JSON.parse((result.content[0] as { text: string }).text);
+        expect(header.ok).toBe(true);
+        expectToolOutputContract('file_grep', header.data);
+        const returned = (header.data.content as string).split('\n');
+        readLines.push(...returned);
+        if (!header.instructions) break;
+        expect(header.status).toBe('partial');
+        const next = Number(header.instructions.match(/offset (\d+)/)?.[1]);
+        expect(next).toBe(offset + returned.length);
+        expect(next).toBeGreaterThan(offset);
+        offset = next;
+      }
+      expect(readLines).toEqual(lines);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   test('bounds a large real file mutation before Kernel validation while retaining the full private patch', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-file-write-'));
@@ -384,6 +513,174 @@ describe('native turn kernel parity', () => {
       }
     } finally { await tasks.close(2_000); database.close(); await rm(root, { recursive: true, force: true }); }
   });
+
+  test('keeps an explicitly backgrounded server alive after Turn cancellation and exposes bounded running output', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-running-output-'));
+    const database = new Database(':memory:');
+    const store = new ToolTaskStore(database as unknown as SqliteDatabase);
+    const tasks = new ToolTaskService(store, path.join(root, 'tasks'));
+    tasks.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+      startCompletionTurn: async () => false, taskChanged: () => {} });
+    await tasks.initialize();
+    try {
+      const context = toolRuntimeContext();
+      const admittedTimeouts = new Map<string, number | null>();
+      const tools = createLocalTools({ workspace: { root, scratchRoot: root, readFileState: new Map(),
+        threadId: context.thread.id, onTaskAdmitted: async (task) => { admittedTimeouts.set(task.sourceItemId, task.timeoutMs); } }, toolTaskService: tasks, turnId: context.turn.id });
+      const bash = tools.find((candidate) => candidate.name === 'bash')!;
+      const controller = new AbortController();
+      const started = await bash.execute('start-server', { run_in_background: true,
+        command: "head -c 29999 /dev/zero; printf '\\n'; head -c 29999 /dev/zero >&2; printf '\\n' >&2; sleep 30" }, controller.signal);
+      const taskId = (started.details as { data: { backgroundTaskId: string } }).data.backgroundTaskId;
+      controller.abort();
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(store.read(taskId)).toMatchObject({ state: 'running', timeoutMs: null });
+      const controls = await new ToolRuntime(toolRuntimeService({ toolTaskService: () => tasks }), {
+        capabilityTools: () => [], capabilityConfig: { blocks: [] },
+      }).createTools({ ...context, configuration: { ...context.configuration, tools: ['task_status'] } });
+      const status = controls.find((candidate) => candidate.name === 'task_status')!;
+      const { gateway } = await executeToolWithArguments(status, { task_id: taskId });
+      const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+      const header = JSON.parse((result.content[0] as { text: string }).text);
+      expectToolOutputContract('task_status', header.data);
+      expect(header).toMatchObject({ ok: true, data: {
+        taskId, state: 'running', result: null,
+        observation: { observedAt: expect.any(Number), output: expect.any(String), outputTruncated: true },
+      } });
+      expect(store.read(taskId)?.state).toBe('running');
+      expect((await tasks.stop(taskId, context.thread.id))?.state).toBe('cancelled');
+      const timed = await bash.execute('timed-background', { command: 'sleep 30', run_in_background: true, timeout: 50 });
+      const timedId = (timed.details as { data: { backgroundTaskId: string } }).data.backgroundTaskId;
+      expect((await tasks.waitForTerminal(timedId, context.thread.id, 5_000))?.state).toBe('timed_out');
+      await bash.execute('foreground', { command: 'true' });
+      expect(admittedTimeouts.get('foreground')).toBe(120_000);
+    } finally {
+      await tasks.close(2_000); database.close(); await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  for (const stream of ['stdout', 'stderr'] as const) {
+    for (const boundary of ['unfinished', 'tail-inside-key'] as const) {
+      test(`redacts ${boundary} PEM context from running ${stream} and the model header`, async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'tenon-key-observation-'));
+        const database = new Database(':memory:');
+        const store = new ToolTaskStore(database as unknown as SqliteDatabase);
+        const tasks = new ToolTaskService(store, path.join(root, 'tasks'));
+        tasks.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+          startCompletionTurn: async () => false, taskChanged: () => {} });
+        await tasks.initialize();
+        try {
+          // Disposable fixture material only: no user credentials or external model.
+          const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey
+            .export({ type: 'pkcs8', format: 'pem' }).toString();
+          const lines = pem.trimEnd().split('\n');
+          const body = lines.slice(1, -1);
+          const prefix = boundary === 'unfinished'
+            ? `before\n${lines.slice(0, -1).join('\n')}\n`
+            : `before\n${pem}${'ordinary log line\n'.repeat(1640)}ready\n`;
+          const suffix = boundary === 'unfinished' ? `${lines.at(-1)}\nafter\n` : 'after\n';
+          if (boundary === 'tail-inside-key') {
+            expect(prefix.slice(-30_000).includes('BEGIN PRIVATE KEY')).toBe(false);
+            expect(body.some((line) => prefix.slice(-30_000).includes(line))).toBe(true);
+          }
+          await writeFile(path.join(root, 'prefix.txt'), prefix, { mode: 0o600 });
+          await writeFile(path.join(root, 'suffix.txt'), suffix, { mode: 0o600 });
+          await writeFile(path.join(root, 'writer.mjs'), `
+            import { existsSync, readFileSync } from 'node:fs';
+            const output = process[process.argv[2]];
+            output.write(readFileSync('prefix.txt'));
+            while (!existsSync('release')) await new Promise((resolve) => setTimeout(resolve, 10));
+            output.write(readFileSync('suffix.txt'));
+            setInterval(() => {}, 1000);
+          `);
+          const context = toolRuntimeContext();
+          const task = await tasks.start({
+            ownerThreadId: context.thread.id, sourceTurnId: context.turn.id, sourceItemId: 'key-log',
+            producer: 'bash', description: 'Disposable multiline secret fixture', command: 'Run log fixture',
+            cwd: root, env: process.env, timeoutMs: null,
+            process: { kind: 'exec', executable: process.execPath, args: ['writer.mjs', stream],
+              env: Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== undefined)), privateControl: false },
+          });
+          const waitForBytes = async (size: number) => {
+            const deadline = Date.now() + 5_000;
+            while ((await stat(path.join(task.detailPath, `${stream}.log`))).size < size) {
+              if (Date.now() >= deadline) throw new Error('Log fixture did not publish its bytes');
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+          };
+          await waitForBytes(Buffer.byteLength(prefix));
+          const controls = await new ToolRuntime(toolRuntimeService({ toolTaskService: () => tasks }), {
+            capabilityTools: () => [], capabilityConfig: { blocks: [] },
+          }).createTools({ ...context, configuration: { ...context.configuration, tools: ['task_status'] } });
+          const status = controls.find((candidate) => candidate.name === 'task_status')!;
+          const observed = await tasks.observeOutput(task.taskId, context.thread.id);
+          const { gateway } = await executeToolWithArguments(status, { task_id: task.taskId });
+          const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+          const headerText = (result.content[0] as { text: string }).text;
+          const header = JSON.parse(headerText);
+          expectToolOutputContract('task_status', header.data);
+          expect(header.ok).toBe(true);
+          expect(header.data.state).toBe('running');
+          expect(header.data.result).toBeNull();
+          // Boolean assertions avoid printing even disposable key material on failure.
+          expect({
+            serviceLeaks: body.some((line) => observed?.[stream].includes(line)),
+            modelLeaks: body.some((line) => headerText.includes(line)),
+          }).toEqual({ serviceLeaks: false, modelLeaks: false });
+          expect(observed?.[stream]).toContain(boundary === 'unfinished' ? 'before' : 'ready');
+          expect(header.data.observation.output).toContain(boundary === 'unfinished' ? 'before' : 'ready');
+          await writeFile(path.join(root, 'release'), 'continue');
+          await waitForBytes(Buffer.byteLength(prefix + suffix));
+          const after = await tasks.observeOutput(task.taskId, context.thread.id);
+          expect(body.some((line) => after?.[stream].includes(line))).toBe(false);
+          expect(after?.[stream]).toContain('after');
+          expect((await readFile(path.join(task.detailPath, `${stream}.log`), 'utf8')) === prefix + suffix).toBe(true);
+          expect(tasks.readOwned(task.taskId, context.thread.id)?.state).toBe('running');
+          expect((await tasks.stop(task.taskId, context.thread.id))?.state).toBe('cancelled');
+          const terminal = await tasks.output(task.taskId, context.thread.id);
+          expect(body.some((line) => terminal?.[stream].includes(line))).toBe(false);
+        } finally {
+          await tasks.close(2_000); database.close(); await rm(root, { recursive: true, force: true });
+        }
+      }, 15_000);
+    }
+  }
+
+  test('retains terminal task status when escaped process output exceeds the JSON byte limit', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-task-output-'));
+    const database = new Database(':memory:');
+    const store = new ToolTaskStore(database as unknown as SqliteDatabase);
+    const tasks = new ToolTaskService(store, path.join(root, 'tasks'));
+    tasks.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+      startCompletionTurn: async () => false, taskChanged: () => {} });
+    await tasks.initialize();
+    try {
+      const context = toolRuntimeContext();
+      const task = await tasks.start({
+        ownerThreadId: context.thread.id, sourceTurnId: context.turn.id, sourceItemId: 'binary-output', producer: 'bash',
+        description: 'Escaped process output',
+        command: 'head -c 30000 /dev/zero; head -c 30000 /dev/zero >&2', cwd: root, env: process.env, timeoutMs: 10_000,
+      });
+      expect((await tasks.waitForTerminal(task.taskId, context.thread.id, 5_000))?.state).toBe('succeeded');
+      const controls = await new ToolRuntime(toolRuntimeService({ toolTaskService: () => tasks }), {
+        capabilityTools: () => [], capabilityConfig: { blocks: [] },
+      }).createTools({ ...context, configuration: { ...context.configuration, tools: ['task_status'] } });
+      const status = controls.find((candidate) => candidate.name === 'task_status')!;
+      const { runtime, gateway } = await executeToolWithArguments(status, { task_id: task.taskId });
+      expect(runtime.state.messages.find((message) => message.role === 'toolResult')?.isError).toBe(false);
+      const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+      const header = JSON.parse((result.content[0] as { text: string }).text);
+      expect(header).toMatchObject({ ok: true, data: {
+        taskId: task.taskId, state: 'succeeded', result: { exitCode: 0, outputTruncated: true },
+      } });
+      expectToolOutputContract('task_status', header.data);
+      const original = await tasks.output(task.taskId, context.thread.id);
+      expect(original?.stdout).toHaveLength(30_000);
+      expect(original?.stderr).toHaveLength(30_000);
+    } finally {
+      await tasks.close(2_000); database.close(); await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   test('keeps expected adapter failures semantic while unexpected exceptions remain Kernel failures', async () => {
     const context = toolRuntimeContext();

@@ -22,7 +22,7 @@ describe('diagnostics export Host', () => {
       const dialogEntered = new Promise<void>((resolve) => { markDialogEntered = resolve; });
       const window = { isDestroyed: () => false };
       const caller: ApplicationOperationCaller = {
-        origin: { kind: 'agent', threadId: 'thread', turnId: 'turn', itemId: 'item' },
+        origin: { kind: 'window', windowId: 1 },
         signal: abort.signal,
         authorize: async () => {
           authorizeCount += 1;
@@ -40,7 +40,7 @@ describe('diagnostics export Host', () => {
         writeExport: async (path) => { writes += 1; return path; },
       });
       const operation = applicationOperations(exporter);
-      const running = operation.diagnosticsManage({ request: { operation: 'export' } }, caller);
+      const running = operation.diagnostics('export', caller);
       await dialogEntered;
 
       if (invalidation === 'abort') abort.abort();
@@ -66,8 +66,8 @@ describe('diagnostics export Host', () => {
       environment: async () => environment,
       writeExport: async (path) => { writes += 1; return path; },
     });
-    const result = await applicationOperations(exporter).diagnosticsManage(
-      { request: { operation: 'export' } },
+    const result = await applicationOperations(exporter).diagnostics(
+      'export',
       {
         origin: { kind: 'window', windowId: 1 },
         authorize: async () => { authorizeCount += 1; },
@@ -84,23 +84,10 @@ function applicationOperations(
   exportDiagnostics: ReturnType<typeof createDiagnosticsExportHost>,
 ) {
   return createApplicationOperations({
-    updates: {
-      view: async () => updateView(),
-      checkExplicitly: async () => updateView(),
-      openAvailableUpdate: async () => ({ ok: false, error: 'unavailable' }),
-    },
     appInfo: async () => ({ name: 'Tenon', version: '0.1.0', platform: 'darwin', arch: 'arm64', electron: '1', chrome: '1', node: '1' }),
     bundledRelease: async () => null,
-    diagnostics: { readRecords: async () => [] },
     openExternal: async () => undefined,
     revealDiagnostics: async () => ({ ok: false, error: 'unavailable' }),
     exportDiagnostics,
   });
-}
-
-function updateView() {
-  return {
-    currentVersion: '0.1.0', automaticChecksEnabled: true, phase: 'idle' as const,
-    lastSuccessfulCheckAt: null, availableRelease: null, manualError: null,
-  };
 }

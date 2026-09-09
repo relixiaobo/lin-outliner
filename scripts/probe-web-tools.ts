@@ -1,10 +1,12 @@
-import { BrowserWindow, app, session as electronSession } from 'electron';
+import { app, session as electronSession } from 'electron';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 
 import { createAgentTools } from '../src/main/agent/capabilities/agentTools';
-import { WEB_SEARCH_PARTITION } from '../src/main/agent/capabilities/agentWebConstants';
-import { interceptFirstMainFrameRedirect } from '../src/main/agent/capabilities/agentWebRedirect';
-import { isGoogleRedirectCandidateUrl } from '../src/main/agent/capabilities/agentWebSearchSerp';
+import { WEB_SEARCH_HTTP_PARTITION } from '../src/main/agent/capabilities/agentWebSearch';
+import { SEARCH_MCP_ENDPOINTS } from '../src/main/agent/capabilities/agentWebSearchMcp';
 import { isToolEnvelope, type ToolEnvelope } from '../src/main/agent/capabilities/agentToolEnvelope';
 
 interface ProbeResult {
@@ -36,6 +38,8 @@ interface WebFetchProbeData {
 interface WebSearchProbeData {
   finalUrl?: string;
   providerName?: string;
+  cached?: boolean;
+  attempts?: Array<{ providerName: string; status: string; code?: string; durationMs: number }>;
   resultCount?: number;
   hint?: {
     type: string;
@@ -51,25 +55,26 @@ interface WebSearchProbeData {
 interface LocalWebFixture {
   contentUrl: string;
   redirectUrl: string;
-  searchRedirectUrl: string;
-  searchTargetUrl: string;
   requests: string[];
   close: () => Promise<void>;
 }
 
+app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR ?? mkdtempSync(join(tmpdir(), 'tenon-web-tools-')));
+
 const results: ProbeResult[] = [];
 const tools = createAgentTools();
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
-const SEARCH_TOOL_TIMEOUT_MS = 210_000;
+const SEARCH_TOOL_TIMEOUT_MS = 25_000;
 const EXPECTED_PROBE_NAMES = [
   'local fixture setup',
   'web_fetch read local fixture',
   'web_fetch metadata local fixture',
   'web_fetch find local fixture',
   'web_fetch follows local redirect',
-  'search redirect interception boundary',
   'local fixture teardown',
   'web_search provider chain',
+  'web_search cached result',
+  'web_search Chinese query',
   'web_fetch search result',
   'web_fetch read example.com',
   'web_fetch metadata example.com',
@@ -83,7 +88,9 @@ async function main(): Promise<number> {
   await app.whenReady();
 
   const searchRequests: string[] = [];
-  electronSession.fromPartition(WEB_SEARCH_PARTITION).webRequest.onBeforeRequest((details, callback) => {
+  let createdWindows = 0;
+  app.on('browser-window-created', () => { createdWindows++; });
+  electronSession.fromPartition(WEB_SEARCH_HTTP_PARTITION).webRequest.onBeforeRequest((details, callback) => {
     searchRequests.push(details.url);
     callback({});
   });
@@ -104,7 +111,6 @@ async function main(): Promise<number> {
         'deterministic local page',
       );
       await runWebFetchRedirectProbe(fixture);
-      await runSearchRedirectBoundaryProbe(fixture);
     } finally {
       await runProbe('local fixture teardown', async () => {
         await fixture.close();
@@ -115,6 +121,7 @@ async function main(): Promise<number> {
   let discoveredUrl: string | undefined;
   await runProbe('web_search provider chain', async () => {
     const requestStart = searchRequests.length;
+    const windowStart = createdWindows;
     const envelope = await executeTool<WebSearchProbeData>(
       'web_search',
       {
@@ -124,26 +131,22 @@ async function main(): Promise<number> {
       SEARCH_TOOL_TIMEOUT_MS,
     );
     assertOk(envelope);
-    if (envelope.data?.hint) {
-      return {
-        verdict: 'SKIP' as const,
-        detail: `search provider returned hint=${JSON.stringify(envelope.data.hint)}`,
-      };
-    }
+    if (envelope.data?.hint) throw new Error('HTTP search unexpectedly returned a browser hint');
     if (!envelope.data?.resultCount) {
       throw new Error('expected at least one search result');
     }
-    if (envelope.data.providerName !== 'google_serp') {
-      throw new Error(`expected google_serp provider; got ${envelope.data.providerName ?? '<unknown>'}`);
+    if (!['parallel', 'exa'].includes(envelope.data.providerName ?? '')) {
+      throw new Error(`expected an HTTP provider; got ${envelope.data.providerName ?? '<unknown>'}`);
     }
+    if (createdWindows !== windowStart) throw new Error('ordinary search created a BrowserWindow');
     const returnedResults = envelope.data.results ?? [];
     if (returnedResults.length !== envelope.data.resultCount) {
       throw new Error(`expected ${envelope.data.resultCount} result records; got ${returnedResults.length}`);
     }
     const requests = searchRequests.slice(requestStart);
-    const googleRedirectRequests = requests.filter(isGoogleRedirectCandidateUrl);
-    if (googleRedirectRequests.length === 0) {
-      throw new Error('expected the Google resolver to request at least one admitted /goto URL');
+    const allowedEndpoints: readonly string[] = Object.values(SEARCH_MCP_ENDPOINTS);
+    if (!requests.length || requests.some((url) => !allowedEndpoints.includes(url))) {
+      throw new Error('expected only fixed HTTP search endpoint requests');
     }
     for (const result of returnedResults) {
       if (!/^https?:\/\//.test(result.url)) {
@@ -162,7 +165,28 @@ async function main(): Promise<number> {
       throw new Error(`expected an electronjs.org result; got ${first.url}`);
     }
     discoveredUrl = first.url;
-    return `provider=${envelope.data.providerName} count=${envelope.data.resultCount} goto=${googleRedirectRequests.length} first="${preview(first.title)}"`;
+    return `provider=${envelope.data.providerName} count=${envelope.data.resultCount} requests=${requests.length} windows=${createdWindows - windowStart} attempts=${JSON.stringify(envelope.data.attempts)} first="${preview(first.title)}"`;
+  });
+
+  await runProbe('web_search cached result', async () => {
+    const requestStart = searchRequests.length;
+    const envelope = await executeTool<WebSearchProbeData>('web_search', {
+      query: 'site:electronjs.org/docs/latest/api/browser-window BrowserWindow', limit: 3,
+    });
+    assertOk(envelope);
+    if (!envelope.data.cached || searchRequests.length !== requestStart) throw new Error('expected a cache hit without network');
+    return `cached=true count=${envelope.data.resultCount}`;
+  });
+
+  await runProbe('web_search Chinese query', async () => {
+    const windowStart = createdWindows;
+    const envelope = await executeTool<WebSearchProbeData>('web_search', {
+      query: '\u6210\u90fd \u5929\u6c14 2026\u5e749\u67089\u65e5 \u4eca\u65e5', limit: 5,
+    }, SEARCH_TOOL_TIMEOUT_MS);
+    assertOk(envelope);
+    if (!envelope.data.resultCount) throw new Error('expected Chinese search candidates');
+    if (createdWindows !== windowStart) throw new Error('Chinese search created a BrowserWindow');
+    return `provider=${envelope.data.providerName} count=${envelope.data.resultCount} windows=0`;
   });
 
   await runProbe('web_fetch search result', async () => {
@@ -265,46 +289,6 @@ async function runWebFetchRedirectProbe(fixture: LocalWebFixture): Promise<void>
   });
 }
 
-async function runSearchRedirectBoundaryProbe(fixture: LocalWebFixture): Promise<void> {
-  await runProbe('search redirect interception boundary', async () => {
-    const requestStart = fixture.requests.length;
-    const window = new BrowserWindow({
-      show: false,
-      webPreferences: {
-        session: electronSession.fromPartition('web-search-redirect-probe'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        javascript: false,
-      },
-    });
-
-    try {
-      const target = await interceptFirstMainFrameRedirect(
-        window.webContents,
-        fixture.searchRedirectUrl,
-        5_000,
-        (sourceUrl, targetUrl) => (
-          sourceUrl === fixture.searchRedirectUrl && targetUrl === fixture.searchTargetUrl
-            ? targetUrl
-            : null
-        ),
-      );
-      if (target !== fixture.searchTargetUrl) {
-        throw new Error(`expected admitted redirect target ${fixture.searchTargetUrl}; got ${target ?? '<empty>'}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const requestPaths = fixture.requests.slice(requestStart).map((url) => new URL(url).pathname);
-      if (requestPaths.length !== 1 || requestPaths[0] !== '/search-redirect') {
-        throw new Error(`expected only the redirect source request; got ${requestPaths.join(', ') || '<none>'}`);
-      }
-      return `requests=${requestPaths.join(',')} target=${target}`;
-    } finally {
-      if (!window.isDestroyed()) window.destroy();
-    }
-  });
-}
-
 async function startLocalWebFixture(): Promise<LocalWebFixture> {
   const html = [
     '<!doctype html><html lang="en"><head><title>Tenon Web Fetch Probe</title></head>',
@@ -321,16 +305,6 @@ async function startLocalWebFixture(): Promise<LocalWebFixture> {
     if (metadataError) {
       response.writeHead(409, { 'content-type': 'text/plain; charset=utf-8' });
       response.end(metadataError);
-      return;
-    }
-    if (requestUrl.pathname === '/search-redirect') {
-      response.writeHead(302, { location: '/search-target' });
-      response.end();
-      return;
-    }
-    if (requestUrl.pathname === '/search-target') {
-      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
-      response.end('this target must not be requested');
       return;
     }
     if (requestUrl.pathname === '/redirect') {
@@ -360,8 +334,6 @@ async function startLocalWebFixture(): Promise<LocalWebFixture> {
   return {
     contentUrl: `${origin}/content`,
     redirectUrl: `${origin}/redirect`,
-    searchRedirectUrl: `${origin}/search-redirect`,
-    searchTargetUrl: `${origin}/search-target`,
     requests,
     close: () => closeServer(server),
   };

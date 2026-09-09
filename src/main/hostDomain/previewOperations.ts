@@ -21,15 +21,12 @@ import {
 import { isUrlPageTranslationModel } from '../../core/urlPageTranslation';
 import { compileToolParameters } from '../agent/runtime/kernel/exactToolArguments';
 import { AgentToolFailure } from '../agent/AgentToolFailure';
-import type { DeferredToolAuthority } from '../agent/runtime/ToolRuntime';
 import type { PreviewTranslationCacheStore } from '../previewTranslationCacheStore';
 
 export interface PreviewOperationCaller {
   readonly key: string;
-  readonly origin:
-    | { kind: 'window'; windowId: number }
-    | { kind: 'agent'; threadId: string; turnId: string; itemId: string };
-  readonly authorize: DeferredToolAuthority;
+  readonly origin: { readonly kind: 'window'; readonly windowId: number };
+  readonly authorize: (name: string, input: unknown, signal?: AbortSignal) => Promise<void>;
   readonly signal?: AbortSignal;
 }
 interface RegisteredPreview {
@@ -231,7 +228,7 @@ export class PreviewOperations {
     if (candidates.length !== 1)
       throw failure(
         'preview_unavailable',
-        'Select exactly one available preview from preview_inspect.',
+        'Select an available preview in the workspace.',
       );
     const [key, entry] = candidates[0]!;
     if (revision !== undefined && revision !== entry.observation.revision)

@@ -32,7 +32,7 @@ export interface ToolTaskRecord extends ToolTaskProjection {
   readonly detailPath: string;
   readonly supervisorPid: number | null;
   readonly childPid: number | null;
-  readonly timeoutMs: number;
+  readonly timeoutMs: number | null;
   readonly stopRequestedAt: number | null;
   readonly terminalDigest: string | null;
   readonly stdoutBytes: number;
@@ -116,7 +116,7 @@ export interface ToolTaskSupervisorConfig {
   readonly finalReceiptPath: string;
   readonly preparedResultPath: string;
   readonly startedAt: number;
-  readonly timeoutMs: number;
+  readonly timeoutMs: number | null;
   readonly maxOutputBytes: number;
   readonly maxPreparedResultBytes: number;
 }
