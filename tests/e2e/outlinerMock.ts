@@ -502,6 +502,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     agentRuntime.delegation = { enabled: false, defaultRunnerId: 'internal', maxConcurrentGlobal: 8, maxConcurrentThread: 4, maxQueuedGlobal: 32, maxQueuedThread: 8, runners: {} };
     const agentSettings = {
       activeProviderId: 'openai',
+      defaultModel: 'auto',
       imageGeneration: {},
       providers: [{
         providerId: 'openai',
@@ -5526,6 +5527,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const index = managedSkills.findIndex((candidate) => candidate.id === String(args.skillId ?? ''));
           if (index >= 0) managedSkills.splice(index, 1);
           return { ok: true, value: clone(managedSkills) } as T;
+        }
+        if (cmd === 'agent_update_model_default') {
+          agentSettings.defaultModel = typeof args.defaultModel === 'string' ? args.defaultModel : 'auto';
+          return clone(agentSettings) as T;
         }
         if (cmd === 'agent_update_image_generation_settings') {
           const settings = (args.settings ?? {}) as { defaultModel?: string | null };
