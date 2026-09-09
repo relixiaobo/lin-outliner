@@ -157,6 +157,9 @@ export const ThreadDock = memo(function ThreadDock({
     ? [...snapshot.toolTasksById.values()].filter((task) => task.ownerThreadId === thread.id)
     : [], [snapshot.toolTasksById, thread]);
   const userInput = thread ? snapshot.userInputByThread.get(thread.id) ?? null : null;
+  useEffect(() => {
+    if (open && thread?.id) void threadStore.userInputs.reconcile(thread.id);
+  }, [open, thread?.id]);
   const providerRetry = thread ? snapshot.providerRetryByThread.get(thread.id) ?? null : null;
   const plan = thread ? snapshot.planByThread.get(thread.id) ?? null : null;
   const providerBlocksCreation = providerSettingsLoaded
@@ -462,6 +465,13 @@ export const ThreadDock = memo(function ThreadDock({
               goal={goal}
               indexStore={indexStore}
               inputRequest={userInput ?? null}
+              inputDrafts={[...snapshot.userInputDrafts.values()].filter((entry) => entry.request.threadId === thread.id)}
+              inputRecovery={snapshot.userInputRecoveryByThread.get(thread.id) ?? null}
+              onInputDraftChange={(request, update) => threadStore.userInputs.updateDraft(request, update)}
+              onReconcileInput={() => { void threadStore.userInputs.reconcile(thread.id); }}
+              onDiscardInput={(key) => threadStore.userInputs.discard(key)}
+              onInputAdded={(key) => threadStore.userInputs.markAdded(key)}
+              onInputMessageAccepted={(keys) => threadStore.userInputs.acceptMessage(thread.id, keys)}
               waitingOnUserInput={thread.status.type === 'active'
                 && thread.status.activeFlags.includes('waitingOnUserInput')}
               key={thread.id}

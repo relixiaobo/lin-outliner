@@ -1,3 +1,4 @@
+import type { UserInputDraft } from '../store/userInputState';
 import { useEffect, useRef, useState } from 'react';
 import type {
   RequestUserInputAnswer,
@@ -10,26 +11,38 @@ import { IconButton } from '../../ui/primitives/IconButton';
 
 interface UserInputRequestProps {
   readonly request: Request;
+  readonly draft: UserInputDraft;
+  readonly disabled?: boolean;
+  readonly onDraftChange: (update: Partial<Pick<UserInputDraft, 'answers' | 'step'>>) => void;
+  readonly onExpired: () => void;
   readonly onSubmit: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
 }
 
-interface SelectedAnswer {
-  readonly optionLabel?: string;
-  readonly otherText?: string;
-}
-
-export function UserInputRequest({ request, onSubmit }: UserInputRequestProps) {
+export function UserInputRequest({ request, draft, disabled = false, onDraftChange, onExpired, onSubmit }: UserInputRequestProps) {
   const t = useT();
-  const [answers, setAnswers] = useState<Record<string, SelectedAnswer>>({});
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const answers = draft.answers;
+  const currentQuestionIndex = draft.step;
+  const setAnswers = (update: (current: UserInputDraft['answers']) => UserInputDraft['answers']) => onDraftChange({ answers: update(answers) });
+  const setCurrentQuestionIndex = (step: number) => onDraftChange({ step });
+  const [remaining, setRemaining] = useState(() => Math.max(0, Math.ceil((request.deadlineAt - Date.now()) / 1000)));
+  const expiredRef = useRef(onExpired);
+  expiredRef.current = onExpired;
+  useEffect(() => {
+    const tick = () => {
+      const seconds = Math.max(0, Math.ceil((request.deadlineAt - Date.now()) / 1000));
+      setRemaining(seconds);
+      if (seconds === 0) { clearInterval(timer); expiredRef.current(); }
+    };
+    const timer = setInterval(tick, 1000);
+    tick();
+    return () => clearInterval(timer);
+  }, [request.deadlineAt]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const focusStepOnChangeRef = useRef(false);
+  const focusStepOnChangeRef = useRef(true);
   const questionStepRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setAnswers({});
-    setCurrentQuestionIndex(0);
     setSubmitting(false);
     setError(null);
   }, [request.itemId]);
@@ -45,30 +58,34 @@ export function UserInputRequest({ request, onSubmit }: UserInputRequestProps) {
     return () => window.cancelAnimationFrame(frame);
   }, [currentQuestionIndex]);
 
+  const blocked = disabled || submitting || remaining === 0;
   const questionCount = request.questions.length;
   const currentQuestion = request.questions[Math.min(currentQuestionIndex, questionCount - 1)];
   const selected = currentQuestion ? answers[currentQuestion.id] : undefined;
-  const currentComplete = Boolean(selected?.optionLabel || selected?.otherText?.trim());
+  const currentComplete = Boolean(selected?.skipped || selected?.optionLabel || selected?.otherText?.trim());
   const complete = request.questions.every((question) => {
     const answer = answers[question.id];
-    return Boolean(answer?.optionLabel || answer?.otherText?.trim());
+    return Boolean(answer?.skipped || answer?.optionLabel || answer?.otherText?.trim());
   });
   const isLastStep = currentQuestionIndex >= questionCount - 1;
 
   function moveToQuestion(index: number) {
-    if (submitting) return;
+    if (blocked) return;
     focusStepOnChangeRef.current = true;
     setCurrentQuestionIndex(Math.max(0, Math.min(questionCount - 1, index)));
   }
 
-  async function submit() {
-    if (!complete || submitting) return;
+  async function submit(submittedAnswers = answers) {
+    if (blocked || !request.questions.every((question) => {
+      const answer = submittedAnswers[question.id];
+      return answer?.skipped || answer?.optionLabel || answer?.otherText?.trim();
+    })) return;
     setSubmitting(true);
     setError(null);
     try {
       await onSubmit(request.questions.map((question) => ({
         questionId: question.id,
-        ...answers[question.id],
+        ...(submittedAnswers[question.id]?.skipped ? { skipped: true as const } : submittedAnswers[question.id]),
       })));
     } catch (submitError) {
       setError(errorMessage(submitError));
@@ -76,9 +93,17 @@ export function UserInputRequest({ request, onSubmit }: UserInputRequestProps) {
     }
   }
 
+  function skipCurrentQuestion() {
+    if (!currentQuestion || blocked) return;
+    const skippedAnswers = { ...answers, [currentQuestion.id]: { ...selected, skipped: true as const } };
+    onDraftChange({ answers: skippedAnswers });
+    if (isLastStep) void submit(skippedAnswers);
+    else moveToQuestion(currentQuestionIndex + 1);
+  }
+
   if (!currentQuestion) return null;
 
-  const otherSelected = selected?.otherText !== undefined;
+  const otherSelected = !selected?.skipped && selected?.otherText !== undefined;
   const progress = questionCount > 1
     ? t.agent.thread.inputProgress({ current: currentQuestionIndex + 1, total: questionCount })
     : null;
@@ -106,7 +131,7 @@ export function UserInputRequest({ request, onSubmit }: UserInputRequestProps) {
         {currentQuestionIndex > 0 ? (
           <IconButton
             className="thread-user-input-back"
-            disabled={submitting}
+            disabled={blocked}
             icon={BackIcon}
             iconSize={ICON_SIZE.menu}
             label={t.agent.thread.inputBack}
@@ -114,17 +139,19 @@ export function UserInputRequest({ request, onSubmit }: UserInputRequestProps) {
           />
         ) : null}
       </div>
+      <p className="thread-user-input-countdown" aria-live="off">{t.agent.thread.inputRemaining({ seconds: remaining })}</p>
       <div className="thread-user-input-step" key={currentQuestion.id} ref={questionStepRef} tabIndex={-1}>
         {currentQuestion.header ? <div className="thread-user-input-header">{currentQuestion.header}</div> : null}
         <div className="thread-user-input-prompt">{currentQuestion.question}</div>
+        {selected?.skipped ? <p className="thread-user-input-countdown">{t.agent.thread.inputSkipped}</p> : null}
         <fieldset>
           <legend className="sr-only">{currentQuestion.question}</legend>
           <div className="thread-user-input-options">
             {currentQuestion.options.map((option) => (
               <label key={option.label}>
                 <input
-                  checked={selected?.optionLabel === option.label}
-                  disabled={submitting}
+                  checked={!selected?.skipped && selected?.optionLabel === option.label}
+                  disabled={blocked}
                   name={currentQuestion.id}
                   onChange={() => setAnswers((current) => ({
                     ...current,
@@ -141,13 +168,13 @@ export function UserInputRequest({ request, onSubmit }: UserInputRequestProps) {
             <label>
               <input
                 checked={otherSelected}
-                disabled={submitting}
+                disabled={blocked}
                 name={currentQuestion.id}
                 onChange={(event) => {
                   const otherInput = event.currentTarget.closest('label')?.querySelector<HTMLInputElement>('.thread-user-input-other');
                   setAnswers((current) => ({
                     ...current,
-                    [currentQuestion.id]: { otherText: '' },
+                    [currentQuestion.id]: { otherText: selected?.otherText ?? '' },
                   }));
                   window.requestAnimationFrame(() => otherInput?.focus());
                 }}
@@ -158,7 +185,7 @@ export function UserInputRequest({ request, onSubmit }: UserInputRequestProps) {
                 <input
                   aria-label={t.agent.thread.other}
                   className="thread-user-input-other"
-                  disabled={!otherSelected || submitting}
+                  disabled={!otherSelected || blocked}
                   onChange={(event) => setAnswers((current) => ({
                     ...current,
                     [currentQuestion.id]: { otherText: event.target.value },
@@ -174,7 +201,10 @@ export function UserInputRequest({ request, onSubmit }: UserInputRequestProps) {
       </div>
       {error ? <p className="thread-inline-error" role="alert">{error}</p> : null}
       <div className="thread-user-input-actions">
-        <Button disabled={!(isLastStep ? complete : currentComplete) || submitting} size="sm" type="submit" variant="primary">
+        <Button disabled={blocked} size="sm" type="button" onClick={skipCurrentQuestion}>
+          {isLastStep ? t.agent.thread.inputSkipAndSubmit : t.agent.thread.inputSkip}
+        </Button>
+        <Button disabled={!(isLastStep ? complete : currentComplete) || blocked} size="sm" type="submit" variant="primary">
           {isLastStep ? t.agent.thread.submitInput : t.agent.thread.inputNext}
         </Button>
       </div>

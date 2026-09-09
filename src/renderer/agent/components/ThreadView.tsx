@@ -1,3 +1,7 @@
+import { Button } from '../../ui/primitives/Button';
+import { UserInputRecovery } from './UserInputRecovery';
+import { recoveryText, type UserInputDraft } from '../store/userInputState';
+import { userInputKey } from '../../../core/agent/userInput';
 import {
   memo,
   useCallback,
@@ -204,6 +208,13 @@ interface ThreadViewProps {
    */
   readonly selfSpeaker: ThreadSpeaker;
   readonly inputRequest: RequestUserInputRequest | null;
+  readonly inputDrafts?: readonly UserInputDraft[];
+  readonly inputRecovery?: 'restoring' | 'error' | null;
+  readonly onInputDraftChange?: (request: RequestUserInputRequest, update: Partial<Pick<UserInputDraft, 'answers' | 'step'>>) => void;
+  readonly onReconcileInput?: () => void;
+  readonly onDiscardInput?: (key: string) => void;
+  readonly onInputAdded?: (key: string) => void;
+  readonly onInputMessageAccepted?: (keys: readonly string[]) => void;
   /** The run is blocked on the user. Working phrases become static and the
    *  divider names the wait; elapsed time remains the Turn's wall-clock span. */
   readonly waitingOnUserInput: boolean;
@@ -671,6 +682,7 @@ export function ThreadView({
   turns,
   selfSpeaker,
   inputRequest,
+  inputDrafts = [], inputRecovery = null, onInputDraftChange, onReconcileInput, onDiscardInput, onInputAdded, onInputMessageAccepted,
   waitingOnUserInput,
   providerRetry,
   threadCreationBlocked,
@@ -692,7 +704,8 @@ export function ThreadView({
   onSubmitUserInput,
 }: ThreadViewProps) {
   const t = useT();
-  const waitingForInput = Boolean(inputRequest);
+  const waitingForInput = Boolean(inputRequest || waitingOnUserInput || inputRecovery);
+  const inputDraft = inputRequest ? inputDrafts.find((entry) => userInputKey(entry.request) === userInputKey(inputRequest)) : undefined;
   const initialScrollSnapshot = threadScrollSnapshots.get(threadId);
   const [draft, setDraft] = useState<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
   const [sending, setSending] = useState(false);
@@ -2480,7 +2493,11 @@ export function ThreadView({
     composerRef.current?.clear();
     updateAttachments((current) => current.filter((attachment) => !submittedAttachmentIds.has(attachment.id)));
     try {
+      const inputRecoveryKeys = inputDrafts.filter((entry) => entry.addedToMessage && recoveryText(entry)
+        && submittedContent.filter((part) => part.type === 'text').map((part) => part.text).join('\n').includes(recoveryText(entry)))
+        .map((entry) => userInputKey(entry.request));
       const submission = await onSend(submittedContent, pendingSend.clientMessageId);
+      if (submission) onInputMessageAccepted?.(inputRecoveryKeys);
       const acceptedTurn = submission?.turn ?? null;
       // A steer is accepted into the active Turn and therefore has no new Turn
       // in the response. Admission disposition, not nullable layout data, owns
@@ -3203,6 +3220,17 @@ export function ThreadView({
       ) : null}
       {composerEnabled ? <div className="thread-composer-region thread-composer" ref={composerRegionRef}>
         {projectControl}
+        <UserInputRecovery
+          drafts={inputDrafts.filter((entry) => entry.outcome !== 'pending')}
+          canAdd={!waitingForInput && !sending}
+          onAdd={(entry) => {
+            if (!composerRef.current) return;
+            composerRef.current.appendPlainText(recoveryText(entry));
+            onInputAdded?.(userInputKey(entry.request));
+          }}
+          onDiscard={(key) => onDiscardInput?.(key)}
+          onRetry={() => onReconcileInput?.()}
+        />
         {activePlan ? (
           <ThreadPlanProgress
             onClosed={() => composerRef.current?.focus()}
@@ -3217,11 +3245,25 @@ export function ThreadView({
           onDragOver={handleDragOver}
           onDrop={handleDrop}
         >
-          {inputRequest ? (
+          {inputRequest && inputDraft ? (
             <UserInputRequest
+              key={userInputKey(inputRequest)}
+              draft={inputDraft}
+              disabled={Boolean(inputRecovery)}
+              onDraftChange={(update) => onInputDraftChange?.(inputRequest, update)}
+              onExpired={() => onReconcileInput?.()}
               onSubmit={onSubmitUserInput}
               request={inputRequest}
             />
+          ) : null}
+          {(inputRecovery || (waitingOnUserInput && !inputRequest)) ? (
+            <div className="thread-user-input-recovery-state" role="status">
+              <p>{inputRecovery === 'error' ? t.agent.thread.inputRestoreError : t.agent.thread.inputRestoring}</p>
+              <div className="thread-user-input-actions">
+                <Button size="sm" onClick={() => onReconcileInput?.()}>{t.agent.thread.inputRetry}</Button>
+                <Button size="sm" onClick={() => void onInterrupt()}>{t.agent.thread.inputInterrupt}</Button>
+              </div>
+            </div>
           ) : null}
           <div className="thread-composer-main" hidden={waitingForInput}>
               {dragActive ? <div className="thread-composer-drop-overlay">{t.agent.thread.dropFilesToAttach}</div> : null}

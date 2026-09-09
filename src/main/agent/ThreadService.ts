@@ -31,6 +31,8 @@ RendererTurnStartRequest,
 RendererTurnSteerRequest,
 RendererTurnSubmitRequest,
 RequestUserInputResponse,
+RequestUserInputResult,
+UserInputReadResponse,
 SkillCatalogContextPayload,
 SkillInvocationContextPayload,
 Thread,
@@ -1306,9 +1308,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return await this.goals.create(decoded as AgentCoreRequestByMethod['goal/create']) as AgentCoreResponseByMethod[Method];
       case 'goal/update':
         return await this.goals.update(decoded as AgentCoreRequestByMethod['goal/update']) as AgentCoreResponseByMethod[Method];
+      case 'userInput/read': {
+        const request = decoded as AgentCoreRequestByMethod['userInput/read'];
+        return await this.turnLifecycle.readUserInput(request.threadId, request.observed) as AgentCoreResponseByMethod[Method];
+      }
       case 'userInput/respond':
-        await this.respondUserInput(decoded as AgentCoreRequestByMethod['userInput/respond']);
-        return emptyResponse() as AgentCoreResponseByMethod[Method];
+        return await this.respondUserInput(decoded as AgentCoreRequestByMethod['userInput/respond']) as AgentCoreResponseByMethod[Method];
     }
   }
   listTurns(request: ThreadTurnsListRequest): ThreadTurnsListResponse {
@@ -1789,8 +1794,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     itemId: string,
     inputValue: unknown,
     signal?: AbortSignal,
-  ): Promise<RequestUserInputResponse> { return this.turnLifecycle.requestUserInput(threadId, turnId, itemId, inputValue, signal); }
-  async respondUserInput(response: RequestUserInputResponse): Promise<void> { return this.turnLifecycle.respondUserInput(response); }
+  ): Promise<RequestUserInputResult> { return this.turnLifecycle.requestUserInput(threadId, turnId, itemId, inputValue, signal); }
+  async reconcileUserInputsOnResume(): Promise<void> {
+    await Promise.allSettled([...this.pendingUserInputs.keys()].map((threadId) => this.turnLifecycle.readUserInput(threadId)));
+  }
+  async respondUserInput(response: RequestUserInputResponse): Promise<UserInputReadResponse> { return this.turnLifecycle.respondUserInput(response); }
   updateTurnPlan(threadId: ThreadId, turnId: string, inputValue: unknown): UpdatePlanToolInput {
     const input = normalizeUpdatePlanToolInput(inputValue);
     this.turnLifecycle.requireActiveTurn(threadId, turnId);

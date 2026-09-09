@@ -5155,6 +5155,7 @@ test.describe('canonical agent Thread surface', () => {
         turnId,
         itemId,
         request: {
+          hostGeneration: 'mock-host', revision: 1, deadlineAt: Date.now() + 60_000, autoResolutionMs: 60_000,
           threadId,
           turnId,
           itemId,
@@ -5195,7 +5196,7 @@ test.describe('canonical agent Thread surface', () => {
     await form.getByRole('button', { name: 'Next' }).click();
     await form.getByRole('radio', { name: 'Other' }).check();
     await form.getByRole('textbox', { name: 'Other' }).fill('Every morning');
-    await form.getByRole('button', { name: 'Submit' }).click();
+    await form.getByRole('button', { name: 'Submit', exact: true }).click();
 
     const response = (await commandCalls(page)).filter((call) => call.cmd === 'userInput/respond').at(-1);
     expect(response?.args.answers).toEqual([
@@ -5203,28 +5204,6 @@ test.describe('canonical agent Thread surface', () => {
       { questionId: 'schedule', otherText: 'Every morning' },
     ]);
 
-    await page.evaluate(async () => {
-      const target = window as Window & {
-        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
-        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
-      };
-      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
-      const threadId = response?.data[0]?.id;
-      if (!threadId) throw new Error('Mock Thread not found');
-      target.__LIN_E2E__?.emitAgentCoreNotification({
-        type: 'userInput/resolved',
-        threadId,
-        turnId: '01910000-0000-7000-8000-00000000ab01',
-        itemId: '01910000-0000-7000-8000-00000000ab02',
-        response: {
-          threadId,
-          turnId: '01910000-0000-7000-8000-00000000ab01',
-          itemId: '01910000-0000-7000-8000-00000000ab02',
-          answers: [],
-          autoResolved: false,
-        },
-      });
-    });
     await expect(composer).toHaveText('Keep this draft while answering.');
   });
 

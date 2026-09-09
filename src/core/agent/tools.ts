@@ -166,7 +166,7 @@ export type RequestUserInputToolQuestion = RequestUserInputQuestion;
 
 export interface RequestUserInputToolInput {
   readonly questions: readonly RequestUserInputToolQuestion[];
-  readonly autoResolutionMs?: number;
+  readonly autoResolutionMs: number;
 }
 
 export interface TaskStopToolInput {
@@ -493,7 +493,7 @@ const requestUserInputSchema = objectSchema({
     'Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with "(Recommended)". Do not include an "Other" option in this list; the client will add a free-form "Other" option automatically.'),
   }, ['id', 'header', 'question', 'options'])),
   autoResolutionMs: numberSchema(
-    `Optional non-blocking timeout from ${REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS} to ${REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS} milliseconds.`,
+    `Whole-request timeout; defaults to 60000 milliseconds. Explicit bounds: ${REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS} to ${REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS} milliseconds.`,
   ),
 }, ['questions']);
 
@@ -753,7 +753,7 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [{
   },
   {
     identity: { namespace: null, name: 'request_user_input' },
-    description: 'Request one to three short product questions from the user. This never requests authorization.',
+    description: 'Request one to three short product questions. Default wait is 60 seconds. Users may skip individual questions; an answered result is an explicit form submission whose entries contain an option, Other text, or skipped: true. A skipped entry supplies no answer. A timedOut result means nothing was submitted, not approval or proof the user saw the question. Continue authorized independent work, state reversible assumptions, or explain the unresolved decision. Do not automatically re-ask skipped or expired questions. Directional, irreversible, or permission-dependent work still requires a real decision. Skipping and timeout grant no authorization; this never requests authorization.',
     scope: 'rootThread',
     schemaOwner: 'core',
     inputSchema: requestUserInputSchema,
@@ -762,9 +762,15 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [{
         questionId: stringSchema(),
         optionLabel: stringSchema(),
         otherText: stringSchema(),
+        skipped: booleanSchema('True only when the user explicitly skipped this question; no optionLabel or otherText accompanies it.'),
       }, ['questionId'])),
-      autoResolved: booleanSchema(),
-    }, ['answers', 'autoResolved']),
+      outcome: enumSchema(['answered', 'timedOut']),
+      hostGeneration: stringSchema(),
+      threadId: stringSchema(),
+      turnId: stringSchema(),
+      itemId: stringSchema(),
+      deadlineAt: numberSchema(),
+    }, ['outcome', 'hostGeneration', 'threadId', 'turnId', 'itemId', 'deadlineAt']),
     actionKinds: ['agent.user_input.request'],
   },
   {
@@ -1062,14 +1068,14 @@ export function normalizeRequestUserInputToolInput(value: unknown): RequestUserI
   const questions = decodeRequestUserInputQuestions(value.questions);
 
   const autoResolutionMs = value.autoResolutionMs === undefined
-    ? undefined
+    ? REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS
     : Math.round(Math.min(
       REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
       Math.max(REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS, finiteNumber(value.autoResolutionMs, 'autoResolutionMs')),
     ));
   return Object.freeze({
     questions: Object.freeze(questions),
-    ...(autoResolutionMs === undefined ? {} : { autoResolutionMs }),
+    autoResolutionMs,
   });
 }
 

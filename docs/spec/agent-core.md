@@ -996,7 +996,8 @@ grouped by the concept they own:
   audited diagnostics reads, and Trajectory projection/detail reads
 - `turn/*`: start, steer, and interrupt
 - `goal/*`: get, create, and update
-- `userInput/respond`: resolve an active structured input request
+- `userInput/read`: bounded current request state and an optional exact prior settlement
+- `userInput/respond`: accept an exact pending answer or return its same-answer receipt
 
 All input and output crosses strict codecs. Unknown fields, invalid UUIDv7 IDs,
 invalid state transitions, and impossible terminal facts fail closed. Thread
@@ -1183,3 +1184,62 @@ Protected definitions retain host-owned identity and lifecycle. Public Changes
 may apply or remove a protected tag from content but cannot mutate its
 definition. Runtime validation extracts every owner, parent, target, binding,
 and nested tree reference and fails closed before write admission.
+
+
+## Structured input lifecycle
+
+`TurnLifecycle` owns structured input authority; the renderer is a projection.
+A root Thread accepts at most one pending request at a time. Each accepted
+request has an exact Host generation / Thread / Turn / Item identity, a monotonic
+per-Thread revision, and a Host-clock deadline. `userInput/read` returns current
+pending state (including explicit null), the latest settlement, and active Turn
+identity at the same serialized owner boundary. An optional exact observed
+identity resolves its recorded settlement through the same owner; this returns
+one receipt, never an unbounded history or another pending-request database.
+The in-memory receipt cache is bounded to 128 entries; older receipts use the
+existing Rollout. Rollout evidence never reconstructs a waiting Promise.
+
+Every request defaults to a 60-second whole-request wait; an explicit duration
+is clamped to the existing 60–240-second bounds. The deadline starts at Host
+acceptance and does not move on reload, focus, typing, or question navigation.
+Timer callbacks, system resume, snapshots, and answer acceptance all reconcile
+against that original deadline. The timeout releases the same active Turn with
+an explicit `timedOut` result and no answers. It removes only input waiting;
+it does not complete a Turn, release an executing Task/run slot, or mark results
+read. Existing Automation execution admission remains unchanged; the future
+scheduled-work consumer must consume this same settlement, not add a timer.
+
+Answer, timeout, cancellation, tool abort, Turn termination, and shutdown share
+one per-Thread input mutex. Answer validation checks the exact identity, complete
+answer-or-skip set, live execution, and Host clock. Each question has exactly one
+option, non-empty Other text, or an explicit `skipped: true` entry. A skip carries
+no answer text and grants no authority. Skipping the last step submits the form
+immediately, without waiting for the deadline. The serialized check orders competing
+transitions; the durable settlement append commits acceptance. Only then does
+the owner remove pending state, publish the settlement, clear the waiting flag,
+and resolve the tool once. A lost reply or append acknowledgement reconciles to
+that receipt. Duplicate same-answer requests succeed consistently; conflicting,
+wrong-Thread, or expired submissions cannot mutate a newer request. A write
+failure before answer commitment keeps the original request answerable. A failed
+request publication or non-answer settlement releases the tool with a visible
+failed state even if recording is unavailable. Notification/status publication
+failure cannot undo committed acceptance or strand the execution Promise.
+
+`userInput/requested` carries the request and ordering. `userInput/resolved`
+retains the validated response and carries an answered settlement (explicit form
+submission, including any skipped questions). Its optional `skippedQuestionIds`
+contains only the skipped IDs, allowing exact-receipt reconciliation to release
+submitted answers while preserving withheld local text;
+`userInput/cleared` carries timed-out, cancelled, or failed settlement without
+inventing an answer. Snapshots expose exact outcomes independently of delivery.
+A new Host generation follows interrupted-Turn recovery and never revives
+historical requests. Renderer visibility checks apply to reads and responses;
+hidden delegated contexts acquire no new access.
+
+Diagnostics record publication, desktop forwarding or absent windows, snapshot
+reconciliation, rejected stale updates, and transport/consumer failure. They use
+only request identities and ordering metadata, not question text or answers.
+Subscriber failures are contained, and input publication does not await extension
+observers while holding the request mutex. A snapshot-reading or stalled observer
+cannot block expiry. Reproducing a recovery defect does not prove
+which transition lost an original incident's notification.

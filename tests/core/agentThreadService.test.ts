@@ -6116,9 +6116,9 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       turnId: turn.turn.id,
       itemId: 'question-item',
       answers: [{ questionId: 'storage_mode', optionLabel: 'Local (Recommended)' }],
-      autoResolved: false,
+      hostGeneration: (await fixture.service.request('userInput/read', { threadId: thread.id })).state.hostGeneration,
     });
-    expect(await responsePromise).toMatchObject({ answers: [{ optionLabel: 'Local (Recommended)' }], autoResolved: false });
+    expect(await responsePromise).toMatchObject({ answers: [{ optionLabel: 'Local (Recommended)' }], outcome: 'answered' });
     expect(notifications.map((notification) => notification.type)).toContain('userInput/requested');
     expect(notifications.map((notification) => notification.type)).toContain('userInput/resolved');
     fixture.executor.finish();
@@ -7408,6 +7408,7 @@ interface Fixture {
   service: ThreadService;
   executor: ControlledExecutor;
   clock: () => number;
+  advanceClock: (ms: number) => void;
   stores: ThreadServiceStores;
 }
 
@@ -7467,7 +7468,7 @@ async function createFixture(
   const clock = () => ++now;
   const opened = await openFixture(root, executor, clock, extensions, options);
   await opened.service.initialize();
-  return { root, executor, clock, service: opened.service, stores: opened.stores };
+  return { root, executor, clock, advanceClock: (ms) => { now += ms; }, service: opened.service, stores: opened.stores };
 }
 
 
@@ -8498,3 +8499,194 @@ function recordPdfFixture(pageTexts: string[]): string {
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
   return pdf;
 }
+
+describe('bounded user input lifecycle', () => {
+  async function setup(extensions?: ExtensionRegistry) {
+    const fixture = await createFixture(extensions);
+    const thread = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
+    const { turn } = await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Ask about storage.' }] });
+    await fixture.executor.waitUntilWaiting();
+    const questions = [{ id: 'storage', header: 'Storage', question: 'Where should it live?', options: [
+      { label: 'Local', description: 'On this device.' }, { label: 'Cloud', description: 'On the server.' },
+    ] }];
+    const read = (observed?: import('../../src/core/agent/protocol').UserInputIdentity) => fixture.service.request('userInput/read', {
+      threadId: thread.id, ...(observed ? { observed: { hostGeneration: observed.hostGeneration, threadId: observed.threadId, turnId: observed.turnId, itemId: observed.itemId } } : {}),
+    });
+    const ask = async (itemId = 'question-1', autoResolutionMs?: number) => {
+      const result = fixture.service.requestUserInput(thread.id, turn.id, itemId, { questions, ...(autoResolutionMs === undefined ? {} : { autoResolutionMs }) });
+      void result.catch(() => undefined);
+      const snapshot = await read();
+      const request = snapshot.state.pending!;
+      const response = { hostGeneration: request.hostGeneration, threadId: thread.id, turnId: turn.id, itemId, answers: [{ questionId: 'storage', optionLabel: 'Local' }] };
+      return { result, request, response };
+    };
+    return { ...fixture, thread, turn, read, ask };
+  }
+
+  test('snapshot-reading, stalled, and throwing subscribers cannot block question settlement or other observers', async () => {
+    let service!: ThreadService;
+    let observed = false;
+    const extensions = new ExtensionRegistry();
+    extensions.register({ id: 'stalled-observer', onNotification: (event) => event.type === 'userInput/requested' ? new Promise(() => {}) : undefined });
+    extensions.register({ id: 'throwing-observer', onNotification: (event) => { if (event.type === 'userInput/requested') throw new Error('synthetic consumer failure'); } });
+    extensions.register({ id: 'snapshot-observer', onNotification: async (event) => {
+      if (event.type === 'userInput/requested') { await service.request('userInput/read', { threadId: event.threadId }); observed = true; }
+    } });
+    const f = await setup(extensions);
+    service = f.service;
+    f.service.subscribe((event) => { if (event.type === 'userInput/requested') throw new Error('synthetic subscriber failure'); });
+    let reached = false;
+    f.service.subscribe((event) => { if (event.type === 'userInput/requested') reached = true; });
+    const question = await withTimeout(f.ask(), 1000);
+    await withTimeout(waitUntil(() => observed), 1000);
+    expect(reached).toBe(true);
+    f.advanceClock(60_001);
+    await withTimeout(f.service.reconcileUserInputsOnResume(), 1000);
+    expect(await question.result).toMatchObject({ outcome: 'timedOut' });
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
+  test('default expiry returns no answers and leaves the same Turn executing after a delayed timer', async () => {
+    const f = await setup();
+    const first = await f.ask();
+    expect(first.request.autoResolutionMs).toBe(60_000);
+    f.advanceClock(60_000);
+    await f.service.reconcileUserInputsOnResume();
+    expect(await first.result).toEqual({
+      hostGeneration: first.request.hostGeneration, threadId: f.thread.id, turnId: f.turn.id, itemId: first.request.itemId,
+      outcome: 'timedOut', deadlineAt: first.request.deadlineAt,
+    });
+    expect((await f.read()).state).toMatchObject({ pending: null, activeTurnId: f.turn.id, settled: { outcome: 'timedOut' } });
+    expect(f.service.readThread({ threadId: f.thread.id }).thread.status).toEqual({ type: 'active', activeFlags: [] });
+    await expect(f.service.respondUserInput(first.response)).rejects.toThrow('expired');
+    const next = await f.ask('question-2', 240_000);
+    expect(next.request.autoResolutionMs).toBe(240_000);
+    expect((await f.read(first.response)).observed).toMatchObject({ outcome: 'timedOut', itemId: first.request.itemId });
+    expect((await f.read()).state.pending?.itemId).toBe('question-2');
+    await f.service.respondUserInput(next.response);
+    expect(await next.result).toMatchObject({ outcome: 'answered' });
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
+  test('accepts one answer, deduplicates a lost reply, and rejects conflicts without touching a newer request', async () => {
+    const f = await setup();
+    const notifications: AgentCoreNotification[] = [];
+    f.service.subscribe((event) => notifications.push(event));
+    const first = await f.ask();
+    const replies = await Promise.all([f.service.respondUserInput(first.response), f.service.respondUserInput(first.response)]);
+    expect(replies.every((reply) => reply.observed?.outcome === 'answered')).toBe(true);
+    expect(await first.result).toMatchObject({ outcome: 'answered', answers: first.response.answers });
+    const next = await f.ask('question-2');
+    expect((await f.service.respondUserInput(first.response)).state.pending?.itemId).toBe(next.request.itemId);
+    await expect(f.service.respondUserInput({ ...first.response, answers: [{ questionId: 'storage', optionLabel: 'Cloud' }] })).rejects.toThrow('already settled');
+    await expect(f.service.respondUserInput({ ...next.response, turnId: uuidV7() })).rejects.toThrow('no longer waiting');
+    expect((await f.read()).state.pending?.itemId).toBe(next.request.itemId);
+    expect(notifications.filter((event) => event.type === 'userInput/resolved')).toHaveLength(1);
+    await f.service.respondUserInput(next.response);
+    await next.result;
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
+  test('late answer loses to the Host deadline even before the timer callback runs', async () => {
+    const f = await setup();
+    const question = await f.ask();
+    f.advanceClock(60_001);
+    await expect(f.service.respondUserInput(question.response)).rejects.toThrow('expired');
+    expect(await question.result).toMatchObject({ outcome: 'timedOut' });
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
+  test('explicit skips settle immediately, reject mixed answer content, and share deadline and duplicate acceptance ordering', async () => {
+    const f = await setup();
+    const first = await f.ask();
+    const skipped = { ...first.response, answers: [{ questionId: 'storage', skipped: true as const }] };
+    await expect(f.service.respondUserInput({ ...skipped, answers: [{ ...skipped.answers[0]!, otherText: 'Not submitted' }] })).rejects.toThrow('explicit skip');
+    const responses = await Promise.all([f.service.respondUserInput(skipped), f.service.respondUserInput(skipped)]);
+    expect(responses.every((response) => response.observed?.skippedQuestionIds?.[0] === 'storage')).toBe(true);
+    expect(await first.result).toMatchObject({ outcome: 'answered', answers: [{ questionId: 'storage', skipped: true }] });
+    expect((await f.read()).state).toMatchObject({ activeTurnId: f.turn.id, pending: null, settled: { skippedQuestionIds: ['storage'] } });
+    await expect(f.service.respondUserInput(first.response)).rejects.toThrow('already settled');
+    const next = await f.ask('late-skip');
+    f.advanceClock(60_001);
+    await expect(f.service.respondUserInput({ ...next.response, answers: skipped.answers })).rejects.toThrow('expired');
+    expect(await next.result).toMatchObject({ outcome: 'timedOut' });
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
+  test('interrupt and normal termination fence the exact request and settle the wait', async () => {
+    for (const interrupt of [true, false]) {
+      const f = await setup();
+      const question = await f.ask();
+      if (interrupt) await f.service.request('turn/interrupt', { threadId: f.thread.id, turnId: f.turn.id });
+      else f.executor.finish();
+      await expect(question.result).rejects.toThrow('interrupted');
+      await f.service.waitForIdle(f.thread.id);
+      expect((await f.read()).state).toMatchObject({ pending: null, settled: { outcome: 'cancelled' } });
+      await expect(f.service.respondUserInput(question.response)).rejects.toThrow('already settled');
+      await f.service.close();
+    }
+  });
+
+  test('retains an answerable request on an uncommitted answer write failure', async () => {
+    const f = await setup();
+    const question = await f.ask();
+    const append = f.stores.rollout.append.bind(f.stores.rollout);
+    const failure = spyOn(f.stores.rollout, 'append').mockImplementation(async (...args) => {
+      if (args[1].type === 'userInput/resolved') throw new Error('synthetic write failure');
+      return append(...args);
+    });
+    await expect(f.service.respondUserInput(question.response)).rejects.toThrow('could not be saved');
+    expect((await f.read()).state.pending).toEqual(question.request);
+    failure.mockRestore();
+    await f.service.respondUserInput(question.response);
+    expect(await question.result).toMatchObject({ outcome: 'answered' });
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
+  test('recognizes a committed append despite a lost write acknowledgement', async () => {
+    const f = await setup();
+    const question = await f.ask();
+    const append = f.stores.rollout.append.bind(f.stores.rollout);
+    const failure = spyOn(f.stores.rollout, 'append').mockImplementation(async (...args) => {
+      const result = await append(...args);
+      if (args[1].type === 'userInput/resolved') throw new Error('synthetic acknowledgement loss');
+      return result;
+    });
+    expect((await f.service.respondUserInput(question.response)).observed?.outcome).toBe('answered');
+    failure.mockRestore();
+    expect(await question.result).toMatchObject({ outcome: 'answered' });
+    f.executor.finish();
+    await f.service.waitForIdle(f.thread.id);
+    await f.service.close();
+  });
+
+  test('publication failure releases the tool with visible failed state, and shutdown never revives it', async () => {
+    const f = await setup();
+    const append = f.stores.rollout.append.bind(f.stores.rollout);
+    const failure = spyOn(f.stores.rollout, 'append').mockImplementation(async (...args) => {
+      if (args[1].type === 'userInput/requested') throw new Error('synthetic publication failure');
+      return append(...args);
+    });
+    const result = f.service.requestUserInput(f.thread.id, f.turn.id, 'failed-question', { questions: [{
+      id: 'storage', header: 'Storage', question: 'Where?', options: [{ label: 'Local', description: 'Local.' }, { label: 'Cloud', description: 'Cloud.' }],
+    }] });
+    await expect(result).rejects.toThrow('could not be delivered');
+    failure.mockRestore();
+    expect((await f.read()).state).toMatchObject({ pending: null, settled: { outcome: 'failed' } });
+    const next = await f.ask('shutdown-question');
+    await f.service.close();
+    await expect(next.result).rejects.toThrow('interrupted');
+  });
+});

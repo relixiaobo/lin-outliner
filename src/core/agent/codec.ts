@@ -1,3 +1,4 @@
+import { sameUserInput } from './userInput';
 import { decodeProcessIsolationEvidence } from './processIsolation';
 import { decodeProjectSelection, decodeProjectInspectRequest, decodeProjectManageRequest, decodeProjectCatalogView, decodeProjectManageResult } from './project';
 import { decodeExecutionContextFact, decodeTaskExecutionContext } from './executionContext';
@@ -52,6 +53,10 @@ import {
   type PrivilegedTurnStartRequest,
   type PrivilegedTurnSteerRequest,
   type RequestUserInputRequest,
+  type RequestUserInputResult,
+  type UserInputIdentity,
+  type UserInputSettlement,
+  type UserInputReadResponse,
   type RequestUserInputQuestion,
   type RendererTurnStartRequest,
   type RendererTurnSubmitRequest,
@@ -803,6 +808,7 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
     'turn/plan/updated',
     'userInput/requested',
     'userInput/resolved',
+    'userInput/cleared',
     'goal/updated',
     'goal/cleared',
     'toolTask/changed',
@@ -995,16 +1001,31 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       result = { type, threadId, turnId, itemId, request };
       break;
     }
-    case 'userInput/resolved': {
-      exactKeys(record, ['type', 'threadId', 'turnId', 'itemId', 'response'], 'notification');
+    case 'userInput/resolved':
+    case 'userInput/cleared': {
+      exactKeys(record, ['type', 'threadId', 'turnId', 'itemId', 'settlement', ...(type === 'userInput/resolved' ? ['response'] : [])], 'notification');
       const threadId = uuidV7(record.threadId, 'notification.threadId');
       const turnId = uuidV7(record.turnId, 'notification.turnId');
       const itemId = stringValue(record.itemId, 'notification.itemId');
-      const response = decodeRequestUserInputResponse(record.response);
-      if (response.threadId !== threadId || response.turnId !== turnId || response.itemId !== itemId) {
-        fail('notification.response', 'control-plane ids must match the notification envelope');
+      const settlement = decodeUserInputSettlement(record.settlement);
+      if (settlement.threadId !== threadId || settlement.turnId !== turnId || settlement.itemId !== itemId) {
+        fail('notification.settlement', 'control-plane ids must match the notification envelope');
       }
-      result = { type, threadId, turnId, itemId, response };
+      if (type === 'userInput/resolved') {
+        const response = decodeRequestUserInputResponse(record.response);
+        if (!sameUserInput(settlement, response) || settlement.outcome !== 'answered') {
+          fail('notification.response', 'must match the answered settlement');
+        }
+        const skipped = response.answers.filter((answer) => answer.skipped).map((answer) => answer.questionId);
+        if (skipped.length !== (settlement.skippedQuestionIds?.length ?? 0)
+          || skipped.some((id) => !settlement.skippedQuestionIds?.includes(id))) {
+          fail('notification.settlement', 'skipped question ids must match the accepted response');
+        }
+        result = { type, threadId, turnId, itemId, response, settlement };
+      } else {
+        if (settlement.outcome === 'answered') fail('notification.settlement', 'answered requests require a response');
+        result = { type, threadId, turnId, itemId, settlement };
+      }
       break;
     }
     case 'goal/updated': {
@@ -1296,6 +1317,15 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'goal/update':
       decoded = decodeGoalUpdateInput(value);
       break;
+    case 'userInput/read': {
+      const record = recordValue(value, 'userInput read');
+      exactKeys(record, ['threadId', 'observed'], 'userInput read');
+      const threadId = uuidV7(record.threadId, 'userInput read.threadId');
+      const observed = record.observed === undefined ? undefined : decodeUserInputIdentity(record.observed);
+      if (observed && observed.threadId !== threadId) fail('userInput read.observed', 'must belong to the requested Thread');
+      decoded = deepFreeze({ threadId, ...(observed ? { observed } : {}) });
+      break;
+    }
     case 'userInput/respond':
       decoded = decodeRequestUserInputResponse(value);
       break;
@@ -1347,8 +1377,11 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
     case 'thread/archive':
     case 'thread/unarchive':
     case 'thread/delete':
-    case 'userInput/respond':
       decoded = decodeEmptyResponse(value);
+      break;
+    case 'userInput/read':
+    case 'userInput/respond':
+      decoded = decodeUserInputReadResponse(value);
       break;
     case 'thread/records/get':
     case 'thread/records/set':
@@ -3269,48 +3302,108 @@ function decodeGoalMutationResponse(value: unknown): AgentCoreResponseByMethod['
   return deepFreeze({ goal: decodeThreadGoal(record.goal) });
 }
 
+const USER_INPUT_IDENTITY_KEYS = ['hostGeneration', 'threadId', 'turnId', 'itemId'];
+
+function readUserInputIdentity(record: Record<string, unknown>): UserInputIdentity {
+  return {
+    hostGeneration: stringValue(record.hostGeneration, 'userInput.hostGeneration'),
+    threadId: uuidV7(record.threadId, 'userInput.threadId'),
+    turnId: uuidV7(record.turnId, 'userInput.turnId'),
+    itemId: stringValue(record.itemId, 'userInput.itemId'),
+  };
+}
+
+function decodeUserInputIdentity(value: unknown): UserInputIdentity {
+  const record = recordValue(value, 'userInput identity');
+  exactKeys(record, USER_INPUT_IDENTITY_KEYS, 'userInput identity');
+  return readUserInputIdentity(record);
+}
+
+export function decodeRequestUserInputResult(value: unknown): RequestUserInputResult {
+  const record = recordValue(value, 'userInput result');
+  const outcome = enumValue(record.outcome, ['answered', 'timedOut'], 'userInput result.outcome');
+  exactKeys(record, [...USER_INPUT_IDENTITY_KEYS, 'deadlineAt', 'outcome', ...(outcome === 'answered' ? ['answers'] : [])], 'userInput result');
+  const identity = readUserInputIdentity(record);
+  const deadlineAt = nonNegativeInteger(record.deadlineAt, 'userInput result.deadlineAt');
+  if (outcome === 'timedOut') return deepFreeze({ ...identity, deadlineAt, outcome });
+  return deepFreeze({ ...decodeRequestUserInputResponse({ ...identity, answers: record.answers }), deadlineAt, outcome });
+}
+
+function decodeUserInputSettlement(value: unknown): UserInputSettlement {
+  const record = recordValue(value, 'userInput settlement');
+  exactKeys(record, [...USER_INPUT_IDENTITY_KEYS, 'revision', 'deadlineAt', 'outcome', 'skippedQuestionIds'], 'userInput settlement');
+  const outcome = enumValue(record.outcome, ['answered', 'timedOut', 'cancelled', 'failed'], 'userInput.outcome');
+  const skippedQuestionIds = record.skippedQuestionIds === undefined ? undefined
+    : arrayValue(record.skippedQuestionIds, 'userInput.skippedQuestionIds').map((id) => snakeCaseId(id, 'userInput.skippedQuestionIds'));
+  if (skippedQuestionIds && (outcome !== 'answered' || skippedQuestionIds.length < 1 || skippedQuestionIds.length > 3
+    || new Set(skippedQuestionIds).size !== skippedQuestionIds.length)) {
+    fail('userInput.skippedQuestionIds', 'requires one to three unique skipped questions in an accepted response');
+  }
+  return {
+    ...readUserInputIdentity(record),
+    revision: positiveInteger(record.revision, 'userInput.revision'),
+    deadlineAt: nonNegativeInteger(record.deadlineAt, 'userInput.deadlineAt'),
+    outcome,
+    ...(skippedQuestionIds ? { skippedQuestionIds } : {}),
+  };
+}
+
+export function decodeUserInputReadResponse(value: unknown): UserInputReadResponse {
+  const record = recordValue(value, 'userInput read response');
+  exactKeys(record, ['state', 'observed'], 'userInput read response');
+  const state = recordValue(record.state, 'userInput state');
+  exactKeys(state, ['threadId', 'hostGeneration', 'revision', 'activeTurnId', 'pending', 'settled'], 'userInput state');
+  const threadId = uuidV7(state.threadId, 'userInput state.threadId');
+  const hostGeneration = stringValue(state.hostGeneration, 'userInput state.hostGeneration');
+  const revision = nonNegativeInteger(state.revision, 'userInput state.revision');
+  const activeTurnId = nullableUuidV7(state.activeTurnId, 'userInput state.activeTurnId');
+  const pending = state.pending === null ? null : decodeRequestUserInputRequest(state.pending);
+  const settled = state.settled === null ? null : decodeUserInputSettlement(state.settled);
+  for (const entry of [pending, settled]) {
+    if (entry && (entry.threadId !== threadId || entry.hostGeneration !== hostGeneration || entry.revision > revision)) {
+      fail('userInput state', 'request ordering must belong to this state');
+    }
+  }
+  if (pending && (pending.turnId !== activeTurnId || pending.revision !== revision || (settled && settled.revision >= pending.revision))) {
+    fail('userInput state.pending', 'must be the latest accepted request in the active Turn');
+  }
+  const observed = record.observed === null ? null : decodeUserInputSettlement(record.observed);
+  if (observed && observed.threadId !== threadId) fail('userInput observed', 'must belong to this Thread');
+  return deepFreeze({ state: { threadId, hostGeneration, revision, activeTurnId, pending, settled }, observed });
+}
+
 function decodeRequestUserInputRequest(value: unknown): RequestUserInputRequest {
   const record = recordValue(value, 'userInput request');
-  exactKeys(record, ['threadId', 'turnId', 'itemId', 'questions', 'autoResolutionMs'], 'userInput request');
-  const questions = decodeRequestUserInputQuestions(record.questions);
-  const autoResolutionMs = record.autoResolutionMs === undefined
-    ? undefined
-    : positiveInteger(record.autoResolutionMs, 'userInput request.autoResolutionMs');
-  if (
-    autoResolutionMs !== undefined
-    && (
-      autoResolutionMs < REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS
-      || autoResolutionMs > REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS
-    )
-  ) {
-    fail('userInput request.autoResolutionMs', 'must be within the canonical non-blocking timeout range');
+  exactKeys(record, [...USER_INPUT_IDENTITY_KEYS, 'revision', 'deadlineAt', 'questions', 'autoResolutionMs'], 'userInput request');
+  const autoResolutionMs = positiveInteger(record.autoResolutionMs, 'userInput request.autoResolutionMs');
+  if (autoResolutionMs < REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS || autoResolutionMs > REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS) {
+    fail('userInput request.autoResolutionMs', 'must be within the canonical timeout range');
   }
   return deepFreeze({
-    threadId: uuidV7(record.threadId, 'userInput request.threadId'),
-    turnId: uuidV7(record.turnId, 'userInput request.turnId'),
-    itemId: stringValue(record.itemId, 'userInput request.itemId'),
-    questions,
-    ...(autoResolutionMs === undefined ? {} : { autoResolutionMs }),
+    ...readUserInputIdentity(record),
+    revision: positiveInteger(record.revision, 'userInput request.revision'),
+    deadlineAt: nonNegativeInteger(record.deadlineAt, 'userInput request.deadlineAt'),
+    questions: decodeRequestUserInputQuestions(record.questions),
+    autoResolutionMs,
   });
 }
 
 function decodeRequestUserInputResponse(value: unknown): AgentCoreRequestByMethod['userInput/respond'] {
   const record = recordValue(value, 'userInput response');
-  exactKeys(record, ['threadId', 'turnId', 'itemId', 'answers', 'autoResolved'], 'userInput response');
+  exactKeys(record, [...USER_INPUT_IDENTITY_KEYS, 'answers'], 'userInput response');
   const answers = arrayValue(record.answers, 'userInput response.answers');
   if (answers.length < 1 || answers.length > 3) {
     fail('userInput response.answers', 'requires one to three answers');
   }
   const questionIds = new Set<string>();
   return deepFreeze({
-    threadId: uuidV7(record.threadId, 'userInput response.threadId'),
-    turnId: uuidV7(record.turnId, 'userInput response.turnId'),
-    itemId: stringValue(record.itemId, 'userInput response.itemId'),
+    ...readUserInputIdentity(record),
     answers: answers.map((entry, index) => {
       const answer = recordValue(entry, `userInput response.answers[${index}]`);
-      exactKeys(answer, ['questionId', 'optionLabel', 'otherText'], `userInput response.answers[${index}]`);
-      if ((answer.optionLabel === undefined) === (answer.otherText === undefined)) {
-        fail(`userInput response.answers[${index}]`, 'requires exactly one of optionLabel or otherText');
+      exactKeys(answer, ['questionId', 'optionLabel', 'otherText', 'skipped'], `userInput response.answers[${index}]`);
+      if ([answer.optionLabel, answer.otherText, answer.skipped].filter((value) => value !== undefined).length !== 1
+        || (answer.skipped !== undefined && answer.skipped !== true)) {
+        fail(`userInput response.answers[${index}]`, 'requires exactly one of optionLabel, otherText, or skipped: true');
       }
       const questionId = snakeCaseId(answer.questionId, `userInput response.answers[${index}].questionId`);
       if (questionIds.has(questionId)) {
@@ -3319,6 +3412,7 @@ function decodeRequestUserInputResponse(value: unknown): AgentCoreRequestByMetho
       questionIds.add(questionId);
       return {
         questionId,
+        ...(answer.skipped === true ? { skipped: true as const } : {}),
         ...(answer.optionLabel === undefined
           ? {}
           : { optionLabel: stringValue(answer.optionLabel, `userInput response.answers[${index}].optionLabel`) }),
@@ -3327,7 +3421,6 @@ function decodeRequestUserInputResponse(value: unknown): AgentCoreRequestByMetho
           : { otherText: stringValue(answer.otherText, `userInput response.answers[${index}].otherText`, true) }),
       };
     }),
-    autoResolved: booleanValue(record.autoResolved, 'userInput response.autoResolved'),
   });
 }
 

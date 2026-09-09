@@ -122,6 +122,7 @@ export type ThreadComposerHistoryActionResult = 'performed' | 'declined';
 
 export interface ThreadComposerEditorHandle {
   clear: () => void;
+  appendPlainText: (text: string) => void;
   focus: () => void;
   hasPendingFileReference: (requestId: string) => boolean;
   insertFileReferences: (refs: ThreadComposerFileReference[]) => void;
@@ -495,6 +496,18 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
       : undefined;
 
     useImperativeHandle(ref, () => ({
+      appendPlainText(text) {
+        const view = viewRef.current;
+        if (!view || !text) return;
+        const { schema } = view.state;
+        const content = text.split('\n').flatMap((line, index) => [
+          ...(index > 0 || view.state.doc.textContent ? [schema.nodes.hardBreak!.create()] : []),
+          ...(line ? [schema.text(line)] : []),
+        ]);
+        const transaction = view.state.tr.insert(view.state.doc.content.size - 1, content);
+        view.dispatch(transaction.setSelection(TextSelection.atEnd(transaction.doc)));
+        view.focus();
+      },
       clear() {
         const view = viewRef.current;
         if (!view) return;

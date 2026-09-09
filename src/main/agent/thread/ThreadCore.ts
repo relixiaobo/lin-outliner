@@ -189,12 +189,12 @@ export class ThreadCore {
     });
   }
 
-  async publishRecordedNotification(notification: AgentCoreRecordedNotification): Promise<void> {
+  async publishRecordedNotification(notification: AgentCoreRecordedNotification, options: { readonly awaitObservers?: boolean } = {}): Promise<void> {
       const decoded = decodeAgentCoreRecordedNotification(notification);
       this.requireThread(decoded.threadId);
       await this.enqueueNotification(decoded.threadId, async () => {
         await this.flushPendingItemDeltaBestEffort(decoded.threadId);
-        await this.publishDecodedNotification(decoded);
+        await this.publishDecodedNotification(decoded, options.awaitObservers);
       });
     }
 
@@ -235,18 +235,19 @@ export class ThreadCore {
       }
     }
 
-  private async publishDecodedNotification(decoded: AgentCoreRecordedNotification): Promise<void> {
+  private async publishDecodedNotification(decoded: AgentCoreRecordedNotification, awaitObservers = true): Promise<void> {
       if (this.hiddenEphemeralThreads.has(decoded.threadId)) return;
       for (const listener of this.listeners) {
         try {
           listener(decoded);
         } catch (error) {
-          console.error('[agent] recorded notification listener failed', error);
+          console.error('[agent] recorded notification listener failed', { type: decoded.type, threadId: decoded.threadId });
         }
       }
-      await this.extensions.notification(decoded).catch((error) => {
-        console.error('[agent] recorded notification observer failed', error);
+      const observers = this.extensions.notification(decoded).catch(() => {
+        console.error('[agent] recorded notification observer failed', { type: decoded.type, threadId: decoded.threadId });
       });
+      if (awaitObservers) await observers;
     }
 
   private async acceptStringItemDelta(

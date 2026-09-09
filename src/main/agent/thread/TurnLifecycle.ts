@@ -1,3 +1,6 @@
+import type { RequestUserInputResult, UserInputIdentity, UserInputSettlement, UserInputReadResponse, AgentCoreRecordedNotification } from '../../../core/agent/protocol';
+import { sameUserInput, userInputKey } from '../../../core/agent/userInput';
+import { KeyedMutex } from '../Mutex';
 import { planProcessObservations } from '../context/ProcessObservations';
 import { decodePrivilegedTurnStartRequest,decodePrivilegedTurnSteerRequest,decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
@@ -38,8 +41,8 @@ interface ActiveTurn {
   lifecyclePublished: boolean;
   diagnosticsSnapshot: (() => TurnDiagnosticsPayload | null) | null;
 }
-interface PendingUserInput { readonly request: RequestUserInputRequest; readonly resolve: (response: RequestUserInputResponse) => void;
-  readonly reject: (error: Error) => void; readonly abort: () => void; timer: ReturnType<typeof setTimeout> | null; }
+interface PendingUserInput { readonly request: RequestUserInputRequest; readonly resolve: (response: RequestUserInputResult) => void;
+  readonly reject: (error: Error) => void; readonly abort: () => void; readonly cleanup: () => void; cancelled: boolean; timer: ReturnType<typeof setTimeout> | null; }
 interface AcceptedTurn { readonly response: TurnStartResponse; readonly thread: Thread; readonly active: ActiveTurn | null; }
 export interface StagedContextEvidence {
   readonly payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>;
@@ -105,6 +108,12 @@ interface TurnLifecycleGoalUsage {
 }
 
 export class TurnLifecycle {
+  private readonly inputGeneration = uuidV7();
+  private readonly inputMutex = new KeyedMutex();
+  private readonly inputRevisions = new Map<ThreadId, number>();
+  private readonly inputSettlements = new Map<ThreadId, UserInputSettlement>();
+  private readonly inputReceipts = new Map<string, { settlement: UserInputSettlement; response?: RequestUserInputResponse }>();
+
   private readonly activeTurns = new Map<ThreadId, ActiveTurn>(); private readonly pendingUserInputs = new Map<ThreadId, PendingUserInput>();
   constructor(
     private readonly core: ThreadCore, private readonly resourceOps: ThreadResourceOps,
@@ -647,73 +656,83 @@ export class TurnLifecycle {
       });
     }
   async requestUserInput(
-      threadId: ThreadId,
-      turnId: string,
-      itemId: string,
-      inputValue: unknown,
-      signal?: AbortSignal,
-    ): Promise<RequestUserInputResponse> {
-      const input = normalizeRequestUserInputToolInput(inputValue);
+    threadId: ThreadId, turnId: string, itemId: string, inputValue: unknown, signal?: AbortSignal,
+  ): Promise<RequestUserInputResult> {
+    const input = normalizeRequestUserInputToolInput(inputValue);
+    // Return a wrapper so the request mutex never waits on the user's answer.
+    const accepted = await this.inputMutex.run(threadId, async () => {
       const active = this.requireActiveTurn(threadId, turnId);
-      if (this.core.requireThread(threadId).thread.parentThreadId !== null) {
-        throw new Error('request_user_input is available only in a root Thread');
-      }
-      if (this.pendingUserInputs.has(threadId)) {
-        throw new Error('This Thread already has a pending request_user_input call');
-      }
+      if (active.finishing || active.controller.signal.aborted || signal?.aborted) throw new Error('request_user_input was interrupted');
+      if (this.core.requireThread(threadId).thread.parentThreadId !== null) throw new Error('request_user_input is available only in a root Thread');
+      if (this.pendingUserInputs.has(threadId)) throw new Error('This Thread already has a pending request_user_input call');
       const request: RequestUserInputRequest = {
-        threadId,
-        turnId,
-        itemId,
-        questions: input.questions,
-        ...(input.autoResolutionMs === undefined ? {} : { autoResolutionMs: input.autoResolutionMs }),
+        hostGeneration: this.inputGeneration, threadId, turnId, itemId,
+        revision: this.nextInputRevision(threadId), questions: input.questions,
+        autoResolutionMs: input.autoResolutionMs, deadlineAt: this.now() + input.autoResolutionMs,
       };
-      let resolve!: (response: RequestUserInputResponse) => void;
-      let reject!: (error: Error) => void;
-      const response = new Promise<RequestUserInputResponse>((resolveValue, rejectValue) => {
-        resolve = resolveValue;
-        reject = rejectValue;
-      });
+      let resolve!: PendingUserInput['resolve'];
+      let reject!: PendingUserInput['reject'];
+      const response = new Promise<RequestUserInputResult>((yes, no) => { resolve = yes; reject = no; });
+      // Publication can fail before the caller receives this Promise.
+      void response.catch(() => undefined);
       const abort = () => {
-        void this.rejectUserInput(threadId, new Error('request_user_input was interrupted'));
+        pending.cancelled = true;
+        void this.rejectUserInput(threadId, new Error('request_user_input was interrupted'), 'cancelled', request)
+          .catch(() => this.traceUserInput('cancellation-error', request));
       };
-      const pending: PendingUserInput = { request, resolve, reject, abort, timer: null };
+      const cleanup = () => {
+        if (pending.timer) clearTimeout(pending.timer);
+        active.controller.signal.removeEventListener('abort', abort);
+        signal?.removeEventListener('abort', abort);
+      };
+      const pending: PendingUserInput = { request, resolve, reject, abort, cleanup, cancelled: false, timer: null };
       this.pendingUserInputs.set(threadId, pending);
       active.controller.signal.addEventListener('abort', abort, { once: true });
       signal?.addEventListener('abort', abort, { once: true });
+      this.scheduleInputDeadline(pending);
       try {
-        await this.setStatus(threadId, { type: 'active', activeFlags: ['waitingOnUserInput'] });
-        await this.core.recordNotification({ type: 'userInput/requested', threadId, turnId, itemId, request });
-        if (input.autoResolutionMs !== undefined) {
-          pending.timer = setTimeout(() => {
-            const autoResponse: RequestUserInputResponse = {
-              threadId,
-              turnId,
-              itemId,
-              answers: input.questions.map((question) => ({
-                questionId: question.id,
-                otherText: 'No response before timeout; continue with best judgment.',
-              })),
-              autoResolved: true,
-            };
-            void this.resolveUserInput(autoResponse);
-          }, input.autoResolutionMs);
-        }
-      } catch (error) {
-        this.pendingUserInputs.delete(threadId);
-        active.controller.signal.removeEventListener('abort', abort);
-        signal?.removeEventListener('abort', abort);
-        throw error;
+        const notification = { type: 'userInput/requested', threadId, turnId, itemId, request } as const;
+        await this.core.recordNotification(notification, { deferObservers: true });
+        await this.core.publishRecordedNotification(notification, { awaitObservers: false });
+        await this.setInputWaitingStatus(threadId, true);
+        this.traceUserInput('published', request);
+      } catch {
+        await this.settleUserInput(pending, 'failed');
       }
-      return response.finally(() => {
-        active.controller.signal.removeEventListener('abort', abort);
-        signal?.removeEventListener('abort', abort);
+      return { response };
+    });
+    return accepted.response;
+  }
+
+  async readUserInput(threadId: ThreadId, observed?: UserInputIdentity): Promise<UserInputReadResponse> {
+    return this.inputMutex.run(threadId, async () => {
+      this.core.requireThread(threadId);
+      await this.reconcileInputDeadline(threadId);
+      const result = await this.inputReadResponse(threadId, observed);
+      this.traceUserInput('snapshot', result.state.pending ?? result.state.settled ?? {
+        hostGeneration: this.inputGeneration, threadId, turnId: '', itemId: '', revision: result.state.revision,
       });
-    }
-  async respondUserInput(response: RequestUserInputResponse): Promise<void> {
-      if (response.autoResolved) throw new Error('Only the host may auto-resolve request_user_input');
-      await this.resolveUserInput(response);
-    }
+      return result;
+    });
+  }
+
+  async respondUserInput(response: RequestUserInputResponse): Promise<UserInputReadResponse> {
+    return this.inputMutex.run(response.threadId, async () => {
+      this.core.requireThread(response.threadId);
+      await this.reconcileInputDeadline(response.threadId);
+      const receipt = await this.findInputReceipt(response);
+      if (receipt) {
+        if (receipt.response && equalInputAnswers(receipt.response, response)) return this.inputReadResponse(response.threadId, response);
+        throw new Error(receipt.settlement.outcome === 'timedOut' ? 'This question expired; no answer was submitted.' : 'This question is already settled.');
+      }
+      const pending = this.pendingUserInputs.get(response.threadId);
+      if (!pending || !sameUserInput(pending.request, response)) throw new Error('This question is no longer waiting for an answer.');
+      validateUserInputAnswers(pending.request, response);
+      await this.settleUserInput(pending, 'answered', response);
+      return this.inputReadResponse(response.threadId, response);
+    });
+  }
+
   async acceptAndLaunch(
       request: InternalTurnStartRequest,
       onlyIfIdle = false,
@@ -1239,6 +1258,7 @@ export class TurnLifecycle {
       await this.core.threadMutex.run(active.threadId, async () => {
         if (this.activeTurns.get(active.threadId) === active) active.finishing = true;
       });
+      await this.rejectUserInput(active.threadId, new Error('Turn ended'), thrown ? 'failed' : 'cancelled', active.turnId);
       await active.steeringDelivery;
       if (result.refreshDiagnostics && result.execution) {
         const diagnosticsRef = await result.refreshDiagnostics();
@@ -1569,7 +1589,7 @@ export class TurnLifecycle {
    * routes to one outcome disagreeing about the Thread was the defect.
    */
   private async failActiveTurn(active: ActiveTurn, error: Error): Promise<void> {
-      await this.rejectUserInput(active.threadId, error).catch(() => undefined);
+      await this.rejectUserInput(active.threadId, error, 'failed', active.turnId).catch(() => undefined);
       // This Turn no longer owns the Thread, so it has no business naming the
       // Thread's state. Completion releases ownership BEFORE its tail runs
       // (`activeTurns.delete` then `setStatus(idle)`, then awaited naming, Goal
@@ -1695,43 +1715,130 @@ export class TurnLifecycle {
       ) throw this.createThreadBusyError('Expected Turn is not active');
       return active;
     }
-  private async resolveUserInput(response: RequestUserInputResponse): Promise<void> {
-      const pending = this.pendingUserInputs.get(response.threadId);
-      if (!pending) throw new Error('No request_user_input call is waiting for a response');
-      const request = pending.request;
-      if (request.turnId !== response.turnId || request.itemId !== response.itemId) {
-        throw new Error('request_user_input response does not match the pending request');
-      }
-      validateUserInputAnswers(request, response);
-      this.pendingUserInputs.delete(response.threadId);
-      if (pending.timer) clearTimeout(pending.timer);
-      try {
-        await this.core.recordNotification({
-          type: 'userInput/resolved',
-          threadId: response.threadId,
-          turnId: response.turnId,
-          itemId: response.itemId,
-          response,
-        });
-        if (this.activeTurns.get(response.threadId)?.turnId === response.turnId) {
-          await this.setStatus(response.threadId, { type: 'active', activeFlags: [] });
-        }
-        pending.resolve(response);
-      } catch (error) {
-        pending.reject(error instanceof Error ? error : new Error(String(error)));
-        throw error;
+  private async setInputWaitingStatus(threadId: ThreadId, waiting: boolean): Promise<void> {
+    const status: ThreadStatus = { type: 'active', activeFlags: waiting ? ['waitingOnUserInput'] : [] };
+    await this.setStatus(threadId, status, { deferObservers: true });
+    // Observation cannot hold the input lock or delay its deadline, including observers that read the snapshot.
+    await this.core.publishRecordedNotification({ type: 'thread/status/changed', threadId, status }, { awaitObservers: false });
+  }
+
+  private nextInputRevision(threadId: ThreadId): number {
+    const revision = (this.inputRevisions.get(threadId) ?? 0) + 1;
+    this.inputRevisions.set(threadId, revision);
+    return revision;
+  }
+
+  private scheduleInputDeadline(pending: PendingUserInput): void {
+    pending.timer = setTimeout(() => {
+      void this.inputMutex.run(pending.request.threadId, async () => {
+        if (this.pendingUserInputs.get(pending.request.threadId) !== pending) return;
+        await this.reconcileInputDeadline(pending.request.threadId);
+        if (this.pendingUserInputs.get(pending.request.threadId) === pending) this.scheduleInputDeadline(pending);
+      }).catch(() => this.traceUserInput('deadline-error', pending.request));
+    }, Math.max(1, pending.request.deadlineAt - this.now()));
+    pending.timer.unref?.();
+  }
+
+  private async reconcileInputDeadline(threadId: ThreadId): Promise<void> {
+    const pending = this.pendingUserInputs.get(threadId);
+    if (!pending) return;
+    const active = this.activeTurns.get(threadId);
+    if (pending.cancelled || !active || active.turnId !== pending.request.turnId || active.finishing || active.controller.signal.aborted) {
+      await this.settleUserInput(pending, 'cancelled');
+    } else if (this.now() >= pending.request.deadlineAt) {
+      await this.settleUserInput(pending, 'timedOut');
+    }
+  }
+
+  private async inputReadResponse(threadId: ThreadId, observed?: UserInputIdentity): Promise<UserInputReadResponse> {
+    return {
+      state: {
+        threadId, hostGeneration: this.inputGeneration, revision: this.inputRevisions.get(threadId) ?? 0,
+        activeTurnId: this.activeTurns.get(threadId)?.turnId ?? null,
+        pending: this.pendingUserInputs.get(threadId)?.request ?? null,
+        settled: this.inputSettlements.get(threadId) ?? null,
+      },
+      observed: observed ? (await this.findInputReceipt(observed))?.settlement ?? null : null,
+    };
+  }
+
+  private async findInputReceipt(identity: UserInputIdentity): Promise<{ settlement: UserInputSettlement; response?: RequestUserInputResponse } | null> {
+    const cached = this.inputReceipts.get(userInputKey(identity));
+    if (cached) return cached;
+    if (this.core.requireThread(identity.threadId).thread.ephemeral) return null;
+    // The Rollout is settlement evidence only: never reconstruct a pending Promise.
+    const events = await this.core.rollout.read(identity.threadId);
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index]!.event;
+      if ((event.type === 'userInput/resolved' || event.type === 'userInput/cleared') && sameUserInput(event.settlement, identity)) {
+        return { settlement: event.settlement, ...(event.type === 'userInput/resolved' ? { response: event.response } : {}) };
       }
     }
-  private async rejectUserInput(threadId: ThreadId, error: Error): Promise<void> {
+    return null;
+  }
+
+  /** Durable settlement is the commit point; only then remove the request and release its tool. */
+  private async settleUserInput(pending: PendingUserInput, outcome: UserInputSettlement['outcome'], response?: RequestUserInputResponse): Promise<void> {
+    const request = pending.request;
+    if (this.pendingUserInputs.get(request.threadId) !== pending) return;
+    const skippedQuestionIds = response?.answers.filter((answer) => answer.skipped).map((answer) => answer.questionId);
+    let settlement: UserInputSettlement = {
+      hostGeneration: request.hostGeneration, threadId: request.threadId, turnId: request.turnId, itemId: request.itemId,
+      deadlineAt: request.deadlineAt, revision: (this.inputRevisions.get(request.threadId) ?? 0) + 1, outcome,
+      ...(skippedQuestionIds?.length ? { skippedQuestionIds } : {}),
+    };
+    let notification: AgentCoreRecordedNotification = response
+      ? { type: 'userInput/resolved', threadId: request.threadId, turnId: request.turnId, itemId: request.itemId, settlement, response }
+      : { type: 'userInput/cleared', threadId: request.threadId, turnId: request.turnId, itemId: request.itemId, settlement };
+    try {
+      await this.core.recordNotification(notification, { deferObservers: true });
+    } catch (error) {
+      // A projection failure follows a durable append; a transport/write error may also follow one.
+      const committed = error instanceof RecordedNotificationProjectionError
+        || Boolean(await this.findInputReceipt(request).catch(() => null));
+      if (!committed && outcome === 'answered') {
+        this.traceUserInput('answer-write-failed', settlement);
+        throw new Error('The answer could not be saved. Retry while the question is still open.');
+      }
+      if (!committed) {
+        settlement = { ...settlement, outcome: 'failed' };
+        notification = { type: 'userInput/cleared', threadId: request.threadId, turnId: request.turnId, itemId: request.itemId, settlement };
+      }
+    }
+    this.inputRevisions.set(request.threadId, settlement.revision);
+    this.pendingUserInputs.delete(request.threadId);
+    pending.cleanup();
+    this.inputSettlements.set(request.threadId, settlement);
+    this.inputReceipts.set(userInputKey(request), { settlement, ...(response ? { response } : {}) });
+    while (this.inputReceipts.size > 128) this.inputReceipts.delete(this.inputReceipts.keys().next().value!);
+    this.traceUserInput('settled', settlement);
+    // Publication/status failures cannot undo a committed answer or strand its Promise.
+    await this.core.publishRecordedNotification(notification, { awaitObservers: false }).catch(() => this.traceUserInput('settlement-publication-failed', settlement));
+    if (this.activeTurns.get(request.threadId)?.turnId === request.turnId) {
+      await this.setInputWaitingStatus(request.threadId, false).catch(() => this.traceUserInput('status-publication-failed', settlement));
+    }
+    if (settlement.outcome === 'answered' && response) pending.resolve({ ...response, outcome: 'answered', deadlineAt: request.deadlineAt });
+    else if (settlement.outcome === 'timedOut') pending.resolve({
+      hostGeneration: request.hostGeneration, threadId: request.threadId, turnId: request.turnId, itemId: request.itemId,
+      outcome: 'timedOut', deadlineAt: request.deadlineAt,
+    });
+    else pending.reject(new Error(settlement.outcome === 'failed' ? 'The question could not be delivered or settled.' : 'request_user_input was interrupted'));
+  }
+
+  private async rejectUserInput(threadId: ThreadId, _error: Error, outcome: 'cancelled' | 'failed' = 'failed', expected?: UserInputIdentity | TurnId): Promise<void> {
+    await this.inputMutex.run(threadId, async () => {
       const pending = this.pendingUserInputs.get(threadId);
-      if (!pending) return;
-      this.pendingUserInputs.delete(threadId);
-      if (pending.timer) clearTimeout(pending.timer);
-      if (this.activeTurns.get(threadId)?.turnId === pending.request.turnId) {
-        await this.setStatus(threadId, { type: 'active', activeFlags: [] }).catch(() => undefined);
-      }
-      pending.reject(error);
-    }
+      if (pending && (!expected || (typeof expected === 'string' ? pending.request.turnId === expected : sameUserInput(pending.request, expected)))) await this.settleUserInput(pending, outcome);
+    });
+  }
+
+  private traceUserInput(boundary: string, identity: UserInputIdentity & { readonly revision: number }): void {
+    console.info('[agent:user-input]', boundary, {
+      hostGeneration: identity.hostGeneration, threadId: identity.threadId, turnId: identity.turnId,
+      itemId: identity.itemId, revision: identity.revision,
+    });
+  }
+
 }
 type ContextCommand =
   | { readonly kind: 'clear' }
@@ -1771,6 +1878,11 @@ function validateUserInputAnswers(request: RequestUserInputRequest, response: Re
   }
   const questions = new Map(request.questions.map((question) => [question.id, question]));
   for (const answer of response.answers) {
+    if ([answer.optionLabel, answer.otherText, answer.skipped].filter((value) => value !== undefined).length !== 1
+      || (answer.skipped !== undefined && answer.skipped !== true)
+      || (answer.otherText !== undefined && !answer.otherText.trim())) {
+      throw new Error('request_user_input requires an option, non-empty text, or an explicit skip for each question');
+    }
     const question = questions.get(answer.questionId);
     if (!question) throw new Error(`Unknown request_user_input question: ${answer.questionId}`);
     if (answer.optionLabel !== undefined && !question.options.some((option) => option.label === answer.optionLabel)) {
@@ -1902,4 +2014,10 @@ function normalizeTurnError(error: TurnError | null | undefined): TurnError | nu
 function errorCode(error: Error): TurnErrorCode | undefined {
   const code = (error as Error & { readonly code?: unknown }).code;
   return typeof code === 'string' && code ? normalizeTurnErrorCode(code) : undefined;
+}
+
+function equalInputAnswers(left: RequestUserInputResponse, right: RequestUserInputResponse): boolean {
+  return left.answers.length === right.answers.length && left.answers.every((answer) => right.answers.some((candidate) =>
+    answer.questionId === candidate.questionId && answer.optionLabel === candidate.optionLabel && answer.otherText === candidate.otherText
+    && answer.skipped === candidate.skipped));
 }

@@ -20,7 +20,8 @@ live on [the board](../TASKS.md).
 ## Non-goals
 
 - Changing question content policy, replacing the existing option-or-Other form,
-  adding a modal, or using questions for permission requests.
+  adding a modal, or using questions for permission requests. Explicit per-question
+  Skip is part of the existing step flow.
 - Automatically choosing an answer because the UI failed to show the form.
 - Replaying a tool call or model Turn to reconstruct a question, or reviving a
   historical request after its owning execution has ended.
@@ -166,7 +167,7 @@ do not present the known recovery defect as proof of that particular cause.
 FR-10: At the deadline, settle the tool with a typed timeout/no-answer result,
 clear pending state, remove the waiting flag, and let the same active Turn
 continue. Do not select the recommended option or manufacture per-question Other
-text. Answered results retain the complete validated answer set; timed-out
+text. Answered results retain the complete validated answer-or-skip set; timed-out
 results carry the request identity and deadline with no fabricated answers.
 Distinguish this outcome from user cancellation, tool failure, and authorization.
 The model-tool output contract, decoder, context projection, and guidance must
@@ -202,7 +203,7 @@ separate and are never replaced by settlement of an older request.
 | Observed request state | Live form | Local answer draft |
 | --- | --- | --- |
 | Pending | Display or restore the exact request | Preserve edits across step navigation, reconciliation, Thread switches, and dock/form remounts within the same renderer session |
-| Answer accepted, including acceptance reconciled after a lost reply | Close the matching form | Release that request's draft only after authoritative acceptance is known |
+| Response accepted, including acceptance reconciled after a lost reply | Close the matching form | Release submitted answers after authoritative acceptance; retain only content withheld by skipped questions |
 | Timed out, by timer, resume, snapshot reconciliation, or rejected late submission | Close the matching form and show that no answer was submitted | Retain every unsubmitted selection and Other text as an unsent recovery entry, including earlier question steps |
 | Cancelled, interrupted, failed, or invalidated by Host restart | Close/fence the matching form and show the known reason | Retain unsent content for manual recovery; it grants no authority to revive the tool |
 | Settlement cannot be determined | Disable submission and reconcile through the existing recovery state | Preserve the draft without claiming acceptance or automatically retrying submission |
@@ -233,6 +234,19 @@ issues, or mark results read. Independently established unresolved-input, failur
 or uncertainty causes remain actionable under their existing owners. There is no
 scheduled-request timer or separate answer ledger; the scheduled-work plan owns
 only run presentation and admission around this shared lifecycle.
+
+FR-15: Offer Skip question at every step for a person who does not know or does
+not want to answer. Skip marks only the current question unanswered and advances;
+on the last question, Skip and submit sends the full answer-or-skip set immediately.
+Each submitted question carries exactly one option, Other text, or `skipped: true`.
+The explicit submission still uses the answered settlement; that state does not
+claim every question received an answer. The settlement identifies skipped
+questions so reconciliation releases only submitted answers and retains withheld
+local text in a skipped recovery entry. Empty skips need no recovery entry.
+Back preserves the skipped state; selecting an answer replaces it. No skipped
+draft content crosses the Host boundary. Skips grant no authorization and do not
+automatically trigger the same question again. They use the same identity,
+deadline, cancellation, and exactly-once acceptance boundary as ordinary answers.
 
 ### Flows, UI behavior, and recovery
 
@@ -352,6 +366,7 @@ on the future scheduling UI to ship the conversation feature.
 | AC-16 | After expiry or interruption, Review/copy, Add to message, and Discard address the exact recovery entry. Adding preserves existing composer text/attachments and makes no model call; only explicit Send can execute, and failed Send retains the recovery content. |
 | AC-17 | A newer request, late settlement, or lost acceptance reply never moves or deletes another request's draft. Reconciled acceptance clears only its own draft; unavailable settlement retains content without claiming a submitted answer. |
 | AC-18 | Timeout of a scheduled-run question removes its live form and active-question attention while preserving the same run and occupied foreground slot until actual execution settles. Unread results and unrelated issues remain unchanged; no timer or input owner is duplicated. |
+| AC-19 | A user can skip individual or all questions without answering. Back preserves skips; the last skip submits immediately. Other answers are retained in the submitted set, skipped text remains local and recoverable, and skip/deadline/cancellation races settle once. |
 
 Extend the service test titled `round-trips request_user_input through the control
 plane and active Thread flag`, codec/projection tests, renderer `ThreadStore`

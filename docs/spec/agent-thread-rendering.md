@@ -657,9 +657,46 @@ with an in-dock form tied to one Item. It is a product-input surface, never a
 permission prompt or a modal over the transcript. Multiple questions use the
 established one-at-a-time flow with progress, Back/Next navigation, retained
 answers, and focus moved into each newly shown step. The form adapts only the
-canonical option-or-Other contract. Removed question outcomes and rich-answer
-fields are not part of this contract. A response includes the exact Thread, Turn, and Item IDs
-and is rejected if the request is no longer active.
+canonical option-or-Other contract with an explicit Skip question action. Skip
+marks only the current question as unanswered and advances to the next step;
+on the last step, Skip and submit sends the completed answer-or-skip set. Back
+shows the skipped state, and choosing an answer replaces the skip. Any typed or
+selected content withheld by Skip stays local and is not part of that response.
+A response includes the exact Host generation,
+Thread, Turn, and Item identity and is rejected if the request is no longer
+pending or its original deadline has elapsed.
+
+ThreadStore subscribes before snapshot reads and reconciles on initial load,
+subscription reattachment, Thread selection, dock reopening, visible-window
+focus, and a waiting notification without question content. Reads coalesce per
+Thread. Host generations are resynchronized, and per-Thread revisions reject
+stale snapshots/events. Matching Turn termination immediately fences a form;
+an older settlement cannot clear a newer question. A localized restoring/error
+state replaces ordinary input when question recovery is needed, with Retry and
+Interrupt Turn actions. The original deadline continues during recovery.
+
+Answer drafts belong to ThreadStore's session state, keyed by exact request
+identity. Each edit updates options, Other text, and step position immediately;
+form remounting, Thread switching, and reconciliation preserve them. The ordinary
+rich composer draft and attachments stay independent. Confirmed acceptance
+releases that request's submitted answers. Authoritative skipped question IDs
+retain only withheld content as a skipped recovery entry; an empty skip needs no
+recovery entry. Expiry, cancellation, failure, or Host
+replacement retains unsent answers beside the composer, including every edited
+step. Unconfirmed settlement retains the draft and offers reconciliation without
+claiming acceptance. A subdued remaining-time label explains continuation without
+an answer; its ticks are not live screen-reader announcements.
+
+Recovery entries remain reachable while another question is shown. Their native
+inline disclosure offers Review/copy and exact-entry Discard. When ordinary input
+is available, Add to message appends question context and answers to the existing
+rich document without replacing text or attachments, and never submits anything.
+The entry stays until Discard or successful explicit Send of the inserted content;
+a failed Send retains it. If the inserted text was removed or rewritten, the
+entry remains available for manual dismissal rather than guessing ownership of
+unrelated text. Thread deletion clears only that Thread's entries. Full renderer
+reload/application exit may discard drafts; they are never persisted in Rollout
+or transmitted before an explicit Submit/Send.
 
 Rename uses the shared `Dialog`; delete uses `ConfirmDialog`. Browser-native
 prompt and confirm APIs are not used. Fork creates and selects the new Thread

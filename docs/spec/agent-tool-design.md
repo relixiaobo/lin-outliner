@@ -766,8 +766,23 @@ later file state. Failed, missing or interrupted output is never a passing resul
 Source changes can require reinspection/reruns; harmless reads do not mechanically
 invalidate past results. Verification does not authorize publication.
 
-`request_user_input` is not an authorization tool. It supports an optional
-bounded auto-resolution timeout only for useful, non-blocking questions. Each
+`request_user_input` is not an authorization tool. Every call has a 60-second
+whole-request deadline by default; optional `autoResolutionMs` keeps the existing
+60–240-second bounds. Omission never means an infinite wait. Answered output has
+`outcome: "answered"`, the exact request identity/deadline and all validated
+answer-or-skip entries. Each entry contains exactly one option label, Other text,
+or `skipped: true`. An answered outcome records explicit form submission; it does
+not imply that every question received an answer. Users can skip individual
+questions, including all of them, without choosing an option or supplying text.
+Skipped entries contain no withheld local draft content. Timeout output has
+`outcome: "timedOut"`, identity/deadline and no
+`answers` field. Timeout is distinct from cancellation, failure, or approval; it
+never fabricates Other text or chooses an option. The Agent continues authorized
+independent work, states reversible assumptions when appropriate, or explains
+the unresolved decision if nothing useful can proceed. Directional, irreversible,
+and permission-dependent work still requires a real decision. Neither Host nor
+runtime automatically re-asks an expired or skipped question. Skipping supplies no
+answer and grants no authorization. Each
 question has a stable ID, short header, one sentence, and two or three mutually
 exclusive options. The model-facing schema asks for the recommended option first
 and an English `(Recommended)` suffix, matching Codex. This is presentation

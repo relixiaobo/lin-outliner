@@ -26,5 +26,5 @@ export async function configureSmokeProvider(smoke: SmokeApp, baseUrl: string): 
   await child.evaluate(() => { void window.lin!.closeProviderConfig(); });
   await closed;
   await models.close();
-  await expect.poll(() => smoke.window.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'ready' });
+  await expect.poll(() => smoke.window.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'ready' });
 }
