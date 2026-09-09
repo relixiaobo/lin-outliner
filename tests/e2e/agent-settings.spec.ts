@@ -10,7 +10,7 @@ test.describe('configuration panes', () => {
     await expect(settings.locator('.settings-chip, .inset-row-code')).toHaveCount(0);
     await expect(settings.getByRole('list', { name: 'System-wide' })).toBeVisible();
 
-    const search = settings.getByRole('searchbox', { name: 'Search shortcuts' });
+    const search = settings.locator('.configuration-toolbar').getByRole('searchbox', { name: 'Search shortcuts' });
     await search.fill('translation');
     await expect(settings.getByText('Toggle page translation', { exact: true })).toBeVisible();
     await expect(settings.getByText('Open page in new pane', { exact: true })).toHaveCount(0);
@@ -34,6 +34,33 @@ test.describe('configuration panes', () => {
     await expect(settings.getByRole('button', { name: 'Change Control+Alt+K', exact: true })).toBeVisible();
     await expect(settings.getByRole('checkbox')).toHaveCount(0);
     await expect(settings.locator('.settings-shortcut-row .settings-row-menu-trigger')).toHaveCount(0);
+  });
+
+  test('shortcut toolbar follows the active pane and retains its local filter', async ({ page }) => {
+    const settings = await openSettings(page, '&destination=shortcuts');
+    const toolbar = settings.locator('.configuration-toolbar');
+    const localSearch = toolbar.getByRole('searchbox', { name: 'Search shortcuts' });
+    await expect(localSearch).toBeVisible();
+    await expect(settings.getByRole('tabpanel', { name: 'Keyboard Shortcuts', exact: true }).getByRole('searchbox')).toHaveCount(0);
+    await expect(settings.locator('.settings-toolbar-actions')).toHaveCSS('-webkit-app-region', 'no-drag');
+    await localSearch.fill('translation');
+    await toolbar.locator('.settings-row-menu-trigger').click();
+    await expect(page.getByRole('menuitem', { name: 'Open Keybindings File' })).toBeVisible();
+    await settings.getByRole('tab', { name: 'General', exact: true }).click();
+    await expect(toolbar.getByRole('searchbox')).toHaveCount(0);
+    await expect(toolbar.locator('.settings-row-menu-trigger')).toHaveCount(0);
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await settings.getByRole('tab', { name: 'Keyboard Shortcuts', exact: true }).click();
+    await expect(localSearch).toHaveValue('translation');
+    await expect(settings.getByText('Open page in new pane', { exact: true })).toHaveCount(0);
+    await localSearch.press('Control+f');
+    const globalSearch = settings.getByRole('searchbox', { name: 'Search Settings', exact: true });
+    await expect(globalSearch).toBeFocused();
+    await globalSearch.fill('appearance');
+    await expect(toolbar.getByRole('searchbox')).toHaveCount(0);
+    await globalSearch.press('Escape');
+    await expect(localSearch).toHaveValue('translation');
+    await expect(globalSearch).toBeFocused();
   });
 
   test('leaving the shortcut recorder releases keys to the current pane', async ({ page }) => {

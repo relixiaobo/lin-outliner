@@ -87,7 +87,9 @@
   border: 0;
   background: transparent;
 }
-.settings-window .configuration-toolbar h1 { min-width: 0; font-size: var(--font-content); overflow-wrap: anywhere; }
+.settings-window .configuration-toolbar h1 { min-width: 0; flex-basis: max-content; font-size: var(--font-content); overflow-wrap: anywhere; }
+.settings-toolbar-actions { -webkit-app-region: no-drag; min-width: 0; max-width: 100%; flex: 0 1 calc(var(--font-ui-sm) * 17); margin-inline-start: auto; }
+.settings-toolbar-actions:empty { display: none; }
 .settings-history {
   -webkit-app-region: no-drag;
   display: flex;

@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CONFIGURABLE_SHORTCUTS,
   portableChordFromEvent,
@@ -20,6 +21,7 @@ import { InsetGroup, InsetRow } from './SettingsInsetList';
 
 interface ShortcutManagerProps {
   readonly active?: boolean;
+  readonly toolbarTarget?: HTMLElement | null;
   readonly onError: (message: string | null) => void;
   readonly onNotice: (message: string | null) => void;
 }
@@ -31,7 +33,7 @@ interface RecordingTarget {
 
 const CONTEXTS: readonly ShortcutContext[] = ['system', 'application', 'preview'];
 
-export function ShortcutManager({ active = true, onError, onNotice }: ShortcutManagerProps) {
+export function ShortcutManager({ active = true, toolbarTarget, onError, onNotice }: ShortcutManagerProps) {
   const t = useT();
   const labels = t.settings.shortcuts;
   const [view, setView] = useState<KeybindingsView | null>(null);
@@ -156,24 +158,27 @@ export function ShortcutManager({ active = true, onError, onNotice }: ShortcutMa
     entry.context === context && filteredIds.has(entry.id)
   )));
 
+  // The pane owns filtering and actions while the shell owns placement.
+  const toolbar = active ? <div className="settings-shortcuts-toolbar">
+    <div className="settings-shortcuts-search" role="search" aria-label={labels.search}>
+      <SearchIcon size={ICON_SIZE.menu} aria-hidden />
+      <Input
+        label={labels.search}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder={labels.search}
+        type="search"
+        value={query}
+        variant="bare"
+      />
+    </div>
+    <SettingsRowMenu ariaLabel={labels.options} menuLabel={labels.options} open={menu === 'options'}
+      onOpenChange={(open) => setMenu(open ? 'options' : null)}
+      actions={[{ label: labels.openFile, onSelect: () => void openFile() }]} />
+  </div> : null;
+
   return (
     <section className="agent-settings-section settings-shortcuts-section" aria-label={t.settings.pages.shortcuts}>
-      <div className="settings-shortcuts-toolbar">
-        <div className="settings-shortcuts-search">
-          <SearchIcon size={ICON_SIZE.menu} />
-          <Input
-            label={labels.search}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={labels.search}
-            type="search"
-            value={query}
-            variant="bare"
-          />
-        </div>
-        <SettingsRowMenu ariaLabel={labels.options} menuLabel={labels.options} open={menu === 'options'}
-          onOpenChange={(open) => setMenu(open ? 'options' : null)}
-          actions={[{ label: labels.openFile, onSelect: () => void openFile() }]} />
-      </div>
+      {toolbarTarget === undefined ? toolbar : toolbarTarget && createPortal(toolbar, toolbarTarget)}
 
       {rejected ? (
         <p className="settings-shortcuts-source-error" role="alert">

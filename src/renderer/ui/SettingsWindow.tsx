@@ -30,6 +30,7 @@ export function SettingsWindow() {
   const [navigation, setNavigation] = useState(() => ({ panes: [initialPane()], index: 0 }));
   const pane = navigation.panes[navigation.index];
   const [visited, setVisited] = useState<Set<SettingsPane>>(() => new Set([initialPane()]));
+  const [toolbarTarget, setToolbarTarget] = useState<HTMLDivElement | null>(null);
   const navigate = useCallback((next: SettingsPane) => {
     setQuery('');
     setNavigation((previous) => {
@@ -172,6 +173,7 @@ export function SettingsWindow() {
               disabled={searching || navigation.index === navigation.panes.length - 1} onClick={() => traverse(1)} />
           </div>
           <h1 id="configuration-title">{searching ? copy.searchResults : copy.destinations[pane]}</h1>
+          <div className="settings-toolbar-actions" ref={setToolbarTarget} />
         </header>
         <div className="settings-body">
           <div className="settings-feedback">{sourceFeedback}</div>
@@ -197,7 +199,7 @@ export function SettingsWindow() {
               <section aria-label={copy.appearanceGroup}>{rows(['appearance.theme', 'appearance.language'])}</section>
               <section aria-label={copy.updatesGroup}><h2 className="configuration-group-title">{copy.updatesGroup}</h2>{rows(['updates.checkAutomatically'])}</section>
             </> : <>
-              <ConfigurationPane destination={destination} active={!searching && pane === destination} />
+              <ConfigurationPane destination={destination} active={!searching && pane === destination} toolbarTarget={toolbarTarget} />
               {destination === 'models' ? <details className="settings-disclosure"><summary>{copy.requestOptions}</summary>
                 {rows(['agent.provider.timeoutMs', 'agent.provider.maxRetries', 'agent.provider.maxRetryDelayMs', 'agent.provider.cacheRetention'])}
               </details> : null}

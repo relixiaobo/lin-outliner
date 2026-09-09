@@ -142,6 +142,7 @@ test('all Settings destinations reuse one native window with bounded admission a
       await expect(page.getByRole('button', { name: 'Back', exact: true })).toHaveCount(destination === 'about' ? 0 : 1);
       if (destination === 'shortcuts') {
         await expect(page.getByText('Go to Today', { exact: true })).toBeVisible();
+        await expect(page.locator('.configuration-toolbar').getByRole('searchbox', { name: 'Search shortcuts' })).toBeVisible();
         await expect(page.getByRole('switch')).toHaveCount(0);
         for (const colorScheme of ['light', 'dark'] as const) {
           await page.emulateMedia({ colorScheme });

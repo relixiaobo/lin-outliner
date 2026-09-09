@@ -439,6 +439,12 @@ clearing visible before the native confirmation. Translation controls remain
 contextual in previews; Data owns global translation-cache and website-data cleanup.
 
 **Keyboard Shortcuts.** The searchable pane owns the public keybindings source.
+Its compact Search shortcuts field and options menu occupy the trailing edge of
+the page toolbar, leaving the content scroller to start with the list. Global
+Search Settings remains in the sidebar. The local filter stays owned by the pane
+and survives navigation; its toolbar controls disappear in other categories and
+global search results. At narrow widths or larger text the controls wrap within
+the toolbar, retaining usable field and title widths.
 One filled list surface contains an editing instruction, compact context headings,
 and alternating compact rows. Each row shows its command name and plain,
 right-aligned key combinations, without checkboxes or per-row action buttons. IDs and default badges do not

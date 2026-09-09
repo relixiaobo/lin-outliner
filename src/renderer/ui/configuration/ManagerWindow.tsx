@@ -14,7 +14,11 @@ const About = lazy(() => import('./AboutManager').then((m) => ({ default: m.Abou
 const Diagnostics = lazy(() => import('./DiagnosticsManager').then((m) => ({ default: m.DiagnosticsManager })));
 
 /** Each visited pane stays mounted so navigation does not discard drafts or accepted work. */
-export function ConfigurationPane({ destination, active }: { destination: Exclude<SettingsPane, 'settings'>; active: boolean }) {
+export function ConfigurationPane({ destination, active, toolbarTarget }: {
+  destination: Exclude<SettingsPane, 'settings'>;
+  active: boolean;
+  toolbarTarget: HTMLElement | null;
+}) {
   const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -22,7 +26,7 @@ export function ConfigurationPane({ destination, active }: { destination: Exclud
     <Suspense fallback={<p role="status">{t.settings.discovery.loading}</p>}>
       {destination === 'models' ? <Models /> : destination === 'agents' ? <Agents /> : destination === 'skills' ? <Skills />
         : destination === 'memory' ? <Memory /> : destination === 'access' ? <Access /> : destination === 'data' ? <Data />
-          : destination === 'shortcuts' ? <Shortcuts active={active} onError={setError} onNotice={setNotice} /> : <Diagnostics />}
+          : destination === 'shortcuts' ? <Shortcuts active={active} toolbarTarget={toolbarTarget} onError={setError} onNotice={setNotice} /> : <Diagnostics />}
     </Suspense>
     <ManagerFeedback error={error} notice={notice} />
   </>;
