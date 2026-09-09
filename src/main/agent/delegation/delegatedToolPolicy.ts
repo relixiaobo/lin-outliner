@@ -22,8 +22,6 @@ const HARD_BLOCKED_ACTIONS = new Set<ModelToolActionKind>([
   'shell.stop',
   'task.inspect',
   'task.stop',
-  'thread.history.search',
-  'thread.history.read',
 ]);
 
 const SESSION_LOCAL_CONTROL_ACTIONS = new Set<ModelToolActionKind>([

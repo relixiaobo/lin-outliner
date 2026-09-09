@@ -1,29 +1,7 @@
 /**
- * TranscriptRenderer — the single faithful Turn -> text projection.
- *
- * AUTHORITY. This module is the ONLY faithful renderer of canonical Turns into
- * readable text. Every later faithful-text need — the transcript artifact, the
- * `agent:dump` operator CLI, any forensics export — routes here instead of
- * growing a second copy. A parallel renderer is exactly what makes two
- * disagreeing "truths" about one Thread possible.
- *
- * EXEMPTION (do not unify). `deterministicSummary` in
- * `context/ContextCompaction.ts` is LOSSY BY CONTRACT: one line per Item,
- * globally clamped to a context budget, written for a provider audience that
- * must forget detail. This renderer has the opposite contract — keep whatever
- * the store kept, for a reader that pulls detail on demand. Merging them would
- * force one of the two contracts to break, so they stay separate on purpose.
- *
- * ONE TURN IS THE UNIT. `renderTurn` renders exactly one Turn and reads only
- * that Turn's payloads; `renderTranscript` composes it. The artifact appends one
- * completed Turn at a time and never re-renders history, so the unit of
- * rendering has to be the unit of appending.
- *
- * PURITY. Turns plus a payload reader are injected; this module imports no
- * store and performs no I/O of its own. Bounds reuse the persistence caps
- * (`MAX_PERSISTED_*`) for already-bounded fields. Canonical Assistant text is
- * written verbatim so an incomplete delegated handoff can resolve the complete
- * answer from the transcript instead of capturing a second lossy projection.
+ * On-demand whole-conversation export for agent:dump and explicit exports.
+ * Runtime record discovery uses ThreadRecordPublisher and ThreadRecordSources;
+ * this renderer is not a publication or history-resolution authority.
  */
 import type {
   DynamicToolCallThreadItem,

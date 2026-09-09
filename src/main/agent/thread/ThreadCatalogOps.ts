@@ -30,7 +30,8 @@ interface PendingThreadNameGeneration {
 }
 
 /** What the catalog's descendant cascade owes the account layer. */
-export interface ThreadCatalogTranscripts {
+export interface ThreadCatalogRecords {
+  replace(thread: Thread): Promise<void>;
   delete(threadId: ThreadId): Promise<void>;
   /** Deletion takes the conversation with it, so its exclusion has nothing left to govern. */
   forgetExclusions(sessionIds: readonly string[]): Promise<void>;
@@ -54,7 +55,7 @@ export class ThreadCatalogOps {
     private readonly isClosing: () => boolean,
     private readonly turnLifecycle: TurnLifecycle,
     private readonly hasUndeliveredWork: (threadId: ThreadId) => boolean,
-    private readonly transcripts: ThreadCatalogTranscripts,
+    private readonly records: ThreadCatalogRecords,
     private readonly clearGoal: (threadId: ThreadId) => Promise<void>,
     private readonly createThreadBusyError: (message: string) => Error,
   ) {}
@@ -305,6 +306,10 @@ export class ThreadCatalogOps {
           nameOrigin: request.name === undefined ? 'derived' : 'manual',
         });
         try {
+          const recovery = await this.core.rollout.readRecovery(source.id);
+          if (recovery && inherited.length && !thread.ephemeral) {
+            this.core.history.apply(await this.core.rollout.appendRecovery(thread.id, recovery));
+          }
           const copiedTurns = inherited.map((turn) => copyTurn(turn, now));
           const cursorMap = forkedCursorMap(inherited, copiedTurns);
           for (let index = 0; index < copiedTurns.length; index += 1) {
@@ -473,6 +478,7 @@ export class ThreadCatalogOps {
         this.core.payloads.pruneUnreferencedTurnDiagnostics(thread.id, references.diagnostics),
         this.core.payloads.pruneUnreferencedTextOutputs(thread.id, references.textOutputs),
       ]).catch(() => undefined);
+      await this.records.replace(this.core.requireThread(thread.id).thread);
       await this.core.publishRecordedNotification(replacement);
     }
 
@@ -566,6 +572,7 @@ export class ThreadCatalogOps {
           this.core.payloads.pruneUnreferencedTurnDiagnostics(thread.id, references.diagnostics),
           this.core.payloads.pruneUnreferencedTextOutputs(thread.id, references.textOutputs),
         ]).catch(() => undefined);
+        await this.records.replace(this.core.requireThread(thread.id).thread);
         if (request.numTurns === turns.length) this.clearAutomaticThreadName(thread.id);
         return { thread: this.core.requireThread(thread.id).thread };
       });
@@ -651,9 +658,9 @@ export class ThreadCatalogOps {
         // After coordination-state teardown, so no append the cascade raced can
         // land behind the removal and resurrect a transcript the user deleted.
         for (const descendantId of [...subtree.threadIds].reverse()) {
-          await this.transcripts.delete(descendantId);
+          await this.records.delete(descendantId);
         }
-        await this.transcripts.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));
+        await this.records.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));
       } finally {
         this.finishThreadSubtreeStop(subtree.threadIds);
       }

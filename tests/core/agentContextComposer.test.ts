@@ -16,6 +16,7 @@ import type {
 } from '../../src/core/agent/protocol';
 import {
   CanonicalContextProjector,
+  serializeUserContent,
 } from '../../src/main/agent/context/ContextProjector';
 import {
   agentPersonaPrompt,
@@ -134,12 +135,28 @@ describe('stable agent prompt composition', () => {
     expect(prompt.text).toContain('install or enable it through the ordinary task environment');
   });
 
-  test('names the episodic index for a root that can read files, and for nobody else', () => {
-    const transcriptIndexPath = '/app-data/thread-transcripts/index.tsv';
+  test('explicit references resolve ordinary record paths only with the effective read capability', async () => {
+    const threadId = rootThread(1).id;
+    let lookups = 0;
+    const resources = { ...projectionResources(new Map()), resolveThreadRecord: async () => { lookups++; return '/records/source/record.md'; } };
+    const content = [{ type: 'threadReference' as const, threadId }];
+    const enabled = await serializeUserContent(content, resources, true);
+    expect(JSON.stringify(enabled)).toContain('/records/source/record.md');
+    expect(JSON.stringify(enabled)).toContain('untrusted');
+    const disabled = await serializeUserContent(content, resources, false);
+    expect(JSON.stringify(disabled)).not.toContain('/records/source/record.md');
+    expect(JSON.stringify(disabled)).toContain('cannot be read');
+    expect(lookups).toBe(1);
+    const unavailable = await serializeUserContent(content, { ...resources, resolveThreadRecord: async () => { throw new Error('source missing'); } }, true);
+    expect(JSON.stringify(unavailable)).toContain('cannot be read');
+  });
 
-    const root = composeStablePrompt({ thread: rootThread(1), configuration, transcriptIndexPath });
+  test('names the episodic index for a root that can read files, and for nobody else', () => {
+    const recordIndexPath = '/app-data/thread-records/index.tsv';
+
+    const root = composeStablePrompt({ thread: rootThread(1), configuration, recordIndexPath });
     expect(root.blocks.map((block) => block.id)).toContain('episodic-records');
-    expect(root.text).toContain(transcriptIndexPath);
+    expect(root.text).toContain(recordIndexPath);
     // The doctrine, not just the path: prime-agent exposes the path alone and the
     // capability goes unused.
     expect(root.text).toContain('Consult the index when the task refers to earlier work');
@@ -150,7 +167,7 @@ describe('stable agent prompt composition', () => {
     const child = composeStablePrompt({
       thread: { ...rootThread(3), parentThreadId: rootThread(1).id },
       configuration,
-      transcriptIndexPath,
+      recordIndexPath,
     });
     expect(child.blocks.map((block) => block.id)).not.toContain('episodic-records');
 
@@ -158,7 +175,7 @@ describe('stable agent prompt composition', () => {
     const noFileTools = composeStablePrompt({
       thread: rootThread(1),
       configuration: { ...configuration, tools: ['web_search'] },
-      transcriptIndexPath,
+      recordIndexPath,
     });
     expect(noFileTools.blocks.map((block) => block.id)).not.toContain('episodic-records');
 

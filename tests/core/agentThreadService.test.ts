@@ -91,11 +91,11 @@ import {
 } from '../../src/main/agent/capabilities/agentSkills';
 import { createLocalTools } from '../../src/main/agent/capabilities/agentLocalTools';
 import {
-  threadTranscriptPath,
-  threadTranscriptRoot,
-} from '../../src/main/agent/thread/ThreadTranscriptArtifact';
-import { ThreadTranscriptIndex } from '../../src/main/agent/thread/ThreadTranscriptIndex';
-import { ThreadTranscriptWriter } from '../../src/main/agent/thread/ThreadTranscriptWriter';
+  threadRecordPath,
+  threadRecordRoot,
+} from '../../src/main/agent/thread/ThreadRecordFiles';
+import { ThreadRecordIndex } from '../../src/main/agent/thread/ThreadRecordIndex';
+import { ThreadRecordPublisher } from '../../src/main/agent/thread/ThreadRecordPublisher';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 import { resolveUserDataDir } from '../../src/main/userDataPath';
@@ -3932,7 +3932,7 @@ readResource: (ref) => reopened.stores.resources.readExact(ref),
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
-      transcriptRoot: threadTranscriptRoot(join(root, 'app-data')),
+      recordRoot: threadRecordRoot(join(root, 'app-data')),
       now: clock,
     });
     await service.initialize();
@@ -4734,7 +4734,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
-      transcriptRoot: threadTranscriptRoot(join(root, 'app-data')),
+      recordRoot: threadRecordRoot(join(root, 'app-data')),
       now: () => 1_720_000_000_000,
     });
     await service.initialize();
@@ -5033,7 +5033,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
-      transcriptRoot: threadTranscriptRoot(join(root, 'app-data')),
+      recordRoot: threadRecordRoot(join(root, 'app-data')),
       resolveUserContent: async (content, context) => {
         if (attachmentRef) return content;
         const written = await stores.resources.writeBytes(
@@ -5120,7 +5120,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
-      transcriptRoot: threadTranscriptRoot(join(root, 'app-data')),
+      recordRoot: threadRecordRoot(join(root, 'app-data')),
       extensions,
       resolveUserContent: async (_content, context) => {
         const written = reusableRef && stores.resources.linkReference(context.threadId, reusableRef)
@@ -5845,7 +5845,7 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     expect(reopened.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.map((turn) => turn.id))
       .toEqual([first.turn.id]);
     expect((await reopened.stores.rollout.read(thread.id)).map((entry) => entry.event.type))
-      .toEqual(['turn/completed']);
+      .toEqual(['history/recovered', 'turn/completed']);
 
     const second = await reopened.service.startRendererTurn({
       threadId: thread.id,
@@ -7504,7 +7504,7 @@ async function openFixture(
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
-      transcriptRoot: threadTranscriptRoot(join(root, 'app-data')),
+      recordRoot: threadRecordRoot(join(root, 'app-data')),
       now: clock,
       extensions,
       ...options,
@@ -7705,7 +7705,217 @@ async function recordReferencedImageEvidence(
 
 
 
-describe('Thread transcript artifact', () => {
+describe('ordinary record retrieval and lifecycle', () => {
+  test('publishes first active input and completed activity, then retrieves a decision and deep tool error through ordinary files', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' }, name: 'Record acceptance' })).thread;
+    const accepted = await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Decision: use native git. Next action: inspect the startup failure.' }] });
+    await fixture.executor.waitUntilWaiting(0);
+    const context = fixture.executor.contexts[0]!;
+    const itemId = context.recorder.createItemId();
+    const args = { command: 'bun run dev:workbench-test' };
+    const item = { id: itemId, type: 'dynamicToolCall', provenance: context.recorder.localProvenance(itemId), namespace: null, tool: 'bash', arguments: args,
+      modelCall: replayableModelCall('bash', args), status: 'inProgress', outputRef: null, contentItems: null, success: null, durationMs: null } as const;
+    await context.recorder.started(item);
+    const text = `${'startup trace '.repeat(25_000)} ERROR_OWNER_REFUSED`;
+    const outputRef = await context.persistOutputText(itemId, text, 'text/plain', 'Startup failed');
+    await context.recorder.completed({ ...item, status: 'completed', outputRef, success: false, durationMs: 1 });
+    await fixture.service.flushThreadRecords(thread.id);
+    await fixture.service.flushThreadRecordIndex();
+    const fileTools = createLocalTools({ localRoot: fixture.root });
+    const read = async (file: string, cursor?: string) => (await executeTool(fileTools, 'file_read', 'inspect', { file_path: file, ...(cursor ? { cursor } : {}) }) as any).details;
+    const index = await read(fixture.service.threadRecordIndexPath);
+    const entryPath = index.data.file.content.split('\n').find((line: string) => line.startsWith(thread.id))!.split('\t')[6];
+    expect(await fixture.service.resolveThreadRecord(thread.id, thread.id)).toBe(entryPath);
+    const entry = await read(entryPath);
+    expect(entry.data.file.content).toContain('activity may continue');
+    const turnLink = /\]\((turns\/[^)]+)\)/.exec(entry.data.file.content)![1]!;
+    const turnFile = join(entryPath, '..', turnLink);
+    const turnRead = await read(turnFile);
+    expect(turnRead.data.file.content).toContain('Decision: use native git');
+    expect(turnRead.data.file.content).toContain('not yet persisted');
+    const search = await executeTool(fileTools, 'file_grep', 'search', { path: join(entryPath, '..', 'details'), pattern: 'ERROR_OWNER_REFUSED', output_mode: 'content' }) as any;
+    expect(search.details.ok).toBe(true);
+    const location = search.details.data.readLocations.find((match: any) => match.byteOffset > 100_000);
+    expect(location).toBeDefined();
+    const error = await read(location.filePath, location.cursor);
+    expect(error.data.file.content).toContain('ERROR_OWNER_REFUSED');
+    expect(turnRead.data.file.content).toContain('bun run dev:workbench-test');
+    expect(turnRead.data.file.content).toContain('replay-arguments');
+    expect(MODEL_TOOL_CATALOG.map(tool => canonicalModelToolKey(tool.identity))).not.toContain('thread_read');
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  for (const media of ['image', 'pdf'] as const) {
+    test(`ordinary ${media} reading retains only B's observation after A is deleted and B restarts`, async () => {
+      const fixture = await createFixture();
+      const source = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
+      await fixture.service.startRendererTurn({ threadId: source.id, input: [{ type: 'text', text: 'Save source bytes' }] });
+      await fixture.executor.waitUntilWaiting(0);
+      const sourceContext = fixture.executor.contexts[0]!;
+      const bytes = media === 'image' ? ONE_PIXEL_PNG_BYTES : Buffer.from(recordPdfFixture(['Saved original page']));
+      const original = await sourceContext.persistOutputResource(bytes, media === 'image' ? 'image/png' : 'application/pdf', media === 'image' ? 'original.png' : 'original.pdf');
+      const itemId = sourceContext.recorder.createItemId();
+      const item = { id: itemId, type: 'dynamicToolCall', provenance: sourceContext.recorder.localProvenance(itemId), namespace: null, tool: 'web_fetch', arguments: { url: 'https://example.test/original' }, modelCall: replayableModelCall('web_fetch', { url: 'https://example.test/original' }), status: 'inProgress', outputRef: null, contentItems: null, success: null, durationMs: null, resourceRefs: [] } as const;
+      await sourceContext.recorder.started(item);
+      await sourceContext.recorder.completed({ ...item, status: 'completed', success: true, resourceRefs: [original] });
+      fixture.executor.finish(0);
+      await fixture.service.waitForIdle(source.id);
+      await fixture.service.flushThreadRecords(source.id);
+      const copy = join(recordRootFor(fixture), source.id, 'resources', original.id, original.fileName);
+      expect(await readFile(copy)).toEqual(bytes);
+      const canonical = await fixture.stores.resources.useExactPath(original, async path => path);
+      expect((await stat(copy)).ino).not.toBe((await stat(canonical!)).ino);
+      const reader = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
+      await fixture.service.resolveThreadRecord(reader.id, source.id);
+      expect(fixture.stores.resources.hasThreadLink(reader.id, original)).toBe(false);
+      await fixture.service.startRendererTurn({ threadId: reader.id, input: [{ type: 'text', text: 'Read the historical file' }] });
+      await fixture.executor.waitUntilWaiting(1);
+      const context = fixture.executor.contexts[1]!;
+      const tools = createLocalTools({ localRoot: fixture.root });
+      const args = { file_path: copy, ...(media === 'pdf' ? { pages: '1' } : {}) };
+      const result = await executeTool(tools, 'file_read', 'historical-media', args) as any;
+      expect(result.outcome.ok).toBe(true);
+      expect(result.content.some((part: any) => part.type === 'image')).toBe(true);
+      const normalizer = new PiEventNormalizer(context);
+      const admission = toolAdmissionEvent('historical-media', 'file_read', args);
+      if (admission.decision.modelCall.disposition === 'replayable') {
+        admission.decision.modelCall = { ...admission.decision.modelCall, schemaDigest: modelToolSchemaDigest(tools.find(tool => tool.name === 'file_read')!.parameters) };
+      }
+      normalizer.handle(admission);
+      normalizer.handle({ type: 'tool_execution_end', toolCallId: 'historical-media', toolName: 'file_read', result, isError: false });
+      await normalizer.flush();
+      fixture.executor.finish(1);
+      await fixture.service.waitForIdle(reader.id);
+      const recorded = fixture.service.readThread({ threadId: reader.id, includeTurns: true }).thread.turns![0]!.items.find(item => item.type === 'dynamicToolCall')!;
+      const observation = recorded.contentItems?.find(content => content.type === 'image');
+      expect(observation?.type).toBe('image');
+      if (!observation || observation.type !== 'image') throw new Error('Missing recorded observation');
+      expect(observation.artifactRef.observation.id).not.toBe(original.id);
+      expect(fixture.stores.resources.hasThreadLink(reader.id, original)).toBe(false);
+      const observedBytes = await fixture.stores.resources.readExact(observation.artifactRef.observation);
+      expect(observedBytes).not.toBeNull();
+      await fixture.service.deleteThread(source.id);
+      expect(await fixture.stores.resources.readExact(original)).toBeNull();
+      expect(await stat(copy).catch(() => null)).toBeNull();
+      await fixture.service.close();
+      const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+      await reopened.service.initialize();
+      const turns = reopened.service.readThread({ threadId: reader.id, includeTurns: true }).thread.turns!;
+      const projected = await new CanonicalContextProjector(projectionModel(), {
+        readContext: ref => reopened.stores.payloads.readContext(reader.id, ref),
+        readOutput: ref => reopened.stores.payloads.readTextReference(reader.id, ref),
+        readResource: ref => reopened.stores.resources.readExact(ref),
+        resolveResourceObservationPath: async () => null, resolveImageArtifactPath: async () => null,
+      }, tools).projectTurns(turns);
+      const replayImages = projected.flatMap(message => typeof message.content === 'string' ? [] : message.content.filter(part => part.type === 'image'));
+      expect(replayImages.some(part => part.type === 'image' && Buffer.from(part.data, 'base64').equals(observedBytes!))).toBe(true);
+      expect(reopened.stores.resources.hasThreadLink(reader.id, original)).toBe(false);
+      expect(await reopened.stores.resources.readExact(original)).toBeNull();
+      await reopened.service.deleteThread(reader.id);
+      expect(await reopened.stores.resources.readExact(observation.artifactRef.observation)).toBeNull();
+      await reopened.service.close();
+    }, 15_000);
+  }
+
+  test('rollback and rerun remove superseded navigation and detail copies while retaining an explicit audit', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'Keep this decision');
+    await recordedUserTurn(fixture, thread.id, 1, 'Obsolete decision');
+    const removed = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns!.at(-1)!;
+    await fixture.service.rollbackThread({ threadId: thread.id, numTurns: 1 });
+    const root = join(recordRootFor(fixture), thread.id);
+    const current = await readFile(join(root, 'record.md'), 'utf8');
+    expect(current).not.toContain(removed.id);
+    expect(current).toContain('audit.json');
+    expect(await stat(join(root, 'details', removed.id)).catch(() => null)).toBeNull();
+    expect(await readFile(join(root, 'audit.json'), 'utf8')).toContain(removed.id);
+    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Retry this request' }] });
+    await fixture.executor.waitUntilWaiting(2);
+    fixture.executor.finish(2, { status: 'failed', error: { message: 'Retry required', codexErrorInfo: null, additionalDetails: null } });
+    await fixture.service.waitForIdle(thread.id);
+    const failed = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns!.at(-1)!;
+    const rerun = await fixture.service.request('turn/rerun', { threadId: thread.id, turnId: failed.id, confirmToolReplay: false });
+    await fixture.executor.waitUntilWaiting(3);
+    await fixture.service.flushThreadRecords(thread.id);
+    const after = await readFile(join(root, 'record.md'), 'utf8');
+    expect(after).toContain(rerun.turn.id);
+    expect(after).not.toContain(failed.id);
+    expect(await stat(join(root, 'details', failed.id)).catch(() => null)).toBeNull();
+    fixture.executor.finish(3);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('task detail expiry removes published full streams while retaining the expired receipt', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } })).thread;
+    const accepted = await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Run a finite command' }] });
+    await fixture.executor.waitUntilWaiting(0);
+    const tasks = fixture.service.toolTaskService();
+    const task = await tasks.start({ ownerThreadId: thread.id, sourceTurnId: accepted.turn.id, sourceItemId: 'task-proof', producer: 'bash', description: 'Retained stream',
+      command: 'printf TASK_STREAM_PROOF', cwd: fixture.root, env: process.env, timeoutMs: 5_000 });
+    expect((await tasks.waitForTerminal(task.taskId, thread.id, 5_000))?.state).toBe('succeeded');
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.flushThreadRecords(thread.id);
+    expect(await readPublishedRecord(fixture, thread.id)).toContain('TASK_STREAM_PROOF');
+    const cleared = await tasks.clearEligibleDetails(thread.id);
+    expect(cleared.tasks).toHaveLength(1);
+    await fixture.service.flushThreadRecords(thread.id);
+    const after = await readPublishedRecord(fixture, thread.id);
+    expect((await storageFiles(join(recordRootFor(fixture), thread.id))).some(file => file.includes('task-stdout-'))).toBe(false);
+    expect(after).toContain('cleared');
+    expect(after).toContain('task-receipt');
+    await fixture.service.close();
+  });
+
+  test('keeps unchanged completed Turns intact and rebuilds a deleted tree on restart', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'Original constraint');
+    const first = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns![0]!;
+    const firstPath = join(recordRootFor(fixture), thread.id, 'turns', `${first.id}.md`);
+    const before = await stat(firstPath);
+    await recordedUserTurn(fixture, thread.id, 1, 'Second request');
+    expect((await stat(firstPath)).mtimeMs).toBe(before.mtimeMs);
+    const sourcePath = fixture.stores.rollout.pathFor(thread.id);
+    const originalRollout = await readFile(sourcePath);
+    await fixture.service.close();
+    await rm(recordRootFor(fixture), { recursive: true, force: true });
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    await reopened.service.flushThreadRecords(thread.id);
+    expect(await readFile(firstPath, 'utf8')).toContain('Original constraint');
+    expect(await readFile(sourcePath)).toEqual(originalRollout);
+    await reopened.service.close();
+  });
+
+  test('retains recovered-history provenance across restart, fork and original deletion', async () => {
+    const fixture = await createFixture();
+    const source = await recordedUserThread(fixture, 0, 'Surviving snapshot');
+    const turn = fixture.service.readThread({ threadId: source.id, includeTurns: true }).thread.turns![0]!;
+    await fixture.service.close();
+    await rm(fixture.stores.rollout.pathFor(source.id));
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    const marker = await reopened.stores.rollout.readRecovery(source.id);
+    expect(marker).toMatchObject({ recoveredThreadId: source.id, coverage: 'snapshot-only', source: 'history-projection' });
+    const fork = (await reopened.service.forkThread({ threadId: source.id, boundary: { kind: 'afterTurn', turnId: turn.id } })).thread;
+    await reopened.service.deleteThread(source.id);
+    await reopened.service.flushThreadRecords(fork.id);
+    expect(await reopened.stores.rollout.readRecovery(fork.id)).toMatchObject({ recoveryId: marker!.recoveryId, recoveredThreadId: source.id });
+    expect(await readFile(join(recordRootFor(fixture), fork.id, 'record.md'), 'utf8')).toContain(marker!.recoveryId);
+    await reopened.service.close();
+    const again = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await again.service.initialize();
+    expect(await again.stores.rollout.readRecovery(fork.id)).toMatchObject({ recoveryId: marker!.recoveryId });
+    await again.service.close();
+  });
+});
+
+describe('Thread record publication', () => {
   test('materializes every persistent root Thread, whatever its source', async () => {
     const fixture = await createFixture();
     const automation = await fixture.service.ensureFeatureRootThread({
@@ -7727,19 +7937,19 @@ describe('Thread transcript artifact', () => {
     await fixture.executor.waitUntilWaiting(0);
     fixture.executor.finish(0, completedExecutionResult(0));
     await fixture.service.waitForIdle(automation.id);
-    await fixture.service.flushThreadTranscript(automation.id);
+    await fixture.service.flushThreadRecords(automation.id);
 
-    const path = await fixture.service.threadTranscriptPath(automation.id);
-    expect(path).toBe(threadTranscriptPath(transcriptRootFor(fixture), automation.id));
-    const transcript = await readFile(path!, 'utf8');
-    expect(transcript).toContain(`threadId: ${automation.id}`);
-    expect(transcript).toContain('source: automation');
-    expect(transcript).toContain('name: Daily review');
+    const path = await fixture.service.threadRecordPath(automation.id);
+    expect(path).toBe(threadRecordPath(recordRootFor(fixture), automation.id));
+    const transcript = await readPublishedRecord(fixture, automation.id);
+    expect(transcript).toContain(`Thread: ${automation.id}`);
+    expect(transcript).toContain('\"source\":\"automation\"');
+    expect(transcript).toContain('Daily review');
     // A root has no delegation to describe, and the run that produced each Turn
     // is already named by that Turn's own trigger line.
     expect(transcript).not.toContain('taskPath:');
-    expect(transcript).toContain('trigger: feature automation (run-a)');
-    expect(transcript).toContain('## Turn 1 — completed');
+    expect(transcript).toContain('run-a');
+    expect(transcript).toContain('Status: completed');
     expect(transcript).toContain('Review what yesterday left behind');
 
     // An ordinary conversation keeps one on the same terms — the predicate is a
@@ -7758,25 +7968,22 @@ describe('Thread transcript artifact', () => {
     await fixture.executor.waitUntilWaiting(1);
     fixture.executor.finish(1, completedExecutionResult(0));
     await fixture.service.waitForIdle(user.id);
-    await fixture.service.flushThreadTranscript(user.id);
+    await fixture.service.flushThreadRecords(user.id);
 
-    const userTranscript = await readFile(
-      threadTranscriptPath(transcriptRootFor(fixture), user.id),
-      'utf8',
-    );
-    expect(userTranscript).toContain('source: user');
+    const userTranscript = await readPublishedRecord(fixture, user.id);
+    expect(userTranscript).toContain('\"source\":\"user\"');
     expect(userTranscript).toContain('An ordinary question');
 
     await fixture.service.close();
   });
 
-  test('indexes what is on disk, newest first, and drops a row when its artifact goes', async () => {
+  test('indexes the eligible catalog, newest first, and drops deleted Threads', async () => {
     const fixture = await createFixture();
     const first = await recordedUserThread(fixture, 0, 'The first question');
     const second = await recordedUserThread(fixture, 1, 'The second question');
-    await fixture.service.flushThreadTranscriptIndex();
+    await fixture.service.flushThreadRecordIndex();
 
-    const index = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
+    const index = await readFile(fixture.service.threadRecordIndexPath, 'utf8');
     const lines = index.trimEnd().split('\n').filter((line) => !line.startsWith('#'));
     expect(lines).toHaveLength(2);
 
@@ -7787,13 +7994,13 @@ describe('Thread transcript artifact', () => {
     const columns = lines[0]!.split('\t');
     expect(columns).toHaveLength(7);
     expect(columns[1]).toBe('user');
-    expect(columns[6]).toBe(threadTranscriptPath(transcriptRootFor(fixture), second.id));
-    expect(index).toContain('# columns: threadId\tsource\tcreatedAt\tupdatedAt\tstatus\tname\ttranscriptPath');
+    expect(columns[6]).toBe(threadRecordPath(recordRootFor(fixture), second.id));
+    expect(index).toContain('# threadId\tsource\tcreatedAt\tupdatedAt\tstatus\tname\trecordPath');
 
     await fixture.service.deleteThread(first.id);
-    await fixture.service.flushThreadTranscriptIndex();
+    await fixture.service.flushThreadRecordIndex();
 
-    const afterDelete = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
+    const afterDelete = await readFile(fixture.service.threadRecordIndexPath, 'utf8');
     expect(afterDelete).not.toContain(first.id);
     expect(afterDelete).toContain(second.id);
     await fixture.service.close();
@@ -7808,9 +8015,9 @@ describe('Thread transcript artifact', () => {
     );
     // A rename moves a row without moving a file, so it owes the index a rewrite
     // on its own — nothing else here is going to trigger one.
-    await fixture.service.flushThreadTranscriptIndex();
+    await fixture.service.flushThreadRecordIndex();
 
-    const index = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
+    const index = await readFile(fixture.service.threadRecordIndexPath, 'utf8');
     const rows = index.trimEnd().split('\n').filter((line) => !line.startsWith('#'));
 
     expect(rows).toHaveLength(1);
@@ -7822,20 +8029,20 @@ describe('Thread transcript artifact', () => {
   test('excluding a Thread removes what is recorded and stops recording more', async () => {
     const fixture = await createFixture();
     const thread = await recordedUserThread(fixture, 0, 'Something private');
-    await fixture.service.flushThreadTranscriptIndex();
-    expect(await fixture.service.threadTranscriptPath(thread.id)).not.toBeNull();
+    await fixture.service.flushThreadRecordIndex();
+    expect(await fixture.service.threadRecordPath(thread.id)).not.toBeNull();
 
     await fixture.service.setThreadRecorded(thread.id, false);
-    await fixture.service.flushThreadTranscriptIndex();
+    await fixture.service.flushThreadRecordIndex();
 
     // A switch that only stopped FUTURE appends would leave the conversation the
     // user just excluded sitting on disk.
     expect(fixture.service.isThreadRecorded(thread.id)).toBe(false);
     expect(await transcriptEntries(fixture)).toEqual([]);
-    expect(await readFile(fixture.service.threadTranscriptIndexPath, 'utf8')).not.toContain(thread.id);
+    expect(await readFile(fixture.service.threadRecordIndexPath, 'utf8')).not.toContain(thread.id);
 
     await recordedUserTurn(fixture, thread.id, 1, 'Something else private');
-    await fixture.service.flushThreadTranscriptIndex();
+    await fixture.service.flushThreadRecordIndex();
     expect(await transcriptEntries(fixture)).toEqual([]);
 
     await fixture.service.close();
@@ -7849,14 +8056,14 @@ describe('Thread transcript artifact', () => {
     expect(await transcriptEntries(fixture)).toEqual([]);
 
     await fixture.service.setThreadRecorded(thread.id, true);
-    await fixture.service.flushThreadTranscriptIndex();
+    await fixture.service.flushThreadRecordIndex();
 
     // Waiting for a next completed Turn would mean an accidental exclusion could
     // never be undone on a conversation that is already finished — while the menu
     // reported the record as restored.
-    const transcript = await readFile(threadTranscriptPath(transcriptRootFor(fixture), thread.id), 'utf8');
+    const transcript = await readPublishedRecord(fixture, thread.id);
     expect(transcript).toContain('A conversation that is over');
-    expect(await readFile(fixture.service.threadTranscriptIndexPath, 'utf8')).toContain(thread.id);
+    expect(await readFile(fixture.service.threadRecordIndexPath, 'utf8')).toContain(thread.id);
     await fixture.service.close();
   });
 
@@ -7868,15 +8075,16 @@ describe('Thread transcript artifact', () => {
 
     // Stand in for a removal that failed or was interrupted: nothing else would
     // ever come back for this file, because an excluded Thread never rewrites it.
-    const orphaned = threadTranscriptPath(transcriptRootFor(fixture), thread.id);
+    const orphaned = threadRecordPath(recordRootFor(fixture), thread.id);
+    await mkdir(join(recordRootFor(fixture), thread.id), { recursive: true });
     await writeFile(orphaned, '# a record that should be gone\n', 'utf8');
 
     const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
     await reopened.service.initialize();
-    await reopened.service.flushThreadTranscriptIndex();
+    await reopened.service.flushThreadRecordIndex();
 
     expect(await transcriptEntries(fixture)).toEqual([]);
-    expect(await readFile(reopened.service.threadTranscriptIndexPath, 'utf8')).not.toContain(thread.id);
+    expect(await readFile(reopened.service.threadRecordIndexPath, 'utf8')).not.toContain(thread.id);
     await reopened.service.close();
   });
 
@@ -7887,15 +8095,15 @@ describe('Thread transcript artifact', () => {
     const threadId = '019fb2da-0000-7000-8000-0000000000aa';
     await writeFile(join(root, `${threadId}.md`), '# a record\n', 'utf8');
     let reads = 0;
-    const index: ThreadTranscriptIndex = new ThreadTranscriptIndex({
-      transcriptRoot: root,
-      readThreads: (ids) => {
+    const index: ThreadRecordIndex = new ThreadRecordIndex({
+      recordRoot: root,
+      readThreads: () => {
         reads += 1;
         // Arriving while a rewrite is in flight: the writer owes one more, and
         // owing it is the whole reason this is a single coalescing chain rather
         // than a queue.
         if (reads === 1) index.schedule();
-        return new Map(ids.map((id) => [id, { ...threadStub(id) }]));
+        return [threadStub(threadId)];
       },
       isExcluded: () => false,
     });
@@ -7915,16 +8123,16 @@ describe('Thread transcript artifact', () => {
 
     await fixture.service.setThreadRecorded(thread.id, true);
     await recordedUserTurn(fixture, thread.id, 2, 'The question after');
-    await fixture.service.flushThreadTranscriptIndex();
+    await fixture.service.flushThreadRecordIndex();
 
     // The record returns whole, from canonical history, rather than resuming from
     // wherever the exclusion interrupted it.
-    const transcript = await readFile(threadTranscriptPath(transcriptRootFor(fixture), thread.id), 'utf8');
+    const transcript = await readPublishedRecord(fixture, thread.id);
     expect(transcript).toContain('The first question');
     expect(transcript).toContain('The excluded question');
     expect(transcript).toContain('The question after');
-    expect(transcript).toContain('## Turn 3 — completed');
-    expect(await readFile(fixture.service.threadTranscriptIndexPath, 'utf8')).toContain(thread.id);
+    expect((await readdir(join(recordRootFor(fixture), thread.id, 'turns')))).toHaveLength(3);
+    expect(await readFile(fixture.service.threadRecordIndexPath, 'utf8')).toContain(thread.id);
     await fixture.service.close();
   });
 
@@ -7968,11 +8176,11 @@ describe('Thread transcript artifact', () => {
     await fixture.executor.waitUntilWaiting(0);
     fixture.executor.finish(0, completedExecutionResult(0));
     await fixture.service.waitForIdle(ephemeral.id);
-    await fixture.service.flushThreadTranscript(ephemeral.id);
+    await fixture.service.flushThreadRecords(ephemeral.id);
 
     // Ephemeral is where the internal memory-consolidation Threads live too, so
     // this is what keeps an internal Thread from materializing by accident.
-    expect(await fixture.service.threadTranscriptPath(ephemeral.id)).toBeNull();
+    expect(await fixture.service.threadRecordPath(ephemeral.id)).toBeNull();
     await fixture.service.close();
   });
 
@@ -7996,26 +8204,81 @@ describe('Thread transcript artifact', () => {
     await fixture.executor.waitUntilWaiting(0);
     fixture.executor.finish(0, completedExecutionResult(0));
     await fixture.service.waitForIdle(automation.id);
-    await fixture.service.flushThreadTranscript(automation.id);
-    const path = threadTranscriptPath(transcriptRootFor(fixture), automation.id);
-    expect(await readFile(path, 'utf8')).toContain('## Turn 1 — completed');
+    await fixture.service.flushThreadRecords(automation.id);
+    const path = threadRecordPath(recordRootFor(fixture), automation.id);
+    expect(await readPublishedRecord(fixture, automation.id)).toContain('Status: completed');
 
     await fixture.service.deleteThread(automation.id);
 
-    expect(await readdir(transcriptRootFor(fixture))).not.toContain(`${automation.id}.md`);
+    expect(await readdir(recordRootFor(fixture))).not.toContain(automation.id);
     await fixture.service.close();
   });
 
-  test('survives a subject resolver that throws on the turn-completion path', async () => {
+  test('serializes a rapid exclusion and re-inclusion with the final record intact', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'Keep this latest preference');
+    await Promise.all([
+      fixture.service.setThreadRecorded(thread.id, false),
+      fixture.service.setThreadRecorded(thread.id, true),
+    ]);
+    expect(fixture.service.isThreadRecorded(thread.id)).toBe(true);
+    expect(await readPublishedRecord(fixture, thread.id)).toContain('Keep this latest preference');
+    await fixture.service.close();
+  });
+
+  test('fences a delayed producer through bounded deletion and immediate restoration', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-record-fence-'));
+    roots.push(root);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let reached!: () => void;
+    const reading = new Promise<void>(resolve => { reached = resolve; });
+    let reads = 0;
+    const turn = { ...transcriptTurnWithOutput('turn-1'), items: [] };
+    const thread = threadStub('thread-1');
+    const writer = new ThreadRecordPublisher({
+      recordRoot: root,
+      isEligible: () => true,
+      core: {
+        metadata: { read: () => ({ thread }) },
+        rollout: { readRecovery: async () => null },
+        allTurns: () => [turn], readTurn: () => turn,
+      } as never,
+      sources: { readDiagnostics: async () => {
+        if (++reads === 1) { reached(); await gate; }
+        return { bundle: null };
+      } } as never,
+      tasks: { list: () => [] } as never,
+    });
+    writer.enqueueTurn(thread, turn);
+    const pending = writer.flush(thread.id);
+    await reading;
+    try {
+      const deletion = writer.delete(thread.id);
+      writer.restore(thread.id);
+      writer.enqueueTurn(thread, turn);
+      await deletion;
+      expect(await stat(threadRecordPath(root, thread.id)).catch(() => null)).toBeNull();
+    } finally {
+      release();
+    }
+    await pending;
+    await writer.flush(thread.id);
+    expect(await readFile(threadRecordPath(root, thread.id), 'utf8')).toContain('turn-1');
+    expect(reads).toBe(2);
+    await writer.flushAll();
+  });
+
+  test('survives a membership lookup that throws on the turn-completion path', async () => {
     const root = join(await mkdtemp(join(tmpdir(), 'tenon-transcript-subject-')), 'transcripts');
     roots.push(root);
-    const writer = new ThreadTranscriptWriter({
-      transcriptRoot: root,
-      // A delegated subject is a spawn-edge lookup, so this is a store read on
-      // the user's path — and stores throw.
-      resolveSubject: () => { throw new Error('the metadata store is unreadable'); },
-      completedTurns: () => [],
-      payloads: () => ({ readContext: async () => null, readOutput: async () => null }),
+    const writer = new ThreadRecordPublisher({
+      recordRoot: root,
+      // Publication membership is an inspection-only store read on the user path.
+      isEligible: () => { throw new Error('the metadata store is unreadable'); },
+      core: {} as never,
+      sources: {} as never,
+      tasks: {} as never,
     });
 
     // The completion tail continues past this call, so a throw here would strand
@@ -8033,22 +8296,26 @@ describe('Thread transcript artifact', () => {
     let markReached!: () => void;
     const reached = new Promise<void>((resolve) => { markReached = resolve; });
     const turn = transcriptTurnWithOutput('turn-1');
-    const writer = new ThreadTranscriptWriter({
-      transcriptRoot: join(root, 'transcripts'),
-      resolveSubject: () => ({ threadId: 'thread-1', source: 'user', cwd: '/tmp' }),
-      completedTurns: () => [turn],
-      payloads: () => ({
-        readContext: async () => null,
-        readOutput: async () => {
+    const writer = new ThreadRecordPublisher({
+      recordRoot: join(root, 'records'),
+      isEligible: () => true,
+      core: {
+        metadata: { read: () => ({ thread: threadStub('thread-1') }) },
+        rollout: { readRecovery: async () => null },
+        allTurns: () => [turn], readTurn: () => turn,
+      } as never,
+      sources: {
+        readDiagnostics: async () => {
           markReached();
           await payloadGate;
-          return 'output';
+          return { bundle: null };
         },
-        readDiagnostics: async () => null,
-      }),
+      } as never,
+      tasks: { list: () => [] } as never,
     });
     const thread = threadStub('thread-1');
     writer.enqueueTurn(thread, turn);
+    void writer.flush('thread-1');
     await reached;
 
     expect(await writer.flushAll(Date.now() + 10)).toBe(false);
@@ -8138,12 +8405,12 @@ async function recordedUserTurn(
   await fixture.executor.waitUntilWaiting(executorIndex);
   fixture.executor.finish(executorIndex, completedExecutionResult(0));
   await fixture.service.waitForIdle(threadId);
-  await fixture.service.flushThreadTranscript(threadId);
+  await fixture.service.flushThreadRecords(threadId);
 }
 
 /** Mirrors the fixture's userData location; deliberately NOT the workspace root. */
-function transcriptRootFor(fixture: Fixture): string {
-  return threadTranscriptRoot(join(fixture.root, 'app-data'));
+function recordRootFor(fixture: Fixture): string {
+  return threadRecordRoot(join(fixture.root, 'app-data'));
 }
 
 /**
@@ -8153,8 +8420,8 @@ function transcriptRootFor(fixture: Fixture): string {
  * directory it would have had to be deleted from.
  */
 async function transcriptEntries(fixture: Fixture): Promise<readonly string[]> {
-  const entries = await readdir(transcriptRootFor(fixture)).catch(() => []);
-  return entries.filter((entry) => entry.endsWith('.md'));
+  const entries = await readdir(recordRootFor(fixture)).catch(() => []);
+  return entries.filter((entry) => /^[0-9a-f-]{36}$/.test(entry));
 }
 
 
@@ -8192,4 +8459,42 @@ function stripUserMessageAuthors(jsonl: string): string {
     strip(record);
     return JSON.stringify(record);
   }).join('\n')}\n`;
+}
+
+async function readPublishedRecord(fixture: Fixture, threadId: string): Promise<string> {
+  const root = join(recordRootFor(fixture), threadId);
+  const files = (await storageFiles(root)).filter(file => file.endsWith('.md') || file.endsWith('.txt'));
+  return (await Promise.all(files.map(file => readFile(join(root, file), 'utf8')))).join('\n');
+}
+
+function recordPdfFixture(pageTexts: string[]): string {
+  const objects: string[] = [];
+  const pageIds = pageTexts.map((_, index) => 3 + index);
+  const contentIds = pageTexts.map((_, index) => 3 + pageTexts.length + index);
+  const fontId = 3 + pageTexts.length * 2;
+  objects[0] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objects[1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageTexts.length} >>`;
+  pageTexts.forEach((text, index) => {
+    objects[pageIds[index]! - 1] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentIds[index]} 0 R >>`;
+  });
+  pageTexts.forEach((text, index) => {
+    const stream = `BT /F1 24 Tf 100 700 Td (${text.replace(/[()\\]/g, '\\$&')}) Tj ET`;
+    objects[contentIds[index]! - 1] = `<< /Length ${Buffer.byteLength(stream, 'utf8')} >>\nstream\n${stream}\nendstream`;
+  });
+  objects[fontId - 1] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(pdf, 'utf8'));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(pdf, 'utf8');
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  for (const offset of offsets.slice(1)) {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return pdf;
 }

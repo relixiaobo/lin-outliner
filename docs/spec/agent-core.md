@@ -365,7 +365,7 @@ Chats, user files, active Tool Tasks, receipts, historical run snapshots, and ma
 resource owners remain intact. Automation ordering and reactivation are defined in
 [Agent Automations](agent-automations.md#project-deletion-and-reactivation).
 
-Transcript headers and `ThreadTranscriptIndex` retain conversation identity and
+Record entries and `ThreadRecordIndex` retain conversation identity and
 timestamps without a synthetic single Thread cwd. Directory facts are read from
 the owning task receipts; index navigation never supplies execution authority.
 
@@ -680,8 +680,13 @@ agent/
     edits/
       <thread-id>/
 content/
-thread-transcripts/
-  <thread-id>.md
+thread-records/
+  index.tsv
+  <thread-id>/
+    record.md
+    turns/<turn-id>.md
+    details/<turn-id>/<source-and-content-id>.txt
+    resources/<resource-id>/<display-name>
 ```
 
 `state.sqlite` is the Thread catalog and configuration snapshot.
@@ -694,8 +699,10 @@ in the Thread-owned payload directory. Exact file revisions live once under the 
 app-level `content/` store and are retained by Host-private anchors. Host-managed
 scratch and isolated execution resources use app-owned paths with Tool Task/Goal
 cleanup ownership; they are not Thread execution bindings. Uploads and disposable
-observations use `agent/scratch`; readable transcripts remain independent rebuildable
-artifacts under `thread-transcripts/`.
+observations use `agent/scratch`; the independent, rebuildable reading tree lives under
+`thread-records/`. Recording exclusions retain their existing owner and location at
+`thread-transcripts/excluded.txt`; old derived Markdown and index files are removed
+at startup, without a legacy reading facade.
 Decoded Thread catalog records use a 256-entry in-process LRU shared by single,
 batch, and list reads, so repeated notification admission does not decode or
 select unchanged metadata. Every `threads` row write invalidates through one
@@ -725,7 +732,60 @@ touched keys, so SQLite rollback restores in-memory state without cloning all ac
 streaming Items. If the rollout is wholly absent while a projection watermark exists,
 startup atomically writes a minimal replacement rollout from projected final snapshots and
 then rebuilds the projection from it; projected rollback hooks are recovered before their
-markers are replaced.
+markers are replaced. A strict `history/recovered` Rollout preface records a recovery
+UUID/time, original Thread ID, projection source, snapshot-only coverage and a digest
+of the recovered snapshot. Projection applies its watermark without treating it as a
+Turn. Forks of recovered history inherit this preface after their `thread/started`
+event, so recovery provenance survives original deletion and later projection rebuilds.
+
+### Published conversation records
+
+`ThreadRecordSources` resolves exact retained values for Trajectory and
+`ThreadRecordPublisher`; it owns no storage or model tools. Tool arguments retain
+owning Thread/Turn/Item, activity, execution, provider-call and response-part
+coordinates, owner, retention and content identity. Provider-issued arguments,
+admitted replay arguments, recorded model-facing result and task process output
+remain separate. Diagnostics with an invalid coordinate yield unavailable evidence;
+only absent diagnostics permit a clearly labelled replay source. Trajectory can use
+live collector snapshots; files identify unpersisted diagnostics without claiming a
+second durable trace.
+
+Discovery membership comes from current catalog metadata: non-excluded persistent
+root conversations across Profiles, including Automation roots and the current
+conversation. Archived roots remain eligible. Delegated and ephemeral Threads have
+no globally published record. The index includes a first active Turn before it has
+completed; a missing file explicitly means pending or unavailable publication.
+Composer references use the same target eligibility. Quarantined conversations may
+appear as unavailable metadata; their damaged history is never included in the
+shared search scan. Capability-disabled and delegated callers receive no
+Agent-facing reading path.
+
+Accepted input, Item start/completion, Turn completion and metadata boundaries
+coalesce into publication work; token deltas do not. At most two Threads publish
+concurrently, serialized per Thread. Only affected or missing Turn files are rebuilt
+on normal activity. Startup repair yields between Turns. Details publish before
+Turn links, followed by the entry and index. Writes use atomic replacement; entries
+identify publication time and source coverage, and Turn files identify their source
+boundary. A linked file from another generation or a removed source is unavailable,
+not evidence that the action completed. Inspection failures do not fail a Turn.
+
+Full rebuilds follow effective history, remove superseded Turn/details/resource
+copies, and link retained Rollout events as a separately labelled replacement audit.
+Audit references may outlive their payloads; missing payloads are not synthesized.
+Deletion and exclusion first fence queued/in-flight producers, remove derived files,
+and prevent late republishing. Preference changes and their cleanup are serialized;
+restored producers wait for older removals. Re-inclusion and restart can rebuild entirely from
+original owners. Task-detail expiry invalidates published streams and receipts;
+shutdown drains within its deadline and aborts remaining publication work.
+
+Historical resources are independent byte copies made with
+`AgentResourceStore.copyForObservation`, never hardlinks or new reader links.
+Publication checks the original owner even if a copy exists and removes unavailable
+copies. Metadata browsing and reference resolution adopt nothing. Ordinary image or
+PDF-page reads persist only the returned observation through the existing tool-result
+normalizer and Item lifecycle. Deleting source A therefore removes A's original and
+publication files while reader B can replay its own observation after restart.
+Copy-on-write is an optimization, not a retention promise or guaranteed disk budget.
 
 History decoding fails closed everywhere; the Thread, not the Item, is the unit that
 degrades (A12). Skipping an undecodable Item is not available as a fallback: it would

@@ -1,3 +1,8 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createAgentLocalWorkspaceContext, createLocalTools } from '../../src/main/agent/capabilities/agentLocalTools';
+import { ToolRuntime } from '../../src/main/agent/runtime/ToolRuntime';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, spyOn, test } from 'bun:test';
@@ -4251,6 +4256,61 @@ describe('PiTurnExecutor provider payload', () => {
     expect(outboundThinkingSignatures(providerContexts[2] ?? [])).toEqual([]);
     expect(JSON.stringify(outgoingPayloads)).not.toContain(invalidSignature);
     expect(JSON.stringify(outgoingPayloads)).not.toContain('[Reasoning]');
+  });
+
+  test('actual overflow compaction invalidates the live file-tool closure before reading unchanged record bytes again', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-compacted-record-'));
+    try {
+      const file = join(root, 'record.md');
+      await writeFile(file, 'Historical constraint: keep the requested development server running.');
+      const fixture = createContext();
+      fixture.context.configuration = { ...fixture.context.configuration, tools: ['file_read'] };
+      let workspace = createAgentLocalWorkspaceContext(root);
+      let fileRead: AgentTool | undefined;
+      const tools = new ToolRuntime({ defaultExecutionDirectory: () => root, extensionToolContributions: async () => [], notifyToolStarted: async () => {}, notifyToolCompleted: async () => {} } as never, {
+        localWorkspace: () => { workspace = createAgentLocalWorkspaceContext(root); return workspace; },
+        capabilityTools: () => createLocalTools({ workspace }), capabilityConfig: { blocks: [] },
+      });
+      const seen: string[] = [];
+      const read = async () => {
+        const result = await fileRead!.execute('record-read', { file_path: file });
+        seen.push((result.details as any).data.type);
+      };
+      fixture.context.compactContext = async () => {
+        await read();
+        return {} as import('../../src/core/agent/protocol').ContextCompactionThreadItem;
+      };
+      let calls = 0;
+      const executor = new PiTurnExecutor({
+        resolveRuntime: async () => runtimeSelection(),
+        resolveRuntimeSettings: async () => runtimeSettings(),
+        createTools: async context => {
+          const created = await tools.createTools(context);
+          fileRead = created.find(tool => tool.name === 'file_read');
+          return created;
+        },
+        onContextReplaced: context => tools.invalidateFileContext(context),
+        createGateway: hooks => new PiModelGateway({ ...hooks, streamSimple: model => {
+          calls++;
+          const call = calls;
+          const stream = createAssistantMessageEventStream();
+          void (async () => {
+            await read();
+            const message = { ...assistantMessage([]), api: model.api, provider: model.provider, model: model.id,
+              stopReason: call === 1 ? 'error' as const : 'stop' as const,
+              ...(call === 1 ? { errorMessage: 'context_length_exceeded: maximum context length reached' } : {}),
+            };
+            if (call === 1) stream.push({ type: 'error', reason: 'error', error: message });
+            else stream.push({ type: 'done', reason: 'stop', message });
+            stream.end(message);
+          })();
+          return stream;
+        } }),
+      });
+      expect(await executor.execute(fixture.context)).toMatchObject({ status: 'completed' });
+      expect(calls).toBe(2);
+      expect(seen).toEqual(['text', 'file_unchanged', 'text']);
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 
   test('applies one runtime policy to provider requests and retries overflow after canonical compaction', async () => {

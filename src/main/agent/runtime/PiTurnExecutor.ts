@@ -117,6 +117,8 @@ export type ModelRuntimeToolFactory = (
 ) => readonly AgentTool[] | Promise<readonly AgentTool[]>;
 
 export interface PiTurnExecutorOptions {
+  readonly resolveThreadRecord?: (currentThreadId: string, threadId: string) => Promise<string | null>;
+  readonly onContextReplaced?: (context: TurnExecutionContext) => void;
   readonly createTools?: ModelRuntimeToolFactory;
   readonly beforeProviderContext?: (context: TurnExecutionContext) => void | Promise<void>;
   readonly resolveRuntime?: (context: PiRuntimeContext) => Promise<PiRuntimeSelection>;
@@ -132,7 +134,7 @@ export interface PiTurnExecutorOptions {
    * than resolved here: this executor is constructed before the Thread service,
    * and the path is a pure function of `userData` either way.
    */
-  readonly transcriptIndexPath?: string | null;
+  readonly recordIndexPath?: string | null;
   /**
    * The name this Thread's agent answers to. Resolved per Turn rather than read
    * from the recorded configuration, so renaming an agent reaches the next Turn
@@ -160,10 +162,18 @@ export interface PiAgentRuntime {
 export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
   constructor(private readonly options: PiTurnExecutorOptions = {}) {}
 
+  private withRecordAccess(context: TurnExecutionContext): TurnExecutionContext {
+    return { ...context, resolveThreadRecord: async (threadId) => {
+      try { return await this.options.resolveThreadRecord?.(context.thread.id, threadId) ?? null; }
+      catch (error) { console.warn('[agent] Record path unavailable', error); return null; }
+    } };
+  }
+
   async planFailureContinuation(context: TurnExecutionContext): Promise<boolean> {
+    context = this.withRecordAccess(context);
     const runtime = await (this.options.resolveRuntime ?? resolveDefaultRuntime)(context);
     const projection = await new CanonicalContextProjector(runtime.model, context, {
-      threadHistoryReadAvailable: context.configuration.tools.includes('thread_read'),
+      threadRecordReadAvailable: false,
     }).projectTurnsWithBoundaries([...context.historyBeforeTurn, context.turn]);
     validateCanonicalProviderHistory(projection.messages);
     return projection.assistantBoundaries.some((boundary) => (
@@ -174,6 +184,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
   async planInputCapacity(
     context: TurnExecutionContext,
   ): Promise<{ readonly remainingInputTokens: number }> {
+    context = this.withRecordAccess(context);
     const internalMemory = context.thread.threadSource === 'memory_consolidation';
     const runtime = await (this.options.resolveRuntime ?? resolveDefaultRuntime)(context);
     const tools = internalMemory
@@ -185,13 +196,14 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           thread: context.thread,
           configuration: context.configuration,
           availableToolNames: tools.map((tool) => tool.name),
-          transcriptIndexPath: this.options.transcriptIndexPath ?? null,
+          recordIndexPath: this.options.recordIndexPath ?? null,
+          currentRecordPath: tools.some(tool => tool.name === 'file_read') ? await context.resolveThreadRecord?.(context.thread.id) ?? null : null,
           persona: this.options.resolvePersona?.(context.thread) ?? null,
         });
     const systemPrompt = stablePrompt?.text
       ?? context.configuration.developerInstructions.join('\n\n');
     const projector = new CanonicalContextProjector(runtime.model, context, {
-      threadHistoryReadAvailable: context.configuration.tools.includes('thread_read'),
+      threadRecordReadAvailable: tools.some(tool => tool.name === 'file_read'),
     });
     const projection = await projector.projectTurnsWithBoundaries([
       ...context.historyBeforeTurn,
@@ -229,6 +241,8 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
   }
 
   async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    context = this.withRecordAccess(context);
+    this.options.onContextReplaced?.(context);
     if (context.signal.aborted) return { status: 'interrupted' };
     let agent: PiAgentRuntime | null = null;
     let unsubscribe: (() => void) | null = null;
@@ -251,7 +265,8 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
             thread: context.thread,
             configuration: context.configuration,
             availableToolNames: tools.map((tool) => tool.name),
-            transcriptIndexPath: this.options.transcriptIndexPath ?? null,
+            recordIndexPath: this.options.recordIndexPath ?? null,
+          currentRecordPath: tools.some(tool => tool.name === 'file_read') ? await context.resolveThreadRecord?.(context.thread.id) ?? null : null,
             persona: this.options.resolvePersona?.(context.thread) ?? null,
           });
       const systemPrompt = stablePrompt?.text
@@ -259,7 +274,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       const turnScopedReads = withTurnScopedContextReads(context);
       const projectionContext = turnScopedReads.context;
       const projector = new CanonicalContextProjector(runtime.model, projectionContext, {
-        threadHistoryReadAvailable: context.configuration.tools.includes('thread_read'),
+        threadRecordReadAvailable: tools.some(tool => tool.name === 'file_read'),
       });
       const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
       const currentMessages = await projector.projectTurns([context.turn]);
@@ -377,7 +392,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
                 liveModelToolCalls,
                 {
                   prepared: (prepared) => diagnostics.prepareProviderPlan(prepared),
-                  compacted: (compacted) => diagnostics.captureContextCompaction(compacted),
+                  compacted: (compacted) => { this.options.onContextReplaced?.(context); diagnostics.captureContextCompaction(compacted); },
                 },
                 omitSidecar ? { omitUserItemIds: new Set([sidecar.itemId]) } : undefined,
               );
@@ -443,7 +458,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
                 'providerOverflow',
                 activeAdmissionCursor(context.turn),
               );
-              if (compacted) diagnostics.captureContextCompaction(compacted);
+              if (compacted) { this.options.onContextReplaced?.(context); diagnostics.captureContextCompaction(compacted); }
               return compacted ? await transformContext() : null;
             }
           : undefined,
@@ -597,7 +612,7 @@ async function projectCanonicalProviderContext(
         turnId === context.turn.id ? liveModelToolCalls.get(itemId) ?? null : null
       ),
       ...(options?.omitUserItemIds ? { omitUserItemIds: options.omitUserItemIds } : {}),
-      threadHistoryReadAvailable: context.configuration.tools.includes('thread_read'),
+      threadRecordReadAvailable: tools.some(tool => tool.name === 'file_read'),
     });
     const canonicalProjection = await projector.projectTurnsWithBoundaries(sourceTurns);
     const projection = reasoningReplay?.reattach(canonicalProjection, model) ?? canonicalProjection;

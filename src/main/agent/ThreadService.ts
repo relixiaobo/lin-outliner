@@ -1,9 +1,7 @@
-import type { StartupIssue, StartupThreadAvailability } from '../../core/startup';
-import { startupIssue } from '../startupIssue';
-import { ResourceScope } from '../resourceScope';
 import type { Stats } from 'node:fs';
+import { readdir,rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname,join } from 'node:path';
 import {
 decodeAgentCoreRequest,
 decodeAgentCoreResponse,
@@ -22,13 +20,12 @@ GetGoalResponse,
 UpdateGoalResponse,
 } from '../../core/agent/goal';
 import type {
-AdditionalContext,
 AgentCoreMethod,
 AgentCoreRequestByMethod,
 AgentCoreResponseByMethod,
+AgentIdentityEntry,
 EmptyAgentCoreResponse,
 JsonValue,
-AgentIdentityEntry,
 PrivilegedTurnStartRequest,
 RendererTurnStartRequest,
 RendererTurnSteerRequest,
@@ -46,6 +43,7 @@ ThreadContextReadResponse,
 ThreadFeatureSource,
 ThreadForkRequest,
 ThreadId,
+ThreadImageArtifactReference,
 ThreadItem,
 ThreadItemOutputReadRequest,
 ThreadItemOutputReadResponse,
@@ -59,15 +57,12 @@ ThreadReferenceResolveRequest,
 ThreadReferenceResolveResponse,
 ThreadReferenceSearchRequest,
 ThreadReferenceSearchResponse,
-ThreadToolTasksRequest,
-ThreadToolTasksResponse,
-ToolTaskReadRequest,
-ToolTaskReadResponse,
-ThreadImageArtifactReference,
 ThreadResourceReference,
 ThreadRollbackRequest,
 ThreadStartRequest,
 ThreadStartResponse,
+ThreadToolTasksRequest,
+ThreadToolTasksResponse,
 ThreadTrajectoryDetailReadRequest,
 ThreadTrajectoryDetailReadResponse,
 ThreadTrajectoryReadRequest,
@@ -77,85 +72,86 @@ ThreadTurnDetailsReadResponse,
 ThreadTurnsListRequest,
 ThreadTurnsListResponse,
 ThreadUserContent,
+ToolTaskReadRequest,
+ToolTaskReadResponse,
 Turn,
-TurnId,
-TurnStartResponse,
-TurnSubmitResponse,
-TurnSteerResponse,
 TurnContinueRequest,
 TurnContinueResponse,
+TurnId,
 TurnRecoveryReadRequest,
 TurnRecoveryReadResponse,
 TurnRerunRequest,
-TurnRerunResponse
+TurnRerunResponse,
+TurnStartResponse,
+TurnSteerResponse,
+TurnSubmitResponse
 } from '../../core/agent/protocol';
-import { isRerunnableTurn } from '../../core/agent/turnRerun';
-import type { DelegationSessionBinding } from './delegation/delegationSessionTypes';
-import type { DelegationCoordinator } from './delegation/DelegationCoordinator';
-import { delegationTaskReconciliation } from './delegation/DelegationCoordinator';
-import { decodeDelegateExecutionResult } from '../../delegate/contract';
 import {
 normalizeUpdatePlanToolInput,
 type ModelToolIdentity,
 type UpdatePlanToolInput
 } from '../../core/agent/tools';
-import type { DocumentProjection } from '../../core/types';
+import { isRerunnableTurn } from '../../core/agent/turnRerun';
 import type { ErrorReport } from '../../core/errorObservability';
+import type { StartupIssue,StartupThreadAvailability } from '../../core/startup';
+import type { DocumentProjection } from '../../core/types';
+import { decodeDelegateExecutionResult } from '../../delegate/contract';
+import { ResourceScope } from '../resourceScope';
+import { startupIssue } from '../startupIssue';
 import {
 defaultEffectiveThreadConfiguration,
 type AgentConfigurationReadFailureReporter,
 } from './AgentConfigurationLoader';
+import {
+collectDeclaredOutputArtifacts,
+decodeDeclaredOutputArtifactPlan,
+} from './capabilities/agentDeclaredOutputArtifacts';
 import type { ReferencedAssetResolution } from './capabilities/agentReferencedAssets';
+import type { DelegationCoordinator } from './delegation/DelegationCoordinator';
+import { delegationTaskReconciliation } from './delegation/DelegationCoordinator';
+import type { DelegationSessionBinding } from './delegation/delegationSessionTypes';
 import { ExtensionRegistry } from './ExtensionRegistry';
 import { GoalExtension } from './extensions/goal/GoalExtension';
 import { GoalStore } from './extensions/goal/GoalStore';
 import { KeyedMutex } from './Mutex';
+import { AgentResourceStore } from './persistence/AgentResourceStore';
 import {
 RolloutStore,
 type ThreadHistoryRollbackMarker
 } from './persistence/RolloutStore';
 import { openSqlite } from './persistence/sqlite';
-import { AgentResourceStore } from './persistence/AgentResourceStore';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
 import {
 ThreadMetadataStore
 } from './persistence/ThreadMetadataStore';
 import { ToolPayloadStore } from './persistence/ToolPayloadStore';
+import { ProjectService } from './projects/ProjectService';
+import type { ToolArtifactSink } from './runtime/ToolArtifactSink';
 import type {
 OutputImageObservationNormalizer,
 ThreadNameGenerator,
 TurnExecutor
 } from './runtime/types';
-import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
-import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
-import { ThreadResourceOps } from './thread/ThreadResourceOps';
-import {
-  ThreadHistoryReferenceService,
-  type AgentThreadReadInput,
-  type AgentThreadReadResult,
-  type AgentThreadSearchInput,
-  type AgentThreadSearchResult,
-} from './thread/ThreadHistoryReference';
-import { ThreadTrajectoryProjection } from './thread/ThreadTrajectoryProjection';
-import { threadTranscriptRoot } from './thread/ThreadTranscriptArtifact';
-import { ThreadTranscriptExclusions } from './thread/ThreadTranscriptExclusions';
-import { ThreadTranscriptIndex } from './thread/ThreadTranscriptIndex';
-import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
-import type { TranscriptSubject } from './thread/TranscriptRenderer';
-import {
-  TurnLifecycle,
-  type CanonicalTurnRerunInputBatch,
-  type StagedContextEvidence,
-} from './thread/TurnLifecycle';
+import type { ToolTaskSupervisorRuntime } from './tasks/toolTaskRuntime';
 import { ToolTaskService } from './tasks/ToolTaskService';
 import { ToolTaskStore } from './tasks/ToolTaskStore';
-import { ProjectService } from './projects/ProjectService';
-import type { ToolTaskSupervisorRuntime } from './tasks/toolTaskRuntime';
+import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
+import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import {
-  collectDeclaredOutputArtifacts,
-  decodeDeclaredOutputArtifactPlan,
-} from './capabilities/agentDeclaredOutputArtifacts';
-import type { ToolArtifactSink } from './runtime/ToolArtifactSink';
+ThreadHistoryReferenceService,
+} from './thread/ThreadHistoryReference';
+import { recordEligible, threadRecordRoot } from './thread/ThreadRecordFiles';
+import { ThreadRecordIndex } from './thread/ThreadRecordIndex';
+import { ThreadRecordPublisher } from './thread/ThreadRecordPublisher';
+import { ThreadRecordSources } from './thread/ThreadRecordSources';
+import { ThreadResourceOps } from './thread/ThreadResourceOps';
+import { ThreadTrajectoryProjection } from './thread/ThreadTrajectoryProjection';
+import { ThreadTranscriptExclusions } from './thread/ThreadTranscriptExclusions';
+import {
+TurnLifecycle,
+type CanonicalTurnRerunInputBatch,
+type StagedContextEvidence,
+} from './thread/TurnLifecycle';
 
 const THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS = 2_000;
 
@@ -170,8 +166,8 @@ export interface AgentCorePaths {
   readonly goals: string;
   readonly payloads: string;
   readonly resourceReferences: string;
-  /** Thread transcript artifacts. A sibling of `agent/`, directly under userData. */
-  readonly transcripts: string;
+  /** Derived conversation records, beside `agent/` under userData. */
+  readonly records: string;
   readonly toolTasks: string;
 }
 
@@ -190,8 +186,8 @@ export interface ThreadServiceOptions {
   readonly executor: TurnExecutor;
   readonly attachmentScratchRoot: string;
   readonly defaultExecutionDirectory?: string;
-  /** App-owned root for Thread transcript artifacts. Never a workspace path. */
-  readonly transcriptRoot: string;
+  /** App-owned root for derived conversation records. Never a workspace path. */
+  readonly recordRoot: string;
   readonly nameGenerator?: ThreadNameGenerator;
   readonly extensions: ExtensionRegistry;
   readonly resolveConfiguration?: (
@@ -361,8 +357,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly historyReferences: ThreadHistoryReferenceService;
   private readonly catalogOps: ThreadCatalogOps;
   private readonly trajectory: ThreadTrajectoryProjection;
-  private readonly transcripts: ThreadTranscriptWriter;
-  private readonly transcriptIndex: ThreadTranscriptIndex;
+  private readonly records: ThreadRecordPublisher;
+  private readonly recordIndex: ThreadRecordIndex;
   private readonly transcriptExclusions: ThreadTranscriptExclusions;
   private readonly turnLifecycle: TurnLifecycle;
   private readonly rendererSubmissionMutex = new KeyedMutex();
@@ -414,7 +410,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.goalStore = options.stores.goals;
     this.toolTasks = new ToolTaskService(
       options.stores.toolTasks,
-      options.toolTaskDetailRoot ?? join(options.transcriptRoot, '..', 'tool-tasks'),
+      options.toolTaskDetailRoot ?? join(options.recordRoot, '..', 'tool-tasks'),
       options.toolTaskSupervisorRuntime,
       this.now,
     );
@@ -426,35 +422,21 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.resolveUserContent ?? ((content) => content),
     );
     this.historyReferences = new ThreadHistoryReferenceService(
-      this.core,
-      this.resourceOps,
-      (threadId) => !this.unreadableThreadIds.has(threadId),
-      this.now,
+      this.core, (threadId) => !this.unreadableThreadIds.has(threadId),
+      (threadId) => !this.isSessionExcluded(threadId),
     );
-    this.transcriptExclusions = new ThreadTranscriptExclusions(options.transcriptRoot);
-    this.transcriptIndex = new ThreadTranscriptIndex({
-      transcriptRoot: options.transcriptRoot,
-      readThreads: (threadIds) => new Map(
-        [...this.core.metadata.readMany(threadIds)].map(([id, record]) => [id, record.thread]),
-      ),
-      // The index derives membership from disk, so it must apply the exclusion
-      // itself: an artifact whose removal failed or was interrupted is still a
-      // file, and listing it would advertise exactly what the user excluded.
+    this.transcriptExclusions = new ThreadTranscriptExclusions(join(options.recordRoot, '..', 'thread-transcripts'));
+    this.recordIndex = new ThreadRecordIndex({
+      recordRoot: options.recordRoot,
+      readThreads: () => this.recordCatalog(),
+      // Exclusion controls catalog discovery even if derived-file removal failed.
       isExcluded: (threadId) => this.isSessionExcluded(threadId),
     });
-    this.transcripts = new ThreadTranscriptWriter({
-      transcriptRoot: options.transcriptRoot,
-      onArtifactsChanged: () => this.transcriptIndex.schedule(),
-      resolveSubject: (thread) => this.transcriptSubject(thread),
-      completedTurns: (threadId) => this.core.allTurns(threadId).filter((turn) => turn.status !== 'inProgress'),
-      payloads: (threadId) => ({
-        readContext: (ref) => this.core.payloads.readContext(threadId, ref),
-        readInternalTextProjection: (ref, maxPrefixChars) => (
-          this.core.payloads.readInternalTextProjection(threadId, ref, maxPrefixChars)
-        ),
-        readOutput: (ref) => this.core.payloads.readTextReference(threadId, ref),
-        readDiagnostics: (ref) => this.core.payloads.readTurnDiagnostics(threadId, ref),
-      }),
+    this.records = new ThreadRecordPublisher({
+      recordRoot: options.recordRoot,
+      onArtifactsChanged: () => this.recordIndex.schedule(),
+      isEligible: (thread) => this.isRecordReadable(thread),
+      core: this.core, sources: new ThreadRecordSources(this.core), tasks: this.toolTasks.store,
     });
     this.turnLifecycle = new TurnLifecycle(
       this.core,
@@ -468,7 +450,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
           this.catalogOps.replaceLatestTurnForRerunWithLocksHeld(...args)
         ),
       },
-      { enqueueTurn: (...args) => this.transcripts.enqueueTurn(...args) },
+      { enqueueTurn: (...args) => this.records.enqueueTurn(...args) },
       { noticeFor: async () => NO_DOCUMENT_DRIFT },
       this.executor,
       this.extensions,
@@ -508,7 +490,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.turnLifecycle,
       (threadId) => options.stores.toolTasks.hasBlockingWork(threadId),
       {
-        delete: (threadId) => this.transcripts.delete(threadId),
+        delete: (threadId) => this.records.delete(threadId),
+        replace: (thread) => this.records.rebuildNow(thread),
         forgetExclusions: (sessionIds) => this.transcriptExclusions.forget(sessionIds),
       },
       (threadId) => this.goals.clear(threadId),
@@ -661,6 +644,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
         );
       },
       taskDetailsExpired: async (threadId) => {
+        const thread = this.core.metadata.read(threadId)?.thread;
+        if (thread) await this.records.rebuildNow(thread);
         if (!this.core.metadata.read(threadId) && !this.core.ephemeral.has(threadId)) return;
         const canonical = this.resourceOps.threadStorageReferences(threadId).resources;
         await this.core.resources.setThreadReferences(
@@ -669,6 +654,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
         );
       },
       taskChanged: (task) => {
+        const thread = this.core.metadata.read(task.ownerThreadId)?.thread;
+        if (thread) this.records.schedule(thread, task.sourceTurnId);
         if (!this.core.metadata.read(task.ownerThreadId) && !this.core.ephemeral.has(task.ownerThreadId)) return;
         this.core.emitTransientNotification({
           type: 'toolTask/changed',
@@ -678,6 +665,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
       },
     });
     this.core.subscribe((notification) => {
+      const thread = notification.type === 'thread/started' ? notification.thread : this.core.metadata.read(notification.threadId)?.thread;
+      if (thread && ['thread/started','turn/started','item/started','item/completed','items/completed','turn/completed','thread/name/updated','thread/status/changed'].includes(notification.type)) {
+        this.recordIndex.schedule();
+        this.records.schedule(thread, 'turnId' in notification ? notification.turnId as TurnId : undefined);
+      }
       if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
         this.toolTasks.wakeDelivery(notification.threadId);
       }
@@ -687,7 +679,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   static async open(
     userDataPath: string,
     executor: TurnExecutor,
-    options: Omit<ThreadServiceOptions, 'stores' | 'executor' | 'transcriptRoot'>,
+    options: Omit<ThreadServiceOptions, 'stores' | 'executor' | 'recordRoot'>,
   ): Promise<ThreadService> {
     const acquisition = new ResourceScope('thread-service-construction');
     try {
@@ -708,7 +700,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       return new ThreadService({
         executor,
         ...options,
-        transcriptRoot: paths.transcripts,
+        recordRoot: paths.records,
         stores: {
           metadata,
           history,
@@ -787,19 +779,25 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     await this.core.resources.initialize(liveResourceReferences, { complete: resourceSnapshotComplete });
     await Promise.all([
-      // Transcript reclamation is the same kind of work as payload pruning, so it
+      // Record reclamation is the same kind of work as payload pruning, so it
       // joins the same startup batch rather than adding a serial step.
-      this.transcripts.sweepOrphans((threadId) => (
+      this.records.sweepOrphans((threadId) => (
           // Reconciliation, not just reclamation: an artifact whose removal
           // failed or was interrupted mid-exclusion is still on disk, and
           // nothing else would ever come back for it — the Thread is excluded,
           // so it never rewrites the file that would notice.
-          knownThreads.has(threadId) && !this.isSessionExcluded(threadId)
+          knownThreads.has(threadId) && !this.isSessionExcluded(threadId) && !this.unreadableThreadIds.has(threadId)
         ))
-        // Rebuild the index once the artifact set has settled: it is a
-        // projection of that set, so recomputing it earlier would only describe
-        // a directory that is about to change.
-        .then(() => { this.transcriptIndex.schedule(); }),
+        // Catalog membership is independent of completed publication files.
+        .then(async () => {
+          this.recordIndex.schedule();
+          for (const thread of this.recordCatalog()) this.records.schedule(thread, undefined, true);
+          // Retire only the old derived reading files; canonical exclusions keep their original location.
+          const priorRoot = join(dirname(this.recordIndex.path), '..', 'thread-transcripts');
+          for (const name of await readdir(priorRoot).catch(() => [])) {
+            if (name === 'index.tsv' || name.endsWith('.md')) await rm(join(priorRoot, name), { force: true }).catch(() => undefined);
+          }
+        }),
       ...reconciledThreadIds.flatMap((threadId) => {
         const references = this.resourceOps.threadStorageReferences(threadId);
         return [
@@ -963,14 +961,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
       console.warn(`[agent] Thread shutdown timed out with ${this.activeTurns.size} active Turn(s)`);
     }
     try {
-      if (!await this.transcripts.flushAll(drainDeadline)) {
-        console.warn('[agent] Thread shutdown timed out with transcript writes pending');
+      if (!await this.records.flushAll(drainDeadline)) {
+        console.warn('[agent] Thread shutdown timed out with record writes pending');
       }
     } catch (error) {
       failures.push(error);
     }
     try {
-      await this.transcriptIndex.flush();
+      await this.recordIndex.flush();
     } catch (error) {
       failures.push(error);
     }
@@ -1323,11 +1321,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
   resolveThreadReferences(request: ThreadReferenceResolveRequest): ThreadReferenceResolveResponse {
     return this.historyReferences.resolveReferences(request);
   }
-  searchThreadHistoryForAgent(input: AgentThreadSearchInput): readonly AgentThreadSearchResult[] {
-    return this.historyReferences.searchForAgent(input);
-  }
-  async readThreadHistoryForAgent(input: AgentThreadReadInput): Promise<AgentThreadReadResult> {
-    return this.historyReferences.readForAgent(input);
+  async resolveThreadRecord(currentThreadId: ThreadId, threadId: ThreadId): Promise<string | null> {
+    const current = this.core.metadata.read(currentThreadId)?.thread;
+    if (!current || current.ephemeral || current.threadSource === 'delegation') return null;
+    const resolved = this.historyReferences.resolveReferences({ currentThreadId, threadIds: [threadId] }).data[0];
+    return resolved && ['available', 'current'].includes(resolved.availability) ? this.records.pathForReader(threadId) : null;
   }
   async readItemOutput(request: ThreadItemOutputReadRequest): Promise<ThreadItemOutputReadResponse> { return this.resourceOps.readItemOutput(request); }
   async readContextPayload(request: ThreadContextReadRequest): Promise<ThreadContextReadResponse> { return this.resourceOps.readContextPayload(request); }
@@ -1476,7 +1474,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
    */
   async setThreadName(threadId: ThreadId, name: string | null): Promise<void> {
     await this.catalogOps.setThreadName(threadId, name);
-    this.transcriptIndex.schedule();
+    this.recordIndex.schedule();
   }
   async setThreadArchived(threadId: ThreadId, archived: boolean): Promise<void> {
     const subtreeIds = this.threadSubtreeIds(threadId);
@@ -1485,7 +1483,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     if (archived) await this.delegationCoordinator()?.closeOwnerSessions(threadId);
     await this.catalogOps.setThreadArchived(threadId, archived);
-    this.transcriptIndex.schedule();
+    this.recordIndex.schedule();
   }
   async deleteThread(threadId: ThreadId): Promise<void> {
     const subtreeIds = this.threadSubtreeIds(threadId);
@@ -1856,17 +1854,25 @@ export class ThreadService implements ThreadServiceExtensionHost {
       error,
     });
   }
-  /** Test seam: settle a Thread's pending transcript appends. */
-  async flushThreadTranscript(threadId: ThreadId): Promise<void> { return this.transcripts.flush(threadId); }
+  /** Test seam: settle a Thread's pending record publications. */
+  async flushThreadRecords(threadId: ThreadId): Promise<void> { return this.records.flush(threadId); }
   /** Account layer for a Thread that keeps one: the artifact path, or null when it is not on disk (A12). */
-  async threadTranscriptPath(threadId: ThreadId): Promise<string | null> { return this.transcripts.pathForReader(threadId); }
+  async threadRecordPath(threadId: ThreadId): Promise<string | null> { return this.records.pathForReader(threadId); }
   /** Where past sessions are discoverable. Named by the discovery doctrine, read with the file tools. */
-  get threadTranscriptIndexPath(): string { return this.transcriptIndex.path; }
+  get threadRecordIndexPath(): string { return this.recordIndex.path; }
   /** Test seam: settle the index rewrite in flight and anything it owes. */
-  async flushThreadTranscriptIndex(): Promise<void> { return this.transcriptIndex.flush(); }
-  private transcriptSubject(thread: Thread): TranscriptSubject | null {
-    if (this.transcriptExclusions.isExcluded(thread.sessionId)) return null;
-    return rootTranscriptSubject(thread);
+  async flushThreadRecordIndex(): Promise<void> { return this.recordIndex.flush(); }
+  private recordCatalog(): Thread[] {
+    const result: Thread[] = [];
+    for (const archived of [false, true]) {
+      let cursor: string | null = null;
+      do { const page = this.core.metadata.list({ archived, cursor, limit: 100, rootsOnly: true }); result.push(...page.data); cursor = page.nextCursor; } while (cursor);
+    }
+    return result;
+  }
+  private isRecordReadable(thread: Thread): boolean {
+    if (this.transcriptExclusions.isExcluded(thread.sessionId) || this.unreadableThreadIds.has(thread.id)) return false;
+    return recordEligible(thread);
   }
 
   /**
@@ -1883,21 +1889,31 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return !this.isSessionExcluded(threadId);
   }
 
+  private recordPreferenceWrite: Promise<void> = Promise.resolve();
+
   /** Take a conversation out of the records, or put it back. */
-  async setThreadRecorded(threadId: ThreadId, recorded: boolean): Promise<void> {
+  setThreadRecorded(threadId: ThreadId, recorded: boolean): Promise<void> {
+    // Serialize the canonical preference and its derived cleanup together so a
+    // rapid off/on choice cannot leave the latest preference without a record.
+    const operation = this.recordPreferenceWrite.then(() => this.applyThreadRecorded(threadId, recorded));
+    this.recordPreferenceWrite = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async applyThreadRecorded(threadId: ThreadId, recorded: boolean): Promise<void> {
     const thread = this.core.metadata.read(threadId)?.thread;
     if (!thread) return;
     if (!await this.transcriptExclusions.setExcluded(thread.sessionId, !recorded)) return;
     const subtree = this.catalogOps.recordedSessionThreads(threadId);
     for (const member of subtree) {
       if (recorded) {
-        this.transcripts.restore(member.id);
-        await this.transcripts.rebuildNow(member);
+        this.records.restore(member.id);
+        await this.records.rebuildNow(member);
       } else {
-        await this.transcripts.delete(member.id);
+        await this.records.delete(member.id);
       }
     }
-    this.transcriptIndex.schedule();
+    this.recordIndex.schedule();
   }
   async withThreadAdmissionBarrier<T>(
     threadId: ThreadId,
@@ -1957,7 +1973,7 @@ export function agentCorePaths(userDataPath: string): AgentCorePaths {
     goals: join(root, 'goals.sqlite'),
     payloads: join(root, 'payloads'),
     resourceReferences: join(root, 'resource_references.sqlite'),
-    transcripts: threadTranscriptRoot(userDataPath),
+    records: threadRecordRoot(userDataPath),
     toolTasks: join(root, 'tool-tasks'),
   };
 }

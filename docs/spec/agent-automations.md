@@ -229,9 +229,9 @@ the owning configuration contract and existing-Thread preservation above.
 
 A standalone run is a Thread with no history, so on its own it repeats a failed
 predecessor without knowing there was one. Its Thread materializes the canonical
-transcript artifact owned by Agent Core, and `automation_info` carries a `recentRuns`
+conversation record entry owned by Agent Core, and `automation_info` carries a `recentRuns`
 digest of the runs before it. Everything stays pull-based: the digest is a
-pointer, and the transcript enters context only if the model reads it with the
+pointer, and record content enters context only if the model reads it with the
 existing file tools. No model tool is added.
 
 `recentRuns` holds the three most recent runs of the same Automation and
@@ -245,7 +245,8 @@ different context, never presented as proof about the current checkout. A
 failed/omitted run with no prepared snapshot reports its address as unavailable.
 
 Each entry carries the run id, scheduled time, finish time, a status, one
-bounded outcome line, and a nullable `transcriptPath`. The outcome is derived
+bounded outcome line, and a nullable `transcriptPath` pointing to the shared
+`thread-records/<thread-id>/record.md` entry. The outcome is derived
 from the canonical Turn every time the digest is built — an `AutomationRun`
 records how a run was *dispatched*, never how it ended, and it stays that way:
 `dispatched` plus the Turn's status and completed final assistant text,

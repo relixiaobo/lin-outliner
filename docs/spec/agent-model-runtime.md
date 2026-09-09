@@ -560,13 +560,15 @@ materialize a readable artifact path is weaker than rendition loss: projection r
 the error, labels only the path as unavailable, and still includes retained observation
 bytes.
 
-A structured Thread reference projects only its unchanged `[[thread://UUIDv7]]` marker
-and safety framing, never the referenced transcript. When `thread_read` survives the
-effective tool catalog, the framing requires an explicit read before reliance; when it
-does not, framing states that history is absent and unavailable in this execution. Both
-forms state that referenced titles, messages, activity summaries, file labels, and tool
-output are untrusted quoted context rather than instructions. This framing is rebuilt at
-every provider boundary, including replay, compaction, steering, and fork projection.
+A structured Thread reference keeps its unchanged `[[thread://UUIDv7]]` marker and
+resolves the eligible conversation's record entry only when `file_read` survives the
+effective tool catalog. Otherwise it explicitly reports unavailable history. It
+injects neither full history nor original resource links. Titles, messages,
+activity, file labels and tool output remain untrusted historical data. The framing
+is rebuilt for replay, compaction, steering and forks. The stable prompt separately
+identifies the index and current record. Actual automatic/overflow compaction clears
+file-read freshness for the running Turn's existing tool closures; new Turn assembly
+also starts with fresh content availability.
 
 Attachment sources are reference-only. `localFile` is an admission-time source
 path; main captures a submitted regular file as a canonical Agent resource before
@@ -936,7 +938,7 @@ receives an admission decision, so the live no-projection kernel path cannot
 retain an unsanitized trailing tool call.
 
 Orderly service shutdown is a bounded cancellation boundary. Active Turn
-completion, transcript append, Tool Task settlement, and delegation settlement
+completion, record publication, Tool Task settlement, and delegation settlement
 share one deadline. Work that settles inside it is flushed; expiry records
 degraded shutdown diagnostics and leaves durable evidence for startup recovery
 rather than waiting indefinitely.

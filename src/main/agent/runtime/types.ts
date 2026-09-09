@@ -72,6 +72,7 @@ export interface TurnExecutionContext {
   readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
   readInternalText(ref: ThreadInternalTextPayloadReference): Promise<string | null>;
   readOutput(ref: ThreadItemOutputReference): Promise<string | null>;
+  resolveThreadRecord?(threadId: string): Promise<string | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
   resolveImageArtifactPath(artifact: ThreadImageArtifactReference): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;

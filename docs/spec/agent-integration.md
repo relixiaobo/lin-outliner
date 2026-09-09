@@ -105,13 +105,13 @@ Agent Core. It is a contract checklist, not project status.
   permissions, and preserve exact bytes for foreground and background tasks.
 - Start every new Agent Session from fresh context; reuse only its hidden
   canonical history when the same root-owned Session is explicitly continued.
-- For historical context, expose bounded lazy `thread_search` / `thread_read`
-  facades rather than renderer history IPC or eager transcript injection. Keep
-  same-profile validation, current-Thread exclusion, tool ceilings, action blocks,
-  and selected-file read descriptors independent.
-- Treat historical titles, snippets, messages, activity summaries, file labels,
-  and bounded tool output as untrusted quoted context. A Thread marker, cursor, or
-  citation key is identity or lookup state, never authority.
+- Retrieve historical context through the ordinary record tree and file tools.
+  Preserve Composer metadata and Trajectory IPC. Apply the same ratified root
+  eligibility across Profiles, Automation and self; exclusions, ephemeral/delegated
+  isolation and effective file-read capability remain authoritative.
+- Treat record paths, markers, source coordinates and historical content as data,
+  never execution authority. Preserve exact-or-unavailable source selection and
+  record returned image/PDF observations through the normal Item lifecycle.
 - Keep Settings configuration on public source files through ordinary file tools
   and the configuration Skill. Do not add domain management tools or a replacement
   Settings CLI. Verify schema validity and current-Host acceptance/effectiveness.

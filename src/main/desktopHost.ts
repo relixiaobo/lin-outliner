@@ -46,8 +46,8 @@ import { DATA_CHANGED_CHANNEL, PREVIEW_CONTEXT_CHANNEL, PREVIEW_ACTION_ACK_CHANN
   type PreviewActionAck, type PreviewOperationName } from '../core/previewOperations';
 import type { PreviewOperationCaller } from './hostDomain/previewOperations';
 import { decodeThreadResourceReference } from '../core/agent/codec';
-import { threadTranscriptRoot } from './agent/thread/ThreadTranscriptArtifact';
-import { threadTranscriptIndexPath } from './agent/thread/ThreadTranscriptIndex';
+import { threadRecordRoot } from './agent/thread/ThreadRecordFiles';
+import { threadRecordIndexPath } from './agent/thread/ThreadRecordIndex';
 import {
   AUTOMATION_NOTIFICATION_CHANNEL,
   AUTOMATION_REQUEST_CHANNEL,
@@ -591,7 +591,7 @@ function constructAgentHost(): Promise<AgentHost> {
     };
   },
   createTurnExecutorOptions: ({ configuration }) => ({
-    transcriptIndexPath: threadTranscriptIndexPath(threadTranscriptRoot(resolvedUserDataDir)),
+    recordIndexPath: threadRecordIndexPath(threadRecordRoot(resolvedUserDataDir)),
     // One name, wherever it is drawn or spoken: the prompt now asks configuration
     // who this agent is instead of hard-coding a name the transcript disagreed
     // with. Delegated Threads are hidden and use no renderer identity catalog.

@@ -68,7 +68,7 @@ type ThreadHostOptions = Omit<
   ThreadServiceOptions,
   | 'stores'
   | 'executor'
-  | 'transcriptRoot'
+  | 'recordRoot'
   | 'attachmentScratchRoot'
   | 'nameGenerator'
   | 'resolveUserContent'
@@ -200,7 +200,7 @@ export interface AgentThreadCapability {
   writeThreadResourceWithStatus: ThreadService['writeThreadResourceWithStatus'];
   waitForIdle: ThreadService['waitForIdle'];
   readThread: ThreadService['readThread'];
-  threadTranscriptPath: ThreadService['threadTranscriptPath'];
+  threadRecordPath: ThreadService['threadRecordPath'];
   resolveAttachmentFile: ThreadService['resolveAttachmentFile'];
   resolveThreadResourceFile: ThreadService['resolveThreadResourceFile'];
   resolveThreadResourceSource: ThreadService['resolveThreadResourceSource'];
@@ -323,6 +323,8 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
   const turnExecutor = new PiTurnExecutor({
     ...options.createTurnExecutorOptions(composition),
     createTools: (context) => toolReference.get().createTools(context),
+    resolveThreadRecord: (currentThreadId, threadId) => threadReference.get().resolveThreadRecord(currentThreadId, threadId),
+    onContextReplaced: (context) => toolReference.get().invalidateFileContext(context),
     beforeProviderContext: (context) => toolReference.get().prepareProviderContext(context),
   });
   const threadService = await ThreadService.open(options.userDataDir, turnExecutor, {
@@ -488,7 +490,7 @@ async function composeAgentHost(options: AgentHostOptions, acquisition: Resource
     writeThreadResourceWithStatus: (...args) => threadService.writeThreadResourceWithStatus(...args),
     waitForIdle: (...args) => threadService.waitForIdle(...args),
     readThread: (...args) => threadService.readThread(...args),
-    threadTranscriptPath: (...args) => threadService.threadTranscriptPath(...args),
+    threadRecordPath: (...args) => threadService.threadRecordPath(...args),
     resolveAttachmentFile: (...args) => threadService.resolveAttachmentFile(...args),
     resolveThreadResourceFile: (...args) => threadService.resolveThreadResourceFile(...args),
     resolveThreadResourceSource: (...args) => threadService.resolveThreadResourceSource(...args),
