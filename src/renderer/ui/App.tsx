@@ -754,21 +754,22 @@ export function App() {
           ui={ui}
         />
 
-        {startup.agentReady && !(startup.issue && startupIssueOpen) ? <ThreadDock
+        {startup.agentReady ? <ThreadDock
           startupThreads={startup.state.threads}
           onOpenStartupIssues={() => setStartupIssueOpen(true)}
           getUserView={getAgentUserView}
           indexStore={indexStore}
-          railState={agentRailState}
+          railState={startup.issue && startupIssueOpen ? 'collapsed' : agentRailState}
           onOpenNodeReference={openNodeReferenceFromAgent}
           onOpenTurnDetails={(threadId, turnId) => openThreadTrajectoryPanel(threadId, { turnId })}
           onRequestOpen={openAgentRail}
           onResizeKeyDown={resizeAgentWithKeyboard}
           onResizeReset={resetAgentWidth}
           onResizeStart={beginAgentResize}
-        /> : <StartupAgentPane startup={startup} open={agentOpen}
+        /> : null}
+        {!startup.agentReady || (startup.issue && startupIssueOpen) ? <StartupAgentPane startup={startup} open={agentOpen}
           onContinue={() => { setStartupIssueOpen(false); setAgentOpen(startup.agentReady); }} onResizeKeyDown={resizeAgentWithKeyboard}
-          onResizeReset={resetAgentWidth} onResizeStart={beginAgentResize} />}
+          onResizeReset={resetAgentWidth} onResizeStart={beginAgentResize} /> : null}
       </div>
 
       <BatchTagSelector

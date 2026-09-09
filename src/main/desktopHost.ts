@@ -288,7 +288,7 @@ const devEffects = resources.child('dev-effects');
 const transportEffects = resources.child('transport');
 const windowEffects = resources.child('window-application');
 const backgroundEffects = resources.child('background-effects');
-let applyFilePreferencesNow: (() => void) | null = null;
+let applyFilePreferencesNow: (() => Promise<void>) | null = null;
 const initialKeybindings = loadKeybindings(resolvedUserDataDir);
 const lastAppliedKeybindings = readLastAppliedKeybindings(resolvedUserDataDir);
 const initialLauncherBindings = (lastAppliedKeybindings ?? initialKeybindings.effective)['global.launcher'];
@@ -405,18 +405,17 @@ async function startConfigurationWatcher(): Promise<void> {
   writeKeybindingsSchema(resolvedUserDataDir);
   let timer: ReturnType<typeof setTimeout> | null = null;
   let keybindingsTimer: ReturnType<typeof setTimeout> | null = null;
-  let applying = false;
+  let applying: Promise<void> | null = null;
   let pendingApply = false;
   let disposed = false;
   const preferenceApplication = new PreferencesApplication();
   let observedPreferences = DEFAULT_FILE_PREFERENCES;
-  const apply = () => {
-    if (disposed) return;
+  const apply = (): Promise<void> => {
+    if (disposed) return Promise.resolve();
     if (applying) {
       pendingApply = true;
-      return;
+      return applying;
     }
-    applying = true;
     timer = null;
     const loaded = loadFilePreferences(resolvedUserDataDir);
     const next = loaded.preferences;
@@ -427,6 +426,7 @@ async function startConfigurationWatcher(): Promise<void> {
     if (changed(observedPreferences.agent.tools, next.agent.tools)) windowApplicationHost.notifyConfigurationChanged('access');
     observedPreferences = next;
     const publishStatus = () => {
+      if (disposed) return;
       const states = Object.values(preferenceApplication.states);
       const failures = states.filter((state) => state.status === 'failed');
       try {
@@ -441,7 +441,7 @@ async function startConfigurationWatcher(): Promise<void> {
       }
       windowApplicationHost.notifyConfigurationChanged('preferences');
     };
-    void preferenceApplication.apply(next, loaded.sourceDigest, {
+    applying = preferenceApplication.apply(next, loaded.sourceDigest, {
       appearance: ({ appearance }) => {
         windowApplicationHost.setTheme(appearance.theme, false);
         windowApplicationHost.setLocale(appearance.language, false);
@@ -456,13 +456,14 @@ async function startConfigurationWatcher(): Promise<void> {
       updates: async (preferences) => { await windowApplicationHost.updates.applyAutomaticChecksEnabled(preferences.updates.checkAutomatically); },
     }, publishStatus).catch((error) => {
       reportError({ domain: 'persistence', severity: 'error', code: 'preferences-status-write', message: 'Could not publish preference application status', error });
-    }).finally(() => {
-      applying = false;
+    }).finally(async () => {
+      applying = null;
       if (pendingApply && !disposed) {
         pendingApply = false;
-        queueMicrotask(apply);
+        await apply();
       }
     });
+    return applying;
   };
   attempt.defer('preferences-timers', () => {
     disposed = true;
@@ -496,7 +497,10 @@ async function startConfigurationWatcher(): Promise<void> {
     effective: preferenceApplication.effective,
     applicationStatus: 'pending',
   });
-  applyKeybindings(initialKeybindings);
+  applyKeybindings();
+  // Agent may already be healthy when this independent milestone is retried.
+  // Join the application (including queued edits) before reporting recovery.
+  if (agentHost) await apply();
   resources.defer('configuration-observation', () => attempt.dispose());
   } catch (error) {
     applyFilePreferencesNow = null;

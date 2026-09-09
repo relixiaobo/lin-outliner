@@ -6,7 +6,9 @@ The dock mounts its Thread store only after the Agent owner is ready. During
 Agent startup/failure, its replacement pane shows loading or the owner issue while
 healthy Outline remains mounted with its selection and edits intact. Continue
 returns to healthy features; the window-chrome issue action remains discoverable.
-Multiple issues are individually selectable. Copy details uses native clipboard
+A healthy dock stays mounted and subscribed while an issue is visible; its
+existing collapsed/inert state hides it without discarding composer drafts or
+missing notifications. Multiple issues are individually selectable. Copy details uses native clipboard
 and owner-resolved source inspection uses the existing configuration action.
 These actions do not depend on Agent, Outline, or writable diagnostics.
 

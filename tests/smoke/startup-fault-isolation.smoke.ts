@@ -179,10 +179,64 @@ test('configuration observation fails independently and source inspection uses i
       try { await window.lin!.startup.issueAction('unobserved', 'open-source'); return 'opened'; }
       catch { return 'rejected'; }
     })).resolves.toBe('rejected');
+    await writeFile(sourcePath, JSON.stringify({ appearance: { theme: 'dark' }, agent: { memory: { enabled: false } } }));
     await rm(statusPath, { recursive: true });
     await smoke.window.getByRole('button', { name: 'Retry', exact: true }).click();
     await expect.poll(() => smoke!.window.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'ready', issues: [] });
+    expect(await smoke.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('dark');
+    expect(await smoke.window.evaluate(() => window.lin!.invoke('memory_inspect', { request: { operation: 'status' } })))
+      .toMatchObject({ status: { featureMode: 'disabled' } });
+    expect(JSON.parse(await readFile(statusPath, 'utf8'))).toMatchObject({
+      application: { status: 'applied' },
+      effective: { appearance: { theme: 'dark' }, agent: { memoryEnabled: false } },
+    });
     await expect(smoke.window.locator('.workspace-canvas')).toBeVisible();
+  } finally {
+    if (smoke && smoke.app.windows().length) await closeSmokeApp(smoke);
+    else await rm(userDataDir, { recursive: true, force: true });
+  }
+});
+
+test('startup issues preserve healthy conversation drafts and notifications while hidden', async ({}, testInfo) => {
+  const userDataDir = await mkdtemp('/tmp/tenon-draft-');
+  execFileSync('bun', [join(REPO_ROOT, 'tests/fixtures/startupWorkspace.ts'), userDataDir], { cwd: REPO_ROOT });
+  await mkdir(join(userDataDir, 'config/status.json'), { recursive: true });
+  let smoke: SmokeApp | undefined;
+  try {
+    smoke = await launchSmokeApp({ userDataDir });
+    await expect.poll(() => smoke!.window.evaluate(() => window.lin!.startup.get())).toMatchObject({
+      status: 'failed', capabilities: { outline: 'ready', agent: 'ready' },
+    });
+    await smoke.window.evaluate(() => window.lin!.agentCoreRequest('thread/start', {
+      name: 'Draft conversation', modelProvider: 'openai',
+    }));
+    const failure = smoke.window.locator('.startup-failure');
+    await failure.getByRole('button', { name: 'Continue with notes', exact: true }).click();
+    await smoke.window.locator('.thread-dock-title-button').first().click();
+    await smoke.window.locator('.thread-list-select').filter({ hasText: 'Draft conversation' }).click();
+    const editor = smoke.window.locator('.thread-composer-editor [contenteditable="true"]');
+    await editor.fill('Keep this unsent draft while inspecting startup issues.');
+    const originalEditor = await editor.elementHandle();
+    // The chrome toggle collapses the conversation and then opens its retained issue.
+    const toggle = smoke.window.getByRole('button', { name: 'Startup issues', exact: true });
+    await toggle.click();
+    await toggle.click();
+    await expect(failure).toBeVisible();
+    expect.soft(await originalEditor!.evaluate((element) => element.isConnected)).toBe(true);
+    await smoke.window.evaluate(() => window.lin!.agentCoreRequest('thread/start', {
+      name: 'Arrived while inspecting an issue', modelProvider: 'openai',
+    }));
+    await failure.getByRole('button', { name: 'Continue with notes', exact: true }).click();
+    await expect.soft(editor).toContainText('Keep this unsent draft while inspecting startup issues.');
+    await smoke.window.locator('.thread-dock-title-button').first().click();
+    await expect(smoke.window.locator('.thread-list')).toContainText('Arrived while inspecting an issue');
+    await smoke.window.keyboard.press('Escape');
+    for (const theme of ['light', 'dark'] as const) {
+      await smoke.app.evaluate(({ nativeTheme }, value) => { nativeTheme.themeSource = value; }, theme);
+      await smoke.window.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
+      await smoke.window.waitForTimeout(250);
+      await smoke.window.screenshot({ path: testInfo.outputPath(`retained-draft-${theme}.png`) });
+    }
   } finally {
     if (smoke && smoke.app.windows().length) await closeSmokeApp(smoke);
     else await rm(userDataDir, { recursive: true, force: true });

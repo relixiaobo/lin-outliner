@@ -346,7 +346,12 @@ branch drains its siblings before retry or teardown. Failure of fixed pre-window
 essentials still uses failed-start rollback and exits.
 
 Agent construction, subscriptions, and configuration file observation follow the
-visible window. Watcher failure is an independent retryable milestone. Native
+visible window. Watcher failure is an independent retryable milestone. If Agent
+is already ready when observation recovers, the watcher reloads current validated
+preferences and keybindings and joins preference application before completing.
+Changes observed during application are coalesced into a follow-up application,
+which recovery also joins, with the resulting domain status published. Retry does
+not depend on reinitializing a healthy Agent owner. Native
 configuration-source inspection, public preferences, startup actions, and independent
 preview operations do not require Agent execution. Agent Core, attachment routes,
 menus, and direct domain callbacks resolve the ready Agent owner at invocation.
