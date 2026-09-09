@@ -49,6 +49,17 @@ async function candidate(
 }
 
 describe('Agent Skill curation analyzer', () => {
+  test('routes retired deletion instructions to Bash', async () => {
+    const skill = await candidate('old-deletion', 'Use `file_delete` or `delete_file` to remove a file.');
+    const report = await analyzeAgentSkills([skill]);
+    const findings = report.rows[0]!.findings;
+    expect(findings).toHaveLength(2);
+    for (const finding of findings) {
+      expect(finding.kind).toBe('stale_tool');
+      expect(finding.message).toContain('bash');
+    }
+  });
+
   test('includes reliable Agent-authored Skills and reports deterministic findings', async () => {
     const first = await candidate('first', 'Use `run_shell` and see [missing](references/nope.md).');
     const second = await candidate('second', first.skill.body);

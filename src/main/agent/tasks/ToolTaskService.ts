@@ -1,3 +1,4 @@
+import { decodeProcessIsolationEvidence, sameIsolationRequest, unstartedProcessIsolation } from '../../../core/agent/processIsolation';
 import { createHash, randomUUID } from 'node:crypto';
 import type { TaskExecutionContext } from '../../../core/agent/executionContext';
 import { ExecutionAdmissionError, executionDigest, pendingExecutionContext, resolveExecutionAddress, revalidateExecutionContext, validateExecutionContext } from './ExecutionContext';
@@ -13,7 +14,7 @@ import type {
   ThreadResourceReference,
   TurnId,
 } from '../../../core/agent/protocol';
-import { getAgentProcessExecutor, type AgentProcessWriteSandbox } from '../capabilities/agentProcessExecutor';
+import { getAgentProcessExecutor, prepareAgentProcessIsolation, type AgentProcessWriteSandbox } from '../capabilities/agentProcessExecutor';
 import { redactSecretLikeContent } from '../capabilities/agentSecretRedaction';
 import { uuidV7 } from '../uuid';
 import {
@@ -69,11 +70,8 @@ export const DEFAULT_TOOL_TASK_LIMITS: ToolTaskServiceLimits = Object.freeze({
 });
 
 export interface ToolTaskHost {
-  admissionFailed?(ownerThreadId: ThreadId, error: unknown): void;
-  beforeTask?(task: ToolTaskRecord): Promise<void>;
-  afterTask?(task: ToolTaskRecord): Promise<void>;
   ownerExists(threadId: ThreadId): boolean;
-  canInheritClaim?(ownerThreadId: ThreadId, task: ToolTaskRecord): boolean;
+  canInheritExecution?(ownerThreadId: ThreadId, task: ToolTaskRecord): boolean;
   readDeliveryAdmission(
     threadId: ThreadId,
     turnId: TurnId,
@@ -120,7 +118,7 @@ export interface StartToolTaskInput {
   ) => Promise<PreparedToolTaskProcess>;
   readonly cwd: string;
   readonly executionContext?: TaskExecutionContext;
-  readonly inheritedClaimTaskId?: string;
+  readonly parentTaskId?: string;
   readonly onAdmitted?: (task: ToolTaskRecord) => Promise<void>;
   readonly stdin?: string;
   readonly timeoutMs: number;
@@ -160,7 +158,6 @@ export interface ToolTaskPreparedResult {
 }
 
 export class ToolTaskService {
-  private readonly terminalObservations = new Map<string, Promise<void>>();
   private readonly hostOperations = new Map<string, { readonly operation: Promise<unknown>; readonly controller: AbortController }>();
   private readonly monitors = new Map<string, ReturnType<typeof setInterval>>();
   private readonly startRuns = new Set<Promise<ToolTaskRecord>>();
@@ -268,35 +265,24 @@ export class ToolTaskService {
   }
 
   async start(input: StartToolTaskInput): Promise<ToolTaskRecord> {
+    if (this.closing) throw new Error('Tool Task admission is closed');
+    if (!this.initialized) throw new Error('Tool Task recovery has not completed');
+    if (!this.host?.ownerExists(input.ownerThreadId)) throw new Error('Tool Task owner does not exist');
+    validateProcessInput(input);
+    this.validateExecutionInheritance(input.ownerThreadId, input.parentTaskId);
+    const executionContext = input.executionContext
+      ? await revalidateExecutionContext(input.executionContext)
+      : pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: input.cwd }), {
+        capability: 'full-access',
+        isolation: input.sandbox ? 'macos-write-sandbox' : 'unsandboxed',
+        writablePaths: input.sandbox?.writablePaths ?? [],
+      });
+    const run = this.startAccepted({ ...input, cwd: executionContext.address.cwd, executionContext });
+    this.startRuns.add(run);
     try {
-      if (this.closing) throw new Error('Tool Task admission is closed');
-      if (!this.initialized) throw new Error('Tool Task recovery has not completed');
-      if (!this.host?.ownerExists(input.ownerThreadId)) throw new Error('Tool Task owner does not exist');
-      validateProcessInput(input);
-      this.validateClaimInheritance(input.ownerThreadId, input.inheritedClaimTaskId);
-      if (input.sandbox && process.platform !== 'darwin') {
-        throw new ExecutionAdmissionError('isolation_unavailable', 'Required process isolation is unavailable on this platform.');
-      }
-      const executionContext = input.executionContext
-        ? await revalidateExecutionContext(input.executionContext)
-        : pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: input.cwd }), {
-          capability: 'full-access', mutation: true,
-          isolation: input.sandbox ? 'macos-write-sandbox' : 'unsandboxed',
-          writablePaths: input.sandbox?.writablePaths ?? [],
-        });
-      if (executionContext.policy.isolation === 'macos-write-sandbox' && !input.sandbox) {
-        throw new ExecutionAdmissionError('isolation_unavailable', 'The admitted process policy requires an enforced write sandbox.');
-      }
-      const run = this.startAccepted({ ...input, cwd: executionContext.address.cwd, executionContext });
-      this.startRuns.add(run);
-      try {
-        return await run;
-      } finally {
-        this.startRuns.delete(run);
-      }
-    } catch (error) {
-      this.host?.admissionFailed?.(input.ownerThreadId, error);
-      throw error;
+      return await run;
+    } finally {
+      this.startRuns.delete(run);
     }
   }
 
@@ -317,7 +303,8 @@ export class ToolTaskService {
       cwd: path.resolve(input.cwd),
       executionContext: input.executionContext,
       operationKind: 'process',
-      inheritedClaimTaskId: input.inheritedClaimTaskId ?? null,
+      isolation: prepareAgentProcessIsolation(input.sandbox, input.executionContext.policy.isolation).evidence,
+      parentTaskId: input.parentTaskId ?? null,
       nonce,
       detailPath,
       backgroundEnabled: input.backgroundEnabled ?? true,
@@ -332,9 +319,11 @@ export class ToolTaskService {
         writeFile(paths.stderr, '', { encoding: 'utf8', mode: 0o600 }),
         atomicJsonWrite(paths.producer, input.producerContext ?? null),
       ]);
-      await this.host?.beforeTask?.(task);
       await input.onAdmitted?.(task);
       this.discoverTaskContext(task);
+      if (task.isolation.state === 'unavailable' || task.isolation.state === 'rejected') {
+        return await this.settleWithoutProcess(task, 'failed', `isolation_${task.isolation.state}`, task.isolation.reason);
+      }
       if (input.signal?.aborted || this.closing) {
         return await this.settleWithoutProcess(
           this.store.read(taskId)!,
@@ -363,7 +352,6 @@ export class ToolTaskService {
           await atomicJsonWrite(paths.receipt, receipt).catch(() => undefined);
           this.store.settleArtifacts(taskId, { artifacts: [], warnings: [] }, this.now());
           const terminal = this.store.commitTerminal(taskId, receipt, this.now());
-          await this.observeTerminal(terminal);
           this.publish(terminal);
           if (terminal.backgroundEnabled) this.wakeDelivery(terminal.ownerThreadId);
           return terminal;
@@ -447,7 +435,7 @@ export class ToolTaskService {
         if (controller.signal.aborted || this.closing || !this.host?.ownerExists(task.ownerThreadId)) return;
         const payload: ExecutionContextObservationPayload = { schemaVersion: 1, kind: 'executionContextObservation',
           taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId,
-          admissionRef, executionContext: observed.context, sources: observed.sources, scopes: observed.scopes, checks: observed.checks };
+          admissionRef, executionContext: observed.context, sources: observed.sources, scopes: observed.scopes };
         const ref = await evidence.write(task.taskId, payload);
         if (controller.signal.aborted || this.closing || !this.host?.ownerExists(task.ownerThreadId)) return;
         this.store.publishContextSuccessor(task.taskId, ref, this.now());
@@ -473,7 +461,7 @@ export class ToolTaskService {
         const payload: ExecutionContextObservationPayload = { schemaVersion: 1, kind: 'executionContextObservation',
           taskId: task.taskId, sourceTurnId: task.sourceTurnId, sourceItemId: task.sourceItemId, admissionRef,
           executionContext: context, sources: [],
-          scopes: task.executionContext.address.scopes.map((scope) => ({ directory: scope.directory, sources: [], complete: false })), checks: [] };
+          scopes: task.executionContext.address.scopes.map((scope) => ({ directory: scope.directory, sources: [], complete: false })) };
         const ref = await evidence.write(task.taskId, payload);
         if (controller.signal.aborted || this.closing || !this.host?.ownerExists(task.ownerThreadId)) return;
         this.store.publishContextSuccessor(task.taskId, ref, this.now());
@@ -505,7 +493,7 @@ export class ToolTaskService {
       const reference = this.store.contextSuccessor(previous.taskId);
       if (!reference) continue;
       const payload = await this.readContextObservation(reference.taskId, reference.ref).catch(() => null);
-      if (!payload || !await validateDiscoveredSources({ context: payload.executionContext, sources: payload.sources, scopes: payload.scopes, checks: payload.checks })) continue;
+      if (!payload || !await validateDiscoveredSources({ context: payload.executionContext, sources: payload.sources, scopes: payload.scopes })) continue;
       return revalidateExecutionContext(payload.executionContext);
     }
     return context;
@@ -517,58 +505,52 @@ export class ToolTaskService {
     readonly sourceItemId: string;
     readonly producer: string;
     readonly executionContext: TaskExecutionContext;
-    readonly inheritedClaimTaskId?: string;
+    readonly parentTaskId?: string;
     readonly onAdmitted: (task: ToolTaskRecord) => Promise<void>;
     readonly execute: (signal: AbortSignal) => Promise<{ readonly result: T; readonly success: boolean }>;
     readonly signal?: AbortSignal;
   }): Promise<T> {
-    try {
-      if (this.closing || !this.initialized) throw new Error('Tool Task admission is unavailable');
-      if (!this.host?.ownerExists(input.ownerThreadId)) throw new Error('Tool Task owner does not exist');
-      this.validateClaimInheritance(input.ownerThreadId, input.inheritedClaimTaskId);
-      await revalidateExecutionContext(input.executionContext);
-      const taskId = `task_${randomUUID()}`;
-      const task = this.store.create({
-        taskId, ownerThreadId: input.ownerThreadId, sourceTurnId: input.sourceTurnId,
-        sourceItemId: input.sourceItemId, producer: input.producer, description: input.producer,
-        commandDigest: digestText(input.producer), cwd: input.executionContext.address.cwd,
-        executionContext: input.executionContext, operationKind: 'host',
-        inheritedClaimTaskId: input.inheritedClaimTaskId ?? null,
-        nonce: randomUUID(), detailPath: path.join(this.detailRoot, taskId),
-        backgroundEnabled: false, timeoutMs: 600_000, startedAt: this.now(),
-      });
-      const controller = new AbortController();
-      const signal = input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal;
-      const operation = (async () => {
-        try {
-          await mkdir(task.detailPath, { recursive: false, mode: 0o700 });
-          await this.host?.beforeTask?.(task);
-          await input.onAdmitted(task);
-          this.discoverTaskContext(task);
-          if (signal.aborted || this.closing) throw new Error('Host operation cancelled before execution');
-          const { result, success } = await input.execute(signal);
-          await this.settleWithoutProcess(task, success ? 'succeeded' : 'failed', 'host_operation_completed', null);
-          return result;
-        } catch (error) {
-          await this.settleWithoutProcess(task, signal.aborted ? 'cancelled' : 'failed',
-            signal.aborted ? 'host_operation_cancelled' : 'host_operation_failed', errorMessage(error));
-          throw error;
-        }
-      })();
-      this.hostOperations.set(taskId, { operation, controller });
-      try { return await operation; }
-      finally { this.hostOperations.delete(taskId); }
-    } catch (error) {
-      this.host?.admissionFailed?.(input.ownerThreadId, error);
-      throw error;
-    }
+    if (this.closing || !this.initialized) throw new Error('Tool Task admission is unavailable');
+    if (!this.host?.ownerExists(input.ownerThreadId)) throw new Error('Tool Task owner does not exist');
+    this.validateExecutionInheritance(input.ownerThreadId, input.parentTaskId);
+    await revalidateExecutionContext(input.executionContext);
+    const taskId = `task_${randomUUID()}`;
+    const task = this.store.create({
+      taskId, ownerThreadId: input.ownerThreadId, sourceTurnId: input.sourceTurnId,
+      sourceItemId: input.sourceItemId, producer: input.producer, description: input.producer,
+      commandDigest: digestText(input.producer), cwd: input.executionContext.address.cwd,
+      executionContext: input.executionContext, operationKind: 'host',
+      parentTaskId: input.parentTaskId ?? null,
+      nonce: randomUUID(), detailPath: path.join(this.detailRoot, taskId),
+      backgroundEnabled: false, timeoutMs: 600_000, startedAt: this.now(),
+    });
+    const controller = new AbortController();
+    const signal = input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal;
+    const operation = (async () => {
+      try {
+        await mkdir(task.detailPath, { recursive: false, mode: 0o700 });
+        await input.onAdmitted(task);
+        this.discoverTaskContext(task);
+        if (signal.aborted || this.closing) throw new Error('Host operation cancelled before execution');
+        const { result, success } = await input.execute(signal);
+        await this.settleWithoutProcess(task, success ? 'succeeded' : 'failed', 'host_operation_completed', null);
+        return result;
+      } catch (error) {
+        await this.settleWithoutProcess(task, signal.aborted ? 'cancelled' : 'failed',
+          signal.aborted ? 'host_operation_cancelled' : 'host_operation_failed', errorMessage(error));
+        throw error;
+      }
+    })();
+    this.hostOperations.set(taskId, { operation, controller });
+    try { return await operation; }
+    finally { this.hostOperations.delete(taskId); }
   }
 
-  private validateClaimInheritance(ownerThreadId: ThreadId, taskId: string | undefined): void {
+  private validateExecutionInheritance(ownerThreadId: ThreadId, taskId: string | undefined): void {
     if (!taskId) return;
     const owner = this.store.read(taskId);
-    if (!owner || isToolTaskTerminal(owner.state) || !this.host?.canInheritClaim?.(ownerThreadId, owner)) {
-      throw new ExecutionAdmissionError('invalid_target', 'The requested execution claim does not belong to this active Delegation Session.');
+    if (!owner || isToolTaskTerminal(owner.state) || !this.host?.canInheritExecution?.(ownerThreadId, owner)) {
+      throw new ExecutionAdmissionError('invalid_target', 'The requested execution owner does not belong to this active Delegation Session.');
     }
   }
 
@@ -621,8 +603,14 @@ export class ToolTaskService {
       validatePreparedProcess(prepared);
       disposePrivateControl = prepared.disposePrivateControl;
       const maxPreparedResultBytes = preparedResultMaxBytes(this.limits.taskDetailBytes);
+      const isolationPlan = prepareAgentProcessIsolation(input.sandbox, task.executionContext.policy.isolation);
+      if (!sameIsolationRequest(task.isolation, isolationPlan.evidence) || isolationPlan.evidence.state !== null) {
+        throw new Error('Required isolation changed or became unavailable before launch.');
+      }
       const config: ToolTaskSupervisorConfig = {
-        version: 2,
+        version: 3,
+        isolation: task.isolation,
+        sandboxProfile: isolationPlan.profile,
         taskId,
         nonce: task.nonce,
         process: prepared.process,
@@ -665,7 +653,6 @@ export class ToolTaskService {
         detached: process.platform !== 'win32',
         stdio: prepared.privateControlInput ? ['ignore', 'ignore', 'ignore', 'pipe'] : 'ignore',
         windowsHide: true,
-        sandbox: input.sandbox,
       });
       if (!supervisor.pid) throw new Error('Tool Task supervisor did not receive a process identity');
       if (prepared.privateControlInput) {
@@ -802,7 +789,6 @@ export class ToolTaskService {
     while (Date.now() < deadline) {
       const task = this.store.owned(taskId, ownerThreadId);
       if (!task || isToolTaskTerminal(task.state)) {
-        await this.terminalObservations.get(taskId);
         return task;
       }
       if (signal?.aborted) return this.stop(taskId, ownerThreadId);
@@ -825,7 +811,6 @@ export class ToolTaskService {
   }
 
   async consumeForeground(taskId: string, ownerThreadId: ThreadId): Promise<void> {
-    await this.terminalObservations.get(taskId);
     const task = this.store.owned(taskId, ownerThreadId);
     if (!task || task.backgroundEnabled || !isToolTaskTerminal(task.state)) {
       throw new Error('Only a terminal foreground Tool Task can be consumed');
@@ -903,7 +888,6 @@ export class ToolTaskService {
       ]);
     }
     await Promise.allSettled([...this.reconciliationRuns.values()]);
-    await Promise.allSettled([...this.terminalObservations.values()]);
   }
 
   async deleteOwner(threadId: ThreadId): Promise<void> {
@@ -1010,7 +994,6 @@ export class ToolTaskService {
         });
         this.supervisors.delete(task.taskId);
         this.clearMonitor(task.taskId);
-        await this.observeTerminal(terminal);
         this.publish(terminal);
         await this.enforceRetention();
         if (terminal.backgroundEnabled) this.wakeDelivery(terminal.ownerThreadId);
@@ -1039,6 +1022,7 @@ export class ToolTaskService {
     }
     const identity = await readIdentity(paths.identity, task).catch(() => null);
     if (identity) {
+      this.store.setIsolation(task.taskId, identity.isolation);
       const current = this.store.setSupervisor(
         task.taskId,
         identity.supervisorPid,
@@ -1103,8 +1087,7 @@ export class ToolTaskService {
       });
       this.supervisors.delete(task.taskId);
       this.clearMonitor(task.taskId);
-      await this.observeTerminal(terminal);
-    this.publish(terminal);
+      this.publish(terminal);
       if (terminal.backgroundEnabled) this.wakeDelivery(terminal.ownerThreadId);
     } catch (error) {
       this.publish(this.store.setCoordinationError(
@@ -1148,6 +1131,7 @@ export class ToolTaskService {
       const paths = taskPaths(task.detailPath);
       const identity = await readIdentity(paths.identity, task).catch(() => null);
       if (identity) {
+        this.store.setIsolation(taskId, identity.isolation);
         this.store.setSupervisor(taskId, identity.supervisorPid, identity.childPid, this.now());
         return;
       }
@@ -1267,7 +1251,8 @@ export class ToolTaskService {
       preparedResultMaxBytes(this.limits.taskDetailBytes),
     );
     const unsigned = {
-      version: 2 as const,
+      version: 3 as const,
+      isolation: unstartedProcessIsolation((this.store.read(task.taskId) ?? task).isolation),
       taskId: task.taskId,
       nonce: task.nonce,
       state: 'lost' as const,
@@ -1295,7 +1280,8 @@ export class ToolTaskService {
     const paths = taskPaths(task.detailPath);
     const [stdoutBytes, stderrBytes] = await Promise.all([fileSize(paths.stdout), fileSize(paths.stderr)]);
     const unsigned = {
-      version: 2 as const,
+      version: 3 as const,
+      isolation: unstartedProcessIsolation((this.store.read(task.taskId) ?? task).isolation),
       taskId: task.taskId,
       nonce: task.nonce,
       state: 'failed' as const,
@@ -1344,7 +1330,8 @@ export class ToolTaskService {
     this.store.markSettling(task.taskId, this.now(), state === 'cancelled');
     const paths = taskPaths(task.detailPath);
     const unsigned = {
-      version: 2 as const,
+      version: 3 as const,
+      isolation: unstartedProcessIsolation((this.store.read(task.taskId) ?? task).isolation),
       taskId: task.taskId,
       nonce: task.nonce,
       state,
@@ -1369,7 +1356,6 @@ export class ToolTaskService {
     const terminalReceipt = await this.reconcileProducer(task, receipt);
     await this.settleArtifacts(task, this.limits.taskDetailBytes);
     const terminal = this.store.commitTerminal(task.taskId, terminalReceipt, this.now());
-    await this.observeTerminal(terminal);
     this.publish(terminal);
     if (terminal.backgroundEnabled) this.wakeDelivery(terminal.ownerThreadId);
     return terminal;
@@ -1413,17 +1399,6 @@ export class ToolTaskService {
 
   private publish(task: ToolTaskRecord): void {
     if (task.backgroundEnabled) this.host?.taskChanged(projectToolTask(task));
-  }
-
-  private async observeTerminal(task: ToolTaskRecord): Promise<void> {
-    const existing = this.terminalObservations.get(task.taskId);
-    if (existing) return existing;
-    const observation = Promise.resolve().then(() => this.host?.afterTask?.(task)).catch((error) => {
-      console.warn('[agent] Terminal evidence observation unavailable', error);
-    });
-    this.terminalObservations.set(task.taskId, observation);
-    try { await observation; }
-    finally { this.terminalObservations.delete(task.taskId); }
   }
 
   private async settleArtifacts(
@@ -1663,10 +1638,12 @@ async function readIdentity(filePath: string, task: ToolTaskRecord): Promise<Too
   const value = await readJson(filePath);
   if (value === null) return null;
   const record = value as Partial<ToolTaskSupervisorIdentity>;
-  if (record.version !== 1 || record.taskId !== task.taskId || record.nonce !== task.nonce
+  if (record.version !== 2 || record.taskId !== task.taskId || record.nonce !== task.nonce
     || !Number.isSafeInteger(record.supervisorPid) || Number(record.supervisorPid) < 1
     || !Number.isSafeInteger(record.childPid) || Number(record.childPid) < 1
     || !Number.isFinite(record.startedAt)) throw new Error('Invalid Tool Task supervisor identity');
+  const isolation = decodeProcessIsolationEvidence(record.isolation);
+  if (isolation.state === null || !sameIsolationRequest(task.isolation, isolation)) throw new Error('Invalid supervisor isolation evidence');
   return record as ToolTaskSupervisorIdentity;
 }
 
@@ -1674,7 +1651,7 @@ async function readFinalReceipt(filePath: string, task: ToolTaskRecord): Promise
   const value = await readJson(filePath);
   if (value === null) return null;
   const record = value as Partial<ToolTaskFinalReceipt>;
-  if (record.version !== 2 || record.taskId !== task.taskId || record.nonce !== task.nonce
+  if (record.version !== 3 || record.taskId !== task.taskId || record.nonce !== task.nonce
     || !['succeeded', 'failed', 'cancelled', 'timed_out', 'lost'].includes(record.state ?? '')
     || typeof record.receiptDigest !== 'string' || !/^[0-9a-f]{64}$/u.test(record.receiptDigest)
     || record.startedAt !== task.startedAt
@@ -1698,6 +1675,8 @@ async function readFinalReceipt(filePath: string, task: ToolTaskRecord): Promise
         || record.supervisorPid === null || record.childPid === null))) {
     throw new Error('Invalid Tool Task final receipt');
   }
+  const isolation = decodeProcessIsolationEvidence(record.isolation);
+  if (isolation.state === null || !sameIsolationRequest(task.isolation, isolation)) throw new Error('Invalid terminal isolation evidence');
   const { receiptDigest, ...unsigned } = record;
   if (digestText(JSON.stringify(unsigned)) !== receiptDigest) throw new Error('Tool Task receipt digest mismatch');
   return record as ToolTaskFinalReceipt;

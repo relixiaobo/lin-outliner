@@ -10,14 +10,12 @@ import type { Thread } from '../../src/core/agent/protocol';
 import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentConfigurationLoader';
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
-import { ProjectService, type ReviewProjectChange } from '../../src/main/agent/projects/ProjectService';
+import { ProjectService } from '../../src/main/agent/projects/ProjectService';
 import { projectAutomationLifecycle } from '../../src/main/agent/projects/projectAutomationLifecycle';
 import { AutomationStore } from '../../src/main/agent/automations/AutomationStore';
 import { AutomationScheduler } from '../../src/main/agent/automations/AutomationScheduler';
 import type { AutomationDispatcher } from '../../src/main/agent/automations/AutomationDispatcher';
-import { createProjectTools } from '../../src/main/agent/projects/projectTools';
 import { modelToolContract } from '../../src/core/agent/tools';
-import { compileToolParameters } from '../../src/main/agent/runtime/kernel/exactToolArguments';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 const closers: Array<() => void> = [];
@@ -31,12 +29,12 @@ async function directory() {
   roots.push(root);
   return realpath(root);
 }
-function catalog(path = ':memory:', review?: ReviewProjectChange) {
+function catalog(path = ':memory:') {
   const db = new Database(path);
   const metadata = new ThreadMetadataStore(path, db as unknown as SqliteDatabase);
   closers.push(() => metadata.close());
   const projects = metadata.projects;
-  const service = new ProjectService(projects, (id) => metadata.read(id)?.thread ?? null, review);
+  const service = new ProjectService(projects, (id) => metadata.read(id)?.thread ?? null);
   function chat(overrides: Partial<Thread> = {}, project?: Project) {
     const thread: Thread = { id: uuidV7(), sessionId: uuidV7(), parentThreadId: null, forkedFromId: null,
       name: 'Chat', preview: '', ephemeral: false, source: 'app', threadSource: 'user', modelProvider: 'openai',
@@ -114,48 +112,11 @@ describe('Project catalog lifecycle', () => {
       expectedRevision: null, expectedMembershipRevision: 1 })).rejects.toThrow('persistent user Chat');
   });
 
-  test('shows the canonical path before confirmation and cancellation writes nothing', async () => {
-    const root = await directory();
-    const alias = `${root}-alias`;
-    roots.push(alias);
-    await symlink(root, alias);
-    let reviewed = false;
-    const host = catalog(':memory:', async (review) => {
-      expect(review.request).toEqual({ operation: 'create', name: 'Example', rootHint: root });
-      reviewed = true;
-      return false;
-    });
-    const result = await host.service.manage({ operation: 'create', name: ' Example ', rootHint: alias }, 'agent');
-    expect(reviewed).toBe(true);
-    expect(result.outcome).toBe('cancelled');
-    expect(host.projects.list()).toHaveLength(0);
-    const created = await host.service.manage({ operation: 'create', name: 'Example', rootHint: alias });
-    expect(created.project?.rootHint).toBe(root);
-  });
-
-  test('an approved proposal cannot overwrite a Project changed while confirmation was open', async () => {
-    const host = catalog(':memory:', async () => {
-      host.projects.update(project.id, 1, 'User edit', null, 2);
-      return true;
-    });
-    const project = host.projects.create('Original', null, 1);
-    await expect(host.service.manage({ operation: 'update', projectId: project.id, expectedRevision: 1,
-      name: 'Agent edit', rootHint: null }, 'agent')).rejects.toThrow('changed');
-    expect(host.projects.require(project.id).name).toBe('User edit');
-  });
-
-  test('an aborted approved proposal cannot persist a change', async () => {
-    const controller = new AbortController();
-    const host = catalog(':memory:', async () => { controller.abort(); return true; });
-    await expect(host.service.manage({ operation: 'create', name: 'Example', rootHint: null }, 'agent', controller.signal)).rejects.toThrow();
-    expect(host.projects.list()).toHaveLength(0);
-  });
-
   test.each(['create', 'update'] as const)(
-    'cancelling an approved %s during directory revalidation writes nothing',
+    'cancelling a %s during directory revalidation writes nothing',
     async (operation) => {
       const root = await directory();
-      const host = catalog(':memory:', async () => true);
+      const host = catalog();
       const original = host.projects.create('Original', root, 1);
       const controller = new AbortController();
       let entered!: () => void;
@@ -171,13 +132,13 @@ describe('Project catalog lifecycle', () => {
       });
       try {
         const request = operation === 'create'
-          ? { operation, name: 'Agent edit', rootHint: root }
-          : { operation, projectId: original.id, expectedRevision: original.revision, name: 'Agent edit', rootHint: root };
-        const pending = host.service.manage(request, 'agent', controller.signal);
+          ? { operation, name: 'User edit', rootHint: root }
+          : { operation, projectId: original.id, expectedRevision: original.revision, name: 'User edit', rootHint: root };
+        const pending = host.service.manage(request, controller.signal);
         await revalidating;
-        controller.abort(new Error('Turn cancelled during directory validation'));
+        controller.abort(new Error('Operation cancelled during directory validation'));
         release();
-        await expect(pending).rejects.toThrow('Turn cancelled during directory validation');
+        await expect(pending).rejects.toThrow('Operation cancelled during directory validation');
         expect(host.projects.list()).toEqual([original]);
       } finally {
         release();
@@ -281,31 +242,22 @@ describe('Project catalog lifecycle', () => {
       projectSnapshot: { ...project, id: uuidV7() } } }] })).toThrow();
   });
 
-  test('Project tools authorize before confirmation and return bounded schema-valid model data', async () => {
-    let confirmations = 0;
-    let allowed = false;
-    const host = catalog(':memory:', async () => { confirmations += 1; return true; });
-    const root = host.chat();
-    const tools = createProjectTools(host.service, root.id, async () => { if (!allowed) throw new Error('blocked'); });
-    const manage = tools.find((tool) => tool.name === 'project_manage')!;
-    const input = { request: { operation: 'create', name: 'From the Agent', rootHint: null } };
-    await expect(manage.execute('proposal', input)).rejects.toThrow('blocked');
-    expect(confirmations).toBe(0);
-    allowed = true;
-    const saved = await manage.execute('proposal', input);
-    expect(confirmations).toBe(1);
-    expect(compileToolParameters(modelToolContract('project_manage')!.outputSchema as never)
-      .Check((saved.details as { data: unknown }).data)).toBe(true);
-    for (let index = 0; index < 50; index += 1) host.projects.create(`Project ${index}`, null, index + 1);
-    const inspect = tools.find((tool) => tool.name === 'project_inspect')!;
-    const page = await inspect.execute('inspect', {});
-    const data = (page.details as { data: { projects: unknown[]; nextOffset: number } }).data;
-    expect(data.projects).toHaveLength(50);
-    expect(data.nextOffset).toBe(50);
-    expect(compileToolParameters(modelToolContract('project_inspect')!.outputSchema as never).Check(data)).toBe(true);
-    expect((await inspect.execute('inspect-more', { offset: 50 })).details).toMatchObject({
-      data: { totalProjects: 51, nextOffset: null },
-    });
+  test('Project management stays available to the UI without model tools', async () => {
+    expect(modelToolContract('project_inspect')).toBeNull();
+    expect(modelToolContract('project_manage')).toBeNull();
+    const host = catalog();
+    const root = await directory();
+    const alias = `${root}-alias`;
+    roots.push(alias);
+    await symlink(root, alias);
+    const created = await host.service.manage({ operation: 'create', name: ' Example ', rootHint: alias });
+    expect(created.project?.rootHint).toBe(root);
+    const project = created.project!;
+    const edited = await host.service.manage({ operation: 'update', projectId: project.id, expectedRevision: project.revision,
+      name: 'Edited', rootHint: null });
+    await expect(host.service.manage({ operation: 'update', projectId: project.id, expectedRevision: project.revision,
+      name: 'Stale edit', rootHint: null })).rejects.toThrow('changed');
+    expect(host.service.inspect({}).projects).toEqual([edited.project!]);
   });
 
   test('Project deletion waits for already-admitted hint writes under the scheduler lock', async () => {

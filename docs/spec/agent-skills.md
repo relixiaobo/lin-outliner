@@ -666,3 +666,19 @@ requires `compatibilityRange` on every entry, requires each `name` to satisfy th
 install path's `SKILL_NAME_PATTERN`, and caps total bytes at
 `MANAGED_SKILL_LIMITS.catalogBytes`; the loader stays permissive about all three
 because it parses bytes it did not author.
+
+
+### Development workflow Skills
+
+The built-in `git-review` Skill uses native Git/GitHub commands through ordinary
+Bash for inspection, selected commits and explicitly requested publication. It
+teaches explicit paths/targets and native-state reconciliation after uncertainty;
+it does not introduce a command wrapper or Host-certified review references. See
+[Git Review And Explicit Publication](agent-tool-design.md#git-review-and-explicit-publication).
+
+The built-in `verification` Skill selects checks from repository instructions and
+normal build/test configuration, inspects Task outcomes and corrects authorized
+work. It requires no proprietary check profile or Goal configuration. Goal budgets
+and Task receipts remain generic. See [native verification](agent-tool-design.md#native-verification).
+The `development` Skill covers explicit cwd, background ownership, status/stop and
+actual isolation; background Tasks do not reserve directories.

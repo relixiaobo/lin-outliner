@@ -108,7 +108,10 @@ unknown tool or malformed argument object valid. Each provider call resolves the
 canonical tool, normalizes model syntax, and passes that tool's strict schema before
 capability evaluation. Local tools accept a strict optional task-scoped `cwd`.
 Path action classification uses that call's directory and canonical target,
-including a default directory-search target and symlink-entry deletion.
+including the default directory-search target; file content edits follow a
+symlink's referent. File removal uses Bash command classification and its
+admitted cwd, as specified in
+[`agent-tool-design.md`](agent-tool-design.md#local-files-and-commands).
 The Host validates and records the immutable execution address, policy and S0
 snapshot before the local task acknowledges `tool_execution_start`. An invalid
 directory returns a structured result without that event or a process launch.
@@ -124,8 +127,8 @@ Local task admission and its pre-execution check revalidate logical path aliases
 canonical targets and Git scope identities. Dedicated delegation worktrees also
 revalidate their recorded source, registration and Git metadata through
 `AgentWorktree.validate`; isolated Automation calls revalidate the frozen dispatch
-contexts. These checks do not turn a known-address claim into a universal
-filesystem lock or remove the external-native-CLI enforcement limits.
+contexts. These checks validate addresses and isolation; they do not reserve directories
+or remove the external-native-CLI enforcement limits.
 
 The phases remain observable and separate:
 

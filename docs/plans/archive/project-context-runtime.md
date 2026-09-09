@@ -3,7 +3,7 @@
 **Shape:** Two independently complete features: bounded execution-context
 discovery/publication, and the optional Project catalog with its entire
 membership, confirmation, deletion, and Automation lifecycle. Each is one PR
-under the [Agent Capability-First Development Workbench](../project-development-workbench.md).
+under the [Agent Capability-First Development Workbench](project-development-workbench.md).
 
 ## Goal
 

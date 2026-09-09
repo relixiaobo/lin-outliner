@@ -30,7 +30,7 @@ function glyph(presentation: ReturnType<typeof toolPresentation>): string {
 describe('tool operation presentation used by rows and groups', () => {
   test.each([
     ['file_write', 'FileWriteTool'], ['file_edit', 'FileEditTool'],
-    ['file_delete', 'FileDeleteTool'], ['file_read', 'FileReadTool'],
+    ['file_read', 'FileReadTool'],
     ['file_glob', 'FileGlobTool'], ['file_grep', 'FileGrepTool'],
     ['web_search', 'WebSearchTool'], ['web_fetch', 'WebFetchTool'],
     ['update_plan', 'PlanTool'], ['skill', 'Skill'],

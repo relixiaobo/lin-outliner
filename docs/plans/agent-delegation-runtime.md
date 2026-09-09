@@ -57,8 +57,8 @@ continue the same isolated context after a Turn settles. The replacement keeps
 that capability through a root-owned hidden Thread plus Skill-guided CLI
 commands, without restoring Agent trees, peer messaging, nesting, or Subagent UI.
 
-**Workbench integration:** The execution-context refactor in
-`project-development-workbench.md` consumes the internal delegation and native
+**Workbench integration:** [Task Execution Context](../spec/agent-delegation.md#task-execution-context)
+defines the shared admission contract over the internal delegation and native
 CLI launcher mechanisms described in [Agent Delegation](../spec/agent-delegation.md).
 It updates their address admission without restoring the retired Subagent
 product or replacing the launcher contract with vendor-specific adapters.
@@ -68,13 +68,12 @@ Thread cwd or a second execution ledger. Every initial and continued Tool Task
 admits its own `ExecutionAddress`, `ExecutionPolicy`, and `ContextSnapshot`;
 Session configuration and settlement records retain only the relevant links.
 The Session execution is a Host Tool Task; native subprocesses and internal local
-calls inherit its covered claims. External results complete a canonical delegated
+calls retain its validated execution ownership; this does not reserve directories. External results complete a canonical delegated
 Turn through a Host-only executor before settlement. Worktree registration and
 source identity are validated again for local admissions; cancellation/recovery
-settle covered child tasks before releasing the owner claim. No native process
+settle covered child tasks before releasing the execution owner. No native process
 uses a second supervision path.
-Future consumers of Unit A use its task-scoped contract; the existing launcher
-baseline is an input to that refactor, not work blocked on a future predecessor.
+Future consumers use that task-scoped contract and the existing launcher baseline.
 Context delivery and caching follow
 [Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication).
 Each internal Session builds its own announced-state baseline and cache affinity

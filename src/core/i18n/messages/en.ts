@@ -1472,10 +1472,6 @@ export const en = {
       rootHelp: 'A saved directory is a hint for future Automation runs. Running tasks keep their current directory and permissions.',
       membershipHelp: 'Group this Chat and its forks and child conversations in a Project.',
       deleteHelp: 'Remove this Project and its Chat grouping. Chats, files, and running tasks are kept. Automations that still reference it must be updated first.',
-      reviewTitle: 'Review Project change',
-      reviewDetail: ({ operation, name, root, thread }: { operation: string; name: string; root: string; thread: string }) =>
-        `${operation}: ${name}\nDirectory hint: ${root}\nChat: ${thread}\n\nGrouping changes include the Chat's forks and child conversations. Saved directory changes apply to future Automation runs. Existing tasks keep their directories and permissions. Files and Chats are kept, and running tasks continue.`,
-      operations: { create: 'Create Project', update: 'Edit Project', bind: 'Change Chat grouping', delete: 'Delete Project' },
     },
     automations: {
       title: 'Automations',
@@ -1637,6 +1633,12 @@ export const en = {
       stopUnavailable: 'That work already finished.',
       tasks: {
         directory: 'Directory',
+        actualIsolation: 'Actual isolation',
+        isolationStates: { pending: 'Not yet observed', sandboxed: 'macOS write sandbox active', unsandboxed: 'No OS process sandbox', unavailable: 'Required sandbox unavailable', rejected: 'Isolation request rejected' },
+        network: 'Network',
+        unrestrictedNetwork: 'Unrestricted by the process sandbox',
+        writeRoots: 'Sandbox write roots',
+        isolationDetail: 'Isolation detail',
         executionPolicy: 'Execution policy',
         backgroundWork: 'Background tasks',
         running: ({ count }: { count: number }) => `${count} running`,

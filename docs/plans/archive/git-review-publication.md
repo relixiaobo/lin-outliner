@@ -76,7 +76,7 @@ execution address, context reference, selected paths, and result.
 ### Model context
 
 Review uses the shared
-[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)
+[Execution Context Publication](../../spec/agent-model-runtime.md#execution-context-publication)
 contract. A new diff or baseline mismatch appends new evidence and a bounded
 explanation of what must be reviewed again. Neither an old diff nor an earlier
 reviewed-state statement is replaced in a previously sent provider message.
@@ -159,3 +159,47 @@ continuation, checking frozen earlier diffs and explicit renewed review needs.
 - A reviewed-state mismatch always requires a new review; it is never implicitly
   refreshed.
 - Non-Git publication remains deferred until a deterministic adapter exists.
+
+### Implementation binding
+
+- A built-in `git-review` Skill drives a strict standalone Bash command:
+  `git-review <capture|commit|preview|push|create-pr> --input - --output json`.
+  Literal JSON stdin supplies paths, messages, or immutable evidence references.
+  Ordinary shell Git commands remain available. The Host prepares a bundled
+  Node helper inside the existing admitted Tool Task; Git and `gh` remain the
+  actual executors, and the canonical Task receipt owns process settlement.
+- Full bounded manifests use the existing context payload store. Bounded
+  observations publish through Execution Context Publication, with dependency
+  references retained through compaction. No separate Git database is added.
+  Historical evidence travels through Task stdin; the private Host channel
+  binds its byte count and SHA-256 after admission. The helper verifies the
+  complete input before execution, keeping the 1 MiB evidence budget independent
+  of the Task's 64 KiB private-control limit.
+- Selected-file commits build a temporary Git index, preserve unrelated real
+  index entries, and use an index lock plus a Git compare-and-swap on the explicitly reviewed
+  ref. HEAD attachment is revalidated immediately before and after the update;
+  external attachment races produce an uncertain result. Git plumbing creates the exact reviewed tree;
+  repository commit hooks and clean filters are not run by this workflow.
+  The committed blobs contain the exact reviewed bytes. Signing follows Git's
+  `commit.gpgSign` setting. Ordinary Bash remains available for custom workflows.
+  All helper Git calls disable fsmonitor, hooks, and implicit lazy fetching.
+  Status, diff, and index operations first reject configured executable
+  clean/process filters. External diffs, textconv, and recursive submodule dirty
+  status are disabled; automatic Task discovery shares this inspection policy
+  and degrades instead of executing extensions. Filtered repositories use
+  ordinary Bash explicitly.
+- The tool result offers unchecked path selection and a copyable explicit
+  commit request, plus a publication preview. Publication is requested through
+  the existing composer and Skill; rendering historical evidence never executes
+  an operation. Every remote attempt first reconciles the exact remote ref or
+  GitHub head/base. Unsupported or ambiguous hosting configurations fail closed.
+- Scope: new Git review domain/helper/Skill and renderer result component;
+  Bash admission, capability classification, ToolRuntime, context payload codecs,
+  publication/dependency projection, focused tests, and current-behavior specs.
+  Collision check against open PR #656: the agent-model-runtime spec and locale dictionaries are
+  shared, in separate sections; no Settings implementation or infrastructure
+  ownership files are needed. Main retains board/changelog/archive ownership.
+- Risks: external non-cooperating writes, process loss between Git ref/index
+  updates, bounded evidence overflow, and uncertain provider replies. These
+  produce explicit non-success/reconciliation evidence, never automatic commit
+  retries, reset, force push, or merge.

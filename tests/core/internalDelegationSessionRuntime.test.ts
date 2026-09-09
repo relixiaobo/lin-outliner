@@ -289,7 +289,7 @@ async function runtimeFixture(): Promise<{
   const store = new DelegationSessionStore(database as unknown as SqliteDatabase);
   const tasks = new ToolTaskService(new ToolTaskStore(database as unknown as SqliteDatabase), join(root, 'tasks'));
   services.push(tasks);
-  tasks.bindHost({ ownerExists: () => true, canInheritClaim: () => true,
+  tasks.bindHost({ ownerExists: () => true, canInheritExecution: () => true,
     readDeliveryAdmission: async () => null, startCompletionTurn: async () => false, taskChanged: () => undefined });
   await tasks.initialize();
   const threads = new FakeThreadService(tasks);

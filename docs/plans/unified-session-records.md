@@ -26,7 +26,7 @@ CON-1: Preserve recorded-notification ordering and durable completion barriers. 
 
 CON-2: A format change uses the repository's explicit pre-release reset procedure, with no migration or legacy reader. No data reset happens as part of authoring this plan.
 
-CON-3: Published record files describe retained history. Current verification results, commit admission, and process liveness remain governed by Tool Tasks, execution context, and their original evidence. Preserve hidden delegated-session references and isolation; readable history does not grant execution authority or broaden delegated discovery.
+CON-3: Published record files describe retained history. Command outcomes and process liveness remain governed by Tool Tasks and execution context; current verification and Git decisions require native-state inspection, without a private source-certification or commit-admission engine. Preserve hidden delegated-session references and isolation; readable history does not grant execution authority or broaden delegated discovery.
 
 ### Original ownership
 
@@ -154,7 +154,13 @@ Consume [startup fault isolation](startup-fault-isolation.md) first under the se
 
 This feature owns shared exact-source resolution (FR-1), durable recovered-history provenance (BR-4), and record publication invalidation/cleanup (BR-5), integrated with existing Thread lifecycle owners. [Targeted conversation recovery](targeted-thread-recovery.md) follows and consumes these final mechanisms for verified rebuild/removal, preserving the only surviving projection and unrelated resources. It adds no independent source interpretation or publication cleanup coordinator. Its startup dependency is a capability prerequisite; the selected order around this record refactor follows A7.
 
-Consume the completed workbench series in the board's selected integration order. Verification C owns check/attempt evidence; Git publication D owns review manifests, reviewed baselines and durable publication outcomes; execution/process E owns isolation receipts, captures and process reconciliation. Resolve retained history through their final source coordinates and retention owners, and cover all three producers in the source/availability and restart fixtures. Do not create a parallel result reader or execution authority. Settings G owns final domain destinations and Host/preload projections; reuse those contracts for reference consumers. The workbench producers precede this sequence, and CON-3 governs their relationship to readable history.
+Consume the final workbench Tool Task, context, artifact and isolation contracts.
+Git and verification Skills use native commands and generic results, not private
+review/check evidence producers. Resolve retained history through generic source
+coordinates and retention owners; cover output expiry, restart and process
+reconciliation without inventing a result reader or execution authority. Settings
+G owns final domain destinations and Host/preload projections; reuse those
+contracts for reference consumers. CON-3 governs their relationship to history.
 
 The board records live claims and merge eligibility. At claim time recheck the actual ThreadService, Tool Task, context/runtime, Host/preload, and renderer overlaps; do not copy a stale open-PR list into this plan. Specs describe current behavior until implementation folds the final contracts into them.
 

@@ -264,14 +264,11 @@ export function assertContextPayloadDependencies(
 
 export function contextPayloadDependencies(payload: ThreadContextPayload): ContextPayloadDependencies {
   switch (payload.kind) {
-    case 'verificationSource':
-      return emptyDependencies();
-    case 'verificationObservation':
-      return emptyDependencies({ contexts: payload.evidenceRefs });
     case 'executionContextObservation':
       return emptyDependencies({ contexts: [payload.admissionRef] });
     case 'executionContextPublication':
       return emptyDependencies({ contexts: payload.evidenceRefs });
+    case 'processObservation':
     case 'taskExecutionContext':
     case 'automationDispatch':
       return emptyDependencies();

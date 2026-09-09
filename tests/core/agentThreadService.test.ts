@@ -6781,55 +6781,6 @@ expect(await opened.stores.resources.readExact(forkImage.artifactRef.observation
     await fixture.service.close();
   });
 
-  test('verification bounds automatic continuation even when the model never starts a check', async () => {
-    const fixture = await createFixture();
-    const directory = await realpath(fixture.root);
-    await mkdir(join(directory, '.tenon'));
-    await writeFile(join(directory, '.tenon/checks.json'), JSON.stringify({ schemaVersion: 1,
-      checks: [{ id: 'test', command: 'echo verified', required: true, inputs: ['.tenon'], exclude: [] }] }));
-    const { thread } = await fixture.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai', configurationSource: { kind: 'user' } });
-    await fixture.service.request('goal/create', { threadId: thread.id, objective: 'Bound every continuation', verification: { roots: [directory], maxAttempts: 1 } });
-    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Begin' }] });
-    await fixture.executor.waitUntilWaiting();
-    fixture.executor.finish(0, completedExecutionResult(0));
-    await fixture.executor.waitUntilWaiting(1);
-    fixture.executor.finish(1, completedExecutionResult(0));
-    await fixture.service.waitForIdle(thread.id);
-    expect(fixture.executor.contexts).toHaveLength(2);
-    expect((await fixture.service.request('goal/get', { threadId: thread.id })).verification).toMatchObject({
-      state: 'stopped', attemptsUsed: 0, stopReason: 'Verification automatic continuation limit (1) exhausted.' });
-    await fixture.service.close();
-  });
-
-  test('verification capacity failure durably blocks Goal continuation before idle and after restart', async () => {
-    const fixture = await createFixture();
-    const directory = await realpath(fixture.root);
-    await mkdir(join(directory, '.tenon'));
-    await writeFile(join(directory, '.tenon/checks.json'), JSON.stringify({ schemaVersion: 1,
-      checks: [{ id: 'test', command: 'echo verified', required: true, inputs: ['.tenon'], exclude: [] }] }));
-    const { thread } = await fixture.service.startThread({ source: 'app', threadSource: 'user',
-      modelProvider: 'openai', configurationSource: { kind: 'user' } });
-    const response = await fixture.service.request('goal/create', { threadId: thread.id,
-      objective: 'Verify the fixture', verification: { roots: [directory], maxAttempts: 3 } });
-    expect(response.verification?.state).toBe('pending');
-    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Continue verification' }] });
-    await fixture.executor.waitUntilWaiting();
-    fixture.executor.finish(0, { status: 'failed', error: { message: 'Active Turn context capacity exhausted' } });
-    await fixture.service.waitForIdle(thread.id);
-    expect(fixture.executor.contexts).toHaveLength(1);
-    const inspected = await fixture.service.request('goal/get', { threadId: thread.id });
-    expect(inspected).toMatchObject({ goal: { status: 'blocked' }, verification: {
-      state: 'stopped', stopReason: 'Turn failed: Active Turn context capacity exhausted', attemptsUsed: 0 } });
-    expect(fixture.stores.goals.readContinuationState(thread.id)?.pending).toBeNull();
-    await fixture.service.close();
-    const executor = new ControlledExecutor();
-    const reopened = await openFixture(fixture.root, executor, fixture.clock);
-    await reopened.service.initialize();
-    expect(executor.contexts).toHaveLength(0);
-    expect((await reopened.service.request('goal/get', { threadId: thread.id })).verification?.state).toBe('stopped');
-    await reopened.service.close();
-  });
-
   test('resumes an active Goal continuation after host restart', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({

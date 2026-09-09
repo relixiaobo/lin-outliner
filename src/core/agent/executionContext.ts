@@ -18,12 +18,11 @@ export interface ExecutionPolicy {
   readonly capability: 'full-access' | 'read-only';
   readonly isolation: 'unsandboxed' | 'macos-write-sandbox' | 'host-write-boundary';
   readonly writablePaths: readonly string[];
-  readonly mutation: boolean;
 }
 
 export interface ExecutionContextFact {
   readonly source: string;
-  readonly kind: 'discovery' | 'instruction' | 'profile' | 'git' | 'check' | 'process';
+  readonly kind: 'discovery' | 'instruction' | 'git' | 'process';
   readonly authority: 'host' | 'repository';
   readonly purpose: 'guidance' | 'observation';
   readonly scope: string;
@@ -54,16 +53,6 @@ export interface ExecutionContextScopeObservation {
   readonly directory: string;
   readonly sources: readonly string[];
   readonly complete: boolean;
-}
-
-export interface ProjectCheckDeclaration {
-  readonly id: string;
-  readonly command: string;
-  readonly required: boolean;
-  readonly inputs: readonly string[];
-  readonly exclude: readonly string[];
-  readonly source: string;
-  readonly scope: string;
 }
 
 /** Self-contained evidence; references identify immutable values in this receipt. */
@@ -100,13 +89,10 @@ export function decodeTaskExecutionContext(value: unknown): TaskExecutionContext
     if (scope.gitDirectory !== null) absolutePath(scope.gitDirectory);
     if ((scope.worktree === null) !== (scope.gitDirectory === null)) throw new Error('Incomplete Git identity');
   }
-  const policy = object(context.policy, ['capability', 'isolation', 'writablePaths', 'mutation']);
+  const policy = object(context.policy, ['capability', 'isolation', 'writablePaths']);
   member(policy.capability, ['full-access', 'read-only']);
   member(policy.isolation, ['unsandboxed', 'macos-write-sandbox', 'host-write-boundary']);
   array(policy.writablePaths).forEach(absolutePath);
-  if (typeof policy.mutation !== 'boolean' || (policy.capability === 'read-only' && policy.mutation)) {
-    throw new Error('Invalid execution mutation authority');
-  }
   const snapshot = object(context.snapshot, ['seriesId', 'capturedAt', 'generation', 'predecessorRef', 'discovery', 'degradation', 'facts']);
   text(snapshot.seriesId);
   if (!Number.isSafeInteger(snapshot.capturedAt) || (snapshot.capturedAt as number) < 0) throw new Error('Invalid snapshot capture time');
@@ -129,7 +115,7 @@ export function decodeExecutionContextFact(value: unknown): ExecutionContextFact
   const fact = object(value, ['source', 'kind', 'authority', 'purpose', 'scope', 'version', 'text', 'invalidated'], ['observedAt']);
   if (fact.observedAt !== undefined && (!Number.isSafeInteger(fact.observedAt) || (fact.observedAt as number) < 0)) throw new Error('Invalid fact capture time');
   for (const key of ['source', 'scope', 'version', 'text']) text(fact[key]);
-  member(fact.kind, ['discovery', 'instruction', 'profile', 'git', 'check', 'process']);
+  member(fact.kind, ['discovery', 'instruction', 'git', 'process']);
   member(fact.authority, ['host', 'repository']);
   member(fact.purpose, ['guidance', 'observation']);
   if (typeof fact.invalidated !== 'boolean') throw new Error('Invalid execution fact invalidation');

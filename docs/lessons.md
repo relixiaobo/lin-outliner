@@ -2733,3 +2733,65 @@ independent processes; complete only after successful coordination settlement.
 Producer names alone confer no exception. Regressions must exercise the real
 launcher/container/check chain, nested delegation, interruption and recovery,
 alongside a gated write-and-restore that crosses a verification revision.
+
+## Native inspection includes configured executable extensions
+
+PR #657 classified Git capture as read-only, but status, index, and diff queries
+could execute configured fsmonitor and clean-filter scripts. Automatic Task
+discovery could reach the same side effects before the helper ran.
+
+**Audit the complete native command chain before declaring an operation a read.**
+Include inherited configuration, hooks, filters, recursive repository inspection,
+and optional discovery. Disable executable extensions or refuse inspection before
+they run; optional observations must degrade without blocking admitted work.
+Verify the actual read-only tool path with marker-writing scripts, including
+configuration includes, environment overrides, and nested repositories.
+
+## Evidence budgets must fit every transport hop
+
+PR #657 could persist a valid review above 64 KiB, then reject a single-file
+commit because the complete manifest crossed a smaller private control channel.
+Domain-only tests never exercised that mismatch.
+
+**A producer's accepted byte budget must be consumable through the real execution
+path.** Keep large evidence in the bounded data transport and bind it to trusted
+control metadata with an exact length and digest. Test near-limit UTF-8 evidence,
+small selections from large captures, tampering, and the production runtime;
+display truncation and successful persistence do not prove later executability.
+
+## Process creation does not establish session ownership
+
+PR #658's tmux experiment showed that a successful launch can leave a detached
+server outside the Task lifetime, pane output outside retained stdout, and
+same-directory control blocked by the server's valid write claim.
+
+**Measure start, control, capture, stop, and restart through the real ownership
+boundary before promising a persistent session.** Record failed properties
+without widening capability rules to make the experiment pass. Prove actual
+OS isolation separately from requested policy, and preserve trusted receipt
+ownership outside the command's writable roots.
+
+## Retiring an executable tool does not retire its historical evidence kind
+
+PR #659 removed the dedicated file deletion tool while canonical `fileChange`
+records still represented deletion. Removing the shared delete glyph or tying
+history decoding to the current catalog would erase valid evidence consumers.
+
+**Sweep executable names separately from canonical outcomes, and verify the
+replacement through its real policy and execution path.** Keep shared history
+rendering covered after removing tool-specific branches. Include current
+permission prose in the retirement sweep; its symlink-entry admission example
+outlived the tool even after the owning tool specification was updated.
+
+## Native replacements must verify effective destinations and caller admission
+
+PR #660 replaced a private Git protocol with native Skill recipes. The first
+recipe queried a remote's fetch URL after publishing to its separate push URL,
+and its literal-path diff syntax was rejected by read-only delegation.
+
+**Verify native replacements through the retained caller policy and the actual
+configured endpoint.** A successful Full Access command does not prove delegated
+admission, and a remote alias does not identify one transport destination.
+Exercise distinct fetch/push URLs, multiple destinations and partial success;
+test literal-path inspections through the capability and execution path without
+broadening authority to make the recipe pass.

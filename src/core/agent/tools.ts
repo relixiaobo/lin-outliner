@@ -101,7 +101,6 @@ export const RETAINED_CAPABILITY_TOOL_NAMES = [
   'file_grep',
   'file_edit',
   'file_write',
-  'file_delete',
   'bash',
   'web_search',
   'web_fetch',
@@ -433,18 +432,6 @@ const threadGoalOutputSchema = objectSchema({
   'updatedAt',
 ]);
 
-const verificationViewSchema = objectSchema({
-  verificationRunId: stringSchema(), revision: nullableSchema(integerSchema()), attemptsUsed: integerSchema(), maxAttempts: integerSchema(),
-  state: enumSchema(['pending', 'running', 'passed', 'failed', 'stopped', 'unavailable']), stopReason: nullableSchema(stringSchema()),
-  changedPaths: outputArraySchema(outputStringSchema()), limitations: outputArraySchema(outputStringSchema()),
-  sourceStateRef: nullableSchema(objectSchema({ id: stringSchema(), mimeType: stringSchema(), byteLength: integerSchema(), schemaVersion: integerSchema(), kind: stringSchema() },
-    ['id', 'mimeType', 'byteLength', 'schemaVersion', 'kind'])),
-  checks: outputArraySchema(objectSchema({ checkId: stringSchema(), command: stringSchema(), cwd: stringSchema(), required: booleanSchema(),
-    toolTaskId: nullableSchema(stringSchema()), state: enumSchema(['running', 'passed', 'failed', 'stopped', 'lost', 'unavailable']),
-    applicability: enumSchema(['current', 'stale', 'unavailable']), exitCode: nullableSchema(integerSchema()), output: nullableSchema(stringSchema()), reason: nullableSchema(stringSchema()) },
-    ['checkId', 'command', 'cwd', 'required', 'toolTaskId', 'state', 'applicability', 'exitCode', 'output', 'reason']), 64),
-}, ['verificationRunId', 'revision', 'attemptsUsed', 'maxAttempts', 'state', 'stopReason', 'changedPaths', 'limitations', 'sourceStateRef', 'checks']);
-
 const retainedCapabilityOutputSchemas: Readonly<Record<typeof RETAINED_CAPABILITY_TOOL_NAMES[number], JsonSchema>> = {
   file_read: fileReadOutputSchema,
   file_glob: objectSchema({
@@ -458,10 +445,6 @@ const retainedCapabilityOutputSchemas: Readonly<Record<typeof RETAINED_CAPABILIT
   }),
   file_edit: localFileMutationOutputSchema,
   file_write: localFileMutationOutputSchema,
-  file_delete: objectSchema({
-    trashPath: stringSchema(),
-    kind: stringSchema(),
-  }, ['trashPath', 'kind']),
   bash: objectSchema({
     stdout: outputStringSchema(),
     stderr: outputStringSchema(),
@@ -554,25 +537,6 @@ const threadReadSchema = objectSchema({
     representation: enumSchema(['reveal', 'replay', 'edit', 'observe']),
   }, ['citation_key', 'representation']), 10),
 }, ['thread_id']);
-
-const projectIdentitySchema = boundedStringSchema(36);
-const projectRevisionSchema: JsonSchema = { type: 'integer', minimum: 1 };
-const projectDataSchema = objectSchema({ id: projectIdentitySchema, name: boundedStringSchema(200),
-  rootHint: nullableSchema(boundedStringSchema(4096)), revision: projectRevisionSchema,
-  createdAt: { type: 'integer', minimum: 0 }, updatedAt: { type: 'integer', minimum: 0 },
-}, ['id', 'name', 'rootHint', 'revision', 'createdAt', 'updatedAt']);
-const projectMembershipSchema = objectSchema({ threadId: projectIdentitySchema,
-  projectId: nullableSchema(projectIdentitySchema), revision: { type: 'integer', minimum: 0 },
-}, ['threadId', 'projectId', 'revision']);
-const projectManageToolSchema = objectSchema({ request: { anyOf: [
-  objectSchema({ operation: { const: 'create' }, name: boundedStringSchema(200), rootHint: nullableSchema(boundedStringSchema(4096)) }, ['operation', 'name', 'rootHint']),
-  objectSchema({ operation: { const: 'update' }, projectId: projectIdentitySchema, expectedRevision: projectRevisionSchema,
-    name: boundedStringSchema(200), rootHint: nullableSchema(boundedStringSchema(4096)) }, ['operation', 'projectId', 'expectedRevision', 'name', 'rootHint']),
-  objectSchema({ operation: { const: 'bind' }, threadId: projectIdentitySchema, projectId: nullableSchema(projectIdentitySchema),
-    expectedRevision: nullableSchema(projectRevisionSchema), expectedMembershipRevision: { type: 'integer', minimum: 0 } },
-  ['operation', 'threadId', 'projectId', 'expectedRevision', 'expectedMembershipRevision']),
-  objectSchema({ operation: { const: 'delete' }, projectId: projectIdentitySchema, expectedRevision: projectRevisionSchema }, ['operation', 'projectId', 'expectedRevision']),
-] } }, ['request']);
 
 const automationScheduleSchema = objectSchema({
   rrule: boundedStringSchema(AUTOMATION_RRULE_MAX_LENGTH, 'RFC 5545 DTSTART and RRULE lines.'),
@@ -853,26 +817,6 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
 
 const coreControlToolContracts: readonly StaticModelToolContract[] = [
   {
-    identity: { namespace: null, name: 'project_inspect' },
-    description: 'Inspect optional saved Projects and the current Chat membership, including exact revisions and canonical directory hints. A Project groups Chats and saves an optional hint. Never treat that hint as an implicit task cwd or permission boundary. Use the offset to page the catalog.',
-    scope: 'rootThread', schemaOwner: 'core',
-    inputSchema: objectSchema({ offset: { type: 'integer', minimum: 0 } }),
-    outputSchema: objectSchema({ projects: boundedArraySchema(projectDataSchema, 50),
-      memberships: boundedArraySchema(projectMembershipSchema, 1), totalProjects: { type: 'integer', minimum: 0 },
-      nextOffset: nullableSchema({ type: 'integer', minimum: 0 }),
-    }, ['projects', 'memberships', 'totalProjects', 'nextOffset']),
-    actionKinds: ['agent.project.inspect'],
-  },
-  {
-    identity: { namespace: null, name: 'project_manage' },
-    description: 'Propose creating, editing, binding, or deleting optional Project metadata through native Host confirmation. Propose a durable Project only after the user expresses lasting organizational intent. Inspect exact revisions first. Deletion detaches grouping, preserves Chats/files/tasks, and is blocked by live Automation dependencies. Cancellation is final until the user requests another proposal.',
-    scope: 'rootThread', schemaOwner: 'core', inputSchema: projectManageToolSchema,
-    outputSchema: objectSchema({ outcome: { const: 'applied' }, project: nullableSchema(projectDataSchema),
-      affectedThreadCount: { type: 'integer', minimum: 0 },
-    }, ['outcome', 'project', 'affectedThreadCount']),
-    actionKinds: ['agent.project.manage'],
-  },
-  {
     identity: { namespace: null, name: 'thread_search' },
     description: [
       'Search bounded, visible history from prior same-profile Tenon conversations.',
@@ -942,25 +886,23 @@ const coreControlToolContracts: readonly StaticModelToolContract[] = [
   },
   {
     identity: { namespace: null, name: 'get_goal' },
-    description: 'Get the current Goal and revalidate its verification evidence. Run every required declared command through Bash at its stated cwd; stale passes do not count.',
+    description: 'Get the Goal attached one-to-one to the current Thread.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: objectSchema({}),
-    outputSchema: objectSchema({ goal: nullableSchema(threadGoalOutputSchema), verification: verificationViewSchema }, ['goal']),
+    outputSchema: objectSchema({ goal: nullableSchema(threadGoalOutputSchema) }, ['goal']),
     actionKinds: ['agent.goal.read'],
   },
   {
     identity: { namespace: null, name: 'create_goal' },
-    description: 'Create a Goal only when explicitly requested and no unfinished Goal exists. For an explicitly requested verify-and-correct workflow, select directory roots and a finite limit for attempts and automatic continuations. Checks come from .tenon/checks.json and execute through ordinary Bash; corrections use existing file tools. After an explicit user request to resume a stopped verification Goal, call create_goal with the same objective, roots and attempt limit in that new user Turn; budgets are not reset. This does not authorize publication.',
+    description: 'Create a Goal only when explicitly requested and no unfinished Goal exists.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: objectSchema({
       objective: stringSchema('Concrete objective to pursue.'),
       token_budget: { type: 'integer', minimum: 1 },
-      verification: objectSchema({ roots: boundedArraySchema(stringSchema('Absolute directory root.'), 8),
-        maxAttempts: { type: 'integer', minimum: 1, maximum: 20 } }, ['roots', 'maxAttempts']),
     }, ['objective']),
-    outputSchema: objectSchema({ goal: threadGoalOutputSchema, verification: verificationViewSchema }, ['goal']),
+    outputSchema: objectSchema({ goal: threadGoalOutputSchema }, ['goal']),
     actionKinds: ['agent.goal.create'],
   },
   {
@@ -982,7 +924,6 @@ const CAPABILITY_ACTION_KINDS = {
   file_grep: ['file.read.local_path', 'file.read.sensitive_local_path'],
   file_edit: ['file.edit.local_path', 'file.write.sensitive_local_path'],
   file_write: ['file.write.local_path', 'file.write.sensitive_local_path'],
-  file_delete: ['file.delete.local_path', 'file.write.sensitive_local_path'],
   bash: [
     'shell.read_search',
     'file.read.sensitive_local_path',

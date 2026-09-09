@@ -43,7 +43,6 @@ export class InternalDelegationSessionRuntime implements DelegationSessionRuntim
       ? session.worktree.metadata.path : session.policy.cwd;
     const executionContext = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: directory }), {
       capability: session.policy.runnerId === 'internal' && session.policy.access === 'read-only' ? 'read-only' : 'full-access',
-      mutation: session.policy.access !== 'read-only' || session.policy.runnerId !== 'internal',
       isolation: session.policy.runnerId === 'internal' && session.policy.worktreePolicy === 'dedicated'
         ? 'host-write-boundary' : 'unsandboxed',
       writablePaths: session.policy.worktreePolicy === 'dedicated' ? [directory] : [],
@@ -52,7 +51,7 @@ export class InternalDelegationSessionRuntime implements DelegationSessionRuntim
     return this.threads.toolTaskService().runHostOperation({
       ownerThreadId: session.sessionId, sourceTurnId: input.turnId, sourceItemId: 'delegate_execution',
       producer: 'delegate_execution', executionContext, signal: input.signal,
-      ...(session.currentTaskId ? { inheritedClaimTaskId: session.currentTaskId } : {}),
+      ...(session.currentTaskId ? { parentTaskId: session.currentTaskId } : {}),
       onAdmitted: async (task) => {
         const payload = {
           schemaVersion: 1 as const, kind: 'taskExecutionContext' as const,

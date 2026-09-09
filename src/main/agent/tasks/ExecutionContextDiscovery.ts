@@ -4,12 +4,13 @@ import { open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { ExecutionContextFact, ExecutionContextSource, ExecutionContextScopeObservation,
-  ProjectCheckDeclaration, TaskExecutionContext } from '../../../core/agent/executionContext';
+  TaskExecutionContext } from '../../../core/agent/executionContext';
 import { redactSecretLikeContent } from '../capabilities/agentSecretRedaction';
 import { executionDigest, validateExecutionContext } from './ExecutionContext';
+import { assertNoExecutableGitFilters, GIT_FILTER_CONFIG_ARGS, GIT_INSPECTION_ARGS } from './gitInspectionPolicy';
 
 const run = promisify(execFile);
-const SOURCE_NAMES = ['AGENTS.md', 'CLAUDE.md', 'AGENT.md', '.tenon/checks.json'] as const;
+const SOURCE_NAMES = ['AGENTS.md', 'CLAUDE.md', 'AGENT.md'] as const;
 const MAX_SOURCE_BYTES = 32 * 1024;
 const MAX_TOTAL_BYTES = 128 * 1024;
 const MAX_CANDIDATES = 384;
@@ -26,7 +27,6 @@ export interface ExecutionContextDiscoveryResult {
   readonly context: TaskExecutionContext;
   readonly sources: readonly ExecutionContextSource[];
   readonly scopes: readonly ExecutionContextScopeObservation[];
-  readonly checks: readonly ProjectCheckDeclaration[];
 }
 
 /** Discovery captures later observations, never edits the original admission. */
@@ -41,7 +41,6 @@ export async function discoverExecutionContext(
   const facts: ExecutionContextFact[] = [];
   const sources = new Map<string, ExecutionContextSource>();
   const scopes: ExecutionContextScopeObservation[] = [];
-  const checks: ProjectCheckDeclaration[] = [];
   const reasons = new Set<string>();
   const bodies = new Set<string>();
   let totalBytes = 0;
@@ -65,22 +64,9 @@ export async function discoverExecutionContext(
             const key = JSON.stringify([source.observation.canonicalPath, directory]);
             if (!bodies.has(key)) {
               bodies.add(key);
-              if (name === '.tenon/checks.json') {
-                try {
-                  const declarations = decodeCheckProfile(source.text, filePath, directory);
-                  checks.push(...declarations);
-                  facts.push(fact(filePath, 'profile', directory, source.observation.digest!,
-                    `Project check declarations (not execution results):\n${JSON.stringify(declarations)}`));
-                } catch {
-                  complete = false;
-                  reasons.add(`Invalid check profile: ${filePath}`);
-                  facts.push(fact(filePath, 'profile', directory, 'unavailable', 'Check declarations are unavailable; do not rely on the previous profile.', true));
-                }
-              } else {
-                const text = await redactSecretLikeContent(source.text);
-                facts.push(fact(source.observation.canonicalPath!, 'instruction', directory,
-                  source.observation.digest!, text || 'This instruction source is explicitly empty.'));
-              }
+              const text = await redactSecretLikeContent(source.text);
+              facts.push(fact(source.observation.canonicalPath!, 'instruction', directory,
+                source.observation.digest!, text || 'This instruction source is explicitly empty.'));
             }
           }
         }
@@ -96,8 +82,8 @@ export async function discoverExecutionContext(
       scope: anchor.directory, version: executionDigest(git), text: git ?? 'Git observations are unavailable.', invalidated: git === null });
     facts.push({ source: 'host:execution-discovery', kind: 'discovery', authority: 'host', purpose: 'observation',
       scope: anchor.directory, version: complete ? 'inspected' : 'incomplete',
-      text: complete ? 'Enclosing instruction and check sources were inspected after task admission. Descendant scopes remain uninspected until addressed.'
-        : 'Some enclosing instruction or check sources could not be inspected. Re-inspect before relying on earlier guidance.', invalidated: false });
+      text: complete ? 'Enclosing instruction sources were inspected after task admission. Descendant scopes remain uninspected until addressed.'
+        : 'Some enclosing instruction sources could not be inspected. Re-inspect before relying on earlier guidance.', invalidated: false });
   }
   if (admitted.address.scopes.length > MAX_SCOPES) reasons.add('Additional target scopes were not inspected at the discovery limit.');
   // A removed/unreadable source must revoke its previous body, including a retargeted alias.
@@ -111,7 +97,7 @@ export async function discoverExecutionContext(
     degradation: reasons.size ? [...reasons].slice(0, 12).join(' ') : null,
     facts: facts.map((fact) => ({ ...fact, observedAt: capturedAt })) };
   return { context: validateExecutionContext({ ...admitted, snapshotRef: executionDigest(snapshot), snapshot }),
-    sources: [...sources.values()], scopes, checks };
+    sources: [...sources.values()], scopes };
 }
 
 export async function validateDiscoveredSources(result: ExecutionContextDiscoveryResult): Promise<boolean> {
@@ -163,32 +149,18 @@ async function inspectSource(filePath: string, limit: number): Promise<{
 async function inspectGit(directory: string, worktree: string | null, signal?: AbortSignal): Promise<string | null> {
   if (!worktree) return 'No Git worktree was detected at admission.';
   try {
-    const git = async (args: string[]) => (await run('git', ['-C', worktree, ...args], {
-      timeout: 400, maxBuffer: 16 * 1024, signal, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+    const git = async (args: string[]) => (await run('git', [...GIT_INSPECTION_ARGS, '-C', worktree, ...args], {
+      timeout: 400, maxBuffer: 16 * 1024, signal, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1' },
     })).stdout.trim();
     const head = await git(['rev-parse', '--verify', 'HEAD']).catch(() => 'unborn or unavailable');
     const ref = await git(['symbolic-ref', '--quiet', 'HEAD']).catch(() => 'detached or unavailable');
-    const status = await git(['status', '--porcelain=v1', '--untracked-files=normal']);
+    const filters = await git(GIT_FILTER_CONFIG_ARGS).catch((error: { code?: number }) => {
+      if (error.code === 1) return ''; throw error;
+    });
+    assertNoExecutableGitFilters(filters);
+    const status = await git(['status', '--porcelain=v1', '--untracked-files=normal', '--ignore-submodules=dirty']);
     return `Observed Git worktree: ${worktree}\nScope: ${directory}\nHEAD: ${head}\nRef: ${ref}\nStatus:\n${status || '(clean)'}`;
   } catch { return null; }
-}
-
-function decodeCheckProfile(text: string, source: string, scope: string): ProjectCheckDeclaration[] {
-  const profile = JSON.parse(text) as { schemaVersion: unknown; checks: unknown };
-  if (!profile || Object.keys(profile).sort().join(',') !== 'checks,schemaVersion' || profile.schemaVersion !== 1
-    || !Array.isArray(profile.checks) || profile.checks.length > 32) throw new Error('Invalid check profile');
-  const ids = new Set<string>();
-  return profile.checks.map((value: unknown) => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid check');
-    const entry = value as Record<string, unknown>;
-    if (Object.keys(entry).some((key) => !['id', 'command', 'required', 'inputs', 'exclude'].includes(key))) throw new Error('Unknown check field');
-    const string = (input: unknown) => { if (typeof input !== 'string' || !input.trim() || input.includes('\0') || input.length > 4_096) throw new Error('Invalid check text'); return input; };
-    const strings = (input: unknown) => { if (!Array.isArray(input) || input.length > 64) throw new Error('Invalid check scope'); return input.map(string); };
-    const id = string(entry.id);
-    if (ids.has(id) || typeof entry.required !== 'boolean') throw new Error('Invalid check identity');
-    ids.add(id);
-    return { id, command: string(entry.command), required: entry.required, inputs: strings(entry.inputs), exclude: strings(entry.exclude), source, scope };
-  });
 }
 
 function ancestorDirectories(directory: string): string[] {

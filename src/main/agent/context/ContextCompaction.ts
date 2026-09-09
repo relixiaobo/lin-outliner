@@ -773,7 +773,7 @@ function isHistoryTool(item: ThreadItem): item is HistoryToolItem {
 }
 
 function isFileMutation(tool: string): boolean {
-  return tool === 'file_write' || tool === 'file_edit' || tool === 'file_delete' || tool === 'file_move';
+  return tool === 'file_write' || tool === 'file_edit' || tool === 'file_move';
 }
 
 function needsObservationArguments(item: ThreadItem): item is HistoryToolItem {

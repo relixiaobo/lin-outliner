@@ -1536,6 +1536,12 @@ export const zhHans: PartialMessages = {
       stopUnavailable: '该工作已经结束。',
       tasks: {
         directory: '执行目录',
+        actualIsolation: '实际进程隔离',
+        isolationStates: { pending: '尚未观测', sandboxed: 'macOS 写入沙盒已启用', unsandboxed: '未使用系统进程沙盒', unavailable: '所需沙盒不可用', rejected: '隔离请求已拒绝' },
+        network: '网络',
+        unrestrictedNetwork: '进程沙盒未限制网络',
+        writeRoots: '沙盒可写目录',
+        isolationDetail: '隔离详情',
         executionPolicy: '执行策略',
         backgroundWork: '后台任务',
         running: ({ count }: { count: number }) => `${count} 个进行中`,

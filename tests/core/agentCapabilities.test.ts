@@ -9,6 +9,7 @@ import {
 } from '../../src/main/agent/capabilities/agentCapabilities';
 import { unavailableToolResultMessage } from '../../src/main/agent/capabilities/agentCapabilityEvents';
 import { parseAgentCapabilitySettings } from '../../src/main/agent/capabilities/agentCapabilityRules';
+import { delegatedBashExecutionAllowed } from '../../src/main/agent/delegation';
 
 const roots: string[] = [];
 
@@ -27,6 +28,25 @@ async function workspaceFixture() {
 }
 
 describe('agent capabilities', () => {
+  test('Bash deletion respects command blocks and delegated read-only authority', async () => {
+    const { workspace } = await workspaceFixture();
+    for (const command of ['rm -- old.txt', 'rm -r -- old-dir', 'rmdir -- empty-dir', 'git rm -- old.ts']) {
+      const allowed = evaluateAgentToolCapability({ toolName: 'bash', args: { command }, policy: { workspaceRoot: workspace } });
+      expect(allowed.behavior).toBe('allow');
+      const actions = allowed.descriptors.map((entry) => entry.actionKind);
+      expect(delegatedBashExecutionAllowed({ profile: 'general', access: 'workspace-write' }, actions, 'absent', false)).toBe(true);
+      expect(delegatedBashExecutionAllowed({ profile: 'general', access: 'read-only' }, actions, 'absent', false)).toBe(false);
+      const blocked = evaluateAgentToolCapability({ toolName: 'bash', args: { command }, policy: {
+        workspaceRoot: workspace, capabilityConfig: { blocks: [`Command(${command})`] },
+      } });
+      expect(blocked.behavior).toBe('unavailable');
+    }
+    const recursive = evaluateAgentToolCapability({ toolName: 'bash', args: { command: 'rm -r -- old-dir' }, policy: {
+      workspaceRoot: workspace, capabilityConfig: { blocks: ['Action(shell.destructive_cleanup)'] },
+    } });
+    expect(recursive).toMatchObject({ behavior: 'unavailable', descriptor: { actionKind: 'shell.destructive_cleanup' } });
+  });
+
   test('applies path blocks to the actual per-call cwd and the operation target', async () => {
     const { workspace, outside } = await workspaceFixture();
     const sensitive = path.join(await realpath(outside), '.ssh');
@@ -44,8 +64,6 @@ describe('agent capabilities', () => {
       expect(evaluateAgentToolCapability({ toolName: 'file_glob', args: { cwd, pattern: '*' }, policy }))
         .toMatchObject({ behavior: 'unavailable', descriptor: { targetPath: sensitive } });
     }
-    expect(evaluateAgentToolCapability({ toolName: 'file_delete', args: { file_path: 'alias' }, policy }))
-      .toMatchObject({ behavior: 'allow', descriptor: { targetPath: path.join(await realpath(workspace), 'alias') } });
     expect(evaluateAgentToolCapability({ toolName: 'file_read', args: { file_path: 'config' }, policy }).behavior).toBe('allow');
   });
 

@@ -4,7 +4,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
 "[
   {
     "name": "bash",
-    "description": "Executes a shell command in the call working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nSet run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.\\nYou do not need to append \\"&\\"; use task_stop if a background task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
+    "description": "Executes a shell command in the call working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_glob, and file_grep for filesystem operations when possible.\\nUse Bash commands such as rm, rmdir, or git rm to delete files and directories. Deletion follows the command semantics; no automatic trash copy is created.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nSet run_in_background to true only when the next useful action does not depend on this command result. Otherwise wait for completion regardless of expected duration.\\nYou do not need to append \\"&\\"; use task_stop if a background task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
     "parameters": {
       "type": "object",
       "additionalProperties": false,
@@ -45,7 +45,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "create_goal",
-    "description": "Create a Goal only when explicitly requested and no unfinished Goal exists. For an explicitly requested verify-and-correct workflow, select directory roots and a finite limit for attempts and automatic continuations. Checks come from .tenon/checks.json and execute through ordinary Bash; corrections use existing file tools. After an explicit user request to resume a stopped verification Goal, call create_goal with the same objective, roots and attempt limit in that new user Turn; budgets are not reset. This does not authorize publication.",
+    "description": "Create a Goal only when explicitly requested and no unfinished Goal exists.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -56,58 +56,12 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         "token_budget": {
           "type": "integer",
           "minimum": 1
-        },
-        "verification": {
-          "type": "object",
-          "properties": {
-            "roots": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "description": "Absolute directory root."
-              },
-              "maxItems": 8
-            },
-            "maxAttempts": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 20
-            }
-          },
-          "required": [
-            "roots",
-            "maxAttempts"
-          ],
-          "additionalProperties": false
         }
       },
       "required": [
         "objective"
       ],
       "additionalProperties": false
-    }
-  },
-  {
-    "name": "file_delete",
-    "description": "Moves a local file or directory to agent trash instead of permanently deleting it.\\nUse this for reversible cleanup. It cannot delete the call working directory root.\\nThe result includes the trash path so the item can be recovered if needed.",
-    "parameters": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "file_path"
-      ],
-      "properties": {
-        "file_path": {
-          "type": "string",
-          "minLength": 1,
-          "description": "An absolute path or a path relative to the call working directory to move to agent trash."
-        },
-        "cwd": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Directory for this call only. Relative paths resolve from the Host default directory; this does not change later calls."
-        }
-      }
     }
   },
   {
@@ -409,7 +363,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "get_goal",
-    "description": "Get the current Goal and revalidate its verification evidence. Run every required declared command through Bash at its stated cwd; stale passes do not count.",
+    "description": "Get the Goal attached one-to-one to the current Thread.",
     "parameters": {
       "type": "object",
       "properties": {},

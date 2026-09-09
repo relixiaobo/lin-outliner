@@ -27,7 +27,7 @@ export type ProjectManageRequest =
       readonly expectedRevision: number | null; readonly expectedMembershipRevision: number }
   | { readonly operation: 'delete'; readonly projectId: string; readonly expectedRevision: number };
 export interface ProjectManageResult {
-  readonly outcome: 'applied' | 'cancelled';
+  readonly outcome: 'applied';
   readonly project: Project | null;
   readonly affectedThreadIds: readonly string[];
 }
@@ -82,7 +82,7 @@ export function decodeProjectCatalogView(value: unknown): ProjectCatalogView {
 
 export function decodeProjectManageResult(value: unknown): ProjectManageResult {
   const entry = record(value, ['outcome', 'project', 'affectedThreadIds']);
-  if (entry.outcome !== 'applied' && entry.outcome !== 'cancelled') throw new Error('Invalid Project outcome');
+  if (entry.outcome !== 'applied') throw new Error('Invalid Project outcome');
   return { outcome: entry.outcome, project: entry.project === null ? null : decodeProject(entry.project),
     affectedThreadIds: array(entry.affectedThreadIds, id, 100_000) };
 }

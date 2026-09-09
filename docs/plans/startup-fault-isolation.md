@@ -132,13 +132,12 @@ issue/action identity with truthful capability availability, and lifecycle entry
 points that retry or fence owners without reopening admission early. Document
 their final contract in current specs; do not publish unused recovery APIs.
 
-Use final Project/Thread, Settings/domain-routing and workbench owners. The
-board orders this feature after Settings discovery and the approved workbench
-series. Audit verification admission, uncertain Git publication settlement, and
-interactive-process restart/cancellation against their merged owners when
-establishing readiness and Retry. This selected integration order prevents
-reworking those boundaries as C/D/E land; displaying a recoverable startup error
-does not itself require every workbench capability.
+Use final Project/Thread, Settings/domain-routing and workbench owners. Git and
+verification workflows use native commands and generic Task outcomes, not private
+verification admission or Git publication coordinators. Audit Goal budgets, Task
+settlement and process restart/cancellation against the final generic owners when
+establishing readiness and Retry. Displaying a recoverable startup error does not
+require every workbench capability.
 
 [Unified session records](unified-session-records.md) follows this final startup
 mechanism under the selected A7 order. [Targeted conversation recovery](targeted-thread-recovery.md)

@@ -1,3 +1,4 @@
+import type { ProcessIsolationEvidence } from '../../../core/agent/processIsolation';
 import type {
   ThreadId,
   ToolTaskDeliveryState,
@@ -23,7 +24,7 @@ export type {
 
 export interface ToolTaskRecord extends ToolTaskProjection {
   readonly operationKind: 'process' | 'host';
-  readonly inheritedClaimTaskId: string | null;
+  readonly parentTaskId: string | null;
   readonly backgroundEnabled: boolean;
   readonly commandDigest: string;
   readonly cwd: string;
@@ -98,7 +99,9 @@ export type ToolTaskProcessSpec =
   };
 
 export interface ToolTaskSupervisorConfig {
-  readonly version: 2;
+  readonly version: 3;
+  readonly isolation: ProcessIsolationEvidence;
+  readonly sandboxProfile: string | null;
   readonly taskId: string;
   readonly nonce: string;
   readonly process: ToolTaskProcessSpec;
@@ -119,7 +122,8 @@ export interface ToolTaskSupervisorConfig {
 }
 
 export interface ToolTaskSupervisorIdentity {
-  readonly version: 1;
+  readonly version: 2;
+  readonly isolation: ProcessIsolationEvidence;
   readonly taskId: string;
   readonly nonce: string;
   readonly supervisorPid: number;
@@ -136,7 +140,8 @@ export interface ToolTaskSupervisorHeartbeat {
 }
 
 export interface ToolTaskFinalReceipt {
-  readonly version: 2;
+  readonly version: 3;
+  readonly isolation: ProcessIsolationEvidence;
   readonly taskId: string;
   readonly nonce: string;
   readonly state: Extract<ToolTaskExecutionState, 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | 'lost'>;

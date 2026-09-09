@@ -17,7 +17,6 @@ import {
 } from './ContextDegradation';
 
 const CORE_FILE_PATH_TOOLS = new Set([
-  'file_delete',
   'file_edit',
   'file_glob',
   'file_grep',

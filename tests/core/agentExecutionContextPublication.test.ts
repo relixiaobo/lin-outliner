@@ -159,7 +159,7 @@ function fixture() {
   const observation = (fact: ExecutionContextFact) => {
     const context = pendingExecutionContext({ requestedCwd: null, cwd: fact.scope, targets: [], targetMode: 'follow', coverage: 'cwd-only',
       scopes: [{ key: `directory:${fact.scope}`, directory: fact.scope, worktree: null, gitDirectory: null }] },
-    { capability: 'full-access', mutation: false, isolation: 'unsandboxed', writablePaths: [] });
+    { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [] });
     const snapshot = { ...context.snapshot, facts: [fact] };
     return evidence({ schemaVersion: 1, kind: 'taskExecutionContext', taskId: `task-${serial}`, sourceTurnId: 'turn',
       sourceItemId: 'tool', executionContext: { ...context, snapshot, snapshotRef: executionDigest(snapshot) } });
@@ -171,3 +171,42 @@ function fixture() {
   };
   return { read, payloads, evidence, observation, publish };
 }
+
+test('process observations resume from canonical history, deduplicate unchanged isolation and retain owned Tasks through compaction', async () => {
+  const { planProcessObservations, processObservation } = await import('../../src/main/agent/context/ProcessObservations');
+  const { pendingProcessIsolation } = await import('../../src/core/agent/processIsolation');
+  const f = fixture();
+  const executionContext = pendingExecutionContext({ requestedCwd: null, cwd: '/repo', targets: [], targetMode: 'follow', coverage: 'cwd-only',
+    scopes: [{ key: 'repo', directory: '/repo', worktree: null, gitDirectory: null }] },
+  { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [] });
+  const task = { taskId: 'owned-process', cwd: '/repo', executionContext, sourceTurnId: 'turn', sourceItemId: 'tool',
+    state: 'running', outcomeReason: null, backgroundEnabled: true, startedAt: 1, completedAt: null,
+    isolation: { ...pendingProcessIsolation(executionContext.policy, 'darwin'), state: 'unsandboxed' },
+  } as import('../../src/main/agent/tasks/toolTaskTypes').ToolTaskRecord;
+  const source = { type: 'toolCall', id: 'tool' } as ThreadItem;
+  const pending = await planProcessObservations([turn([source])], [task], f.read);
+  expect(pending).toHaveLength(1);
+  const observed = f.evidence(pending[0]!);
+  expect(await planProcessObservations([turn([source, observed])], [task], f.read)).toEqual([]);
+  const baseline = await f.publish([source, observed]);
+  const stopped = f.evidence(processObservation({ ...task, state: 'cancelled', completedAt: 2, outcomeReason: 'stop_requested' })!);
+  const after = await f.publish([source, observed, baseline.item, stopped]);
+  expect(after.payload.text).toContain('cancelled');
+  expect(after.payload.text).not.toContain('Write roots:');
+  const history = [turn([source, observed, baseline.item, stopped, after.item])];
+  const plan = await planContextCompaction({ turns: history, readContext: f.read });
+  expect(plan!.restoredState.executionContext.text).toContain('owned-process');
+  expect(plan!.restoredState.executionContext.text).toContain('not current liveness');
+  expect(plan!.restoredState.executionContext.text).not.toContain('was observed running');
+  expect(contextPayloadDependencies(plan!.restoredState).contexts).toContainEqual(after.item.payloadRef);
+  expect(await planProcessObservations([turn([...history[0]!.items, { type: 'contextReset', id: 'reset' } as ThreadItem])], [task], f.read)).toEqual([]);
+
+  const many = Array.from({ length: 40 }, (_, index) => ({ ...task, taskId: 'task-' + index }));
+  const first = await planProcessObservations([turn([source])], many, f.read);
+  expect(first).toHaveLength(32);
+  const second = await planProcessObservations([turn([source, ...first.map(f.evidence)])], many, f.read);
+  expect(second).toHaveLength(8);
+  const foreground = f.evidence(processObservation({ ...task, taskId: 'foreground', backgroundEnabled: false, startedAt: 3 })!);
+  const unchanged = await f.publish([source, observed, baseline.item, foreground]);
+  expect(unchanged.payload.text).toBe('');
+});

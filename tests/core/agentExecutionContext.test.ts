@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { decodeTaskExecutionContext } from '../../src/core/agent/executionContext';
@@ -20,7 +20,7 @@ async function fixture() {
   await mkdir(join(root, 'b'));
   return root;
 }
-const policy = { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [], mutation: true } as const;
+const policy = { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [] } as const;
 const owner = '00000000-0000-7000-8000-000000000001';
 const turn = '00000000-0000-7000-8000-000000000002';
 
@@ -39,7 +39,7 @@ describe('task execution context', () => {
     await expect(resolveExecutionAddress({ defaultCwd: root, cwd: '' })).rejects.toMatchObject({ code: 'invalid_cwd' });
   });
 
-  test('retains target applicability within a worktree while claiming its shared identity', async () => {
+  test('retains target applicability within a worktree with its shared identity', async () => {
     const root = await fixture();
     execFileSync('git', ['init', '-q', root]);
     const address = await resolveExecutionAddress({ defaultCwd: root, targets: ['a/file', 'b/file'] });
@@ -68,12 +68,12 @@ describe('task execution context', () => {
     await expect(revalidateExecutionContext(entry)).rejects.toMatchObject({ code: 'invalid_target' });
   });
 
-  test('stops a Host operation before releasing its inherited owner claim', async () => {
+  test('stops a Host operation before releasing its inherited owner execution', async () => {
     const root = await fixture();
     const db = new Database(':memory:');
     const store = new ToolTaskStore(db as unknown as SqliteDatabase);
     const service = new ToolTaskService(store, join(root, 'tasks'));
-    service.bindHost({ ownerExists: () => true, canInheritClaim: () => true,
+    service.bindHost({ ownerExists: () => true, canInheritExecution: () => true,
       readDeliveryAdmission: async () => null, startCompletionTurn: async () => false, taskChanged: () => {} });
     await service.initialize();
     const executionContext = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root }), policy);
@@ -87,7 +87,7 @@ describe('task execution context', () => {
         const parent = store.nonterminal()[0]!;
         childWork = service.runHostOperation({
           ownerThreadId: owner, sourceTurnId: turn, sourceItemId: 'child', producer: 'file_write', executionContext,
-          inheritedClaimTaskId: parent.taskId, onAdmitted: async () => {},
+          parentTaskId: parent.taskId, onAdmitted: async () => {},
           execute: async (childSignal) => {
             ready.resolve(parent.taskId);
             await new Promise<void>((resolve) => childSignal.addEventListener('abort', () => resolve(), { once: true }));
@@ -142,7 +142,7 @@ describe('task execution context', () => {
     } finally { await service.close(2_000); db.close(); }
   });
 
-  test('persists host-operation context before mutation, rolls back multi-scope claims, and releases on settlement', async () => {
+  test('persists host-operation context without reserving overlapping directories', async () => {
     const root = await fixture();
     const db = new Database(':memory:');
     const store = new ToolTaskStore(db as unknown as SqliteDatabase);
@@ -168,10 +168,9 @@ describe('task execution context', () => {
     try {
       const other = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root, targets: ['b/file', 'a/other'] }), policy);
       await expect(service.runHostOperation({
-        ownerThreadId: owner, sourceTurnId: turn, sourceItemId: 'conflict', producer: 'file_write', executionContext: other,
-        onAdmitted: async () => { throw new Error('Conflict must fail before evidence publication'); },
-        execute: async () => { throw new Error('Conflict must fail before mutation'); },
-      })).rejects.toMatchObject({ code: 'worktree_busy' });
+        ownerThreadId: owner, sourceTurnId: turn, sourceItemId: 'overlap', producer: 'file_write', executionContext: other,
+        onAdmitted: async () => {}, execute: async () => ({ result: 'overlap', success: true }),
+      })).resolves.toBe('overlap');
       expect(store.nonterminal()).toHaveLength(1);
       const independent = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root, targets: ['b/file'] }), policy);
       await expect(service.runHostOperation({
@@ -197,35 +196,5 @@ describe('task execution context', () => {
     expect(b.executionContext?.address.targets).toEqual([join(root, 'b', 'file')]);
     const invalid = await tool.execute('invalid', { file_path: 'file' });
     expect((invalid.details as { ok: boolean }).ok).toBe(false);
-  });
-
-  test('isolated deletion admits both entry addresses and keeps trash inside the resource when cwd is elsewhere', async () => {
-    const root = await fixture();
-    const source = join(root, 'a', 'source');
-    const link = join(root, 'b', 'link');
-    await writeFile(source, 'preserved');
-    await symlink(source, link);
-    const tool = createLocalTools({ workspace: {
-      root: join(root, 'a'), scratchRoot: join(root, 'scratch'), readFileState: new Map(),
-      writeBoundary: { root: join(root, 'b') },
-    } }).find((tool) => tool.name === 'file_delete')!;
-    const deleted = await tool.execute('delete', { file_path: link });
-    expect(deleted.details.ok).toBe(true);
-    const data = deleted.details.data as { trashPath: string };
-    expect(data.trashPath).toStartWith(join(root, 'b', '.agent-trash'));
-    expect(deleted.executionContext?.address.targets).toContain(link);
-    expect(deleted.executionContext?.address.targets).toContain(data.trashPath);
-    expect((await lstat(data.trashPath)).isSymbolicLink()).toBe(true);
-    expect(await readFile(source, 'utf8')).toBe('preserved');
-    await expect(lstat(link)).rejects.toThrow();
-    const rootDelete = await tool.execute('root', { file_path: join(root, 'b') });
-    expect(rootDelete.details).toMatchObject({ ok: false, error: { code: 'root_delete_forbidden' } });
-
-    await rm(join(root, 'b', '.agent-trash'), { recursive: true });
-    await symlink(join(root, 'a'), join(root, 'b', '.agent-trash'));
-    await writeFile(join(root, 'b', 'keep'), 'keep');
-    const escaped = await tool.execute('escape', { file_path: join(root, 'b', 'keep') });
-    expect(escaped.details).toMatchObject({ ok: false, error: { code: 'write_outside_isolated_workspace' } });
-    expect(await readFile(join(root, 'b', 'keep'), 'utf8')).toBe('keep');
   });
 });

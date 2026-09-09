@@ -14,7 +14,7 @@ export function nativeAgentProcessExecutor(
     const task = await service.start({
       ownerThreadId: owner.ownerThreadId, sourceTurnId: owner.sourceTurnId, sourceItemId: owner.sourceItemId,
       producer: 'native_agent', description: 'Run native Agent', command: input.executable,
-      cwd: owner.cwd, executionContext: owner.executionContext, inheritedClaimTaskId: owner.taskId,
+      cwd: owner.cwd, executionContext: owner.executionContext, parentTaskId: owner.taskId,
       stdin: input.stdin, timeoutMs: 600_000, env: process.env,
       process: { kind: 'exec', executable: input.executable, args: input.args,
         env: Object.fromEntries(Object.entries(input.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),

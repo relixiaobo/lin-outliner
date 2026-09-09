@@ -1,3 +1,4 @@
+import { planProcessObservations } from '../context/ProcessObservations';
 import { decodePrivilegedTurnStartRequest,decodePrivilegedTurnSteerRequest,decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createHostRootTurnAdmissionBarrierSnapshot,createThreadAdmissionBarrierSnapshot } from '../../../core/agent/extensions';
@@ -101,7 +102,6 @@ interface TurnLifecycleDocumentDrift {
 }
 interface TurnLifecycleGoalUsage {
   addUsage(threadId: ThreadId, tokens: number, elapsedSeconds: number, turnId: TurnId, terminalStatus: TurnStatus): Promise<void>;
-  verificationPublication?(threadId: ThreadId): Promise<{ owner: string; payload: import('../../../core/agent/protocol').VerificationObservationPayload } | null>;
 }
 
 export class TurnLifecycle {
@@ -1366,19 +1366,13 @@ export class TurnLifecycle {
       const located = turns.flatMap((turn) => turn.items.map((item) => ({ turn, item })));
       let reset = -1;
       located.forEach(({ item }, index) => { if (item.type === 'contextReset') reset = index; });
-      const verification = await this.goalUsage.verificationPublication?.(active.threadId);
-      if (verification) {
-        const previous = located.slice(reset + 1).reverse().find(({ item }) => item.type === 'contextEvidence' && item.kind === 'verificationObservation');
-        const priorPayload = previous?.item.type === 'contextEvidence' ? await this.core.payloads.readContext(active.threadId, previous.item.payloadRef).catch(() => null) : null;
-        if (priorPayload?.kind !== 'verificationObservation' || JSON.stringify(priorPayload.facts) !== JSON.stringify(verification.payload.facts)) {
-          let available = true;
-          for (const ref of verification.payload.evidenceRefs) {
-            available &&= await this.core.payloads.copyContextToThread(verification.owner, active.threadId, ref);
-          }
-          const payload = available ? verification.payload : { ...verification.payload, evidenceRefs: [],
-            facts: verification.payload.facts.map((fact) => ({ ...fact, version: 'unavailable', invalidated: true, text: 'Verification evidence could not be retained for this context. Inspect the Goal before relying on any earlier pass.' })) };
-          await this.persistExecutionContextEvidenceLocked(active, thread, payload, 'Current verification applicability');
-        }
+      try {
+        const observations = await planProcessObservations(turns, this.toolTasks.store.listAll(active.threadId),
+          (ref) => this.core.payloads.readContext(active.threadId, ref));
+        for (const payload of observations) await this.persistExecutionContextEvidenceLocked(active, thread, payload,
+          'Recorded process isolation and lifecycle');
+      } catch (error) {
+        console.warn('[agent] Optional process observation delivery deferred', error);
       }
       for (const pending of this.toolTasks.store.pendingContextObservations(active.threadId)) {
         const task = this.toolTasks.store.read(pending.taskId);

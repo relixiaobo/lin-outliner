@@ -1179,7 +1179,7 @@ function startedToolItem(
       type: 'fileChange',
       changes: [{
         path: boundedText(path, MAX_PERSISTED_TOOL_STRING_CHARS),
-        kind: identity.name === 'file_delete' ? 'delete' : identity.name === 'file_write' ? 'add' : 'update',
+        kind: identity.name === 'file_write' ? 'add' : 'update',
       }],
       status: 'inProgress',
     };
@@ -1602,7 +1602,7 @@ function toolItemLabel(item: ThreadItem): string {
 }
 
 function isFileMutationTool(value: string): boolean {
-  return value === 'file_edit' || value === 'file_write' || value === 'file_delete';
+  return value === 'file_edit' || value === 'file_write';
 }
 
 function toolDetails(result: unknown): unknown {

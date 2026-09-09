@@ -31,7 +31,6 @@ import { createAutomationTool } from '../agent/automations/AutomationTool';
 import type { SkillOperationCaller } from './skillLifecycle';
 import { createMemoryOperations, type MemoryOperations, type OpenMemory, type ReviewMemoryReset } from './memoryOperations';
 import { projectAutomationLifecycle } from '../agent/projects/projectAutomationLifecycle';
-import { createProjectTools } from '../agent/projects/projectTools';
 import { AutomationWorktree } from '../agent/automations/AutomationWorktree';
 import { MemoryControlStore } from '../agent/extensions/memory/MemoryControlStore';
 import { MemoryExtension } from '../agent/extensions/memory/MemoryExtension';
@@ -84,7 +83,6 @@ export interface AgentHostComposition {
 }
 
 export interface AgentHostOptions {
-  readonly reviewProjectChange?: import('../agent/projects/ProjectService').ReviewProjectChange;
   readonly reviewMemoryReset: ReviewMemoryReset;
   readonly openMemory: OpenMemory;
   readonly onMemoryChanged: () => void;
@@ -313,7 +311,6 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   });
   const threadService = ThreadService.open(options.userDataDir, turnExecutor, {
     ...options.createThreadOptions(composition),
-    reviewProjectChange: options.reviewProjectChange,
     attachmentScratchRoot: options.scratchRoot,
     nameGenerator: turnExecutor,
     resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
@@ -554,7 +551,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
         context.thread.id,
       ),
       ...(delegationSession ? {
-        inheritedClaimTaskId: threadService.toolTaskService().store.sessionExecution(delegationSession.sessionId)?.taskId,
+        parentTaskId: threadService.toolTaskService().store.sessionExecution(delegationSession.sessionId)?.taskId,
       } : {}),
       ...(delegationMetadata ? { validateIsolation: () => worktree.validate(delegationMetadata) } : {}),
     };
@@ -570,10 +567,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       context,
       localWorkspaceForContext(context),
     ),
-    dynamicTools: (context, authorize) => [createAutomationTool(automationService),
-      ...(context.thread.parentThreadId === null && context.thread.threadSource === 'user' && !context.thread.ephemeral
-        ? createProjectTools(threadService.projects, context.thread.id, authorize) : []),
-    ],
+    dynamicTools: () => [createAutomationTool(automationService)],
     delegationPolicy: (threadId) => {
       const session = delegationStore.readSession(threadId);
       return session ? { profile: session.policy.profile, access: session.policy.access } : null;

@@ -199,6 +199,7 @@ export interface ToolTaskStoragePressure {
 }
 
 export interface ToolTaskProjection {
+  readonly isolation: import('./processIsolation').ProcessIsolationEvidence;
   readonly taskId: string;
   readonly executionContext: import('./executionContext').TaskExecutionContext;
   readonly ownerThreadId: ThreadId;
@@ -845,7 +846,7 @@ export const CONTEXT_EVIDENCE_KINDS = Object.freeze([
   'inheritedContext',
   'taskExecutionContext',
   'executionContextObservation',
-  'verificationObservation',
+  'processObservation',
   'executionContextPublication',
   'automationDispatch',
 ] as const);
@@ -1074,7 +1075,6 @@ export interface ExecutionContextObservationPayload {
   readonly executionContext: import('./executionContext').TaskExecutionContext;
   readonly sources: readonly import('./executionContext').ExecutionContextSource[];
   readonly scopes: readonly import('./executionContext').ExecutionContextScopeObservation[];
-  readonly checks: readonly import('./executionContext').ProjectCheckDeclaration[];
 }
 
 export interface ExecutionContextPublicationPayload {
@@ -1086,16 +1086,14 @@ export interface ExecutionContextPublicationPayload {
   readonly text: string;
 }
 
-export interface VerificationSourcePayload {
+/** Immutable observation of an existing Task; never an instruction to restart it. */
+export interface ProcessObservationPayload {
   readonly schemaVersion: 1;
-  readonly kind: 'verificationSource';
-  readonly manifest: import('./verification').VerificationSourceManifest;
-}
-
-export interface VerificationObservationPayload {
-  readonly schemaVersion: 1;
-  readonly kind: 'verificationObservation';
-  readonly evidenceRefs: readonly ThreadContextPayloadReference[];
+  readonly kind: 'processObservation';
+  readonly taskId: string;
+  readonly state: ToolTaskExecutionState;
+  readonly executionContext: import('./executionContext').TaskExecutionContext;
+  readonly isolation: import('./processIsolation').ProcessIsolationEvidence;
   readonly facts: readonly import('./executionContext').ExecutionContextFact[];
 }
 
@@ -1194,8 +1192,7 @@ export interface ToolCallArgumentsContextPayload {
 }
 
 export type ThreadContextPayload =
-  | VerificationSourcePayload
-  | VerificationObservationPayload
+  | ProcessObservationPayload
   | AutomationDispatchContextPayload
   | TaskExecutionContextPayload
   | ExecutionContextObservationPayload
@@ -1217,7 +1214,6 @@ export type ContextPayloadKind = ThreadContextPayload['kind'];
 
 export const CONTEXT_PAYLOAD_KINDS = Object.freeze([
   ...CONTEXT_EVIDENCE_KINDS,
-  'verificationSource',
   'compactionSummary',
   'compactionRestoredState',
   'compactionInstructions',

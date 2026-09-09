@@ -316,8 +316,8 @@ authority.
 
 ## Execution Context Publication
 
-This is the shared contract for execution context and its discovery, verification,
-Git, process, delegation, and Automation consumers. The runtime implements common
+This is the shared contract for execution context, passive discovery, process, delegation, and Automation
+consumers. Native Git/test workflows retain ordinary tool results. The runtime implements common
 publication and restore with pending generation-0 snapshots. Later discovery
 generations follow this same contract; their collectors belong to Unit B.
 
@@ -332,6 +332,23 @@ inspection and control; this rule concerns context-correlation metadata.
 Task calls and results already describe actual execution. A snapshot admitted after
 the model selected a tool call is not proof that the model saw its instructions.
 Prepared provider input and its canonical publication boundary establish visibility.
+
+`processObservation` resources carry actual Task isolation and observed lifecycle
+facts into the same publication contract. Before a provider boundary, the Host
+derives changed observations from owned Task records and canonical source Items;
+canonical resources are the resumable delivery cursor, with at most 32 new
+observations per boundary. A context reset excludes earlier source Tasks. Failed
+optional observation delivery is deferred without killing the user's Turn.
+There is no second process ledger or restart action in this collector.
+
+Isolation facts deduplicate semantically by execution scope. Background lifecycle
+facts retain the original Task handle and recorded state; unchanged observations
+do not repeat their body. Foreground results already own their individual output.
+Explicit terminal captures remain bounded, frozen tool observations. Publication
+does not rewrite prior provider requests, the canonical tool catalog, Skill body,
+or cache affinity. Compaction retains publication dependencies and owned process
+references, marks restored process facts as historical, and requires Task
+reconciliation before assuming liveness or starting a replacement.
 
 A reducer over canonical evidence computes effective context by source identity,
 fact kind, Host-assigned authority/purpose, and canonical applicability scope.
@@ -450,27 +467,22 @@ failure; bounded Goal continuation may proceed through later Turns under its own
 admission/recovery rules, never by replaying settled mutations or retrying an
 unchanged oversized request indefinitely.
 
-Verification uses `verificationObservation` evidence through this same
-publication reducer. Its bounded Host fact is scoped to the owning Thread and
-includes the current run/revision, required work, applicability and stop reason.
-The referenced `verificationSource` payloads contain complete manifests and have
-no direct model projection. Publication and compaction dependencies retain those
-payloads; ordinary correction deltas preserve prior provider prefixes and never
-rewrite a previous check outcome. A restored fact is historical until the Goal
-coordinator revalidates the source. Missing source or attempt evidence cannot
-revive an earlier passing aggregate. Capacity failure durably disables the
-verification Goal's automatic continuation before idle; only fresh user
-admission can resume a stopped run within its remaining budget.
+Git and test workflows use ordinary tool arguments/results, artifacts and generic
+Task/process observations. There are no Git review manifests or verification
+source payloads. Compaction and fork preserve their generic canonical history and
+resource dependencies under the normal retention contract. Missing observations
+never authorize replay; retained results describe historical execution and require
+current inspection before claims about later source or remote state.
 
 ### Cache Contract And Verification
 
 With the same provider/model, effective configuration, retained context, and
-available evidence, task-directory changes, discovery, check invalidation, Project
+available evidence, task-directory changes, discovery, Project
 grouping, and process updates preserve the already-published model-input prefix.
 The stable prompt and canonical tool schemas contain no task-specific paths, Git
 state, snapshots, or changing process policy. Cache affinity follows only the
 Thread/context-reset epoch contract below, not Project, cwd, task, snapshot,
-Automation hint, or verification revision. Separate Threads have separate affinity
+or Automation hint. Separate Threads have separate affinity
 and announced-state baselines; no parent or previous run's cache hit proves that a
 new Session received its context. External native CLIs own their provider caching.
 

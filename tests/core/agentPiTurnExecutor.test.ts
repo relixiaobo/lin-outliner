@@ -1856,7 +1856,7 @@ describe('PiTurnExecutor event normalization', () => {
         executionContext: pendingExecutionContext({
           requestedCwd: directory, cwd: directory, targets: [], targetMode: 'follow', coverage: 'cwd-only',
           scopes: [{ key: `directory:${directory}`, directory, worktree: null, gitDirectory: null }],
-        }, { capability: 'full-access', isolation: 'unsandboxed', mutation: false, writablePaths: [] }),
+        }, { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [] }),
       }, 'Execution observation');
     };
     let failPublication = true;
@@ -1905,64 +1905,65 @@ describe('PiTurnExecutor event normalization', () => {
     expect(JSON.stringify(requests.at(-1))).not.toContain('task-');
   });
 
-  test('verification deltas preserve provider prefixes and compact without projecting source manifests', async () => {
+  test('process observations and bounded captures preserve provider prefixes and reconcile references after compaction', async () => {
     const fixture = createContext();
-    const { executionDigest } = await import('../../src/main/agent/tasks/ExecutionContext');
+    const { pendingExecutionContext } = await import('../../src/main/agent/tasks/ExecutionContext');
+    const { pendingProcessIsolation } = await import('../../src/core/agent/processIsolation');
+    const { processObservation } = await import('../../src/main/agent/context/ProcessObservations');
     const payloads = new Map<string, ThreadContextPayload>();
     const put = (payload: ThreadContextPayload): ThreadContextPayloadReference => {
       const bytes = JSON.stringify(payload);
       const ref = { id: createHash('sha256').update(bytes).digest('hex'), mimeType: 'application/vnd.tenon.agent-context+json' as const,
         byteLength: Buffer.byteLength(bytes), schemaVersion: 1 as const, kind: payload.kind };
-      payloads.set(ref.id, payload);
-      return ref;
+      payloads.set(ref.id, payload); return ref;
     };
-    const source = { roots: [{ path: '/repo', identity: '1:2', worktree: null, gitDirectory: null, head: null, ref: null, indexDigest: null }],
-      entries: Array.from({ length: 400 }, (_, index) => ({ root: '/repo', path: `UNPROJECTED_SOURCE_MANIFEST_${index}`, kind: 'file' as const,
-        mode: 420, bytes: 1, digest: 'a'.repeat(64), target: null })), definitionDigest: 'b'.repeat(64) };
-    const manifestRef = put({ schemaVersion: 1, kind: 'verificationSource', manifest: {
-      ...source, digest: executionDigest(source), startedAt: 1, finishedAt: 2, limitations: [] } });
-    const originalRead = fixture.context.readContext;
-    const read = async (ref: ThreadContextPayloadReference) => payloads.get(ref.id) ?? originalRead(ref);
+    const read = async (ref: ThreadContextPayloadReference) => payloads.get(ref.id) ?? fixture.context.readContext(ref);
     const context = { ...fixture.context, readContext: read };
+    const executionContext = pendingExecutionContext({ requestedCwd: '/repo', cwd: '/repo', targets: [], targetMode: 'follow', coverage: 'cwd-only',
+      scopes: [{ key: 'repo', directory: '/repo', worktree: null, gitDirectory: null }] },
+    { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [] });
+    const task = { taskId: 'original-process', cwd: '/repo', executionContext, state: 'running', outcomeReason: null,
+      backgroundEnabled: true, startedAt: 1, completedAt: null,
+      isolation: { ...pendingProcessIsolation(executionContext.policy, 'darwin'), state: 'unsandboxed' },
+    } as import('../../src/main/agent/tasks/toolTaskTypes').ToolTaskRecord;
     const requests: unknown[][] = [];
     const executor = new PiTurnExecutor({
       resolveRuntimeSettings: async () => runtimeSettings(), resolveRuntime: async () => runtimeSelection(),
       createAgent: (options) => ({ state: { errorMessage: undefined }, subscribe: () => () => undefined,
         abort: () => undefined, steer: () => undefined, prompt: async () => {
-          for (const [index, text] of ['R0: A passed; B failed.', 'R0 invalidated by correction; all required checks must rerun.',
-            'R1: B passed; A still outstanding.', 'R1: A and B current and passed.'].entries()) {
-            await context.persistContextEvidence({ schemaVersion: 1, kind: 'verificationObservation', evidenceRefs: [manifestRef],
-              facts: [{ source: 'host:verification:run', kind: 'check', authority: 'host', purpose: 'observation', scope: '/repo',
-                version: String(index), text, invalidated: index === 1, observedAt: index + 1 }] }, 'Verification applicability');
-            const messages = await options.transformContext!([]);
-            requests.push(convertResponsesMessages(testModel, { messages }, new Set([testModel.provider]), { includeSystemPrompt: false }));
+          const schema = JSON.stringify(options.tools);
+          for (let index = 0; index < 3; index++) {
+            await context.persistContextEvidence(processObservation(index === 2
+              ? { ...task, state: 'cancelled', completedAt: 3, outcomeReason: 'stop_requested' } : task)!, 'Recorded process');
+            await context.persistContextEvidence({ schemaVersion: 1, kind: 'additionalContext', threadState: null,
+              turnEntries: [{ key: 'capture-' + index, source: 'task:capture-' + index, authority: 'untrusted', purpose: 'observation',
+                text: 'Frozen bounded capture ' + index + ': ' + 'line\\n'.repeat(10) }] }, 'Explicit process capture');
+            for (let retry = 0; retry < 2; retry++) {
+              const messages = await options.transformContext!([]);
+              requests.push(convertResponsesMessages(testModel, { messages }, new Set([testModel.provider]), { includeSystemPrompt: false }));
+            }
+            expect(JSON.stringify(options.tools)).toBe(schema);
           }
         } }),
     });
     expect((await executor.execute(context)).status).toBe('completed');
-    for (let index = 1; index < requests.length; index++) {
-      expect(requests[index]!.slice(0, requests[index - 1]!.length)).toEqual(requests[index - 1]);
-    }
-    expect(JSON.stringify(requests)).not.toContain('UNPROJECTED_SOURCE_MANIFEST');
-    expect(JSON.stringify(requests[0])).toContain('R0: A passed; B failed.');
-    expect(JSON.stringify(requests[3])).toContain('R1: A and B current and passed.');
+    for (let index = 1; index < requests.length; index++) expect(requests[index]!.slice(0, requests[index - 1]!.length)).toEqual(requests[index - 1]);
+    expect(requests[0]).toEqual(requests[1]);
+    expect(requests[2]).toEqual(requests[3]);
+    expect(JSON.stringify(requests.at(-1))).toContain('Frozen bounded capture 0');
     const prior = completedTurn(context.turn, context.turn.id, [...context.turn.items, ...fixture.recorder.orderedItems()], 1);
     const plan = await planContextCompaction({ turns: [prior], readContext: read });
     expect(plan).not.toBeNull();
     const compacted = completedTurn(context.turn, uuidV7(), [{ id: uuidV7(), type: 'contextCompaction', ...plan,
       summaryRef: put(plan!.summary), restoredStateRef: put(plan!.restoredState) } as ThreadItem], 3);
-    const projected = await new CanonicalContextProjector(testModel, { readContext: read, readOutput: async () => null,
-      readResource: async () => null, resolveResourceObservationPath: async () => null, resolveImageArtifactPath: async () => null }).projectTurns([prior, compacted]);
+    const projected = await new CanonicalContextProjector(testModel, { readContext: read, readInternalText: async () => null,
+      readOutput: async () => null, readResource: async () => null, resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => null }).projectTurns([prior, compacted]);
     const restored = JSON.stringify(convertResponsesMessages(testModel, { messages: projected }, new Set([testModel.provider]), { includeSystemPrompt: false }));
-    expect(restored).toContain('R1: A and B current and passed.');
-    expect(restored).not.toContain('R0: A passed; B failed.');
-    expect(restored).not.toContain('UNPROJECTED_SOURCE_MANIFEST');
-    const retainedPublication = await read(plan!.restoredState.executionContext.entries[0]!.evidenceRef);
-    expect(retainedPublication?.kind).toBe('executionContextPublication');
-    if (retainedPublication?.kind === 'executionContextPublication') {
-      const observation = await read(retainedPublication.evidenceRefs[0]!);
-      expect(observation?.kind === 'verificationObservation' && observation.evidenceRefs).toContainEqual(manifestRef);
-    }
+    expect(restored).toContain('original-process');
+    expect(restored).toContain('cancelled');
+    expect(restored).toContain('Reconcile this Task');
+    expect(restored).not.toContain('was observed running');
   });
 
   test('rebuilds every provider boundary from durable canonical Items', async () => {

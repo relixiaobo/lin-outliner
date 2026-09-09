@@ -1016,6 +1016,8 @@ describe('agent skills', () => {
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
       'configuration',
       'delegate',
+      'development',
+      'git-review',
       'outline',
       'skillify',
       'verification',
@@ -1445,10 +1447,15 @@ describe('built-in skill resource packaging', () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
     await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
-    expect((await readdir(generatedRoot)).sort()).toEqual(['configuration', 'delegate', 'outline', 'verification']);
+    expect((await readdir(generatedRoot)).sort()).toEqual(['configuration', 'delegate', 'development', 'git-review', 'outline', 'verification']);
+    const developmentRaw = await readFile(path.join(generatedRoot, 'development', 'SKILL.md'), 'utf8');
+    expect(developmentRaw).toContain('not a supported persistent terminal');
+    const gitReviewRaw = await readFile(path.join(generatedRoot, 'git-review', 'SKILL.md'), 'utf8');
+    expect(gitReviewRaw).toContain('git --literal-pathspecs commit --only');
+    expect(gitReviewRaw).toContain('A\n   review or commit request alone does not authorize push');
     const verificationRaw = await readFile(path.join(generatedRoot, 'verification', 'SKILL.md'), 'utf8');
-    expect(verificationRaw).toContain('every required check');
-    expect(verificationRaw).toContain('within the original');
+    expect(verificationRaw).toContain('native commands');
+    expect(verificationRaw).toContain('Do not reset a budget');
     const delegateRoot = path.join(generatedRoot, 'delegate');
     const delegateRaw = await readFile(path.join(delegateRoot, 'SKILL.md'), 'utf8');
     expect(delegateRaw).toContain('delegate run --input - --output json');

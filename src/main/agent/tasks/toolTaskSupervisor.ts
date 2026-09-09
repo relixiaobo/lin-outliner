@@ -3,6 +3,8 @@ import { spawn } from 'node:child_process';
 import { closeSync, openSync, readFileSync, readSync, statSync, writeSync } from 'node:fs';
 import { access, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import type { Readable } from 'node:stream';
+import { decodeProcessIsolationEvidence, unstartedProcessIsolation, type ProcessIsolationEvidence } from '../../../core/agent/processIsolation';
 import type {
   ToolTaskFinalReceipt,
   ToolTaskSupervisorConfig,
@@ -17,6 +19,7 @@ const PRIVATE_CONTROL_MAX_BYTES = 64 * 1024;
 const SUPERVISOR_ONLY_ENV_KEYS = ['ELECTRON_RUN_AS_NODE'] as const;
 let activeConfig: ToolTaskSupervisorConfig | null = null;
 let activeChildPid: number | null = null;
+let activeIsolation: ProcessIsolationEvidence | null = null;
 
 async function main(): Promise<void> {
   const configPath = process.argv[2];
@@ -32,13 +35,24 @@ async function main(): Promise<void> {
     ? readPrivateControl(3)
     : null;
   const target = resolveProcess(config);
+  const acknowledgement = JSON.stringify({ taskId: config.taskId, nonce: config.nonce, profileDigest: config.isolation.profileDigest });
+  // sandbox-exec execs this fixed bootstrap only after applying the profile.
+  // Close the acknowledgement descriptor before exec: the command cannot attest
+  // to its own isolation. The supervisor retains exclusive receipt write access.
+  const launch = config.sandboxProfile === null ? target : {
+    ...target, executable: '/usr/bin/sandbox-exec', args: ['-p', config.sandboxProfile, '--', '/bin/sh', '-c',
+      'printf "%s" "$1" >&4; exec 4>&-; shift; exec "$@"', 'tenon-isolation', acknowledgement, target.executable, ...target.args],
+  };
+  let isolation: ProcessIsolationEvidence = config.isolation;
   let child: ReturnType<typeof spawn>;
   try {
-    child = spawn(target.executable, [...target.args], {
+    child = spawn(launch.executable, [...launch.args], {
       cwd: config.cwd,
       env: target.env,
       shell: false,
-      stdio: privateControl ? [stdin, 'pipe', 'pipe', 'pipe'] : [stdin, 'pipe', 'pipe'],
+      // Bun requires contiguous extra pipes; an ignored fd 3 would drop fd 4.
+      stdio: config.sandboxProfile !== null ? [stdin, 'pipe', 'pipe', 'pipe', 'pipe']
+        : privateControl ? [stdin, 'pipe', 'pipe', 'pipe'] : [stdin, 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
     });
@@ -58,14 +72,17 @@ async function main(): Promise<void> {
     throw result.error ?? new Error('Tool Task command did not receive a process identity');
   }
   activeChildPid = child.pid;
-  const identity: ToolTaskSupervisorIdentity = {
-    version: 1,
+  const activation = config.sandboxProfile === null ? Promise.resolve(true)
+    : readIsolationAcknowledgement(child.stdio[4], acknowledgement);
+  const identity = () => ({
+    version: 2 as const,
+    isolation,
     taskId: config.taskId,
     nonce: config.nonce,
     supervisorPid: process.pid,
-    childPid: child.pid,
+    childPid: child.pid!,
     startedAt,
-  };
+  } satisfies ToolTaskSupervisorIdentity);
 
   let stopReason: 'requested' | 'timed_out' | 'output_limit' | 'capture_error' | null = null;
   let stopSentAt: number | null = null;
@@ -97,7 +114,13 @@ async function main(): Promise<void> {
   child.stderr?.on('data', (value) => capture(stderr, value));
   // Attach capture before yielding: child-process close may drain an unobserved pipe.
   if (privateControl) await writePrivateControl(child, privateControl);
-  await atomicJsonWrite(config.identityPath, identity);
+  else if (config.sandboxProfile !== null) (child.stdio[3] as NodeJS.WritableStream).end();
+  const activated = await activation;
+  isolation = activated ? { ...config.isolation, state: config.sandboxProfile === null ? 'unsandboxed' : 'sandboxed', reason: null }
+    : { ...config.isolation, state: 'unavailable', reason: 'The sandbox backend did not acknowledge activation; no unrestricted fallback was attempted.' };
+  activeIsolation = isolation;
+  if (!activated) requestStop('capture_error');
+  await atomicJsonWrite(config.identityPath, identity());
   const writeHeartbeat = () => atomicJsonWrite(config.heartbeatPath, {
     version: 1,
     taskId: config.taskId,
@@ -148,7 +171,9 @@ async function main(): Promise<void> {
   const quiescedAt = Date.now();
   const sizes = outputSizes(config);
   const preparedResult = preparedResultEvidence(config);
-  const outcome = stopReason === 'requested'
+  const outcome = !activated
+    ? { state: 'failed' as const, reason: 'isolation_unavailable' }
+    : stopReason === 'requested'
     ? { state: 'cancelled' as const, reason: 'stop_requested' }
     : stopReason === 'timed_out'
       ? { state: 'timed_out' as const, reason: 'timeout' }
@@ -164,16 +189,17 @@ async function main(): Promise<void> {
               ? { state: 'succeeded' as const, reason: 'exit_zero' }
               : { state: 'failed' as const, reason: result.signal ? 'signal' : 'exit_nonzero' };
   const unsigned = {
-    version: 2 as const,
+    version: 3 as const,
+    isolation,
     taskId: config.taskId,
     nonce: config.nonce,
     state: outcome.state,
     exitCode: result.code,
     signal: result.signal,
     reason: outcome.reason,
-    error: boundedError(captureState.error?.message ?? result.error?.message ?? null),
+    error: boundedError(!activated ? isolation.reason : captureState.error?.message ?? result.error?.message ?? null),
     supervisorPid: process.pid,
-    childPid: child.pid,
+    childPid: child.pid!,
     startedAt,
     quiescedAt,
     stdoutBytes: sizes.stdout,
@@ -192,6 +218,24 @@ function commandEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env = { ...source };
   for (const key of SUPERVISOR_ONLY_ENV_KEYS) delete env[key];
   return env;
+}
+
+function readIsolationAcknowledgement(stream: unknown, expected: string): Promise<boolean> {
+  if (!stream || typeof (stream as Readable).on !== 'function') return Promise.resolve(false);
+  const readable = stream as Readable;
+  return new Promise((resolve) => {
+    let bytes = Buffer.alloc(0); let settled = false;
+    const finish = (valid: boolean) => { if (!settled) { settled = true; clearTimeout(timer); resolve(valid); } };
+    const timer = setTimeout(() => finish(false), 1_000);
+    readable.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      if (bytes.length + chunk.length > 1024) { finish(false); return; }
+      bytes = Buffer.concat([bytes, chunk]);
+    });
+    readable.once('end', () => finish(bytes.toString('utf8') === expected));
+    readable.once('error', () => finish(false));
+    readable.once('close', () => finish(bytes.toString('utf8') === expected));
+  });
 }
 
 function resolveProcess(config: ToolTaskSupervisorConfig): {
@@ -261,7 +305,7 @@ function decodeConfig(value: unknown): ToolTaskSupervisorConfig {
     'taskId', 'nonce', 'cwd', 'stdinPath', 'stdoutPath', 'stderrPath', 'progressPath',
     'identityPath', 'heartbeatPath', 'stopRequestPath', 'finalReceiptPath', 'preparedResultPath',
   ] as const;
-  if (record.version !== 2 || strings.some((key) => typeof record[key] !== 'string' || !record[key])
+  if (record.version !== 3 || strings.some((key) => typeof record[key] !== 'string' || !record[key])
     || !validProcessSpec(record.process)) {
     throw new Error('Invalid Tool Task config identity');
   }
@@ -270,6 +314,12 @@ function decodeConfig(value: unknown): ToolTaskSupervisorConfig {
     || !Number.isSafeInteger(record.maxOutputBytes) || Number(record.maxOutputBytes) < 1
     || !Number.isSafeInteger(record.maxPreparedResultBytes) || Number(record.maxPreparedResultBytes) < 1) {
     throw new Error('Invalid Tool Task config limits');
+  }
+  const isolation = decodeProcessIsolationEvidence(record.isolation);
+  if (isolation.state !== null || !(record.sandboxProfile === null || typeof record.sandboxProfile === 'string')
+    || (isolation.requested === 'macos-write-sandbox') !== (record.sandboxProfile !== null)
+    || (record.sandboxProfile !== null && createHash('sha256').update(record.sandboxProfile as string).digest('hex') !== isolation.profileDigest)) {
+    throw new Error('Invalid Tool Task isolation configuration');
   }
   return record as unknown as ToolTaskSupervisorConfig;
 }
@@ -401,7 +451,8 @@ void main().catch(async (error) => {
         const sizes = outputSizes(config);
         const preparedResult = preparedResultEvidence(config);
         const unsigned = {
-          version: 2 as const,
+          version: 3 as const,
+          isolation: activeIsolation ?? unstartedProcessIsolation(config.isolation),
           taskId: config.taskId,
           nonce: config.nonce,
           state: 'failed' as const,

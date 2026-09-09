@@ -119,11 +119,14 @@ const projectionContextRef = {
 };
 
 const toolTask = {
+  isolation: { requested: 'unsandboxed', state: null, platform: 'darwin', backend: null,
+    dependency: 'not-required', network: 'unrestricted', writablePaths: [], protectedGitObjectStores: [],
+    profileDigest: null, reason: null },
   executionContext: {
     addressRef: 'a'.repeat(64), policyRef: 'b'.repeat(64), snapshotRef: 'c'.repeat(64),
     address: { requestedCwd: null, cwd: '/workspace', targets: [], targetMode: 'follow', coverage: 'cwd-only',
       scopes: [{ key: 'directory:/workspace', directory: '/workspace', worktree: null, gitDirectory: null }] },
-    policy: { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [], mutation: true },
+    policy: { capability: 'full-access', isolation: 'unsandboxed', writablePaths: [] },
     snapshot: { seriesId: 'fixture', capturedAt: 0, generation: 0, predecessorRef: null, discovery: 'pending', degradation: 'Discovery pending', facts: [] },
   },
   taskId: 'task-1',

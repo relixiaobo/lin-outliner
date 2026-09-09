@@ -123,7 +123,7 @@ export class AutomationDispatcher {
           throw new Error('Saved Project directory was redirected; edit its root hint before scheduling');
         }
         const sourceContext = pendingExecutionContext(sourceAddress, {
-          capability: 'full-access', isolation: 'unsandboxed', writablePaths: [], mutation: false,
+          capability: 'full-access', isolation: 'unsandboxed', writablePaths: [],
         });
         const workspace = await this.options.worktrees.prepare(prepared, sourceAddress.cwd, async (intent) => {
           prepared = this.options.store.setWorktree(prepared.id, intent, this.now());
@@ -131,7 +131,7 @@ export class AutomationDispatcher {
         });
         if (workspace.worktree && !prepared.worktree) prepared = this.options.store.setWorktree(prepared.id, workspace.worktree, this.now());
         const executionContext = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: workspace.cwd }), {
-          capability: 'full-access', mutation: false,
+          capability: 'full-access',
           isolation: workspace.worktree ? 'macos-write-sandbox' : 'unsandboxed',
           writablePaths: workspace.worktree ? [workspace.cwd] : [],
         });

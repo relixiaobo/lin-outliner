@@ -10,12 +10,12 @@ export function supervisedNativeProcess(root: string) {
   return async (input: Parameters<ReturnType<typeof nativeAgentProcessExecutor>>[0]) => {
     const database = new Database(':memory:');
     const service = new ToolTaskService(new ToolTaskStore(database as unknown as SqliteDatabase), join(root, 'tasks'));
-    service.bindHost({ ownerExists: () => true, canInheritClaim: () => true,
+    service.bindHost({ ownerExists: () => true, canInheritExecution: () => true,
       readDeliveryAdmission: async () => null, startCompletionTurn: async () => false, taskChanged: () => undefined });
     await service.initialize();
     const signal = new AbortController().signal;
     const executionContext = pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: root }), {
-      capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [],
+      capability: 'full-access', isolation: 'unsandboxed', writablePaths: [],
     });
     let owner: Parameters<typeof nativeAgentProcessExecutor>[1];
     try {

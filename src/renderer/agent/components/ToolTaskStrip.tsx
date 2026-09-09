@@ -118,7 +118,7 @@ export function ToolTaskStrip({
                   />
                 ) : null}
                 {detail?.task.taskId === task.taskId ? (
-                  <TaskDetail detail={detail} onRequestClear={() => setConfirmingClear(true)} clearResult={clearResult} />
+                  <TaskDetail detail={detail} isolation={task.isolation} onRequestClear={() => setConfirmingClear(true)} clearResult={clearResult} />
                 ) : null}
               </div>
             );
@@ -144,10 +144,12 @@ export function ToolTaskStrip({
 
 function TaskDetail({
   detail,
+  isolation,
   onRequestClear,
   clearResult,
 }: {
   readonly detail: ToolTaskReadResponse;
+  readonly isolation: ToolTaskProjection['isolation'];
   readonly onRequestClear: () => void;
   readonly clearResult: string | null;
 }) {
@@ -160,6 +162,18 @@ function TaskDetail({
         <dd>{detail.task.executionContext.address.cwd}</dd>
         <dt>{t.agent.thread.tasks.executionPolicy}</dt>
         <dd>{detail.task.executionContext.policy.capability} / {detail.task.executionContext.policy.isolation}</dd>
+        <dt>{t.agent.thread.tasks.actualIsolation}</dt>
+        <dd>{t.agent.thread.tasks.isolationStates[isolation.state ?? 'pending']}</dd>
+        <dt>{t.agent.thread.tasks.network}</dt>
+        <dd>{t.agent.thread.tasks.unrestrictedNetwork}</dd>
+        {isolation.writablePaths.length > 0 ? <>
+          <dt>{t.agent.thread.tasks.writeRoots}</dt>
+          <dd>{isolation.writablePaths.join(', ')}</dd>
+        </> : null}
+        {isolation.reason ? <>
+          <dt>{t.agent.thread.tasks.isolationDetail}</dt>
+          <dd>{isolation.reason}</dd>
+        </> : null}
       </dl>
       {output ? <pre className="thread-tool-task-output">{output}</pre> : null}
       {detail.task.artifacts.length > 0 ? (
