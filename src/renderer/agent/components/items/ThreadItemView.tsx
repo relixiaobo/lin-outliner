@@ -1647,7 +1647,6 @@ function dynamicToolActivityKind(item: Extract<ThreadToolItem, { type: 'dynamicT
   switch (identity) {
     case 'file_write': return 'fileWrite';
     case 'file_edit': return 'fileEdit';
-    case 'file_delete': return 'fileDelete';
     case 'file_read': return 'fileRead';
     case 'file_glob':
     case 'file_grep': return 'fileSearch';

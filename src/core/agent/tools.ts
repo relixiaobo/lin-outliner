@@ -115,7 +115,6 @@ export const RETAINED_CAPABILITY_TOOL_NAMES = [
   'file_grep',
   'file_edit',
   'file_write',
-  'file_delete',
   'bash',
   'web_search',
   'web_fetch',
@@ -490,10 +489,6 @@ const retainedCapabilityOutputSchemas: Readonly<Record<typeof RETAINED_CAPABILIT
   }),
   file_edit: localFileMutationOutputSchema,
   file_write: localFileMutationOutputSchema,
-  file_delete: objectSchema({
-    trashPath: stringSchema(),
-    kind: stringSchema(),
-  }, ['trashPath', 'kind']),
   bash: objectSchema({
     stdout: outputStringSchema(),
     stderr: outputStringSchema(),
@@ -1098,7 +1093,6 @@ const CAPABILITY_ACTION_KINDS = {
   file_grep: ['file.read.local_path', 'file.read.sensitive_local_path'],
   file_edit: ['file.edit.local_path', 'file.write.sensitive_local_path'],
   file_write: ['file.write.local_path', 'file.write.sensitive_local_path'],
-  file_delete: ['file.delete.local_path', 'file.write.sensitive_local_path'],
   bash: [
     'shell.read_search',
     'file.read.sensitive_local_path',

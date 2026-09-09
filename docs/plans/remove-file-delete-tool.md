@@ -57,6 +57,6 @@ behavior change is that shell deletion has no automatic Agent trash recovery;
 Git or a user-selected backup command supplies recovery where needed. Removing
 the tool must not weaken shell authorization or isolation.
 
-## Open Questions
+## Open questions
 
 None. The PM selected removal and the existing Bash workflow explicitly.

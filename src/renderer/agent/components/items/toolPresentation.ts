@@ -27,7 +27,6 @@ const UNKNOWN: ToolPresentation = { operation: 'unknown', Icon: GenericToolIcon 
 const DYNAMIC_OPERATIONS: Readonly<Record<string, ToolPresentation>> = {
   file_write: { operation: 'fileWrite', Icon: FileWriteToolIcon },
   file_edit: { operation: 'fileEdit', Icon: FileEditToolIcon },
-  file_delete: { operation: 'fileDelete', Icon: FileDeleteToolIcon },
   file_read: { operation: 'fileRead', Icon: FileReadToolIcon },
   file_glob: { operation: 'filePathSearch', Icon: FileGlobToolIcon },
   file_grep: { operation: 'fileContentSearch', Icon: FileGrepToolIcon },
