@@ -73,14 +73,17 @@ Its popover offers Project search/selection, creation, no Project, and the curre
 work-folder setting. Full paths are inspectable. Related folder lists belong in
 Project editing/context details, not an always-expanded composer configuration
 form. An unbound chat can show a quiet Choose project entry without a missing-state
-warning.
+warning. The composer uses the same saved-folder versus application-default
+distinction as history in FR-4.
 
 **FR-1:** A new conversation can remain unbound. Its folder control offers the
-native directory picker and can show the existing application default used for
-unbound execution. Selecting an existing directory validates and saves its
-canonical path, then displays its basename with the full path available. The
-person can change or clear it through the same control. Ordinary chat remains
-usable if a chosen folder later disappears; the control shows the unavailable
+native directory picker and shows the application default in location details
+when no work folder is saved. Selecting an existing directory validates and saves
+its canonical path, then displays its basename with the full path available. The
+person can change or clear it through the same control. Clearing it selects the
+application default under BR-1, even while Project membership remains; it does
+not adopt the Project primary folder. Ordinary chat remains usable if a chosen
+folder later disappears; the control shows the unavailable
 path and offers selection of a replacement or clearing the setting.
 
 **FR-2:** An explicit request such as "Use this folder for this conversation"
@@ -107,16 +110,27 @@ can follow the existing lineage rule without propagating a root folder change
 into a descendant's independently owned directory or isolation context.
 
 **FR-4:** Each history row identifies its Project and work location alongside
-the existing title, activity, and time. Use Project name as the default secondary
-label; append the work-folder basename when it differs from the Project primary
-folder. A folder-only conversation shows that folder. A tooltip/accessibility
-label exposes the complete accepted path; colliding basenames receive parent-path
+the existing title, activity, and time. With a saved work folder, use Project name
+as the secondary label and append the folder basename when it differs from the
+Project primary folder. A folder-only conversation shows that folder. A tooltip
+and accessible label expose the complete accepted path; colliding basenames receive parent-path
 context. An unavailable selected folder retains its identity and an unavailable
 indication. A chat with neither selection needs no missing-Project warning.
 Preserve existing ordering, grouping, and management entry points. Preserve
 system-source and startup-availability information. Unknown Project membership
 does not become a false No Project claim, and the last tool cwd never replaces
 the saved conversation location in a row.
+
+A Project-associated conversation with no saved work folder displays
+`<Project name> · Application default` in both composer and history. This includes
+clearing a folder while retaining membership, assigning a Project without adopting
+its primary folder, and creating a chat in a Project with no primary folder.
+The label remains explicit even if the current application default happens to
+equal the Project primary path: the saved setting is still different. Location
+details expose the current Host-resolved application-default path. If that path
+cannot be resolved, show its location as unavailable; do not infer the Project
+primary or a previously used task cwd. This presentation does not save the
+application-default path as a conversation setting.
 
 **FR-5:** Project creation/editing presents a name and Source folders with native
 Add folder, Remove, and Make primary controls. The first folder supplies an
@@ -284,6 +298,16 @@ durable work-folder selection.
   cancellation, native proposal revision conflicts, UI refresh, dependency rules,
   ambiguous/partial create outcomes, and atomic combined membership/folder edits.
   Covers FR-6 and the combined operation in FR-3.
+- **AC-11:** With Project P primary A and a chat using A, clear the chat's work
+  folder while retaining P. Composer and history show `P · Application default`,
+  location details expose Host default H, and the next unqualified operation uses
+  H. Restart retains the unset setting and its explicit label. Covers FR-1/4 and
+  BR-1.
+- **AC-12:** Assign an existing chat with no saved work folder to P through a
+  membership-only change. It remains unset and shows the same application-default
+  identity and resolved path as AC-11, including when H equals P's primary path.
+  Unavailable default-path resolution shows unavailable location details and never
+  substitutes P's primary or the last task cwd. Covers FR-3/4 and BR-1.
 
 Run typecheck, relevant owner/integration tests, real CLI discovery, focused
 Electron interaction and restart checks, docs checks, and light/dark verification
