@@ -1171,6 +1171,26 @@ describe('ThreadService', () => {
     }
   });
 
+  test('an unavailable Agent admission owner blocks new Turns without writing history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-admission-'));
+    roots.push(root);
+    const executor = new ControlledExecutor();
+    let available = false;
+    const opened = await openFixture(root, executor, Date.now, undefined, { canStartTurn: () => available });
+    await opened.service.initialize();
+    const { thread } = await opened.service.startThread({ source: 'app', threadSource: 'user', modelProvider: 'openai' });
+    await expect(opened.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Blocked' }] }))
+      .rejects.toThrow('Agent execution is unavailable');
+    expect(opened.service.listTurns({ threadId: thread.id }).data).toEqual([]);
+    available = true;
+    await opened.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Admitted' }] });
+    await executor.waitUntilWaiting();
+    executor.finish();
+    await opened.service.waitForIdle(thread.id);
+    expect(opened.service.listTurns({ threadId: thread.id }).data).toHaveLength(1);
+    await opened.service.close();
+  });
+
   test('quarantines authorless persisted history under the strict schema, and starts anyway', async () => {
     // A missing required author is malformed new-store data. Startup must cost
     // that one Thread, not the launch, including on extension fan-out that reads
@@ -1248,6 +1268,8 @@ describe('ThreadService', () => {
     });
     await reopened.service.initialize();
 
+    expect(reopened.service.startupIssues()).toMatchObject([{ threadId: unreadableId, retryable: false, actions: ['copy-details'] }]);
+    expect(reopened.service.startupThreadAvailability()).toEqual([{ threadId: unreadableId, sourceThreadId: unreadableId }]);
     expect(reopened.service.readThread({ threadId: readableId }).thread.name).toBe('Readable');
     expect(reopened.service.persistentRootThreads().map((thread) => thread.id)).toEqual([readableId]);
     expect(() => reopened.service.readThread({ threadId: unreadableId, includeTurns: true }))
@@ -7433,6 +7455,7 @@ async function createFixture(
     | 'normalizeOutputImage'
     | 'defaultExecutionDirectory'
     | 'beforeInitialTurnAdmission'
+    | 'canStartTurn'
     | 'reportError'
     | 'delegationCoordinator'
   > = {},
@@ -7470,6 +7493,7 @@ async function openFixture(
     | 'normalizeOutputImage'
     | 'defaultExecutionDirectory'
     | 'beforeInitialTurnAdmission'
+    | 'canStartTurn'
     | 'reportError'
     | 'delegationCoordinator'
   > = {},

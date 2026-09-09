@@ -13,7 +13,7 @@ import type {
   ThreadItemId,
 } from '../../../core/agent/protocol';
 import { decodeCursor, encodeCursor, pageLimit } from './cursor';
-import { openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
+import { closeSqliteAfterFailure, openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
 import { ProjectCatalogStore } from './ProjectCatalogStore';
 
 export interface ThreadCatalogRecord {
@@ -73,8 +73,9 @@ export class ThreadMetadataStore {
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = database ?? openSqlite(path);
-    this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
-    this.db.exec(`
+    try {
+      this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+      this.db.exec(`
       CREATE TABLE IF NOT EXISTS threads (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -115,7 +116,11 @@ export class ThreadMetadataStore {
         PRIMARY KEY(thread_id, client_id)
       ) STRICT;
     `);
-    this.projects = new ProjectCatalogStore(this.db);
+      this.projects = new ProjectCatalogStore(this.db);
+    } catch (error) {
+      if (!database) closeSqliteAfterFailure(this.db, error);
+      throw error;
+    }
   }
 
   close(): void {

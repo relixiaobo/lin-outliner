@@ -772,9 +772,19 @@ cannot enumerate, so running it against the filtered list would permanently disc
 Thread's extraction state and make a session-scoped quarantine durable. The filter and
 the `hasHiddenRootThreads()` signal that guards it evaluate the same predicate rather
 than two sets that could disagree. It is reported once as a `thread-history-unreadable`
-persistence diagnostic naming the Thread — the only trace, since nothing durable records
-it, so it is never emitted for a Thread that merely inherited quarantine from an
-ancestor's subtree and was refused on availability rather than on decoding.
+persistence diagnostic naming the Thread and a session-only startup issue; no durable
+quarantine flag is written. A source failure is never reported for a Thread that
+merely inherited quarantine from an ancestor's subtree and was refused on availability rather than on decoding.
+
+`ThreadService.startupIssues()` retains bounded, scrubbed evidence independently
+of diagnostics writes. `startupThreadAvailability()` projects trusted catalog
+lineage into failed-source and affected-descendant identities. The desktop exposes
+these through startup state, separately from canonical Thread status. Catalog
+identity/lineage failure makes Agent unavailable instead of inventing an entity
+scope. A quarantined Thread stays nameable and its Project metadata is retained;
+its bytes are not deleted or rewritten as a repair. Quarantine has no global Retry
+action: the healthy Agent owner is already ready, and a subsequent launch reprobes
+source readability after any external repair.
 
 Threads already held back by delegated-Agent admission recovery are still probed, so a
 Thread whose history also fails to decode answers the contracted refusal rather than

@@ -14,6 +14,7 @@ export interface MemoryPipelineSourceHost {
 }
 
 export interface MemoryPipelineOptions {
+  readonly canRun?: () => boolean;
   readonly now?: () => number;
   readonly maxThreadAgeMs?: number;
   readonly minThreadIdleMs?: number;
@@ -121,7 +122,7 @@ export class MemoryPipeline {
   }
 
   private wake(): void {
-    if (this.stopped || this.running) return;
+    if (this.stopped || this.running || this.options.canRun?.() === false) return;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.running = this.drain().finally(() => {
@@ -131,7 +132,7 @@ export class MemoryPipeline {
   }
 
   private async drain(): Promise<void> {
-    while (!this.stopped) {
+    while (!this.stopped && this.options.canRun?.() !== false) {
       const job = this.control.nextJob(this.now(), this.suspended);
       if (!job) return;
       try {
@@ -208,6 +209,7 @@ export class MemoryPipeline {
   }
 
   private scheduleNextWake(): void {
+    if (this.options.canRun?.() === false) return;
     if (this.stopped || this.running || this.retryTimer) return;
     const availableAt = this.control.nextJobAvailableAt(this.suspended);
     if (availableAt === null) return;

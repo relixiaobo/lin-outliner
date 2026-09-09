@@ -20,7 +20,7 @@ import {
   type AutomationUpdateInput,
   type AutomationWorktreeMetadata,
 } from '../../../core/agent/automation';
-import { openSqlite, type SqliteDatabase } from '../persistence/sqlite';
+import { closeSqliteAfterFailure, openSqlite, type SqliteDatabase } from '../persistence/sqlite';
 import { AgentToolFailure } from '../AgentToolFailure';
 import { uuidV7 } from '../uuid';
 import { nextAutomationOccurrence } from './AutomationSchedule';
@@ -105,8 +105,9 @@ export class AutomationStore {
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = database ?? openSqlite(path);
-    this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
-    this.db.exec(`
+    try {
+      this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+      this.db.exec(`
       CREATE TABLE IF NOT EXISTS automations (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -165,6 +166,10 @@ export class AutomationStore {
       CREATE INDEX IF NOT EXISTS automation_runs_automation_idx
         ON automation_runs(automation_id, scheduled_for DESC);
     `);
+    } catch (error) {
+      if (!database) closeSqliteAfterFailure(this.db, error);
+      throw error;
+    }
   }
 
   close(): void {

@@ -8,7 +8,7 @@ import { DATA_CHANGED_CHANNEL, PREVIEW_ACTION_CHANNEL, PREVIEW_ACTION_ACK_CHANNE
 import { SKILL_LIBRARY_CHANGED_CHANNEL, SKILL_REVIEW_DECIDE_CHANNEL, SKILL_REVIEW_GET_CHANNEL, SKILL_REVIEW_PRELOAD_ARG } from '../core/agent/skillOperations';
 import {
   STARTUP_GET_CHANNEL, STARTUP_QUIT_CHANNEL, STARTUP_RETRY_CHANNEL, STARTUP_STATE_CHANNEL,
-  type StartupState,
+  STARTUP_ISSUE_ACTION_CHANNEL, type StartupIssueAction, type StartupState,
 } from '../core/startup';
 import { buildLauncherPreloadApi } from './launcher';
 import { LAUNCHER_PRELOAD_ROLE_ARG } from '../core/launcher/commands';
@@ -333,6 +333,9 @@ const api = {
     return () => { ipcRenderer.removeListener(SKILL_LIBRARY_CHANGED_CHANNEL, handler); };
   },
   startup: {
+    issueAction: (startupIssueId: string, action: StartupIssueAction) => ipcRenderer.invoke(
+      STARTUP_ISSUE_ACTION_CHANNEL, { startupIssueId, action },
+    ) as Promise<void>,
     get: () => ipcRenderer.invoke(STARTUP_GET_CHANNEL) as Promise<StartupState>,
     retry: () => ipcRenderer.invoke(STARTUP_RETRY_CHANNEL) as Promise<StartupState>,
     quit: () => ipcRenderer.invoke(STARTUP_QUIT_CHANNEL) as Promise<void>,

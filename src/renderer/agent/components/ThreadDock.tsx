@@ -46,6 +46,8 @@ const ProjectDialog = lazy(async () => ({ default: (await import('../projects/Pr
 export type ThreadRailState = 'collapsed' | 'open';
 
 interface ThreadDockProps {
+  readonly startupThreads?: readonly import('../../../core/startup').StartupThreadAvailability[];
+  readonly onOpenStartupIssues?: () => void;
   readonly getUserView: () => RendererUserViewHints;
   readonly indexStore: DocumentIndexStore;
   readonly railState: ThreadRailState;
@@ -58,6 +60,7 @@ interface ThreadDockProps {
 }
 
 export const ThreadDock = memo(function ThreadDock({
+  startupThreads = [], onOpenStartupIssues,
   getUserView,
   indexStore,
   railState,
@@ -100,6 +103,7 @@ export const ThreadDock = memo(function ThreadDock({
   const slashCommandsRequestRef = useRef(0);
   const openRef = useRef(open);
   const thread = snapshot.threads.find((candidate) => candidate.id === snapshot.selectedThreadId) ?? null;
+  const unavailable = startupThreads.some((entry) => entry.threadId === thread?.id);
   const threadsById = useMemo(
     () => new Map(snapshot.threads.map((candidate) => [candidate.id, candidate])),
     [snapshot.threads],
@@ -437,7 +441,11 @@ export const ThreadDock = memo(function ThreadDock({
             </button>
           </div>
         ) : null}
-        {surface === 'thread' && thread ? (
+        {surface === 'thread' && unavailable ? <div className="thread-dock-error" role="alert">
+          <span>{t.startup.quarantined}</span>
+          <Button onClick={onOpenStartupIssues}>{t.startup.issues}</Button>
+        </div> : null}
+        {surface === 'thread' && thread && !unavailable ? (
           <div className="thread-dock-body">
             <div className="thread-dock-conversation">
             <ThreadView
@@ -507,6 +515,7 @@ export const ThreadDock = memo(function ThreadDock({
         ) : null}
         {surface === 'thread' && listOpen ? (
           <ThreadList
+            startupThreads={startupThreads}
             projects={projects.view.projects}
             memberships={projects.view.memberships}
             onManageProjects={() => { setListOpen(false); setProjectTarget('catalog'); }}
@@ -528,6 +537,7 @@ export const ThreadDock = memo(function ThreadDock({
             }}
             readRecorded={(target) => threadStore.readThreadRecorded(target.id)}
             onSelect={(threadId) => {
+              if (startupThreads.some((entry) => entry.threadId === threadId)) { setListOpen(false); onOpenStartupIssues?.(); return; }
               void runAction(() => threadStore.selectThread(threadId));
               setListOpen(false);
             }}

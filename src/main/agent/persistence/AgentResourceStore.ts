@@ -7,7 +7,7 @@ import { MAX_THREAD_MANAGED_ATTACHMENT_BYTES } from '../../../core/agentAttachme
 import { safeAttachmentFileName } from '../../../core/agentAttachmentPaths';
 import type { ThreadId, ThreadResourceReference } from '../../../core/agent/protocol';
 import { isPathInside } from '../capabilities/agentAttachmentMaterialization';
-import { openSqlite, type SqliteDatabase } from './sqlite';
+import { closeSqliteAfterFailure, openSqlite, type SqliteDatabase } from './sqlite';
 
 const AGENT_CONTENT_NAMESPACE = 'agent';
 const RESOURCE_ID_PATTERN = /^resource:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -124,8 +124,9 @@ export class AgentResourceStore {
     database?: SqliteDatabase,
   ) {
     this.database = database ?? openSqlite(databasePath);
-    this.database.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
-    this.database.exec(`
+    try {
+      this.database.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+      this.database.exec(`
       CREATE TABLE IF NOT EXISTS resource_references (
         reference_id TEXT PRIMARY KEY,
         display_name TEXT NOT NULL,
@@ -163,7 +164,13 @@ export class AgentResourceStore {
         PRIMARY KEY (thread_id, item_id, marker_ordinal)
       );
     `);
-    this.content = ContentStore.open(contentRoot);
+      this.content = ContentStore.open(contentRoot);
+      // Construction starts this asynchronous owner before initialize can observe it.
+      void this.content.catch(() => undefined);
+    } catch (error) {
+      if (!database) closeSqliteAfterFailure(this.database, error);
+      throw error;
+    }
   }
 
   async initialize(
@@ -642,10 +649,15 @@ export class AgentResourceStore {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    await this.abortAllUploads();
+    const failures: unknown[] = [];
+    try { await this.abortAllUploads(); } catch (error) { failures.push(error); }
     await this.mutationTail.catch(() => undefined);
-    (await this.content).close();
-    this.database.close();
+    // A rejected open owns no ContentStore. Cleanup of other owners still runs.
+    const content = await this.content.catch(() => null);
+    for (const close of [() => content?.close(), () => this.database.close()]) {
+      try { close(); } catch (error) { failures.push(error); }
+    }
+    if (failures.length) throw new AggregateError(failures, 'Agent resources failed to close cleanly');
   }
 
   private async commitAdmission(

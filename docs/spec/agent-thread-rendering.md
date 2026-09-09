@@ -1,5 +1,26 @@
 # Agent Thread Rendering
 
+## Startup availability
+
+The dock mounts its Thread store only after the Agent owner is ready. During
+Agent startup/failure, its replacement pane shows loading or the owner issue while
+healthy Outline remains mounted with its selection and edits intact. Continue
+returns to healthy features; the window-chrome issue action remains discoverable.
+A healthy dock stays mounted and subscribed while an issue is visible; its
+existing collapsed/inert state hides it without discarding composer drafts or
+missing notifications. Multiple issues are individually selectable. Copy details uses native clipboard
+and owner-resolved source inspection uses the existing configuration action.
+These actions do not depend on Agent, Outline, or writable diagnostics.
+
+History quarantine is session-only availability, separate from persisted Thread
+execution status. The conversation chooser marks an unreadable root and opens
+its issue instead of attempting a history read. The issue identifies the failed
+source and affected descendants without suggesting their own histories are corrupt.
+Healthy conversations remain usable. No Retry is offered for an entity whose
+Agent owner is already ready; no action silently resets data. Quitting retains
+the ordinary document-save arbitration. Startup event revisions prevent older
+get/retry results from replacing newer owner observations.
+
 ## Model selection
 
 New root Threads resolve model selection through the main-owned precedence

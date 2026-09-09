@@ -1789,6 +1789,12 @@ function cloneReplayEntry(entry: WorkspacePersistenceReplayEntry): WorkspacePers
 }
 
 function assertSnapshotEnvelope(value: unknown): asserts value is SnapshotEnvelope {
+  if (isRecord(value) && value.kind === SNAPSHOT_KIND && Number.isSafeInteger(value.storageVersion)
+    && value.storageVersion !== OUTLINE_STORAGE_VERSION) {
+    throw Object.assign(new Error('The Outline snapshot uses a different storage version.'), {
+      code: 'STARTUP_VERSION_MISMATCH', found: value.storageVersion, expected: OUTLINE_STORAGE_VERSION,
+    });
+  }
   if (!isRecord(value)
     || value.kind !== SNAPSHOT_KIND
     || value.storageVersion !== OUTLINE_STORAGE_VERSION
@@ -1803,10 +1809,12 @@ function assertSnapshotEnvelope(value: unknown): asserts value is SnapshotEnvelo
     || !Array.isArray(value.assetLeases)
     || !isStringArray(value.liveAssetRecordIds)
     || typeof value.checksum !== 'string') {
-    throw new Error('Invalid outline workspace snapshot');
+    throw Object.assign(new Error('Invalid outline workspace snapshot'), { code: 'STARTUP_INVALID_DATA' });
   }
   const { checksum, ...body } = value;
-  if (checksum !== canonicalSha256(body)) throw new Error('Outline workspace snapshot checksum mismatch');
+  if (checksum !== canonicalSha256(body)) {
+    throw Object.assign(new Error('Outline workspace snapshot checksum mismatch'), { code: 'STARTUP_INVALID_DATA' });
+  }
   Core.deserializeState(JSON.stringify(value.document));
   if (!value.operations.every((operation) => Value.Check(OperationSchema, operation))
     || !value.events.every((event) => Value.Check(EventSchema, event))

@@ -1,3 +1,6 @@
+import type { StartupIssue, StartupThreadAvailability } from '../../core/startup';
+import { startupIssue } from '../startupIssue';
+import { ResourceScope } from '../resourceScope';
 import type { Stats } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -229,6 +232,7 @@ export interface ThreadServiceOptions {
   readonly reportError?: (report: ErrorReport) => void | Promise<void>;
   readonly normalizeOutputImage?: OutputImageObservationNormalizer;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
+  readonly canStartTurn?: () => boolean;
   readonly toolTaskSupervisorRuntime?: ToolTaskSupervisorRuntime;
   readonly toolTaskDetailRoot?: string;
   readonly delegationCoordinator?: () => DelegationCoordinator | null;
@@ -338,6 +342,21 @@ export class ThreadService implements ThreadServiceExtensionHost {
    * "could not be read" would be a lie.
    */
   private readonly unreadableThreadIds = new Set<ThreadId>();
+  private readonly unreadableIssues = new Map<ThreadId, StartupIssue>();
+
+  startupIssues(): readonly StartupIssue[] { return [...this.unreadableIssues.values()]; }
+
+  startupThreadAvailability(): readonly StartupThreadAvailability[] {
+    const sources = new Map<ThreadId, ThreadId>();
+    for (const source of this.unreadableThreadIds) {
+      if (this.core.metadata.read(source)) {
+        for (const edge of this.core.metadata.childEdges(source, true)) sources.set(edge.childThreadId, source);
+      }
+    }
+    // A child with its own unreadable history remains a source, not just a dependent.
+    for (const source of this.unreadableThreadIds) sources.set(source, source);
+    return [...sources].map(([threadId, sourceThreadId]) => ({ threadId, sourceThreadId }));
+  }
   private readonly resourceOps: ThreadResourceOps;
   private readonly historyReferences: ThreadHistoryReferenceService;
   private readonly catalogOps: ThreadCatalogOps;
@@ -465,6 +484,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
       (message, rendererSubmissionRetryable) => new ThreadBusyError(message, rendererSubmissionRetryable),
       (error) => error instanceof ThreadBusyError,
       this.toolTasks,
+      () => {
+        if (this.closing) throw new ThreadBusyError('Agent service is shutting down');
+        return options.canStartTurn?.() !== false;
+      },
     );
     this.trajectory = new ThreadTrajectoryProjection(
       this.core,
@@ -661,34 +684,45 @@ export class ThreadService implements ThreadServiceExtensionHost {
     });
   }
 
-  static open(
+  static async open(
     userDataPath: string,
     executor: TurnExecutor,
     options: Omit<ThreadServiceOptions, 'stores' | 'executor' | 'transcriptRoot'>,
-  ): ThreadService {
-    const paths = agentCorePaths(userDataPath);
-    const metadata = new ThreadMetadataStore(paths.state);
-    const goalsDatabase = openSqlite(paths.goals);
-    return new ThreadService({
-      executor,
-      ...options,
-      transcriptRoot: paths.transcripts,
-      stores: {
-        metadata,
-        history: new ThreadHistoryProjectionStore(paths.history),
-        rollout: new RolloutStore(paths.rollouts),
-        goals: new GoalStore(paths.goals, goalsDatabase),
-        toolTasks: new ToolTaskStore(goalsDatabase),
-        payloads: new ToolPayloadStore(paths.payloads),
-        resources: new AgentResourceStore(
-          paths.resourceReferences,
-          join(userDataPath, 'content'),
-          options.attachmentScratchRoot,
-          options.now ?? Date.now,
-        ),
-      },
-      toolTaskDetailRoot: paths.toolTasks,
-    });
+  ): Promise<ThreadService> {
+    const acquisition = new ResourceScope('thread-service-construction');
+    try {
+      const paths = agentCorePaths(userDataPath);
+      const metadata = new ThreadMetadataStore(paths.state);
+      acquisition.defer('metadata', () => metadata.close());
+      const goalsDatabase = openSqlite(paths.goals);
+      acquisition.defer('goals-and-tasks', () => goalsDatabase.close());
+      const history = new ThreadHistoryProjectionStore(paths.history);
+      acquisition.defer('history', () => history.close());
+      const goals = new GoalStore(paths.goals, goalsDatabase);
+      const toolTasks = new ToolTaskStore(goalsDatabase);
+      const resources = new AgentResourceStore(
+        paths.resourceReferences, join(userDataPath, 'content'),
+        options.attachmentScratchRoot, options.now ?? Date.now,
+      );
+      acquisition.defer('resources', () => resources.close());
+      return new ThreadService({
+        executor,
+        ...options,
+        transcriptRoot: paths.transcripts,
+        stores: {
+          metadata,
+          history,
+          rollout: new RolloutStore(paths.rollouts),
+          goals,
+          toolTasks,
+          payloads: new ToolPayloadStore(paths.payloads),
+          resources,
+        },
+        toolTaskDetailRoot: paths.toolTasks,
+      });
+    } catch (error) {
+      return acquisition.fail(error);
+    }
   }
   async initialize(): Promise<void> {
     if (this.initialized) return;
@@ -840,6 +874,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     operation: 'read' | 'resume',
     error: unknown,
   ): Promise<void> {
+    const issue = startupIssue('agent', error);
+    this.unreadableIssues.set(threadId, {
+      ...issue, details: `Thread: ${threadId}\n${issue.details}`.slice(0, 8_000), id: `thread:${threadId}`, operation: `thread-${operation}`,
+      threadId, retryable: false,
+    });
     try {
       await this.reportError({
         domain: 'persistence',
@@ -888,7 +927,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async close(drainTimeoutMs = THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS): Promise<void> {
     this.closing = true;
-    await this.toolTasks.close(drainTimeoutMs);
+    const failures: unknown[] = [];
+    try {
+      await this.toolTasks.close(drainTimeoutMs);
+    } catch (error) {
+      failures.push(error);
+    }
     const drainDeadline = Date.now() + Math.max(0, drainTimeoutMs);
     const pendingNames = this.catalogOps.pendingNameShutdownHandles();
     for (const pending of pendingNames) pending.abort();
@@ -918,21 +962,31 @@ export class ThreadService implements ThreadServiceExtensionHost {
       for (const turn of this.activeTurns.values()) turn.controller.abort();
       console.warn(`[agent] Thread shutdown timed out with ${this.activeTurns.size} active Turn(s)`);
     }
-    if (!await this.transcripts.flushAll(drainDeadline)) {
-      console.warn('[agent] Thread shutdown timed out with transcript writes pending');
+    try {
+      if (!await this.transcripts.flushAll(drainDeadline)) {
+        console.warn('[agent] Thread shutdown timed out with transcript writes pending');
+      }
+    } catch (error) {
+      failures.push(error);
     }
-    await this.transcriptIndex.flush();
-    const failures: unknown[] = [];
+    try {
+      await this.transcriptIndex.flush();
+    } catch (error) {
+      failures.push(error);
+    }
     const operations = await Promise.allSettled([
       this.core.flush(),
       this.core.rollbackRecovery.close(),
       (async () => {
+        try {
         await this.core.resources.abortAllUploads();
         await Promise.all([...this.core.ephemeral.keys()].map(async (threadId) => {
           await this.core.payloads.deleteThread(threadId);
           await this.core.resources.deleteThread(threadId);
         }));
-        await this.core.resources.close();
+        } finally {
+          await this.core.resources.close();
+        }
       })(),
     ]);
     for (const result of operations) {

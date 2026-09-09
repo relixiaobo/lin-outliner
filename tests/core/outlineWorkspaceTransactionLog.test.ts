@@ -45,7 +45,7 @@ describe('WorkspaceTransactionLog', () => {
     }));
 
     await expect(new WorkspaceTransactionLog(root).load())
-      .rejects.toThrow('Invalid outline workspace snapshot');
+      .rejects.toMatchObject({ code: 'STARTUP_VERSION_MISMATCH', found: 2, expected: OUTLINE_STORAGE_VERSION });
   });
 
   test('atomically replays document update Operation idempotency Event and recovery after restart', async () => {

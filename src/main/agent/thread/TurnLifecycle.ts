@@ -123,7 +123,11 @@ export class TurnLifecycle {
     private readonly createThreadBusyError: (message: string, rendererSubmissionRetryable?: boolean) => Error,
     private readonly isThreadBusyError: (error: unknown) => boolean,
     private readonly toolTasks?: import('../tasks/ToolTaskService').ToolTaskService,
+    private readonly canStartTurn: () => boolean = () => true,
   ) {}
+  private assertExecutionAvailable(): void {
+    if (!this.canStartTurn()) throw this.createThreadBusyError('Agent execution is unavailable');
+  }
   activeTurnsForInspection(): Map<ThreadId, ActiveTurn> { return this.activeTurns; } pendingUserInputsForInspection(): Map<ThreadId, PendingUserInput> { return this.pendingUserInputs; }
   activeTurnDiagnosticsForInspection(threadId: ThreadId, turnId: TurnId): TurnDiagnosticsPayload | null {
     const active = this.activeTurns.get(threadId);
@@ -257,7 +261,8 @@ export class TurnLifecycle {
       command: ContextCommand,
       admissionGuard?: () => void,
     ): Promise<TurnStartResponse> { return this.core.threadMutex.run(request.threadId, async () => {
-        admissionGuard?.();
+        this.assertExecutionAvailable();
+      admissionGuard?.();
         const record = this.core.requireThread(request.threadId);
         const existing = request.clientUserMessageId
           ? this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId)
@@ -373,6 +378,7 @@ export class TurnLifecycle {
             completedAt: null,
             durationMs: null,
           });
+          this.assertExecutionAvailable();
           admissionGuard?.();
           await this.core.recordNotification({ type: 'turn/started', threadId: request.threadId, turnId, turn: inProgress });
           const completedAt = this.now();
@@ -520,7 +526,8 @@ export class TurnLifecycle {
       deliveryFailureMode: 'fatal' | 'advisory' = 'fatal',
       admissionGuard?: () => void,
     ): Promise<TurnSteerResponse> { return this.core.threadMutex.run(request.threadId, async () => {
-        admissionGuard?.();
+        this.assertExecutionAvailable();
+      admissionGuard?.();
         const existing = request.clientUserMessageId
           ? this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId)
           : null;
@@ -599,6 +606,7 @@ export class TurnLifecycle {
             acceptedAt,
           );
           admittedItems = [...evidence.items, item];
+          this.assertExecutionAvailable();
           admissionGuard?.();
           await active.recorder.completedImmediatelyBatch(admittedItems, acceptedAt);
         } catch (error) {
@@ -752,6 +760,7 @@ export class TurnLifecycle {
       onlyIfIdle: boolean,
       admissionGuard?: () => void,
     ): Promise<AcceptedTurn> {
+      this.assertExecutionAvailable();
       admissionGuard?.();
       const record = this.core.requireThread(request.threadId);
       if (request.rerunReplacementTarget) {
@@ -1019,7 +1028,8 @@ export class TurnLifecycle {
         ...(request.toolTaskAdmission ? { toolTaskAdmission: request.toolTaskAdmission } : {}),
       } as const;
       try {
-        admissionGuard?.();
+        this.assertExecutionAvailable();
+      admissionGuard?.();
         if (request.rerunReplacementTarget) {
           await this.catalog.replaceLatestTurnForRerunWithLocksHeld(
             request.threadId,

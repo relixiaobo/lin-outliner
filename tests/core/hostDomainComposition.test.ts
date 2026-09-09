@@ -90,7 +90,7 @@ describe('Host domain composition', () => {
       );
     expect(mainSource).not.toMatch(concreteServicePattern);
     expect(desktopHostSource).not.toMatch(concreteServicePattern);
-    expect(desktopHostSource).toContain('agentHost.threads');
+    expect(desktopHostSource).toContain('requireAgentHost().threads');
     expect(desktopHostSource).toContain('outlineHost.document');
   });
 

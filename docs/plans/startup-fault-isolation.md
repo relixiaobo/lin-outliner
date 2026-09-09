@@ -74,6 +74,95 @@ exception and declaring Agent ready would bypass those obligations. Resource
 initialization already pauses reclamation when unreadable Threads make its
 reference snapshot incomplete; preserve that rule.
 
+### Construction, retry, and resource ownership
+
+Keep `createDesktopHost`'s pre-window composition limited to the native shell,
+transport registration, and lazy domain access. `main.ts` currently calls it
+before installing app lifecycle forwarding and before `app.whenReady()`; moving
+only `AgentHost.initialize` behind a catch cannot capture store construction.
+Register startup status/actions and paint the existing window before opening
+fallible Agent data. Keep native security and transport setup in their existing
+owners; this is not a new bootstrap coordinator.
+
+Treat `createAgentHost` and `ThreadService.open` as resource-acquisition
+boundaries. Register each successfully opened store/database and subscription
+with an attempt-owned `ResourceScope` immediately, including acquisitions before
+a later constructor throws. Shared handles such as the Goal/Tool Task database
+have one disposal owner. A constructor that fails after opening its own handle
+must close that handle before propagating the original failure. Cleanup failures
+are secondary evidence and cannot replace the original issue.
+
+Distinguish incomplete construction from incomplete initialization. A disposed
+construction attempt gets fresh resources and `assignOnce` bindings; a healthy
+completed service is retained through the existing lifecycle milestones.
+`createAgentHostLifecycle` must settle started branches and quiesce dependent
+producers after failure, including a delegation broker started before Thread
+initialization and a Memory worker started alongside failed Automations. A retry
+must not reuse disposed handles, duplicate subscriptions, or leave a producer
+running behind an unavailable Agent surface. Preserve Task/process settlement
+and recovery ownership; uncertain cleanup keeps dependent admission closed.
+
+Track every owner's readiness and issue as each DAG branch settles. Waiting for
+the aggregate `Promise.allSettled` remains necessary before retry/teardown, but
+must not delay reporting an independently ready Outline. Extend `StartupState`
+in `src/core/startup.ts` and its existing preload/client consumers together;
+derive capability availability from real owners, not from issue dismissal or
+the aggregate lifecycle phase. Keep issue details in bounded Host memory so
+Copy details works when diagnostics persistence is unavailable.
+
+### Entry-route and renderer boundaries
+
+Audit direct owner access as well as IPC. In particular, document projection
+delivery, configuration watchers, notification subscriptions, native menus and
+timers currently close over the eagerly constructed `agentHost`. Resolve their
+dependencies at execution time and register subscriptions only for the active
+owner. Initialize a retried Memory index from the current Outline projection
+before restarting its worker; missed notifications are not permission to use a
+stale index or replay a document mutation.
+
+| Entry route | Availability contract |
+| --- | --- |
+| Startup status, issue details, Copy details, Retry and Quit | Available from the native shell without Agent, Outline, or writable diagnostics. Retry and Quit use the existing lifecycle owner. |
+| Outline edits, assets and projection delivery | Follow Outline/shared-content readiness. An Agent failure does not unmount a healthy document or interrupt its durability arbitration. |
+| Agent Core, launcher conversations, attachment upload/read, Goals and Project/Automation actions | Require their real Agent dependency boundary; a menu, preview callback, or direct upload handler cannot bypass it. Entity quarantine retains the narrower existing scope. |
+| Task recovery/delivery, delegation broker, Memory and Automation producers | Preserve owner settlement/cancellation truth while blocking new dependent work. An unavailable UI does not itself stop or adopt a process. |
+| Settings/configuration-source actions and independent preview operations | Use the final owning domain routes. Source inspection that does not require Agent execution stays available; never route it through retired model tools. |
+
+Update `App`, `useStartupState`, `StartupFailure`, and the Agent surface as one
+flow. Outline projection failure can replace the document surface; Agent-only
+failure or retry cannot. Preserve document selection, pane state and edits while
+showing an unavailable Agent area and discoverable issues. Reconcile retry
+responses with live startup events so an older IPC snapshot cannot erase a
+newer failure or readiness update. Quit cancellation and reversible quit failure
+restore the truthful pre-quit availability and permit another action.
+
+### Translation-cache read failures
+
+Separate filesystem reads from JSON/schema decoding in
+`PreviewTranslationCacheStore.ensureInitialized` and `loadShard`. Only known
+malformed content reaches the existing bounded rebuild/removal path. Missing
+files follow their existing absence semantics; permissions, I/O and unknown
+read failures preserve the index and shards, report unavailable observations,
+and cannot schedule an empty replacement write. Failed directory enumeration
+must not authorize orphan removal or manifest pruning in
+`reconcileShardDirectory`. Later successful reads may retry normally; explicit
+Clear remains a separate authorized operation.
+
+### Concrete issue and retry contract
+
+Use the existing startup IPC with a monotonic revision, Outline/Agent availability,
+owner issues, and transient Thread/source identities. Issue details are scrubbed
+and individually bounded; native Copy and fixed configuration-source actions use
+the current Host observation. Thread quarantine does not offer the Desktop Retry:
+its owner is healthy and a subsequent launch reprobes externally repaired sources.
+Keep the canonical Thread schema and persisted statuses unchanged.
+
+A fresh Agent owner replaces a failed attempt only after its subscriptions and
+stores have settled cleanup. Recheck new-work admission at commit, apply validated
+Memory opt-out before opening admission, and preserve recovery of accepted work.
+Observe child Runtime startup failure through a bounded private pipe with no
+ownership authority. Only the snapshot reader can claim a version mismatch.
+
 ### Requirements
 
 - **FR-1:** Catch fallible user-data opening, including constructors, behind
@@ -173,6 +262,15 @@ Use temporary stores and production constructors/readers. Preserve tests such as
 and `leaves an old index untouched and requires an explicit development-store reset`.
 Add real Electron constructor-failure and partial-availability cases, per-owner
 failure fixtures, concurrent Retry/Quit, and an entry-route admission matrix.
+
+Exercise failures after each successful store acquisition, before a host object
+has been returned, and after each producer starts. Verify original failure
+identity, handle/subscription cleanup, non-duplication on retry, and durable
+Outline edits during Agent unavailability. Cover a rejected retry request after
+a newer live state, cancellation of Quit from partial availability, and
+diagnostics-write failure while copying details. Cache fixtures must distinguish
+malformed bytes from injected filesystem read/enumeration errors and prove that
+the latter leave both persisted bytes and pending-write state unchanged.
 
 Run typecheck, relevant Core/renderer tests, focused Electron smoke, docs/diff
 checks, and light/dark/accessibility verification. Measure first paint with delayed

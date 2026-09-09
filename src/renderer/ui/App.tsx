@@ -18,6 +18,7 @@ import { buildRendererUserViewHints } from './agent/userViewContext';
 import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
 import { StartupFailure } from './StartupFailure';
+import { StartupAgentPane } from './StartupAgentPane';
 import { useStartupState } from './useStartupState';
 import { ActionNotice, nextActionNotice, type ActionNoticeState } from './ActionNotice';
 import {
@@ -77,6 +78,8 @@ const EMPTY_AGENT_USER_VIEW: RendererUserViewHints = {
 export function App() {
   const t = useT();
   const startup = useStartupState();
+  const [startupIssueOpen, setStartupIssueOpen] = useState(false);
+  const shownStartupIssue = useRef<string | null>(null);
   const { projectionAttempt, setProjectionFailure } = startup;
   const [ui, setUi] = useUiState();
   const { index, indexStore, applyProjectionUpdate } = useProjectionStore(readDesktopProjection, setUi, {
@@ -291,7 +294,15 @@ export function App() {
     if (nextOpen) prepareAgentOpen();
     agentOpenRef.current = nextOpen;
     setAgentOpen(nextOpen);
-  }, [prepareAgentOpen]);
+    if (nextOpen && startup.issue) setStartupIssueOpen(true);
+  }, [prepareAgentOpen, startup.issue]);
+  useEffect(() => {
+    if (!startup.issue || startup.state.capabilities.outline !== 'ready') return;
+    if (shownStartupIssue.current === startup.issue.id) return;
+    shownStartupIssue.current = startup.issue.id;
+    setStartupIssueOpen(true);
+    openAgentRail();
+  }, [openAgentRail, startup.issue, startup.state.capabilities.outline]);
   // Deep content rows can ask to surface the agent panel without prop-drilling
   // App-local rail state. Reveals are layout no-ops while the rail is already
   // open; only the collapsed -> open transition preflows rail width.
@@ -636,7 +647,7 @@ export function App() {
     '--agent-width': `${agentWidth}px`,
   } as CSSProperties;
 
-  if (!index || !indexStore || startup.failure || startup.retrying) {
+  if (!index || !indexStore || startup.workspaceFailure) {
     return (
       <div
         className={[
@@ -646,7 +657,7 @@ export function App() {
         ].filter(Boolean).join(' ')}
         style={appShellStyle}
       >
-        <WindowChrome
+        <WindowChrome startupIssueVisible={startup.state.issues.length > 0}
           agentOpen={agentOpen}
           sidebarOpen={sidebarOpen}
           onToggleAgent={toggleAgentRail}
@@ -656,6 +667,10 @@ export function App() {
           {startup.failure && (
             <StartupFailure
               failure={startup.failure}
+              issue={startup.issue}
+              issues={startup.state.issues}
+              threads={startup.state.threads}
+              actionError={startup.actionError}
               retrying={startup.retrying}
               onRetry={() => void startup.retry()}
               onQuit={startup.quit}
@@ -682,7 +697,7 @@ export function App() {
           traffic-light inset + the two symmetric fixed rail toggles. This is the
           ONLY -webkit-app-region:drag host now that TopBar is gone (rail tops and
           pane headers add further drag regions in CSS). */}
-      <WindowChrome
+      <WindowChrome startupIssueVisible={startup.state.issues.length > 0}
         agentOpen={agentOpen}
         sidebarOpen={sidebarOpen}
         onToggleAgent={toggleAgentRail}
@@ -739,17 +754,22 @@ export function App() {
           ui={ui}
         />
 
-        <ThreadDock
+        {startup.agentReady ? <ThreadDock
+          startupThreads={startup.state.threads}
+          onOpenStartupIssues={() => setStartupIssueOpen(true)}
           getUserView={getAgentUserView}
           indexStore={indexStore}
-          railState={agentRailState}
+          railState={startup.issue && startupIssueOpen ? 'collapsed' : agentRailState}
           onOpenNodeReference={openNodeReferenceFromAgent}
           onOpenTurnDetails={(threadId, turnId) => openThreadTrajectoryPanel(threadId, { turnId })}
           onRequestOpen={openAgentRail}
           onResizeKeyDown={resizeAgentWithKeyboard}
           onResizeReset={resetAgentWidth}
           onResizeStart={beginAgentResize}
-        />
+        /> : null}
+        {!startup.agentReady || (startup.issue && startupIssueOpen) ? <StartupAgentPane startup={startup} open={agentOpen}
+          onContinue={() => { setStartupIssueOpen(false); setAgentOpen(startup.agentReady); }} onResizeKeyDown={resizeAgentWithKeyboard}
+          onResizeReset={resetAgentWidth} onResizeStart={beginAgentResize} /> : null}
       </div>
 
       <BatchTagSelector

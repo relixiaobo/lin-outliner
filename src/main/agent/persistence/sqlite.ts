@@ -26,6 +26,20 @@ interface NodeSqliteModule {
 export function openSqlite(path: string): SqliteDatabase {
   const nodeSqlite = createRequire(import.meta.url)('node:sqlite') as NodeSqliteModule;
   const database = new nodeSqlite.DatabaseSync(path);
-  database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
+  try {
+    database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
+  } catch (error) {
+    closeSqliteAfterFailure(database, error);
+  }
   return database;
+}
+
+/** Preserve the opening failure while recording any failure to release its handle. */
+export function closeSqliteAfterFailure(database: SqliteDatabase, failure: unknown): never {
+  try {
+    database.close();
+  } catch (cleanupError) {
+    throw new AggregateError([failure, cleanupError], 'Database initialization and cleanup failed.', { cause: failure });
+  }
+  throw failure;
 }
