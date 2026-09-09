@@ -65,7 +65,7 @@ limits. `tmux` state is evidence, not a second process ledger.
 ### Model context
 
 Use the common
-[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication)
+[Execution Context Publication](../../spec/agent-model-runtime.md#execution-context-publication)
 contract for isolation facts and process updates. Keep canonical tool names,
 descriptions, and schemas independent of the current cwd, session name, and
 per-process policy. Actual enforcement and actionable failures belong to the

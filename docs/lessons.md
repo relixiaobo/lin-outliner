@@ -2758,3 +2758,15 @@ path.** Keep large evidence in the bounded data transport and bind it to trusted
 control metadata with an exact length and digest. Test near-limit UTF-8 evidence,
 small selections from large captures, tampering, and the production runtime;
 display truncation and successful persistence do not prove later executability.
+
+## Process creation does not establish session ownership
+
+PR #658's tmux experiment showed that a successful launch can leave a detached
+server outside the Task lifetime, pane output outside retained stdout, and
+same-directory control blocked by the server's valid write claim.
+
+**Measure start, control, capture, stop, and restart through the real ownership
+boundary before promising a persistent session.** Record failed properties
+without widening capability rules to make the experiment pass. Prove actual
+OS isolation separately from requested policy, and preserve trusted receipt
+ownership outside the command's writable roots.

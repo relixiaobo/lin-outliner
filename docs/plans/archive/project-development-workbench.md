@@ -136,7 +136,7 @@ current-task marker. A new task using unchanged instructions does not repeat
 their body. Audit evidence and model visibility remain distinct.
 
 The shared authority is
-[Execution Context Publication](../spec/agent-model-runtime.md#execution-context-publication).
+[Execution Context Publication](../../spec/agent-model-runtime.md#execution-context-publication).
 It owns publication order, semantic equality, source/scope isolation, frozen
 bundle boundaries, compaction restoration, cache affinity, and validation.
 All child features consume it. They cannot replace earlier reminder text,
@@ -173,8 +173,8 @@ Discovery publishes generation 1 as a separate, later observation at the
 next provider boundary; only later admissions may consume it as execution
 context. Failure, restart, and replay never fill in or rewrite generation 0.
 The exact ordering follows the current
-[task discovery lifecycle](../spec/agent-tool-design.md#local-files-and-commands)
-and [execution-context publication](../spec/agent-model-runtime.md#execution-context-publication) contracts.
+[task discovery lifecycle](../../spec/agent-tool-design.md#local-files-and-commands)
+and [execution-context publication](../../spec/agent-model-runtime.md#execution-context-publication) contracts.
 Discovery degradation does not block ordinary Full Access work; mandatory
 address, policy, claim, and isolation validation still completes before spawn.
 
@@ -282,7 +282,7 @@ address/policy/context snapshot; recovery uses that captured dispatch evidence,
 not the current Project catalog. Every subsequent Tool Task still owns its
 actual execution context. Cursor, overlap, edit, deletion, continuity, and
 managed-worktree recovery rules have one authority in
-[Agent Automations](../spec/agent-automations.md).
+[Agent Automations](../../spec/agent-automations.md).
 
 Restart reconciles unfinished Tool Tasks before resuming. Missing terminal
 evidence is `lost` or `stopped`, never success. A lost provider response never
@@ -467,20 +467,25 @@ ownership or recovery gap is measured.
 
 ## Implementation contracts
 
-- [Local files and commands](../spec/agent-tool-design.md#local-files-and-commands)
-  and [Optional Project catalog](../spec/agent-core.md#optional-project-catalog)
+- [Task Execution Context](../../spec/agent-delegation.md#task-execution-context)
+  and [Execution Context Publication](../../spec/agent-model-runtime.md#execution-context-publication)
+  define Unit A's task-scoped admission and shared publication mechanisms.
+- [Local files and commands](../../spec/agent-tool-design.md#local-files-and-commands)
+  and [Optional Project catalog](../../spec/agent-core.md#optional-project-catalog)
   define Unit B's context collection and Project catalog boundary. Its original
-  design remains in [Project context runtime](archive/project-context-runtime.md).
-- [Source-bound verification](../spec/agent-tool-design.md#source-bound-verification)
+  design remains in [Project context runtime](project-context-runtime.md).
+- [Source-bound verification](../../spec/agent-tool-design.md#source-bound-verification)
   defines the current check and Goal contracts; the
-  [archived verification design](archive/verification-self-iteration.md)
+  [archived verification design](verification-self-iteration.md)
   preserves Unit C's design rationale.
-- [Git review and explicit publication](../spec/agent-tool-design.md#git-review-and-explicit-publication)
+- [Git review and explicit publication](../../spec/agent-tool-design.md#git-review-and-explicit-publication)
   defines the current review and publication contracts; the
-  [archived Git publication design](archive/git-review-publication.md)
+  [archived Git publication design](git-review-publication.md)
   preserves Unit D's design rationale.
-- [Execution sandbox and interactive processes](execution-sandbox-process.md)
-  defines Unit E's isolation receipt and tmux experiment.
+- [Tool Task isolation](../../spec/agent-tool-design.md#local-files-and-commands)
+  and [Interactive process experiment](../../spec/agent-tool-design.md#interactive-process-experiment)
+  define Unit E's actual isolation evidence and measured process limits; the
+  [archived execution design](execution-sandbox-process.md) preserves its rationale.
 
 The shared protocol/codec changes in Unit A land before consumers. Every child
 plan must use the entities and invariants in this plan; a child plan cannot

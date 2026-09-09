@@ -2,7 +2,7 @@
 
 **Shape:** One complete feature. It provides auditable review and explicit
 publication over Git and hosting CLIs without creating a Git ledger under the
-[Agent Capability-First Development Workbench](../project-development-workbench.md).
+[Agent Capability-First Development Workbench](project-development-workbench.md).
 
 ## Goal
 

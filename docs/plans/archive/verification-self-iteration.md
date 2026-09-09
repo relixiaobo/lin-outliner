@@ -2,7 +2,7 @@
 
 **Shape:** One complete feature. It composes Tool Tasks, Goals, Skills, and
 project check declarations into a factual, bounded correction workflow under
-the [Agent Capability-First Development Workbench](../project-development-workbench.md).
+the [Agent Capability-First Development Workbench](project-development-workbench.md).
 
 ## Goal
 
