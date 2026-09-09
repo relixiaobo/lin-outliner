@@ -184,6 +184,20 @@ replaces it directly. The existing sender-checked key IPC requires explicit prev
 or reveal mode; full reads occur only on Show/Copy. Remove generic connection copy
 and the separate replacement action. No Agent tools or IPC channels are added.
 
+### Agent Editor and Skill Availability
+
+The Agent editor presents identity, standing instructions, scope, and optional
+capability restrictions in a bounded form with a persistent action footer.
+Default tool access follows the available catalog; default Skill access follows
+the Skill Library. Only Custom selection expands searchable member checklists.
+Explicit saved lists remain exact, even when they currently include every item;
+only choosing the default mode returns to inheritance. Library-disabled Skills
+are labelled as off in the library, without changing the Agent's saved selection.
+The Library explains that its switches govern shared availability, while the
+Agent's custom selection can only narrow it. Colour choices use complete circular
+selection rings, and the header previews the selected identity. Saving disables
+editing and dismissal until the write settles; failed drafts remain editable.
+
 ### Acceptance Criteria
 
 - **AC-1 (FR-1, FR-2):** General opens without domain catalog requests. All category
@@ -236,9 +250,10 @@ Tests target these boundaries directly. PR #655 shares only the existing
 `docs/spec/agent-model-runtime.md` scope, in distinct ownership paragraphs; its
 execution-contract/ThreadService implementation is outside this change. It has
 merged, as have #658 (process execution and Tool Tasks) and #659 (file_delete
-retirement). Open #660 is a documentation plan for further tool retirement.
-It does not claim Provider forms or credential
-preview code. Keep shared specification edits in their respective sections.
+retirement). Merged #660 implements workbench tool retirement and overlaps the
+existing catalog/runtime retirement scope. It does not change the Agent editor,
+Skill Library UI, Provider forms, or credential preview code. Integrate its shared
+catalog and specification changes without restoring retired tools.
 
 ## Open questions
 

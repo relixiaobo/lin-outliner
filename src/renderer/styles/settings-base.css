@@ -15,6 +15,13 @@
   gap: var(--space-lg);
 }
 
+.settings-section-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
 /* The stack owns section spacing; nested groups/disclosures must not add a
    second margin on top of it. Field spacing inside each group stays compact. */
 .agent-settings-section > .inset-group + .inset-group,

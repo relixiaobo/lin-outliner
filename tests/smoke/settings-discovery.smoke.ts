@@ -154,9 +154,18 @@ test('all Settings destinations reuse one native window with bounded admission a
     await agents.getByRole('list', { name: 'Built-in agents' }).getByRole('button').first().click();
     const dialog = agents.getByRole('dialog');
     await dialog.getByRole('textbox', { name: 'Instructions' }).fill('Preserve this draft.');
+    await expect(dialog.getByRole('checkbox')).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Save', exact: true })).toBeInViewport();
     for (const colorScheme of ['light', 'dark'] as const) {
       await agents.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
       await dialog.screenshot({ path: testInfo.outputPath(`agent-editor-${colorScheme}.png`), animations: 'disabled' });
+    }
+    await dialog.getByRole('combobox', { name: 'Tools', exact: true }).selectOption('custom');
+    await dialog.getByRole('checkbox').last().scrollIntoViewIfNeeded();
+    await expect(dialog.getByRole('button', { name: 'Save', exact: true })).toBeInViewport();
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await agents.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+      await dialog.screenshot({ path: testInfo.outputPath(`agent-editor-custom-${colorScheme}.png`), animations: 'disabled' });
     }
     await smoke.window.evaluate(() => window.lin!.openSettings({ destination: 'shortcuts' }));
     await expect(dialog.getByRole('textbox', { name: 'Instructions' })).toHaveValue('Preserve this draft.');

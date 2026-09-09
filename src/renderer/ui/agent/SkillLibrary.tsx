@@ -495,6 +495,7 @@ export function SkillLibrary({
 
   return (
     <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
+      <p className="settings-section-description">{t.settings.skills.availabilityHint}</p>
       {active && toolbarTarget && createPortal(<div className="settings-skills-toolbar">{addControl}</div>, toolbarTarget)}
       {curationReport ? (
         <Dialog

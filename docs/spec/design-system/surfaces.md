@@ -451,8 +451,24 @@ main persona, standing instructions, and capability ceiling. It does not restore
 retired Roles, per-type execution, or duplicated built-in Agents. Delegation
 preferences and runner readiness load through their own projection within Agents,
 separately from Models. A visible Edit action opens the root editor; its copy
-names editable instructions and capabilities. Colour choices support roving arrow
-navigation. Delegation explains its purpose and names the runner to which the
+names editable instructions and capabilities. The editor keeps its header and
+Save/Cancel footer outside its scrolling body. Identity and Apply to precede
+standing instructions, then capability restrictions. Colour choices have complete
+circular selection rings, support roving arrow navigation, and update the header
+preview. Default name/colour previews follow the loader's whole-object presentation
+override rules. Saving locks editing and dismissal; errors preserve the draft.
+
+Tools defaults to All available; Skills defaults to Follow Skill Library. Only
+Custom selection expands a searchable membership checklist. Library-disabled
+Skills are labelled Off in Skill Library; selecting one does not turn it on.
+Explicit lists remain exact even when they currently contain every catalog member;
+only choosing the default option restores inheritance. An empty custom list allows
+none. Library status is read separately through its existing service and never
+blocks editing or rewrites profile selections when unavailable. The library page
+explains that its switches govern shared availability and Agent selections can
+only narrow that availability. No new model tool or IPC channel is introduced.
+
+Delegation explains its purpose and names the runner to which the
 model/access/time options apply. Access states the Full Access boundary and lists explicit
 blocks; removal commits on its row. The boundary explanation is a footnote.
 

@@ -74,11 +74,33 @@ describe('the main Agent editor', () => {
     });
   });
 
+  test('previews presentation defaults using whole-object project replacement', async () => {
+    const rendered = await renderAgents({ view: { ...VIEW, presentationOverrides: [
+      { agentType: 'main', layer: 'user', persona: 'Willow', color: 'pink' },
+      { agentType: 'main', layer: 'project', persona: 'Juniper', color: null },
+    ] } });
+    await rendered.click(rendered.document.querySelector('.inset-row-main')!);
+    const name = rendered.document.querySelector('input[aria-label="Name"]')!;
+    const defaultMark = () => rendered.document.querySelector('button[aria-label="Default"] svg')?.innerHTML;
+    // A project name alone keeps the built-in colour, not the user colour.
+    expect(defaultMark()).toContain('--identity-tint-4');
+    await rendered.input(name, '');
+    expect(name.getAttribute('placeholder')).toBe('Willow');
+    expect(defaultMark()).toContain('--identity-tint-7');
+    await rendered.click(rendered.document.querySelector('button[aria-label="Blue"]')!);
+    expect(name.getAttribute('placeholder')).toBe('Aspen');
+    await rendered.input(rendered.document.querySelector('select[aria-label="Apply to"]')!, 'user');
+    expect(defaultMark()).toContain('--identity-tint-4');
+  });
+
   test('writes an exact empty capability set instead of treating it as inheritance', async () => {
     const rendered = await renderAgents();
     await rendered.click(rendered.document.querySelector('.inset-row-main')!);
-    for (const checkbox of rendered.document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')) {
-      await rendered.click(checkbox);
+    for (const label of ['Tools', 'Skills']) {
+      await rendered.input(rendered.document.querySelector(`select[aria-label="${label}"]`)!, 'custom');
+    }
+    for (const button of [...rendered.document.querySelectorAll('button')].filter((button) => button.textContent === 'Deselect All')) {
+      await rendered.click(button);
     }
     await rendered.click([...rendered.document.querySelectorAll('button')].find((button) => button.textContent === 'Save')!);
     expect((rendered.calls.at(-1)?.args as { profile: { tools: string[]; skills: string[] } }).profile)
@@ -100,11 +122,40 @@ describe('the main Agent editor', () => {
     expect(rendered.document.querySelector('.agent-editor-dialog')).not.toBeNull();
     expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('Refused');
   });
+
+  test('preserves an explicit full selection when only the name changes', async () => {
+    const rendered = await renderAgents({ view: { ...VIEW, profile: { ...VIEW.profile,
+      tools: ['file_read', 'bash'], skills: ['review'] } } });
+    await rendered.click(rendered.document.querySelector('.inset-row-main')!);
+    await rendered.input(rendered.document.querySelector('input[aria-label="Name"]')!, 'Juniper');
+    await rendered.click([...rendered.document.querySelectorAll('button')].find((button) => button.textContent === 'Save')!);
+    expect(rendered.calls.at(-1)?.args).toMatchObject({ profile: { tools: ['file_read', 'bash'], skills: ['review'] } });
+  });
+
+  test('returns to inheritance only when the default mode is chosen', async () => {
+    const rendered = await renderAgents({ view: { ...VIEW, profile: { ...VIEW.profile, tools: [], skills: [] } } });
+    await rendered.click(rendered.document.querySelector('.inset-row-main')!);
+    for (const label of ['Tools', 'Skills']) {
+      await rendered.input(rendered.document.querySelector(`select[aria-label="${label}"]`)!, 'default');
+    }
+    await rendered.click([...rendered.document.querySelectorAll('button')].find((button) => button.textContent === 'Save')!);
+    expect(rendered.calls.at(-1)?.args).toMatchObject({ profile: { tools: null, skills: null } });
+  });
+
+  test('shows library-disabled skills without altering the profile or library switch', async () => {
+    const rendered = await renderAgents({ disabledSkills: ['review'] });
+    await rendered.click(rendered.document.querySelector('.inset-row-main')!);
+    await rendered.input(rendered.document.querySelector('select[aria-label="Skills"]')!, 'custom');
+    expect(rendered.document.querySelector('.agent-capability-status')?.textContent).toBe('Off in Skill Library');
+    await rendered.click([...rendered.document.querySelectorAll('button')].find((button) => button.textContent === 'Save')!);
+    expect(rendered.calls.at(-1)?.args).toMatchObject({ profile: { skills: ['review'] } });
+    expect(rendered.calls.some((call) => call.name === 'agent_update_skill_settings')).toBe(false);
+  });
 });
 
-async function renderAgents(options: { rejectWrite?: boolean } = {}) {
+async function renderAgents(options: { rejectWrite?: boolean; view?: AgentEditorView; disabledSkills?: string[] } = {}) {
   const calls: Array<{ name: string; args: unknown }> = [];
-  let currentView = VIEW;
+  let currentView = options.view ?? VIEW;
   let refresh: (() => void) | undefined;
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -118,9 +169,10 @@ async function renderAgents(options: { rejectWrite?: boolean } = {}) {
     });
   }
   (globalThis as Record<string, unknown>).lin = {
-    onConfigurationChanged: (_domain: string, callback: () => void) => { refresh = callback; return () => {}; },
+    onConfigurationChanged: (domain: string, callback: () => void) => { if (domain === 'agents') refresh = callback; return () => {}; },
     invoke: async (name: string, args: unknown) => {
       calls.push({ name, args });
+      if (name === 'agent_get_skill_settings') return { disabledSkills: options.disabledSkills ?? [], sourceBindings: [] };
       if (options.rejectWrite && name === 'agent_write_profile') throw new Error('Refused by test');
       return currentView;
     },
@@ -146,6 +198,9 @@ async function renderAgents(options: { rejectWrite?: boolean } = {}) {
     click: async (element: Element) => {
       await act(async () => {
         element.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
+        if (element.getAttribute('type') === 'submit') {
+          element.closest('form')?.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+        }
         await Promise.resolve();
       });
     },

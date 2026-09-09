@@ -223,10 +223,11 @@ test.describe('configuration panes', () => {
     // it. What it has is standing instructions and the capability ceiling.
     await expect(dialog.getByRole('textbox', { name: 'Instructions' })).toBeVisible();
     await expect(dialog.getByRole('textbox', { name: 'Type' })).toHaveCount(0);
-    await expect(dialog.getByText('the ceiling for every agent')).toBeVisible();
+    await expect(dialog.getByText('These limits also apply to work this agent delegates.')).toBeVisible();
     await expect(dialog.getByRole('list', { name: 'How this agent runs' })).toHaveCount(0);
 
     await dialog.getByRole('textbox', { name: 'Instructions' }).fill('Always answer in Chinese.');
+    await dialog.getByRole('combobox', { name: 'Tools', exact: true }).selectOption('custom');
     // Clicking the row, which is what a user does: the native box is visually
     // hidden behind the styled mark and the whole label is the target.
     await dialog.locator('.agent-capability-item', { hasText: 'bash' }).click();

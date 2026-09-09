@@ -9,26 +9,53 @@
  * compete to mean "chosen". */
 
 .agent-editor-dialog {
-  width: min(560px, calc(100vw - 32px));
-  max-height: min(760px, calc(100vh - 48px));
-  overflow: auto;
-  border-radius: var(--radius-overlay-sm);
+  width: min(560px, calc(100vw - var(--space-8) * 2));
+  max-height: min(760px, calc(100vh - var(--space-lg) * 2));
+  display: flex;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
   background: var(--bg-elevated);
   box-shadow: var(--overlay-shadow-level-2);
-  padding: var(--space-6);
+  padding: 0;
 }
 
-.agent-editor-dialog .inset-group {
-  margin-top: var(--space-5);
+.agent-editor-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
-/* The mark beside the title is a live preview, so the heading is where the
-   user sees the colour they just picked take effect. */
 .agent-editor-heading {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-4);
+  padding: var(--space-8);
 }
+
+.agent-editor-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-1) var(--space-8);
+  scrollbar-gutter: stable;
+}
+
+.agent-editor-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.agent-editor-fields > .inset-group { margin-top: 0; }
+.agent-editor-fields > .inset-group > .inset-card { border: 0; box-shadow: none; }
+.agent-editor-footer { flex: 0 0 auto; padding: var(--space-8); }
+.agent-editor-actions { margin: 0; }
 
 /* The editor owns these grouped field rows; provider connections use framed inputs. */
 .settings-sheet-row {
@@ -40,7 +67,18 @@
 }
 
 .inset-card .settings-sheet-row:not(:last-child) {
-  border-bottom: 1px solid var(--separator);
+  position: relative;
+}
+
+.inset-card .settings-sheet-row:not(:last-child)::after,
+.agent-capability-setting:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  inset-inline: var(--space-4);
+  bottom: 0;
+  height: 1px;
+  background: var(--separator);
+  pointer-events: none;
 }
 
 .settings-sheet-row-label {
@@ -82,7 +120,7 @@
   box-shadow: none;
 }
 
-:root[data-input-modality="keyboard"] .inset-card .settings-sheet-row:focus-within {
+:root[data-input-modality="keyboard"] .inset-card .settings-sheet-row:has(.settings-sheet-row-input:focus-visible) {
   box-shadow: var(--outline-focus);
 }
 
@@ -135,40 +173,38 @@
   background: var(--control-active);
 }
 
-/* Delete belongs to the object, not to the dialog's commit pair — it sits at
-   the leading edge so it is never the button next to Save. */
-.agent-editor-actions .agent-editor-delete {
-  margin-right: auto;
-}
-
-/* "Default" sits before the hues and means the absence of a choice, so a hairline
-   separates it from the palette rather than a second visual language. */
-.agent-colour-choice.is-default {
-  margin-right: var(--space-2);
-  border-right: 1px solid var(--separator);
-  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
-  padding-right: var(--space-3);
+.agent-colour-divider {
+  align-self: center;
+  width: 1px;
+  height: var(--space-8);
+  margin-inline: var(--space-1);
+  background: var(--separator);
 }
 
 /* The name conflict speaks inside the card it is about, not from the pane's
    shared alert at the bottom of a scrolled dialog. */
 .agent-editor-conflict {
-  margin: var(--space-2) 0 0;
+  margin: 0 0 var(--space-4);
   color: var(--status-danger);
 }
 
-/* Capability lists are scannable columns rather than one long ladder: 17 tools
-   in a single column would push Save below the fold of the dialog. */
-.agent-capability-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--space-1) var(--space-4);
-  /* Capped against the window, not at a fixed rung: the point is that a long
-     catalogue never pushes Save below the fold of the dialog. */
-  max-height: min(220px, calc(100vh - 480px));
-  overflow-y: auto;
-  overscroll-behavior: contain;
+.agent-capability-setting { position: relative; }
+.agent-capability-heading { justify-content: space-between; flex-wrap: wrap; }
+.agent-capability-heading::after { display: none; }
+.agent-capability-hint {
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
 }
+.agent-capability-custom { padding: var(--space-3) var(--space-4); }
+.agent-capability-custom > input { width: 100%; }
+.agent-capability-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.agent-capability-toolbar .agent-capability-count { margin-inline-end: auto; }
+.agent-capability-list { display: flex; flex-direction: column; }
+.agent-capability-name { display: flex; flex-direction: column; min-width: 0; }
+.agent-capability-status { color: var(--text-secondary); font-size: var(--font-meta); line-height: var(--line-meta); }
 
 /* The row IS the control: a label carrying the styled mark, with the native box
    hidden but still focusable and still the thing assistive tech and Playwright
@@ -179,7 +215,8 @@
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
-  min-height: var(--settings-tile-size);
+  min-height: var(--settings-row-min-height);
+  padding-block: var(--space-3);
   color: var(--text-primary);
   font-size: var(--font-ui-sm);
 }
@@ -205,24 +242,16 @@
   box-shadow: var(--focus-ring-shadow);
 }
 
-/* The count states the ceiling ("all 17"), so the list reads as narrowing
-   rather than as granting each row. */
 .agent-capability-count {
-  margin-left: var(--space-2);
-  color: var(--text-tertiary);
-  font-weight: 400;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
 }
 
-.agent-editor-builtin {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-/* The name rule, stated where the field is rather than left for the write
-   boundary to reveal. */
 .agent-editor-hint {
-  margin: var(--space-2) 0 0;
-  color: var(--text-tertiary);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
 }
