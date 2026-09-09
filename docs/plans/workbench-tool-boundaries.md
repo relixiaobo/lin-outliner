@@ -126,6 +126,10 @@ old guarantees, fails this design. The reductions above require product ratifica
   cleanup first. Collision check: #656 overlaps tools, capabilities, ToolRuntime,
   agentHost and specs; #658 overlaps ToolRuntime, context, Skills and specs. This new
   plan file overlaps neither code diff. Recheck exact scopes before implementation.
+- The additional [#659](https://github.com/relixiaobo/lin-outliner/pull/659) claim
+  retires `file_delete` and overlaps the same catalog, local capability/execution,
+  and tool-spec files. Keep its deletion semantics independent, consume its final
+  surface if it lands first, and coordinate implementation ordering through main.
 - Serialize A then B on shared files; this is collision ordering, not a functional
   dependency. Main owns board/changelog and placement against startup/recovery/records.
   This follow-up does not expand Unit E or silently extend the existing A-E gate.
