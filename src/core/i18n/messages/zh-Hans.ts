@@ -85,7 +85,8 @@ export const zhHans: PartialMessages = {
       searchResults: "搜索结果",
       appearanceGroup: "外观",
       updatesGroup: "软件更新",
-      requestOptions: "请求选项",
+      requestOptions: "模型请求",
+      requestOptionsDescription: "调整模型调用的超时、重试和提示词缓存。大多数服务使用默认值即可。",
       sourceOptions: "配置文件",
       customizedOptions: "配置检查器",
       inspectorDescription: "检查或重置各分类中已有的偏好设置。这里修改的是同一份设置。",
@@ -141,7 +142,7 @@ export const zhHans: PartialMessages = {
     "access": "查看访问边界和被阻止的操作。",
     "data": "管理预览存储、缓存和清理。",
     "shortcuts": "查找命令并自定义键盘快捷键。",
-    "diagnostics": "打开日志或导出诊断报告。"
+    "diagnostics": "调整模型请求、检查配置或查看诊断信息。"
   },
   "fields": {
     "appearance.theme": {

@@ -8,10 +8,11 @@ import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { Button } from '../primitives/Button';
 
-export function PreferenceRow({ entry, sourceDigest, disabled, edit }: {
+export function PreferenceRow({ entry, sourceDigest, disabled, showReset = false, edit }: {
   entry: PreferenceObservation;
   sourceDigest: string | null;
   disabled: boolean;
+  showReset?: boolean;
   edit: (operation: 'set' | 'reset', value?: PreferenceValue, expectedDigest?: string | null) => Promise<void>;
 }) {
   const t = useT();
@@ -85,7 +86,7 @@ export function PreferenceRow({ entry, sourceDigest, disabled, edit }: {
             setDraft(String(entry.value ?? '')); setError(null);
           }
         }} />}
-      {entry.modified ? <Button size="sm" variant="ghost" className="preference-reset" aria-label={`${copy.resetLabel} ${text.label}`}
+      {showReset && entry.modified ? <Button size="sm" variant="ghost" className="preference-reset" aria-label={`${copy.resetLabel} ${text.label}`}
         disabled={unavailable} onClick={() => void commit('reset')}>{copy.reset}</Button> : null}
     </div>
     {entry.application?.status === 'failed' || entry.application?.status === 'pending' ? <div className="preference-status"><SettingsFeedback feedback={entry.application.status === 'failed'

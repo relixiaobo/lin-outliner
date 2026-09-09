@@ -27,6 +27,7 @@ test('Settings edits and resets the real source, tracks external errors, and kee
       await appearance.getByRole('radio', { name: label, exact: true }).check();
       await expect.poll(() => smoke.app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe(theme);
       await expect(appearance.getByRole('radio', { name: label, exact: true })).toBeChecked();
+      await expect(page.getByRole('button', { name: 'Reset Appearance', exact: true })).toHaveCount(0);
     }
     await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
     await page.getByText('Configuration Inspector', { exact: true }).click();

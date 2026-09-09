@@ -107,7 +107,8 @@ export const en = {
       searchResults: "Search Results",
       appearanceGroup: "Appearance",
       updatesGroup: "Software Updates",
-      requestOptions: "Request Options",
+      requestOptions: "Model Requests",
+      requestOptionsDescription: "Timeouts, retry limits, and prompt caching for model calls. Defaults work for most providers.",
       sourceOptions: "Configuration Files",
       customizedOptions: "Configuration Inspector",
       inspectorDescription: "Inspect or reset preferences already shown in their categories. These controls edit the same settings.",
@@ -163,7 +164,7 @@ export const en = {
     "access": "Review access boundaries and blocked operations.",
     "data": "Manage preview storage, cache, and cleanup.",
     "shortcuts": "Find commands and customize keyboard shortcuts.",
-    "diagnostics": "Open logs or export a diagnostic report."
+    "diagnostics": "Adjust model requests, inspect configuration, or open diagnostics."
   },
   "fields": {
     "appearance.theme": {

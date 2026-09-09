@@ -64,8 +64,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await installElectronMock(page, { initialLanguage: 'en' });
     await page.setViewportSize({ width: 680, height: 720 });
     await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
-    await page.goto('/?surface=settings&destination=models');
-    await page.locator('summary', { hasText: 'Request Options' }).click();
+    await page.goto('/?surface=settings&destination=diagnostics');
+    await page.locator('summary', { hasText: 'Model Requests' }).click();
     const requests = page.locator('.settings-disclosure[open]');
     await expect(requests.getByText(/Minimum:|Allowed range:/).first()).toBeVisible();
     await requests.screenshot({ path: testInfo.outputPath(`requests-${colorScheme}.png`) });
@@ -81,7 +81,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
 
     await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
     await page.locator('summary', { hasText: 'Configuration Inspector' }).click();
-    const inspector = page.getByRole('tabpanel', { name: 'Advanced', exact: true }).locator('.settings-disclosure[open]');
+    const inspector = page.locator('.settings-disclosure').filter({ has: page.locator('summary', { hasText: 'Configuration Inspector' }) });
     await expect(inspector.getByRole('radio', { name: 'Modified', exact: true })).toBeChecked();
     await inspector.getByRole('radio', { name: 'All', exact: true }).click();
     await expect(inspector.getByRole('radiogroup', { name: 'Appearance', exact: true })).toBeVisible();

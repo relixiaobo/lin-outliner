@@ -140,7 +140,7 @@ export function SettingsWindow() {
     return matches(entry.id, text.label, text.description, text.aliases);
   }) ?? [];
   const links = CONFIGURATION_LINKS.filter(({ destination, paths }) => matches(copy.destinations[destination], copy.descriptions[destination], ...paths));
-  const rows = (ids: readonly PreferenceId[]) => <div className="preference-list" role="list">{view?.entries.filter((entry) => ids.includes(entry.id)).map((entry) => <PreferenceRow key={entry.id} entry={entry}
+  const rows = (ids: readonly PreferenceId[], showReset = false) => <div className="preference-list" role="list">{view?.entries.filter((entry) => ids.includes(entry.id)).map((entry) => <PreferenceRow key={entry.id} entry={entry} showReset={showReset}
     sourceDigest={view.source.digest} disabled={view.source.status === 'rejected'} edit={(operation, value, expectedDigest) => edit(entry.id, operation, value, expectedDigest)} />)}</div>;
   const openFile = () => sourceAction('preferences', () => window.lin?.preferences.openFile());
   const openSource = (sourceId: NonNullable<PreferencesView['sources']>[number]['sourceId']) => sourceAction(sourceId, () => window.lin?.preferences.openSource(sourceId));
@@ -229,10 +229,11 @@ export function SettingsWindow() {
               <section aria-label={copy.updatesGroup}><h2 className="configuration-group-title">{copy.updatesGroup}</h2>{rows(['updates.checkAutomatically'])}</section>
             </> : <>
               <ConfigurationPane destination={destination} active={!searching && pane === destination} toolbarTarget={toolbarTarget} />
-              {destination === 'models' ? <details className="settings-disclosure"><summary>{copy.requestOptions}</summary>
-                {rows(['agent.provider.timeoutMs', 'agent.provider.maxRetries', 'agent.provider.maxRetryDelayMs', 'agent.provider.cacheRetention'])}
-              </details> : null}
               {destination === 'diagnostics' ? <>
+                <details className="settings-disclosure"><summary>{copy.requestOptions}</summary>
+                  <p className="inset-group-footnote">{copy.requestOptionsDescription}</p>
+                  {rows(['agent.provider.timeoutMs', 'agent.provider.maxRetries', 'agent.provider.maxRetryDelayMs', 'agent.provider.cacheRetention'])}
+                </details>
                 <section aria-label={copy.sourceOptions}><h2 className="configuration-group-title">{copy.sourceOptions}</h2>
                   <Button size="sm" variant="secondary" onClick={openFile}>{copy.openFile}</Button>
                   <SettingsFeedback feedback={{ error: sourceActionErrors.preferences }} />
@@ -246,7 +247,7 @@ export function SettingsWindow() {
                   <p className="inset-group-footnote">{copy.inspectorDescription}</p>
                   <div className="configuration-filter"><SegmentedControl label={copy.filter} value={filter}
                     options={[{ value: 'all', label: copy.all }, { value: 'modified', label: copy.modified }]} onChange={setFilter} /></div>
-                  {rows((view?.entries.filter((entry) => filter === 'all' || entry.modified) ?? []).map((entry) => entry.id))}
+                  {rows((view?.entries.filter((entry) => filter === 'all' || entry.modified) ?? []).map((entry) => entry.id), true)}
                   {filter === 'modified' && !view?.entries.some((entry) => entry.modified) ? <p role="status">{copy.noModified}</p> : null}
                 </details>
               </> : null}

@@ -44,20 +44,17 @@ test('General loads no catalogs and sidebar navigation stays in the same window'
   await install(page);
   expect(await page.evaluate(() => (window as any).__settingsTest.calls)).toEqual([]);
   await expect(page.locator('[data-preference-id]:visible')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: /^Reset / })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Open Settings File…' })).toHaveCount(0);
   await page.getByRole('tab', { name: 'General', exact: true }).focus();
   await page.keyboard.press('ArrowDown');
   await expect(page.getByRole('tab', { name: 'Models', exact: true })).toBeFocused();
   await expect(page.getByRole('heading', { name: 'Models', exact: true })).toBeVisible();
   expect(await page.evaluate(() => (window as any).__settingsTest.destinations)).toEqual([]);
-  await page.getByText('Request Options', { exact: true }).click();
-  const number = page.getByRole('textbox', { name: 'Request timeout (ms)' });
-  await number.fill('3.5');
-  await number.press('Enter');
+  await expect(page.getByText('Model Requests', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Request timeout (ms)' })).toHaveCount(0);
   await page.getByRole('tab', { name: 'General', exact: true }).click();
   await page.getByRole('tab', { name: 'Models', exact: true }).click();
-  await expect(number).toHaveValue('3.5');
-  await expect(page.locator('.preference-error')).toContainText('whole number');
   await expect.poll(() => page.evaluate(() => (window as any).__settingsTest.calls.length)).toBe(2);
   expect(await page.evaluate(() => (window as any).__settingsTest.calls)).toEqual(['agent_get_provider_settings', 'agent_get_provider_settings']);
   await page.keyboard.press('Control+f');
@@ -67,6 +64,8 @@ test('General loads no catalogs and sidebar navigation stays in the same window'
 test('search finds aliases and IDs and Modified includes explicit defaults', async ({ page }) => {
   await install(page);
   const search = page.getByRole('searchbox');
+  await search.fill('model requests');
+  await expect(page.getByRole('button', { name: 'Open… Advanced' })).toBeVisible();
   await search.fill('backoff');
   await expect(page.getByRole('textbox', { name: 'Maximum retry delay (ms)' })).toBeVisible();
   await search.press('Escape');
@@ -76,14 +75,15 @@ test('search finds aliases and IDs and Modified includes explicit defaults', asy
   await expect(page.locator('[data-preference-id]:visible')).toHaveCount(1);
   await expect(page.getByRole('radiogroup', { name: 'Appearance' })).toBeVisible();
   await page.getByRole('button', { name: 'Reset Appearance', exact: true }).click();
-  await expect(page.getByRole('status')).toHaveText('No preferences have been customized.');
+  const inspector = page.locator('.settings-disclosure').filter({ has: page.locator('summary', { hasText: 'Configuration Inspector' }) });
+  await expect(inspector.getByRole('status')).toHaveText('No preferences have been customized.');
   expect(await page.evaluate(() => (window as any).__settingsTest.edits)).toEqual([{ id: 'appearance.theme', operation: 'reset', expectedDigest: 'one' }]);
   await page.getByRole('radio', { name: 'All', exact: true }).click();
   await search.fill('agent.provider.timeoutMs');
   await expect(page.getByRole('textbox', { name: 'Request timeout (ms)' })).toBeVisible();
 });
 
-test('appearance previews support native radio navigation, failed writes, and reset', async ({ page }) => {
+test('appearance previews support native radio navigation, failed writes, and following System without Reset', async ({ page }) => {
   await install(page);
   const group = page.getByRole('radiogroup', { name: 'Appearance', exact: true });
   const system = group.getByRole('radio', { name: 'System', exact: true });
@@ -116,10 +116,11 @@ test('appearance previews support native radio navigation, failed writes, and re
   await expect(page.getByRole('alert')).toContainText('Settings source changed');
   await expect(dark).toBeChecked();
   await page.evaluate(() => { (window as any).__settingsTest.failWrite = false; });
-  await page.getByRole('button', { name: 'Reset Appearance', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Reset Appearance', exact: true })).toHaveCount(0);
+  await system.check();
   await expect(system).toBeChecked();
   expect(await page.evaluate(() => (window as any).__settingsTest.edits.map((edit: any) => [edit.operation, edit.value]))).toEqual([
-    ['set', 'light'], ['set', 'dark'], ['set', 'light'], ['reset', undefined],
+    ['set', 'light'], ['set', 'dark'], ['set', 'light'], ['set', 'system'],
   ]);
 });
 
@@ -129,20 +130,20 @@ test('toolbar history preserves drafts, branches on a new category, and returns 
   const forward = page.getByRole('button', { name: 'Forward', exact: true });
   await expect(back).toBeDisabled();
   await expect(forward).toBeDisabled();
-  await page.getByRole('tab', { name: 'Models', exact: true }).click();
-  await page.getByText('Request Options', { exact: true }).click();
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
+  await page.getByText('Model Requests', { exact: true }).click();
   const number = page.getByRole('textbox', { name: 'Request timeout (ms)' });
   await number.fill('3.5');
   await number.press('Enter');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
+  await page.getByRole('tab', { name: 'Models', exact: true }).click();
   await back.click();
   await expect(number).toHaveValue('3.5');
-  await expect(page.getByRole('tab', { name: 'Models', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Advanced', exact: true })).toHaveAttribute('aria-selected', 'true');
   await back.click();
   await expect(back).toBeDisabled();
   await forward.click();
   await expect(number).toHaveValue('3.5');
-  await page.getByRole('tab', { name: 'Models', exact: true }).click();
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await expect(forward).toBeEnabled();
   await page.getByRole('tab', { name: 'General', exact: true }).click();
   await expect(forward).toBeDisabled();

@@ -352,9 +352,10 @@ indicators; clicking empty content never selects or outlines the whole viewport.
 
 **Organization and discovery.** General contains appearance, language, and
 automatic updates. Other categories are Models, Agents, Skills, Memory, Access,
-Data, Keyboard Shortcuts, and Advanced. Models folds request policy into Request
-Options; Agents folds delegation capacity limits into its advanced disclosure.
-Advanced contains diagnostics, public configuration files, and a collapsed scalar
+Data, Keyboard Shortcuts, and Advanced. Models contains connections and default
+model choices; Agents folds delegation capacity limits into its advanced disclosure.
+Advanced contains diagnostics, a collapsed Model Requests group for timeout,
+retry and prompt-cache preferences, public configuration files, and a collapsed scalar
 Configuration Inspector with **All / Modified** filtering, initially **Modified**.
 Its explanation identifies these as the same preferences shown in the categories;
 it supports troubleshooting and reset rather than presenting a second set of settings.
@@ -369,8 +370,11 @@ catalogs. Source repair remains visible across category and search changes.
 
 **Commit model.** Choices commit immediately. Numeric edits validate on Return
 or blur; Escape restores the uncommitted value, and failed writes preserve the
-entered value. Reset deletes only that scalar declaration. Its named action has
-an accessible label and appears only for explicit overrides. Source rejection disables that source's structural controls while
+entered value. Ordinary category and search rows show only their setting control.
+Source-level Reset belongs in Configuration Inspector, where it deletes only that
+scalar declaration. Its named action has an accessible label and appears only for
+explicit overrides. Appearance returns to following macOS by choosing System.
+Source rejection disables that source's structural controls while
 showing its retained effective values and an Open File repair action regardless
 of query/filter. Runtime application and file acceptance are separate facts;
 per-owner failures preserve only the affected owner's previous effective values.

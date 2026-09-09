@@ -165,6 +165,7 @@
 .settings-disclosure > summary { padding-block: var(--space-4); color: var(--text-secondary); }
 .settings-disclosure > summary:hover { color: var(--text-primary); }
 .settings-disclosure[open] > summary { margin-bottom: var(--space-4); }
+.settings-disclosure > .inset-group-footnote { margin-bottom: var(--space-4); }
 
 
 .settings-source-list { margin-top: var(--space-6); }
