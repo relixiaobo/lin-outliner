@@ -1270,6 +1270,9 @@ function toolTask(
   state: ToolTaskProjection['state'],
 ): ToolTaskProjection {
   return {
+    isolation: { requested: 'unsandboxed', state: 'unsandboxed', platform: 'darwin', backend: null,
+      dependency: 'not-required', network: 'unrestricted', writablePaths: [], protectedGitObjectStores: [],
+      profileDigest: null, reason: null },
     taskId,
     ownerThreadId,
     sourceTurnId: 'turn-source',

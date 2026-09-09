@@ -324,8 +324,9 @@ after shutdown settlement.
 
 The standalone supervisor owns the process group, nonce-bound identity, heartbeat,
 bounded stdout/stderr files, stop request, and atomic quiescent final receipt. A Tool Task
-does not become terminal or deliverable until declared artifacts settle, the main process
-and descendants are absent, and the final receipt is durable. `settling` remains
+does not become terminal or deliverable until declared artifacts settle, the tracked
+process group is absent, and the final receipt is durable. Detached daemons can leave
+that group; a terminal receipt does not prove every daemonized descendant exited. `settling` remains
 nonterminal and cancellable when teardown or reconciliation is incomplete. A restart
 reattaches to a matching live supervisor or consumes its receipt; authenticated process
 absence without one becomes `lost`, while ambiguous identity remains occupied rather
@@ -336,6 +337,32 @@ Packaged execution may add Host-only environment such as `ELECTRON_RUN_AS_NODE` 
 the standalone supervisor. The supervisor removes those control keys before launching
 the user shell while preserving the admitted workspace environment and Tool Task progress
 channel.
+
+Every Task stores requested isolation separately from actual enforcement. Pending
+admission has a null result; resolved results are `sandboxed`, `unsandboxed`,
+`unavailable`, or `rejected`. The receipt records platform, backend dependency,
+canonical writable roots, protected Git object stores, profile digest, network
+policy, and any actionable failure. Full Access without an OS boundary records
+`unsandboxed`. Host typed-file boundaries and read-only capability never imply OS
+process isolation. Task details and `task_status` expose this distinction.
+
+For `macos-write-sandbox`, the trusted supervisor retains exclusive ownership of
+its metadata outside the command's write roots. It applies `/usr/bin/sandbox-exec`
+to the command through a fixed bootstrap. A private fd 4 acknowledgement binds the
+Task nonce and profile digest after the kernel applies the profile; the bootstrap
+closes that descriptor before executing user code. Private producer input remains
+on fd 3. Missing dependencies reject activation before spawn. Missing acknowledgement
+records `unavailable`, tears down the attempted process group, and never retries
+unrestricted. The network policy is explicitly `unrestricted`; a write sandbox
+is not network isolation. Protected Git object rules still allow only the
+previously admitted object-creation operations.
+
+Isolation request fields and a resolved outcome are immutable. Terminal receipt
+version 3 and supervisor identity version 2 retain the activation result through
+Host restart, terminal settlement, and output-detail expiry. Task storage includes
+`isolation_json`; this is a pre-release format cut without legacy readers or a
+migration. Development runs need fresh clone-specific userData; never reset or
+reuse installed Tenon data to test this change.
 
 Admission uses durable `queued`, `active`, and `released` leases. Product limits bound
 global and per-Thread execution plus producer/pool occupancy and queue length. Saturated
@@ -435,6 +462,36 @@ does not set one Turn-wide `BROWSER_PILOT_REQUEST_ID` because request identity i
 per command. The installation identity is cached only after a successful load;
 a transient read failure drops that command's optional contribution and can retry
 on a later command execution.
+
+### Interactive Process Experiment
+
+The bundled development Skill uses ordinary Bash and Tool Tasks. It does not add
+a persistent terminal or silently install tmux. The repeatable macOS probe is
+`bun scripts/probe-tmux-tasks.ts /absolute/path/to/tmux report.json`. It creates
+fresh Task storage and private sockets, derives the session name from the owner
+Thread, execution directory, and worktree identity, and writes a report containing
+the exact commands and Task receipts. It never uses an existing user tmux socket.
+To exercise the built supervisor in Electron's Node mode, run `bun run tool-task:build`
+and supply `TENON_PROBE_ELECTRON` with the Electron executable path to the probe.
+
+The macOS arm64 experiment with tmux 3.7c measured these properties:
+
+| Property | Observed result |
+|---|---|
+| Default detached server ownership | Failed: the launch Task succeeds while tmux remains alive; stopping that terminal Task does not stop tmux. |
+| Foreground `tmux -D` ownership | Host crash/reopen reconciles the same Task, supervisor, server PID, and named session without another start. |
+| Same-directory control | Failed: the foreground server owns the directory write claim, so subsequent Bash control Tasks conflict. Remaining diagnostic clients use a separate Full Access control directory, not a weaker capability or worktree policy. |
+| Duplicate named session | The second create fails; exactly one session remains. |
+| Input and capture | `send-keys` is observed by the pane. Explicit `capture-pane` Tasks retain frozen earlier output; a 10,000-line workload yields a bounded tail within a 4 KiB preview. |
+| Raw pane output ownership | Failed: pane output is not the server Task's stdout; uncaptured pane history is not retained as Task output. |
+| Stop and explicit reopen | Stopping the foreground Task removes the tested cooperative server/pane. Clients use `-N` to avoid starting an absent server. Explicit reopen creates a new Task with one session. This does not attest to arbitrary detached or signal-resistant children. |
+| Required macOS write isolation | The server records active isolation, but pane creation fails with `fork failed: Operation not permitted`. Pane writes cannot be exercised; the probe preserves the required profile and records this failed property. Ordinary isolated shell writable roots and protected Git objects are verified separately. |
+
+Every session creation sets `-c` explicitly; a client's directory must not silently
+change the pane's starting address. These failed properties mean tmux plus the
+current Task API is not a supported persistent-session contract. A future native
+terminal requires its own complete design grounded in these measurements; this
+feature does not add one or relax capability/worktree restrictions.
 
 ### Web And Image
 

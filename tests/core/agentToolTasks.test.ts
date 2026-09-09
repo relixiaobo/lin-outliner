@@ -1,3 +1,4 @@
+import { pendingProcessIsolation, unstartedProcessIsolation } from '../../src/core/agent/processIsolation';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -394,7 +395,7 @@ describe('ToolTaskService', () => {
       detailBytes: result.byteLength + 4,
     });
     expect(receipt).toMatchObject({
-      version: 2,
+      version: 3,
       preparedResultDigest: prepared.sha256,
       preparedResultBytes: result.byteLength,
     });
@@ -653,7 +654,9 @@ describe('ToolTaskService', () => {
     ]);
     const startedAt = Date.now();
     const config: ToolTaskSupervisorConfig = {
-      version: 2,
+      version: 3,
+      isolation: pendingProcessIsolation({ capability: 'full-access', mutation: true, isolation: 'unsandboxed', writablePaths: [] }, process.platform),
+      sandboxProfile: null,
       taskId: 'task-identity-failure',
       nonce: 'nonce-identity-failure',
       process: { kind: 'shell', command: 'sleep 30' },
@@ -749,7 +752,8 @@ describe('ToolTaskService', () => {
     const fixture = await createFixture();
     const task = await seedRunningTask(fixture, 'task-missing', 100);
     await writeFile(path.join(task.detailPath, 'identity.json'), `${JSON.stringify({
-      version: 1,
+      version: 2,
+      isolation: unstartedProcessIsolation(task.isolation),
       taskId: task.taskId,
       nonce: task.nonce,
       supervisorPid: 2_000_000_001,
@@ -1395,7 +1399,8 @@ function receiptFor(
   quiescedAt: number,
 ): ToolTaskFinalReceipt {
   const unsigned = {
-    version: 2 as const,
+    version: 3 as const,
+    isolation: unstartedProcessIsolation(task.isolation),
     taskId: task.taskId,
     nonce: task.nonce,
     state,

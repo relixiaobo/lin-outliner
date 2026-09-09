@@ -1,6 +1,9 @@
-import { realpathSync } from 'node:fs';
+import { accessSync, constants, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import path from 'node:path';
+import type { ExecutionPolicy } from '../../../core/agent/executionContext';
+import { decodeProcessIsolationEvidence, pendingProcessIsolation, type ProcessIsolationEvidence } from '../../../core/agent/processIsolation';
 
 export interface AgentProcessSpawnInput {
   command: string;
@@ -52,27 +55,46 @@ function sandboxedCommand(
   sandbox: AgentProcessWriteSandbox | undefined,
 ): { readonly command: string; readonly args: readonly string[] } {
   if (!sandbox) return { command, args };
-  if (process.platform !== 'darwin') {
-    throw new Error('Isolated Agent shell execution is supported only on macOS');
+  const prepared = prepareAgentProcessIsolation(sandbox, 'macos-write-sandbox');
+  if (!prepared.profile) throw new Error(prepared.evidence.reason ?? 'Required process isolation is unavailable');
+  return { command: '/usr/bin/sandbox-exec', args: ['-p', prepared.profile, '--', command, ...args] };
+}
+
+/** Preparation records requirements only. The supervisor proves activation. */
+export function prepareAgentProcessIsolation(sandbox: AgentProcessWriteSandbox | undefined, requested: ExecutionPolicy['isolation'], platform = process.platform): {
+  readonly evidence: ProcessIsolationEvidence; readonly profile: string | null;
+} {
+  let evidence = pendingProcessIsolation({ capability: 'full-access', mutation: true, isolation: requested, writablePaths: [] }, platform);
+  const fail = (state: 'unavailable' | 'rejected', reason: string) => ({ evidence: { ...evidence, state, reason } as ProcessIsolationEvidence, profile: null });
+  if (requested !== 'macos-write-sandbox') {
+    if (sandbox) return fail('rejected', 'The process sandbox differs from its admitted policy.');
+    if (requested === 'host-write-boundary') return fail('rejected', 'A Host write boundary cannot enforce a shell process.');
+    return { evidence, profile: null };
   }
-  const writablePaths = [...new Set(sandbox.writablePaths.map(canonicalizePotentialPath))];
-  if (writablePaths.length === 0) throw new Error('Isolated Agent shell requires at least one writable path');
-  const protectedGitObjectStores = [...new Set(
-    (sandbox.protectedGitObjectStores ?? []).map(canonicalizePotentialPath),
-  )];
-  const writable = `(require-any (literal "/dev/null") ${[...writablePaths, ...protectedGitObjectStores]
-    .map((candidate) => `(subpath ${sandboxString(candidate)})`)
-    .join(' ')})`;
-  const profile = [
-    '(version 1)',
-    '(allow default)',
-    `(deny file-write* (require-not ${writable}))`,
-    ...protectedGitObjectStores.flatMap(gitObjectStoreProtectionRules),
-  ].join('\n');
-  return {
-    command: '/usr/bin/sandbox-exec',
-    args: ['-p', profile, '--', command, ...args],
-  };
+  if (!sandbox) return fail('unavailable', 'The admitted process policy requires an enforced write sandbox.');
+  try {
+    const writablePaths = [...new Set(sandbox.writablePaths.map(canonicalizePotentialPath))];
+    if (writablePaths.length === 0) return fail('rejected', 'Isolated Agent shell requires at least one writable path.');
+    const protectedGitObjectStores = [...new Set(
+      (sandbox.protectedGitObjectStores ?? []).map(canonicalizePotentialPath),
+    )];
+    const writable = `(require-any (literal "/dev/null") ${[...writablePaths, ...protectedGitObjectStores]
+      .map((candidate) => `(subpath ${sandboxString(candidate)})`)
+      .join(' ')})`;
+    const profile = [
+      '(version 1)',
+      '(allow default)',
+      `(deny file-write* (require-not ${writable}))`,
+      ...protectedGitObjectStores.flatMap(gitObjectStoreProtectionRules),
+    ].join('\n');
+    evidence = decodeProcessIsolationEvidence({ ...evidence, writablePaths, protectedGitObjectStores, profileDigest: createHash('sha256').update(profile).digest('hex') });
+    if (platform !== 'darwin') return { evidence: { ...evidence, dependency: 'unavailable', state: 'unavailable', reason: 'Required process isolation is unavailable on this platform.' }, profile: null };
+    try { accessSync('/usr/bin/sandbox-exec', constants.X_OK); }
+    catch { return { evidence: { ...evidence, dependency: 'unavailable', state: 'unavailable', reason: 'The macOS sandbox backend is unavailable.' }, profile: null }; }
+    return { evidence: { ...evidence, dependency: 'available' }, profile };
+  } catch {
+    return fail('rejected', 'The requested sandbox roots or profile are invalid.');
+  }
 }
 
 function gitObjectStoreProtectionRules(objectStore: string): string[] {

@@ -1491,6 +1491,12 @@ export const en = {
       stopUnavailable: 'That work already finished.',
       tasks: {
         directory: 'Directory',
+        actualIsolation: 'Actual isolation',
+        isolationStates: { pending: 'Not yet observed', sandboxed: 'macOS write sandbox active', unsandboxed: 'No OS process sandbox', unavailable: 'Required sandbox unavailable', rejected: 'Isolation request rejected' },
+        network: 'Network',
+        unrestrictedNetwork: 'Unrestricted by the process sandbox',
+        writeRoots: 'Sandbox write roots',
+        isolationDetail: 'Isolation detail',
         executionPolicy: 'Execution policy',
         backgroundWork: 'Background tasks',
         running: ({ count }: { count: number }) => `${count} running`,

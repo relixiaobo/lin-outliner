@@ -2021,6 +2021,67 @@ describe('PiTurnExecutor event normalization', () => {
     expect(restored).toContain('Historical diff B reviewed.');
   });
 
+  test('process observations and bounded captures preserve provider prefixes and reconcile references after compaction', async () => {
+    const fixture = createContext();
+    const { pendingExecutionContext } = await import('../../src/main/agent/tasks/ExecutionContext');
+    const { pendingProcessIsolation } = await import('../../src/core/agent/processIsolation');
+    const { processObservation } = await import('../../src/main/agent/context/ProcessObservations');
+    const payloads = new Map<string, ThreadContextPayload>();
+    const put = (payload: ThreadContextPayload): ThreadContextPayloadReference => {
+      const bytes = JSON.stringify(payload);
+      const ref = { id: createHash('sha256').update(bytes).digest('hex'), mimeType: 'application/vnd.tenon.agent-context+json' as const,
+        byteLength: Buffer.byteLength(bytes), schemaVersion: 1 as const, kind: payload.kind };
+      payloads.set(ref.id, payload); return ref;
+    };
+    const read = async (ref: ThreadContextPayloadReference) => payloads.get(ref.id) ?? fixture.context.readContext(ref);
+    const context = { ...fixture.context, readContext: read };
+    const executionContext = pendingExecutionContext({ requestedCwd: '/repo', cwd: '/repo', targets: [], targetMode: 'follow', coverage: 'cwd-only',
+      scopes: [{ key: 'repo', directory: '/repo', worktree: null, gitDirectory: null }] },
+    { capability: 'full-access', isolation: 'unsandboxed', mutation: false, writablePaths: [] });
+    const task = { taskId: 'original-process', cwd: '/repo', executionContext, state: 'running', outcomeReason: null,
+      backgroundEnabled: true, startedAt: 1, completedAt: null,
+      isolation: { ...pendingProcessIsolation(executionContext.policy, 'darwin'), state: 'unsandboxed' },
+    } as import('../../src/main/agent/tasks/toolTaskTypes').ToolTaskRecord;
+    const requests: unknown[][] = [];
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(), resolveRuntime: async () => runtimeSelection(),
+      createAgent: (options) => ({ state: { errorMessage: undefined }, subscribe: () => () => undefined,
+        abort: () => undefined, steer: () => undefined, prompt: async () => {
+          const schema = JSON.stringify(options.tools);
+          for (let index = 0; index < 3; index++) {
+            await context.persistContextEvidence(processObservation(index === 2
+              ? { ...task, state: 'cancelled', completedAt: 3, outcomeReason: 'stop_requested' } : task)!, 'Recorded process');
+            await context.persistContextEvidence({ schemaVersion: 1, kind: 'additionalContext', threadState: null,
+              turnEntries: [{ key: 'capture-' + index, source: 'task:capture-' + index, authority: 'untrusted', purpose: 'observation',
+                text: 'Frozen bounded capture ' + index + ': ' + 'line\\n'.repeat(10) }] }, 'Explicit process capture');
+            for (let retry = 0; retry < 2; retry++) {
+              const messages = await options.transformContext!([]);
+              requests.push(convertResponsesMessages(testModel, { messages }, new Set([testModel.provider]), { includeSystemPrompt: false }));
+            }
+            expect(JSON.stringify(options.tools)).toBe(schema);
+          }
+        } }),
+    });
+    expect((await executor.execute(context)).status).toBe('completed');
+    for (let index = 1; index < requests.length; index++) expect(requests[index]!.slice(0, requests[index - 1]!.length)).toEqual(requests[index - 1]);
+    expect(requests[0]).toEqual(requests[1]);
+    expect(requests[2]).toEqual(requests[3]);
+    expect(JSON.stringify(requests.at(-1))).toContain('Frozen bounded capture 0');
+    const prior = completedTurn(context.turn, context.turn.id, [...context.turn.items, ...fixture.recorder.orderedItems()], 1);
+    const plan = await planContextCompaction({ turns: [prior], readContext: read });
+    expect(plan).not.toBeNull();
+    const compacted = completedTurn(context.turn, uuidV7(), [{ id: uuidV7(), type: 'contextCompaction', ...plan,
+      summaryRef: put(plan!.summary), restoredStateRef: put(plan!.restoredState) } as ThreadItem], 3);
+    const projected = await new CanonicalContextProjector(testModel, { readContext: read, readInternalText: async () => null,
+      readOutput: async () => null, readResource: async () => null, resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => null }).projectTurns([prior, compacted]);
+    const restored = JSON.stringify(convertResponsesMessages(testModel, { messages: projected }, new Set([testModel.provider]), { includeSystemPrompt: false }));
+    expect(restored).toContain('original-process');
+    expect(restored).toContain('cancelled');
+    expect(restored).toContain('Reconcile this Task');
+    expect(restored).not.toContain('was observed running');
+  });
+
   test('rebuilds every provider boundary from durable canonical Items', async () => {
     const fixture = createContext();
     const providerContexts: Message[][] = [];

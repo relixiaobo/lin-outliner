@@ -355,6 +355,9 @@ export class ToolRuntime {
         const combined = [output?.stdout, output?.stderr].filter(Boolean).join('\n');
         return toolResult('task_status', {
           taskId: task.taskId,
+          isolation: task.isolation,
+          cwd: task.executionContext.address.cwd,
+          capability: task.executionContext.policy.capability,
           producer: task.producer,
           description: task.description,
           state: task.state,
