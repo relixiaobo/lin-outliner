@@ -26,6 +26,7 @@ import {
   type ToolEnvelope,
 } from '../../src/main/agent/capabilities/agentToolEnvelope';
 import { createLocalTools } from '../../src/main/agent/capabilities/agentLocalTools';
+import { expectToolOutputContract } from '../helpers/toolOutputContract';
 import { Database } from 'bun:sqlite';
 import { ToolTaskService } from '../../src/main/agent/tasks/ToolTaskService';
 import { ToolTaskStore } from '../../src/main/agent/tasks/ToolTaskStore';
@@ -216,6 +217,14 @@ describe('native turn kernel parity', () => {
       result: { kind: 'tenon', outcome: { ok: true }, data: 'wrong', content: [], details: {} },
       expectedMessage: 'Tenon tool result data does not match its output schema.',
     }, {
+      name: 'file_read',
+      result: {
+        kind: 'tenon', outcome: { ok: true },
+        data: { file: { filePath: '/notes.txt', totalLines: 'unknown' } },
+        content: [], details: {},
+      },
+      expectedMessage: 'Tenon tool result data does not match its output schema.',
+    }, {
       name: 'update_plan',
       result: { kind: 'tenon', outcome: { ok: true }, data: {}, content: [], details: {} },
       expectedMessage: 'A Tenon tool declared no output data but returned data.',
@@ -297,6 +306,125 @@ describe('native turn kernel parity', () => {
     });
     expect(runtime.state.messages.at(-1)).toMatchObject({ role: 'assistant', content: [{ text: 'complete' }] });
   });
+
+  test('preserves bounded file_read pages and continuation through Kernel output validation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-file-pages-'));
+    try {
+      const filePath = path.join(root, 'notes.txt');
+      const lines = Array.from({ length: 176 }, (_, index) => `line ${index + 1}`);
+      await writeFile(filePath, lines.join('\n'), 'utf8');
+      const fileRead = createLocalTools({ localRoot: root })
+        .find((candidate) => candidate.name === 'file_read')!;
+
+      for (const page of [
+        { args: { limit: 45 }, startLine: 1, totalLines: null, hasMore: true,
+          content: lines.slice(0, 45).join('\n'), instruction: 'offset 46' },
+        { args: { offset: 46, limit: 200 }, startLine: 46, totalLines: 176, hasMore: false,
+          content: lines.slice(45).join('\n'), instruction: 'Reached the end of the file' },
+      ]) {
+        const { runtime, gateway } = await executeToolWithArguments(fileRead, {
+          file_path: filePath, cwd: root, ...page.args,
+        });
+        const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+        const providerResult = gateway.requests[1]?.context.messages
+          .find((message) => message.role === 'toolResult');
+        expect(result?.isError).toBe(false);
+        expect(providerResult?.content).toHaveLength(2);
+        const header = JSON.parse((providerResult!.content[0] as { text: string }).text);
+        expect(header).toMatchObject({
+          ok: true, status: 'partial',
+          data: { file: { filePath, startLine: page.startLine, totalLines: page.totalLines, hasMore: page.hasMore } },
+          instructions: expect.stringContaining(page.instruction),
+        });
+        expect(providerResult!.content[1]).toEqual({ type: 'text', text: page.content });
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('preserves a character-bounded file_read with an unknown line count through Kernel output validation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-long-line-'));
+    try {
+      const filePath = path.join(root, 'long-line.txt');
+      await writeFile(filePath, 'x'.repeat(250_000), 'utf8');
+      const fileRead = createLocalTools({ localRoot: root })
+        .find((candidate) => candidate.name === 'file_read')!;
+      const { runtime, gateway } = await executeToolWithArguments(fileRead, { file_path: filePath });
+      const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+      const providerResult = gateway.requests[1]?.context.messages
+        .find((message) => message.role === 'toolResult');
+      expect(result?.isError).toBe(false);
+      expect(providerResult?.content).toHaveLength(2);
+      const header = JSON.parse((providerResult!.content[0] as { text: string }).text);
+      expect(header).toMatchObject({
+        ok: true, status: 'partial',
+        data: { file: { filePath, totalLines: null, lineTruncated: true } },
+        instructions: expect.stringContaining('A single line exceeded'),
+      });
+      expect(providerResult!.content[1]).toEqual({ type: 'text', text: 'x'.repeat(200_000) });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('paginates broad file_grep results within Kernel count and byte limits without losing matches', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-grep-pages-'));
+    try {
+      for (let index = 0; index < 4_200; index += 1) {
+        await writeFile(path.join(root, `match-${index.toString().padStart(4, '0')}.txt`), 'hit\n');
+      }
+      const fileGrep = createLocalTools({ localRoot: root })
+        .find((candidate) => candidate.name === 'file_grep')!;
+      const collected: string[] = [];
+      let offset = 0;
+      for (let page = 0; page < 3; page += 1) {
+        const { runtime, gateway } = await executeToolWithArguments(fileGrep, {
+          pattern: 'hit', output_mode: 'files_with_matches', head_limit: 0, offset,
+        });
+        expect(runtime.state.messages.find((message) => message.role === 'toolResult')?.isError).toBe(false);
+        const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+        const header = JSON.parse((result.content[0] as { text: string }).text);
+        expect(header.ok).toBe(true);
+        expectToolOutputContract('file_grep', header.data);
+        collected.push(...header.data.filenames);
+        if (!header.instructions) break;
+        expect(header.status).toBe('partial');
+        const next = Number(header.instructions.match(/offset (\d+)/)?.[1]);
+        expect(next).toBe(offset + header.data.filenames.length);
+        expect(next).toBeGreaterThan(offset);
+        offset = next;
+      }
+      expect(collected).toHaveLength(4_200);
+      expect(new Set(collected).size).toBe(4_200);
+
+      const lines = Array.from({ length: 2_000 }, (_, index) => `hit ${index} ${'x\\"'.repeat(150)}`);
+      await writeFile(path.join(root, 'wide.txt'), lines.join('\n'));
+      const readLines: string[] = [];
+      offset = 0;
+      for (let page = 0; page < 10; page += 1) {
+        const { runtime, gateway } = await executeToolWithArguments(fileGrep, {
+          pattern: 'hit', path: 'wide.txt', output_mode: 'content', head_limit: 0, offset, '-n': false,
+        });
+        expect(runtime.state.messages.find((message) => message.role === 'toolResult')?.isError).toBe(false);
+        const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+        const header = JSON.parse((result.content[0] as { text: string }).text);
+        expect(header.ok).toBe(true);
+        expectToolOutputContract('file_grep', header.data);
+        const returned = (header.data.content as string).split('\n');
+        readLines.push(...returned);
+        if (!header.instructions) break;
+        expect(header.status).toBe('partial');
+        const next = Number(header.instructions.match(/offset (\d+)/)?.[1]);
+        expect(next).toBe(offset + returned.length);
+        expect(next).toBeGreaterThan(offset);
+        offset = next;
+      }
+      expect(readLines).toEqual(lines);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   test('bounds a large real file mutation before Kernel validation while retaining the full private patch', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-file-write-'));
@@ -384,6 +512,42 @@ describe('native turn kernel parity', () => {
       }
     } finally { await tasks.close(2_000); database.close(); await rm(root, { recursive: true, force: true }); }
   });
+
+  test('retains terminal task status when escaped process output exceeds the JSON byte limit', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-task-output-'));
+    const database = new Database(':memory:');
+    const store = new ToolTaskStore(database as unknown as SqliteDatabase);
+    const tasks = new ToolTaskService(store, path.join(root, 'tasks'));
+    tasks.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+      startCompletionTurn: async () => false, taskChanged: () => {} });
+    await tasks.initialize();
+    try {
+      const context = toolRuntimeContext();
+      const task = await tasks.start({
+        ownerThreadId: context.thread.id, sourceTurnId: context.turn.id, sourceItemId: 'binary-output', producer: 'bash',
+        description: 'Escaped process output',
+        command: 'head -c 30000 /dev/zero; head -c 30000 /dev/zero >&2', cwd: root, env: process.env, timeoutMs: 10_000,
+      });
+      expect((await tasks.waitForTerminal(task.taskId, context.thread.id, 5_000))?.state).toBe('succeeded');
+      const controls = await new ToolRuntime(toolRuntimeService({ toolTaskService: () => tasks }), {
+        capabilityTools: () => [], capabilityConfig: { blocks: [] },
+      }).createTools({ ...context, configuration: { ...context.configuration, tools: ['task_status'] } });
+      const status = controls.find((candidate) => candidate.name === 'task_status')!;
+      const { runtime, gateway } = await executeToolWithArguments(status, { task_id: task.taskId });
+      expect(runtime.state.messages.find((message) => message.role === 'toolResult')?.isError).toBe(false);
+      const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+      const header = JSON.parse((result.content[0] as { text: string }).text);
+      expect(header).toMatchObject({ ok: true, data: {
+        taskId: task.taskId, state: 'succeeded', result: { exitCode: 0, outputTruncated: true },
+      } });
+      expectToolOutputContract('task_status', header.data);
+      const original = await tasks.output(task.taskId, context.thread.id);
+      expect(original?.stdout).toHaveLength(30_000);
+      expect(original?.stderr).toHaveLength(30_000);
+    } finally {
+      await tasks.close(2_000); database.close(); await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   test('keeps expected adapter failures semantic while unexpected exceptions remain Kernel failures', async () => {
     const context = toolRuntimeContext();

@@ -49,7 +49,7 @@ import {
   isWebFetchUrl,
   normalizeWebFetchParams,
   normalizeWebSearchParams,
-  webFetchModelData,
+  webFetchToolResult,
   webSearchModelData,
   type FetchTextResult,
   type NormalizedWebFetchParams,
@@ -317,19 +317,6 @@ function createWebFetchTool(artifactSink?: ToolArtifactSink): AgentTool<any, Too
       }
     },
   };
-}
-
-function webFetchToolResult(envelope: ToolEnvelope<WebFetchData>) {
-  const supplemental = envelope.data?.mode === 'read' && envelope.data.content !== undefined
-    ? [{ type: 'text' as const, text: envelope.data.content }]
-    : [];
-  const result = agentToolResult(
-    envelope,
-    envelope.data ? webFetchModelData(envelope.data) : undefined,
-    supplemental,
-  );
-  const resourceRef = envelope.data?.binaryFile?.resourceRef;
-  return resourceRef ? { ...result, resourceRefs: [resourceRef] } : result;
 }
 
 async function fetchWebFetchEnvelope(

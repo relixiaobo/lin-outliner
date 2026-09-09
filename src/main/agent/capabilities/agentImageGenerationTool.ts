@@ -8,9 +8,11 @@ import type {
 import {
   agentToolResult,
   errorEnvelope,
+  MAX_TENON_RESULT_DATA_BYTES,
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
+import { boundJsonString, jsonByteLength } from './agentToolResultBudget';
 import { readAgentImageDimensions } from './agentLocalTools';
 import {
   parseFileReferenceUri,
@@ -352,6 +354,8 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           text: textOutputs,
           promptPreview: promptPreview(params.prompt),
         };
+        const visible = modelVisibleGenerateImageData(data);
+        if (visible.truncated) warnings.push('Provider text was truncated in the model-visible result. Saved images and complete text remain in Host details.');
         return agentToolResult(
           successEnvelope(GENERATE_IMAGE_TOOL_NAME, data, {
             status: warnings.length > 0 ? 'partial' : 'success',
@@ -360,9 +364,10 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
             metrics: {
               durationMs: elapsed(startedAt),
               outputBytes: savedOutputBytes,
+              truncated: visible.truncated,
             },
           }),
-          modelVisibleGenerateImageData(data),
+          visible.data,
           extraContent,
         );
       } catch (error) {
@@ -496,7 +501,7 @@ function noImageModelMessage(requested: string | undefined): string {
 }
 
 function modelVisibleGenerateImageData(data: GenerateImageData) {
-  return {
+  const visible = {
     images: data.images.map((image) => {
       const geometry = image.artifactRef.geometry;
       return {
@@ -521,7 +526,23 @@ function modelVisibleGenerateImageData(data: GenerateImageData) {
         observationToSource: geometry.observationToSource,
       };
     }),
-    ...(data.text.length ? { text: data.text } : {}),
+    ...(data.text.length ? { text: [] as string[] } : {}),
+  };
+  let visibleBytes = jsonByteLength(visible);
+  for (const text of data.text) {
+    if (visible.text!.length >= 16) break;
+    const separatorBytes = visible.text!.length > 0 ? 1 : 0;
+    const remaining = MAX_TENON_RESULT_DATA_BYTES - visibleBytes - separatorBytes;
+    if (remaining < 2) break;
+    const bounded = boundJsonString(text, remaining);
+    visible.text!.push(bounded);
+    visibleBytes += jsonByteLength(bounded) + separatorBytes;
+    if (bounded !== text) break;
+  }
+  return {
+    data: visible,
+    truncated: data.text.length !== (visible.text?.length ?? 0)
+      || data.text.some((text, index) => text !== visible.text?.[index]),
   };
 }
 
