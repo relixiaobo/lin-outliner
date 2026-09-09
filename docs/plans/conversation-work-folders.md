@@ -12,7 +12,8 @@ and related files distributed across directories.
 available through both the UI and an Agent acting on the user's instruction.
 **OBJ-2:** History identifies that setting without confusing a Project name with
 an execution directory. **OBJ-3:** A temporary operation elsewhere does not
-change where later work defaults.
+change where later work defaults. **OBJ-4:** Ordinary conversations without a
+Project or selected folder keep the composer free of extra setup/status chrome.
 
 Minimum acceptable outcome: choose, inspect, change, clear, restore, and display
 the work folder, with truthful invalid-directory and concurrent-change handling.
@@ -42,6 +43,11 @@ actual execution addresses. A default is a convenience; the immutable admitted
 task address remains the record
 of where an operation actually executes.
 
+**DEC-2:** The composer uses an Add (`+`) menu in place of the attachment icon.
+Project/location status appears immediately beside Add only when a Project or
+work folder is selected. This follows the PM's explicit interaction direction
+for the expected majority of conversations without a Project.
+
 | Option | Benefit | Cost / decision |
 | --- | --- | --- |
 | Per-call cwd only, as today | Simple task ownership and flexible cross-directory work | No durable conversation location; insufficient for OBJ-1 |
@@ -67,14 +73,14 @@ each conversation owns its accepted default work folder thereafter. A work folde
 is a setting, not another navigation container or Workspace entity. Direct
 conversation folder selection remains available without creating a Project.
 
-The composer has one compact Project/location entry. It shows the selected Project
-and, when needed to avoid ambiguity, the conversation's different work folder.
-Its popover offers Project search/selection, creation, no Project, and the current
-work-folder setting. Full paths are inspectable. Related folder lists belong in
-Project editing/context details, not an always-expanded composer configuration
-form. An unbound chat can show a quiet Choose project entry without a missing-state
-warning. The composer uses the same saved-folder versus application-default
-distinction as history in FR-4.
+The composer toolbar starts with Add (`+`), which opens attachment and optional
+Project/work-folder actions. With neither Project nor work folder selected, this
+is the only context-entry control: no Choose project prompt, status chip, or extra
+Project row is displayed. After a selection is accepted, one compact status chip
+appears immediately to the right of Add in the same toolbar row. Its label uses
+the same saved-folder versus application-default distinction as history in FR-4.
+Full paths and related folder lists are available in Project/location details.
+FR-7 defines the menu and status interaction.
 
 **FR-1:** A new conversation can remain unbound. Its folder control offers the
 native directory picker and shows the application default in location details
@@ -171,6 +177,40 @@ CLI transport must be available without enabling the delegation experiment and
 must not open private databases. Successful changes invalidate the existing UI
 catalog/current-context views without discarding selection or unsent input.
 
+**FR-7:** Add opens a menu with Add attachments, Choose project, and Set work
+folder actions. Choose project opens the searchable selector with creation and
+no-Project options; Set work folder opens the location control/native picker from
+FR-1. Once a selection exists, the same actions allow changes, and clicking the
+status chip opens its Project/location details. There is no separate persistent
+Project control above the composer.
+
+| Accepted conversation settings | Status immediately beside Add |
+| --- | --- |
+| No Project and no saved folder | No status chip |
+| Project P and its primary folder A saved | P |
+| Project P and another folder B saved | P · B |
+| Project P and no saved folder | P · Application default |
+| No Project and folder B saved | B |
+
+Changing or clearing a setting updates the chip after Host acceptance. Leaving a
+Project retains any saved work folder, so a folder-only chip remains; clearing
+both settings removes the chip. Pending/failed reads never convert an unknown
+selection into a false empty state. Selected unavailable locations stay visible
+and expose repair actions. The no-selection application default remains
+inspectable through Set work folder without adding persistent toolbar status.
+
+Add attachments uses the existing attachment picker and admission path. Attachment
+limits or attachment-specific unavailability disable that action, not unrelated
+Project/location inspection or otherwise admissible setting changes. File paste,
+drop, tray/removal behavior, and draft preservation remain part of the existing
+attachment owner. Attaching a file does not select a Project or work folder.
+Menu dismissal restores focus, keyboard operation exposes every eligible action,
+and the neutral icon/chip follows the existing design tokens. Long Project names
+truncate before hiding the application-default qualifier or different-folder
+identity; full text is accessible in details. At supported narrow widths the
+chip stays in the toolbar without displacing send/stop controls or adding a
+permanent row. Hover never changes geometry.
+
 ### Execution and change rules
 
 **BR-1:** Resolve each operation from its explicit cwd override, otherwise the
@@ -220,9 +260,13 @@ secondary-folder access. Its
 and per-turn overrides. These support the distinction between a reusable Project
 and a conversation location; the screenshots do not prove how changing an
 existing chat's Project alters cwd, so FR-3 is a Tenon recommendation.
-**ASM-1:** A single compact composer entry can explain normal Project selection
-and exceptional folder overrides. Validate with ordinary chat, a folder-less
-Project, a multi-folder Project, two worktrees, and a cross-directory inspection.
+**EVD-4:** The PM expects most conversations to have no Project and supplied a
+Tenon screenshot directing replacement of the attachment icon with Add, Project
+selection inside its menu, and selected status beside Add. This is the supplied
+product direction, not a measured usage statistic.
+**ASM-1:** Add remains discoverable without an empty Project prompt. Validate with
+ordinary chat, attachment use, a folder-less Project, a multi-folder Project, two
+worktrees, cross-directory inspection, keyboard navigation, and a narrow composer.
 
 Implementation suggestions: use the existing persistent Thread metadata owner
 for one revisioned folder setting; extend Host admission and the current-context
@@ -237,7 +281,8 @@ they do not acquire conversation-default lookup or multi-folder fan-out.
 
 Expected areas: Agent Thread protocol and metadata persistence, Thread service
 operations, resource/default-directory resolution, local-tool admission and
-context publication, packaged CLI/Skill admission, ThreadDock/ThreadList and
+context publication, packaged CLI/Skill admission, ThreadView's composer toolbar,
+ThreadDock/ThreadList, composer/Project styles, attachment-menu integration, and
 Project catalog/service/storage/editing and membership flow, Automation Project
 directory resolution, localization, and focused Core/renderer/Electron tests.
 Update Agent Core, tool design, rendering, and affected context specs together.
@@ -308,6 +353,17 @@ durable work-folder selection.
   identity and resolved path as AC-11, including when H equals P's primary path.
   Unavailable default-path resolution shows unavailable location details and never
   substitutes P's primary or the last task cwd. Covers FR-3/4 and BR-1.
+- **AC-13:** A chat with neither Project nor saved work folder shows Add in place
+  of the attachment icon and no Project prompt/chip/extra row. Mouse and keyboard
+  can reach attachments, Project selection, and work-folder selection. Attachment
+  limits disable only their own action; picker, paste/drop, draft, and attachment
+  removal continue through the existing owner. Covers FR-7 and OBJ-4.
+- **AC-14:** UI and Agent changes produce each FR-7 status immediately beside Add
+  after acceptance, including the explicit application-default state in AC-11/12.
+  Leaving a Project with a saved folder yields the folder-only chip; clearing both
+  settings removes it. Pending/failure states remain truthful. Long names and a
+  narrow light/dark composer retain location distinctions and accessible send/stop
+  controls, and menu dismissal preserves input/focus. Covers FR-4/7.
 
 Run typecheck, relevant owner/integration tests, real CLI discovery, focused
 Electron interaction and restart checks, docs checks, and light/dark verification
