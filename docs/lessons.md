@@ -2913,3 +2913,17 @@ primary folder and an unset conversation folder that uses the application defaul
 and an explicit choice remain different even when their current paths coincide.
 Verify clearing, membership-only reassignment, default changes, unavailability
 and restart without silently persisting or substituting a displayed default.
+
+## Bounded text pages must also bound aggregate scanning
+
+PR #669's continuation reader initially changed newline normalization between
+pages, and match-only search lost zero-width and UTF-16 context. Restoring that
+context with one prefix scan per match made a 4 MiB BOM file with 100 matches
+take about eight seconds despite each preview being small.
+
+**Share normalization and original-byte accounting across reading paths, then
+bound total I/O per file and request as well as each response.** Use verified
+positional reads for byte-addressable text and one forward decoding pass for
+transcoded match windows. Test encoding, BOM, newline and page boundaries plus
+many adjacent matches, replacement and cancellation; measure actual read volume
+so a bounded preview cannot conceal repeated whole-prefix work.

@@ -33,7 +33,7 @@ to widen the reset. Preserve bytes before changing active records.
 CON-1: Consume the shipped [startup fault isolation](../spec/architecture.md#desktop-host-lifecycle)
 issue/action identity and capability readiness. Use the exact-source resolution,
 recovered-history provenance, and publication invalidation mechanisms from
-[unified session records](unified-session-records.md). These are required
+[published conversation records](../spec/agent-core.md#published-conversation-records). These are required
 predecessor contracts, not implementation details to reconstruct from an archive.
 
 The selected order also consumes

@@ -363,10 +363,10 @@ Update Agent Core, tool design, rendering, and affected context specs together.
 In particular, reconcile the stale Agent Core opening that says Thread owns a
 working directory with its later current contract; do not preserve both claims.
 
-Collision evidence was checked against `origin/main` at `7c17f32d`: #664 startup
-fault isolation and #668 scheduled-work design are integrated. Open #669 claims
-Thread source resolution, runtime context, records, and lifecycle; this design
-overlaps those owners and must consume its final contract before implementation.
+Consume current startup fault isolation and the
+[published record contract](../spec/agent-core.md#published-conversation-records)
+for Thread source resolution, runtime context and lifecycle. This design shares
+those owners; refresh live claims before changing them.
 The scheduled-work design keeps its assignment location independent of a
 conversation default; it may copy an explicit initial choice, then resolves its
 saved Project selection through the same primary-folder owner. CLI packaging

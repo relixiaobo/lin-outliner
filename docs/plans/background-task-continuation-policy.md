@@ -251,10 +251,10 @@ choices must preserve the target, authority, receipt, and race contracts above.
 - Update current Agent tool, runtime, core, delegation, and rendering specs at
   implementation, wherever their existing all-results-deliver premise changes.
 
-Collision check found no competing claim on this plan file. The implementation
-overlaps PR #669's `ThreadService`, runtime/context, record publication, and
-related specs; consume its final shared mechanisms or agree an isolated shared
-interface first. PR #670's Project/work-directory design must continue using the
+Implementation uses the current `ThreadService`, runtime/context and
+[published record owners](../spec/agent-core.md#published-conversation-records).
+Preserve their source and lifecycle contracts when adding Task responsibility;
+coordinate any new shared interface separately. PR #670's Project/work-directory design must continue using the
 same execution addresses; this feature does not add directory ownership.
 Refresh open claims before implementation rather than relying on this snapshot.
 

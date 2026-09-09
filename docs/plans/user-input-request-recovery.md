@@ -313,10 +313,10 @@ coordination required by the repository.
 - Current core, model-runtime, tool-design, and Thread-rendering specifications:
   fold the final request lifecycle and snapshot behavior in the same feature PR.
 
-Collision check found no competing claim on this plan file. Implementation
-overlaps PR #669's Thread lifecycle, protocol/codec, renderer store, and record
-work. Consume its final shared mechanisms or agree an isolated shared-interface
-sequence first. PR #670's future work-folder implementation also uses Thread
+Implementation uses the current Thread lifecycle and
+[published record owners](../spec/agent-core.md#published-conversation-records).
+Preserve their final contracts while coordinating request protocol/codec and
+renderer-store changes. PR #670's future work-folder implementation also uses Thread
 and composer owners. Refresh live scopes at claim time.
 
 This feature and [background continuation](background-task-continuation-policy.md)
