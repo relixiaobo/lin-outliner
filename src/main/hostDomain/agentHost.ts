@@ -1,3 +1,4 @@
+import { ResourceScope } from '../resourceScope';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type {
@@ -83,6 +84,7 @@ export interface AgentHostComposition {
 }
 
 export interface AgentHostOptions {
+  readonly readMemoryEnabled?: () => boolean;
   readonly reviewMemoryReset: ReviewMemoryReset;
   readonly openMemory: OpenMemory;
   readonly onMemoryChanged: () => void;
@@ -190,6 +192,8 @@ export interface AgentWorktreeCapability {
 }
 
 export interface AgentThreadCapability {
+  startupIssues: ThreadService['startupIssues'];
+  startupThreadAvailability: ThreadService['startupThreadAvailability'];
   request: ThreadService['request'];
   subscribe: ThreadService['subscribe'];
   subscribeRenderer: ThreadService['subscribeRenderer'];
@@ -245,7 +249,17 @@ export interface AgentSkillsCapability {
   };
 }
 
-export function createAgentHost(options: AgentHostOptions): AgentHost {
+export async function createAgentHost(options: AgentHostOptions): Promise<AgentHost> {
+  const acquisition = new ResourceScope('agent-host-construction');
+  try {
+    return await composeAgentHost(options, acquisition);
+  } catch (error) {
+    return acquisition.fail(error);
+  }
+}
+
+async function composeAgentHost(options: AgentHostOptions, acquisition: ResourceScope): Promise<AgentHost> {
+  let admissionOpen = false;
   const managedSkills = createManagedSkillsHost({
     userDataDir: options.userDataDir,
     localRoot: options.defaultCwd,
@@ -257,8 +271,10 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   });
   const extensions = new ExtensionRegistry();
   const memoryControl = new MemoryControlStore(join(options.userDataDir, 'agent', 'memories.sqlite'));
+  acquisition.defer('memory-control', () => memoryControl.close());
   const memoryTimeline = new TimelineMemoryStore(options.timeline);
   const memory = new MemoryExtension(memoryControl, memoryTimeline, {
+    canRun: () => admissionOpen,
     onError: (error, operation) => options.reportError({
       domain: 'memory',
       severity: 'error',
@@ -309,13 +325,14 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     createTools: (context) => toolReference.get().createTools(context),
     beforeProviderContext: (context) => toolReference.get().prepareProviderContext(context),
   });
-  const threadService = ThreadService.open(options.userDataDir, turnExecutor, {
+  const threadService = await ThreadService.open(options.userDataDir, turnExecutor, {
     ...options.createThreadOptions(composition),
     attachmentScratchRoot: options.scratchRoot,
     nameGenerator: turnExecutor,
     resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
     extensions,
     beforeInitialTurnAdmission: () => memory.prepareForTurnAdmission(),
+    canStartTurn: () => admissionOpen,
     resolveSkillAdmission: (input) => managedSkills.resolveAdmission(
       input,
       options.createAdmissionSkillRuntimeOptions(input, composition),
@@ -325,8 +342,10 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
       ? {}
       : { toolTaskSupervisorRuntime: options.toolTaskSupervisorRuntime }),
   });
+  acquisition.defer('threads', () => threadService.close());
   threadReference.set(threadService);
   const delegationDatabase = openSqlite(join(options.userDataDir, 'agent', 'delegation.sqlite'));
+  acquisition.defer('delegation-database', () => delegationDatabase.close());
   const delegationStore = new DelegationSessionStore(delegationDatabase);
   const runnerRegistry = createDelegationRunnerRegistry();
   const delegationRuntime = new InternalDelegationSessionRuntime(
@@ -358,6 +377,7 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     socketPath: join(options.userDataDir, 'agent', 'delegate-broker.sock'),
     currentConfigurationRevision: async () => (await loadDelegationConfiguration()).revision,
     resolveAdmission: async (input) => {
+      if (!admissionOpen) throw new Error('Agent execution is unavailable');
       const source = threadService.delegationAdmissionContext(
         input.source.rootThreadId,
         input.source.sourceTurnId,
@@ -460,6 +480,8 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     execute: (execution) => delegationCoordinator.execute(execution),
   });
   const threads: AgentThreadCapability = {
+    startupIssues: () => threadService.startupIssues(),
+    startupThreadAvailability: () => threadService.startupThreadAvailability(),
     request: (...args) => threadService.request(...args),
     subscribe: (...args) => threadService.subscribe(...args),
     subscribeRenderer: (...args) => threadService.subscribeRenderer(...args),
@@ -482,15 +504,17 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
   };
   threadCapabilityReference.set(threads);
   memory.bindHost(threadService);
-  memory.subscribe(options.onMemoryChanged);
+  acquisition.defer('memory-subscription', memory.subscribe(options.onMemoryChanged));
   const memoryOperations = createMemoryOperations({ memory, review: options.reviewMemoryReset, open: options.openMemory });
   extensions.register(memory, { applicationInstructions: true });
 
   const automationStore = new AutomationStore(join(options.userDataDir, 'agent', 'automations.sqlite'));
+  acquisition.defer('automations', () => automationStore.close());
   automationStore.bindProjectResolver((id) => threadService.projects.store.require(id));
   const automationWorktree = new AutomationWorktree(options.userDataDir);
   const automationReference = assignOnce<AutomationService>('AutomationService');
   const automationDispatcher = new AutomationDispatcher({
+    canDispatch: () => admissionOpen,
     store: automationStore,
     threads: threadService,
     worktrees: automationWorktree,
@@ -591,12 +615,12 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
     },
   });
   toolReference.set(toolRuntime);
-  threadService.subscribe((notification) => {
+  acquisition.defer('thread-subscription', threadService.subscribe((notification) => {
     if (notification.type === 'turn/completed') managedSkills.clearTurn(notification.turnId);
     if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
       automationService.wake();
     }
-  });
+  }));
   const lifecycle = createAgentHostLifecycle({
     memory,
     threads: threadService,
@@ -657,8 +681,23 @@ export function createAgentHost(options: AgentHostOptions): AgentHost {
         });
       }
     },
-    initialize: lifecycle.initialize,
-    close: lifecycle.close,
+    initialize: async (projection, assertActive) => {
+      await lifecycle.initialize(projection, assertActive);
+      if (options.readMemoryEnabled) {
+        const mode = options.readMemoryEnabled() ? 'enabled' : 'disabled';
+        if ((await memory.view()).status.featureMode !== mode) await memory.setFeatureMode(mode);
+      }
+      assertActive?.();
+      admissionOpen = true;
+      memory.wakeWorker();
+      automationService.wake();
+      const tasks = threadService.toolTaskService();
+      for (const owner of tasks.store.ownersWithPendingDelivery()) tasks.wakeDelivery(owner);
+    },
+    close: () => {
+      admissionOpen = false;
+      return lifecycle.close();
+    },
   };
 }
 

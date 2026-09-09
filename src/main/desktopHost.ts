@@ -4,7 +4,7 @@ import { configurationCommandAllowed, isModelConfigurationCommand } from './conf
 import { readPreferencesView, editPreference, ensurePreferencesFile, ensureConfigurationSource } from './configuration/discovery';
 import type { PreferenceEdit, PreferencesView } from '../core/settingsDefinitions';
 import type { ConfigurationDomain } from '../core/settingsWindow';
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, shell } from 'electron';
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { SKILL_LIBRARY_CHANGED_CHANNEL, SKILL_REVIEW_DECIDE_CHANNEL, SKILL_REVIEW_GET_CHANNEL } from '../core/agent/skillOperations';
 import { createHash, randomUUID } from 'node:crypto';
@@ -17,6 +17,7 @@ import {
   STARTUP_QUIT_CHANNEL,
   STARTUP_RETRY_CHANNEL,
   STARTUP_STATE_CHANNEL,
+  STARTUP_ISSUE_ACTION_CHANNEL,
 } from '../core/startup';
 import { runOutlineActionCommand } from './outlineActionCommands';
 import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
@@ -252,7 +253,7 @@ import {
   type TransportOwner,
 } from './hostTransport/ownership';
 import { createOutlineDesktopHost } from './hostDomain/outlineDesktopHost';
-import { createAgentHost } from './hostDomain/agentHost';
+import { createAgentHost, type AgentHost } from './hostDomain/agentHost';
 import { createResourcePreviewHost } from './hostPlatform/resourcePreviewHost';
 import type { LocalFileOperationInput } from './hostPlatform/nativeLocalFileHost';
 import { createWindowApplicationHost } from './hostPlatform/windowApplicationHost';
@@ -352,13 +353,13 @@ const resourcePreviewHost = createResourcePreviewHost({
   translationShortcutBindings: () => effectiveKeybindings['global.toggle_page_translation'],
   resolveAttachmentFile: async (threadId, attachmentId) => {
     await lifecycle.ready('agent');
-    return agentHost.threads.resolveAttachmentFile(threadId, attachmentId);
+    return requireAgentHost().threads.resolveAttachmentFile(threadId, attachmentId);
   },
   resolveResourceFile: async (threadId, ref, intent) => {
     await lifecycle.ready('agent');
     return intent === 'source'
-      ? agentHost.threads.resolveThreadResourceSource(threadId, ref)
-      : agentHost.threads.resolveThreadResourceFile(threadId, ref);
+      ? requireAgentHost().threads.resolveThreadResourceSource(threadId, ref)
+      : requireAgentHost().threads.resolveThreadResourceFile(threadId, ref);
   },
   reportError,
 });
@@ -377,7 +378,7 @@ function scheduleManagedSkillUpdateCheck(): void {
     // version touched. The throttle stamps lastCheckedAt on failure too, so a
     // record that keeps failing is retried on the same schedule as one that
     // succeeds rather than on every launch.
-    void agentHost.skills.catalog
+    void requireAgentHost().skills.catalog
       .checkUpdates(undefined, { throttleMs: MANAGED_SKILL_UPDATE_THROTTLE_MS })
       .catch(() => { /* recorded on the record; retried next launch */ });
   }, MANAGED_SKILL_UPDATE_STARTUP_DELAY_MS);
@@ -394,7 +395,9 @@ function scheduleAppUpdateCheck(): void {
   timer.unref?.();
 }
 
-function startConfigurationWatcher(): void {
+async function startConfigurationWatcher(): Promise<void> {
+  const attempt = new ResourceScope('configuration-observation');
+  try {
   const configDir = join(resolvedUserDataDir, 'config');
   ensureAgentDir(configDir);
   writeAgentConfigurationSchema(resolvedUserDataDir);
@@ -404,9 +407,11 @@ function startConfigurationWatcher(): void {
   let keybindingsTimer: ReturnType<typeof setTimeout> | null = null;
   let applying = false;
   let pendingApply = false;
+  let disposed = false;
   const preferenceApplication = new PreferencesApplication();
   let observedPreferences = DEFAULT_FILE_PREFERENCES;
   const apply = () => {
+    if (disposed) return;
     if (applying) {
       pendingApply = true;
       return;
@@ -441,24 +446,30 @@ function startConfigurationWatcher(): void {
         windowApplicationHost.setTheme(appearance.theme, false);
         windowApplicationHost.setLocale(appearance.language, false);
       },
-      skills: (preferences) => agentHost.skills.updateRuntimeSettings(agentRuntimeSettingsFromPreferences(preferences)),
+      skills: (preferences) => requireAgentHost().skills.updateRuntimeSettings(agentRuntimeSettingsFromPreferences(preferences)),
       memory: async (preferences) => {
         await lifecycle.ready('outline-documents');
-        const current = await agentHost.memory.view();
+        const current = await requireAgentHost().memory.view();
         const mode = preferences.agent.memory.enabled ? 'enabled' : 'disabled';
-        if (current.status.featureMode !== mode) await agentHost.memory.setFeatureMode(mode);
+        if (current.status.featureMode !== mode) await requireAgentHost().memory.setFeatureMode(mode);
       },
       updates: async (preferences) => { await windowApplicationHost.updates.applyAutomaticChecksEnabled(preferences.updates.checkAutomatically); },
     }, publishStatus).catch((error) => {
       reportError({ domain: 'persistence', severity: 'error', code: 'preferences-status-write', message: 'Could not publish preference application status', error });
     }).finally(() => {
       applying = false;
-      if (pendingApply) {
+      if (pendingApply && !disposed) {
         pendingApply = false;
         queueMicrotask(apply);
       }
     });
   };
+  attempt.defer('preferences-timers', () => {
+    disposed = true;
+    if (timer !== null) clearTimeout(timer);
+    if (keybindingsTimer !== null) clearTimeout(keybindingsTimer);
+    if (applyFilePreferencesNow === apply) applyFilePreferencesNow = null;
+  });
   applyFilePreferencesNow = apply;
   const watcher = watch(configDir, { persistent: false }, (_event, filename) => {
     const name = filename?.toString();
@@ -471,29 +482,41 @@ function startConfigurationWatcher(): void {
       keybindingsTimer = setTimeout(() => { applyKeybindings(); windowApplicationHost.notifyConfigurationChanged('preferences'); }, 100);
     }
   });
+  attempt.defer('preferences-watcher', () => watcher.close());
+  ensureAgentDir(join(resolvedUserDataDir, 'agent'));
   const rootSourceWatcher = watch(join(resolvedUserDataDir, 'agent'), { persistent: false }, (_event, filename) => {
     if (!filename || filename.toString() === 'config.json') {
       windowApplicationHost.notifyConfigurationChanged('agents');
       windowApplicationHost.notifyConfigurationChanged('preferences');
     }
   });
+  attempt.defer('agent-source-watcher', () => rootSourceWatcher.close());
   const initial = loadFilePreferences(resolvedUserDataDir);
   writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, initial, {
     effective: preferenceApplication.effective,
     applicationStatus: 'pending',
   });
   applyKeybindings(initialKeybindings);
-  resources.defer('file-preferences-watcher', () => {
-    watcher.close();
-    rootSourceWatcher.close();
-    if (timer !== null) clearTimeout(timer);
-    if (keybindingsTimer !== null) clearTimeout(keybindingsTimer);
-    if (applyFilePreferencesNow === apply) applyFilePreferencesNow = null;
-  });
+  resources.defer('configuration-observation', () => attempt.dispose());
+  } catch (error) {
+    applyFilePreferencesNow = null;
+    return attempt.fail(error);
+  }
 }
 
 const agentImageObservationMutex = new Mutex();
-const agentHost = createAgentHost({
+let agentHost: AgentHost | null = null;
+let initializingAgentHost: AgentHost | null = null;
+let agentAttemptCleanup: Promise<void> | null = null;
+function requireAgentHost(): AgentHost {
+  if (!agentHost || lifecycle.phase() === 'quitting' || lifecycle.phase() === 'disposed') {
+    throw new Error('Conversations are unavailable. Use the startup issue to retry.');
+  }
+  return agentHost;
+}
+function constructAgentHost(): Promise<AgentHost> {
+  return createAgentHost({
+  readMemoryEnabled: () => loadFilePreferences(resolvedUserDataDir).preferences.agent.memory.enabled,
   reviewSkillOperation: (input) => windowApplicationHost.reviewSkillOperation(input),
   reviewMemoryReset: (review, caller) => windowApplicationHost.reviewMemoryReset(review, caller),
   onMemoryChanged: () => {
@@ -649,7 +672,7 @@ const agentHost = createAgentHost({
     processEnvironment: outlineHost.createAgentShellEnvironment(
       context.thread.id,
       context.turn.id,
-      (shell) => agentHost.skills.processEnvironment(context.thread.id, context.turn.id, shell),
+      (shell) => requireAgentHost().skills.processEnvironment(context.thread.id, context.turn.id, shell),
     ),
   }),
   createImageGenerationRuntime: createThreadImageGenerationRuntime,
@@ -669,6 +692,7 @@ const agentHost = createAgentHost({
   },
   validateAutomationConfiguration: validateAutomationEffectiveConfiguration,
 });
+}
 const windowApplicationHost = createWindowApplicationHost({
   userDataDir: resolvedUserDataDir,
   moduleDir: environment.moduleDir,
@@ -749,26 +773,48 @@ async function validateAutomationEffectiveConfiguration(
   validateAgentModelSelection(configuration.model, configuration.reasoningEffort, provider);
 }
 const wakeAutomationsOnResume = () => {
-  void lifecycle.ready('agent').then(() => agentHost.automations.wake()).catch(() => undefined);
+  void lifecycle.ready('agent').then(() => requireAgentHost().automations.wake()).catch(() => undefined);
 };
-agentHost.threads.subscribeRenderer((notification) => {
-  windowApplicationHost.windows.main()?.webContents.send(
-    AGENT_CORE_NOTIFICATION_CHANNEL,
-    projectAgentCoreNotification(notification),
-  );
-});
-
-/**
- * Generations already announced, so one terminal event notifies exactly once.
- *
- * Bounded: the ledger emits repeatedly for one generation, so this must remember
- * them — but a long session delegating steadily would otherwise grow it for the
- * life of the process. The oldest keys are dropped once it passes the cap; a
- * generation that old cannot still be settling.
- */
-agentHost.automations.subscribe((notification) => {
-  windowApplicationHost.windows.main()?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);
-});
+async function initializeAgentHost(assertActive: () => void): Promise<void> {
+  // A failed attempt must finish releasing its resources before a replacement opens.
+  await agentAttemptCleanup;
+  assertActive();
+  const candidate = await constructAgentHost();
+  initializingAgentHost = candidate;
+  const subscriptions = new ResourceScope('agent-notifications');
+  try {
+    subscriptions.defer('threads', candidate.threads.subscribeRenderer((notification) => {
+      windowApplicationHost.windows.main()?.webContents.send(
+        AGENT_CORE_NOTIFICATION_CHANNEL, projectAgentCoreNotification(notification),
+      );
+    }));
+    subscriptions.defer('automations', candidate.automations.subscribe((notification) => {
+      windowApplicationHost.windows.main()?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);
+    }));
+    await candidate.initialize(outlineHost.document.liveProjection(), assertActive);
+    assertActive();
+    lifecycle.setThreadIssues(candidate.threads.startupIssues(), candidate.threads.startupThreadAvailability());
+    agentHost = candidate;
+    initializingAgentHost = null;
+    resources.defer('agent-notifications', () => subscriptions.dispose());
+    applyFilePreferencesNow?.();
+  } catch (error) {
+    if (agentHost === candidate) agentHost = null;
+    initializingAgentHost = null;
+    agentAttemptCleanup = (async () => {
+      const results = await Promise.allSettled([subscriptions.dispose(), candidate.close()]);
+      const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+      if (failures.length) throw new AggregateError(failures, 'Agent attempt cleanup failed.');
+    })();
+    try {
+      await agentAttemptCleanup;
+      agentAttemptCleanup = null;
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Agent startup and cleanup failed.', { cause: error });
+    }
+    throw error;
+  }
+}
 
 function createThreadImageGenerationRuntime(
   context: import('./agent/runtime/types').TurnExecutionContext,
@@ -865,7 +911,7 @@ function generatedImageExtension(mimeType: string): string {
 }
 
 outlineHost.observeProjection(({ event, update }) => {
-  agentHost.projectionChanged(update, event.operation);
+  (agentHost ?? initializingAgentHost)?.projectionChanged(update, event.operation);
 });
 
 function registerMainTransport(previewSession: Electron.Session): HostTransportComposition {
@@ -922,6 +968,22 @@ function registerMainTransport(previewSession: Electron.Session): HostTransportC
 }
 
 function registerStartupTransport(ipcMain: OwnedIpcMain): void {
+  ipcMain.handle(STARTUP_ISSUE_ACTION_CHANNEL, async (event, input: unknown) => {
+    assertMainRenderer(event, 'Startup issue action');
+    if (!input || typeof input !== 'object') throw new Error('Invalid startup issue action');
+    const { startupIssueId, action } = input as { startupIssueId?: unknown; action?: unknown };
+    const issue = lifecycle.state().issues.find((candidate) => candidate.id === startupIssueId);
+    if (!issue || (action !== 'copy-details' && action !== 'open-source') || !issue.actions.includes(action)) {
+      throw new Error('Startup issue action is no longer available');
+    }
+    if (action === 'copy-details') {
+      clipboard.writeText(issue.details);
+      return;
+    }
+    const source = issue.source === 'preferences' ? 'preferences' : 'agent-user';
+    const message = await shell.openPath(ensureConfigurationSource(resolvedUserDataDir, agentLocalFileRoot, source));
+    if (message) throw new Error(message);
+  });
   ipcMain.handle(STARTUP_GET_CHANNEL, (event) => {
     assertMainRenderer(event, 'Startup status');
     return lifecycle.state();
@@ -1043,14 +1105,14 @@ function registerAgentTransport(ipcMain: OwnedIpcMain): void {
       throw new Error(`Unknown Automation method: ${String(method)}`);
     }
     await lifecycle.ready('agent');
-    return agentHost.automations.request(method as AutomationMethod, input);
+    return requireAgentHost().automations.request(method as AutomationMethod, input);
   });
   ipcMain.handle(AGENT_CORE_REQUEST_CHANNEL, async (event, method: AgentCoreMethod, input: unknown) => {
     if (!windowApplicationHost.isMainSender(event)) {
       throw new Error('Agent Core is available only to the main application window.');
     }
     await lifecycle.ready('agent');
-    const response = await agentHost.threads.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
+    const response = await requireAgentHost().threads.request(method, input as AgentCoreRequestByMethod[AgentCoreMethod]);
     return projectAgentCoreResponse(method, response);
   });
   ipcMain.handle(
@@ -1184,7 +1246,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
             return token ? previewLocalUrl(token) : null;
           },
           threadAttachmentFile: async (threadId, attachmentId) =>
-            agentHost.threads
+            requireAgentHost().threads
               .resolveAttachmentFile(threadId, attachmentId)
               .then(async (resolved) => {
                 if (!resolved) return null;
@@ -1202,8 +1264,8 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
               .catch(() => null),
           threadResourceFile: async (threadId, ref, intent) =>
             (intent === 'source'
-              ? agentHost.threads.resolveThreadResourceSource(threadId, ref)
-              : agentHost.threads.resolveThreadResourceFile(threadId, ref))
+              ? requireAgentHost().threads.resolveThreadResourceSource(threadId, ref)
+              : requireAgentHost().threads.resolveThreadResourceFile(threadId, ref))
               .then((resolved) => {
                 if (!resolved) return null;
                 return {
@@ -1213,7 +1275,7 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
               })
               .catch(() => null),
           threadImageArtifactFile: async (threadId, artifact) =>
-            agentHost.threads
+            requireAgentHost().threads
               .resolveImageArtifactFile(threadId, artifact)
               .then(async (resolved) => {
                 if (!resolved) return null;
@@ -1490,7 +1552,7 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
     }
     const threadId = requiredNonEmptyString(raw?.threadId, 'threadId');
     const attachmentId = requiredNonEmptyString(raw?.attachmentId, 'attachmentId');
-    const uploadId = await agentHost.threads.beginAttachmentUpload({
+    const uploadId = await requireAgentHost().threads.beginAttachmentUpload({
       threadId,
       attachmentId,
       expectedBytes,
@@ -1506,7 +1568,7 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
     if (!bytes || bytes.byteLength === 0 || bytes.byteLength > ATTACHMENT_UPLOAD_CHUNK_BYTES) {
       throw new Error('Attachment upload chunk is invalid.');
     }
-    await agentHost.threads.appendAttachmentUpload({
+    await requireAgentHost().threads.appendAttachmentUpload({
       threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
       attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
       uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
@@ -1517,7 +1579,7 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
 
   ipcMain.handle('lin:attachment-upload/finish', async (event, raw?: Record<string, unknown>) => {
     assertMainRenderer(event, 'Attachment upload');
-    return agentHost.threads.finishAttachmentUpload({
+    return requireAgentHost().threads.finishAttachmentUpload({
       threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
       attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
       uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
@@ -1526,7 +1588,7 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
 
   ipcMain.handle('lin:attachment-upload/abort', async (event, raw?: Record<string, unknown>) => {
     assertMainRenderer(event, 'Attachment upload');
-    await agentHost.threads.abortAttachmentUpload({
+    await requireAgentHost().threads.abortAttachmentUpload({
       threadId: requiredNonEmptyString(raw?.threadId, 'threadId'),
       attachmentId: requiredNonEmptyString(raw?.attachmentId, 'attachmentId'),
       uploadId: requiredNonEmptyString(raw?.uploadId, 'uploadId'),
@@ -1536,7 +1598,7 @@ function registerAgentResourceTransport(ipcMain: OwnedIpcMain): void {
 
   ipcMain.handle('lin:attachment-resource/discard', async (event, raw?: Record<string, unknown>) => {
     assertMainRenderer(event, 'Attachment resource discard');
-    const discarded = await agentHost.threads.discardUnreferencedThreadResource(
+    const discarded = await requireAgentHost().threads.discardUnreferencedThreadResource(
       requiredNonEmptyString(raw?.threadId, 'threadId'),
       decodeThreadResourceReference(raw?.ref, 'attachmentResource.ref'),
     );
@@ -1562,8 +1624,8 @@ async function handleMemoryCommand(event: IpcMainInvokeEvent, command: string, a
   sender.on('did-start-loading', abort);
   const caller: MemoryOperationCaller = { origin: { kind: 'window', windowId: parent!.id }, signal: controller.signal, authorize };
   try {
-    if (command === 'memory_inspect') return await agentHost.memory.operations.inspect(args, caller);
-    if (command === 'memory_manage') return await agentHost.memory.operations.manage(args, caller);
+    if (command === 'memory_inspect') return await requireAgentHost().memory.operations.inspect(args, caller);
+    if (command === 'memory_manage') return await requireAgentHost().memory.operations.manage(args, caller);
     if (command === 'memory_enabled_update') {
       if (Object.keys(args).length !== 1 || typeof args.enabled !== 'boolean') throw new Error('Memory enabled must be a boolean.');
       await authorize();
@@ -1751,7 +1813,7 @@ async function handleAssetCommand(
     case 'ingest_thread_resource': {
       assertMainRenderer(event, 'Thread resource ingest');
       return ingestThreadResourceAsset(args, {
-        readResource: (threadId, ref) => agentHost.threads
+        readResource: (threadId, ref) => requireAgentHost().threads
           .readReferencedThreadResource(threadId, ref)
           .catch(() => null),
         ingestResource: (bytes, ref) => outlineHost.assets.ingest({
@@ -1928,11 +1990,11 @@ function agentEditorCwd(value: unknown): string {
  */
 async function agentEditorView(cwd: string): Promise<AgentEditorView> {
   return {
-    entries: agentHost.configuration.resolveIdentityCatalog(cwd),
-    presentationOverrides: agentHost.configuration.listPresentationOverrides(cwd),
-    profile: agentHost.configuration.resolveEditableProfile(cwd),
+    entries: requireAgentHost().configuration.resolveIdentityCatalog(cwd),
+    presentationOverrides: requireAgentHost().configuration.listPresentationOverrides(cwd),
+    profile: requireAgentHost().configuration.resolveEditableProfile(cwd),
     capabilities: await agentCapabilityCatalog(),
-    sources: agentHost.configuration.inspectSources(cwd),
+    sources: requireAgentHost().configuration.inspectSources(cwd),
   };
 }
 
@@ -1950,7 +2012,7 @@ async function agentCapabilityCatalog(): Promise<AgentCapabilityCatalog> {
     })),
     // Every Skill the install can see, so a narrowing names real Skills; which
     // of them are enabled is a separate setting on its own page.
-    skills: (await agentHost.skills.list(false)).map((skill) => skill.name),
+    skills: (await requireAgentHost().skills.list(false)).map((skill) => skill.name),
   };
 }
 
@@ -2263,7 +2325,7 @@ function withCanonicalSkillSettings(settings: AgentSkillSettingsView): AgentSkil
 }
 
 async function delegationSettingsView() {
-  return { delegation: (await getAgentRuntimeSettings()).delegation, runners: await agentHost.delegationRunners() };
+  return { delegation: (await getAgentRuntimeSettings()).delegation, runners: await requireAgentHost().delegationRunners() };
 }
 
 /**
@@ -2279,7 +2341,7 @@ async function isRevealableSkillLocation(target: string): Promise<boolean> {
     .map((dir) => expandSkillDirectory(dir, agentLocalFileRoot))
     .filter(Boolean);
   if (bound.some((dir) => isPathInside(dir, resolved))) return true;
-  const skills = await agentHost.skills.list(false).catch(() => []);
+  const skills = await requireAgentHost().skills.list(false).catch(() => []);
   return skills.some((skill) => (
     // Managed content is pinned and immutable: resolveSkillContentTarget
     // refuses it for the same reason. Opening it invites the hand edit that
@@ -2374,7 +2436,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       const requested = args.settings as AgentSkillSettingsInput;
       const preserved = preserveStoredSkillDirectoryForms(requested, stored, agentLocalFileRoot);
       const next = await updateAgentSkillSettings(preserved);
-      agentHost.skills.updateRuntimeSettings(await getAgentRuntimeSettings());
+      requireAgentHost().skills.updateRuntimeSettings(await getAgentRuntimeSettings());
       return withCanonicalSkillSettings(next);
     }
     case 'agent_update_image_generation_settings':
@@ -2480,9 +2542,9 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return result;
     }
     case 'agent_list_all_skills':
-      return agentHost.skills.list(args.userInvocableOnly === true);
+      return requireAgentHost().skills.list(args.userInvocableOnly === true);
     case 'agent_skill_curation_report':
-      return analyzeAgentSkills(await agentHost.skills.listCurationCandidates());
+      return analyzeAgentSkills(await requireAgentHost().skills.listCurationCandidates());
     case 'agent_skill_manage': {
       const callerWindow = BrowserWindow.fromWebContents(event.sender);
       if (!callerWindow || event.senderFrame !== event.sender.mainFrame
@@ -2495,7 +2557,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       event.sender.once('render-process-gone', cancel);
       event.sender.once('destroyed', cancel);
       try {
-        return await managedSkillCommand(() => agentHost.skills.manage(args, {
+        return await managedSkillCommand(() => requireAgentHost().skills.manage(args, {
           origin: { kind: 'window', windowId: callerWindow.id }, signal: controller.signal,
           authorize: async () => {
             controller.signal.throwIfAborted();
@@ -2513,7 +2575,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return await agentEditorView(agentEditorCwd(args.cwd));
     case 'agent_write_profile': {
       const cwd = agentEditorCwd(args.cwd);
-      await agentHost.configuration.writeProfile(
+      await requireAgentHost().configuration.writeProfile(
         layerTarget(args.layer),
         cwd,
         requiredText(args.name, 'name'),
@@ -2525,23 +2587,23 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     }
 
     case 'agent_managed_skill_catalog':
-      return managedSkillCommand(() => agentHost.skills.catalog.load());
+      return managedSkillCommand(() => requireAgentHost().skills.catalog.load());
     case 'agent_managed_skill_discover':
-      return managedSkillCommand(() => agentHost.skills.catalog.discover({
+      return managedSkillCommand(() => requireAgentHost().skills.catalog.discover({
         sourceUrl: typeof args.sourceUrl === 'string' ? args.sourceUrl : undefined,
         catalogId: typeof args.catalogId === 'string' ? args.catalogId : undefined,
       }));
     case 'agent_managed_skill_list':
-      return managedSkillCommand(() => agentHost.skills.catalog.list());
+      return managedSkillCommand(() => requireAgentHost().skills.catalog.list());
     case 'agent_managed_skill_check_updates':
       // The throttle window is main's policy, so the renderer only says whether
       // the check was ambient — it never carries the number.
-      return managedSkillCommand(() => agentHost.skills.catalog.checkUpdates(
+      return managedSkillCommand(() => requireAgentHost().skills.catalog.checkUpdates(
         typeof args.skillId === 'string' ? args.skillId : undefined,
         args.ambient === true ? { throttleMs: MANAGED_SKILL_UPDATE_THROTTLE_MS } : undefined,
       ));
     case 'agent_managed_skill_preview_update':
-      return managedSkillCommand(() => agentHost.skills.catalog.previewUpdate({
+      return managedSkillCommand(() => requireAgentHost().skills.catalog.previewUpdate({
         skillId: String(args.skillId ?? ''),
         expectedActiveHash: String(args.expectedActiveHash ?? ''),
       }));
@@ -2648,7 +2710,7 @@ const closeDesktopResources = (
       serviceSettlements = await settleWithin(
         Promise.allSettled([
           ...(milestones.has('personal-ranking') ? [outlineHost.flushDerivedState()] : []),
-          agentHost.close(),
+          agentHost?.close() ?? agentAttemptCleanup ?? Promise.resolve(),
           diagnosticLog.flushNow({ reason: reason === 'ordinary-quit' ? 'before-quit' : 'fatal' }),
           resourcePreviewHost.close(),
         ]),
@@ -2726,14 +2788,16 @@ const lifecycle = new DesktopHostLifecycle({
         transportEffects.defer('main-transport', () => mainTransport?.dispose());
       },
     },
-    { name: 'windows', run: async () => {
-      await windowApplicationHost.initialize();
-      startConfigurationWatcher();
-    } },
+    { name: 'windows', run: () => windowApplicationHost.initialize() },
+    {
+      name: 'configuration-observation', dependsOn: ['windows'], retryable: true, source: 'preferences',
+      run: () => startConfigurationWatcher(),
+    },
     {
       name: 'provider-configuration',
       dependsOn: ['windows'],
       retryable: true,
+      source: 'preferences',
       run: async () => {
         const providerReconcile = await reconcileProviderConfig();
         if (providerReconcile?.activeProviderChanged) clearLastAgentThreadConfiguration();
@@ -2761,8 +2825,7 @@ const lifecycle = new DesktopHostLifecycle({
       dependsOn: ['provider-configuration', 'outline-documents'],
       retryable: true,
       run: async ({ assertActive }) => {
-        await agentHost.initialize(outlineHost.document.liveProjection(), assertActive);
-        applyFilePreferencesNow?.();
+        await initializeAgentHost(assertActive);
       },
     },
     {

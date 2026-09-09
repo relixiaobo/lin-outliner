@@ -3,7 +3,30 @@
 Tenon records runtime failures locally as structured diagnostics. The subsystem is
 local-only: it never sends diagnostics to a server, never shows proactive badges,
 toasts, or interruption prompts, and exposes only passive find/send actions in
-Settings.
+Settings. Capability startup availability is a separate, in-memory owner surface;
+its issue notices are not diagnostic-log notifications.
+
+## Startup issues
+
+The lifecycle retains scrubbed issue messages (at most 1,000 characters) and
+copyable details (at most 8,000 characters) in Host memory. Oversized raw evidence
+is omitted before truncation; complete and incomplete private-key material passes
+through the existing secret scanner. Diagnostics persistence and event-observer
+failure cannot hide the original issue or change readiness.
+
+Issues name their domain, operation, observed category, optional Thread source,
+and eligible actions. Error codes (including Node SQLite primary result codes)
+separate permissions, full storage, locks, and invalid data. Snapshot readers alone
+establish a version mismatch and its found/expected versions; unknown prose stays
+unknown. Dependency availability follows the lifecycle DAG without duplicating a
+source failure as a second corruption report.
+
+Only the main renderer may request an action for a currently retained issue.
+Native Copy details uses that retained text; Open source resolves a fixed owner
+configuration destination inside the resolved data root. The request carries no
+arbitrary path or reset instruction. Retry is lifecycle-owned and entity quarantine
+has no cosmetic retry. Failed configuration bytes, workspace data, conversation
+records, and Project metadata are preserved.
 
 ## Reporting
 

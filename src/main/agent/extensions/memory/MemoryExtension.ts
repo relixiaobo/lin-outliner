@@ -96,6 +96,7 @@ export interface MemoryThreadHost extends ThreadServiceExtensionHost {
 }
 
 export interface MemoryExtensionOptions {
+  readonly canRun?: () => boolean;
   readonly onError?: (error: unknown, operation: 'graph-digest' | 'graph-wake') => void;
 }
 
@@ -159,6 +160,7 @@ export class MemoryExtension implements AgentCoreExtension {
       },
     };
     this.pipeline = new MemoryPipeline(this.control, this.timeline, phase1, phase2, sources, {
+      canRun: this.options.canRun,
       recoverResetPublication: (record, receiptMatches) => this.recoverPreparedReset(record, receiptMatches),
     });
   }
@@ -214,6 +216,10 @@ export class MemoryExtension implements AgentCoreExtension {
     await this.prepareForTurnAdmission();
     await this.requirePipeline().start();
     this.initialized = true;
+  }
+
+  wakeWorker(): void {
+    this.pipeline?.wakePending();
   }
 
   stopWorker(): Promise<void> {

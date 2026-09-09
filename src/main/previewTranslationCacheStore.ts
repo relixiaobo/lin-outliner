@@ -357,16 +357,36 @@ export class PreviewTranslationCacheStore {
 
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) return;
+    let content: string | null = null;
     try {
-      const parsed = parseManifest(JSON.parse(await readFile(this.indexPath(), 'utf8')) as unknown);
-      for (const [scope, metadata] of parsed) this.manifest.set(scope, metadata);
+      content = await readFile(this.indexPath(), 'utf8');
     } catch (error) {
       if (!isNotFoundError(error)) {
         this.onError?.('load');
-        await rm(this.rootDir, { force: true, recursive: true }).catch(() => undefined);
+        throw error;
       }
     }
-    await this.reconcileShardDirectory();
+    const previous = new Map(this.manifest);
+    const previousDirty = this.manifestDirty;
+    this.manifest.clear();
+    if (content !== null) {
+      try {
+        const parsed = parseManifest(JSON.parse(content) as unknown);
+        for (const [scope, metadata] of parsed) this.manifest.set(scope, metadata);
+      } catch {
+        // Only bytes actually read and rejected by the decoder authorize a rebuild.
+        this.onError?.('load');
+        await rm(this.rootDir, { force: true, recursive: true });
+      }
+    }
+    try {
+      await this.reconcileShardDirectory();
+    } catch (error) {
+      this.manifest.clear();
+      for (const [scope, metadata] of previous) this.manifest.set(scope, metadata);
+      this.manifestDirty = previousDirty;
+      throw error;
+    }
     this.initialized = true;
     if (this.manifestDirty) this.scheduleFlush();
   }
@@ -378,7 +398,7 @@ export class PreviewTranslationCacheStore {
     } catch (error) {
       if (isNotFoundError(error)) return;
       this.onError?.('load');
-      return;
+      throw error;
     }
     const diskScopes = new Set<string>();
     for (const entry of entries) {
@@ -412,19 +432,28 @@ export class PreviewTranslationCacheStore {
       return cached;
     }
 
-    let parsed: ParsedShard | null = null;
+    let content: string | null = null;
     try {
-      parsed = parseShard(JSON.parse(await readFile(this.shardPath(scope), 'utf8')) as unknown);
-      if (identity && (parsed.shard.sourceDigest !== identity.sourceDigest || parsed.shard.contentKind !== identity.contentKind)) {
-        throw new Error('Cache shard identity mismatch.');
-      }
+      content = await readFile(this.shardPath(scope), 'utf8');
     } catch (error) {
-      parsed = null;
       if (isNotFoundError(error)) {
         if (this.manifest.delete(scope)) this.manifestDirty = true;
       } else {
         this.onError?.('load');
-        await rm(this.shardPath(scope), { force: true }).catch(() => undefined);
+        throw error;
+      }
+    }
+    let parsed: ParsedShard | null = null;
+    if (content !== null) {
+      try {
+        parsed = parseShard(JSON.parse(content) as unknown);
+        if (identity && (parsed.shard.sourceDigest !== identity.sourceDigest || parsed.shard.contentKind !== identity.contentKind)) {
+          throw new Error('Cache shard identity mismatch.');
+        }
+      } catch {
+        parsed = null;
+        this.onError?.('load');
+        await rm(this.shardPath(scope), { force: true });
         this.manifest.delete(scope);
         this.manifestDirty = true;
       }

@@ -32,6 +32,15 @@ export class ResourceScope {
     return this.disposal;
   }
 
+  async fail(failure: unknown): Promise<never> {
+    try {
+      await this.dispose();
+    } catch (cleanupError) {
+      throw new AggregateError([failure, cleanupError], `${this.name} construction and cleanup failed.`, { cause: failure });
+    }
+    throw failure;
+  }
+
   private async disposeEntries(): Promise<void> {
     const failures: Error[] = [];
     for (const entry of this.entries.reverse()) {

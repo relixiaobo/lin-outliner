@@ -1,4 +1,5 @@
-import type { StartupState } from '../core/startup';
+import { initialStartupState, type StartupIssue, type StartupState, type StartupThreadAvailability } from '../core/startup';
+import { startupIssue } from './startupIssue';
 
 export type DesktopHostPhase = 'constructed' | 'starting' | 'failed' | 'started' | 'quitting' | 'disposed';
 export type DesktopHostQuitOutcome = 'cancelled' | 'disposed';
@@ -11,6 +12,7 @@ export interface DesktopHostStartStep {
   readonly name: string;
   readonly dependsOn?: readonly string[];
   readonly retryable?: boolean;
+  readonly source?: StartupIssue['source'];
   readonly run: (context: DesktopHostStartContext) => void | Promise<void>;
 }
 
@@ -43,7 +45,17 @@ export class DesktopHostLifecycle {
   private rejectStart: ((error: unknown) => void) | null = null;
   private quitSettlement: Promise<void> | null = null;
   private readonly readiness = new Map<string, Promise<void>>();
-  private startupState: StartupState = { status: 'starting' };
+  private startupState: StartupState = initialStartupState();
+  private readonly issues = new Map<string, StartupIssue>();
+  private threadIssues: readonly StartupIssue[] = [];
+  private threadAvailability: readonly StartupThreadAvailability[] = [];
+
+  setThreadIssues(issues: readonly StartupIssue[], threads: readonly StartupThreadAvailability[]): void {
+    this.threadIssues = issues;
+    this.threadAvailability = threads;
+  }
+
+  private readonly failedReadiness = new Set<string>();
 
   constructor(private readonly options: DesktopHostLifecycleOptions) {}
 
@@ -73,6 +85,8 @@ export class DesktopHostLifecycle {
       return Promise.reject(new Error(`Desktop Host cannot start from ${this.currentPhase}.`));
     }
     this.currentPhase = 'starting';
+    this.issues.clear();
+    this.failedReadiness.clear();
     this.publishState({ status: 'starting' });
     this.startSettlement = new Promise<void>((resolve, reject) => {
       this.resolveStart = resolve;
@@ -114,20 +128,30 @@ export class DesktopHostLifecycle {
         );
         const settlement = (async () => {
           if (this.milestones.has(step.name)) return;
-          await Promise.all(dependencies.map((name) => {
-            const ready = this.readiness.get(name);
-            if (!ready) throw new Error(`Startup dependency ${name} must precede ${step.name}.`);
-            return ready;
-          }));
-          this.assertStartupStillOwnsLifecycle();
+          let entered = false;
           try {
+            await Promise.all(dependencies.map((name) => {
+              const ready = this.readiness.get(name);
+              if (!ready) throw new Error(`Startup dependency ${name} must precede ${step.name}.`);
+              return ready;
+            }));
+            this.assertStartupStillOwnsLifecycle();
+            entered = true;
             await step.run({ assertActive: () => this.assertStartupStillOwnsLifecycle() });
             this.milestones.add(step.name);
             this.assertStartupStillOwnsLifecycle();
+            this.publishState({ status: 'starting' });
           } catch (error) {
-            if (!(error instanceof QuitWonStartupRace) && !failedStep) {
-              failedStep = step;
-              failure = error;
+            if (!(error instanceof QuitWonStartupRace)) {
+              this.failedReadiness.add(step.name);
+              if (entered) {
+                this.issues.set(step.name, startupIssue(step.name, error, step.source));
+                if (!failedStep || !step.retryable) {
+                  failedStep = step;
+                  failure = error;
+                }
+              }
+              if (this.currentPhase === 'starting') this.publishState({ status: 'starting' });
             }
             throw error;
           }
@@ -152,7 +176,7 @@ export class DesktopHostLifecycle {
         this.publishState({
           status: 'failed',
           step: failedStep.name,
-          message: error instanceof Error ? error.message : String(error),
+          message: this.issues.get(failedStep.name)?.message ?? 'Startup failed.',
         });
         this.rejectStart?.(error);
         this.clearStartCompletion();
@@ -207,7 +231,16 @@ export class DesktopHostLifecycle {
       return;
     }
 
-    const outcome = await this.options.ordinaryQuit(this.completedMilestones());
+    let outcome: DesktopHostQuitOutcome;
+    try {
+      outcome = await this.options.ordinaryQuit(this.completedMilestones());
+    } catch (error) {
+      // The quit owner retains durability/admission truth; restore actionable UI state.
+      this.currentPhase = wasFailed ? 'failed' : this.startupState.status === 'ready' ? 'started' : 'starting';
+      if (this.currentPhase === 'starting') this.beginStartAttempt();
+      else this.publishState(this.startupState);
+      throw error;
+    }
     if (outcome === 'cancelled') {
       if (wasFailed) {
         this.currentPhase = 'failed';
@@ -234,8 +267,22 @@ export class DesktopHostLifecycle {
     this.rejectStart = null;
   }
 
-  private publishState(state: StartupState): void {
-    this.startupState = state;
-    this.options.onStartupState?.(state);
+  private publishState(state: { readonly status: 'starting' | 'ready' } | {
+    readonly status: 'failed'; readonly step: string; readonly message: string;
+  }): void {
+    const availability = (name: string) => this.milestones.has(name) ? 'ready' as const
+      : this.failedReadiness.has(name) ? 'unavailable' as const : 'starting' as const;
+    this.startupState = {
+      ...state,
+      revision: this.startupState.revision + 1,
+      capabilities: { outline: availability('outline-documents'), agent: availability('agent') },
+      issues: [...this.issues.values(), ...this.threadIssues],
+      threads: this.threadAvailability,
+    };
+    try {
+      this.options.onStartupState?.(this.startupState);
+    } catch {
+      // Notifications and diagnostics cannot change owner readiness or hide an issue.
+    }
   }
 }

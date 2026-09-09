@@ -26,7 +26,7 @@ import type {
   ThreadHistoryRerunMarker,
   ThreadHistoryRollbackMarker,
 } from './RolloutStore';
-import { openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
+import { closeSqliteAfterFailure, openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
 import { applyThreadItemDelta } from '../itemDelta';
 
 interface TurnRow {
@@ -105,8 +105,9 @@ export class ThreadHistoryProjectionStore {
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = database ?? openSqlite(path);
-    this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
-    this.db.exec(`
+    try {
+      this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
+      this.db.exec(`
       CREATE TABLE IF NOT EXISTS thread_turns (
         thread_id TEXT NOT NULL,
         turn_id TEXT NOT NULL,
@@ -162,6 +163,10 @@ export class ThreadHistoryProjectionStore {
       CREATE INDEX IF NOT EXISTS history_rollbacks_thread_idx
         ON history_rollbacks(thread_id, marker_ordinal);
     `);
+    } catch (error) {
+      if (!database) closeSqliteAfterFailure(this.db, error);
+      throw error;
+    }
   }
 
   close(): void {

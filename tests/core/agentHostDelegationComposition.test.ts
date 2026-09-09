@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { AgentRuntimeSettings, DocumentProjection } from '../../src/core/types';
 import type { AgentImageGenerationRuntime } from '../../src/main/agent/capabilities/agentImageGenerationTool';
 import { resolveDelegateCliRuntime } from '../../src/main/delegateRuntime';
+import { closeSqliteAfterFailure } from '../../src/main/agent/persistence/sqlite';
 
 const roots: string[] = [];
 let currentUserData = '';
@@ -21,6 +22,7 @@ mock.module('electron', () => ({
 }));
 
 mock.module('../../src/main/agent/persistence/sqlite', () => ({
+  closeSqliteAfterFailure,
   openSqlite: (databasePath: string) => new Database(databasePath, { create: true }),
 }));
 
@@ -45,7 +47,7 @@ describe('Agent Host delegation composition', () => {
       import('../../src/main/agent/AgentConfigurationLoader'),
       import('../../src/main/hostDomain/agentHost'),
     ]);
-    const host = createAgentHost({
+    const host = await createAgentHost({
       reviewMemoryReset: async () => false,
       openMemory: async () => { throw new Error('Not used by composition smoke'); },
       onMemoryChanged: () => {},

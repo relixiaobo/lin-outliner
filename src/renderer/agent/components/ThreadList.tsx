@@ -10,6 +10,7 @@ import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
 
 interface ThreadListProps {
+  readonly startupThreads?: readonly import('../../../core/startup').StartupThreadAvailability[];
   readonly projects?: readonly Project[];
   readonly memberships?: readonly ProjectMembership[];
   readonly onManageProjects?: () => void;
@@ -47,6 +48,7 @@ interface ThreadListProps {
 const ACTION_MENU_WIDTH = 168;
 
 export function ThreadList({
+  startupThreads = [],
   projects = [], memberships = [], onManageProjects, onAssignProject,
   anchorRef,
   backgroundWorkThreadIds,
@@ -181,6 +183,7 @@ export function ThreadList({
         {groups.map((group) => <Fragment key={group.id}>
           {projects.length ? <h3 className="thread-project-heading">{group.name}</h3> : null}
           {group.threads.map((thread) => {
+          const availability = startupThreads.find((entry) => entry.threadId === thread.id);
           const selected = thread.id === selectedThreadId;
           const identity = threadIdentity(thread, t.agent.thread.sources);
           const backgroundWork = backgroundWorkThreadIds.has(thread.id);
@@ -202,6 +205,7 @@ export function ThreadList({
                   {thread.name || thread.preview || t.agent.thread.untitled}
                 </span>
                 <small>
+                  {availability ? <>{availability.threadId === availability.sourceThreadId ? t.startup.quarantined : t.startup.dependentThreads}{' · '}</> : null}
                   {identity ? <>{identity}{' · '}</> : null}
                   {formatRelativeTime(thread.updatedAt)}
                 </small>

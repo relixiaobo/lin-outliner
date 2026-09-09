@@ -253,15 +253,24 @@ configuration readers/writers, managed worktrees, Memory stores and extension,
 `PiTurnExecutor`, `ThreadService`, Automation storage/dispatch/scheduling,
 `ToolRuntime`, and their one-time bindings. Real constructor cycles use typed
 assign-once callbacks: reading before composition completes or assigning a
-second implementation fails immediately. Constructors acquire synchronous
-objects only; Thread initialization, the Memory worker, and Automation scheduling
-follow an explicit dependency graph: Threads precede both Memory and Automation,
+second implementation fails immediately. Store construction runs inside the
+visible-window startup attempt. An acquisition scope registers each SQLite handle immediately and closes already acquired owners
+if a later constructor fails; shared Goal/Tool Task storage has one close owner.
+A failed Agent attempt drains and closes its partial host before a fresh attempt
+can replace it; uncertain cleanup leaves admission closed. Thread initialization,
+the Memory worker, and Automation scheduling follow an explicit dependency graph: Threads precede both Memory and Automation,
 whose startup can overlap. Concurrent initialization shares one attempt, and
-settled milestones survive retry. Shutdown preserves the reverse
+healthy Desktop milestones survive retry. Shutdown preserves the reverse
 Automation, Memory, Thread, and store order and aggregates failures. Its public
 surface is grouped into configuration, worktree, Thread, Memory, Automation,
 Skill, and lifecycle capabilities; concrete services and per-Turn Skill Runtime
 maps remain private to the Host.
+
+Translation-cache reads distinguish absence, rejected content, and environmental
+failure. Only successfully read malformed index/shard content reaches the existing
+bounded rebuild path. Permission, I/O, or directory-enumeration failure preserves
+saved bytes and cannot schedule an empty replacement or orphan pruning; later
+successful reads can retry. Explicit Clear keeps its separate semantics.
 
 `createResourcePreviewHost` owns the URL-preview session and its security policy,
 page translation and cache, local preview streams, linked-file grants, and the
@@ -325,12 +334,32 @@ conflict, up to three complete attempts. It never merges different revisions;
 other errors and exhausted conflicts reach the persistent failure surface.
 
 Service startup failure leaves the window and registered transport alive. The
-Host publishes a persistent failure state naming the failed service. Retry runs
-only unfinished milestones and renews the renderer projection subscription; Quit
-uses the existing lifecycle and durability arbitration. An ordinary request never
-implicitly retries failed startup. A failed parallel branch drains its siblings
-before retry or teardown. Failure of the fixed pre-window essentials still uses
-failed-start rollback and exits.
+Host publishes revisioned Outline/Agent availability and owner-reported issues as
+each dependency branch settles. Healthy Outline remains mounted and editable
+through Agent failure and retry, with an unavailable Agent pane and a dismissible,
+rediscoverable issue. Retry runs only unfinished Desktop milestones and renews
+the renderer projection only when Outline/projection was unavailable. Older IPC
+responses cannot overwrite newer startup events. Quit uses the existing lifecycle
+and durability arbitration; a reversible failure restores actionable availability.
+An ordinary request never implicitly retries failed startup. A failed parallel
+branch drains its siblings before retry or teardown. Failure of fixed pre-window
+essentials still uses failed-start rollback and exits.
+
+Agent construction, subscriptions, and configuration file observation follow the
+visible window. Watcher failure is an independent retryable milestone. Native
+configuration-source inspection, public preferences, startup actions, and independent
+preview operations do not require Agent execution. Agent Core, attachment routes,
+menus, and direct domain callbacks resolve the ready Agent owner at invocation.
+Turn admission rechecks availability after asynchronous preparation and before
+commit; delegation and Automation dispatch are fenced, and Memory cannot wake or
+drain until its owner is ready. Recovery of accepted Task/Automation facts remains
+allowed. The validated Memory opt-out is applied before admission opens. Retry
+initializes Memory against the current live Outline projection.
+
+The parent observes Runtime startup failures through a bounded private pipe;
+it propagates a confirmed snapshot storage-version mismatch with found/expected
+versions, and malformed snapshot evidence separately. This pipe grants no process
+ownership or shutdown authority. Startup never resets authoritative data.
 
 If the document opens before Agent startup fails, the renderer Thread store clears
 its failed initialization cache. Remounting the dock after Host recovery reloads

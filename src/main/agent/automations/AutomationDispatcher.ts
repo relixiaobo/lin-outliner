@@ -26,6 +26,7 @@ export interface ResolvedAutomationConfiguration {
 }
 
 export interface AutomationDispatcherOptions {
+  readonly canDispatch?: () => boolean;
   readonly store: AutomationStore;
   readonly threads: ThreadService;
   readonly worktrees: AutomationWorktree;
@@ -92,6 +93,7 @@ export class AutomationDispatcher {
     if (!current || current.state !== 'pending') return current ?? run;
     const recovered = await this.recoverAcceptedTurn(current);
     if (recovered) return recovered;
+    if (this.options.canDispatch?.() === false) return current;
     let featureThreadCreated = false;
     let acceptedTurn = false;
     try {

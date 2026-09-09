@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import * as filesystem from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -47,6 +48,43 @@ afterEach(async () => {
 });
 
 describe('PreviewTranslationCacheStore', () => {
+  for (const boundary of ['index', 'shard', 'directory'] as const) {
+    test(`preserves saved bytes and pending writes after ${boundary} I/O failure`, async () => {
+      const root = await makeRoot();
+      const original = new CacheStore(root, { flushDelayMs: 60_000 });
+      const ticket = original.beginWrite(scope().sourceId);
+      await original.record(scope(), [block()], [{ id: 'b1', translation: 'Saved' }], ticket);
+      original.releaseWrite(ticket);
+      await original.flushNow();
+      const names = (await readdir(root)).sort();
+      const before = await Promise.all(names.map((name) => readFile(path.join(root, name), 'utf8')));
+      const target = boundary === 'index' ? 'index.json' : names.find((name) => name !== 'index.json')!;
+      const read = filesystem.readFile;
+      const enumerate = filesystem.readdir;
+      const fault = Object.assign(new Error('Injected I/O failure'), { code: 'EACCES' });
+      const spy = boundary === 'directory'
+        ? spyOn(filesystem, 'readdir').mockImplementation((...args: any[]) => {
+          if (String(args[0]) === root) return Promise.reject(fault) as any;
+          return (enumerate as any)(...args);
+        })
+        : spyOn(filesystem, 'readFile').mockImplementation((...args: any[]) => {
+          if (String(args[0]) === path.join(root, target)) return Promise.reject(fault) as any;
+          return (read as any)(...args);
+        });
+      const reopened = new CacheStore(root, { flushDelayMs: 60_000 });
+      try {
+        await expect(reopened.lookup(scope(), [block()])).rejects.toBe(fault);
+        await reopened.flushNow().catch(() => undefined);
+        expect((await enumerate(root)).sort()).toEqual(names);
+        expect(await Promise.all(names.map((name) => read(path.join(root, name), 'utf8')))).toEqual(before);
+      } finally {
+        spy.mockRestore();
+      }
+      expect((await reopened.lookup(scope(), [block()])).hits).toEqual([{ id: 'b1', translation: 'Saved' }]);
+      await reopened.flushNow();
+    });
+  }
+
   test('rejects mismatched persisted source metadata instead of returning its translations', async () => {
     const root = await makeRoot();
     const store = new CacheStore(root, { flushDelayMs: 60_000 });
@@ -478,7 +516,6 @@ describe('PreviewTranslationCacheStore', () => {
 
   test('keeps in-memory hits usable when a durable flush fails', async () => {
     const parentFile = await makeRoot();
-    await writeFile(parentFile, 'not a directory', 'utf8');
     const errors: PreviewTranslationCacheOperation[] = [];
     const store = new PreviewTranslationCacheStore(path.join(parentFile, 'cache'), {
       flushDelayMs: 60_000,
@@ -487,6 +524,8 @@ describe('PreviewTranslationCacheStore', () => {
     const lookup = await store.lookup(scope(), [block()]);
     await store.record(scope(), [block()], [{ id: 'b1', translation: 'Memory result' }], lookup.ticket);
 
+    await mkdir(path.dirname(parentFile), { recursive: true });
+    await writeFile(parentFile, 'not a directory', 'utf8');
     await expect(store.flushNow()).rejects.toThrow();
     expect((await store.lookup(scope(), [block()])).hits).toEqual([
       { id: 'b1', translation: 'Memory result' },

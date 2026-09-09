@@ -8,7 +8,7 @@ import type {
 } from '../../../../core/agent/memory';
 import type { ThreadId, ThreadItemId, TurnId } from '../../../../core/agent/protocol';
 import { redactSecretLikeContent } from '../../capabilities/agentSecretRedaction';
-import { openSqlite, type SqliteDatabase, type SqliteValue } from '../../persistence/sqlite';
+import { closeSqliteAfterFailure, openSqlite, type SqliteDatabase, type SqliteValue } from '../../persistence/sqlite';
 
 type MemoryControlStatus = Omit<MemoryStatus, 'strayTaggedNodeCount'>;
 
@@ -150,8 +150,9 @@ export class MemoryControlStore {
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = database ?? openSqlite(path);
-    this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
-    this.db.exec(`
+    try {
+      this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+      this.db.exec(`
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -249,13 +250,17 @@ export class MemoryControlStore {
         updated_at INTEGER NOT NULL
       ) STRICT;
     `);
-    this.initializeSetting('featureMode', 'enabled');
-    this.initializeSetting('featureModeGeneration', '0');
-    this.initializeSetting('resetEpoch', '0');
-    this.initializeSetting('memoryVisibilityGeneration', '0');
-    this.initializeSetting('publicationGeneration', '0');
-    this.initializeSetting('lastSuccessfulRunAt', '');
-    this.initializeSetting('lastError', '');
+      this.initializeSetting('featureMode', 'enabled');
+      this.initializeSetting('featureModeGeneration', '0');
+      this.initializeSetting('resetEpoch', '0');
+      this.initializeSetting('memoryVisibilityGeneration', '0');
+      this.initializeSetting('publicationGeneration', '0');
+      this.initializeSetting('lastSuccessfulRunAt', '');
+      this.initializeSetting('lastError', '');
+    } catch (error) {
+      if (!database) closeSqliteAfterFailure(this.db, error);
+      throw error;
+    }
   }
 
   close(): void {

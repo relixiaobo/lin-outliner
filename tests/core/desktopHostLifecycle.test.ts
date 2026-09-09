@@ -42,6 +42,33 @@ function createHarness(overrides: Partial<DesktopHostLifecycleOptions> = {}) {
 }
 
 describe('DesktopHostLifecycle', () => {
+  test('publishes independent readiness and issues before a slow sibling settles', async () => {
+    const sibling = deferred();
+    const states: import('../../src/core/startup').StartupState[] = [];
+    const { lifecycle } = createHarness({
+      startSteps: [
+        { name: 'windows', run: () => undefined },
+        { name: 'outline-documents', dependsOn: ['windows'], run: () => undefined },
+        { name: 'provider-configuration', dependsOn: ['windows'], retryable: true, run: () => sibling.promise },
+        { name: 'agent', dependsOn: ['outline-documents'], retryable: true, run: () => {
+          throw Object.assign(new Error('Access denied'), { code: 'EACCES' });
+        } },
+      ],
+      onStartupState: (state) => { states.push(state); throw new Error('Diagnostics cannot write'); },
+    });
+    const starting = lifecycle.start().catch((error) => error);
+    await lifecycle.ready('outline-documents');
+    await expect(lifecycle.ready('agent')).rejects.toThrow('Access denied');
+    expect(lifecycle.phase()).toBe('starting');
+    expect(lifecycle.state()).toMatchObject({ capabilities: { outline: 'ready', agent: 'unavailable' },
+      issues: [{ domain: 'agent', category: 'permission', actions: ['copy-details'] }] });
+    expect(states.some((state) => state.capabilities.outline === 'ready' && state.status === 'starting')).toBe(true);
+    sibling.resolve();
+    await starting;
+    expect(lifecycle.state().revision).toBeGreaterThan(states[0]!.revision);
+    expect(lifecycle.state().capabilities.outline).toBe('ready');
+  });
+
   test('shows the window before services and gates each request on its owning DAG boundary', async () => {
     const document = deferred();
     const providers = deferred();
@@ -77,7 +104,7 @@ describe('DesktopHostLifecycle', () => {
     expect(events).not.toContain('search:reply');
     ranking.resolve();
     await Promise.all([start, search]);
-    expect(lifecycle.state()).toEqual({ status: 'ready' });
+    expect(lifecycle.state()).toMatchObject({ status: 'ready' });
   });
 
   test('keeps a recoverable failure visible and retries only unfinished services once', async () => {
@@ -102,7 +129,7 @@ describe('DesktopHostLifecycle', () => {
       { status: 'rejected', reason: error }, { status: 'rejected', reason: error },
     ]);
     expect(lifecycle.phase()).toBe('failed');
-    expect(lifecycle.state()).toEqual({ status: 'failed', step: 'outline-documents', message: error.message });
+    expect(lifecycle.state()).toMatchObject({ status: 'failed', step: 'outline-documents', message: error.message });
     expect(events).toEqual([]);
     await expect(lifecycle.ready('outline-documents')).rejects.toBe(error);
     expect(attempts).toBe(1);
@@ -159,6 +186,31 @@ describe('DesktopHostLifecycle', () => {
     expect(attempts).toBe(1);
     await expect(lifecycle.start()).rejects.toThrow('Agent preparation failed');
     expect(attempts).toBe(2);
+  });
+
+  test('a reversible quit failure resumes an interrupted startup without repeating healthy work', async () => {
+    const blocked = deferred();
+    let first = true;
+    const events: string[] = [];
+    const { lifecycle } = createHarness({
+      startSteps: [
+        { name: 'outline-documents', run: () => { events.push('outline'); } },
+        { name: 'agent', retryable: true, run: async ({ assertActive }) => {
+          events.push('agent');
+          if (first) { first = false; await blocked.promise; assertActive(); }
+        } },
+      ],
+      ordinaryQuit: async () => { throw new Error('Reversible drain failure'); },
+    });
+    const starting = lifecycle.start();
+    await lifecycle.ready('outline-documents');
+    await Promise.resolve();
+    const quitting = lifecycle.requestQuit();
+    blocked.resolve();
+    await expect(quitting).rejects.toThrow('Reversible drain failure');
+    await starting;
+    expect(lifecycle.phase()).toBe('started');
+    expect(events).toEqual(['outline', 'agent', 'agent']);
   });
 
   test('starts once and records each completed boundary', async () => {
@@ -461,7 +513,7 @@ describe('DesktopHostLifecycle', () => {
     await lifecycle.start();
 
     await expect(lifecycle.requestQuit()).rejects.toThrow('unfreeze failed');
-    expect(lifecycle.phase()).toBe('quitting');
+    expect(lifecycle.phase()).toBe('started');
 
     await lifecycle.requestQuit();
     expect(lifecycle.phase()).toBe('started');

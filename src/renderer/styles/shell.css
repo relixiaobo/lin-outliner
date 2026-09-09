@@ -62,6 +62,11 @@
   gap: var(--space-4);
 }
 
+.startup-agent-pane {
+  justify-content: center;
+  overflow: auto;
+}
+
 /* ── Persistent window chrome ──────────────────────────────────────────────── */
 
 /* The title-bar band is shared by ZONES, not one full-width strip (Apple's

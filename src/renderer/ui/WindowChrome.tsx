@@ -1,9 +1,10 @@
-import { CollapseAgentPanelIcon, CollapseSidebarIcon, ExpandAgentPanelIcon, ExpandSidebarIcon, ICON_SIZE } from './icons';
+import { CollapseAgentPanelIcon, CollapseSidebarIcon, ExpandAgentPanelIcon, ExpandSidebarIcon, WarningIcon, ICON_SIZE } from './icons';
 import { IconButton } from './primitives/IconButton';
 import { useT } from '../i18n/I18nProvider';
 
 interface WindowChromeProps {
   agentOpen: boolean;
+  startupIssueVisible?: boolean;
   sidebarOpen: boolean;
   onToggleAgent: () => void;
   onToggleSidebar: () => void;
@@ -24,7 +25,8 @@ interface WindowChromeProps {
 export function WindowChrome(props: WindowChromeProps) {
   const t = useT();
   const sidebarToggleLabel = props.sidebarOpen ? t.shell.chrome.collapseSidebar : t.shell.chrome.expandSidebar;
-  const agentToggleLabel = props.agentOpen ? t.shell.chrome.collapseAgent : t.shell.chrome.expandAgent;
+  const agentToggleLabel = props.startupIssueVisible ? t.startup.issues
+    : props.agentOpen ? t.shell.chrome.collapseAgent : t.shell.chrome.expandAgent;
   return (
     <>
       <div className="window-chrome-zone window-chrome-zone-left">
@@ -47,7 +49,7 @@ export function WindowChrome(props: WindowChromeProps) {
           <IconButton
             className="rail-toggle agent-toggle"
             aria-expanded={props.agentOpen}
-            icon={props.agentOpen ? CollapseAgentPanelIcon : ExpandAgentPanelIcon}
+            icon={props.startupIssueVisible ? WarningIcon : props.agentOpen ? CollapseAgentPanelIcon : ExpandAgentPanelIcon}
             iconSize={ICON_SIZE.toolbar}
             label={agentToggleLabel}
             onClick={props.onToggleAgent}

@@ -10,6 +10,7 @@ import {
 } from './descriptor';
 import type { RuntimeDescriptor, RuntimeStatus } from '../contract/schemas';
 import { acquireOutlineRuntimeRetirementClaim } from './retirement';
+import { readOutlineStartupFailure } from '../contract/startupFailure';
 
 export interface OutlineRuntimeLaunch {
   readonly command: string;
@@ -53,23 +54,29 @@ export class OutlineClientSupervisor {
     }
     if (existing) return existing;
     if (this.options.noStart) throw runtimeUnavailable('Outline Runtime is not running and automatic start is disabled.');
-    this.launchRuntime();
-    let lastError: unknown;
-    while (Date.now() < deadline) {
-      await delay(25, signal);
-      try {
-        const client = await this.tryConnectBefore(deadline, signal);
-        if (client) return client;
-      } catch (error) {
-        if (signal?.aborted) throw error;
-        if (error instanceof OutlineContractError) throw error;
-        lastError = error;
+    const launch = this.launchRuntime();
+    try {
+      let lastError: unknown;
+      while (Date.now() < deadline) {
+        await delay(25, signal);
+        try {
+          const client = await this.tryConnectBefore(deadline, signal);
+          if (client) return client;
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          if (error instanceof OutlineContractError) throw error;
+          lastError = error;
+        }
+        const failure = launch.failure();
+        if (failure) throw failure;
       }
+      throw runtimeUnavailable(
+        'Outline Runtime did not become available before the startup timeout.',
+        lastError,
+      );
+    } finally {
+      launch.close();
     }
-    throw runtimeUnavailable(
-      'Outline Runtime did not become available before the startup timeout.',
-      lastError,
-    );
   }
 
   async status(signal?: AbortSignal): Promise<RuntimeStatus> {
@@ -308,25 +315,47 @@ export class OutlineClientSupervisor {
       && await descriptorHasMatchingRuntimeOwner(this.options.root, descriptor);
   }
 
-  private launchRuntime(): void {
+  private launchRuntime(): { failure(): Error | null; close(): void } {
     if (!this.options.contentRoot) {
       throw runtimeUnavailable('Automatic Runtime start requires an explicit ContentStore root.');
     }
     const launch = this.options.launch ?? defaultLaunch(this.options.root, this.options.contentRoot);
     const child = spawn(launch.command, [...launch.args], {
       detached: launch.detached ?? true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'ignore', 'pipe'],
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
         TENON_CONTENT_ROOT: this.options.contentRoot,
         ...launch.env,
+        TENON_OUTLINE_STARTUP_REPORT_FD: '3',
         ...(this.options.expectedDevelopmentSessionId ? {
           TENON_OUTLINE_RUNTIME_DEVELOPMENT_SESSION_ID: this.options.expectedDevelopmentSessionId,
         } : {}),
       },
     });
+    let failure: Error | null = null;
+    let report = Buffer.alloc(0);
+    const observation = child.stdio[3];
+    if (observation && 'readable' in observation) {
+      observation.on('data', (chunk: Buffer) => {
+        if (report.length + chunk.length > 16_384) {
+          observation.destroy();
+          return;
+        }
+        report = Buffer.concat([report, chunk]);
+      });
+      observation.on('end', () => {
+        try { failure = readOutlineStartupFailure(JSON.parse(report.toString('utf8'))) ?? failure; } catch { /* Empty/invalid evidence proves no cause. */ }
+      });
+      observation.on('error', () => undefined);
+    }
+    child.on('error', (error) => { failure ??= error; });
+    child.on('close', (code, signal) => {
+      if (code !== 0) failure ??= new Error(`Outline Runtime exited during startup (${signal ?? code ?? 'unknown'}).`);
+    });
     child.unref();
+    return { failure: () => failure, close: () => observation?.destroy() };
   }
 }
 

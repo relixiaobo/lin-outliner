@@ -148,6 +148,21 @@ must not authorize orphan removal or manifest pruning in
 `reconcileShardDirectory`. Later successful reads may retry normally; explicit
 Clear remains a separate authorized operation.
 
+### Concrete issue and retry contract
+
+Use the existing startup IPC with a monotonic revision, Outline/Agent availability,
+owner issues, and transient Thread/source identities. Issue details are scrubbed
+and individually bounded; native Copy and fixed configuration-source actions use
+the current Host observation. Thread quarantine does not offer the Desktop Retry:
+its owner is healthy and a subsequent launch reprobes externally repaired sources.
+Keep the canonical Thread schema and persisted statuses unchanged.
+
+A fresh Agent owner replaces a failed attempt only after its subscriptions and
+stores have settled cleanup. Recheck new-work admission at commit, apply validated
+Memory opt-out before opening admission, and preserve recovery of accepted work.
+Observe child Runtime startup failure through a bounded private pipe with no
+ownership authority. Only the snapshot reader can claim a version mismatch.
+
 ### Requirements
 
 - **FR-1:** Catch fallible user-data opening, including constructors, behind

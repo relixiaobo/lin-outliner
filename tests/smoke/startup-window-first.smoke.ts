@@ -53,7 +53,7 @@ test('the native window paints while the document snapshot read is still blocked
       BrowserWindow.getAllWindows().some((window) => /index\.html/.test(window.webContents.getURL()) && window.isVisible())
     ))).toBe(true);
     expect(isReleased()).toBe(false);
-    expect(await smoke.window.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'starting' });
+    expect(await smoke.window.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'starting' });
     let agentSettled = false;
     const earlyAgent = smoke.window.evaluate(() => window.lin!.agentCoreRequest('thread/list', {}))
       .then(() => { agentSettled = true; return 'completed'; }, () => 'failed');
@@ -62,7 +62,7 @@ test('the native window paints while the document snapshot read is still blocked
     await releaseRead();
     expect(await earlyAgent).toBe('completed');
     await expect(smoke.window.locator('.workspace-canvas')).toBeVisible();
-    await expect.poll(() => smoke!.window.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'ready' });
+    await expect.poll(() => smoke!.window.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'ready' });
   } finally {
     clearTimeout(deadline);
     await releaseRead();
@@ -101,7 +101,7 @@ test('a document startup failure persists and Retry recovers in the same window'
     await failure.getByRole('button', { name: 'Retry', exact: true }).click();
     await expect(failure).toHaveCount(0);
     await expect(smoke.window.locator('.workspace-canvas')).toBeVisible({ timeout: 30_000 });
-    await expect.poll(() => smoke!.window.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'ready' });
+    await expect.poll(() => smoke!.window.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'ready' });
   } finally {
     await cleanup(smoke, fixture.userDataDir);
   }
@@ -114,12 +114,12 @@ test('Retry restores existing conversations after the document opens before Agen
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
     smoke = await launchSmokeApp({ userDataDir: fixture.userDataDir });
-    const existingThreadId = await smoke.window.evaluate(async (cwd) => {
+    const existingThreadId = await smoke.window.evaluate(async () => {
       const { thread } = await window.lin!.agentCoreRequest('thread/start', {
-        name: 'Recovered conversation', modelProvider: 'openai', cwd,
+        name: 'Recovered conversation', modelProvider: 'openai',
       });
       return thread.id;
-    }, fixture.userDataDir);
+    });
     await closeSmokeApp(smoke, { keepUserData: true });
     smoke = undefined;
 
@@ -139,7 +139,7 @@ test('Retry restores existing conversations after the document opens before Agen
     await expect(smoke.window.locator('.thread-empty-copy')).toHaveCount(1);
     await smoke.window.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
     expect(held.isReleased()).toBe(false);
-    expect(await smoke.window.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'starting' });
+    expect(await smoke.window.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'starting' });
     await releaseRead();
     const failure = smoke.window.locator('.startup-failure');
     await expect(failure).toContainText('EEXIST');
@@ -149,7 +149,7 @@ test('Retry restores existing conversations after the document opens before Agen
 
     await rm(uploadsPath);
     await failure.getByRole('button', { name: 'Retry', exact: true }).click();
-    await expect.poll(() => smoke!.window.evaluate(() => window.lin!.startup.get())).toEqual({ status: 'ready' });
+    await expect.poll(() => smoke!.window.evaluate(() => window.lin!.startup.get())).toMatchObject({ status: 'ready' });
     await expect(smoke.window.locator('.workspace-canvas')).toBeVisible();
     await expect(smoke.window.locator('.thread-dock-title')).toHaveText('Recovered conversation');
     await expect(smoke.window.locator('.thread-dock-error')).toHaveCount(0);

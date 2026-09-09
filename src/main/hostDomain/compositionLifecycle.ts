@@ -37,6 +37,7 @@ export function createAgentHostLifecycle(
 ): AgentHostLifecycle {
   const completed = new Set<string>();
   let initialization: Promise<void> | null = null;
+  let closing: Promise<void> | null = null;
   const initialize = async (projection: DocumentProjection, assertActive: () => void) => {
     assertActive();
     if (!completed.has('memory-index')) {
@@ -68,13 +69,14 @@ export function createAgentHostLifecycle(
   };
   return {
     initialize: (projection, assertActive = () => undefined) => {
+      if (closing) return Promise.reject(new Error('Agent Host is closing. A retry requires a fresh owner.'));
       initialization ??= initialize(projection, assertActive).catch((error) => {
         initialization = null;
         throw error;
       });
       return initialization;
     },
-    close: async () => {
+    close: () => closing ??= (async () => {
       const failures: unknown[] = [];
       try {
         await closeAgentServices(dependencies.memory, dependencies.threads, dependencies.automations);
@@ -92,7 +94,7 @@ export function createAgentHostLifecycle(
         failures.push(error);
       }
       if (failures.length > 0) throw new AggregateError(failures, 'Agent Host lifecycle failed to close cleanly');
-    },
+    })(),
   };
 }
 
