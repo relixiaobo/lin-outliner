@@ -513,6 +513,51 @@ describe('native turn kernel parity', () => {
     } finally { await tasks.close(2_000); database.close(); await rm(root, { recursive: true, force: true }); }
   });
 
+  test('keeps an explicitly backgrounded server alive after Turn cancellation and exposes bounded running output', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-running-output-'));
+    const database = new Database(':memory:');
+    const store = new ToolTaskStore(database as unknown as SqliteDatabase);
+    const tasks = new ToolTaskService(store, path.join(root, 'tasks'));
+    tasks.bindHost({ ownerExists: () => true, readDeliveryAdmission: async () => null,
+      startCompletionTurn: async () => false, taskChanged: () => {} });
+    await tasks.initialize();
+    try {
+      const context = toolRuntimeContext();
+      const admittedTimeouts = new Map<string, number | null>();
+      const tools = createLocalTools({ workspace: { root, scratchRoot: root, readFileState: new Map(),
+        threadId: context.thread.id, onTaskAdmitted: async (task) => { admittedTimeouts.set(task.sourceItemId, task.timeoutMs); } }, toolTaskService: tasks, turnId: context.turn.id });
+      const bash = tools.find((candidate) => candidate.name === 'bash')!;
+      const controller = new AbortController();
+      const started = await bash.execute('start-server', { run_in_background: true,
+        command: "head -c 29999 /dev/zero; printf '\\n'; head -c 29999 /dev/zero >&2; printf '\\n' >&2; sleep 30" }, controller.signal);
+      const taskId = (started.details as { data: { backgroundTaskId: string } }).data.backgroundTaskId;
+      controller.abort();
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(store.read(taskId)).toMatchObject({ state: 'running', timeoutMs: null });
+      const controls = await new ToolRuntime(toolRuntimeService({ toolTaskService: () => tasks }), {
+        capabilityTools: () => [], capabilityConfig: { blocks: [] },
+      }).createTools({ ...context, configuration: { ...context.configuration, tools: ['task_status'] } });
+      const status = controls.find((candidate) => candidate.name === 'task_status')!;
+      const { gateway } = await executeToolWithArguments(status, { task_id: taskId });
+      const result = gateway.requests[1]!.context.messages.find((message) => message.role === 'toolResult')!;
+      const header = JSON.parse((result.content[0] as { text: string }).text);
+      expectToolOutputContract('task_status', header.data);
+      expect(header).toMatchObject({ ok: true, data: {
+        taskId, state: 'running', result: null,
+        observation: { observedAt: expect.any(Number), output: expect.any(String), outputTruncated: true },
+      } });
+      expect(store.read(taskId)?.state).toBe('running');
+      expect((await tasks.stop(taskId, context.thread.id))?.state).toBe('cancelled');
+      const timed = await bash.execute('timed-background', { command: 'sleep 30', run_in_background: true, timeout: 50 });
+      const timedId = (timed.details as { data: { backgroundTaskId: string } }).data.backgroundTaskId;
+      expect((await tasks.waitForTerminal(timedId, context.thread.id, 5_000))?.state).toBe('timed_out');
+      await bash.execute('foreground', { command: 'true' });
+      expect(admittedTimeouts.get('foreground')).toBe(120_000);
+    } finally {
+      await tasks.close(2_000); database.close(); await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   test('retains terminal task status when escaped process output exceeds the JSON byte limit', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-task-output-'));
     const database = new Database(':memory:');

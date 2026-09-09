@@ -264,19 +264,12 @@ function descendantProjectionIds(rootIds: readonly string[], nodes: readonly Nod
   return descendants;
 }
 
-function desktopOutlineRuntimeLaunch(
+export function desktopOutlineRuntimeLaunch(
   options: OutlineDesktopHostOptions,
   root: string,
   contentRoot: string,
 ): OutlineRuntimeLaunch {
   const environment = options.environment ?? process.env;
-  const configuredEntry = environment.TENON_OUTLINE_RUNTIME_ENTRY;
-  if (configuredEntry) {
-    return {
-      command: environment.TENON_OUTLINE_RUNTIME_COMMAND ?? options.execPath,
-      args: [configuredEntry, '--root', root, '--content-root', contentRoot],
-    };
-  }
   if (options.isPackaged) {
     return {
       command: options.execPath,

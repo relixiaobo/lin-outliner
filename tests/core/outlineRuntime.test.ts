@@ -1,3 +1,4 @@
+import { desktopOutlineRuntimeLaunch } from '../../src/main/hostDomain/outlineDesktopHost';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFile as execFileCallback } from 'node:child_process';
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
@@ -30,6 +31,23 @@ afterEach(() => {
 });
 
 describe('Outline CLI runtime', () => {
+  test('starts this desktop runtime with its own interpreter despite inherited CLI exports', () => {
+    const base = {
+      userDataDir: '/child/data', moduleDir: '/child/out/main', resourcesPath: '/child/Contents/Resources',
+      execPath: '/child/Electron', reportError: () => {}, ready: async () => {},
+      environment: { TENON_OUTLINE_RUNTIME_ENTRY: '/parent/src/runtime.ts',
+        TENON_OUTLINE_RUNTIME_COMMAND: '/parent/Electron', npm_execpath: '/tools/bun' },
+    };
+    expect(desktopOutlineRuntimeLaunch({ ...base, isPackaged: false }, '/child/runtime', '/child/content')).toEqual({
+      command: '/tools/bun',
+      args: ['/child/src/outline/runtime/server/entry.ts', '--root', '/child/runtime', '--content-root', '/child/content'],
+    });
+    expect(desktopOutlineRuntimeLaunch({ ...base, isPackaged: true }, '/child/runtime', '/child/content')).toEqual({
+      command: '/child/Electron',
+      args: ['/child/Contents/Resources/outline/outline-runtime.mjs', '--root', '/child/runtime', '--content-root', '/child/content'],
+    });
+  });
+
   test('resolves the repository launcher and TypeScript entry in development', () => {
     const config = resolveOutlineCliRuntime({
       isPackaged: false,

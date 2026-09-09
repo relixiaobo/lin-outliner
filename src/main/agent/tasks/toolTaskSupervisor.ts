@@ -135,7 +135,7 @@ async function main(): Promise<void> {
   heartbeat.unref?.();
   const monitor = setInterval(() => {
     if (stopReason === null) {
-      if (Date.now() - timeoutStartedAt >= config.timeoutMs) requestStop('timed_out');
+      if (config.timeoutMs !== null && Date.now() - timeoutStartedAt >= config.timeoutMs) requestStop('timed_out');
       else void access(config.stopRequestPath).then(() => requestStop('requested'), () => undefined);
       return;
     }
@@ -310,7 +310,7 @@ function decodeConfig(value: unknown): ToolTaskSupervisorConfig {
     throw new Error('Invalid Tool Task config identity');
   }
   if (!Number.isFinite(record.startedAt)
-    || !Number.isSafeInteger(record.timeoutMs) || Number(record.timeoutMs) < 1
+    || (record.timeoutMs !== null && (!Number.isSafeInteger(record.timeoutMs) || Number(record.timeoutMs) < 1))
     || !Number.isSafeInteger(record.maxOutputBytes) || Number(record.maxOutputBytes) < 1
     || !Number.isSafeInteger(record.maxPreparedResultBytes) || Number(record.maxPreparedResultBytes) < 1) {
     throw new Error('Invalid Tool Task config limits');

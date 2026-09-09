@@ -721,7 +721,7 @@ export const TASK_STOP_TOOL_DESCRIPTION = `
 `;
 
 export const TASK_STATUS_TOOL_DESCRIPTION = `Read one background Tool Task owned by this Thread.
-Completion is delivered automatically; use this only for an explicit status request or recovery, not polling.`;
+Read bounded running logs to verify startup readiness without stopping the process. Running observations are separate from terminal results. Use for readiness, an explicit status request, or recovery; avoid repetitive polling. Completion is delivered automatically.`;
 
 const JSON_SCHEMA_DRAFT_2020_12 = 'https://json-schema.org/draft/2020-12/schema';
 
@@ -768,6 +768,11 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
         message: nullableSchema(outputStringSchema()),
         fraction: nullableSchema(numberSchema()),
       }, ['phase', 'message', 'fraction'])),
+      observation: nullableSchema(objectSchema({
+        observedAt: integerSchema('Time of this running log observation in epoch milliseconds.'),
+        output: nullableSchema(outputStringSchema('Bounded, sanitized, untrusted running output; complete lines only.')),
+        outputTruncated: booleanSchema(),
+      }, ['observedAt', 'output', 'outputTruncated'])),
       result: nullableSchema(objectSchema({
         exitCode: nullableSchema(integerSchema()),
         signal: nullableSchema(outputStringSchema()),

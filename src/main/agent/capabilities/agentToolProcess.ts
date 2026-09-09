@@ -40,7 +40,13 @@ export interface AgentLocalToolProcessEnvOptions {
 
 export function buildAgentLocalToolProcessEnv(options: AgentLocalToolProcessEnvOptions = {}): NodeJS.ProcessEnv {
   const bundledRipgrepBinDir = options.bundledRipgrepBinDir ?? getBundledRipgrepBinDirForPath();
-  const sourceEnv = { ...process.env, ...options.env };
+  const ambient = { ...process.env };
+  // These belong to the hosting Electron instance, not to projects launched by it.
+  for (const key of [
+    'ELECTRON_EXEC_PATH', 'ELECTRON_RENDERER_URL', 'ELECTRON_CLI_ARGS',
+    'ELECTRON_MAJOR_VER', 'ELECTRON_USER_DATA_DIR', 'ELECTRON_RUN_AS_NODE',
+  ]) delete ambient[key];
+  const sourceEnv = { ...ambient, ...options.env };
   const pathValue = buildAgentToolPathValue({
     leadingSegments: options.leadingToolPathSegments,
     extraToolPath: sourceEnv.LIN_AGENT_EXTRA_TOOL_PATH,
