@@ -22,7 +22,10 @@
 .settings-provider-groups {
   display: flex;
   flex-direction: column;
+  gap: var(--space-lg);
 }
+
+.settings-provider-groups > .inset-group + .inset-group { margin-top: 0; }
 
 /* Row separators sit WITHIN the row content, not bleeding to the panel edge: the
    left edge aligns with the brand tile (the row's content padding, where the icon

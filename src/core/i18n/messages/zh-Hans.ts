@@ -1999,6 +1999,8 @@ export const zhHans: PartialMessages = {
     baseUrlLabel: '基础 URL',
     getApiKey: '获取 API 密钥',
     validating: '测试中…',
+    retryConnection: '重试连接',
+    testAgainHint: ({ when }: { when: string }) => `上次检查：${when}。点击可再次测试。`,
     cancel: '取消',
     connectionSuccessful: '连接成功',
     validationFailed: '校验失败',

@@ -2124,6 +2124,8 @@ export const en = {
     baseUrlLabel: 'Base URL',
     getApiKey: 'Get API key',
     validating: 'Testing…',
+    retryConnection: 'Retry Connection',
+    testAgainHint: ({ when }: { when: string }) => `Last checked ${when}. Click to test again.`,
     cancel: 'Cancel',
     connectionSuccessful: 'Connection successful',
     validationFailed: 'Validation failed',

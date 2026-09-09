@@ -98,6 +98,11 @@ test('all Settings destinations reuse one native window with bounded admission a
   const smoke = await launchSmokeApp({ userDataDir: fixture() });
   try {
     const settings = await open(smoke, 'settings');
+    await expect(settings.getByRole('radiogroup', { name: 'Appearance', exact: true })).toBeVisible();
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await settings.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+      await settings.screenshot({ path: testInfo.outputPath(`general-${colorScheme}.png`), animations: 'disabled' });
+    }
     const models = await open(smoke, 'models');
     await expect(models.getByRole('list', { name: 'Providers to add' })).toBeVisible();
     expect(models).toBe(settings);
@@ -149,6 +154,10 @@ test('all Settings destinations reuse one native window with bounded admission a
     await agents.getByRole('list', { name: 'Built-in agents' }).getByRole('button').first().click();
     const dialog = agents.getByRole('dialog');
     await dialog.getByRole('textbox', { name: 'Instructions' }).fill('Preserve this draft.');
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await agents.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+      await dialog.screenshot({ path: testInfo.outputPath(`agent-editor-${colorScheme}.png`), animations: 'disabled' });
+    }
     await smoke.window.evaluate(() => window.lin!.openSettings({ destination: 'shortcuts' }));
     await expect(dialog.getByRole('textbox', { name: 'Instructions' })).toHaveValue('Preserve this draft.');
     expect(new URL(agents.url()).searchParams.get('destination')).toBe('agents');
@@ -157,6 +166,7 @@ test('all Settings destinations reuse one native window with bounded admission a
       const page = await open(smoke, destination);
       if (destination !== 'about') expect(page).toBe(settings);
       await expect(page.locator('.configuration-content:visible')).not.toBeEmpty();
+      await expect(page.locator('.configuration-content:visible .inset-card').first()).toBeVisible();
       expect(smoke.app.windows().filter((window) => new URL(window.url()).searchParams.get('surface') === 'settings')).toHaveLength(1);
       await expect(page.getByRole('button', { name: 'Back', exact: true })).toHaveCount(destination === 'about' ? 0 : 1);
       if (destination === 'skills') {
@@ -183,6 +193,12 @@ test('all Settings destinations reuse one native window with bounded admission a
       if (destination === 'diagnostics') {
         const source = page.locator('.settings-source-list').getByRole('listitem').filter({ hasText: 'keybindings.jsonc' });
         await expect(source.getByRole('button', { name: 'Open File…' })).toBeVisible();
+      }
+      if (destination !== 'skills' && destination !== 'shortcuts') {
+        for (const colorScheme of ['light', 'dark'] as const) {
+          await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+          await page.screenshot({ path: testInfo.outputPath(`${destination}-${colorScheme}.png`), animations: 'disabled' });
+        }
       }
     }
   } finally { await closeSmokeApp(smoke); }

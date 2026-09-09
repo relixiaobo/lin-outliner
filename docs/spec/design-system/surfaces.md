@@ -627,12 +627,20 @@ to a truthful Saved key placeholder without blocking editing. Externally managed
 environment and OAuth credentials never enter this display/read path. No Agent
 tool is involved.
 
-Test Connection is an optional compact action row without a separator or panel
-padding. Pending state stays in the button; the result and secondary check age
-share the space beside it. Success uses a short localized label, with the full
-response in its tooltip. Errors remain complete and wrap as needed, including at
-larger text sizes. Testing does not save draft inputs. Editing the draft
-invalidates a pending or completed result.
+Test Connection is an optional stateful button without a separate result panel.
+It changes from Test Connection to Testing, then Connection successful (checkmark)
+or Retry Connection (warning). Completed results remain actionable; normal form
+validity and busy-state restrictions still apply. Status icons carry status color
+while the button keeps its neutral styling. A polite live label announces changes. The completed
+check's absolute time and repeat-test hint belong in the button tooltip. Only a
+failure exposes its full explanation beside the button, wrapping when necessary.
+Testing does not save draft inputs. Editing the draft invalidates a pending or
+completed result and restores the Test Connection action.
+The key caption renders only when it has a hint, character count, or copy feedback;
+an empty key reserves no description line. Connection fields use `--space-8`
+between fields and `--space-3` within a field. Settings section stacks own their
+`--space-lg` group separation, without adding child group/disclosure margins.
+Inline shortcut errors reset paragraph margins so feedback uses only its row gap.
 Copy feedback stays with the key, and save failures stay next to the footer while
 preserving input. Return submits a valid changed draft. Save disables editing and
 Cancel/Escape until the write completes and rejects duplicate submissions. Save

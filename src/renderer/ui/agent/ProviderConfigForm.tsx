@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { ICON_SIZE, LoaderIcon, OpenInBrowserIcon } from '../icons';
+import { CheckIcon, ICON_SIZE, LoaderIcon, OpenInBrowserIcon, WarningIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -20,6 +20,7 @@ export interface ProviderConfigValidation {
   message: string;
 }
 export type ProviderFormActivity = 'idle' | 'testing' | 'saving';
+type ConnectionCheckResult = ProviderConfigValidation & { checkedAt: number };
 
 interface ProviderConfigFormProps {
   mode: 'configure' | 'custom';
@@ -32,7 +33,7 @@ interface ProviderConfigFormProps {
   defaultBaseUrl?: string;
   requiresEndpoint: boolean;
   allowEndpointOverride: boolean;
-  previousCheck?: ProviderConfigValidation & { checkedAt: string };
+  previousCheck?: ConnectionCheckResult;
   hasCredential: boolean;
   hasStoredKey: boolean;
   authNote?: { note: string; docsUrl?: string; docsLabel?: string };
@@ -55,7 +56,7 @@ export function ProviderConfigForm({
   const validationToken = useRef(0);
   const savingRef = useRef(false);
   const [activity, setActivity] = useState<ProviderFormActivity>('idle');
-  const [result, setResult] = useState<ProviderConfigValidation | null>(null);
+  const [result, setResult] = useState<ConnectionCheckResult | null>(null);
   const [saveError, setSaveError] = useState('');
   const [docsError, setDocsError] = useState('');
   const [keyLoading, setKeyLoading] = useState(false);
@@ -73,12 +74,12 @@ export function ProviderConfigForm({
   const dirty = !hasExisting || Boolean(draft.apiKey.trim()) || endpoint !== initialBaseUrl.trim();
   const canSave = complete && dirty && !saving && !keyLoading;
   const displayedResult = result ?? (!dirty && activity === 'idle' ? previousCheck : null);
-  const resultMessage = displayedResult ? <>
-    <span>{displayedResult.success ? t.providerConfig.connectionSuccessful : displayedResult.message}</span>
-    {displayedResult === previousCheck && previousCheck ? <span className="settings-sheet-test-time">
-      {' · '}{previousCheck.checkedAt}
-    </span> : null}
-  </> : null;
+  const testLabel = testing ? t.providerConfig.validating : displayedResult
+    ? displayedResult.success ? t.providerConfig.connectionSuccessful : t.providerConfig.retryConnection
+    : t.providerConfig.validate;
+  const testHint = displayedResult ? t.providerConfig.testAgainHint({
+    when: new Date(displayedResult.checkedAt).toLocaleString(),
+  }) : undefined;
 
   useEffect(() => {
     if (autoFocus) firstFieldRef.current?.focus();
@@ -108,9 +109,10 @@ export function ProviderConfigForm({
     setResult(null);
     try {
       const next = await onValidate(draft);
-      if (token === validationToken.current) setResult(next);
+      if (token === validationToken.current) setResult({ ...next, checkedAt: Date.now() });
     } catch (caught) {
-      if (token === validationToken.current) setResult({ success: false, message: String(caught instanceof Error ? caught.message : caught) });
+      if (token === validationToken.current) setResult({ success: false,
+        message: String(caught instanceof Error ? caught.message : caught), checkedAt: Date.now() });
     } finally {
       if (token === validationToken.current) updateActivity('idle');
     }
@@ -188,13 +190,19 @@ export function ProviderConfigForm({
           </details>
         ) : null}
         <section className="settings-sheet-test" aria-label={t.providerConfig.validate}>
-          <Button onClick={() => void testConnection()} disabled={!complete || saving || testing || keyLoading}>
-            {testing ? <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} /> : null}
-            {testing ? t.providerConfig.validating : t.providerConfig.validate}
+          <Button onClick={() => void testConnection()} title={testHint}
+            aria-describedby={displayedResult && !displayedResult.success ? `${ids}-connection-error` : undefined}
+            disabled={!complete || saving || testing || keyLoading}>
+            {testing ? <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} aria-hidden />
+              : displayedResult ? displayedResult.success
+                ? <CheckIcon className="settings-sheet-test-success" size={ICON_SIZE.menu} aria-hidden />
+                : <WarningIcon className="settings-sheet-test-failure" size={ICON_SIZE.menu} aria-hidden /> : null}
+            <span aria-live="polite">{testLabel}</span>
           </Button>
-          {displayedResult ? displayedResult.success
-            ? <p className="settings-sheet-test-result settings-sheet-test-success" role="status" title={displayedResult.message}>{resultMessage}</p>
-            : <ErrorState className="settings-sheet-test-result" message={resultMessage} size="inline" /> : null}
+          {displayedResult && !displayedResult.success
+            ? <p className="settings-sheet-test-result settings-sheet-test-failure" id={`${ids}-connection-error`} role="alert">
+              {displayedResult.message}
+            </p> : null}
         </section>
       </div>
       <div className="settings-sheet-actions">

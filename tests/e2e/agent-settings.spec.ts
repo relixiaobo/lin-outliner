@@ -19,6 +19,7 @@ test.describe('configuration panes', () => {
     await expect(settings.getByText('Open page in new pane', { exact: true })).toBeVisible();
     await settings.getByRole('button', { name: 'Change CommandOrControl+M', exact: true }).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Add an alternate for Open page in new pane' }).click();
+    await expect(settings.locator('.settings-shortcut-key.is-recording')).toBeFocused();
     await page.keyboard.press('Control+P');
     await expect(settings.getByRole('button', { name: 'Change Control+P' })).toBeVisible();
 
@@ -636,11 +637,20 @@ test.describe('provider config windows', () => {
     const config = await openProviderConfig(page, 'anthropic');
     await config.getByLabel('API key').fill('sk-good');
     await config.getByRole('button', { name: 'Test Connection' }).click();
-    await expect(config.getByText(/Connection successful/)).toBeVisible();
+    const successful = config.getByRole('button', { name: 'Connection successful', exact: true });
+    await expect(successful).toBeEnabled();
+    await expect(successful).toHaveAttribute('title', /Last checked.*Click to test again/);
+    await successful.click();
+    await expect.poll(async () => (await commandCalls(page)).filter((call) => call.cmd === 'agent_test_provider_connection').length).toBe(2);
+    await expect(successful).toBeEnabled();
 
     await config.getByLabel('API key').fill('sk-bad');
     await config.getByRole('button', { name: 'Test Connection' }).click();
     await expect(config.getByText(/Invalid API key/)).toBeVisible();
+    const retry = config.getByRole('button', { name: 'Retry Connection', exact: true });
+    await expect(retry).toBeEnabled();
+    await retry.click();
+    await expect.poll(async () => (await commandCalls(page)).filter((call) => call.cmd === 'agent_test_provider_connection').length).toBe(4);
 
     const calls = await commandCalls(page);
     expect(calls.some((call) => call.cmd === 'agent_set_provider_api_key')).toBe(false);

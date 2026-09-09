@@ -38,6 +38,7 @@ export function ProviderApiKeyField({
   const showPreview = !reveal && preview && (!value || !focused);
   const hint = hasStoredKey ? t.providerConfig.savedKeyHint
     : local ? t.providerConfig.localKeyHint : hasCredential ? t.providerConfig.availableKeyHint : '';
+  const hasCaption = Boolean(copied || hint || preview);
 
   useEffect(() => {
     if (!hasStoredKey) return;
@@ -99,7 +100,7 @@ export function ProviderApiKeyField({
           value={value || (reveal ? storedKey ?? '' : '')} type={reveal ? 'text' : 'password'}
           disabled={disabled || loading}
           placeholder={showPreview ? '' : hasStoredKey ? t.providerConfig.savedKeyPlaceholder : t.providerConfig.apiKeyPlaceholder}
-          aria-describedby={`${id}-hint ${id}-length`} autoComplete="off" autoCapitalize="none" spellCheck={false}
+          aria-describedby={hasCaption ? `${id}-hint ${id}-length` : undefined} autoComplete="off" autoCapitalize="none" spellCheck={false}
           onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
           onChange={(event) => {
             setError('');
@@ -124,10 +125,10 @@ export function ProviderApiKeyField({
           </ButtonControl>
         </span>
       </div>
-      <div className="settings-sheet-key-caption settings-sheet-help">
+      {hasCaption ? <div className="settings-sheet-key-caption settings-sheet-help">
         <span id={`${id}-hint`} role="status">{copied ? t.providerConfig.keyCopied : hint}</span>
         <span id={`${id}-length`}>{preview ? t.providerConfig.keyLength({ count: preview.length }) : ''}</span>
-      </div>
+      </div> : null}
       {error ? <ErrorState message={error} size="inline" /> : null}
     </div>
   );

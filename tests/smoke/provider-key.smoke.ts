@@ -42,8 +42,9 @@ test('the owned credential sheet previews a real saved key without disclosing it
     for (const colorScheme of ['light', 'dark'] as const) {
       await child.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
       await expect(child.getByText('107 characters', { exact: true })).toBeVisible();
-      const testButton = child.getByRole('button', { name: 'Test Connection', exact: true });
+      const testButton = child.getByRole('button', { name: 'Connection successful', exact: true });
       await expect(testButton).toBeInViewport();
+      await expect(testButton).toHaveAttribute('title', /Last checked.*Click to test again/);
       expect(await child.locator('.settings-sheet-body').evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
       await child.screenshot({ path: testInfo.outputPath(`anthropic-key-${colorScheme}.png`) });
     }

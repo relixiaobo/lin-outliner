@@ -5,7 +5,6 @@ import { providerConfigParamsFromSearch } from '../../../core/settingsWindow';
 import { localGatewayProviderDefinition } from '../../../core/localGatewayProviders';
 import { useT } from '../../i18n/I18nProvider';
 import { formatProviderName, oauthSignInInfo, providerAuthInfo, PROVIDER_DOCS_URL, ProviderAvatar, providerHasCredential } from './providerCatalog';
-import { providerCheckedAtText } from './providerStatus';
 import { OAUTH_API_KEY_FALLBACK } from './providerOAuthCapabilities';
 import { ProviderConfigForm, type ProviderConfigDraft, type ProviderFormActivity } from './ProviderConfigForm';
 import { ProviderOAuthForm } from './ProviderOAuthForm';
@@ -145,7 +144,7 @@ function ProviderConnection({ settings, onSettingsChange, providerId, providerNa
             success: existing.connectionCheck.outcome === 'ok',
             message: existing.connectionCheck.message ?? (existing.connectionCheck.outcome === 'ok'
               ? t.providerConfig.connectionSuccessful : t.providerConfig.validationFailed),
-            checkedAt: providerCheckedAtText(existing.connectionCheck.at, Date.now(), t),
+            checkedAt: existing.connectionCheck.at,
           } : undefined}
           authNote={authNote} docsUrl={mode === 'custom' ? undefined : PROVIDER_DOCS_URL[providerId]}
           hasCredential={dualAuth ? hasApiKeyCredential : providerHasCredential(existing, catalog)} hasStoredKey={hasStoredKey}

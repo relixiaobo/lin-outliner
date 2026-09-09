@@ -12,7 +12,14 @@
 .agent-settings-section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
+  gap: var(--space-lg);
+}
+
+/* The stack owns section spacing; nested groups/disclosures must not add a
+   second margin on top of it. Field spacing inside each group stays compact. */
+.agent-settings-section > .inset-group + .inset-group,
+.agent-settings-section > .settings-disclosure {
+  margin-top: 0;
 }
 
 /* The one small status / tag chip across Settings (provider Active marker, skill
