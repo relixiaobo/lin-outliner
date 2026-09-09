@@ -24,28 +24,19 @@ record plan separates historical originals from new reading-Thread image/PDF
 observations. Runtime behavior has not shipped. Record-discovery eligibility
 remains gated on the explicit product decision in that plan's OQ-1.
 
-Workbench Units A-E are complete, with execution/process Unit E shipped in
-#658; the aggregate and all child plans are archived. Settings Unit G is claimed
-by #656 and remains the prerequisite before starting the recovery/records
-implementation queue. Planning and read-only collision checks need not wait
-for that merge.
+Workbench Units A-E shipped through #658. PR #660 subsequently simplified the
+workbench to UI-owned Projects, native Git/test commands guided by Skills, and
+generic Goal/Task state. Private verification and Git evidence, Project model
+tools, and directory claims are retired. Execution context, passive instruction
+discovery, actual isolation, and validated parent/child Task ownership remain.
+The workbench plans are archived and current contracts live in the specs.
 
-PR #659 retired the dedicated file deletion tool. When rebasing #656, resolve
-the catalog-count assertion to 22 and retain the assertion that `file_delete`
-is absent; its twelve Settings-tool removals compose with this retirement.
-
-PR #639 approved the capability-first development workbench design; #645 revised
-its cache/publication contract. Unit A shipped in #646 as one complete
-execution-context refactor over the shipped delegation/native-launcher and
-Settings mechanisms, including frozen publication boundaries, scoped reduction,
-and compaction restore. PR #649 shipped Unit B's bounded discovery, immutable
-successor delivery, and freshness validation; PR #651 completes its optional
-Project catalog, confirmed membership, deletion fencing, and Project-backed
-Automation hints. Unit C's source-bound verification and bounded correction
-shipped in #655 over that context/profile mechanism. Unit D's reviewed commits
-and explicit publication shipped in #657. Unit E's actual isolation receipts,
-context observations, and bounded tmux experiment shipped in #658. Current
-contracts live in the specs; all workbench plans are archived.
+Settings Unit G is claimed by #656 and remains the prerequisite before starting
+the recovery/records implementation queue. Planning and read-only collision
+checks need not wait for that merge. Rebase #656 over #659 and #660: its twelve
+Settings-tool removals leave 20 catalog tools. Retain the absence of
+`file_delete`, `project_inspect`, and `project_manage`, and reconcile the shared
+runtime/spec edits against the generic workbench contracts.
 
 PR #628 shipped internal Agent delegation and complete Subagent/isolated-Skill
 retirement under the design merged in #620. Generic Background Tool Tasks
@@ -105,7 +96,7 @@ Parallel now eligible:
 
 Selected integration order:
   Settings G (#656) ~> startup-fault-isolation
-  Workbench A-E (complete through #658) ~> startup-fault-isolation
+  Workbench (simplified in #660) ~> startup-fault-isolation
   startup-fault-isolation ~> unified-session-records ~> targeted-thread-recovery
 
 Capability prerequisite:
@@ -114,8 +105,8 @@ Capability prerequisite:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
-| P1 | [startup-fault-isolation](plans/startup-fault-isolation.md) | `draft` | After Settings G (#656); workbench A-E completed in #658. Consume final Host, admission and restart ownership. |
-| P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | After startup fault isolation over the completed workbench series; cover C/D/E evidence and settle OQ-1 before claiming implementation |
+| P1 | [startup-fault-isolation](plans/startup-fault-isolation.md) | `draft` | After Settings G (#656); consume #660's generic Goal/Task, Host admission and process restart ownership. |
+| P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | After startup fault isolation; cover generic Task outputs, context, artifacts and isolation, and settle OQ-1 before claiming implementation |
 | P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | After startup issue/lifecycle and unified source/provenance/publication mechanisms; one complete verified rebuild/removal feature |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
@@ -137,30 +128,23 @@ The split also absorbs three former planless tasks without losing their intent:
 - `computer-pilot-managed-skill` now has its own complete plan and consumes the
   final Host plus Agent resource lifecycle; both foundations are complete.
 
-The series-level boundary avoids revisiting startup readiness, record source
-coverage, and recovery closure as workbench producers change. C owns check and
-attempt evidence; D adds review manifests and durable publication outcomes;
-E settles isolation receipts and interactive-process ownership, captures and
-restart behavior. The new sequence consumes all three, not just #655.
-
-This is a delivery order, not a claim that each workbench feature is required
-to display a startup error. Workbench completion means the approved A-E units
-have shipped, including E's bounded experiment and its recorded outcome. A
-possible later native terminal, additional sandbox backend, or other follow-up
-proposal does not extend this gate. C/D/E shipped as independent units; the
-series-level edge does not invent C -> D -> E.
+The recovery/records sequence consumes #660's generic command outcomes,
+retained/expired output and artifacts, Goal accounting, execution context,
+and process-isolation/settlement owners. It has no private check-attempt or
+Git-review manifest producer to recover. Native-state reconciliation precedes
+new mutations after uncertain outcomes. A future terminal or additional sandbox
+backend does not extend the completed workbench integration gate.
 
 Collision lanes remain claim-time constraints alongside the selected order:
 
 - #656 settles shared Host/preload and domain destinations before startup fault
-  isolation rewires fallible construction and failure routes. Workbench C/D/E
-  settled task/runtime evidence and process lifecycle before that new sequence.
+  isolation rewires fallible construction and failure routes. PR #660 supplies
+  the final generic Task/runtime evidence and process lifecycle for that sequence.
   Actual file overlap still requires a claim-time check with exact symbols;
   the selected series order does not depend on an open PR already listing it.
-- Workbench C/D/E consume Tool Tasks, execution context, and original evidence;
-  they precede the new sequence and do not wait for readable record files.
-  Those files cannot authorize a current check pass, commit, process adoption
-  or sandbox claim. Further delegation retains its own collision check and
+- Readable records consume generic Task/context/artifact retention; they do not
+  grant publication or process-adoption authority, or authenticate a current
+  source revision. Further delegation retains its own collision check and
   hidden-session discovery boundaries.
 - `file-preview-office`, `url-static-reader`, and the preview/translation units
   in Interaction Jank must not overlap on shared preview shell files; #605 is the
@@ -310,6 +294,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **workbench-tool-boundaries** (`done`, #660, 2026-09-09) - UI Projects and native Git/test Skills replace private workbench tools and directory claims while preserving generic Task ownership/isolation; [plan archived](plans/archive/workbench-tool-boundaries.md).
 - **remove-file-delete-tool** (`done`, #659, 2026-09-09) - local deletion now uses Bash command semantics without automatic Agent trash; existing policy/isolation and canonical deletion history remain, and the [plan is archived](plans/archive/remove-file-delete-tool.md).
 - **execution-sandbox-process / workbench complete** (`done`, #658, 2026-09-09) - actual isolation evidence and bounded tmux lifecycle measurements complete Units A-E; [Unit E](plans/archive/execution-sandbox-process.md) and the [aggregate](plans/archive/project-development-workbench.md) are archived.
 - **git-review-publication** (`done`, #657, 2026-09-09) - reviewed selected-file commits, immutable evidence, and explicit push/PR publication with remote reconciliation shipped; [plan archived](plans/archive/git-review-publication.md).

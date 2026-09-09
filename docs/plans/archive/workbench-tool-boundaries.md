@@ -143,7 +143,7 @@ capacity leases, Task stop/recovery, and actual sandbox receipts unchanged.
 ### Explicit behavior changes and risks
 
 This simplifies the current
-[Git publication contract](../spec/agent-tool-design.md#git-review-and-explicit-publication):
+[Git publication contract](../../spec/agent-tool-design.md#git-review-and-explicit-publication):
 
 | Property | Treatment |
 | --- | --- |

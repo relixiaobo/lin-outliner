@@ -2782,3 +2782,16 @@ replacement through its real policy and execution path.** Keep shared history
 rendering covered after removing tool-specific branches. Include current
 permission prose in the retirement sweep; its symlink-entry admission example
 outlived the tool even after the owning tool specification was updated.
+
+## Native replacements must verify effective destinations and caller admission
+
+PR #660 replaced a private Git protocol with native Skill recipes. The first
+recipe queried a remote's fetch URL after publishing to its separate push URL,
+and its literal-path diff syntax was rejected by read-only delegation.
+
+**Verify native replacements through the retained caller policy and the actual
+configured endpoint.** A successful Full Access command does not prove delegated
+admission, and a remote alias does not identify one transport destination.
+Exercise distinct fetch/push URLs, multiple destinations and partial success;
+test literal-path inspections through the capability and execution path without
+broadening authority to make the recipe pass.
