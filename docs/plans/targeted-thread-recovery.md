@@ -62,6 +62,17 @@ CON-3: Coordinate live writers/processes and retained dependencies through their
 owners. Existing completion, cancellation, delivery, Project deletion, and
 resource retention truth remain authoritative. Unknown ownership blocks recovery.
 
+The same closure consumes [question settlement](user-input-request-recovery.md)
+and [Task responsibility](background-task-continuation-policy.md) when those
+features are present: fence the exact pending request/deadline and retain or
+invalidate Task operation/disposition references through their existing owners.
+A late timer, answer or process event cannot revive removed execution. Renderer
+answer drafts follow their Thread-local lifetime; they are not a new durable
+recovery source. [Conversation work folders](conversation-work-folders.md) retain
+independent Project metadata and already admitted Task addresses. The board
+selects integration order; whichever consumer lands later covers the earlier
+feature's final closure without creating another owner.
+
 CON-4: All targets derive from resolved packaged/dev userData. The renderer
 supplies an issue/action identity and observed scope revision, not a storage path
 or deletion instruction. Retained originals cannot depend on writable diagnostics.

@@ -725,6 +725,16 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Execution order reconciled across active plans** - audited all 15 active
+  designs against main and the sole open implementation claim, #669. The board
+  now records its two review fixes, prioritizes bounded question recovery and
+  Task continuation policy, distinguishes required contracts from selected
+  Project/scheduling/recovery order, and exposes independent Memory, preview and
+  Settings work. Scheduled location/Task ownership and recovery handoffs now link
+  the corresponding plans. Delegation retains an explicit closure audit rather
+  than an unnamed runtime phase. Existing product decisions remain visible;
+  no feature implementation or source-data reset is included.
+
 - **Task responsibility and input recovery designs refined (PR #671)** - Task
   control now specifies explicit service handoff, exact-result acknowledgement,
   and independent watch creation/revocation, with durable receipts and one event

@@ -652,7 +652,7 @@ and file scopes before implementation.
 
 | Mechanism / evidence | Observed position | Consequence for this design |
 | --- | --- | --- |
-| Context and Projects, #646/#649/#651; [Agent Core](../spec/agent-core.md) | Implemented | One work-location hint resolves through existing Project/context owners. Each real tool execution keeps its own captured address and policy. No sticky Thread cwd or new Project management tools. |
+| Context and Projects, #646/#649/#651; [Agent Core](../spec/agent-core.md) | Existing owner boundary | A scheduled assignment saves its own work location and each execution captures its actual address/policy. A conversation default may initialize an explicit choice but is never consulted as mutable run configuration. Scheduling adds no Project model tools. |
 | Isolation and workbench simplification, #658/#660; [tool design](../spec/agent-tool-design.md) | Implemented; #660 supersedes private verification/Git machinery from #655/#657 | Use generic Goal/Tool Task, native Git/test commands, Skills, and actual isolation. No new verification receipt ledger, Git publication controller, directory claim, or replacement delegation protocol. |
 | Background lifetime and observations, #663; [tool design](../spec/agent-tool-design.md) | Implemented | BR-6/7 consume live observations and terminal receipts separately. Cross-Thread inspection uses validated run/Task ownership; late delivery continuations require shared foreground admission. Result rendering must not terminate surviving background work. |
 | Bounded output and source evidence, #661; [resources](../spec/agent-core.md) | Implemented | Display partial/oversized results honestly; use existing complete-output and resource references, not copied previews as evidence. |
@@ -664,6 +664,8 @@ and file scopes before implementation.
 | [Memory/profile](memory-agent-profile.md), #665 | Design integrated; runtime absent | Global preferences, identity, style, and learning remain with that owner. Task briefs contain work-specific instructions. Consume accepted configuration without a direct USER.md reader or task-local learned profile. |
 | [Targeted conversation recovery](targeted-thread-recovery.md) | Design only | Preserve definition/run fences and shared references. Coordinate final new assignment and run references with its recovery closure; no separate repair action or cleanup interpretation. |
 | [Bounded user input](user-input-request-recovery.md) | Design only | Consume its request settlement, 60-second default deadline, session-local answer drafts, and exact active-question attention rules. Whichever consumer lands later verifies AC-39/40/41 against the final shared owner; no parallel timeout or input ledger. |
+| [Conversation work folders](conversation-work-folders.md) | Shared Project/location contract | Resolve an explicitly selected Project through its primary-folder owner while retaining the assignment's independent work-location choice. Share packaged CLI admission; changing the originating chat cannot redirect an accepted or future scheduled run. |
+| [Background continuation policy](background-task-continuation-policy.md) | Shared Task responsibility contract | Preserve launch/handoff, watch and exact-event disposition through the Task owner. Silent process observations do not acquire the foreground slot; required continuations retain their original run association and shared admission. |
 | [Delegation](../spec/agent-delegation.md), #628/#637 | Implemented common mechanisms | Internal/external delegated work remains owned by generic Task/session mechanisms and keeps existing discovery and cancellation boundaries. |
 
 **Implementation suggestions:** Keep the existing scheduling and Agent execution
@@ -701,6 +703,10 @@ configuration owner is consumed; changes to admission/learning require a new
 collision decision. Whichever recovery feature lands later must cover the final
 assignment/run references of the earlier feature. This plan does not reorder the
 board or broaden another plan's unratified discovery policy.
+The board also selects the input, Task-responsibility and Project-location
+integration order. These features remain independently useful; the later
+implementation adapts its consumer to the earlier owner's final contract rather
+than adding a parallel request, location or delivery authority.
 
 ### Verification approach
 

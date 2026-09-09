@@ -367,8 +367,9 @@ Collision evidence was checked against `origin/main` at `7c17f32d`: #664 startup
 fault isolation and #668 scheduled-work design are integrated. Open #669 claims
 Thread source resolution, runtime context, records, and lifecycle; this design
 overlaps those owners and must consume its final contract before implementation.
-Scheduled-work design currently assumes no sticky Thread cwd; reconcile that
-premise while keeping scheduled assignments independently owned. CLI packaging
+The scheduled-work design keeps its assignment location independent of a
+conversation default; it may copy an explicit initial choice, then resolves its
+saved Project selection through the same primary-folder owner. CLI packaging
 can overlap scheduling; coordinate shared ownership and repeat
 the open-PR file-scope check before claiming implementation. No board or changelog
 change is part of this draft.
