@@ -228,7 +228,7 @@ const enumSchema = (values: readonly string[], description?: string): JsonSchema
 });
 
 const MAX_TOOL_OUTPUT_STRING_LENGTH = 256 * 1024;
-const MAX_TOOL_OUTPUT_ARRAY_LENGTH = 4_096;
+export const MAX_TOOL_OUTPUT_ARRAY_LENGTH = 4_096;
 
 const outputStringSchema = (description?: string): JsonSchema => ({
   ...stringSchema(description),

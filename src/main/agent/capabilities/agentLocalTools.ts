@@ -2,6 +2,7 @@ import type { AgentTool, AgentToolTextReplacement } from '../runtime/kernel/type
 import {
   type BashTaskStatus,
   bashTaskStatusForToolTaskState,
+  MAX_TOOL_OUTPUT_ARRAY_LENGTH,
 } from '../../../core/agent/tools';
 import type {
   ThreadResourceReference,
@@ -43,6 +44,7 @@ import {
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
+import { jsonByteLength } from './agentToolResultBudget';
 import type { AgentSkillContentTarget, AgentSkillRuntime } from './agentSkills';
 import {
   AgentSkillAuthoringError,
@@ -1459,8 +1461,9 @@ function createFileGrepTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         const params = normalizeFileGrepParams(rawParams);
         const data = await runGrep(workspace, params);
         return agentToolResult(successEnvelope('file_grep', data, {
+          status: data.appliedLimit !== undefined ? 'partial' : undefined,
           instructions: data.appliedLimit !== undefined ? `More results may be available. Call file_grep again with offset ${(data.appliedOffset ?? 0) + data.appliedLimit}.` : undefined,
-          metrics: metrics(started, data),
+          metrics: { ...metrics(started, data), truncated: data.appliedLimit !== undefined },
         }), visibleFileGrep(data));
       } catch (error) {
         return localErrorResult('file_grep', error, started);
@@ -2019,11 +2022,25 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
   }
 
   const rawLines = result.lines.slice(0, page.limit);
-  const appliedLimit = result.truncated || result.lines.length > page.limit ? page.limit : undefined;
+  const candidates = rawLines.map((line) => mode === 'files_with_matches'
+    ? relativeToWorkspace(workspace, path.resolve(workspace.root, line))
+    : relativizeRipgrepLine(workspace, line, mode));
+  const items: string[] = [];
+  let visibleBytes = jsonByteLength(mode === 'files_with_matches' ? { filenames: [] }
+    : mode === 'count' ? { content: '', numMatches: Number.MAX_SAFE_INTEGER } : { content: '' });
+  for (const item of candidates) {
+    const itemBytes = mode === 'files_with_matches'
+      ? jsonByteLength(item) + (items.length > 0 ? 1 : 0)
+      : jsonByteLength(item) - 2 + (items.length > 0 ? 2 : 0);
+    if (items.length >= MAX_TOOL_OUTPUT_ARRAY_LENGTH || visibleBytes + itemBytes > MAX_TENON_RESULT_DATA_BYTES) break;
+    items.push(item);
+    visibleBytes += itemBytes;
+  }
+  const appliedLimit = result.truncated || result.lines.length > page.limit || items.length < rawLines.length
+    ? items.length : undefined;
   const appliedOffset = page.offset > 0 ? page.offset : undefined;
 
   if (mode === 'content') {
-    const items = rawLines.map((line) => relativizeRipgrepLine(workspace, line, 'content'));
     return {
       mode: 'content',
       numFiles: 0,
@@ -2036,7 +2053,6 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
   }
 
   if (mode === 'count') {
-    const items = rawLines.map((line) => relativizeRipgrepLine(workspace, line, 'count'));
     const numMatches = items.reduce((sum, line) => {
       const colonIndex = line.lastIndexOf(':');
       const parsed = colonIndex >= 0 ? Number(line.slice(colonIndex + 1)) : Number.NaN;
@@ -2053,11 +2069,10 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
     };
   }
 
-  const filenames = rawLines.map((line) => relativeToWorkspace(workspace, path.resolve(workspace.root, line)));
   return {
     mode: 'files_with_matches',
-    numFiles: filenames.length,
-    filenames,
+    numFiles: items.length,
+    filenames: items,
     ...(appliedLimit !== undefined ? { appliedLimit } : {}),
     ...(appliedOffset !== undefined ? { appliedOffset } : {}),
   };
@@ -2065,7 +2080,8 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
 
 function buildRipgrepArgs(workspace: WorkspaceContext, target: string, params: FileGrepParams): string[] {
   const mode = params.output_mode ?? 'files_with_matches';
-  const args = ['--hidden', '--max-columns', '500'];
+  // Offset pagination must preserve file order across calls on an unchanged tree.
+  const args = ['--hidden', '--max-columns', '500', '--sort', 'path'];
   for (const dir of ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules']) {
     args.push('--glob', `!**/${dir}/**`);
   }
@@ -4466,10 +4482,6 @@ function metrics(started: number, data: unknown) {
 
 function elapsed(started: number): number {
   return Date.now() - started;
-}
-
-function jsonByteLength(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
 function errorMessage(error: unknown): string {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { undoSkillForTest } from '../fixtures/skillUndo';
+import { expectToolOutputContract } from '../helpers/toolOutputContract';
 import { Database } from 'bun:sqlite';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -88,6 +89,7 @@ async function executeTool<TData>(workspaceRoot: string, name: string, params: u
   const tool = tools.find((candidate) => candidate.name === name);
   expect(tool).toBeDefined();
   const result = await (tool!.execute as any)('test-call', params);
+  if (result.data !== undefined) expectToolOutputContract(name, result.data);
   return result.details as ToolEnvelope<TData>;
 }
 

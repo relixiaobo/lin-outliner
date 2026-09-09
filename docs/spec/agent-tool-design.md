@@ -270,6 +270,14 @@ failure. Editing and notebook parsing still require their independent 10 MiB
 whole-file budget. Image `file_read` uses main's globally serialized native
 normalization path: it accepts at most 256 MiB of source data and emits at most
 2,000 px / 4.5 MiB of model input rather than base64-encoding the original file.
+
+`file_grep` sorts paths before applying offsets so consecutive pages on an
+unchanged tree neither repeat nor skip files. Each page retains complete lines
+or filenames within the shared 4,096-entry and 256 KiB serialized result-data
+limits, including UTF-8 and JSON escaping. A clipped page is a successful partial
+result; its continuation offset advances by the number of entries actually
+returned, including when the byte limit is reached before the requested limit.
+
 PDF and rich-document reads retain their own page, byte, output, and timeout
 budgets; PDF source size is rejected before whole-file buffering, and rendered
 page images are normalized serially through the same bounded image path. A PDF
@@ -342,6 +350,11 @@ reattaches to a matching live supervisor or consumes its receipt; authenticated 
 absence without one becomes `lost`, while ambiguous identity remains occupied rather
 than being treated as free capacity. Orderly Quit requests process-group teardown and
 bounded drain. No command is replayed during recovery.
+
+`task_status` keeps terminal state, exit status, and artifact references available
+even when JSON escaping makes the captured output preview exceed the shared
+result-data budget. It clips only the visible output prefix and sets
+`outputTruncated`; stored stdout/stderr and task details remain unchanged.
 
 Packaged execution may add Host-only environment such as `ELECTRON_RUN_AS_NODE` to start
 the standalone supervisor. The supervisor removes those control keys before launching
@@ -557,6 +570,14 @@ metadata and removes the path. Artifact
 admission failure reports partial success and a warning without reclassifying the
 completed HTTP request as a network failure.
 
+`web_fetch` budgets model-visible find results after UTF-8 encoding and JSON
+escaping. It retains complete match snippets and advances `nextMatchOffset` to
+the first omitted match. Metadata text is bounded independently: individual
+text fields use a 4 KiB JSON allowance and metadata uses 64 KiB overall. URLs
+are kept whole or omitted, never shortened into a different address. Clipped
+projections report partial status and truncation guidance; complete extracted
+metadata and the original match window remain in Host details.
+
 `generate_image` separates the provider's original artifact from the bounded image shown
 to the model. It validates provider MIME/base64 against the 256 MiB source-image safety
 boundary and admits the original into the shared ContentStore through an opaque Agent
@@ -577,6 +598,11 @@ the tool result. Original or observation admission failure omits only that outpu
 leaves unreferenced writes for normal Turn cleanup. Typed Thread-resource quota and
 filesystem-capacity errors degrade generic image persistence to `quotaExceeded`;
 unrelated storage errors retain their identity.
+
+Provider text accompanying generated images fits at most 16 parts within the
+remaining 256 KiB serialized result-data budget. Truncation preserves Unicode
+characters, reports partial status and a warning, and leaves saved images,
+preview content, and complete provider text in Host details intact.
 
 Generated local images are displayed automatically, so the tool returns no Markdown image
 syntax and does not ask the model to repeat them. When the user names a destination, the

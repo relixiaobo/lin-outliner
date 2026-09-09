@@ -8,6 +8,7 @@ import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEn
 import { MAX_TOOL_PAYLOAD_IMAGE_BYTES } from '../../src/main/agent/persistence/ToolPayloadStore';
 import { formatFileReferenceUri } from '../../src/core/referenceMarkup';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
+import { expectToolOutputContract } from '../helpers/toolOutputContract';
 
 const ONE_PIXEL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==';
 const GENERATED_IMAGE_PATH = '/scratch/agent-attachments/thread/image-artifacts/generated/image';
@@ -52,6 +53,34 @@ function persistedGeneratedImage() {
 }
 
 describe('generate_image tool', () => {
+  test('keeps saved images when provider text exceeds the output count or byte limit', async () => {
+    for (const text of [Array.from({ length: 17 }, (_, index) => `Caption ${index}`), ['文😀"\\'.repeat(70_000)]]) {
+      const runtime: AgentImageGenerationRuntime = {
+        listModels: async () => [{ providerId: 'test', id: 'image-test', name: 'Image Test', input: ['text'], output: ['image'] }],
+        getActiveProviderId: async () => 'test',
+        readLocalImage: async () => { throw new Error('not used'); },
+        ...generatedOutputRuntime(),
+        generateImages: async () => ({
+          api: 'openai-images', provider: 'test', model: 'image-test', stopReason: 'stop', timestamp: 1,
+          output: [
+            { type: 'image', data: ONE_PIXEL_PNG_BASE64, mimeType: 'image/png' },
+            ...text.map((value) => ({ type: 'text' as const, text: value })),
+          ],
+        }),
+      };
+      const result = await createGenerateImageTool(runtime).execute('large-caption', { prompt: 'A square' });
+      expect(result.outcome).toMatchObject({ ok: true, status: 'partial' });
+      expectToolOutputContract('generate_image', result.data);
+      expect(result.data).toMatchObject({ images: [{ artifactId: GENERATED_IMAGE_ARTIFACT.id, path: GENERATED_IMAGE_PATH }] });
+      expect(result.content).toEqual([{ type: 'image', data: ONE_PIXEL_PNG_BASE64, mimeType: 'image/png' }]);
+      expect((result.details as ToolEnvelope<GenerateImageData>).data!.text).toEqual(text);
+      expect(result.warnings).toContain('Provider text was truncated in the model-visible result. Saved images and complete text remain in Host details.');
+      const visibleText = (result.data as { text: string[] }).text;
+      expect(visibleText).toHaveLength(Math.min(16, text.length));
+      expect(visibleText.every((value) => !/[\ud800-\udbff]$/.test(value))).toBe(true);
+    }
+  });
+
   test('returns an absolute original path and emits a bounded preview without embedding bytes in JSON', async () => {
     const runtime: AgentImageGenerationRuntime = {
       listModels: async () => [{

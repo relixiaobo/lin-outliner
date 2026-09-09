@@ -1,5 +1,6 @@
 import type { AgentTool, AgentToolResult } from './kernel/types';
-import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from '../capabilities/agentToolEnvelope';
+import { agentToolResult, errorEnvelope, MAX_TENON_RESULT_DATA_BYTES, successEnvelope, type ToolEnvelope } from '../capabilities/agentToolEnvelope';
+import { boundJsonString, jsonByteLength } from '../capabilities/agentToolResultBudget';
 import type { TSchema } from 'typebox';
 import {
   assembleModelToolRegistry,
@@ -646,11 +647,7 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
   }
   if (tool === 'task_status' && isRecord(details)) {
     const terminal = details.state !== 'running' && details.state !== 'settling';
-    return agentToolResult(successEnvelope(tool, details, {
-      instructions: details.state === 'running' || details.state === 'settling'
-        ? 'The task is still active. Do not poll; completion will be delivered automatically.'
-        : undefined,
-    }), {
+    const visible = {
       taskId: details.taskId,
       state: details.state,
       progress: details.progress && isRecord(details.progress) ? {
@@ -663,13 +660,23 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
         signal: details.signal ?? null,
         reason: details.reason ?? null,
         error: details.error ?? null,
-        output: details.output ?? null,
+        output: null as string | null,
         outputTruncated: Boolean(details.outputTruncated),
         detailState: details.detailState,
         artifacts: Array.isArray(details.artifacts) ? details.artifacts : [],
         storagePressure: details.storagePressure ?? null,
       } : null,
-    });
+    };
+    if (visible.result && typeof details.output === 'string') {
+      const remaining = MAX_TENON_RESULT_DATA_BYTES - jsonByteLength(visible) + 4;
+      visible.result.output = boundJsonString(details.output, Math.max(2, remaining));
+      visible.result.outputTruncated ||= visible.result.output !== details.output;
+    }
+    return agentToolResult(successEnvelope(tool, details, {
+      instructions: details.state === 'running' || details.state === 'settling'
+        ? 'The task is still active. Do not poll; completion will be delivered automatically.'
+        : undefined,
+    }), visible);
   }
   return agentToolResult(successEnvelope(tool, details), details);
 }
