@@ -260,9 +260,11 @@ before side effects, without falling back to an unrestricted address. See
 Ordinary text `file_read` bounds the observation rather than the source. It
 classifies encoding and binary content from an 8 KiB prefix, streams only until
 the requested line window, an extra-content signal, or the 200,000-character
-projection budget is reached, then closes the stream. `totalLines` is known only
-when the scan reaches EOF; `hasMore` and `lineTruncated` make incomplete views
-explicit. The active Turn's `AbortSignal` reaches the reader; cancellation closes
+projection budget is reached, then closes the stream. `totalLines` is an integer
+only when the scan reaches EOF and is `null` otherwise, including in the
+model-visible output schema. These bounded reads remain successful partial
+results; `hasMore` and `lineTruncated` make incomplete views explicit. The active
+Turn's `AbortSignal` reaches the reader; cancellation closes
 the stream and propagates as cancellation rather than being rewritten as a file
 failure. Editing and notebook parsing still require their independent 10 MiB
 whole-file budget. Image `file_read` uses main's globally serialized native

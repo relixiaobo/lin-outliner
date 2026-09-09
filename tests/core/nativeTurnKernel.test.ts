@@ -216,6 +216,14 @@ describe('native turn kernel parity', () => {
       result: { kind: 'tenon', outcome: { ok: true }, data: 'wrong', content: [], details: {} },
       expectedMessage: 'Tenon tool result data does not match its output schema.',
     }, {
+      name: 'file_read',
+      result: {
+        kind: 'tenon', outcome: { ok: true },
+        data: { file: { filePath: '/notes.txt', totalLines: 'unknown' } },
+        content: [], details: {},
+      },
+      expectedMessage: 'Tenon tool result data does not match its output schema.',
+    }, {
       name: 'update_plan',
       result: { kind: 'tenon', outcome: { ok: true }, data: {}, content: [], details: {} },
       expectedMessage: 'A Tenon tool declared no output data but returned data.',
@@ -296,6 +304,67 @@ describe('native turn kernel parity', () => {
       }],
     });
     expect(runtime.state.messages.at(-1)).toMatchObject({ role: 'assistant', content: [{ text: 'complete' }] });
+  });
+
+  test('preserves bounded file_read pages and continuation through Kernel output validation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-file-pages-'));
+    try {
+      const filePath = path.join(root, 'notes.txt');
+      const lines = Array.from({ length: 176 }, (_, index) => `line ${index + 1}`);
+      await writeFile(filePath, lines.join('\n'), 'utf8');
+      const fileRead = createLocalTools({ localRoot: root })
+        .find((candidate) => candidate.name === 'file_read')!;
+
+      for (const page of [
+        { args: { limit: 45 }, startLine: 1, totalLines: null, hasMore: true,
+          content: lines.slice(0, 45).join('\n'), instruction: 'offset 46' },
+        { args: { offset: 46, limit: 200 }, startLine: 46, totalLines: 176, hasMore: false,
+          content: lines.slice(45).join('\n'), instruction: 'Reached the end of the file' },
+      ]) {
+        const { runtime, gateway } = await executeToolWithArguments(fileRead, {
+          file_path: filePath, cwd: root, ...page.args,
+        });
+        const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+        const providerResult = gateway.requests[1]?.context.messages
+          .find((message) => message.role === 'toolResult');
+        expect(result?.isError).toBe(false);
+        expect(providerResult?.content).toHaveLength(2);
+        const header = JSON.parse((providerResult!.content[0] as { text: string }).text);
+        expect(header).toMatchObject({
+          ok: true, status: 'partial',
+          data: { file: { filePath, startLine: page.startLine, totalLines: page.totalLines, hasMore: page.hasMore } },
+          instructions: expect.stringContaining(page.instruction),
+        });
+        expect(providerResult!.content[1]).toEqual({ type: 'text', text: page.content });
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('preserves a character-bounded file_read with an unknown line count through Kernel output validation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-kernel-long-line-'));
+    try {
+      const filePath = path.join(root, 'long-line.txt');
+      await writeFile(filePath, 'x'.repeat(250_000), 'utf8');
+      const fileRead = createLocalTools({ localRoot: root })
+        .find((candidate) => candidate.name === 'file_read')!;
+      const { runtime, gateway } = await executeToolWithArguments(fileRead, { file_path: filePath });
+      const result = runtime.state.messages.find((message) => message.role === 'toolResult');
+      const providerResult = gateway.requests[1]?.context.messages
+        .find((message) => message.role === 'toolResult');
+      expect(result?.isError).toBe(false);
+      expect(providerResult?.content).toHaveLength(2);
+      const header = JSON.parse((providerResult!.content[0] as { text: string }).text);
+      expect(header).toMatchObject({
+        ok: true, status: 'partial',
+        data: { file: { filePath, totalLines: null, lineTruncated: true } },
+        instructions: expect.stringContaining('A single line exceeded'),
+      });
+      expect(providerResult!.content[1]).toEqual({ type: 'text', text: 'x'.repeat(200_000) });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test('bounds a large real file mutation before Kernel validation while retaining the full private patch', async () => {

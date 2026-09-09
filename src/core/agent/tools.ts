@@ -316,7 +316,7 @@ const fileReadOutputSchema = objectSchema({
     extractedText: objectSchema({ truncated: booleanSchema() }, ['truncated']),
     renderedImages: objectSchema({ count: integerSchema() }, ['count']),
     startLine: integerSchema(),
-    totalLines: integerSchema(),
+    totalLines: nullableSchema(integerSchema('Known only when the text scan reaches EOF.')),
     hasMore: booleanSchema(),
     lineTruncated: booleanSchema(),
     converter: enumSchema(['markitdown', 'pptx-structural']),
