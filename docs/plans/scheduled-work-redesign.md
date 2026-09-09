@@ -15,6 +15,9 @@ and return to an understandable result or an actionable exception.
 **OBJ-2:** The person can distinguish the plan, an individual execution, and a
 background process without understanding the execution transport.
 
+**OBJ-3:** Agent access uses ordinary Bash plus an on-demand Skill. Scheduled
+work contributes no dedicated model tool to the default catalog.
+
 **Minimum acceptable outcome:** Creating, executing, reviewing, changing,
 pausing, manually running, stopping, and discussing one scheduled assignment
 form a complete usable loop with honest unavailable and interrupted states.
@@ -62,6 +65,12 @@ is paused or ended. Discussing a result leaves future instructions unchanged.
 Automation screens, bindings, names, and transport choices do not determine the
 new product interaction.
 
+**DEC-6:** Replace `automation_update` with a packaged `schedule` CLI and a
+built-in scheduling Skill. UI and CLI call the same Host-owned operations. The
+CLI is a short-lived client; the Host remains the scheduler and execution owner.
+The implementation retires the old tool, schema, registration, and instructions
+in the same complete feature. It adds no replacement model tool.
+
 ### Constraints, alternatives, and evidence
 
 - **CON-1, hard:** Preserve the TypeScript/Electron process boundary, native
@@ -82,6 +91,11 @@ new product interaction.
   it does not meet OBJ-1.
 - **OPT-3, deferred expansion:** Every-period or always-on execution. Revisit when
   concrete work requires completeness across offline intervals or another runner.
+- **OPT-4, selected Agent interface:** CLI plus Skill provides explicit operation
+  receipts without keeping task-management schemas in every model context. A
+  dedicated model tool would preserve another always-available domain interface;
+  a watched definition file would require another saved/accepted/effective
+  activation contract alongside execution commands. Neither is selected here.
 - **TRD-1:** A task has one primary work location. Several explicit reference
   materials are supported. Separate locations requiring separate executions use
   separate tasks rather than a hidden fan-out multiplier.
@@ -91,6 +105,10 @@ new product interaction.
   specifically required consideration of recent related iterations.
 - **EVD-2:** The integration baseline was inspected at `origin/main` commit
   `7d89e698`; the dependency audit below distinguishes implementation from plans.
+- **EVD-3:** The user explicitly prefers CLI plus Skill and gradually reducing
+  default tools. Existing Outline and delegation CLI/Skill paths establish the
+  local packaging and Agent-invocation precedent; file-first Settings establishes
+  a separate precedent for declarative preferences.
 - **ASM-1:** The main demand is periodic research, review, and organization rather
   than interval-complete processing. Validate with the user's actual examples
   before implementing an additional missed-occurrence policy.
@@ -145,6 +163,78 @@ implicitly choose another Agent identity or permission policy. Actual isolated
 execution is offered only when a selected work location and Host support it;
 the control explains its write boundary and never promises isolation from a
 worktree name alone.
+
+### Agent access: CLI plus Skill
+
+The Agent discovers a short scheduling Skill description through the existing
+Skill catalog and loads its instructions when the user's request concerns
+scheduled work. The full command contract is not injected into every Turn. The
+Skill explains intent, timing, materials, revision handling, receipts, and result
+handoff; executable validation and authorization stay with the Host. It neither
+runs timers nor becomes a per-task storage format. One Skill manages any number
+of assignments; reusable work procedures can be separate existing Skills.
+
+The invocation path is `Agent -> scheduling Skill -> bash -> schedule CLI ->
+Host task service`. Renderer actions use the preload bridge to that same service.
+The CLI does not launch a second scheduler, run a provider directly, write private
+stores, or install OS scheduling jobs. The application retains the local execution
+promise in BR-1, even when the initiating CLI process has exited.
+
+The proposed executable is `schedule`, kept separate from generic Tool Tasks.
+Its bounded interface is:
+
+| Command family | Meaning and result |
+| --- | --- |
+| `schedule list` / `schedule show TASK_ID` | Read definitions, accepted revision, readable timing, availability, and current/latest run references. Lists are paginated. |
+| `schedule create` / `schedule update TASK_ID` | Atomically validate and save the assignment; return the accepted revision, next occurrence, and task reference. |
+| `schedule pause TASK_ID` / `schedule resume TASK_ID` | Change automatic admission independently of editing or current execution. |
+| `schedule run TASK_ID` / `schedule stop RUN_ID` | Admit a manual run or request that exact run's cancellation through its execution owner; return promptly with the real state. |
+| `schedule archive TASK_ID` / `schedule restore TASK_ID` | Apply the same reversible lifecycle checks as the UI; restoration leaves timing paused. |
+| `schedule runs TASK_ID` | Page run associations, outcomes, and shared record/resource references; no copied transcript or private history query language. |
+
+Agent mutations use canonical commands with `--input - --output json`; literal
+JSON travels through the existing separate Bash stdin field. Read commands use
+`--output json`. A typical creation invokes
+`schedule create --input - --output json`. Long instructions never become shell
+interpolation, command arguments, or environment values. Versioned schemas, CLI
+help, decoding, and receipts derive from one contract. The Skill includes a
+minimal valid example; `schedule schema` and `schedule doctor` diagnose actual
+validation/availability failures rather than impose routine preflight calls.
+
+Every mutation carries a request identity; edits and lifecycle changes to a
+saved assignment also carry its expected revision. Repeating the same admitted
+request returns its original receipt, even after a run has finished. Reusing its
+identity with different input is rejected. A lost reply is reconciled using the
+same identity; it never authorizes a new create/run request. The task owner keeps
+the required durable operation associations, not another execution/output ledger.
+Conflict returns the current revision without discarding the Agent's intended
+change; the Agent reads, compares, and submits a deliberate revision.
+
+Receipts distinguish saved assignment, accepted run, requested stop, and terminal
+outcome. Successful `schedule run` exits after admission; it does not stay alive
+until the scheduled work finishes. Stopping that short-lived CLI cannot undo an
+accepted run. `schedule stop` addresses the run; surviving background processes
+remain inspectable/stoppable through generic Tool Task controls. Source content
+uses the unified record files and ordinary file tools; the CLI returns pointers
+and availability instead of exposing another history model tool. Skill guidance
+prohibits shell sleep, background timer loops, repeated status polling, and claims
+of delivery based on admission alone.
+
+The Host binds CLI admission to the actual source Thread/Turn/Tool Task and its
+effective capabilities, following the existing packaged delegation CLI pattern.
+The bridge must preserve root/delegated, read-only, worktree, source-discovery,
+and scoped-readiness restrictions. Merely knowing a CLI path, hiding a Skill,
+or having Bash is not authorization. The implementation coordinates any shared
+admission changes; it does not repurpose delegation Session commands or create
+an unrestricted local management server. Disabled Skill discovery and denied
+execution authority remain separate existing configuration concepts.
+
+Task definitions remain revisioned domain data. The brief may reference files,
+and a local file may be an editing draft, but writing a file alone does not
+activate scheduled work. Global preferences and profile configuration continue
+through their public files and configuration Skill. This selects CLI for task
+operations without replacing the file-first configuration design or moving
+canonical run records into task-owned files.
 
 ### Screens and interaction
 
@@ -210,6 +300,10 @@ instruction creates the task and returns a compact receipt with the saved brief,
 next occurrence, and Open task / Pause schedule. An Agent suggestion remains a
 proposal with Create task. Missing product information is clarified before
 activation; no extra permission ceremony is introduced by this feature.
+The Agent uses the scheduling Skill and CLI; the user need not see commands or
+manage files. Only an acceptance receipt supports a success claim. A missing
+reply leaves the outcome unresolved until reconciled; a conflict preserves the
+intended change without applying it.
 
 **FLOW-3: Return to results.** Open Scheduled tasks, choose a task, read its latest
 delivery, follow an artifact or exact process reference, and optionally discuss
@@ -247,6 +341,8 @@ owner before archive; archived task references still expose retained resources.
 | BR-13: Time semantics | A saved IANA timezone anchors local wall time. Travel does not silently move it. Skip nonexistent DST times, run ambiguous times once, and preview the next actual occurrence. Monthly dates absent from a month skip that month. |
 | BR-14: Scope and history | Task archive, conversation removal, Project removal, and resource expiry follow their own ownership. Unavailable old records remain labelled; future work depends on current explicit material, not hidden historical aliases. |
 | BR-15: Ordinary failure | A known terminal failure raises attention without changing the enabled plan. Future runs follow timing after required admission becomes available. Uncertain side effects retain the stronger generic recovery fence. |
+| BR-16: Agent interface | UI and CLI share validation, revisions, and lifecycle owners. Skill text is guidance, never executable authority. No dedicated scheduling model tool remains. |
+| BR-17: Command settlement | A command receipt identifies the operation it proves. Lost replies and repeated request identities do not duplicate mutations or runs; cancellation after admission uses the actual run owner. |
 
 Empty lists explain New task; empty results show the next occurrence and Run now.
 Loading does not masquerade as no tasks. An unavailable task owner shows the
@@ -328,6 +424,31 @@ task labels.
   attention, run selection, pause, stop, and handoff shall remain reachable without
   clipped controls, hover-only actions, or lost focus on close.
 
+**FR-6:** Provide complete Agent task management through the packaged CLI and
+on-demand Skill, with no dedicated scheduling model tool. Covers DEC-6 and
+BR-16/17.
+
+- **AC-23:** When an eligible Agent receives a complete scheduling instruction,
+  loading the Skill and invoking the packaged CLI through Bash shall create a task
+  visible in the same workspace; the model catalog shall contain neither
+  `automation_update` nor a replacement scheduling tool.
+- **AC-24:** When UI and CLI edit the same revision concurrently, at most one
+  mutation shall succeed; the other shall receive a conflict with its intended
+  changes intact. Both paths shall apply the same timing and material validation.
+- **AC-25:** When a create or run reply is lost and the identical request is
+  repeated, the Host shall return the original accepted operation without a second
+  task or run, including after restart and after the first run has finished.
+- **AC-26:** When a delegated or otherwise disallowed execution invokes the CLI
+  directly, Host admission shall reject it before mutation; changing command
+  spelling or omitting Skill invocation shall not grant additional authority.
+- **AC-27:** When the Host is unavailable or a stop has only been requested,
+  CLI output shall report that actual state and shall not claim a saved task,
+  completed run, or completed cancellation. CLI exit shall leave accepted work
+  owned by the Host.
+- **AC-28:** When a CLI run reference points to unavailable history or retained
+  background work, Agent inspection shall follow shared source and Tool Task
+  ownership without reconstructing a transcript or creating a private process log.
+
 ### Recent iteration dependencies and implementation ownership
 
 This is the integration audit, not a claim that every referenced design has
@@ -342,6 +463,7 @@ and file scopes before implementation.
 | Bounded output and source evidence, #661; [resources](../spec/agent-core.md) | Implemented | Display partial/oversized results honestly; use existing complete-output and resource references, not copied previews as evidence. |
 | HTTP web search, #662 | Implemented | Research tasks use configured common search tools; scheduling does not require browser state or add a private fetch pipeline. |
 | File-first Settings and Skills, #636/#638/#640/#641/#643/#644/#656 | Implemented | Task configuration consumes accepted configuration; global edits remain UI/file/Skill owned. The open #666 model-picker fix is a separate renderer lane. |
+| Outline CLI/Skill, #584/#606; delegation CLI/Skill, #628/#637 | Implemented | DEC-6 follows packaged CLI discovery, literal Bash stdin, bounded receipts, and Host admission. Reuse their transport/admission approach without repurposing document or delegation operations. |
 | [Startup fault isolation](startup-fault-isolation.md), #664 | Implementation claim open | Consume final scoped readiness, issue actions, admission fencing, and retry ownership before changing Automation lifecycle/Host wiring. |
 | [Unified session records](unified-session-records.md), #654 | Design integrated; runtime absent | Build result process navigation, history access, continuity, and handoff on its final exact-source/publication contract. Do not add another transcript tree or new history model tools. Its OQ-1 discovery membership still requires its own decision. |
 | [Memory/profile](memory-agent-profile.md), #665 | Design integrated; runtime absent | Global preferences, identity, style, and learning remain with that owner. Task briefs contain work-specific instructions. Consume accepted configuration without a direct USER.md reader or task-local learned profile. |
@@ -358,15 +480,22 @@ It is rebuildable and does not become another authoritative output ledger.
 Expected implementation areas are `src/core/agent/automation.ts`,
 `src/main/agent/automations/`, `src/renderer/agent/automations/`, sidebar/workspace
 navigation, shared exact-run navigation, i18n, and focused Core/renderer/E2E
-tests. Host/preload or shared Agent protocol changes require coordinated scope.
+tests. CLI work also touches the packaged CLI entry/build wiring, a built-in
+scheduling Skill, built-in Skill discovery, Bash admission/Host wiring, the model
+tool catalog and Automation tool registration/retirement. `package.json`, build
+configuration, Host/preload, or shared Agent protocol changes require coordinated
+scope. The CLI contract and Skill ship together with the complete feature.
 Current intended behavior is folded into `docs/spec/agent-automations.md` and
-the affected workspace/rendering specs in the implementing PR. The main agent
-owns board and changelog changes.
+the affected tool, Skill, workspace, and rendering specs in the implementing PR.
+The main agent owns board and changelog changes.
 
 **Collision result:** The document-only scope is this file. At the recorded
 baseline, open #664 and #666 do not touch it. Product implementation overlaps
 #664 on Host/lifecycle and the unified-record/recovery plans on source and
 navigation ownership. Land against final startup and unified-record mechanisms.
+CLI admission also shares Host/Bash capability wiring with the delivered
+delegation path; perform a fresh file-scope check and coordinate its shared
+contract before implementation. No currently open PR claims this plan file.
 Profile implementation need not serialize this work if only its existing
 configuration owner is consumed; changes to admission/learning require a new
 collision decision. Whichever recovery feature lands later must cover the final
@@ -381,9 +510,13 @@ and one delivered result with a live development server. Check that the reader
 can identify next timing, actual outcome, relevant materials, and the next action.
 Prototype observations validate comprehension, not runtime behavior.
 
-Implementation verification maps AC-1 through AC-22 to meaningful owner and
+Implementation verification maps AC-1 through AC-28 to meaningful owner and
 cross-layer fixtures. Run required typecheck, relevant tests, docs and diff
 checks, real Electron light/dark interaction, and interruption/restart fixtures.
+Include a packaged CLI/Skill discovery smoke test, command/receipt validation,
+UI/CLI conflict, lost-reply/restart idempotency, and direct-invocation admission
+checks. Verify removal from the default catalog and active built-in instructions;
+archived documentation remains provenance.
 Use clone-isolated test data; the design work never resets installed data.
 
 ## Open questions
