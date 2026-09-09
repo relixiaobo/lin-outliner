@@ -42,6 +42,27 @@ unified records and consumes the shipped startup owners. The plan's local
 catch-up promise and task/work-location choices (OQ-1/OQ-2) remain explicit
 product decisions before implementation; merging the design ships no runtime.
 
+PR #670 integrates the [Project and conversation work-folder design](plans/conversation-work-folders.md)
+as one complete implementation feature: Project source folders and a primary,
+independent conversation defaults, packaged CLI/Skill operations, and composer
+Add/status controls with compact model/effort labels. Implementation follows
+unified records (#669); OQ-1 still requires product ratification. The reviewed
+application-default state remains distinct from adopting a Project primary.
+This merge records the design only; the runtime and composer changes are pending.
+
+Two independent Agent interaction follow-ups are recorded for dev implementation:
+[reliable, bounded user input](plans/user-input-request-recovery.md) and
+[background continuation policy](plans/background-task-continuation-policy.md).
+Prioritize the missing answer surface. Both require a live shared-owner check
+against #669; order their common Turn/protocol/store edits rather than building
+against competing interfaces. The background plan's OQ-1 service-exit default
+requires implementation ratification. The question plan's OQ-1 is an unresolved
+incident diagnostic, not a reason to defer its reproduced recovery/cleanup fixes.
+The question feature also gives every request a finite deadline (60 seconds by
+default), returning an explicit no-answer result so the same Agent Turn can
+continue without treating silence as approval. These entries record designs
+only; neither runtime fix has shipped.
+
 Workbench Units A-E shipped through #658. PR #660 subsequently simplified the
 workbench to UI-owned Projects, native Git/test commands guided by Skills, and
 generic Goal/Task state. Private verification and Git evidence, Project model
@@ -121,6 +142,7 @@ Selected integration order:
   Workbench (#660, shipped) ~> startup-fault-isolation (#664, shipped)
   startup-fault-isolation (#664, shipped) ~> unified-session-records
   unified-session-records -> scheduled-work-redesign
+  unified-session-records -> conversation-work-folders
   unified-session-records ~> memory-agent-profile: profile files/direct learning
   memory-agent-profile: profile files/direct learning ~> targeted-thread-recovery
   startup-fault-isolation (#664, shipped) ~> memory-agent-profile: Node retention quality
@@ -132,10 +154,13 @@ Capability prerequisite:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
+| P1 | [user-input-request-recovery](plans/user-input-request-recovery.md) | `draft` | Recover/display questions, clean up cancellation, and continue after a default 60-second unanswered wait. Coordinate #669's shared owners; prioritize before background-policy edits on shared files. |
+| P2 | [background-task-continuation-policy](plans/background-task-continuation-policy.md) | `draft` | Ratify OQ-1 and coordinate #669 plus the question-recovery shared interfaces. Preserve scheduled-run and delegated-result ownership; no new process manager. |
 | P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | **Startup predecessor complete (#664)**; cover generic Task outputs, context, artifacts and isolation, and settle OQ-1 before claiming implementation |
 | P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | **Now; startup predecessor complete (#664)**; independent complete Node quality feature. Recheck actual overlap with unified records and land shared Memory changes before the selected profile unit. |
 | P2 | [memory-agent-profile: Profile files and direct learning](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | After unified records and selected Node-quality shared changes; demonstrate component sources/precedence before consumers. One complete profile, direct-learning, activation and lifecycle feature. |
 | P2 | [scheduled-work-redesign](plans/scheduled-work-redesign.md) | `draft` | After unified records; startup is complete in #664. Settle OQ-1/OQ-2, then coordinate Host/Bash admission, exact run/Task ownership and delivery with live claims. One complete UI/CLI feature. |
+| P2 | [conversation-work-folders](plans/conversation-work-folders.md) | `draft` | Design integrated in #670; after unified records (#669) and OQ-1 ratification. One complete Project/folder/CLI/composer feature; coordinate scheduling, recovery/profile, and question-recovery shared owners. |
 | P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | After unified records and the profile owner; startup is complete in #664; include final profile file/admission/provenance/pending-work/retention contracts in verified rebuild/removal. |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | **Now; Desktop Host shipped in #603**; preview-shell lane clear |
@@ -171,6 +196,12 @@ exact scope and claim; they are not prerequisite work for this queue.
 
 Collision lanes remain claim-time constraints alongside the selected order:
 
+- Conversation work folders consume #669's final Thread metadata, context and
+  record owners. Coordinate Project/Automation resolution and packaged CLI/Bash
+  admission with scheduled work, retained settings with profile/recovery owners,
+  and composer/Turn changes with question recovery and background continuation.
+  Refresh claims before implementation; existing Automation work locations and
+  delegated isolation must retain their independent ownership.
 - Scheduled work and profile learning can proceed in parallel after their
   predecessors where they consume established owners. Shared admission,
   configuration or learning changes require explicit collision ordering;
@@ -340,6 +371,7 @@ contract or user-visible decision.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **conversation-work-folders design integration** (`done`, #670, 2026-09-09) - Project sources, independent conversation defaults, CLI/Skill access and composer controls are specified; implementation follows #669 and OQ-1 ratification.
 - **scheduled-work design integration** (`done`, #668, 2026-09-09) - the task/results workspace and CLI/Skill design is integrated; implementation follows unified records, with OQ-1/OQ-2 still pending.
 - **startup-fault-isolation** (`done`, #664, 2026-09-09) - scoped startup recovery preserves healthy notes, chat drafts and notifications; owner retry and configuration recovery are specified, and the [plan is archived](plans/archive/startup-fault-isolation.md).
 - **default-model-selection** (`done`, #666, 2026-09-09) - queued saves retain each chosen text model, display the persisted result, and preserve the selection across Settings reopening and app restart.

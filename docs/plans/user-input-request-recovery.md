@@ -1,0 +1,319 @@
+# Reliable and Bounded User Input Requests
+
+## Goal
+
+Ensure that whenever an Agent is waiting for a person's structured answer, that
+person can reach the corresponding question in the conversation composer.
+Reload, subscription loss, cancellation, and late replies must not leave an
+invisible question or a stale form that the Host can no longer accept. An
+unanswered question releases the Agent after a bounded wait instead of suspending
+the execution indefinitely.
+
+**Shape:** ONE complete feature in one PR. Authoritative pending state,
+snapshot/event synchronization, answer/cancellation/timeout settlement, composer
+recovery, and end-to-end validation ship together. This plan defines the proposed
+change;
+current behavior is owned by [Agent Core](../spec/agent-core.md) and
+[Thread rendering](../spec/agent-thread-rendering.md). Status and selected order
+live on [the board](../TASKS.md).
+
+## Non-goals
+
+- Changing question content policy, replacing the existing option-or-Other form,
+  adding a modal, or using questions for permission requests.
+- Automatically choosing an answer because the UI failed to show the form.
+- Replaying a tool call or model Turn to reconstruct a question, or reviving a
+  historical request after its owning execution has ended.
+- Claiming that reload caused the reported incident without evidence, or that
+  repairing question presentation fixes unnecessary background continuations.
+  That policy has its own [plan](background-task-continuation-policy.md).
+- A general workflow engine, new history source, or independent request database.
+
+## Design
+
+### Reader, evidence, and constraints
+
+OBJ-1: An active pending question survives renderer reconstruction under the same
+Host, remains answerable exactly once, and disappears after cancellation or
+settlement. A missing snapshot produces a reachable recovery state, not ordinary
+editable input while the Agent silently waits. A finite Host-owned deadline
+releases unanswered requests with an explicit timeout result.
+
+EVD-1: Inspection of the reported conversation's retained events found an
+in-progress `request_user_input` Item, `waitingOnUserInput`, and a valid
+`userInput/requested` event. No answer-resolution event followed. Approximately
+314 seconds later the request failed with an aborted result and the Turn became
+interrupted. This proves Host admission and waiting, not successful UI delivery.
+
+EVD-2: Replaying that request through the renderer codec and `ThreadStore` while
+subscribed populated `userInputByThread`. Initializing a fresh store from a Thread
+already marked as waiting and its in-progress tool Item did not populate it.
+`ThreadStore.loadTurns` reads history, Goal, and configuration but no pending
+request snapshot. Live notification is currently the only form-population path.
+
+EVD-3: Replaying the real interruption events after the request left the Thread
+idle with the old request still in `userInputByThread`. `rejectUserInput` removes
+Host pending state without publishing a request-cancellation event; renderer
+Turn completion does not remove the request. These are two reproducible defects,
+independent of the unresolved location of the original notification loss.
+
+EVD-4: The user additionally requested that unanswered questions allow the Agent
+to continue after a limited wait. The current `autoResolutionMs` is optional,
+bounded from 60 to 240 seconds, and omitted in the reported request. Its present
+timeout handler synthesizes an Other answer for every question. The proposed
+contract replaces optional unbounded waiting and synthetic answers with a default
+deadline and a distinct no-answer outcome.
+
+CON-1: `TurnLifecycle` remains the pending-request and response owner. The current
+root-only, one-pending-question-call-per-Thread contract and exact Thread/Turn/Item
+answer validation remain. Read access uses existing renderer Thread visibility;
+it does not expose hidden delegated contexts or grant execution authority.
+
+CON-2: The renderer is a projection. Host pending state and canonical lifecycle
+events govern answerability; rendered tool arguments, cached history, screenshots,
+and a waiting flag alone cannot authorize a response. The clean-slate invariant
+and selected brownfield target are the same: snapshots recover state and events
+keep it current. Reuse the existing owners instead of introducing another ledger.
+
+### Decisions and requirements
+
+DEC-1: Make current input state a bounded Host-readable snapshot, with no pending
+request as an explicit value. Include the pending question's exact identity and
+an ordering token sufficient to reject stale reads/events. Supply it on initial
+conversation load and reattachment, not only when the tool first asks.
+
+DEC-2: Preserve the existing in-composer question form. Receiving or restoring a
+question replaces the editor with the established step flow, retaining the
+ordinary draft. There is no separate popup. Hiding the dock does not cancel or
+answer the request; reopening restores it and its current Host validity.
+
+DEC-3: Every question request has a finite deadline. Use 60 seconds for the whole
+one-to-three-question request by default; an explicit duration may use the
+existing 60-to-240-second bounds for questions needing more time. Omission means
+the default, never infinity. Start the deadline at Host acceptance, not UI
+visibility, so a lost notification cannot produce an unlimited wait. The default
+is a concrete implementation choice for the user's bounded-wait requirement;
+there is no new Settings panel.
+
+FR-1: Expose the authoritative snapshot through the existing Agent Core control
+plane. Read request state and execution validity at one owner boundary. Waiting
+status and question publication derive from the same accepted request; failed
+publication must settle/fail the tool rather than leave an unobservable Promise.
+History remains evidence, not a substitute source of live pending requests.
+
+FR-2: Subscribe before reading the snapshot, and merge both with explicit
+ordering. A delayed empty snapshot cannot erase a newer request; a delayed
+pending snapshot cannot restore an answered/cancelled one. Use a Host-generation
+identity with a monotonic per-Thread revision or equivalent existing canonical
+ordering. A new Host generation requires resynchronization, not numeric comparison
+of unrelated epochs. Expose only bounded pending state, not the entire Rollout.
+
+FR-3: Reconcile on initialization, subscription reattachment, opening a Thread,
+and a waiting-state notification without matching request content. A visible
+window returning to focus may trigger one coalesced reconciliation of its active
+conversation to heal missed IPC. Do not poll the whole catalog. Concurrent reads
+use generations/revisions; switching Threads never paints another Thread's form.
+
+FR-4: Settle an answer, timeout, explicit cancellation, tool abort, Turn
+interruption, Turn termination, or owner shutdown through one request lifecycle. Each accepted
+transition invalidates the exact request and emits authoritative state change.
+Do not fabricate an answer to represent cancellation. Preserve existing recorded
+answer events and add a cancellation/cleared representation where needed.
+
+FR-5: The renderer clears only the matching request on settlement and treats
+matching Turn termination as an immediate stale-form fence. A late settlement
+for an older Item cannot erase a new question. A reply validates exact identity
+and the still-pending state at acceptance; wrong-Thread, stale, and cancelled
+replies are rejected without modifying a newer request or launching another Turn.
+
+FR-6: Response acceptance, request removal, event recording, and Promise
+resolution must have a defined commit boundary. If acceptance committed but its
+reply was lost, reconciliation must show the answered state and must not resume
+the model twice. Duplicate same-answer submissions settle consistently; a
+conflicting answer after acceptance is rejected. On write failure retain an
+answerable request or terminate it with a visible recoverable error, never a
+removed request with an unresolved execution Promise.
+
+FR-7: Renderer reload restores a live request from the same Host. A Host restart
+follows existing interrupted-Turn recovery: clear/fence the old request and do
+not reconstruct its waiting Promise from history. Continuing the conversation
+uses the existing recovery action; it does not replay the original tool silently.
+Store/return the original finite deadline; UI reload, focus, typing, and question
+step navigation cannot restart or extend it. Reconcile an elapsed deadline on
+system resume before accepting another response.
+
+FR-8: When a known waiting state lacks request content, show a localized restoring
+state in the composer. If the read fails or the Host reports inconsistent state,
+show an inline error with Retry and the existing interrupt action. Preserve the
+draft, avoid an endlessly empty form or ordinary steering editor, and keep
+the user able to stop waiting. The Host deadline continues during UI recovery;
+failure to render a question cannot extend it. No failure path invents an answer.
+
+FR-9: Record bounded diagnostics for request publication, snapshot reconciliation,
+stale-update rejection, and transport/consumer errors, using Thread/Turn/Item,
+revision, and Host generation. Do not log question text or answers by default.
+Contain a subscriber failure so unrelated observers remain reachable. Instrument
+the actual notification path to determine the original loss site if reproducible;
+do not present the known recovery defect as proof of that particular cause.
+
+FR-10: At the deadline, settle the tool with a typed timeout/no-answer result,
+clear pending state, remove the waiting flag, and let the same active Turn
+continue. Do not select the recommended option or manufacture per-question Other
+text. Answered results retain the complete validated answer set; timed-out
+results carry the request identity and deadline with no fabricated answers.
+Distinguish this outcome from user cancellation, tool failure, and authorization.
+The model-tool output contract, decoder, context projection, and guidance must
+all preserve that distinction.
+
+FR-11: After timeout, the Agent continues independent work and may state a
+reversible assumption where existing authorization permits it. Directional,
+irreversible, or permission-dependent work still awaits a real user decision.
+If nothing useful can proceed, return a concise account of the unresolved input
+rather than keep the execution Promise pending. Timeout means no submitted
+answer, not user approval or evidence that the user saw the question. Neither the
+Host nor the runtime automatically re-asks the expired question; guidance must
+prevent a repeated-question loop from replacing the original infinite wait.
+
+FR-12: Serialize answer, timeout, and cancellation against the same request.
+Answer acceptance checks the Host clock and pending state; a delayed timer does
+not make a reply after the deadline valid. An answer accepted before expiry wins;
+otherwise timeout wins, and an interrupt cannot be undone by a late timer. A
+response received after expiry shows that the question expired, preserves local
+unsent text, and offers the normal conversation path for a new explicit user
+message. It does not resubmit into the old tool or start another Turn on its own.
+
+### Flows, UI behavior, and recovery
+
+FLOW-1: The Agent asks a valid question. The Host accepts it, publishes pending
+state, and awaits its result. The composer displays the question, options, Other,
+and the existing multi-step controls. Submission resolves once and restores the
+ordinary draft while the same Turn continues.
+
+FLOW-2: The notification occurs before a new renderer subscribes, or while its
+subscription is absent. Initialization/reattachment reads the live snapshot and
+renders the same request. Closing and reopening the dock under the same renderer
+retains unsent answers where the existing form remains mounted. A full reload
+may reset unsent option selections; it must restore the question and answerability.
+
+FLOW-3: Stop or Turn termination races with submission or a delayed snapshot.
+The Host's accepted ordering decides whether an answer committed. Both sides
+clear the old form, and the model resumes at most once. A newer question is not
+removed by an old response. No polling, repeated model call, or auto-answer is
+used to unblock the control plane.
+
+FLOW-4: Snapshot recovery fails. The composer shows the recovery error, Retry,
+and an interrupt route. A successful retry restores the live question or normal
+editor according to the new snapshot. A stopped or restarted Host produces the
+existing execution recovery state, not a restored historical question.
+
+FLOW-5: The user gives no answer. The form shows its remaining wait time and
+explains that the Agent will continue without an answer. At the original deadline
+the Host returns the no-answer outcome once; the form closes and the ordinary
+composer returns. The Agent continues within the boundaries above. A hidden or
+failed form follows the same deadline; no UI acknowledgement is needed to release
+the wait. Unsubmitted option selections or partial Other text are not answers.
+
+Respect focus within a displayed question step. Newly restored questions receive
+the existing question focus behavior; background updates must not repeatedly
+reset selections or steal focus. Keep Back/Next state, submission errors, Other
+input, draft retention, keyboard operation, light/dark styling, and accessibility
+preferences. Error and loading copy must describe the user's state rather than
+protocol revisions or internal request IDs.
+Show a subdued countdown or remaining-time label; screen readers must not
+announce every tick. Expiry should visibly explain that no answer was submitted,
+without claiming a choice on the user's behalf.
+
+### Implementation scope and dependencies
+
+Implementation suggestions use the existing ownership boundary; dev may choose
+snapshot method and token names within this contract, with the shared-interface
+coordination required by the repository.
+
+- `src/main/agent/thread/TurnLifecycle.ts` and `src/main/agent/ThreadService.ts`:
+  authoritative snapshot, request settlement, cancellation, recovery, and exact
+  acceptance ordering. Inspect `requestUserInput`, `resolveUserInput`, and
+  `rejectUserInput`; do not only patch `UserInputRequest` presentation.
+- `src/core/agent/protocol.ts`, `codec.ts`, and `rendererProjection.ts`: bounded
+  snapshot, deadline, and ordered pending/cleared contracts; preserve response
+  validation.
+- `src/core/agent/tools.ts`, `src/main/agent/runtime/ToolRuntime.ts`, and
+  `src/main/agent/thread/TurnLifecycle.ts`: default bounded wait, explicit
+  no-answer tool outcome, provider-visible continuation guidance, and deadline
+  races without a fabricated answer or new model Turn.
+- Existing preload/desktop notification forwarding, if needed for snapshot
+  wiring, observation diagnostics, or subscriber-error containment. Keep process
+  isolation and renderer visibility boundaries intact.
+- `src/renderer/agent/store/threadStore.ts`, `components/ThreadDock.tsx`,
+  `ThreadView.tsx`, and `UserInputRequest.tsx`: recovery, merge ordering, exact
+  clear semantics, draft/focus preservation, and localized inline failure states.
+- Current core, model-runtime, tool-design, and Thread-rendering specifications:
+  fold the final request lifecycle and snapshot behavior in the same feature PR.
+
+Collision check found no competing claim on this plan file. Implementation
+overlaps PR #669's Thread lifecycle, protocol/codec, renderer store, and record
+work. Consume its final shared mechanisms or agree an isolated shared-interface
+sequence first. PR #670's future work-folder implementation also uses Thread
+and composer owners. Refresh live scopes at claim time.
+
+This feature and [background continuation](background-task-continuation-policy.md)
+can each ship alone. Select an integration order for their shared
+`ThreadService`, `TurnLifecycle`, protocol, and renderer-store edits; reliable
+questions do not depend on adopting new background agreements. The
+[scheduled-work plan](scheduled-work-redesign.md) must continue to distinguish
+an answered/cancelled question from unread results and preserve its own run
+admission. Do not create a second scheduled input owner.
+
+### Acceptance and verification
+
+| ID | Observable acceptance |
+| --- | --- |
+| AC-1 | A real runtime `request_user_input` travels through Host, renderer projection, preload, store, and composer; options display, an answer is accepted, and the same Turn resumes exactly once. |
+| AC-2 | If the original requested notification is dropped, a fresh renderer or reattached subscription recovers the live question without a new model call. |
+| AC-3 | Switching Threads, hiding/reopening the dock, and repeated reconciliation preserve request identity and never show another Thread's question. |
+| AC-4 | Reordered pending/empty snapshots and requested/cleared events cannot erase a newer question or resurrect an old one. |
+| AC-5 | Interrupt, tool cancellation, normal/error Turn termination, and owner shutdown remove the matching form and settle the wait without inventing an answer. |
+| AC-6 | Submission racing with cancellation, double submission, and a lost acceptance reply produce at most one accepted answer and one model resumption. |
+| AC-7 | A waiting-state/snapshot failure shows Retry and an interrupt route; successful recovery restores a form or editor, never an invisible indefinite wait. |
+| AC-8 | Host restart does not revive historical questions; renderer reload under a live Host restores the request and retains its original deadline. |
+| AC-9 | Multi-step/Other answers, existing draft retention, focus, keyboard use, light/dark themes, and accessibility preferences remain functional. |
+| AC-10 | The reported event order reproduces neither a waiting Thread with no recoverable form nor an idle Thread with a stale form. Diagnostics identify transition boundaries without recording question/answer content. |
+| AC-11 | An omitted timeout releases an unanswered request after 60 seconds; explicit durations retain the 60-to-240-second bounds, and hiding/reloading the form or losing its notification cannot extend the deadline. |
+| AC-12 | Timeout clears the form/waiting flag, returns a typed no-answer result, and resumes the same active Turn once without selecting an option, fabricating Other text, or creating another Turn. |
+| AC-13 | Answer versus deadline, delayed timer, system sleep/resume, cancellation, and late-response races yield one settlement; a stopped Turn is never revived. |
+| AC-14 | After timeout the Agent can continue reversible independent work, retains genuinely required decisions as unresolved, and does not automatically re-ask the same question or treat silence as approval. |
+
+Extend the service test titled `round-trips request_user_input through the control
+plane and active Thread flag`, codec/projection tests, renderer `ThreadStore`
+tests, and the established multi-step input E2E. Add an integrated real-Electron
+test with a scripted provider driving the actual tool; the existing E2E that
+injects `userInput/requested` directly into the renderer cannot validate the full
+delivery path. Test dropped events and renderer reload while the Host remains
+alive, then cancellation and late replies with controlled ordering.
+Use a controlled Host clock for deadline tests, plus one real tool-to-renderer
+timeout smoke; include missing `autoResolutionMs`, explicit bounds, no form
+delivery, multi-question partial drafts, and timer callbacks delayed by sleep.
+
+Use sanitized synthetic fixtures matching the observed sequence, not committed
+user conversations or machine-specific paths. Run typecheck, relevant
+Core/renderer/E2E checks, `bun run docs:check`, and `git diff --check`; verify the
+form/recovery state in light and dark. Fold specs and archive this plan only when
+the complete feature passes its acceptance checks.
+
+## Open questions
+
+OQ-1: Which transport, subscription, or renderer transition lost the original
+live notification? The event log and controlled replay establish admission and
+two recovery/cleanup defects, but do not identify that transition. Investigate
+with the bounded diagnostics and real delivery test in FR-9/AC-1; do not block
+fixing the independently reproduced defects on speculation about a reload.
+
+The user requested bounded unanswered waits; the plan selects the concrete
+60-second default and preserves the existing maximum duration. Public
+snapshot/cancellation/timeout shape still requires the normal shared-interface
+collision check before dev writes against it.
+
+## Implementation checklist
+
+- [ ] Reproduce delivery, recovery/cleanup failures, and the missing-deadline case using synthetic fixtures (EVD-1 through EVD-4, AC-1/2/10/11).
+- [ ] Settle the shared snapshot/ordering/timeout contract, then implement Host lifecycle and all consumers in one PR (FR-1 through FR-12).
+- [ ] Verify AC-1 through AC-14, investigate the original loss boundary, fold specs, and complete the board/archive lifecycle.
