@@ -82,8 +82,6 @@ export interface AgentCapabilityEvaluationInput {
   args: unknown;
   /** Resolved runtime contract actions for extension and MCP tools. */
   actionKinds?: readonly AgentToolActionKind[];
-  /** Host-resolved target, never read from model arguments. */
-  fileWritePath?: string;
   policy: AgentCapabilityPolicyInput;
 }
 
@@ -102,7 +100,6 @@ export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInpu
   const descriptorInput = {
     toolName,
     args: input.args,
-    fileWritePath: input.fileWritePath,
     ...(input.actionKinds === undefined ? {} : { actionKinds: input.actionKinds }),
     policy,
     access,
@@ -139,61 +136,11 @@ export function deriveAgentToolActionDescriptors(input: {
   toolName: string;
   args: unknown;
   actionKinds?: readonly AgentToolActionKind[];
-  fileWritePath?: string;
   policy: AgentCapabilityPolicy;
   access: AgentCapabilityAccess;
 }): ToolActionDescriptor[] {
   const toolName = normalizeToolName(input.toolName);
-  if (['preview_inspect', 'preview_manage', 'data_inspect', 'data_manage'].includes(toolName)) {
-    const operation = getStringArg(getUnknownArg(input.args, 'request'), 'operation');
-    const kind = toolName === 'preview_inspect' ? 'preview.inspect'
-      : toolName === 'data_inspect' ? 'preview.data.inspect'
-        : toolName === 'preview_manage' && operation !== 'clear_cache' ? 'preview.control' : 'preview.data.clear';
-    return [simpleDescriptor(toolName, input.args, kind, 'Preview operations', 'Inspect or operate on the selected preview/data scope.')];
-  }
-  if (toolName === 'memory_inspect' || toolName === 'memory_manage') {
-    const operation = getStringArg(getUnknownArg(input.args, 'request'), 'operation') ?? '';
-    const result = [simpleDescriptor(toolName, input.args,
-      toolName === 'memory_inspect' ? 'agent.memory.inspect' : 'agent.memory.manage',
-      'Memory operations', `Memory ${operation}.`)];
-    if (toolName === 'memory_manage' && (operation === 'open' || operation === 'reset')) {
-      result.push(descriptor(toolName, operation === 'open' ? 'outline.edit' : 'outline.delete', {
-        accessScope: 'none', title: 'Memory document operation', summary: `Memory ${operation}.`,
-        consequence: operation === 'open' ? 'Ensure the Memory saved search.' : 'Delete the exact reviewed Memory containers and descendants.',
-      }));
-    }
-    return result;
-  }
-  if (toolName === 'application_inspect' || toolName === 'application_manage'
-    || toolName === 'diagnostics_inspect' || toolName === 'diagnostics_manage') {
-    const readOnly = toolName.endsWith('_inspect');
-    return [simpleDescriptor(
-      toolName,
-      input.args,
-      toolName === 'application_inspect' ? 'agent.application.inspect'
-        : toolName === 'application_manage' ? 'agent.application.manage'
-          : toolName === 'diagnostics_inspect' ? 'agent.diagnostics.inspect' : 'agent.diagnostics.manage',
-      readOnly ? 'Application and diagnostics inspection' : 'Application and diagnostics operation',
-      readOnly ? 'Inspect bounded application or diagnostics state.' : 'Perform a bounded application or diagnostics operation.',
-    )];
-  }
   if (toolName === 'bash') return deriveBashCapability(getStringArg(input.args, 'command'), input.args).descriptors;
-  if (toolName === 'skill_inspect' || toolName === 'skill_manage') {
-    const request = getUnknownArg(input.args, 'request');
-    const operation = getStringArg(request, 'operation') ?? '';
-    const result = [simpleDescriptor(toolName, input.args,
-      toolName === 'skill_inspect' ? 'agent.skill.inspect' : 'agent.skill.manage',
-      'Skill lifecycle', `Skill ${operation}.`)];
-    if (['catalog', 'discover', 'check_updates', 'preview_update', 'install'].includes(operation)) {
-      result.push(descriptor(toolName, 'web.fetch', {
-        accessScope: 'external_system', title: 'Skill source read', summary: 'Fetch reviewed Skill source data.', consequence: 'Read public source content without executing it.',
-      }));
-    }
-    if (operation === 'undo_edit') {
-      result.push(derivePathToolActionDescriptor(toolName, { file_path: input.fileWritePath }, input.policy, 'write', 'file_path'));
-    }
-    return result;
-  }
   if (toolName === 'task_stop') {
     return [
       descriptor(toolName, 'task.stop', {

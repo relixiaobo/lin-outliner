@@ -5,7 +5,7 @@ import { parseHTML } from 'linkedom';
 import type { MemoryInspectResult, MemoryResetView } from '../../src/core/agent/memoryOperations';
 import type { Thread } from '../../src/core/agent/protocol';
 import { ThreadDetailsDialog } from '../../src/renderer/agent/components/ThreadDetailsDialog';
-import { MemorySettingsGroup } from '../../src/renderer/ui/agent/MemorySettingsGroup';
+import { MemoryManager } from '../../src/renderer/ui/agent/MemoryManager';
 
 const cleanups: Array<() => void> = [];
 const savedGlobals: Array<[string, PropertyDescriptor | undefined]> = [];
@@ -25,24 +25,24 @@ describe('Memory owner UI', () => {
       if (name === 'memory_inspect') return status(enabled);
       if (name === 'memory_enabled_update') { writes.push(args); return; }
       throw new Error(name);
-    }, <MemorySettingsGroup />);
+    }, <MemoryManager />);
     await flush();
     const toggle = rendered.button('Use Memory');
     await act(async () => toggle.click());
     expect(writes).toEqual([{ enabled: false }]);
     expect(toggle.getAttribute('aria-checked')).toBe('true');
-    expect(rendered.document.body.textContent).toContain('Application is pending');
+    expect(rendered.document.body.textContent).toContain('Waiting for Memory to finish applying the change');
     enabled = false;
     rendered.changed();
     await flush();
     expect(toggle.getAttribute('aria-checked')).toBe('false');
-    expect(rendered.document.body.textContent).toContain('Memory disabled.');
+    expect(rendered.document.body.textContent).toContain('Memory is off.');
     expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(3);
     enabled = true;
     rendered.changed();
     await flush();
     expect(toggle.getAttribute('aria-checked')).toBe('true');
-    expect(rendered.document.body.textContent).not.toContain('Application is pending');
+    expect(rendered.document.body.textContent).not.toContain('Waiting for Memory to finish applying the change');
   });
 
   test('Reset uses the native owner decision and only reports finalized as complete', async () => {
@@ -52,11 +52,11 @@ describe('Memory owner UI', () => {
       if (name === 'memory_inspect') return request.operation === 'reset' ? { operation: 'reset', reset } : status(true);
       if (name === 'memory_manage') return { operation: 'reset', reset };
       throw new Error(name);
-    }, <MemorySettingsGroup />);
+    }, <MemoryManager />);
     await flush();
     await act(async () => rendered.button('Reset Memory').click());
     expect(rendered.document.querySelector('.confirm-dialog')).toBeNull();
-    expect(rendered.document.body.textContent).toContain('Reset is awaiting settlement.');
+    expect(rendered.document.body.textContent).toContain('Confirming whether Memory was reset. Please wait before trying again.');
     expect(rendered.document.body.textContent).not.toContain('Memory reset.');
     expect(rendered.button('Reset Memory').disabled).toBe(true);
     reset = { ...reset, state: 'finalized' };
@@ -64,6 +64,8 @@ describe('Memory owner UI', () => {
     await flush();
     expect(rendered.document.body.textContent).toContain('Memory reset.');
     expect(rendered.button('Reset Memory').disabled).toBe(false);
+    await act(async () => rendered.button('Use Memory').click());
+    expect(rendered.button('Reset Memory').closest('.inset-row')?.textContent).toContain('Memory reset.');
   });
 
   test('keeps cancellation, failure and navigation outcomes local', async () => {
@@ -71,21 +73,22 @@ describe('Memory owner UI', () => {
       if (name === 'memory_inspect') return status(true);
       if ((args?.request as { operation: string }).operation === 'reset') throw new Error('Memory Reset was cancelled.');
       return { operation: 'open', nodeId: 'search', navigation: 'unknown' };
-    }, <MemorySettingsGroup />);
+    }, <MemoryManager />);
     await flush();
     await act(async () => rendered.button('Reset Memory').click());
     expect(rendered.document.querySelector('[role="alert"]')?.textContent).toContain('cancelled');
     await act(async () => rendered.button('Open Memory').click());
-    expect(rendered.document.querySelector('[role="alert"]')).toBeNull();
-    expect(rendered.document.querySelector('[role="status"]')?.textContent).toContain('navigation was not confirmed');
+    expect(rendered.button('Reset Memory').closest('.inset-row')?.textContent).toContain('cancelled');
+    expect(rendered.button('Open Memory').closest('.inset-row')?.textContent).toContain('Try Open Memory again');
+    expect(rendered.button('Open Memory').closest('.inset-row')?.textContent).not.toContain('cancelled');
   });
 
   test('owner events refresh without parent callback churn and release on close', async () => {
     let reads = 0;
-    const rendered = render(async () => { reads++; return status(true, undefined, true, 2); }, <MemorySettingsGroup />);
+    const rendered = render(async () => { reads++; return status(true, undefined, true, 2); }, <MemoryManager />);
     await flush();
     expect(rendered.document.body.textContent).toContain('2 reserved-tagged Nodes');
-    rendered.rerender(<MemorySettingsGroup />);
+    rendered.rerender(<MemoryManager />);
     await flush();
     expect(reads).toBe(1);
     rendered.changed();
@@ -100,7 +103,7 @@ describe('Memory owner UI', () => {
   test('ignores an older status request after a newer owner invalidation', async () => {
     const stale = deferred<MemoryInspectResult>();
     let reads = 0;
-    const rendered = render(async () => ++reads === 2 ? stale.promise : status(reads === 1), <MemorySettingsGroup />);
+    const rendered = render(async () => ++reads === 2 ? stale.promise : status(reads === 1), <MemoryManager />);
     await flush();
     rendered.changed();
     await flush();

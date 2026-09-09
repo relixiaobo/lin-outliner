@@ -1,3 +1,4 @@
+import { configureSmokeProvider } from './configurationHelpers';
 import { expect, test, type Page } from '@playwright/test';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -126,7 +127,7 @@ test.describe('URL page translation', () => {
     smoke = await launchSmokeApp();
     smoke.window = await findMainWindow(smoke);
     await smoke.window.locator('#root').waitFor();
-    await configureTranslationProvider(smoke.window, `${origin}/v1`);
+    await configureSmokeProvider(smoke, `${origin}/v1`);
     await smoke.window.evaluate(async () => {
       const lin = (window as unknown as {
         lin: { setLanguage: (locale: 'en') => Promise<void> };
@@ -480,19 +481,6 @@ test.describe('URL page translation', () => {
   });
 });
 
-async function configureTranslationProvider(page: Page, baseUrl: string): Promise<void> {
-  await page.evaluate(async ({ baseUrl }) => {
-    const lin = (window as unknown as {
-      lin: { invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> };
-    }).lin;
-    const providerId = 'groq';
-    await lin.invoke('agent_upsert_provider_config', {
-      provider: { providerId, baseUrl, enabled: true },
-    });
-    await lin.invoke('agent_set_provider_api_key', { providerId, apiKey: 'smoke-key' });
-    await lin.invoke('agent_set_active_provider', { providerId });
-  }, { baseUrl });
-}
 
 async function captureTranslationVisual(
   page: Page,

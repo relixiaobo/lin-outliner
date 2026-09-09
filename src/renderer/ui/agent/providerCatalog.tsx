@@ -10,7 +10,7 @@ import { localGatewayProviderDefinition } from '../../../core/localGatewayProvid
 
 export { PROVIDER_DISPLAY_NAMES, formatProviderName, providerInitial } from './providerNames';
 
-// Pure provider-catalog helpers shared by the settings list (AgentSettingsView)
+// Pure provider-catalog helpers shared by the Models manager
 // and the standalone per-provider config window (ProviderConfigWindow): display
 // names, brand avatar, credential/active derivation, auth notes, and docs links.
 // Keeping them here (not on a component) lets the config window derive its own

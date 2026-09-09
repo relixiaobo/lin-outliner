@@ -710,73 +710,25 @@ is untrusted command output with a stable Session handle, terminal outcome,
 bounded text/error, usage, artifacts, and worktree disposition. Only an explicit
 later `delegate send` invocation continues that Session.
 
-### Memory Management
+### Application Configuration
 
-Memory management has two independent root-only contracts, `memory_inspect` and
-`memory_manage`, backed by the same domain facade as the human UI. Their closed,
-object-rooted schemas carry nested `request` variants and bounded `result`
-variants. Status, exact Thread revision, Reset settlement, and acknowledged
-navigation are management data; content retrieval/editing remains ordinary
-Outline work. Global Memory enablement is a configuration file edit. Reset
-accepts neither model approval nor a supplied deletion target. See
-[`agent-memory.md`](agent-memory.md#user-surface) for ownership and settlement.
+Agent configuration uses the existing ordinary file tools and the built-in
+configuration Skill. Public source files, schemas, and current-Host status are
+the contract: preserve unrelated content and distinguish saved, accepted, and
+effective values. No Settings-specific model tools or Configuration CLI exist.
 
-### Preview And Data Operations
+Skill acquisition/maintenance, Memory opening/reset, preview-local translation,
+data cleanup, update checks, and diagnostics export remain user-interface
+operations. Their internal Host services and IPC preserve live-window admission,
+exact targets, native confirmation, cancellation, and settlement. They are not
+published in the model catalog and have no Agent runtime adapters. The Skill
+directs users to Settings, the preview controls, or App/Help menus for these
+operations rather than inventing keys or touching private stores.
 
-`preview_inspect`, `preview_manage`, `data_inspect`, and `data_manage` are
-independent root-only domain tools. Their closed object-rooted schemas use a
-nested `request` and bounded `result`; they share the same Host facade as human
-controls, not a settings-command dispatcher or private-file interface.
-
-Preview inspection returns up to four opaque lifetime IDs, pane IDs, revisions,
-controls, effective language, readiness and cache availability, never source text,
-URLs or paths. Management requires an inspected revision; an omitted ID is valid
-only for exactly one eligible preview. Configure patches language/model (null
-restores Follow UI/Agent), automatic enablement and display intent
-(`automatic`, `translated`, `original`). Only a matching renderer controller
-acknowledgement returns `applied`; missing acknowledgement is `unknown`, and
-unavailable/stale lifetimes require reinspection. Provider completion is separate.
-
-`clear_cache` selects the registered current source, never an Agent-supplied path.
-`data_manage` accepts only `translations` or `websites`. Every deletion requires
-cancel-default native review. Translation clearing removes shared saved entries
-but retains every live display and pending result. Website clearing affects only
-Tenon's preview partition and reports each stage and reload outcome separately.
-Data inspection exposes counts, logical/Chromium bytes, session availability,
-guest count and up to 32 Host-lifetime receipts. Re-delivery of a recorded
-maintenance invocation cannot clear fresh data again. After caller loss, inspect
-settlement; after restart, inspect current data rather than inventing a receipt.
-
-See [Preview translation](workspace-layout.md) for lifetime, cache-ticket, and UI
-ownership. None of these tools writes durable translation preferences or adds a
-Settings/Configuration CLI.
-
-### Application And Diagnostics Operations
-
-`application_inspect`, `application_manage`, `diagnostics_inspect`, and
-`diagnostics_manage` are root-only operations backed by the same Host facade as
-the About and Help surfaces. Application inspection returns bounded version/build
-facts, bundled release information, cached update state, and the fixed
-Help/Issues/License destinations. Bundled release inspection resolves the
-current build's packaged changelog with
-the same current-version/newest-noted fallback used by About, and remains
-separate from remote update state. `check_updates` is explicitly fresh; cached
-availability is never described as a successful check, including when it is
-returned alongside a failed fresh check. Management can open only a validated
-release/download or one of those fixed destinations and cannot install updates
-or accept an arbitrary URL. Domain unavailability, failed opening, and explicit
-check errors produce failed semantic outcomes with stable recovery guidance.
-
-Diagnostics inspection returns aggregate record counts and severity totals only.
-Reveal flushes and shows the Host-owned local log; export always uses a native
-save dialog, returns the redacted artifact outcome, and accepts no model-supplied
-path. After a path is selected, export obtains the diagnostic environment and
-then revalidates the caller signal, current operation authority, originating
-window identity, and Host lifetime immediately before writing. Cancellation is
-a cancellation outcome; reveal/export failures are failed semantic outcomes.
-Neither operation uploads or posts diagnostics. All four tools expose closed,
-bounded, operation-discriminated output data. They do not create a
-Settings/Configuration CLI or expand the aggregate Settings DTO.
+Global Memory enablement and Skill availability/source bindings remain public
+file preferences. Memory content is ordinary Outline data. See
+[Memory](agent-memory.md#user-surface), [Skills](agent-skills.md), and
+[Preview translation](workspace-layout.md) for the retained user workflows.
 
 ### Skills
 
@@ -787,21 +739,10 @@ current Thread catalog and explicit blocks.
 The effective presence of `skill` gates instruction invocation. When absent or
 globally disabled, the Host emits no instruction catalog or Skill stable-prompt
 module and does not recognize direct slash or natural-language Skill invocation.
-A configured Skill name cannot bypass that gate. A registry may still exist for
-separately admitted lifecycle inspection; it grants no invocation authority.
-
-`skill_inspect` and `skill_manage` are independent root-only domain tools with
-strict nested operation schemas. They call the same lifecycle owner as the
-human Library. Inspection owns bounded discovery, exact targets, update previews,
-and diagnostics; management owns install, apply update, rollback, uninstall, and
-hash-bound Agent-edit undo. Tool selection, global disablement, and explicit
-action blocks are checked at admission and again before delayed commit. Network
-descriptors follow the selected operation; undo checks its Host-resolved mutable
-file target. Human review is sender-bound native UI, never a model argument.
-Results separate committed content, observed availability, and refresh failure.
-Preference edits still use public configuration files, with no settings CLI or
-private-store fallback. The full lifecycle contract lives in
-[`agent-skills.md`](agent-skills.md).
+A configured Skill name cannot bypass that gate. The human Skill Library retains
+its independent registry and lifecycle service without granting instruction
+invocation authority. Availability and source bindings use public configuration
+files; installation and maintenance use the Library's reviewed operations.
 
 A successful invocation returns only `{"status":"loaded"}` before its
 supplemental instruction content is projected canonically. The result has no

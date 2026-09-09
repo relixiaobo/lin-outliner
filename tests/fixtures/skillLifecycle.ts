@@ -32,13 +32,12 @@ export async function skillLifecycleFixture(review: ReviewSkillOperation = async
   const lifecycle = createSkillLifecycle({ service, review,
     refreshProvenance: () => runtime.refreshProvenanceRecords(), changed: () => {} });
   const caller: SkillOperationCaller = {
-    key: 'test-root-view', runtime,
-    origin: { kind: 'agent', threadId: 'thread', turnId: 'turn', itemId: 'item' },
+    runtime,
+    origin: { kind: 'window', windowId: 1 },
     authorize: async (_name, _args, signal) => { signal?.throwIfAborted(); },
   };
-  const inspect = (request: unknown, override: Partial<SkillOperationCaller> = {}) => lifecycle.inspect({ request }, { ...caller, ...override }) as Promise<any>;
   const manage = (request: unknown, override: Partial<SkillOperationCaller> = {}) => lifecycle.manage({ request }, { ...caller, ...override }) as Promise<any>;
-  return { root, workspace, config, store, service, github, runtime, lifecycle, caller, inspect, manage, provenance,
+  return { root, workspace, config, store, service, github, runtime, lifecycle, caller, manage, provenance,
     originalConfig: await readFile(config, 'utf8'),
     close: async () => {
       for (const entry of (await store.readIndex()).skills) await store.removeSkill(entry.id);

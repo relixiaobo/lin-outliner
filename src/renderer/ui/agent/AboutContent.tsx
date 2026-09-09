@@ -8,6 +8,7 @@ import { api } from '../../api/client';
 import { useI18n } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { ICON_SIZE, OpenInBrowserIcon } from '../icons';
+import { SettingsFeedback, type SettingsFeedbackState } from '../configuration/SettingsFeedback';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
@@ -23,11 +24,10 @@ function openFixedDestination(destination: 'help' | 'issues' | 'license', fallba
   void api.openExternalUrl(fallback);
 }
 
-interface SettingsAboutSectionProps {
+interface AboutContentProps {
   appUpdate?: AppUpdateView | null;
   onAppUpdateChange?: (view: AppUpdateView) => void;
-  onError: (message: string | null) => void;
-  onNotice: (message: string | null) => void;
+  readError?: string | null;
   loadRelease?: () => Promise<BundledApplicationRelease | null>;
 }
 
@@ -97,17 +97,18 @@ function ReleaseNote({ note }: { note: string }) {
  * links, the one-paragraph description — are omitted rather than stubbed. An
  * empty row that says nothing is worse than a page that does not claim to.
  */
-export function SettingsAboutSection({
+export function AboutContent({
   appUpdate = null,
   onAppUpdateChange = () => undefined,
-  onError,
-  onNotice,
+  readError,
   loadRelease = loadBundledApplicationRelease,
-}: SettingsAboutSectionProps) {
+}: AboutContentProps) {
   const { locale, t } = useI18n();
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [release, setRelease] = useState<BundledApplicationRelease | null>(null);
-  const [updateActionError, setUpdateActionError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Record<string, SettingsFeedbackState>>({});
+  function report(key: string, value: SettingsFeedbackState = {}) { setFeedback((current) => ({ ...current, [key]: value })); }
+  const [automaticBusy, setAutomaticBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -120,12 +121,12 @@ export function SettingsAboutSection({
   useEffect(() => {
     let active = true;
     void loadRelease()
-      .then((next) => { if (active) setRelease(next); })
+      .then((next) => { if (active) { setRelease(next); report('release'); } })
       .catch(() => {
-        if (active) onError(t.settings.about.releaseNotesUnavailable);
+        if (active) report('release', { error: t.settings.about.releaseNotesUnavailable });
       });
     return () => { active = false; };
-  }, [loadRelease, onError, t.settings.about.releaseNotesUnavailable]);
+  }, [loadRelease, t.settings.about.releaseNotesUnavailable]);
 
   // The heading names the release whose note is shown. For anyone running a
   // published build that is their own version; on a build ahead of the last
@@ -139,8 +140,7 @@ export function SettingsAboutSection({
   // The triple a bug report needs, in the order a person reads it back.
   async function copyVersionInfo(): Promise<void> {
     if (!info) return;
-    onError(null);
-    onNotice(null);
+    report('copy');
     const text = [
       `${info.name} ${info.version}`,
       `${info.platform} ${info.arch}`,
@@ -148,7 +148,7 @@ export function SettingsAboutSection({
     ].join('\n');
     try {
       await navigator.clipboard.writeText(text);
-      onNotice(t.settings.about.copiedNotice);
+      report('copy', { notice: t.settings.about.copiedNotice });
     } catch (caught) {
       window.lin?.reportRendererError?.({
         domain: 'persistence',
@@ -157,27 +157,28 @@ export function SettingsAboutSection({
         message: 'Failed to copy app version information.',
         error: serializeUnknownError(caught),
       });
-      onError(t.settings.about.copyFailed);
+      report('copy', { error: t.settings.about.copyFailed });
     }
   }
 
   async function checkForUpdates(): Promise<void> {
-    setUpdateActionError(null);
+    report('check');
     try {
       const next = await window.lin?.appUpdate?.check();
       if (!next) throw new Error('App update bridge unavailable.');
       if (next.manualError) {
-        setUpdateActionError(updateErrorMessage(next.manualError, t.settings.about));
+        report('check', { error: updateErrorMessage(next.manualError, t.settings.about) });
       }
       onAppUpdateChange({ ...next, manualError: null });
     } catch {
-      setUpdateActionError(t.settings.about.updateCheckFailed);
+      report('check', { error: t.settings.about.updateCheckFailed });
     }
   }
 
   async function setAutomaticChecksEnabled(enabled: boolean): Promise<void> {
-    if (!appUpdate) return;
-    setUpdateActionError(null);
+    if (!appUpdate || automaticBusy) return;
+    setAutomaticBusy(true);
+    report('automatic');
     onAppUpdateChange({ ...appUpdate, automaticChecksEnabled: enabled });
     try {
       const next = await window.lin?.appUpdate?.setAutomaticChecksEnabled(enabled);
@@ -185,17 +186,17 @@ export function SettingsAboutSection({
       onAppUpdateChange(next);
     } catch {
       onAppUpdateChange(appUpdate);
-      setUpdateActionError(t.settings.about.updatePreferenceFailed);
-    }
+      report('automatic', { error: t.settings.about.updatePreferenceFailed });
+    } finally { setAutomaticBusy(false); }
   }
 
   async function openAvailableUpdate(): Promise<void> {
-    setUpdateActionError(null);
+    report('open');
     try {
       const result = await window.lin?.appUpdate?.open();
-      if (!result?.ok) setUpdateActionError(t.settings.about.updateOpenFailed);
+      if (!result?.ok) report('open', { error: t.settings.about.updateOpenFailed });
     } catch {
-      setUpdateActionError(t.settings.about.updateOpenFailed);
+      report('open', { error: t.settings.about.updateOpenFailed });
     }
   }
 
@@ -229,6 +230,7 @@ export function SettingsAboutSection({
       {info ? (
         <InsetGroup ariaLabel={t.settings.about.sectionAriaLabel} id="version">
           <InsetRow
+            feedback={<SettingsFeedback feedback={feedback.copy} />}
             label={info.name}
             sublabel={`${t.settings.about.version} ${info.version}`}
             trailing={(
@@ -241,9 +243,11 @@ export function SettingsAboutSection({
         </InsetGroup>
       ) : null}
 
+      <SettingsFeedback feedback={{ error: readError }} />
       {appUpdate ? (
         <InsetGroup ariaLabel={t.settings.about.updateGroup} id="software-update" label={t.settings.about.updateGroup}>
           <InsetRow
+            feedback={<SettingsFeedback feedback={feedback.open} />}
             label={updateStatusLabel}
             sublabel={updateStatusSublabel}
             trailing={availableUpdate ? (
@@ -259,9 +263,7 @@ export function SettingsAboutSection({
             <ReleaseNote note={availableUpdate.note} />
           ) : null}
           <InsetRow
-            feedback={updateActionError
-              ? <div className="settings-update-error" role="alert">{updateActionError}</div>
-              : undefined}
+            feedback={<SettingsFeedback feedback={feedback.check} />}
             label={t.settings.about.updateCheckLabel}
             sublabel={lastChecked}
             trailing={(
@@ -278,10 +280,12 @@ export function SettingsAboutSection({
             wrap
           />
           <InsetRow
+            feedback={<SettingsFeedback feedback={feedback.automatic} />}
             label={t.settings.about.updateAutomaticLabel}
             sublabel={t.settings.about.updateAutomaticSublabel}
             trailing={(
               <SwitchControl
+                disabled={automaticBusy}
                 checked={appUpdate.automaticChecksEnabled}
                 label={t.settings.about.updateAutomaticLabel}
                 onCheckedChange={(enabled) => void setAutomaticChecksEnabled(enabled)}
@@ -294,6 +298,7 @@ export function SettingsAboutSection({
         </InsetGroup>
       ) : null}
 
+      <SettingsFeedback feedback={feedback.release} />
       {release ? (
         <InsetGroup ariaLabel={whatsNewLabel} id="whats-new" label={whatsNewLabel}>
           {/* A section written before the note convention degrades to the link

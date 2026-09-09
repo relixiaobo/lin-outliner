@@ -1,414 +1,217 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { CheckIcon, CopyIcon, HideIcon, ICON_SIZE, LoaderIcon, OpenInBrowserIcon, PasswordIcon, ShowIcon } from '../icons';
+import { useEffect, useId, useRef, useState } from 'react';
+import { CheckIcon, ICON_SIZE, LoaderIcon, OpenInBrowserIcon, WarningIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
-import type { AgentProviderCapabilityKind, AgentProviderCapabilitySummary } from '../../../core/types';
-import type { Messages } from '../../../core/i18n';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { ErrorState } from '../primitives/FeedbackState';
 import { Input } from '../primitives/Input';
+import { ProviderApiKeyField } from './ProviderApiKeyField';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
-import { providerStatusSentence, type ProviderStatus } from './providerStatus';
 
-// The draft committed by Save. `apiKey` empty means "leave the saved key
-// unchanged"; a non-empty value replaces it. A provider is a CONNECTION only —
-// credentials + endpoint. The model/effort that runs is chosen on the agent
-// profile (built-in assistant default or a user/project agent), never here.
+// Empty apiKey retains the saved credential. This draft belongs to the window so
+// switching authentication methods does not discard an unfinished connection.
 export interface ProviderConfigDraft {
   providerId: string;
   baseUrl: string;
   apiKey: string;
 }
-
 export interface ProviderConfigValidation {
   success: boolean;
   message: string;
 }
-
-interface AuthNote {
-  note: string;
-  docsUrl?: string;
-  docsLabel?: string;
-}
+export type ProviderFormActivity = 'idle' | 'testing' | 'saving';
+type ConnectionCheckResult = ProviderConfigValidation & { checkedAt: number };
 
 interface ProviderConfigFormProps {
   mode: 'configure' | 'custom';
-  providerName: string;
-  description: string;
-  avatar: ReactNode;
+  autoFocus: boolean;
+  draft: ProviderConfigDraft;
+  onDraftChange: (draft: ProviderConfigDraft) => void;
+  initialBaseUrl: string;
+  reservedProviderIds: readonly string[];
+  hasExisting: boolean;
   defaultBaseUrl?: string;
-  baseUrlPlaceholder: string;
-  initial: { providerId: string; baseUrl: string };
+  requiresEndpoint: boolean;
+  allowEndpointOverride: boolean;
+  previousCheck?: ConnectionCheckResult;
   hasCredential: boolean;
   hasStoredKey: boolean;
-  isActive: boolean;
-  /** The shared status, derived by the window so the list and this page agree. */
-  status?: ProviderStatus;
-  /** When the verdict was taken, already localized ("checked 5 minutes ago"). */
-  checkedAt?: string;
-  capabilities?: readonly AgentProviderCapabilitySummary[];
-  /** Managed-credential providers (e.g. AWS Bedrock) show a note instead of a key field. */
-  authNote?: AuthNote;
+  authNote?: { note: string; docsUrl?: string; docsLabel?: string };
   docsUrl?: string;
-  titleId: string;
   onValidate: (draft: ProviderConfigDraft) => Promise<ProviderConfigValidation>;
   onSubmit: (draft: ProviderConfigDraft) => Promise<void>;
-  onLoadStoredApiKey?: () => Promise<string | undefined>;
-  onSetActive?: () => void;
-  onRemoveProvider?: () => void;
-  onOpenExternal: (url: string) => void;
+  onActivityChange: (activity: ProviderFormActivity) => void;
+  onOpenExternal: (url: string) => Promise<unknown>;
   onClose: () => void;
 }
 
-type FormStatus = 'idle' | 'validating' | 'success' | 'error' | 'saving';
-
-// The per-provider connection form. Rendered as the whole content of the native
-// provider-config window (a modal child of Settings — the macOS idiom where a list
-// row opens a real dialog, not an in-renderer overlay). It proves a CONNECTION:
-// credentials, optional base URL, and a Test connection probe. The model/effort
-// that runs is chosen on the Thread Configuration Profile, never here. Custom providers enter a
-// provider id (no catalog to default from). Selection / focus stay neutral (B3/B4);
-// Save is a single neutral-strong primary, never a system-blue accent (B4);
-// validation uses status colour only (B4).
 export function ProviderConfigForm({
-  mode,
-  providerName,
-  description,
-  avatar,
-  defaultBaseUrl,
-  baseUrlPlaceholder,
-  initial,
-  hasCredential,
-  hasStoredKey,
-  isActive,
-  status,
-  checkedAt,
-  capabilities,
-  authNote,
-  docsUrl,
-  titleId,
-  onValidate,
-  onSubmit,
-  onLoadStoredApiKey,
-  onSetActive,
-  onRemoveProvider,
-  onOpenExternal,
-  onClose,
+  mode, autoFocus, draft, onDraftChange, initialBaseUrl, reservedProviderIds, hasExisting, defaultBaseUrl,
+  requiresEndpoint, allowEndpointOverride, previousCheck, hasCredential, hasStoredKey, authNote, docsUrl,
+  onValidate, onSubmit, onActivityChange, onOpenExternal, onClose,
 }: ProviderConfigFormProps) {
   const t = useT();
-  const firstFieldRef = useRef<HTMLInputElement | null>(null);
+  const ids = useId();
+  const firstFieldRef = useRef<HTMLInputElement>(null);
   const validationToken = useRef(0);
-  const isCustom = mode === 'custom';
-
-  const [providerId, setProviderId] = useState(initial.providerId);
-  const [baseUrl, setBaseUrl] = useState(initial.baseUrl);
-  const [apiKey, setApiKey] = useState('');
-  const [storedApiKey, setStoredApiKey] = useState<string | null>(null);
-  const [reveal, setReveal] = useState(false);
-  const [formStatus, setFormStatus] = useState<FormStatus>('idle');
+  const savingRef = useRef(false);
+  const [activity, setActivity] = useState<ProviderFormActivity>('idle');
+  const [result, setResult] = useState<ConnectionCheckResult | null>(null);
+  const [saveError, setSaveError] = useState('');
+  const [docsError, setDocsError] = useState('');
   const [keyLoading, setKeyLoading] = useState(false);
-  const [message, setMessage] = useState('');
+  const [advanced, setAdvanced] = useState(Boolean(draft.baseUrl && draft.baseUrl !== defaultBaseUrl));
+  const saving = activity === 'saving';
+  const testing = activity === 'testing';
+  const isCustom = mode === 'custom';
+  const endpoint = draft.baseUrl.trim();
+  const duplicateId = isCustom && reservedProviderIds.includes(draft.providerId.trim());
+  const hasEndpoint = !requiresEndpoint || Boolean(endpoint);
+  let validEndpoint = !endpoint;
+  try { validEndpoint = ['http:', 'https:'].includes(new URL(endpoint).protocol); } catch { /* Incomplete input stays editable. */ }
+  const hasConnection = Boolean(authNote || draft.apiKey.trim() || hasCredential || isLocalBaseUrl(endpoint));
+  const complete = Boolean(draft.providerId.trim()) && !duplicateId && hasEndpoint && validEndpoint && hasConnection;
+  const dirty = !hasExisting || Boolean(draft.apiKey.trim()) || endpoint !== initialBaseUrl.trim();
+  const canSave = complete && dirty && !saving && !keyLoading;
+  const displayedResult = result ?? (!dirty && activity === 'idle' ? previousCheck : null);
+  const testLabel = testing ? t.providerConfig.validating : displayedResult
+    ? displayedResult.success ? t.providerConfig.connectionSuccessful : t.providerConfig.retryConnection
+    : t.providerConfig.validate;
+  const testHint = displayedResult ? t.providerConfig.testAgainHint({
+    when: new Date(displayedResult.checkedAt).toLocaleString(),
+  }) : undefined;
 
-  // The window owns focus, so autofocus the first field on mount (the Dialog used
-  // to do this for the old in-renderer sheet).
   useEffect(() => {
-    firstFieldRef.current?.focus();
-  }, []);
+    if (autoFocus) firstFieldRef.current?.focus();
+    return () => { validationToken.current += 1; };
+  }, [autoFocus]);
 
-  const validating = formStatus === 'validating';
-  const saving = formStatus === 'saving';
-  const busy = validating || saving || keyLoading;
-  const statusSentence = status ? providerStatusSentence(status, t) : '';
-  const statusAriaLabel = t.providerConfig.statusAriaLabel;
-
-  const trimmedProviderId = providerId.trim();
-  const showKeyField = !authNote;
-  const draft: ProviderConfigDraft = {
-    providerId: isCustom ? trimmedProviderId : initial.providerId,
-    baseUrl: baseUrl.trim(),
-    apiKey: apiKey.trim(),
-  };
-  // A managed provider (authNote) persists a row with nothing to fill in; an
-  // api-key / custom provider needs credentials unless the base URL is a local
-  // endpoint. A keyless remote proxy has no way to authenticate, so we block
-  // saving one rather than persist an unusable connection (startup reconcile
-  // keeps any baseUrl row it finds — it does not prune keyless-remote).
-  const hasConnection = Boolean(draft.apiKey) || hasCredential || isLocalBaseUrl(draft.baseUrl);
-  const canSave = Boolean(draft.providerId)
-    && (authNote ? true : hasConnection)
-    && !busy;
-  const canValidate = Boolean(draft.providerId) && !busy;
-  const showingStoredKey = reveal && !apiKey && storedApiKey !== null;
-  const apiKeyDisplayValue = apiKey || (showingStoredKey ? storedApiKey : '');
-
-  function clearResult() {
+  function updateActivity(next: ProviderFormActivity) {
+    setActivity(next);
+    onActivityChange(next);
+  }
+  function updateDraft(patch: Partial<ProviderConfigDraft>) {
     validationToken.current += 1;
-    if (formStatus !== 'idle' && formStatus !== 'saving') {
-      setFormStatus('idle');
-      setMessage('');
-    }
+    if (testing) updateActivity('idle');
+    setResult(null);
+    setSaveError('');
+    onDraftChange({ ...draft, ...patch });
   }
-
-  async function loadStoredApiKey(): Promise<string | null> {
-    if (storedApiKey !== null) return storedApiKey;
-    if (!hasStoredKey || !onLoadStoredApiKey) return null;
-    setKeyLoading(true);
-    try {
-      const key = await onLoadStoredApiKey();
-      if (!key) throw new Error(t.providerConfig.savedKeyUnavailable);
-      setStoredApiKey(key);
-      return key;
-    } catch (caught) {
-      setFormStatus('error');
-      setMessage(caught instanceof Error ? caught.message : String(caught));
-      return null;
-    } finally {
-      setKeyLoading(false);
-    }
+  async function openDocs(url: string) {
+    setDocsError('');
+    try { await onOpenExternal(url); }
+    catch (caught) { setDocsError(String(caught instanceof Error ? caught.message : caught)); }
   }
-
-  async function toggleReveal() {
-    if (!reveal && hasStoredKey && !apiKey) {
-      const key = await loadStoredApiKey();
-      if (!key) return;
-    }
-    setReveal((current) => !current);
-  }
-
-  async function copyApiKey() {
-    const key = apiKey.trim() || (await loadStoredApiKey());
-    if (!key) return;
-    try {
-      await navigator.clipboard.writeText(key);
-      setFormStatus('success');
-      setMessage(t.providerConfig.keyCopied);
-    } catch (caught) {
-      setFormStatus('error');
-      setMessage(caught instanceof Error ? caught.message : String(caught));
-    }
-  }
-
-  async function runValidate() {
-    if (!canValidate) return;
+  async function testConnection() {
+    if (!complete || saving || testing) return;
     const token = ++validationToken.current;
-    setFormStatus('validating');
-    setMessage('');
+    updateActivity('testing');
+    setResult(null);
     try {
-      const result = await onValidate(draft);
-      if (validationToken.current !== token) return; // cancelled or superseded
-      setFormStatus(result.success ? 'success' : 'error');
-      setMessage(result.message);
+      const next = await onValidate(draft);
+      if (token === validationToken.current) setResult({ ...next, checkedAt: Date.now() });
     } catch (caught) {
-      if (validationToken.current !== token) return;
-      setFormStatus('error');
-      setMessage(caught instanceof Error ? caught.message : String(caught));
+      if (token === validationToken.current) setResult({ success: false,
+        message: String(caught instanceof Error ? caught.message : caught), checkedAt: Date.now() });
+    } finally {
+      if (token === validationToken.current) updateActivity('idle');
     }
   }
-
-  function cancelValidate() {
+  async function save() {
+    if (!canSave || savingRef.current) return;
+    savingRef.current = true;
     validationToken.current += 1;
-    setFormStatus('idle');
-    setMessage('');
-  }
-
-  async function runSave() {
-    if (!canSave) return;
-    validationToken.current += 1;
-    setFormStatus('saving');
-    setMessage('');
+    updateActivity('saving');
+    setResult(null);
+    setSaveError('');
     try {
       await onSubmit(draft);
       onClose();
     } catch (caught) {
-      setFormStatus('error');
-      setMessage(caught instanceof Error ? caught.message : String(caught));
+      setSaveError(String(caught instanceof Error ? caught.message : caught));
+    } finally {
+      savingRef.current = false;
+      updateActivity('idle');
     }
   }
 
-  return (
-    <>
-      <header className="settings-sheet-head">
-        <span aria-hidden="true" className="settings-sheet-avatar">{avatar}</span>
-        <div className="settings-sheet-head-text">
-          <h2 className="settings-sheet-title" id={titleId}>
-            {providerName}
-            {isActive ? <span className="settings-chip">{t.providerConfig.activeChip}</span> : null}
-          </h2>
-          <p className="settings-sheet-subtitle">{description}</p>
-        </div>
-      </header>
+  const endpointField = (
+    <div className="settings-sheet-field">
+      <label htmlFor={`${ids}-url`}>{t.providerConfig.baseUrlLabel}</label>
+      <Input id={`${ids}-url`} label={t.providerConfig.baseUrlLabel} type="url"
+        ref={authNote || requiresEndpoint && !isCustom ? firstFieldRef : undefined}
+        value={draft.baseUrl} placeholder={defaultBaseUrl ?? 'https://api.example.com/v1'}
+        disabled={saving} spellCheck={false} autoCapitalize="none" autoComplete="off"
+        aria-describedby={`${ids}-url-hint`} aria-invalid={Boolean(endpoint && !validEndpoint)}
+        onChange={(event) => updateDraft({ baseUrl: event.target.value })} />
+      <p className="settings-sheet-help" id={`${ids}-url-hint`}>
+        {endpoint && !validEndpoint ? t.providerConfig.invalidUrl
+          : requiresEndpoint ? t.providerConfig.endpointRequired : t.providerConfig.endpointOptional}
+      </p>
+    </div>
+  );
 
+  return (
+    <form className="settings-sheet-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <div className="settings-sheet-body">
-        {status ? (
-          <section className="inset-card settings-sheet-status" aria-label={statusAriaLabel}>
-            <div className="settings-sheet-status-row">
-              <span className="settings-sheet-status-state">{statusSentence}</span>
-              {checkedAt ? <span className="settings-sheet-status-when">{checkedAt}</span> : null}
-            </div>
-            <div className="settings-sheet-status-actions">
-              {onSetActive && !isActive ? (
-                <Button disabled={busy} onClick={onSetActive} size="sm" variant="secondary">
-                  {t.providerConfig.setActive}
-                </Button>
-              ) : null}
-              {onRemoveProvider ? (
-                <Button disabled={busy} onClick={onRemoveProvider} size="sm" variant="danger">
-                  {t.providerConfig.removeProvider}
-                </Button>
-              ) : null}
-            </div>
-          </section>
+        {isCustom ? (
+          <div className="settings-sheet-field">
+            <label htmlFor={`${ids}-id`}>{t.providerConfig.providerIdLabel}</label>
+            <Input id={`${ids}-id`} ref={firstFieldRef} label={t.providerConfig.providerIdLabel}
+              value={draft.providerId} disabled={saving} autoComplete="off" spellCheck={false}
+              aria-invalid={duplicateId} aria-describedby={`${ids}-id-hint`}
+              placeholder={t.providerConfig.providerIdPlaceholder}
+              onChange={(event) => updateDraft({ providerId: event.target.value })} />
+            <p id={`${ids}-id-hint`} className="settings-sheet-help">{duplicateId ? t.providerConfig.duplicateId : t.providerConfig.providerIdHint}</p>
+          </div>
         ) : null}
+        {requiresEndpoint ? endpointField : null}
         {authNote ? (
           <div className="settings-sheet-note">
             <p>{authNote.note}</p>
             {authNote.docsUrl ? (
-              <ButtonControl
-                className="agent-settings-doc-link"
-                onClick={() => onOpenExternal(authNote.docsUrl as string)}
-              >
-                <span>{authNote.docsLabel ?? t.providerConfig.learnMore}</span>
-                <OpenInBrowserIcon size={ICON_SIZE.tiny} />
+              <ButtonControl className="agent-settings-doc-link" onClick={() => void openDocs(authNote.docsUrl!)}>
+                {authNote.docsLabel ?? t.providerConfig.learnMore}<OpenInBrowserIcon size={ICON_SIZE.tiny} />
               </ButtonControl>
             ) : null}
+            {docsError ? <ErrorState message={docsError} size="inline" /> : null}
           </div>
+        ) : (
+          <ProviderApiKeyField providerId={draft.providerId} value={draft.apiKey}
+            hasStoredKey={hasStoredKey} hasCredential={hasCredential} local={isLocalBaseUrl(endpoint)}
+            disabled={saving} inputRef={!isCustom && !requiresEndpoint ? firstFieldRef : undefined}
+            docsUrl={docsUrl} onChange={(apiKey) => updateDraft({ apiKey })}
+            onBusyChange={setKeyLoading} onOpenExternal={onOpenExternal} />
+        )}
+        {allowEndpointOverride && !requiresEndpoint ? (
+          <details className="settings-sheet-advanced" open={advanced} onToggle={(event) => setAdvanced(event.currentTarget.open)}>
+            <summary>{t.providerConfig.advanced}</summary>
+            {endpointField}
+          </details>
         ) : null}
-        <div className="inset-card" role="group">
-          {isCustom ? (
-            <label className="settings-sheet-row">
-              <span className="settings-sheet-row-label">{t.providerConfig.providerIdLabel}</span>
-              <Input
-                className="settings-sheet-row-input"
-                label={t.providerConfig.providerIdLabel}
-                onChange={(event) => { setProviderId(event.target.value.trim()); clearResult(); }}
-                placeholder={t.providerConfig.providerIdPlaceholder}
-                ref={firstFieldRef}
-                value={providerId}
-                variant="bare"
-              />
-            </label>
-          ) : null}
-          {showKeyField ? (
-            <div className="settings-sheet-row">
-              <div className="settings-sheet-key">
-                <PasswordIcon size={ICON_SIZE.menu} />
-                <Input
-                  className="settings-sheet-row-input"
-                  label={t.providerConfig.apiKeyLabel}
-                  onChange={(event) => { setApiKey(event.target.value); clearResult(); }}
-                  placeholder={hasStoredKey ? t.providerConfig.apiKeySavedPlaceholder : t.providerConfig.apiKeyPlaceholder}
-                  readOnly={showingStoredKey}
-                  ref={isCustom ? undefined : firstFieldRef}
-                  type={reveal ? 'text' : 'password'}
-                  value={apiKeyDisplayValue}
-                  variant="bare"
-                />
-                {apiKey || hasStoredKey ? (
-                  <ButtonControl
-                    aria-label={t.providerConfig.copyKey}
-                    className="settings-sheet-reveal"
-                    disabled={busy}
-                    onClick={() => void copyApiKey()}
-                  >
-                    {keyLoading ? <LoaderIcon size={ICON_SIZE.menu} /> : <CopyIcon size={ICON_SIZE.menu} />}
-                  </ButtonControl>
-                ) : null}
-                <ButtonControl
-                  aria-label={reveal ? t.providerConfig.hideKey : t.providerConfig.showKey}
-                  aria-pressed={reveal}
-                  className="settings-sheet-reveal"
-                  disabled={busy}
-                  onClick={() => void toggleReveal()}
-                >
-                  {reveal ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
-                </ButtonControl>
-              </div>
-            </div>
-          ) : null}
-          <label className="settings-sheet-row">
-            <span className="settings-sheet-row-label">{t.providerConfig.baseUrlLabel}</span>
-            <Input
-              className="settings-sheet-row-input"
-              label={t.providerConfig.baseUrlLabel}
-              onChange={(event) => { setBaseUrl(event.target.value); clearResult(); }}
-              placeholder={defaultBaseUrl || baseUrlPlaceholder}
-              value={baseUrl}
-              variant="bare"
-            />
-          </label>
-        </div>
-        {!authNote && !hasCredential && docsUrl ? (
-          <ButtonControl className="agent-settings-doc-link settings-sheet-getkey" onClick={() => onOpenExternal(docsUrl)}>
-            <span>{t.providerConfig.getApiKey}</span>
-            <OpenInBrowserIcon size={ICON_SIZE.tiny} />
-          </ButtonControl>
-        ) : null}
-
-        {capabilities?.length ? (
-          <section className="inset-card settings-sheet-capabilities" aria-label={t.providerConfig.capabilitiesTitle}>
-            <h3 className="settings-sheet-section-title">{t.providerConfig.capabilitiesTitle}</h3>
-            {capabilities.map((capability) => (
-              <div className="settings-sheet-capability" key={capability.kind}>
-                <span className="settings-sheet-capability-kind">{capabilityLabel(capability.kind, t)}</span>
-                <span className="settings-sheet-capability-models">{capabilityModels(capability, t)}</span>
-              </div>
-            ))}
-          </section>
-        ) : null}
-
-        {validating ? (
-          <div className="settings-sheet-result" role="status">
-            <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} />
-            <span className="settings-sheet-result-text">{t.providerConfig.validating}</span>
-            <Button onClick={cancelValidate} size="sm" variant="ghost">{t.providerConfig.cancel}</Button>
-          </div>
-        ) : formStatus === 'success' ? (
-          <div className="settings-sheet-result is-success" role="status">
-            <span className="settings-sheet-result-text">
-              <CheckIcon size={ICON_SIZE.menu} aria-hidden />
-              <span>{message || t.providerConfig.connectionSuccessful}</span>
-            </span>
-          </div>
-        ) : formStatus !== 'idle' && formStatus !== 'saving' ? (
-          <ErrorState
-            className="settings-sheet-result"
-            message={message || t.providerConfig.validationFailed}
-            size="inline"
-          />
-        ) : null}
+        <section className="settings-sheet-test" aria-label={t.providerConfig.validate}>
+          <Button onClick={() => void testConnection()} title={testHint}
+            aria-describedby={displayedResult && !displayedResult.success ? `${ids}-connection-error` : undefined}
+            disabled={!complete || saving || testing || keyLoading}>
+            {testing ? <LoaderIcon className="settings-sheet-spinner" size={ICON_SIZE.menu} aria-hidden />
+              : displayedResult ? displayedResult.success
+                ? <CheckIcon className="settings-sheet-test-success" size={ICON_SIZE.menu} aria-hidden />
+                : <WarningIcon className="settings-sheet-test-failure" size={ICON_SIZE.menu} aria-hidden /> : null}
+            <span aria-live="polite">{testLabel}</span>
+          </Button>
+          {displayedResult && !displayedResult.success
+            ? <p className="settings-sheet-test-result settings-sheet-test-failure" id={`${ids}-connection-error`} role="alert">
+              {displayedResult.message}
+            </p> : null}
+        </section>
       </div>
-
-      {/* Only the connection draft. Set active and Remove apply instantly and
-          close the window, so sharing a button row with Save meant pressing one
-          of them silently discarded a key the user had just typed — they live in
-          the status group now, where an instant action belongs. */}
       <div className="settings-sheet-actions">
-        <div className="settings-sheet-actions-left" />
+        {saveError ? <ErrorState className="settings-sheet-save-error" message={saveError} size="inline" /> : null}
         <div className="settings-sheet-actions-right">
-          <Button disabled={saving} onClick={onClose} variant="ghost">
-            {t.providerConfig.cancel}
-          </Button>
-          <Button disabled={!canValidate} onClick={runValidate} variant="secondary">
-            {validating ? t.providerConfig.validating : t.providerConfig.validate}
-          </Button>
-          <Button disabled={!canSave} onClick={runSave} variant="primary">
-            {saving ? t.providerConfig.saving : t.providerConfig.save}
-          </Button>
+          <Button disabled={saving} onClick={onClose} variant="ghost">{t.providerConfig.cancel}</Button>
+          <Button type="submit" disabled={!canSave} variant="primary">{saving ? t.providerConfig.saving : t.providerConfig.save}</Button>
         </div>
       </div>
-    </>
+    </form>
   );
-}
-
-function capabilityLabel(kind: AgentProviderCapabilityKind, t: Messages): string {
-  if (kind === 'image_generation') return t.providerConfig.capabilityImageGeneration;
-  return t.providerConfig.capabilityLanguage;
-}
-
-function capabilityModels(capability: AgentProviderCapabilitySummary, t: Messages): string {
-  const names = capability.models.slice(0, 3).map((model) => model.name);
-  return t.providerConfig.capabilityIncludesModels({
-    models: names.join(', '),
-    more: capability.models.length > names.length,
-  });
 }

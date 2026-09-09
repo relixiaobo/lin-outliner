@@ -58,6 +58,15 @@ const chromeIconControlSelectors = [
   '.settings-row-menu-trigger',
 ];
 const focusVisibleRingSuppressionExceptions = new Map([
+  // The complete search capsule owns the visible keyboard ring, including its icon.
+  [
+    'src/renderer/styles/configuration.css|:root[data-input-modality="keyboard"] .configuration-search input:focus-visible',
+    'Sidebar search transfers its keyboard ring to .configuration-search:has(input:focus-visible).',
+  ],
+  [
+    'src/renderer/styles/settings-shortcuts.css|:root[data-input-modality="keyboard"] .settings-shortcuts-search input:focus-visible',
+    'Toolbar search transfers its keyboard ring to .settings-shortcuts-search:has(input:focus-visible).',
+  ],
   [
     'src/renderer/styles/automation.css|.automation-settings-group .time-picker-control:focus-within, :root[data-input-modality="keyboard"] .automation-settings-group .select-popup-input:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-date-trigger:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-multi-select-trigger:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-number-setting input:focus-visible, :root[data-input-modality="keyboard"] .automation-settings-group .automation-number-input:focus-visible',
     'Automation settings controls transfer the keyboard ring to the setting row (.automation-setting-row:focus-within).',
@@ -87,7 +96,7 @@ const focusVisibleRingSuppressionExceptions = new Map([
     'Outliner description editing uses the caret and local description surface.',
   ],
   [
-    'src/renderer/styles/settings-provider-sheet.css|.inset-card .settings-sheet-row-input:focus-visible',
+    'src/renderer/styles/settings-agent-editor.css|.inset-card .settings-sheet-row-input:focus-visible',
     'Clipped inset-card inputs transfer the keyboard ring to the row.',
   ],
 ]);
@@ -1053,8 +1062,8 @@ test.describe('cursor affordances', () => {
     await installElectronMock(page);
     // The provider rows this checks live on the Model services page now, not on
     // whatever Settings happens to open with.
-    await page.goto('/?surface=settings&category=agent/services');
-    const settings = page.locator('.settings-window');
+    await page.goto('/?surface=settings&destination=models');
+    const settings = page.locator('.configuration-window');
     await expect(settings.locator('.inset-row-main').first()).toBeVisible();
 
     const listCursors = await page.evaluate(() => {
@@ -1066,13 +1075,11 @@ test.describe('cursor affordances', () => {
       return {
         insetRow: cursor('.inset-row-main'),
         rowMenuTrigger: cursor('.settings-row-menu-trigger'),
-        historyArrow: cursor('.settings-history-nav .rail-toggle'),
         configure: cursor('.settings-provider-configure'),
       };
     });
     expect(listCursors.insetRow).toBe('default');
     expect(listCursors.rowMenuTrigger).toBe('default');
-    expect(listCursors.historyArrow).toBe('default');
     expect(listCursors.configure).toBe('default');
 
     // The per-provider config is its own native window (?surface=provider-config);

@@ -1,127 +1,65 @@
-// Settings live in their own OS window (a native "Preferences" surface) rather
-// than an in-app modal. The settings window reuses the single renderer bundle and
-// is told which surface to render through a URL query param, so no extra build
-// entry is needed. These constants are shared by the main process (which opens
-// the window and broadcasts changes) and the renderer (which routes on the
-// surface and listens for change broadcasts).
-
+/** Settings destinations share one native window; About retains its standard App-menu window. */
+export const CONFIGURATION_DESTINATIONS = [
+  'settings', 'models', 'agents', 'skills', 'memory', 'access', 'data', 'shortcuts', 'about', 'diagnostics',
+] as const;
+export type ConfigurationDestination = typeof CONFIGURATION_DESTINATIONS[number];
+export const SETTINGS_PANES = CONFIGURATION_DESTINATIONS.filter((destination) => destination !== 'about');
+export type SettingsPane = Exclude<ConfigurationDestination, 'about'>;
+export type ConfigurationWindowSurface = 'settings' | 'about';
+export type ConfigurationDomain = 'preferences' | 'models' | 'agents' | 'skills' | 'access';
+export const CONFIGURATION_CHANGED_CHANNEL = 'lin:configuration-changed';
 export const WINDOW_SURFACE_QUERY_PARAM = 'surface';
-export type WindowSurface = 'main' | 'settings' | 'provider-config' | 'skill-review';
-
-/**
- * The three rail categories, cut along what a user is trying to affect rather
- * than which subsystem implements it.
- */
-export type SettingsCategoryTarget = 'general' | 'agent' | 'preview';
-
-/**
- * Second-level pages. A collection the user installs or connects — unbounded and
- * carrying its own lifecycle — gets a page; a bounded set of settings stays
- * inline on its category. About is a page for the same reason: it is content, not
- * controls.
- */
-export type SettingsPageTarget = 'services' | 'skills' | 'agents' | 'shortcuts' | 'about';
+export type WindowSurface = 'main' | 'settings' | 'about' | 'provider-config' | 'skill-review';
+export const CONFIGURATION_DESTINATION_PARAM = 'destination';
+export const SETTINGS_SETTING_PARAM = 'setting';
+export const LIN_SETTINGS_NAVIGATE_CHANNEL = 'lin:settings-navigate';
 
 export interface SettingsOpenTarget {
-  category?: SettingsCategoryTarget;
-  page?: SettingsPageTarget;
-  /**
-   * A group to scroll to and briefly highlight. Landing at the top of a long
-   * category is a downgrade for a contextual "open settings" affordance, which is
-   * what a deep link owes the user in place of the aliases this replaced.
-   */
-  anchor?: string;
+  destination?: ConfigurationDestination;
+  settingId?: string;
 }
 
-export const SETTINGS_CATEGORY_PARAM = 'category';
-export const SETTINGS_ANCHOR_PARAM = 'anchor';
-export const LIN_SETTINGS_NAVIGATE_CHANNEL = 'lin:settings-navigate';
-const SETTINGS_ANCHOR_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export function isConfigurationDestination(value: unknown): value is ConfigurationDestination {
+  return typeof value === 'string' && (CONFIGURATION_DESTINATIONS as readonly string[]).includes(value);
+}
 
-/** Which category owns each page, so a page target routes without being told twice. */
-const PAGE_CATEGORY: Record<SettingsPageTarget, SettingsCategoryTarget> = {
-  services: 'agent',
-  skills: 'agent',
-  agents: 'agent',
-  shortcuts: 'general',
-  about: 'general',
-};
+export function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
+  if (!raw || typeof raw !== 'object') return {};
+  const input = raw as Record<string, unknown>;
+  return {
+    ...(isConfigurationDestination(input.destination) ? { destination: input.destination } : {}),
+    ...(typeof input.settingId === 'string' && /^[a-zA-Z][\w.-]{0,127}$/.test(input.settingId)
+      ? { settingId: input.settingId } : {}),
+  };
+}
 
 export function windowSurfaceFromSearch(search: string): WindowSurface {
   const surface = new URLSearchParams(search).get(WINDOW_SURFACE_QUERY_PARAM);
-  if (surface === 'settings') return 'settings';
-  if (surface === 'provider-config') return 'provider-config';
-  if (surface === 'skill-review') return 'skill-review';
-  return 'main';
+  return surface === 'settings' || surface === 'about' || surface === 'provider-config' || surface === 'skill-review'
+    ? surface : 'main';
 }
 
-export function isSettingsCategoryTarget(value: unknown): value is SettingsCategoryTarget {
-  return value === 'general' || value === 'agent' || value === 'preview';
-}
-
-export function isSettingsPageTarget(value: unknown): value is SettingsPageTarget {
-  return value === 'services' || value === 'skills' || value === 'agents' || value === 'shortcuts' || value === 'about';
-}
-
-export function isSettingsAnchorTarget(value: unknown): value is string {
-  return typeof value === 'string' && SETTINGS_ANCHOR_PATTERN.test(value);
-}
-
-export function settingsPageCategory(page: SettingsPageTarget): SettingsCategoryTarget {
-  return PAGE_CATEGORY[page];
-}
-
-/**
- * Parse `category=agent`, or a page in path form: `category=agent/skills`.
- *
- * The retired ids (`providers`, `security`, `skills` as a category) are not
- * aliased. Only one in-app caller ever passed a category and there are no
- * persisted or external deep links, so an alias would be permanent weight for a
- * migration nobody needs — the same call `permissions` got when it was replaced
- * rather than aliased.
- */
 export function settingsOpenTargetFromSearch(search: string): SettingsOpenTarget {
   const params = new URLSearchParams(search);
-  const raw = params.get(SETTINGS_CATEGORY_PARAM) ?? '';
-  const anchor = params.get(SETTINGS_ANCHOR_PARAM);
-  const [head, tail] = raw.split('/');
-  const target: SettingsOpenTarget = {};
-
-  if (tail !== undefined) {
-    // A pair that disagrees with itself — `general/skills` — is a malformed link,
-    // not a hint. Honouring the category half would land the user on a pane they
-    // did not ask for and looks like it worked; routing nowhere leaves them on the
-    // default pane and is at least legible as "that link is wrong".
-    if (isSettingsPageTarget(tail) && settingsPageCategory(tail) === head) {
-      target.category = head as SettingsCategoryTarget;
-      target.page = tail;
-    }
-  } else if (isSettingsCategoryTarget(head)) {
-    target.category = head;
-  }
-  if ((target.category || target.page) && isSettingsAnchorTarget(anchor)) target.anchor = anchor;
-  return target;
+  return sanitizeSettingsOpenTarget({
+    destination: params.get(CONFIGURATION_DESTINATION_PARAM), settingId: params.get(SETTINGS_SETTING_PARAM),
+  });
 }
 
-/** The inverse, for building a link: `agent` or `agent/skills`. */
-export function settingsTargetPath(target: SettingsOpenTarget): string {
-  if (target.page) return `${settingsPageCategory(target.page)}/${target.page}`;
-  return target.category ?? '';
+export function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, string> {
+  const destination = target.destination ?? 'settings';
+  return {
+    [WINDOW_SURFACE_QUERY_PARAM]: destination === 'about' ? 'about' : 'settings',
+    [CONFIGURATION_DESTINATION_PARAM]: destination,
+    ...(target.settingId ? { [SETTINGS_SETTING_PARAM]: target.settingId } : {}),
+  };
 }
 
-// The per-provider config opens as its OWN native window (a modal child of the
-// settings window, the System Settings idiom — not an in-renderer overlay). Which
-// provider / mode it edits rides the URL query, like the surface itself, so no
-// extra IPC channel is needed to hand it its context.
+/** Credential editing is a modal child of Settings, with its own admission. */
 export const PROVIDER_CONFIG_PROVIDER_PARAM = 'provider';
 export const PROVIDER_CONFIG_MODE_PARAM = 'mode';
 export type ProviderConfigMode = 'configure' | 'custom';
-
-export interface ProviderConfigParams {
-  providerId: string;
-  mode: ProviderConfigMode;
-}
-
+export interface ProviderConfigParams { providerId: string; mode: ProviderConfigMode }
 export function providerConfigParamsFromSearch(search: string): ProviderConfigParams {
   const params = new URLSearchParams(search);
   return {
@@ -129,8 +67,3 @@ export function providerConfigParamsFromSearch(search: string): ProviderConfigPa
     mode: params.get(PROVIDER_CONFIG_MODE_PARAM) === 'custom' ? 'custom' : 'configure',
   };
 }
-
-// Broadcast from the main process to the main window after the settings window
-// mutates provider settings, so the main window re-fetches instead of
-// showing stale provider state.
-export const LIN_SETTINGS_CHANGED_CHANNEL = 'lin:settings-changed';

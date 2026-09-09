@@ -122,10 +122,10 @@ async function openPreview(page: Page, url: string) {
 
 async function openPreviewDataSettings(smoke: SmokeApp): Promise<Page> {
   await smoke.window.evaluate(async () => {
-    await window.lin!.openSettings({ category: 'preview' });
+    await window.lin!.openSettings({ destination: 'data' });
   });
-  await expect.poll(() => smoke.app.windows().filter((page) => surfaceFor(page) === 'settings').length).toBe(1);
-  const settings = smoke.app.windows().find((page) => surfaceFor(page) === 'settings');
+  await expect.poll(() => smoke.app.windows().filter((page) => surfaceFor(page) === 'settings' && page.url().includes('destination=data')).length).toBe(1);
+  const settings = smoke.app.windows().find((page) => surfaceFor(page) === 'settings' && page.url().includes('destination=data'));
   if (!settings) throw new Error('Missing Settings window');
   await settings.locator('#root').waitFor();
   return settings;

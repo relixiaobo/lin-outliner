@@ -15,8 +15,8 @@ async function openShortcuts(smoke: SmokeApp): Promise<Page> {
     if (!item) throw new Error('Keyboard Shortcuts menu item is missing');
     item.click();
   });
-  await expect.poll(() => smoke.app.windows().some((page) => page.url().includes('surface=settings'))).toBe(true);
-  const page = smoke.app.windows().find((page) => page.url().includes('surface=settings'))!;
+  await expect.poll(() => smoke.app.windows().some((page) => page.url().includes('destination=shortcuts'))).toBe(true);
+  const page = smoke.app.windows().find((page) => page.url().includes('destination=shortcuts'))!;
   await expect(page.getByRole('heading', { name: 'Keyboard Shortcuts' })).toBeVisible();
   await expect(page.getByRole('list', { name: 'Application', exact: true })).toBeVisible();
   return page;
@@ -39,16 +39,19 @@ test('native shortcut editor and external edits converge through the live Host',
   try {
     const page = await openShortcuts(smoke);
     const sourcePath = join(userDataDir, 'config/keybindings.jsonc');
-    const row = page.locator('.inset-row').filter({ hasText: 'global.open_page_in_pane' });
-    await row.getByRole('button', { name: 'Change CommandOrControl+M', exact: true }).click();
+    const row = page.locator('[data-shortcut-id="global.open_page_in_pane"]');
+    await row.getByRole('button', { name: 'Change CommandOrControl+M', exact: true }).dblclick();
     await page.keyboard.press('Control+Alt+J');
     await expect(row.getByRole('button', { name: 'Change Control+Alt+J', exact: true })).toBeVisible();
     expect(readFileSync(sourcePath, 'utf8')).toContain('// Preserve this comment.');
     expect(readFileSync(sourcePath, 'utf8')).toContain('Control+Alt+J');
 
-    await row.getByRole('switch', { name: 'Enable Open page in new pane' }).click();
+    await row.getByRole('button', { name: 'Change Control+Alt+J', exact: true }).dblclick();
+    await page.keyboard.press('Backspace');
+    await expect(row.getByRole('button', { name: 'Set shortcut for Open page in new pane', exact: true })).toHaveText('None');
     await expect.poll(async () => (await view(page)).entries.find((entry) => entry.id === 'global.open_page_in_pane')?.effective).toEqual([]);
-    await row.getByRole('button', { name: 'Reset Open page in new pane', exact: true }).click();
+    await row.getByRole('button', { name: 'Set shortcut for Open page in new pane', exact: true }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Reset Open page in new pane', exact: true }).click();
     await expect(row.getByRole('button', { name: 'Change CommandOrControl+M', exact: true })).toBeVisible();
     expect(readFileSync(sourcePath, 'utf8')).not.toContain('global.open_page_in_pane');
 
@@ -74,7 +77,7 @@ test('native shortcut editor and external edits converge through the live Host',
     expect((await view(page)).source.acceptedDigest).toBe(accepted.source.acceptedDigest);
     expect((await view(page)).entries.find((entry) => entry.id === 'global.open_page_in_pane')?.effective).toEqual(['Control+Alt+J']);
     expect(readFileSync(sourcePath, 'utf8')).toBe(invalid);
-    await expect(row.getByRole('switch')).toBeDisabled();
+    await expect(row.getByRole('button', { name: 'Change Control+Alt+J', exact: true })).toBeDisabled();
 
     writeFileSync(sourcePath, '{ "global.launcher": false }');
     await expect(row.getByRole('button', { name: 'Change CommandOrControl+M', exact: true })).toBeEnabled();

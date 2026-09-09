@@ -1,3 +1,4 @@
+import { SettingsFeedback, type SettingsFeedbackState } from '../configuration/SettingsFeedback';
 import { memo, useMemo, useRef, useState } from 'react';
 import type { AgentProviderOption, AgentProviderSettingsView } from '../../api/types';
 import { api } from '../../api/client';
@@ -19,21 +20,20 @@ import {
 } from './settingsProviderModel';
 import { providerStatusSentence, resolveProviderStatus } from './providerStatus';
 
-// A single provider row in the inset grouped list. Configured rows expose an
-// enable switch plus details/removal actions. Unconfigured catalog rows usually
-// open the config sheet, except detected external providers such as CC Switch:
-// those are already configured by their own app, so the row is a direct enable
-// switch that materializes Tenon's connection.
+// Provider availability is an immediate on/off state. The trailing switch is
+// separate from the row's Configure action, including externally detected providers.
 const SettingsProviderRow = memo(function SettingsProviderRow({
   provider,
   menuOpen,
   handlers,
   toggleError,
+  feedback,
 }: {
   provider: ProviderChoice;
   menuOpen: boolean;
   handlers: ProviderRowHandlers;
   toggleError?: string;
+  feedback?: SettingsFeedbackState;
 }) {
   const t = useT();
   const name = formatProviderName(provider.providerId);
@@ -45,54 +45,22 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
   if (provider.canRefreshModels) {
     actions.push({ label: t.settings.providers.refreshModels, onSelect: () => handlers.onRefreshModels(provider.providerId) });
   }
-  if (!quickEnable) {
-    actions.push({ label: t.settings.providers.configureAction, onSelect: () => handlers.onConfigure(provider.providerId) });
-  }
   if (provider.configured) {
     actions.push({ label: t.settings.providers.removeProvider, danger: true, onSelect: () => handlers.onRemove(provider.providerId) });
   }
-  const trailing = provider.configured ? (
-    <div className="settings-provider-row-actions">
-      <SwitchControl
-        checked={provider.enabled}
-        label={t.settings.providers.enabledToggleNamed({ name })}
-        onCheckedChange={(enabled) => handlers.onToggleEnabled(provider.providerId, enabled)}
-      >
-        <SwitchMark checked={provider.enabled} />
-      </SwitchControl>
-      <SettingsRowMenu
-        actions={actions}
-        ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
-        onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
-        open={menuOpen}
-      />
-    </div>
-  ) : quickEnable ? (
-    <SwitchControl
-      checked={provider.enabled}
-      label={t.settings.providers.enabledToggleNamed({ name })}
-      onCheckedChange={(enabled) => handlers.onToggleEnabled(provider.providerId, enabled)}
-    >
-      <SwitchMark checked={provider.enabled} />
-    </SwitchControl>
-  ) : actions.length > 1 ? (
-    <SettingsRowMenu
-      actions={actions}
-      ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
-      onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
-      open={menuOpen}
-    />
-  ) : (
-    <Button
-      aria-label={t.settings.providers.configureNamed({ name })}
-      className="settings-provider-configure"
-      onClick={() => handlers.onConfigure(provider.providerId)}
-      size="sm"
-      variant="secondary"
-    >
-      {t.settings.providers.configure}
-    </Button>
-  );
+  const enabledControl = provider.configured || quickEnable ? <SwitchControl
+    checked={provider.enabled}
+    label={t.settings.providers.enabledToggleNamed({ name })}
+    onCheckedChange={(enabled) => handlers.onToggleEnabled(provider.providerId, enabled)}><SwitchMark checked={provider.enabled} /></SwitchControl> : null;
+  const trailing = <>
+    {!quickEnable ? (
+    <Button aria-label={t.settings.providers.configureNamed({ name })} className="settings-provider-configure"
+      onClick={() => handlers.onConfigure(provider.providerId)} size="sm" variant="secondary">{t.settings.providers.configureAction}</Button>
+    ) : null}
+    {actions.length > 0 ? <SettingsRowMenu actions={actions} ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
+      onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)} open={menuOpen} /> : null}
+    {enabledControl}
+  </>;
   const status = resolveProviderStatus(provider);
   const statusSentence = providerStatusSentence(status, t);
   // The row states its status only when the status is worth stating. Labelling
@@ -105,8 +73,7 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
   return (
     <InsetRow
       ariaLabel={t.settings.providers.rowAriaLabel({ name, status: statusSentence })}
-      dimmed={(provider.configured || quickEnable) && !provider.enabled}
-      feedback={toggleError ? <span role="alert">{toggleError}</span> : undefined}
+      feedback={<SettingsFeedback feedback={toggleError ? { error: toggleError } : feedback} />}
       label={name}
       leading={<ProviderAvatar providerId={provider.providerId} />}
       onSelect={quickEnable
@@ -118,18 +85,16 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
   );
 });
 
-interface SettingsProvidersSectionProps {
+interface ModelsListProps {
+  feedback?: Readonly<Record<string, SettingsFeedbackState>>;
   settings: AgentProviderSettingsView | null;
   draftProviderId: string;
   enabledOverrides: ReadonlyMap<string, boolean>;
   toggleErrors: ReadonlyMap<string, string>;
   onToggleProviderEnabled: (providerId: string, baseUrl: string | null) => void;
-  /**
-   * The shared mutation envelope. Provider rows commit through the parent because
-   * a provider mutation writes the settings, drafts, saving flag, and
-   * error/notice surface the whole page shares.
-   */
+  /** Serializes model writes while feedback remains with the affected row. */
   runProviderMutation: (
+    target: string,
     action: () => Promise<AgentProviderSettingsView>,
     successNotice: string,
     resetToInitial?: boolean,
@@ -141,14 +106,15 @@ interface SettingsProvidersSectionProps {
  * plus grouped inset cards). It owns only its own row-menu state; everything it
  * mutates goes through the parent's envelope.
  */
-export function SettingsProvidersSection({
+export function ModelsList({
+  feedback = {},
   settings,
   draftProviderId,
   enabledOverrides,
   toggleErrors,
   onToggleProviderEnabled,
   runProviderMutation,
-}: SettingsProvidersSectionProps) {
+}: ModelsListProps) {
   const t = useT();
   // The per-row ⋯ actions menu (only one open at a time, keyed by providerId). The
   // per-provider config opens in its own native window, not an in-renderer sheet.
@@ -196,15 +162,16 @@ export function SettingsProvidersSection({
   }
 
   function activateProvider(providerId: string) {
-    runProviderMutation(() => api.agentSetActiveProvider(providerId), t.settings.providers.setActiveNotice);
+    runProviderMutation(providerId, () => api.agentSetActiveProvider(providerId), t.settings.providers.setActiveNotice);
   }
 
   function refreshProviderModels(providerId: string) {
-    runProviderMutation(() => api.agentRefreshProviderModels(providerId), t.settings.providers.modelsRefreshedNotice);
+    runProviderMutation(providerId, () => api.agentRefreshProviderModels(providerId), t.settings.providers.modelsRefreshedNotice);
   }
 
   function changeDefaultImageModel(defaultModel: string) {
     runProviderMutation(
+      'default-image',
       () => api.agentUpdateImageGenerationSettings({ defaultModel: defaultModel || null }),
       t.settings.providers.defaultImageModelSavedNotice,
     );
@@ -229,7 +196,7 @@ export function SettingsProvidersSection({
   }
 
   function deleteProviderFor(providerId: string) {
-    runProviderMutation(() => api.agentDeleteProviderConfig(providerId), t.settings.providers.removedNotice, true);
+    runProviderMutation(providerId, () => api.agentDeleteProviderConfig(providerId), t.settings.providers.removedNotice, true);
   }
 
   // Open the per-provider config in its OWN native window (a modal child of
@@ -257,6 +224,7 @@ export function SettingsProvidersSection({
 
   const renderProviderRow = (provider: ProviderChoice) => (
     <SettingsProviderRow
+      feedback={feedback[provider.providerId]}
       handlers={rowHandlers}
       key={provider.providerId}
       menuOpen={openRowMenu === provider.providerId}
@@ -273,8 +241,9 @@ export function SettingsProvidersSection({
           the pane. Custom providers are added from the last row of the
           add-provider list (no separate floating add control). */}
       <div className="settings-provider-groups">
-        <InsetGroup ariaLabel={t.settings.providers.defaultModelLabel} label={t.settings.providers.defaultModelLabel}>
+        <InsetGroup ariaLabel={t.settings.providers.defaultModelsGroup} label={t.settings.providers.defaultModelsGroup}>
           <InsetRow
+            feedback={<SettingsFeedback feedback={feedback['default-text']} />}
             label={t.settings.providers.defaultModelLabel}
             sublabel={languageModelMenu.defaultUnavailable
               ? t.settings.providers.defaultModelUnavailable
@@ -282,7 +251,9 @@ export function SettingsProvidersSection({
             trailing={(
               <SelectControl
                 label={t.settings.providers.defaultModelLabel}
+                disabled={!settings}
                 onChange={(event) => runProviderMutation(
+                  'default-text',
                   () => api.agentUpdateModelDefault(event.target.value || null),
                   t.settings.providers.defaultModelSavedNotice,
                 )}
@@ -304,12 +275,8 @@ export function SettingsProvidersSection({
             )}
             wrap
           />
-        </InsetGroup>
-        <InsetGroup
-          ariaLabel={t.settings.providers.imageGenerationAriaLabel}
-          label={t.settings.providers.imageGenerationGroup}
-        >
           <InsetRow
+            feedback={<SettingsFeedback feedback={feedback['default-image']} />}
             label={t.settings.providers.defaultImageModelLabel}
             sublabel={imageModelMenu.defaultUnavailable
               ? t.settings.providers.defaultImageModelUnavailable
@@ -317,6 +284,7 @@ export function SettingsProvidersSection({
             trailing={(
               <SelectControl
                 label={t.settings.providers.defaultImageModelLabel}
+                disabled={!settings}
                 onChange={(event) => changeDefaultImageModel(event.target.value)}
                 value={settings?.imageGeneration.defaultModel ?? ''}
                 variant="popup"

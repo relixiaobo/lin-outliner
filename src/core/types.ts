@@ -1277,7 +1277,6 @@ export interface AgentProviderSettingsView {
   defaultModel?: string;
   providers: AgentProviderConfigView[];
   availableProviders: AgentProviderOption[];
-  agent: Omit<AgentRuntimeSettings, 'additionalSkillDirectories' | 'additionalSkillSourceModes' | 'disabledSkills'>;
   imageGeneration: AgentImageGenerationSettings;
 }
 

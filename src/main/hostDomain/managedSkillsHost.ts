@@ -19,7 +19,7 @@ import { DEFAULT_MANAGED_SKILLS } from '../managedSkillDefaults';
 import { ManagedSkillService } from '../managedSkillService';
 import { ManagedSkillShellEnvironmentRegistry } from '../managedSkillShellEnvironment';
 import { ManagedSkillStore } from '../managedSkillStore';
-import { createSkillLifecycle, type ReviewSkillOperation, type SkillLifecycle, type SkillOperationCaller } from './skillLifecycle';
+import { createSkillLifecycle, type ReviewSkillOperation, type SkillOperationCaller } from './skillLifecycle';
 
 export interface ManagedSkillsHostOptions {
   readonly userDataDir: string;
@@ -38,7 +38,6 @@ export interface ManagedSkillsHostOptions {
 }
 
 interface ManagedSkillsHost {
-  readonly lifecycle: SkillLifecycle;
   manageForWindow(input: unknown, caller: Pick<SkillOperationCaller, 'origin' | 'authorize' | 'signal'>): Promise<unknown>;
   processEnvironment: ManagedSkillShellEnvironmentRegistry['processEnvironment'];
   updateRuntimeSettings(settings: {
@@ -159,9 +158,8 @@ export function createManagedSkillsHost(options: ManagedSkillsHostOptions): Mana
         await Promise.all([primaryRuntime, ...turnRuntimes.values()].map((runtime) => runtime.refreshProvenanceRecords()));
       }, changed: options.onLibraryChanged });
   return {
-    lifecycle,
     manageForWindow: (input, caller) => lifecycle.manage(input, {
-      ...caller, key: JSON.stringify(caller.origin), runtime: primaryRuntime,
+      ...caller, runtime: primaryRuntime,
     }),
     processEnvironment: (threadId, turnId, context) => (
       shellEnvironment.processEnvironment(threadId, turnId, context)

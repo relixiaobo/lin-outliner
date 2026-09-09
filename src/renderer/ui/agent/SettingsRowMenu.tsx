@@ -14,11 +14,13 @@ export type RowMenuAction = AnchoredMenuAction;
 export function SettingsRowMenu({
   ariaLabel,
   actions,
+  menuLabel,
   open,
   onOpenChange,
 }: {
   ariaLabel: string;
   actions: RowMenuAction[];
+  menuLabel?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -46,7 +48,7 @@ export function SettingsRowMenu({
         <AnchoredActionMenu
           actions={actions}
           anchorRef={anchorRef}
-          ariaLabel={t.settings.providers.rowMenuAriaLabel}
+          ariaLabel={menuLabel ?? t.settings.providers.rowMenuAriaLabel}
           className="settings-row-menu"
           itemClassName="settings-row-menu-item"
           itemLabelClassName="settings-row-menu-item-label"

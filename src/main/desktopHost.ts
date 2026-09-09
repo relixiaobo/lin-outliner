@@ -1,3 +1,9 @@
+import { PreferencesApplication } from './configuration/application';
+import { agentRuntimeSettingsFromPreferences } from './agent/capabilities/agentSettings';
+import { configurationCommandAllowed, isModelConfigurationCommand } from './configuration/windowAccess';
+import { readPreferencesView, editPreference, ensurePreferencesFile, ensureConfigurationSource } from './configuration/discovery';
+import type { PreferenceEdit, PreferencesView } from '../core/settingsDefinitions';
+import type { ConfigurationDomain } from '../core/settingsWindow';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, shell } from 'electron';
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { SKILL_LIBRARY_CHANGED_CHANNEL, SKILL_REVIEW_DECIDE_CHANNEL, SKILL_REVIEW_GET_CHANNEL } from '../core/agent/skillOperations';
@@ -127,6 +133,7 @@ import {
   getAgentSkillSettings,
   getProviderSecretStatus,
   getStoredProviderApiKey,
+  getStoredProviderApiKeyPreview,
   getProviderSettings,
   rankedModels,
   reconcileProviderConfig,
@@ -331,8 +338,7 @@ if (!hasExplicitAgentRoot) {
 }
 ensureAgentDir(agentScratchRoot);
 const resourcePreviewHost = createResourcePreviewHost({
-  operationWindow: (caller) => caller.origin.kind === 'window'
-    ? BrowserWindow.fromId(caller.origin.windowId) : windowApplicationHost.windows.main(),
+  operationWindow: (caller) => BrowserWindow.fromId(caller.origin.windowId),
   locale: () => windowApplicationHost.effectiveLocale(),
   dataChanged: () => {
     for (const target of [windowApplicationHost.windows.main(), windowApplicationHost.windows.settings()]) {
@@ -398,7 +404,8 @@ function startConfigurationWatcher(): void {
   let keybindingsTimer: ReturnType<typeof setTimeout> | null = null;
   let applying = false;
   let pendingApply = false;
-  let effectivePreferences = DEFAULT_FILE_PREFERENCES;
+  const preferenceApplication = new PreferencesApplication();
+  let observedPreferences = DEFAULT_FILE_PREFERENCES;
   const apply = () => {
     if (applying) {
       pendingApply = true;
@@ -407,38 +414,43 @@ function startConfigurationWatcher(): void {
     applying = true;
     timer = null;
     const loaded = loadFilePreferences(resolvedUserDataDir);
-    writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
-      effective: effectivePreferences,
-      applicationStatus: 'pending',
-    });
-    const { appearance } = loaded.preferences;
-    if (windowApplicationHost.theme() !== appearance.theme) {
-      windowApplicationHost.setTheme(appearance.theme);
-    }
-    if (typeof appearance.language === 'string' && windowApplicationHost.effectiveLocale() !== appearance.language) {
-      windowApplicationHost.setLocale(appearance.language);
-    }
-    void Promise.all([
-      getAgentRuntimeSettings().then((settings) => {
-        agentHost.skills.updateRuntimeSettings(settings);
-      }),
-      Promise.resolve(agentHost.memory.view()).then((current) => {
-        const mode = loaded.preferences.agent.memory.enabled ? 'enabled' : 'disabled';
-        return current.status.featureMode === mode ? undefined : agentHost.memory.setFeatureMode(mode);
-      }),
-      windowApplicationHost.updates.applyAutomaticChecksEnabled(loaded.preferences.updates.checkAutomatically),
-    ]).then(() => {
-      effectivePreferences = loaded.preferences;
-      writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
-        effective: effectivePreferences,
-        applicationStatus: 'applied',
-      });
-    }).catch((error) => {
-      writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
-        effective: effectivePreferences,
-        applicationStatus: 'failed',
-        applicationError: error instanceof Error ? error.message : String(error),
-      });
+    const next = loaded.preferences;
+    const changed = (left: unknown, right: unknown) => JSON.stringify(left) !== JSON.stringify(right);
+    if (changed(observedPreferences.models, next.models) || changed(observedPreferences.agent.provider, next.agent.provider)) windowApplicationHost.notifyConfigurationChanged('models');
+    if (changed(observedPreferences.agent.delegation, next.agent.delegation)) windowApplicationHost.notifyConfigurationChanged('agents');
+    if (changed(observedPreferences.agent.skills, next.agent.skills)) windowApplicationHost.notifyConfigurationChanged('skills');
+    if (changed(observedPreferences.agent.tools, next.agent.tools)) windowApplicationHost.notifyConfigurationChanged('access');
+    observedPreferences = next;
+    const publishStatus = () => {
+      const states = Object.values(preferenceApplication.states);
+      const failures = states.filter((state) => state.status === 'failed');
+      try {
+        writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, loaded, {
+          effective: preferenceApplication.effective,
+          domains: preferenceApplication.states,
+          applicationStatus: states.some((state) => state.status === 'pending') ? 'pending' : failures.length ? 'failed' : 'applied',
+          applicationError: failures.map((state) => state.error).join('; ') || null,
+        });
+      } catch (error) {
+        reportError({ domain: 'persistence', severity: 'error', code: 'preferences-status-write', message: 'Could not publish preference application status', error });
+      }
+      windowApplicationHost.notifyConfigurationChanged('preferences');
+    };
+    void preferenceApplication.apply(next, loaded.sourceDigest, {
+      appearance: ({ appearance }) => {
+        windowApplicationHost.setTheme(appearance.theme, false);
+        windowApplicationHost.setLocale(appearance.language, false);
+      },
+      skills: (preferences) => agentHost.skills.updateRuntimeSettings(agentRuntimeSettingsFromPreferences(preferences)),
+      memory: async (preferences) => {
+        await lifecycle.ready('outline-documents');
+        const current = await agentHost.memory.view();
+        const mode = preferences.agent.memory.enabled ? 'enabled' : 'disabled';
+        if (current.status.featureMode !== mode) await agentHost.memory.setFeatureMode(mode);
+      },
+      updates: async (preferences) => { await windowApplicationHost.updates.applyAutomaticChecksEnabled(preferences.updates.checkAutomatically); },
+    }, publishStatus).catch((error) => {
+      reportError({ domain: 'persistence', severity: 'error', code: 'preferences-status-write', message: 'Could not publish preference application status', error });
     }).finally(() => {
       applying = false;
       if (pendingApply) {
@@ -456,17 +468,24 @@ function startConfigurationWatcher(): void {
     }
     if (!name || name === 'keybindings.jsonc') {
       if (keybindingsTimer !== null) clearTimeout(keybindingsTimer);
-      keybindingsTimer = setTimeout(() => applyKeybindings(), 100);
+      keybindingsTimer = setTimeout(() => { applyKeybindings(); windowApplicationHost.notifyConfigurationChanged('preferences'); }, 100);
+    }
+  });
+  const rootSourceWatcher = watch(join(resolvedUserDataDir, 'agent'), { persistent: false }, (_event, filename) => {
+    if (!filename || filename.toString() === 'config.json') {
+      windowApplicationHost.notifyConfigurationChanged('agents');
+      windowApplicationHost.notifyConfigurationChanged('preferences');
     }
   });
   const initial = loadFilePreferences(resolvedUserDataDir);
   writeFilePreferencesStatus(resolvedUserDataDir, hostSessionId, initial, {
-    effective: effectivePreferences,
+    effective: preferenceApplication.effective,
     applicationStatus: 'pending',
   });
   applyKeybindings(initialKeybindings);
   resources.defer('file-preferences-watcher', () => {
     watcher.close();
+    rootSourceWatcher.close();
     if (timer !== null) clearTimeout(timer);
     if (keybindingsTimer !== null) clearTimeout(keybindingsTimer);
     if (applyFilePreferencesNow === apply) applyFilePreferencesNow = null;
@@ -474,10 +493,7 @@ function startConfigurationWatcher(): void {
 }
 
 const agentImageObservationMutex = new Mutex();
-let applicationOperationsRef: import('./hostDomain/applicationOperations').ApplicationOperation | null = null;
 const agentHost = createAgentHost({
-  previewOperations: resourcePreviewHost.operations,
-  applicationOperations: () => applicationOperationsRef,
   reviewSkillOperation: (input) => windowApplicationHost.reviewSkillOperation(input),
   reviewMemoryReset: (review, caller) => windowApplicationHost.reviewMemoryReset(review, caller),
   onMemoryChanged: () => {
@@ -677,7 +693,6 @@ const windowApplicationHost = createWindowApplicationHost({
   diagnosticEnvironment,
   initialLauncherBindings,
 });
-applicationOperationsRef = windowApplicationHost.applicationOperations;
 
 function applyKeybindings(candidate = loadKeybindings(resolvedUserDataDir)): KeybindingsView {
   const observed = retainLastAcceptedKeybindings(lastAcceptedKeybindings, candidate);
@@ -932,23 +947,23 @@ function registerOutlineTransport(ipcMain: OwnedIpcMain): void {
 
 function registerUpdateTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle(LIN_APP_UPDATE_GET_CHANNEL, (event): Promise<AppUpdateView> => {
-    windowApplicationHost.assertSettingsSender(event, 'App update status');
+    windowApplicationHost.assertConfigurationSender(event, ['about'], 'App update status');
     return windowApplicationHost.updates.view();
   });
 
   ipcMain.handle(LIN_APP_UPDATE_CHECK_CHANNEL, (event): Promise<AppUpdateView> => {
-    windowApplicationHost.assertSettingsSender(event, 'App update checks');
+    windowApplicationHost.assertConfigurationSender(event, ['about'], 'App update checks');
     return windowApplicationHost.updates.checkExplicitly();
   });
 
   ipcMain.handle(LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL, (event, enabled: unknown): Promise<AppUpdateView> => {
-    windowApplicationHost.assertSettingsSender(event, 'Automatic app update checks');
+    windowApplicationHost.assertConfigurationSender(event, ['about'], 'Automatic app update checks');
     if (typeof enabled !== 'boolean') throw new Error('Automatic update-check preference must be a boolean.');
     return windowApplicationHost.updates.setAutomaticChecksEnabled(enabled);
   });
 
   ipcMain.handle(LIN_APP_UPDATE_OPEN_CHANNEL, (event) => {
-    windowApplicationHost.assertSettingsSender(event, 'Opening an app update');
+    windowApplicationHost.assertConfigurationSender(event, ['about'], 'Opening an app update');
     return windowApplicationHost.updates.openAvailableUpdate();
   });
 }
@@ -1127,18 +1142,26 @@ function registerSourcePreviewTransport(ipcMain: OwnedIpcMain): void {
     // `get_projection` or `delete_node` by any command name, and a renderer
     // with no registered capabilities fails closed rather than inheriting the
     // app's rights.
-    if (!rendererHasCapability(event.sender.id, 'appCommands')) {
+    if (!rendererHasCapability(event.sender.id, 'appCommands')
+      || !configurationCommandAllowed(windowApplicationHost.configurationSender(event), command)) {
       throw new Error('This renderer may not invoke application commands.');
     }
     const dispatch = async () => {
-      if (command.startsWith('memory_') || isAgentCommand(command) || isPreviewCommand(command)
+      if (isModelConfigurationCommand(command)) {
+        await lifecycle.ready('provider-configuration');
+      } else if (command.startsWith('memory_') || isAgentCommand(command) || isPreviewCommand(command)
         || isUrlPageTranslationCommand(command)) {
         await lifecycle.ready('agent');
       } else if (isAssetCommand(command)) {
         await lifecycle.ready('outline-documents');
       }
       if (command.startsWith('memory_')) return handleMemoryCommand(event, command, args ?? {});
-      if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
+      if (isAgentCommand(command)) {
+        const result = await handleAgentCommand(event, command, args ?? {});
+        const domain = configurationMutationDomain(command);
+        if (domain) windowApplicationHost.notifyConfigurationChanged(domain);
+        return result;
+      }
       if (isAssetCommand(command)) return handleAssetCommand(event, command, args ?? {});
       if (isUrlPageTranslationCommand(command)) {
         if (!windowApplicationHost.isMainSender(event)) {
@@ -1309,16 +1332,16 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
     });
   });
   ipcMain.handle(KEYBINDINGS_GET_CHANNEL, (event): KeybindingsView => {
-    windowApplicationHost.assertSettingsSender(event, 'Keyboard Shortcuts');
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
     return currentKeybindingsView;
   });
   ipcMain.handle(KEYBINDINGS_UPDATE_CHANNEL, (event, raw: unknown): KeybindingsView => {
-    windowApplicationHost.assertSettingsSender(event, 'Keyboard Shortcuts');
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
     const loaded = updateKeybindings(resolvedUserDataDir, decodeKeybindingsUpdateInput(raw));
     return applyKeybindings(loaded);
   });
   ipcMain.handle(KEYBINDINGS_OPEN_FILE_CHANNEL, async (event): Promise<void> => {
-    windowApplicationHost.assertSettingsSender(event, 'Keyboard Shortcuts');
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Keyboard Shortcuts');
     const error = await shell.openPath(ensureKeybindingsFile(resolvedUserDataDir));
     if (error) throw new Error(error);
   });
@@ -1329,21 +1352,50 @@ function registerWindowSettingsTransport(ipcMain: OwnedIpcMain): void {
   ipcMain.handle('lin:set-language', (_event, raw: unknown) => windowApplicationHost.setLocale(raw));
   ipcMain.handle(SKILL_REVIEW_GET_CHANNEL, (event) => windowApplicationHost.readSkillReview(event));
   ipcMain.handle(SKILL_REVIEW_DECIDE_CHANNEL, (event, approved: unknown) => windowApplicationHost.decideSkillReview(event, approved));
-  ipcMain.handle('lin:open-provider-config', (_event, args?: { providerId?: unknown; mode?: unknown }) => {
+  ipcMain.handle('lin:open-provider-config', (event, args?: { providerId?: unknown; mode?: unknown }) => {
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Provider configuration');
     const providerId = typeof args?.providerId === 'string' ? args.providerId : '';
     const mode: ProviderConfigMode = args?.mode === 'custom' ? 'custom' : 'configure';
     windowApplicationHost.openProviderConfig(providerId, mode);
   });
-  ipcMain.handle('lin:close-provider-config', () => windowApplicationHost.closeProviderConfig());
-  ipcMain.handle('lin:get-provider-api-key', async (event, args?: { providerId?: unknown }) => {
-    if (!windowApplicationHost.isProviderConfigSender(event)) {
+  ipcMain.handle('lin:close-provider-config', (event) => {
+    if (!windowApplicationHost.isProviderConfigSender(event) || event.senderFrame !== event.sender.mainFrame) throw new Error('Provider configuration window required');
+    windowApplicationHost.closeProviderConfig();
+  });
+  ipcMain.handle('lin:get-provider-api-key', async (event, args?: { providerId?: unknown; mode?: unknown }) => {
+    if (!windowApplicationHost.isProviderConfigSender(event) || event.senderFrame !== event.sender.mainFrame) {
       throw new Error('Provider API keys are only available to the provider config window.');
     }
     await lifecycle.ready('provider-configuration');
-    return getStoredProviderApiKey(String(args?.providerId ?? ''));
+    const providerId = String(args?.providerId ?? '');
+    if (args?.mode === 'preview') return getStoredProviderApiKeyPreview(providerId);
+    if (args?.mode === 'reveal') return getStoredProviderApiKey(providerId);
+    throw new Error('A provider key read mode is required.');
   });
-  ipcMain.handle('lin:settings-changed', (event) => {
-    windowApplicationHost.notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
+  ipcMain.handle('lin:preferences/get', (event): PreferencesView => {
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Preference discovery');
+    return readPreferencesView(resolvedUserDataDir, hostSessionId, agentLocalFileRoot);
+  });
+  ipcMain.handle('lin:preferences/edit', async (event, input: PreferenceEdit): Promise<PreferencesView> => {
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Preference editing');
+    editPreference(resolvedUserDataDir, input);
+    applyFilePreferencesNow?.();
+    return readPreferencesView(resolvedUserDataDir, hostSessionId, agentLocalFileRoot);
+  });
+  ipcMain.handle('lin:preferences/open-file', async (event) => {
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Preference source');
+    const error = await shell.openPath(ensurePreferencesFile(resolvedUserDataDir));
+    if (error) throw new Error(error);
+  });
+  ipcMain.handle('lin:configuration/open-source', async (event, sourceId: unknown) => {
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Public configuration source');
+    const error = await shell.openPath(ensureConfigurationSource(resolvedUserDataDir, agentLocalFileRoot, sourceId));
+    if (error) throw new Error(error);
+  });
+  ipcMain.handle('lin:delegation/get', async (event) => {
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Delegation settings');
+    await lifecycle.ready('agent');
+    return delegationSettingsView();
   });
 }
 
@@ -1353,34 +1405,26 @@ function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
   });
 
   ipcMain.handle(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
-    windowApplicationHost.assertSettingsSender(event, 'Reveal diagnostics');
-    const result = await windowApplicationHost.applicationOperations.diagnosticsManage(
-      { request: { operation: 'reveal' } },
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Reveal diagnostics');
+    const result = await windowApplicationHost.applicationOperations.diagnostics(
+      'reveal',
       { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
     );
     return result;
   });
 
   ipcMain.handle(LIN_APP_INFO_CHANNEL, async (event) => {
-    windowApplicationHost.assertSettingsSender(event, 'Application information');
-    const result = await windowApplicationHost.applicationOperations.inspect(
-      { request: { operation: 'info' } },
-      { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
-    );
-    return result.operation === 'info' ? result.app : result;
+    windowApplicationHost.assertConfigurationSender(event, ['about'], 'Application information');
+    return windowApplicationHost.applicationOperations.info();
   });
 
   ipcMain.handle(LIN_APP_RELEASE_CHANNEL, async (event) => {
-    windowApplicationHost.assertSettingsSender(event, 'Bundled release information');
-    const result = await windowApplicationHost.applicationOperations.inspect(
-      { request: { operation: 'release' } },
-      { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
-    );
-    return result.operation === 'release' ? result.release : null;
+    windowApplicationHost.assertConfigurationSender(event, ['about'], 'Bundled release information');
+    return windowApplicationHost.applicationOperations.release();
   });
 
   ipcMain.handle(LIN_APP_OPEN_DESTINATION_CHANNEL, async (event, destination: unknown) => {
-    windowApplicationHost.assertSettingsSender(event, 'Application destination');
+    windowApplicationHost.assertConfigurationSender(event, ['about'], 'Application destination');
     if (destination !== 'help' && destination !== 'issues' && destination !== 'license') {
       throw new Error('Only fixed application destinations may be opened.');
     }
@@ -1388,9 +1432,9 @@ function registerDiagnosticsTransport(ipcMain: OwnedIpcMain): void {
   });
 
   ipcMain.handle(LIN_EXPORT_DIAGNOSTICS_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
-    windowApplicationHost.assertSettingsSender(event, 'Export diagnostics');
-    return windowApplicationHost.applicationOperations.diagnosticsManage(
-      { request: { operation: 'export' } },
+    windowApplicationHost.assertConfigurationSender(event, ['settings'], 'Export diagnostics');
+    return windowApplicationHost.applicationOperations.diagnostics(
+      'export',
       { origin: { kind: 'window', windowId: BrowserWindow.fromWebContents(event.sender)?.id ?? 0 }, authorize: async () => undefined },
     );
   });
@@ -1847,9 +1891,7 @@ async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
  * list re-render for nothing. `origin` is undefined when main itself is the
  * writer, in which case every window hears it.
  */
-function notifySettingsChanged(origin?: BrowserWindow | null): void {
-  windowApplicationHost.notifySettingsChanged(origin);
-}
+
 
 /**
  * Which layer an editor change lands in. Anything unrecognised is the user
@@ -1979,12 +2021,12 @@ async function probeAndRecordConnection(providerIdInput: unknown): Promise<void>
     if (!probe.matchesStoredConnection || connectionGeneration === undefined) return;
     const result = await testProviderConnection(probe.input);
     const recorded = await recordProviderConnectionCheck(providerId, result, connectionGeneration);
-    if (recorded) notifySettingsChanged();
+    if (recorded) windowApplicationHost.notifyConfigurationChanged('models');
   } catch {
     if (connectionGeneration !== undefined) {
       const recorded = await recordProviderConnectionCheck(providerId, null, connectionGeneration)
         .catch(() => false);
-      if (recorded) notifySettingsChanged();
+      if (recorded) windowApplicationHost.notifyConfigurationChanged('models');
     }
   }
 }
@@ -2220,11 +2262,8 @@ function withCanonicalSkillSettings(settings: AgentSkillSettingsView): AgentSkil
   };
 }
 
-async function withDelegationRunners(settings: AgentProviderSettingsView) {
-  return {
-    ...settings,
-    delegationRunners: await agentHost.delegationRunners(),
-  };
+async function delegationSettingsView() {
+  return { delegation: (await getAgentRuntimeSettings()).delegation, runners: await agentHost.delegationRunners() };
 }
 
 /**
@@ -2267,11 +2306,11 @@ async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<
 async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
     case 'agent_get_provider_settings':
-      return withDelegationRunners(await getProviderSettings());
+      return await getProviderSettings();
     case 'agent_get_skill_settings':
       return withCanonicalSkillSettings(await getAgentSkillSettings());
     case 'agent_refresh_provider_models':
-      return withDelegationRunners(await refreshProviderModels(String(args.providerId)));
+      return await refreshProviderModels(String(args.providerId));
     case 'agent_pick_skill_directory': {
       // Tenon points at the directory; it never copies it in. The picker returns
       // a path the caller stores in additionalSkillDirectories, so the user's
@@ -2326,9 +2365,9 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return { revealed: true };
     }
     case 'agent_update_runtime_settings': {
-      const settings = await updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
-      agentHost.skills.updateRuntimeSettings(await getAgentRuntimeSettings());
-      return withDelegationRunners(settings);
+      if (windowApplicationHost.isSettingsSender(event) && (!isRecord(args.settings) || Object.keys(args.settings).some((key) => key !== 'delegation'))) throw new Error('Settings may update only delegation policy');
+      await updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
+      return delegationSettingsView();
     }
     case 'agent_update_skill_settings': {
       const stored = await getAgentSkillSettings();
@@ -2336,15 +2375,14 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       const preserved = preserveStoredSkillDirectoryForms(requested, stored, agentLocalFileRoot);
       const next = await updateAgentSkillSettings(preserved);
       agentHost.skills.updateRuntimeSettings(await getAgentRuntimeSettings());
-      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
       return withCanonicalSkillSettings(next);
     }
     case 'agent_update_image_generation_settings':
-      return withDelegationRunners(await updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput));
+      return await updateImageGenerationSettings(args.settings as AgentImageGenerationSettingsInput);
     case 'agent_update_model_default':
-      return withDelegationRunners(await updateModelDefault(
+      return await updateModelDefault(
         typeof args.defaultModel === 'string' ? args.defaultModel : null,
-      ));
+      );
     case 'agent_get_capability_settings':
       return readAgentCapabilitySettingsView();
     case 'agent_apply_capability_settings_patch':
@@ -2355,7 +2393,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
     case 'agent_upsert_provider_config': {
       const input = args.provider as AgentProviderConfigInput;
-      const settings = await withDelegationRunners(await upsertProviderConfig(input));
+      const settings = await upsertProviderConfig(input);
       if (input.enabled === false) clearLastAgentThreadConfiguration();
       // Prove the connection AFTER committing it when the caller says this was a
       // connection save. The same upsert command also backs the provider-list
@@ -2375,16 +2413,12 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return settings;
     }
     case 'agent_delete_provider_config': {
-      const settings = await withDelegationRunners(
-        await deleteProviderConfig(String(args.providerId)),
-      );
+      const settings = await deleteProviderConfig(String(args.providerId));
       clearLastAgentThreadConfiguration();
       return settings;
     }
     case 'agent_set_active_provider': {
-      const settings = await withDelegationRunners(
-        await setActiveProvider(String(args.providerId)),
-      );
+      const settings = await setActiveProvider(String(args.providerId));
       clearLastAgentThreadConfiguration();
       return settings;
     }
@@ -2400,11 +2434,11 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       // dropped, leaving the interactive step unanswerable and login() hung).
       const loginWindow = windowApplicationHost.windows.providerConfig();
       const providerId = String(args.providerId);
-      const settings = await withDelegationRunners(await oauthLoginManager.startLogin(providerId, (envelope) => {
+      const settings = await oauthLoginManager.startLogin(providerId, (envelope) => {
         if (loginWindow && !loginWindow.isDestroyed()) {
           loginWindow.webContents.send(LIN_AGENT_OAUTH_EVENT_CHANNEL, envelope);
         }
-      }));
+      });
       // A successful sign-in is a credential write just like saving an API key.
       // Keep the login response fast, then persist the same conservative probe
       // verdict the API-key path records in the background.
@@ -2412,7 +2446,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return settings;
     }
     case 'agent_oauth_logout':
-      return withDelegationRunners(await oauthLoginManager.logout(String(args.providerId)));
+      return await oauthLoginManager.logout(String(args.providerId));
     case 'agent_oauth_respond':
       oauthLoginManager.respond(String(args.requestId), args.value === undefined ? undefined : String(args.value));
       return undefined;
@@ -2441,7 +2475,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
           result,
           probe.connectionGeneration,
         ).catch(() => false);
-        if (recorded) notifySettingsChanged();
+        if (recorded) windowApplicationHost.notifyConfigurationChanged('models');
       }
       return result;
     }
@@ -2485,8 +2519,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         requiredText(args.name, 'name'),
         decodeProfileDraft(args.profile),
         args.presentation === undefined ? undefined : decodePresentationDraft(args.presentation),
+        args.sourceDigest === null || typeof args.sourceDigest === 'string' ? args.sourceDigest : undefined,
       );
-      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
       return await agentEditorView(cwd);
     }
 
@@ -2782,4 +2816,14 @@ return {
   },
   phase: () => lifecycle.phase(),
 };
+}
+
+function configurationMutationDomain(command: string): ConfigurationDomain | null {
+  if (['agent_upsert_provider_config', 'agent_delete_provider_config', 'agent_set_active_provider',
+    'agent_set_provider_api_key', 'agent_delete_provider_api_key', 'agent_refresh_provider_models',
+    'agent_update_image_generation_settings', 'agent_update_model_default', 'agent_oauth_login', 'agent_oauth_logout'].includes(command)) return 'models';
+  if (command === 'agent_update_runtime_settings' || command === 'agent_write_profile') return 'agents';
+  if (command === 'agent_update_skill_settings' || command === 'agent_skill_manage') return 'skills';
+  if (command === 'agent_apply_capability_settings_patch' || command === 'agent_append_capability_block') return 'access';
+  return null;
 }

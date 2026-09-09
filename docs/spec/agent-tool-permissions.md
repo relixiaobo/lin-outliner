@@ -25,43 +25,23 @@ change Settings or capability blocks, clear user-stop provenance, or turn a
 denied operation into an allowed one. The root remains responsible for
 surfacing blocked needs through the ordinary product flow.
 
-That extends to Skills. There is no per-Skill accept-before-use gate. Human and
-root Agent lifecycle requests use the same domain review for installation,
-update, rollback, and uninstall; this confirms exact content or destructive
-intent, not a new execution permission policy. The model cannot submit an
-approval or replace the native interaction with `request_user_input`.
-A named product-default managed Skill may instead be acquired by the declared
-seed/opt-out policy in [`agent-skills.md`](agent-skills.md). Acquisition executes
-nothing and never writes preferences. A new identity is enabled by default;
-an explicitly disabled identity stays disabled, including after reinstall.
+That extends to Skills. There is no per-Skill accept-before-use gate. Human
+Library requests use the domain review for installation, update, rollback, and
+uninstall; this confirms exact content or destructive intent, not a new
+execution permission policy. A named product-default managed Skill may be
+acquired by the declared seed/opt-out policy in [agent-skills.md](agent-skills.md).
+Acquisition executes nothing and never writes preferences. An explicitly
+disabled identity stays disabled, including after reinstall.
 
-`skill_inspect` and `skill_manage` are independently admitted root-only tools.
-The lifecycle owner rechecks selection, global disablement, active Turn, and
-operation-specific action blocks after review and before commit. Local undo
-also checks file-write blocks against a Host-resolved physical target. A
-delegated caller cannot reach this facade through a dynamic factory bypass.
-Without a usable review window, reviewed operations return unavailable rather
-than approving silently. Invocation still requires the independent `skill` gate.
-
-`memory_inspect` and `memory_manage` are independently admitted root-only domain
-tools. Their owner rechecks the active caller, selection, global tool disablement,
-and operation blocks after review and after gate waits. Reset additionally checks
-`outline.delete`; Open checks `outline.edit` for saved-search creation. A delete
-block does not prevent status inspection or Thread mode changes. No descendant
-can bypass these checks through raw dynamic contributions. Global Memory mode
-remains a public file preference, not a management-tool setter. Native Reset
-review binds destructive intent to an exact target, not execution permission.
-
-Preview/Data inspection and management are separately selected root-only tools,
-unavailable to child or ephemeral Threads. Canonical descriptors distinguish
-`preview.inspect`, `preview.control`, `preview.data.inspect`, and
-`preview.data.clear`; `preview_manage` derives the descriptor from its operation.
-Lifetime, tool exposure, global disablement, capability ceilings and operation
-blocks are rechecked after native review and immediately before deletion in the
-cache queue. Guest renderers cannot register preview lifetimes, acknowledge
-controls or call Data operations. Main-window frames own preview controls;
-the live Settings window can inspect/maintain Data but cannot impersonate a pane.
-Neither an `approved` field nor Agent-authored confirmation bypasses native review.
+Settings configuration reaches Agents only through existing public file tools
+and the configuration Skill. There are no dedicated model tools for Skill
+lifecycle, Memory, preview/data, or application/diagnostic operations. Internal
+UI IPC does not enter the model registry. The human operation owners retain
+originating-window validation, exact revisions, native review, and late caller
+checks before committing. Main-window frames own preview controls; Settings
+can inspect/maintain Data but cannot impersonate a pane. Guest, child, and
+review frames cannot borrow the originating window's authority. A model cannot
+replace a native decision with an approval argument or user-input tool.
 
 Default availability does not widen execution authority. Browser Pilot remains
 subject to the effective Configuration Profile and Skill ceiling, the

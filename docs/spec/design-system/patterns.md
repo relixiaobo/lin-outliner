@@ -118,18 +118,23 @@ hover, focus, or open state, but it does not gain decorative background chrome.
 
 ### Preference Window
 
-Preference/configuration windows borrow macOS System Settings' interaction idiom
-without copying Apple chrome. The surface is a standalone native child or
-settings window, not an in-renderer overlay, when the task is modal to settings.
-The left side is category navigation; the right side is a flat content base with
-constrained grouped cards. Category titles live in the toolbar, not repeated as a
-second in-content heading.
+Preference/configuration windows use native macOS window behavior and Tenon's
+neutral controls. Settings uses one native window with category navigation and a
+persistent search field in the sidebar below the native traffic lights. General leads with common choices; domain panes own
+collections and maintenance, with technical options disclosed in context. A
+category switch preserves its pane state and never opens a new native window.
+The container structure matches the main app: one inset floating left rail,
+an unboxed toolbar above the right column, and its own opaque content viewport.
+The toolbar shares the window background; only its Back/Forward controls form a
+compact pill group beside the title. The left rail owns the material and
+elevation, using the shared rail tokens. Category history preserves pane state.
+Preference windows retain real traffic lights, dim minimize/zoom, and disable
+fullscreen; resizing accommodates larger text. Credential forms are modal native
+children of Settings; About keeps its App-menu window.
 
-Rows are text-led, controls trail, and each pane uses the same inset-list
-primitive. There is no permanent detail side pane; row launch points open child
-windows or dedicated editors. Single-action rows reveal one quiet secondary
-button; multi-action rows reveal one `...` menu. Pane intros are avoided unless
-they carry information that cannot live in a section header or row sublabel.
+Rows are text-led, controls trail, and inset lists organize related preferences.
+Direct choices apply immediately; editors preserve invalid input for correction.
+Reset removes an explicit override. Search/filtering never hides source repair.
 
 ### Inline Reference Flow
 
@@ -183,7 +188,7 @@ remain in the dock and never become authorization overlays.
   empty Thread follows the same rule: when a provider is usable it stays
   visually blank until the user types or work appears; when provider settings have
   **loaded** and none is usable it shows a quiet onboarding line + a neutral CTA
-  that opens Settings › Providers, and the composer send is disabled (neutral,
+  that opens Models, and the composer send is disabled (neutral,
   with a tooltip) — gated on the loaded state so a key-holding user never sees the
   onboarding flash during the async load.
   Whole-panel empty results (search with no matches, an empty Trash/Recents view)

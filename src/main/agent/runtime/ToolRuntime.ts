@@ -40,7 +40,7 @@ import {
   type DelegatedToolPolicy,
 } from '../delegation/delegatedToolPolicy';
 
-export type DeferredToolAuthority = (toolName: string, args: unknown, signal?: AbortSignal, fileWritePath?: string) => Promise<void>;
+export type DeferredToolAuthority = (toolName: string, args: unknown, signal?: AbortSignal) => Promise<void>;
 
 export interface ToolRuntimeOptions {
   readonly localWorkspace?: AgentLocalWorkspaceContext | ((context: TurnExecutionContext) => AgentLocalWorkspaceContext);
@@ -136,7 +136,7 @@ export class ToolRuntime {
           turnId: context.turn.id,
           ...(delegateCommandRuntime === undefined ? {} : { delegateCommandRuntime }),
         });
-    const dynamicTools = await this.options.dynamicTools?.(context, (name, args, signal, fileWritePath) => this.authorizeDeferredTool(context, name, args, signal, fileWritePath)) ?? [];
+    const dynamicTools = await this.options.dynamicTools?.(context, (name, args, signal) => this.authorizeDeferredTool(context, name, args, signal)) ?? [];
     const dynamicToolSet = new Set(dynamicTools);
     const tools = [
       ...capabilityTools,
@@ -384,7 +384,7 @@ export class ToolRuntime {
     ];
   }
 
-  private async authorizeDeferredTool(context: TurnExecutionContext, name: string, args: unknown, signal?: AbortSignal, fileWritePath?: string): Promise<void> {
+  private async authorizeDeferredTool(context: TurnExecutionContext, name: string, args: unknown, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     const contract = modelToolContract(name);
     const turn = this.service.readTurnForHost(context.thread.id, context.turn.id);
@@ -394,7 +394,7 @@ export class ToolRuntime {
       || !turn || turn.status !== 'inProgress') {
       throw new AgentToolFailure('operation_unavailable', 'This operation is no longer available in the initiating Turn.', 'Inspect the current configuration before retrying.');
     }
-    const decision = evaluateAgentToolCapability({ toolName: name, args, fileWritePath, policy: {
+    const decision = evaluateAgentToolCapability({ toolName: name, args, policy: {
       workspaceRoot: this.service.defaultExecutionDirectory(), capabilityConfig: await this.capabilityConfig(),
     } });
     if (decision.behavior === 'unavailable') {

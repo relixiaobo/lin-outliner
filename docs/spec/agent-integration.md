@@ -112,26 +112,24 @@ Agent Core. It is a contract checklist, not project status.
 - Treat historical titles, snippets, messages, activity summaries, file labels,
   and bounded tool output as untrusted quoted context. A Thread marker, cursor, or
   citation key is identity or lookup state, never authority.
-- Keep Skill lifecycle operations in the shared domain owner reached by
-  `skill_inspect` / `skill_manage` and human Library IPC. Preferences remain
-  file-only; managed records must not gain an enable flag. Recheck exact target,
-  current root Turn authority, and operation-specific blocks at delayed commit.
-  Keep sender-bound human review distinct from permission policy and separate
-  saved content, observed invocation availability, and runtime refresh results.
-- Keep Memory management in the shared `memory_inspect` / `memory_manage` owner,
-  distinct from file-backed global enablement and ordinary Outline content.
-  Exercise exact native-reviewed Reset targets and recovery, retained exclusions,
-  root-only late authority checks, Thread revisions, sender isolation, truthful
-  navigation/settlement, and event-driven local UI together. No scaffold release
-  or Settings CLI is a substitute for the complete workflow.
-- Keep application/update and diagnostics actions in the shared
-  `application_inspect` / `application_manage` and
-  `diagnostics_inspect` / `diagnostics_manage` Host owner. Fresh update checks,
-  bundled installed-release information, cached remote-update state, validated
-  release destinations, fixed support links, and native diagnostic export are
-  distinct outcomes. Revalidate caller authority and the originating Host/window
-  after native save interaction and before writing. Never expose an arbitrary
-  URL/path input or a Settings/Configuration CLI.
+- Keep Settings configuration on public source files through ordinary file tools
+  and the configuration Skill. Do not add domain management tools or a replacement
+  Settings CLI. Verify schema validity and current-Host acceptance/effectiveness.
+- Keep Skill acquisition and maintenance in the human Library's domain owner.
+  Managed records have no enable flag. Preserve exact-target review, sender
+  validation, delayed commit checks, and separate saved content, observed
+  invocation availability, and runtime refresh results.
+- Keep Memory management in its UI-owned facade, distinct from file-backed
+  global enablement and ordinary Outline content. Exercise native-reviewed Reset
+  targets and recovery, retained exclusions, Thread revisions, sender isolation,
+  truthful navigation/settlement, and event-driven local feedback together.
+- Keep preview translation and Data maintenance in their existing window-owned
+  services. The model registry and Agent Host must not expose these operations.
+- Keep About/update and diagnostics actions in their UI-owned Host services.
+  Fresh checks, bundled release notes, cached update state, validated release
+  destinations, fixed support links, and diagnostic export remain distinct.
+  Revalidate the originating Host/window after native save interaction and before
+  writing. Never accept arbitrary URL/path inputs or upload diagnostics.
 
 ## Extension Contract
 
@@ -239,3 +237,40 @@ Agent Core. It is a contract checklist, not project status.
   ID/affected/recovery data, and guarded exact revert.
 - Run typecheck, Core tests, renderer tests, E2E, docs check, and diff check
   before the PR is ready.
+
+## Settings discovery and source settlement
+
+`settingsDefinitions.ts` is the scalar definition authority shared by validation,
+JSON Schema, defaults, search metadata, and direct UI controls. The Host's
+preference discovery bridge exposes bounded public source observations and
+accepted/effective scalar values, not domain catalogs or credentials. Structural
+writes use the caller's observed source digest, reject malformed or stale input,
+validate the resulting document, and recheck bytes immediately before atomic
+replacement. Reset removes only the named override and retains unrelated JSONC.
+A missing source has no observed or accepted digest.
+
+The generated status carries the Host session identity, source observation,
+per-owner application state and effective preferences. Appearance, Memory,
+updates, Skills, Access, request policy, delegation, and models settle
+independently. Failures retain that owner's effective state; accepted request
+policy/model/delegation declarations apply at their next admission/read boundary.
+A previous Host's status cannot establish current application evidence.
+
+The main frame's actual native-window identity gates each configuration operation.
+One Settings renderer has a finite configuration-operation allowlist for its
+category panes. Categories and URL parameters do not grant authority. Document
+mutations, turn execution, unknown commands, and credential operations are excluded.
+Credentials are exclusive to the provider configuration child; About has only its
+application/update channels. The main application retains normal command authority;
+auxiliary configuration windows do not inherit action-attestation capabilities.
+Visited panes stay mounted on navigation, preserving their own drafts, queues,
+and subscriptions without eagerly loading unvisited domain catalogs.
+Configuration notifications are Host-authored and scoped to `preferences`,
+`models`, `agents`, `skills`, or `access`; each consumer subscribes to its owner.
+
+The root configuration editor captures the user/project source digests when an
+edit opens. Background catalog refreshes update the manager without replacing
+that draft observation. A save against an externally changed source is refused,
+leaving the draft visible; reopening the editor establishes a new observation.
+Settings and the root manager also refresh source observations when their native
+window regains focus, including after editing project configuration externally.

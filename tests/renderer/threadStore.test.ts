@@ -12,7 +12,7 @@ import type { api } from '../../src/renderer/api/client';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 type ThreadStoreClient = Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'>
-  & Partial<Pick<typeof api, 'onSettingsChanged'>>;
+  & Partial<Pick<typeof api, 'onConfigurationChanged'>>;
 
 describe('renderer Thread store', () => {
   test('retries failed initialization on remount and keeps successful initialization single-flight', async () => {
@@ -143,7 +143,7 @@ describe('renderer Thread store', () => {
     let notifySettings: () => void = () => undefined;
     const client = {
       onAgentCoreNotification: () => () => undefined,
-      onSettingsChanged: (listener: () => void) => {
+      onConfigurationChanged: (domain: string, listener: () => void) => {
         notifySettings = listener;
         return () => undefined;
       },

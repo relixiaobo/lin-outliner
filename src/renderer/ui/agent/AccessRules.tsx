@@ -3,7 +3,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 
-interface SettingsSecuritySectionProps {
+interface AccessRulesProps {
   blocks: readonly string[];
   blockErrors: ReadonlyMap<string, string>;
   onRemoveBlock: (rule: string) => void;
@@ -13,7 +13,7 @@ interface SettingsSecuritySectionProps {
  * The Security category. Each removal commits immediately in the parent, so this
  * component only renders the current rules and their row-owned failure state.
  */
-export function SettingsSecuritySection({ blocks, blockErrors, onRemoveBlock }: SettingsSecuritySectionProps) {
+export function AccessRules({ blocks, blockErrors, onRemoveBlock }: AccessRulesProps) {
   const t = useT();
 
   function renderCapabilityRuleRows(

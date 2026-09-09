@@ -6,65 +6,34 @@ user-invocable: false
 
 # Configuration
 
-Use this Skill for durable declarative preferences only. Do not use it for
-provider login, credential reveal, model connection tests, Skill installation,
-memory reset, data deletion, diagnostics export, or other domain operations;
-route those requests to the owning operation.
+Use this Skill for durable declarative preferences. Use the existing ordinary
+file tools, public configuration schemas, and owner-published status described
+below. No Settings management tool or Configuration CLI exists.
 
-For Skills, `skill_inspect` provides live library identities, provenance, source
-discovery, update previews, and supported next actions. Use `skill_manage` for
-install, update, rollback, uninstall, or undoing a recorded Agent edit. Follow
-the available tool schema and exact targets from inspection; do not reconstruct
-private paths or copy a remembered schema. If the required tool is absent,
-report that limitation instead of editing an installation index or provenance
-store. Human review is owned by the operation, not an `approved` argument or
-a `request_user_input` prompt.
+For Skill availability and source bindings, edit the public settings file.
+Installation does not change `agent.skills.disabled`: an explicitly disabled
+identity stays disabled across uninstall/reinstall. For global Memory enablement,
+edit `agent.memory.enabled`. Disabling Memory can interrupt the calling Turn;
+a file-write result alone does not prove application.
 
-Enable/disable and source bind/unbind remain configuration file edits, never
-lifecycle commands. Installation does not change `agent.skills.disabled`: an
-explicitly disabled identity stays disabled across uninstall/reinstall. A
-committed installation is not proof that its instructions are invocable; report
-the operation's observed availability and runtime refresh separately.
+Some requests are user-interface operations rather than preferences:
 
-For Memory, edit `agent.memory.enabled` for global enablement. Use
-`memory_inspect` for live status, exact Thread mode/revision, and Reset
-settlement; use `memory_manage` to open Memory, change one Thread mode, or
-request Reset. Omitted Thread identity means the calling Thread, never the
-focused Thread. Reset requires the Host's native review and deletes canonical
-containers with all descendants, including ordinary notes. Only `finalized`
-means Reset completed; inspect the returned operation identity after a pending
-or unknown result instead of issuing another Reset. A conflicted target needs
-fresh review. Navigation acknowledgement is separate from saved-search creation.
-Memory content remains ordinary Outline data, not management-tool arguments.
-Global disable can interrupt the calling Turn; do not claim application from
-the file-write result alone. No Settings or Configuration CLI exists.
+- Settings > Models owns provider credentials and connection configuration.
+- Settings > Skills owns discovery, installation, update review, rollback,
+  uninstall, and recorded Agent-edit undo.
+- Settings > Memory owns opening Memory and confirmed Reset; a conversation's
+  Memory control owns its participation mode. Memory content remains ordinary
+  Outline data.
+- A preview's translation controls own its temporary language, model, and display
+  choices; Settings > Data owns confirmed cache and preview-website cleanup.
+- The Tenon app menu > About Tenon owns version/build information, What's New,
+  the full changelog, and update checks. Settings > Advanced owns showing logs
+  and exporting redacted diagnostics; the Help menu owns support destinations.
 
-Application and support requests are operations, not file edits. Use
-`application_inspect` for version/build facts, the bundled installed-release
-note, cached remote-update state, and fixed support destinations; use
-`application_manage` for an explicit fresh update check or to open a validated
-release/download or fixed Help, Issues, or License
-destination. Bundled release information is not remote update availability, and
-a failed fresh check does not invalidate a separately returned cached release.
-Inspect the semantic outcome before reporting success. Opening is never
-installation and arbitrary URLs are unavailable.
-Use `diagnostics_inspect` for bounded local counts and `diagnostics_manage` to
-reveal or export redacted diagnostics. Export opens a native save dialog and
-accepts no path; cancellation and failed reveal/export outcomes are not success.
-Never retry a canceled export without a new user request, and never upload or
-post the result.
-
-Translation is preview-local, not a configuration-file preference. Use
-`preview_inspect` for live IDs and revisions, then `preview_manage` for controls
-or clearing saved translations for the selected content. Select an explicit
-preview when more than one is available; do not guess from a URL or recent focus.
-Only `applied` proves a control change, not provider completion. Re-inspect an
-unknown result instead of replaying it. Use `data_inspect` and `data_manage` for
-global translation-cache or preview-website maintenance. Both translation-cache
-clears retain live displays and pending results; later requests can cache fresh
-output. Website clearing affects only Tenon's preview partition. Clearing requires
-native confirmation, never private-file deletion. If a tool is absent, report
-unavailability rather than inventing a settings key or command.
+Direct the user to the relevant control for these operations. Do not invent
+configuration keys, recreate a management API through shell commands, or edit
+private installation, Memory, cache, credential, or diagnostic stores. Never
+claim to have performed an operation from a preference-file edit.
 
 Keyboard shortcut changes are edits to `keybindings.jsonc`, never a command,
 tool, or Settings CLI. Read `keybindings.schema.json` for the current command
