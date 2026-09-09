@@ -326,6 +326,23 @@ Task calls and results already describe actual execution. A snapshot admitted af
 the model selected a tool call is not proof that the model saw its instructions.
 Prepared provider input and its canonical publication boundary establish visibility.
 
+`processObservation` resources carry actual Task isolation and observed lifecycle
+facts into the same publication contract. Before a provider boundary, the Host
+derives changed observations from owned Task records and canonical source Items;
+canonical resources are the resumable delivery cursor, with at most 32 new
+observations per boundary. A context reset excludes earlier source Tasks. Failed
+optional observation delivery is deferred without killing the user's Turn.
+There is no second process ledger or restart action in this collector.
+
+Isolation facts deduplicate semantically by execution scope. Background lifecycle
+facts retain the original Task handle and recorded state; unchanged observations
+do not repeat their body. Foreground results already own their individual output.
+Explicit terminal captures remain bounded, frozen tool observations. Publication
+does not rewrite prior provider requests, the canonical tool catalog, Skill body,
+or cache affinity. Compaction retains publication dependencies and owned process
+references, marks restored process facts as historical, and requires Task
+reconciliation before assuming liveness or starting a replacement.
+
 A reducer over canonical evidence computes effective context by source identity,
 fact kind, Host-assigned authority/purpose, and canonical applicability scope.
 Content/version and applicability determine changes; task IDs, projection time,

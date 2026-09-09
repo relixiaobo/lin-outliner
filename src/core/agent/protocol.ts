@@ -199,6 +199,7 @@ export interface ToolTaskStoragePressure {
 }
 
 export interface ToolTaskProjection {
+  readonly isolation: import('./processIsolation').ProcessIsolationEvidence;
   readonly taskId: string;
   readonly executionContext: import('./executionContext').TaskExecutionContext;
   readonly ownerThreadId: ThreadId;
@@ -847,6 +848,7 @@ export const CONTEXT_EVIDENCE_KINDS = Object.freeze([
   'executionContextObservation',
   'verificationObservation',
   'gitReviewEvidence',
+  'processObservation',
   'executionContextPublication',
   'automationDispatch',
 ] as const);
@@ -1087,6 +1089,17 @@ export interface ExecutionContextPublicationPayload {
   readonly text: string;
 }
 
+/** Immutable observation of an existing Task; never an instruction to restart it. */
+export interface ProcessObservationPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'processObservation';
+  readonly taskId: string;
+  readonly state: ToolTaskExecutionState;
+  readonly executionContext: import('./executionContext').TaskExecutionContext;
+  readonly isolation: import('./processIsolation').ProcessIsolationEvidence;
+  readonly facts: readonly import('./executionContext').ExecutionContextFact[];
+}
+
 export interface GitReviewEvidencePayload {
   readonly schemaVersion: 1;
   readonly kind: 'gitReviewEvidence';
@@ -1205,6 +1218,7 @@ export interface ToolCallArgumentsContextPayload {
 }
 
 export type ThreadContextPayload =
+  | ProcessObservationPayload
   | GitReviewEvidencePayload
   | VerificationSourcePayload
   | VerificationObservationPayload

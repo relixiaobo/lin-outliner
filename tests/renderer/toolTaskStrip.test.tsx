@@ -87,9 +87,26 @@ describe('Tool Task strip', () => {
     expect(read).toEqual(['terminal']);
     expect(document.querySelector('.thread-tool-task-context')?.textContent).toContain('/actual/task-directory');
     expect(document.querySelector('.thread-tool-task-context')?.textContent).toContain('unsandboxed');
+    expect(document.querySelector('.thread-tool-task-context')?.textContent).toContain('No OS process sandbox');
+    expect(document.querySelector('.thread-tool-task-context')?.textContent).toContain('Unrestricted by the process sandbox');
     expect(document.querySelector('.thread-tool-task-output')?.textContent).toBe('bounded output');
     expect(document.querySelector('.thread-tool-task-artifacts')?.textContent).toContain('Rendered clip');
     expect(document.querySelector('.thread-tool-task-error')?.textContent).toBe('Renderer failed.');
+  });
+
+  test('updates an open isolation detail when queued activation is observed', async () => {
+    const { document, root } = installDom();
+    const pending = task('pending', 'running', 10_000, null);
+    const initial = { ...pending, isolation: { ...pending.isolation, state: null } };
+    const view = (current: ToolTaskProjection) => <ToolTaskStrip now={20_000} tasks={[current]} ownerThreadId={OWNER_ID}
+      onRead={async () => ({ task: initial, output: null })} onStop={async () => {}} onClearDetails={async () => 0} />;
+    await render(root, view(initial));
+    await act(async () => { document.querySelector<HTMLElement>('.thread-work-strip-pill')?.click(); });
+    await act(async () => { document.querySelector<HTMLElement>('.thread-work-strip-open')?.click(); });
+    expect(document.querySelector('.thread-tool-task-context')?.textContent).toContain('Not yet observed');
+    await render(root, view(pending));
+    expect(document.querySelector('.thread-tool-task-context')?.textContent).toContain('No OS process sandbox');
+    expect(document.querySelector('.thread-tool-task-context')?.textContent).not.toContain('Not yet observed');
   });
 
   test('removes the final terminal row when the injected clock leaves the linger window', async () => {
@@ -167,6 +184,9 @@ function task(
   completedAt: number | null,
 ): ToolTaskProjection {
   return {
+    isolation: { requested: 'unsandboxed', state: 'unsandboxed', platform: 'darwin', backend: null,
+      dependency: 'not-required', network: 'unrestricted', writablePaths: [], protectedGitObjectStores: [],
+      profileDigest: null, reason: null },
     taskId,
     executionContext: {
       addressRef: 'a'.repeat(64), policyRef: 'b'.repeat(64), snapshotRef: 'c'.repeat(64),

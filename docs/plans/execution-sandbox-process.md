@@ -123,3 +123,31 @@ the process receipts, with actual runtime enforcement checked independently.
 - Network restriction requires a separate backend experiment.
 - The Skill may probe tmux, but must not silently substitute an unowned process
   session when unavailable.
+
+### Implementation binding
+
+- Extend the existing Task projection and terminal receipt with requested
+  isolation, canonical write roots, protected Git object stores, backend/network
+  policy, and actual enforcement evidence. A pending Task has no enforcement
+  result; admission policy alone cannot attest to a running sandbox. Host file
+  boundaries remain distinct from OS process isolation.
+- Apply the macOS profile to the supervised command. Keep the canonical
+  supervisor outside that write boundary so it can retain output and receipts
+  without granting the command access to Task metadata. A private acknowledgement
+  from inside the applied profile proves activation before the command executes;
+  missing acknowledgement or backend failure never falls back to unrestricted
+  execution. Persist the result for restart and detail retention.
+- Publish isolation/process observations through existing context resources and
+  frozen provider boundaries. Task details show the recorded result. Any Task
+  storage/receipt format change is a pre-release clean cut, with no legacy reader.
+- Run a reproducible, bounded tmux experiment against the real Tool Task service
+  using a private socket and deterministic owner/address identity. Measure
+  duplicate starts, input/capture, termination, Host recovery, output retention,
+  and isolated writes. Record failed properties as well as passes in the current
+  specification; do not introduce a native terminal in this feature.
+- Scope: Agent process executor, Task service/store/supervisor and receipt codecs,
+  context publication, Task detail presentation, development Skill, focused
+  tests, experiment driver, and Agent specifications. Settings #656 overlaps only
+  separate specification/locale sections; it does not claim these process owners.
+  No dependency, build configuration, document protocol, board, or changelog
+  edits are needed for implementation.

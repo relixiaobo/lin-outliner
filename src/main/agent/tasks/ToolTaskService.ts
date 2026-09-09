@@ -1,3 +1,4 @@
+import { decodeProcessIsolationEvidence, sameIsolationRequest, unstartedProcessIsolation } from '../../../core/agent/processIsolation';
 import { createHash, randomUUID } from 'node:crypto';
 import type { TaskExecutionContext } from '../../../core/agent/executionContext';
 import { ExecutionAdmissionError, executionDigest, pendingExecutionContext, resolveExecutionAddress, revalidateExecutionContext, validateExecutionContext } from './ExecutionContext';
@@ -13,7 +14,7 @@ import type {
   ThreadResourceReference,
   TurnId,
 } from '../../../core/agent/protocol';
-import { getAgentProcessExecutor, type AgentProcessWriteSandbox } from '../capabilities/agentProcessExecutor';
+import { getAgentProcessExecutor, prepareAgentProcessIsolation, type AgentProcessWriteSandbox } from '../capabilities/agentProcessExecutor';
 import { redactSecretLikeContent } from '../capabilities/agentSecretRedaction';
 import { uuidV7 } from '../uuid';
 import {
@@ -274,9 +275,6 @@ export class ToolTaskService {
       if (!this.host?.ownerExists(input.ownerThreadId)) throw new Error('Tool Task owner does not exist');
       validateProcessInput(input);
       this.validateClaimInheritance(input.ownerThreadId, input.inheritedClaimTaskId);
-      if (input.sandbox && process.platform !== 'darwin') {
-        throw new ExecutionAdmissionError('isolation_unavailable', 'Required process isolation is unavailable on this platform.');
-      }
       const executionContext = input.executionContext
         ? await revalidateExecutionContext(input.executionContext)
         : pendingExecutionContext(await resolveExecutionAddress({ defaultCwd: input.cwd }), {
@@ -284,9 +282,6 @@ export class ToolTaskService {
           isolation: input.sandbox ? 'macos-write-sandbox' : 'unsandboxed',
           writablePaths: input.sandbox?.writablePaths ?? [],
         });
-      if (executionContext.policy.isolation === 'macos-write-sandbox' && !input.sandbox) {
-        throw new ExecutionAdmissionError('isolation_unavailable', 'The admitted process policy requires an enforced write sandbox.');
-      }
       const run = this.startAccepted({ ...input, cwd: executionContext.address.cwd, executionContext });
       this.startRuns.add(run);
       try {
@@ -317,6 +312,7 @@ export class ToolTaskService {
       cwd: path.resolve(input.cwd),
       executionContext: input.executionContext,
       operationKind: 'process',
+      isolation: prepareAgentProcessIsolation(input.sandbox, input.executionContext.policy.isolation).evidence,
       inheritedClaimTaskId: input.inheritedClaimTaskId ?? null,
       nonce,
       detailPath,
@@ -335,6 +331,9 @@ export class ToolTaskService {
       await this.host?.beforeTask?.(task);
       await input.onAdmitted?.(task);
       this.discoverTaskContext(task);
+      if (task.isolation.state === 'unavailable' || task.isolation.state === 'rejected') {
+        return await this.settleWithoutProcess(task, 'failed', `isolation_${task.isolation.state}`, task.isolation.reason);
+      }
       if (input.signal?.aborted || this.closing) {
         return await this.settleWithoutProcess(
           this.store.read(taskId)!,
@@ -621,8 +620,14 @@ export class ToolTaskService {
       validatePreparedProcess(prepared);
       disposePrivateControl = prepared.disposePrivateControl;
       const maxPreparedResultBytes = preparedResultMaxBytes(this.limits.taskDetailBytes);
+      const isolationPlan = prepareAgentProcessIsolation(input.sandbox, task.executionContext.policy.isolation);
+      if (!sameIsolationRequest(task.isolation, isolationPlan.evidence) || isolationPlan.evidence.state !== null) {
+        throw new Error('Required isolation changed or became unavailable before launch.');
+      }
       const config: ToolTaskSupervisorConfig = {
-        version: 2,
+        version: 3,
+        isolation: task.isolation,
+        sandboxProfile: isolationPlan.profile,
         taskId,
         nonce: task.nonce,
         process: prepared.process,
@@ -665,7 +670,6 @@ export class ToolTaskService {
         detached: process.platform !== 'win32',
         stdio: prepared.privateControlInput ? ['ignore', 'ignore', 'ignore', 'pipe'] : 'ignore',
         windowsHide: true,
-        sandbox: input.sandbox,
       });
       if (!supervisor.pid) throw new Error('Tool Task supervisor did not receive a process identity');
       if (prepared.privateControlInput) {
@@ -1039,6 +1043,7 @@ export class ToolTaskService {
     }
     const identity = await readIdentity(paths.identity, task).catch(() => null);
     if (identity) {
+      this.store.setIsolation(task.taskId, identity.isolation);
       const current = this.store.setSupervisor(
         task.taskId,
         identity.supervisorPid,
@@ -1148,6 +1153,7 @@ export class ToolTaskService {
       const paths = taskPaths(task.detailPath);
       const identity = await readIdentity(paths.identity, task).catch(() => null);
       if (identity) {
+        this.store.setIsolation(taskId, identity.isolation);
         this.store.setSupervisor(taskId, identity.supervisorPid, identity.childPid, this.now());
         return;
       }
@@ -1267,7 +1273,8 @@ export class ToolTaskService {
       preparedResultMaxBytes(this.limits.taskDetailBytes),
     );
     const unsigned = {
-      version: 2 as const,
+      version: 3 as const,
+      isolation: unstartedProcessIsolation((this.store.read(task.taskId) ?? task).isolation),
       taskId: task.taskId,
       nonce: task.nonce,
       state: 'lost' as const,
@@ -1295,7 +1302,8 @@ export class ToolTaskService {
     const paths = taskPaths(task.detailPath);
     const [stdoutBytes, stderrBytes] = await Promise.all([fileSize(paths.stdout), fileSize(paths.stderr)]);
     const unsigned = {
-      version: 2 as const,
+      version: 3 as const,
+      isolation: unstartedProcessIsolation((this.store.read(task.taskId) ?? task).isolation),
       taskId: task.taskId,
       nonce: task.nonce,
       state: 'failed' as const,
@@ -1344,7 +1352,8 @@ export class ToolTaskService {
     this.store.markSettling(task.taskId, this.now(), state === 'cancelled');
     const paths = taskPaths(task.detailPath);
     const unsigned = {
-      version: 2 as const,
+      version: 3 as const,
+      isolation: unstartedProcessIsolation((this.store.read(task.taskId) ?? task).isolation),
       taskId: task.taskId,
       nonce: task.nonce,
       state,
@@ -1663,10 +1672,12 @@ async function readIdentity(filePath: string, task: ToolTaskRecord): Promise<Too
   const value = await readJson(filePath);
   if (value === null) return null;
   const record = value as Partial<ToolTaskSupervisorIdentity>;
-  if (record.version !== 1 || record.taskId !== task.taskId || record.nonce !== task.nonce
+  if (record.version !== 2 || record.taskId !== task.taskId || record.nonce !== task.nonce
     || !Number.isSafeInteger(record.supervisorPid) || Number(record.supervisorPid) < 1
     || !Number.isSafeInteger(record.childPid) || Number(record.childPid) < 1
     || !Number.isFinite(record.startedAt)) throw new Error('Invalid Tool Task supervisor identity');
+  const isolation = decodeProcessIsolationEvidence(record.isolation);
+  if (isolation.state === null || !sameIsolationRequest(task.isolation, isolation)) throw new Error('Invalid supervisor isolation evidence');
   return record as ToolTaskSupervisorIdentity;
 }
 
@@ -1674,7 +1685,7 @@ async function readFinalReceipt(filePath: string, task: ToolTaskRecord): Promise
   const value = await readJson(filePath);
   if (value === null) return null;
   const record = value as Partial<ToolTaskFinalReceipt>;
-  if (record.version !== 2 || record.taskId !== task.taskId || record.nonce !== task.nonce
+  if (record.version !== 3 || record.taskId !== task.taskId || record.nonce !== task.nonce
     || !['succeeded', 'failed', 'cancelled', 'timed_out', 'lost'].includes(record.state ?? '')
     || typeof record.receiptDigest !== 'string' || !/^[0-9a-f]{64}$/u.test(record.receiptDigest)
     || record.startedAt !== task.startedAt
@@ -1698,6 +1709,8 @@ async function readFinalReceipt(filePath: string, task: ToolTaskRecord): Promise
         || record.supervisorPid === null || record.childPid === null))) {
     throw new Error('Invalid Tool Task final receipt');
   }
+  const isolation = decodeProcessIsolationEvidence(record.isolation);
+  if (isolation.state === null || !sameIsolationRequest(task.isolation, isolation)) throw new Error('Invalid terminal isolation evidence');
   const { receiptDigest, ...unsigned } = record;
   if (digestText(JSON.stringify(unsigned)) !== receiptDigest) throw new Error('Tool Task receipt digest mismatch');
   return record as ToolTaskFinalReceipt;
