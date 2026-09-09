@@ -42,6 +42,19 @@ unified records and consumes the shipped startup owners. The plan's local
 catch-up promise and task/work-location choices (OQ-1/OQ-2) remain explicit
 product decisions before implementation; merging the design ships no runtime.
 
+Two independent Agent interaction follow-ups are recorded for dev implementation:
+[reliable, bounded user input](plans/user-input-request-recovery.md) and
+[background continuation policy](plans/background-task-continuation-policy.md).
+Prioritize the missing answer surface. Both require a live shared-owner check
+against #669; order their common Turn/protocol/store edits rather than building
+against competing interfaces. The background plan's OQ-1 service-exit default
+requires implementation ratification. The question plan's OQ-1 is an unresolved
+incident diagnostic, not a reason to defer its reproduced recovery/cleanup fixes.
+The question feature also gives every request a finite deadline (60 seconds by
+default), returning an explicit no-answer result so the same Agent Turn can
+continue without treating silence as approval. These entries record designs
+only; neither runtime fix has shipped.
+
 Workbench Units A-E shipped through #658. PR #660 subsequently simplified the
 workbench to UI-owned Projects, native Git/test commands guided by Skills, and
 generic Goal/Task state. Private verification and Git evidence, Project model
@@ -132,6 +145,8 @@ Capability prerequisite:
 
 | Priority | Plan / PR claim | Status | Eligible after |
 | --- | --- | --- | --- |
+| P1 | [user-input-request-recovery](plans/user-input-request-recovery.md) | `draft` | Recover/display questions, clean up cancellation, and continue after a default 60-second unanswered wait. Coordinate #669's shared owners; prioritize before background-policy edits on shared files. |
+| P2 | [background-task-continuation-policy](plans/background-task-continuation-policy.md) | `draft` | Ratify OQ-1 and coordinate #669 plus the question-recovery shared interfaces. Preserve scheduled-run and delegated-result ownership; no new process manager. |
 | P2 | [unified-session-records](plans/unified-session-records.md) | `draft` | **Startup predecessor complete (#664)**; cover generic Task outputs, context, artifacts and isolation, and settle OQ-1 before claiming implementation |
 | P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | **Now; startup predecessor complete (#664)**; independent complete Node quality feature. Recheck actual overlap with unified records and land shared Memory changes before the selected profile unit. |
 | P2 | [memory-agent-profile: Profile files and direct learning](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | After unified records and selected Node-quality shared changes; demonstrate component sources/precedence before consumers. One complete profile, direct-learning, activation and lifecycle feature. |

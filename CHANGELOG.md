@@ -725,6 +725,17 @@ Entries reference the pull request that introduced them when one exists.
 
 ### Internal
 
+- **Agent continuation and question-recovery plans recorded** - two independent
+  complete-feature plans define service handoff versus finite-result delivery,
+  Host-owned continuation decisions, and recoverable pending questions with
+  ordered snapshots, cancellation cleanup, and a default 60-second unanswered
+  deadline that resumes the Agent without fabricating an answer. The board
+  prioritizes the missing answer surface and records shared-owner coordination
+  with #669. The background
+  service-exit default remains an explicit implementation-ratification decision;
+  the precise incident notification-loss boundary remains unproven. This change
+  documents the work and its acceptance criteria; runtime behavior is unchanged.
+
 - **Scheduled-work redesign integrated (PR #668)** - the design defines one
   complete task/results workspace and scheduling CLI/Skill feature, with separate
   timing, execution and attention, idempotent admission, exact run/Task control,
