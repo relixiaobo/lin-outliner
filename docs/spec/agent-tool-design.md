@@ -1118,7 +1118,11 @@ when safe inspection is unavailable; explicit native commands use ordinary Git
 configuration, hooks, filters and signing under the admitted policy.
 
 Review includes branch/HEAD, staged and unstaged diffs, selected untracked files,
-binary content, renames, deletions and literal pathspecs. A whole-file commit uses
+binary content, renames, deletions and literal pathspecs. Literal-path inspection
+uses shell-quoted `:(literal)` pathspecs after `--`, e.g.
+`git diff --no-ext-diff --no-textconv -- ':(literal)selected'`, so it remains
+admissible under read-only delegation without broadening the capability classifier.
+A whole-file commit uses
 explicit paths (`git --literal-pathspecs commit --only ... -- <paths>`), adding
 only selected new paths first. This includes unstaged content of selected files
 and preserves unrelated staged paths. A staged-hunk request instead requires
@@ -1127,8 +1131,13 @@ must not silently stage unrelated working content. Inspect immediately before
 and after mutation, including the resulting commit and remaining status.
 
 Publication requires intent for the operation and destination. Inspect the remote
-URL, head/base, SHA and range; use explicit push refspecs and explicit
-`gh pr create --repo --head --base --title --body-file`. Query remote OIDs and
+URLs (`git remote get-url --push --all`), head/base, SHA and range; a named remote
+may publish to multiple URLs, all of which must be covered by the request. Recheck
+that list before the explicit-refspec push and query each actual push URL directly
+before/afterward, including after a failed or interrupted push. A fetch-URL query
+cannot establish the push destination's state. Track exact target refs/OIDs per
+destination; partial or unreadable outcomes cannot become aggregate success.
+Use explicit `gh pr create --repo --head --base --title --body-file`. Query
 matching PRs before/after mutation, checking repository/head owner as well as branch
 names. An interrupted response requires native-state reconciliation before another
 mutation. Existing intended PRs are reused/reported; a closed/merged PR does not

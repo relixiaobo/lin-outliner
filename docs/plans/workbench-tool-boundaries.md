@@ -67,16 +67,21 @@ Task cwd, reads project instructions, and teaches:
 
 1. Inspect branch/HEAD, staged/unstaged changes, selected untracked files, and full
    relevant diffs. Truncation needs focused inspection; account for binary files,
-   renames, deletions, and literal pathspecs.
+   renames, deletions, and shell-quoted `:(literal)` pathspecs after `--` so native
+   inspection remains admitted under read-only delegation.
 2. Commit only the explicitly requested files. Distinguish whole working files from
    staged hunks, add only selected new paths, and preserve unrelated staged/working
    changes. Inspect before and after; unexpected branch/content changes need renewed
    inspection. Native hooks, filters, and signing apply.
-3. Inspect exact remote URL, head/base, SHA, and range before authorized publication.
+3. Resolve all push URLs with `git remote get-url --push --all`; inspect the complete
+   authorized destination set, head/base, SHA, and range before publication.
    Missing objects need a separately scoped fetch. Never force push, reset, merge,
    or silently change destinations. Pass explicit repository/head/base and a body
    file to `gh pr create`, avoiding its implicit push/fork selection path.
-4. Query remote OIDs after push and all relevant PR states before/after creation.
+4. Query each actual push URL and exact target ref before/after push, including
+   failed or interrupted pushes; a named-remote fetch query does not reconcile a
+   separate push URL. Account for multiple destinations and partial success.
+   Query all relevant PR states before/after creation.
    Existing matching PRs are reused/reported. After interruption, reconcile before
    another mutation; incomplete/ambiguous results are not success. Never blindly
    replay commits, delete index locks, or install missing dependencies automatically.
@@ -182,7 +187,9 @@ retirements and archives this plan with its integration record.
   including Automation dependencies, rather than only checking deleted strings.
 - Run native recipes through Bash in disposable repositories and a local bare remote:
   selected new/modified/renamed/deleted/binary paths, literal names, unrelated staged
-  work, and resulting SHAs. Validate reconciliation recipes against queried native state; do not recreate
+  work, and resulting SHAs. Include distinct fetch/push URLs, multiple push targets,
+  and literal diff recipes through the read-only capability path. Validate
+  reconciliation recipes against queried native state; do not recreate
   the removed GitHub coordinator solely to test it. No test PR publication is needed.
 - Preserve read-only/publication blocks and Unit E receipts/isolation. Exercise
   uncertain settlement, generic artifact retention, restart/compaction/fork/expiry,

@@ -13,13 +13,17 @@ output; the Host does not certify that a commit matches a frozen review.
 ## Inspect and commit
 
 1. Read applicable repository instructions. Inspect `git status --short`, current
-   branch and `git rev-parse HEAD` (an unborn repository has no HEAD). Inspect both
-   `git diff` and `git diff --cached`, with `--no-ext-diff --no-textconv` for content
+   branch and `git show --no-patch --format=%H HEAD` (an unborn repository has no
+   HEAD). Inspect both `git diff` and `git diff --cached`, with
+   `--no-ext-diff --no-textconv` for content
    inspection. Inspect selected untracked files separately; they are absent from
-   ordinary diffs. Use `--` and literal pathspecs (`git --literal-pathspecs ...`)
-   for user-specified paths. Account for both sides of renames, deletions, binary
-   content, symlinks and unresolved conflicts. Resolve a truncated diff by focused
-   inspection, never by treating omitted content as reviewed.
+   ordinary diffs. For user-specified paths, pass `--` followed by shell-quoted
+   `:(literal)` pathspecs, e.g.
+   `git diff --no-ext-diff --no-textconv -- ':(literal)selected'` (add `--cached`
+   for the staged diff). This form also works under read-only delegation;
+   `git --literal-pathspecs diff ...` is not admitted there. Account for both sides
+   of renames, deletions, binary content, symlinks and unresolved conflicts. Resolve
+   a truncated diff by focused inspection, never by treating omitted content as reviewed.
 2. Establish whether the request means whole working files or already-staged
    hunks. For whole files, add only selected new paths with
    `git --literal-pathspecs add -- <selected-new-paths>`, then use
@@ -44,11 +48,21 @@ output; the Host does not certify that a commit matches a frozen review.
    local commit SHA and the intended commit range using `git remote`,
    `git rev-parse`, `git log` and `git diff`. If comparison objects are missing,
    fetch only the needed remote refs within the requested scope and inspect again.
-2. Query `git ls-remote <remote> refs/heads/<head>` before push. Use an explicit
-   destination and refspec, e.g. `git push <remote> HEAD:refs/heads/<head>` after
-   rechecking that HEAD is the inspected commit. Never force push, change remotes,
-   or move another branch implicitly. Query the same remote ref afterward and
-   compare its OID with the intended commit. A failed query is uncertainty.
+2. Resolve every actual push destination with
+   `git remote get-url --push --all <remote>`; the fetch URL may differ from the
+   push URLs. Multiple URLs mean a named-remote push targets all of them. Proceed
+   only when the request covers that complete set; otherwise resolve the intended
+   destination before mutation, without silently choosing the first or changing
+   remote configuration. Query each resolved URL directly with
+   `git ls-remote <push-url> refs/heads/<head>` before push. Recheck the destination
+   list and HEAD, then use the inspected remote and explicit refspec, e.g.
+   `git push <remote> HEAD:refs/heads/<head>`. Never force push or move another
+   branch implicitly. Afterward, even if push failed or its output was lost,
+   query every inspected push URL directly and compare its exact target ref/OID
+   with the intended commit. Do not use `ls-remote <remote>` as a substitute: it
+   queries the fetch URL. Report each destination's outcome; one matching OID
+   cannot establish success for all targets. An unreadable push endpoint remains
+   uncertain, and partial success requires reconciliation before another push.
 3. Before creation, use `gh pr list --repo <owner/repo> --head <head> --base <base>
    --state all --json number,url,state,headRefName,baseRefName,headRepositoryOwner`
    and inspect candidates with `gh pr view`. For forks, verify the head repository
