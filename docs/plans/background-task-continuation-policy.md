@@ -21,8 +21,8 @@ status and merge ordering belong to [the board](../TASKS.md).
 - Suppressing successful finite-job results, bypassing process isolation, or
   dropping logs and process ownership to avoid notifications.
 - Fixing Outline Runtime startup or asserting that its logs caused the reported
-  exit. Reliable question presentation is a separate
-  [complete feature](user-input-request-recovery.md).
+  exit. Reliable question presentation uses the existing
+  [structured input lifecycle](../spec/agent-core.md#structured-input-lifecycle).
 
 ## Design
 
@@ -269,8 +269,9 @@ Refresh open claims before implementation rather than relying on this snapshot.
 Coordinate with [scheduled work](scheduled-work-redesign.md): process events keep
 their original run relationship; pure observations occupy no foreground slot,
 and an actual continuation uses the existing run/Turn admission owner. The
-[question recovery plan](user-input-request-recovery.md) is independently
-shippable; shared Turn/store edits require selected ordering on the board.
+[structured input lifecycle](../spec/agent-core.md#structured-input-lifecycle)
+already owns question settlement; preserve that contract when changing shared
+Turn/store behavior and refresh the board's selected ordering.
 
 Any persisted format change follows the repository's pre-release fresh-dev-data
 policy, with no legacy reader. This plan does not authorize deleting anyone's

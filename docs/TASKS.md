@@ -13,26 +13,25 @@ starting or integrating work; the audit below is a dated snapshot, not a lock.
 
 ## In Flight
 
-Integration refresh: 2026-09-09, main `12845145`. PR #669 is merged after review
-of `efb4499a`; all three reported P2 findings are resolved. No PR is open at
-this refresh. Its plan joins the delivered delegation aggregate in the archive,
-leaving 13 active designs from the earlier 15-plan audit. Downstream work consumes
-the [published record contract](spec/agent-core.md#published-conversation-records);
-no downstream implementation is claimed by this merge or by the audit.
+Integration refresh: 2026-09-11, main `2ab65ef7`. PR #672 is merged after review
+of `f63564ca`; all four findings are resolved. No PR is open at this refresh.
+Its plan is archived, leaving 12 active designs. Downstream work consumes the
+[structured input lifecycle](spec/agent-core.md#structured-input-lifecycle) and
+the [published record contract](spec/agent-core.md#published-conversation-records).
+Scheduled-work presentation and its question-attention acceptance remain with
+that consumer; this merge does not complete the scheduling redesign.
 
-The board previously labelled unified records as draft and omitted the #670/#671
-work from its main dependency graph. #665, #668, #670 and #671 integrated designs,
-not profile learning, scheduled work, work folders or interaction fixes. The two
-reported interaction failures remain present on main: `requestUserInput` still
-permits an omitted deadline and `ToolTaskStore.pendingDelivery` still selects
-terminal background work without a service-handoff agreement.
+#665, #668, #670 and #671 integrated designs rather than their runtime features;
+#672 now delivers question recovery. The separate background-continuation defect
+remains: `ToolTaskStore.pendingDelivery` selects terminal background work without
+a service-handoff agreement.
 
 Verified predecessor contracts are already available: Source/preview/desktop
 Hosts (#598/#599/#603), generic Agent resources (#607), Tool Tasks/delegation/native
 launchers (#623/#628/#637), file-first Settings through #656, simplified workbench
-and isolation (#658/#660/#663), startup fault isolation (#664), and unified
-session records (#669). Consume the current specifications; these completed
-series do not reserve future work.
+and isolation (#658/#660/#663), startup fault isolation (#664), unified
+session records (#669), and bounded question recovery (#672). Consume the current
+specifications; these completed series do not reserve future work.
 
 The delegation closure audit confirms its three runtime units in #623/#628/#637
 and current Task/delegation specs. The original plan's no-runner-override and
@@ -62,7 +61,7 @@ features.
 | [performance-optimization](plans/performance-optimization.md) | Reframe as measured candidates | Core scans, `nativeLocalFileHost.rgFileNameMatches` and repeated normalization in `analyzeTextSearchField` still exist, but no current baseline establishes worthwhile latency savings. Each of the three independent candidates must first pass a fixed-fixture measurement threshold; an immaterial candidate can close without a rewrite. |
 | [dark-mode-contrast-pass](plans/dark-mode-contrast-pass.md) | Bound the verification scope | The current ink tokens and prior tertiary-text correction already exist. Freeze one release candidate and finite shipped-surface inventory; future visual proposals are not dependencies. A clean visual walk can finish verification without token edits. |
 | [unified-session-records](plans/archive/unified-session-records.md) | Delivered after the audit; archived | #669 supplies ordinary-file retrieval and exact-source publication. The approved cross-Profile, Automation-root and self scope is in the current specification; consumers have no remaining record approval or implementation gate. |
-| [user-input-request-recovery](plans/user-input-request-recovery.md) | Retain; current defect | `requestUserInput` permits an absent deadline, and renderer pending requests depend on live events. The bounded no-answer outcome, recoverable presentation, exact-request cancellation and session-local drafts still address the observed failure. |
+| [user-input-request-recovery](plans/archive/user-input-request-recovery.md) | Delivered after the audit; archived | #672 supplies ordered snapshots, a 60-second default, exact settlement and session-local drafts. Downstream consumers use the current structured-input contract; scheduled attention acceptance remains with scheduling. |
 | [background-task-continuation-policy](plans/background-task-continuation-policy.md) | Retain; current defect | `ToolTaskStore.pendingDelivery` selects terminal work without service handoff, and `ToolTaskService` can start a completion Turn. Launch receipt, explicit watch and event acknowledgement remain necessary; exit code/log text cannot establish user intent. |
 | [conversation-work-folders](plans/conversation-work-folders.md) | Retain; location contract still absent | Current Task isolation and UI Projects do not provide the proposed multi-folder Project owner and independent ordinary-conversation default. Keep the explicit OQ-1 and consume current Task/CLI owners. |
 | [scheduled-work-redesign](plans/scheduled-work-redesign.md) | Retain; complete replacement feature | Current Automation scheduling does not supply the planned task/results workspace and CLI lifecycle. Keep one complete feature, settle local catch-up/location questions and consume final record/question/Task owners; document length alone is not a reason to ship partial scaffolding. |
@@ -84,13 +83,12 @@ not separately releasable scaffolding. The PM reviews at most two significant
 changes at once. Planning, fixtures and disjoint implementation can proceed in
 parallel; shared-owner mutations need an explicit integration order.
 
-Immediate recommendation after #669: claim **question recovery** in the shared
-Agent lane and **Node retention quality** on Memory-local owners. Each remains
-one complete feature PR. Prepare background policy's service-exit decision and
-fixtures concurrently, then integrate it after question recovery. Profile
+After #672, **background continuation policy** is the next selected shared Agent
+feature, subject to its service-exit decision; **Node retention quality** remains
+eligible on Memory-local owners. Each is one complete feature PR. Profile
 learning follows the selected Node-quality changes; refresh exact context and
-configuration overlap before running it beside the Agent lane. This is execution
-advice, not a claim that a dev has started either feature or that retained product
+configuration overlap before running it beside the Agent lane. This preserves
+the selected order without claiming that work has started or open product
 questions have been ratified.
 
 ### Contract dependencies and selected order
@@ -106,11 +104,12 @@ Required contract consumption:
   published record contract (#669, available) -> profile files/direct learning
   published record contract (#669, available) -> scheduled-work-redesign
   published record contract (#669, available) -> targeted-thread-recovery
+  structured input contract (#672, available) -> scheduled-work-redesign
+  structured input contract (#672, available) -> targeted-thread-recovery
   profile files/direct learning -> targeted-thread-recovery
 
 Preferred shared Agent/Host integration lane:
-  user-input-request-recovery
-    ~> background-task-continuation-policy
+  background-task-continuation-policy
     ~> conversation-work-folders
     ~> scheduled-work-redesign
     ~> targeted-thread-recovery
@@ -124,7 +123,7 @@ Preview lane:
   shared file-tool changes preserve the available #669 contract
 ```
 
-The selected Agent lane prioritizes today's lost question and unsolicited
+Question recovery is available. The remaining Agent lane prioritizes unsolicited
 continuation, then settles Project location/CLI and Task responsibility before
 scheduling consumes them. Recovery is preferably integrated after the selected
 new state owners so its deletion/rebuild closure is verified once against them.
@@ -140,13 +139,12 @@ extend these prerequisites.
 
 | Priority | Plan / PR claim | Status | Next action / eligibility |
 | --- | --- | --- | --- |
-| P1 | [user-input-request-recovery](plans/user-input-request-recovery.md) | `draft` | Next shared Agent claim: visible/recoverable questions, 60-second default, typed no-answer outcome, session-local drafts. Consume #669's delivered owners; incident OQ-1 is diagnostic, not a start blocker. |
-| P2 | [background-task-continuation-policy](plans/background-task-continuation-policy.md) | `draft` | Prefer after question recovery; ratify the service-exit OQ-1. Ship launch/handoff, exact-event acknowledgement, independent watch and receipts together. |
+| P2 | [background-task-continuation-policy](plans/background-task-continuation-policy.md) | `draft` | Next selected Agent feature after #672; ratify the service-exit OQ-1. Ship launch/handoff, exact-event acknowledgement, independent watch and receipts together. |
 | P2 | [conversation-work-folders](plans/conversation-work-folders.md) | `draft` | Consume #669's delivered Thread/context contract, with its own OQ-1 ratified. Prefer after interaction fixes and before scheduling on Project resolution, CLI and composer owners. |
-| P2 | [scheduled-work-redesign](plans/scheduled-work-redesign.md) | `draft` | Record prerequisite is available; OQ-1/OQ-2 remain. Prefer after input, Task policy and work folders; one complete UI/CLI feature consuming their final owners. |
+| P2 | [scheduled-work-redesign](plans/scheduled-work-redesign.md) | `draft` | Record and input prerequisites are available; OQ-1/OQ-2 remain. Prefer after Task policy and work folders; one complete UI/CLI feature consuming their final owners. |
 | P2 | [memory-agent-profile: Node retention quality](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | Eligible now on Memory-local files; preserve the delivered source interface. Freeze quality/coverage fixtures before implementation. |
 | P2 | [memory-agent-profile: Profile files and direct learning](plans/memory-agent-profile.md#implementation-ownership-and-complete-delivery-units) | `draft` | Record prerequisite is available; follow selected Node-quality changes. Demonstrate edit/source/activation contracts before consumers; parallel with the Agent lane only where shared context/configuration owners remain settled. |
-| P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | Record prerequisite is available; final profile owners remain required. Prefer after other selected lifecycle consumers; verify exact question, Task, Project and scheduled-run closure through their actual owners. |
+| P2 | [targeted-thread-recovery](plans/targeted-thread-recovery.md) | `draft` | Record and input prerequisites are available; final profile owners remain required. Prefer after other selected lifecycle consumers; verify exact question, Task, Project and scheduled-run closure through their actual owners. |
 | P2 | [file-preview-office](plans/file-preview-office.md) | `draft` | Prove no-Python DOCX/XLSX extraction and archive policy first; cut over Agent and preview in the same feature. Preserve #669's delivered file-tool contract; take the first preview-shell claim and ship all three readers together. |
 | P2 | [url-static-reader](plans/url-static-reader.md) | `draft` | Network/image-policy and existing Agent-mode fixtures can start now. Prefer after Office on preview shell/extraction wiring; preserve each caller's acquisition authority without a renderer fetch path. |
 | P3 | [computer-pilot-managed-skill](plans/computer-pilot-managed-skill.md) | `draft` | Prove both Skill and CLI acquisition plus packaged/TCC behavior. Refresh live Host/resource claims; use current file-backed admission and per-execution output ownership. |
@@ -158,8 +156,8 @@ open question. Reuse existing PM decisions instead of requesting them again.
 
 | Scope | Decision / preparation still to resolve | Effect on execution |
 | --- | --- | --- |
-| Background policy OQ-1 | Confirm whether all handed-over service exits, including nonzero/uncertain exits, stay factual UI updates without an Agent reply unless a watch exists. | Gates this feature's implementation; question recovery can proceed independently. |
-| Work folders OQ-1 | Confirm multi-folder Projects, primary initialization and independent existing-chat move/folder semantics. | Gates Project/folder implementation, not Memory or question recovery. |
+| Background policy OQ-1 | Confirm whether all handed-over service exits, including nonzero/uncertain exits, stay factual UI updates without an Agent reply unless a watch exists. | Gates this feature's implementation; independent Memory work remains eligible. |
+| Work folders OQ-1 | Confirm multi-folder Projects, primary initialization and independent existing-chat move/folder semantics. | Gates Project/folder implementation, not Memory or the delivered input contract. |
 | Scheduled work OQ-1/OQ-2 | Confirm local current-state catch-up/missed-once behavior and the task/result workspace with one primary work location. | Gates the scheduling feature; it is not a prerequisite for profile learning or targeted recovery. |
 | Profile core unit | Show direct edit, scoped correction, source removal, interrupted save and next-Turn activation examples. | Internal contract work before consumers in the same complete feature, not an extra proposal phase or mandatory approval inbox. |
 | Office / URL / Computer Pilot | Resolve parser/archive policy, shared remote-image policy, and reproducible CLI acquisition respectively. | Bounded technical preparation inside each feature; dependency/build ownership still requires coordination. |
@@ -171,10 +169,10 @@ open question. Reuse existing PM decisions instead of requesting them again.
   `stablePrompt` and shared specs. Consumers use those final owners and refresh
   live claims before editing them. An ordinary file reference does not grant source access,
   process control or authority to replay work.
-  The selected predecessor for work folders and question recovery is now available;
-  readable-record publication is not their intrinsic product prerequisite.
-- **Input and Task lifecycle:** question recovery owns deadline/settlement and
-  renderer draft state; background policy owns Task responsibility/disposition.
+  The selected record predecessor for work folders is available;
+  readable-record publication is not its intrinsic product prerequisite.
+- **Input and Task lifecycle:** #672 delivers deadline/settlement and renderer
+  draft state; background policy owns the proposed Task responsibility/disposition.
   Scheduling consumes both. Timeout keeps the same execution and slot until its
   owner settles. It clears only the exact question cause, not unread results or
   unrelated issues. No consumer adds a second timer or completion ledger.
@@ -336,10 +334,11 @@ into a blanket dependency for every PR.
 One line per recent shipped integration. Older history and review detail live in
 [CHANGELOG.md](../CHANGELOG.md) and merged PRs.
 
+- **user-input-request-recovery** (`done`, #672, 2026-09-11) - ordered question recovery, bounded exactly-once settlement and independent session-local answer/message drafts are shipped; [plan archived](plans/archive/user-input-request-recovery.md).
 - **unified-session-records** (`done`, #669, 2026-09-09) - ordinary file tools recover retained conversation evidence with exact sources, active publication and bounded continuation/search; [plan archived](plans/archive/unified-session-records.md).
 - **Execution-order audit** (`done`, 2026-09-09) - reconciled 15 active plans, #669's review state, contract dependencies, selected integration lanes and product gates; runtime features remain in their own rows.
 - **Design-validity audit and delegation closure** (`done`, 2026-09-09) - audited 15 designs, revised five and retained nine; the three shipped delegation units are [archived](plans/archive/agent-delegation-runtime.md), with graduation measurement preserved separately and no experimental graduation claimed.
-- **Task responsibility and input recovery design refinement** (`done`, #671, 2026-09-09) - Task acknowledgement/watch receipts, unsent answer recovery and scheduled question settlement are specified; all three runtime features remain unimplemented.
+- **Task responsibility and input recovery design refinement** (`done`, #671, 2026-09-09) - Task acknowledgement/watch receipts, unsent answer recovery and scheduled question settlement are specified; #672 subsequently delivers input recovery while Task policy and scheduled-work redesign remain open.
 - **conversation-work-folders design integration** (`done`, #670, 2026-09-09) - Project sources, independent conversation defaults, CLI/Skill access and composer controls are specified; #669's prerequisite is delivered and OQ-1 remains pending.
 - **scheduled-work design integration** (`done`, #668, 2026-09-09) - the task/results workspace and CLI/Skill design is integrated; record contracts are available, with OQ-1/OQ-2 still pending.
 - **startup-fault-isolation** (`done`, #664, 2026-09-09) - scoped startup recovery preserves healthy notes, chat drafts and notifications; owner retry and configuration recovery are specified, and the [plan is archived](plans/archive/startup-fault-isolation.md).
