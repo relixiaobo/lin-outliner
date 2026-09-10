@@ -40,7 +40,10 @@ receive neither, which keeps nested delegation unavailable by construction.
 The UI has no delegated-Agent roster, tree, chip, transcript, or navigation.
 Each invocation appears as the same Bash Item and generic Tool Task row used by
 any other long-running command. Completion is pushed through the Tool Task
-delivery path. `task_status` is for explicit inspection or recovery, not a
+delivery path under a finite-result agreement. Delegated jobs cannot be relabelled
+as handed-over services. The owning root may acknowledge an exact terminal event
+with `task_control`; hidden delegated callers cannot mutate Task responsibility.
+`task_status` is for explicit inspection or recovery, not a
 polling loop; `task_stop` accepts only a Tool Task ID.
 
 ## Vocabulary And Ownership

@@ -1,3 +1,4 @@
+import { decodeTaskContinuation } from './taskContinuation';
 import { sameUserInput } from './userInput';
 import { decodeProcessIsolationEvidence } from './processIsolation';
 import { decodeProjectSelection, decodeProjectInspectRequest, decodeProjectManageRequest, decodeProjectCatalogView, decodeProjectManageResult } from './project';
@@ -2248,7 +2249,7 @@ function decodeToolTaskProjection(value: unknown, path: string): import('./proto
     'taskId', 'ownerThreadId', 'sourceTurnId', 'sourceItemId', 'producer', 'description',
     'state', 'deliveryState', 'progress', 'exitCode', 'signal', 'outcomeReason', 'error',
     'detailState', 'artifacts', 'artifactWarnings', 'outputBytes', 'detailBytes', 'storagePressure',
-    'startedAt', 'completedAt', 'deliveryTurnId', 'executionContext', 'isolation',
+    'startedAt', 'completedAt', 'deliveryTurnId', 'executionContext', 'isolation', 'continuation',
   ], path);
   let progress: import('./protocol').ToolTaskProgress | null = null;
   if (record.progress !== null) {
@@ -2287,6 +2288,7 @@ function decodeToolTaskProjection(value: unknown, path: string): import('./proto
   }
   return {
     taskId: boundedUtf8String(record.taskId, `${path}.taskId`, 256),
+    continuation: decodeTaskContinuation(record.continuation),
     executionContext: decodeTaskExecutionContext(record.executionContext),
     isolation: decodeProcessIsolationEvidence(record.isolation),
     ownerThreadId: uuidV7(record.ownerThreadId, `${path}.ownerThreadId`),
@@ -2298,7 +2300,7 @@ function decodeToolTaskProjection(value: unknown, path: string): import('./proto
       'running', 'settling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'lost',
     ], `${path}.state`),
     deliveryState: enumValue(record.deliveryState, [
-      'pending', 'delivering', 'delivered', 'blocked',
+      'pending', 'delivering', 'delivered', 'blocked', 'silent', 'handled',
     ], `${path}.deliveryState`),
     progress,
     exitCode: nullableInteger(record.exitCode, `${path}.exitCode`),

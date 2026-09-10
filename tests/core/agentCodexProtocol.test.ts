@@ -1,3 +1,4 @@
+import { initialTaskContinuation } from '../../src/core/agent/taskContinuation';
 import { decodeRequestUserInputResult, decodeUserInputReadResponse } from '../../src/core/agent/codec';
 import { describe, expect, test } from 'bun:test';
 import {
@@ -138,6 +139,7 @@ const toolTask = {
   description: 'Render clip',
   state: 'failed' as const,
   deliveryState: 'pending' as const,
+  continuation: initialTaskContinuation(),
   progress: { phase: 'render', message: 'frame 12', fraction: 0.5, updatedAt: 120 },
   exitCode: 1,
   signal: null,

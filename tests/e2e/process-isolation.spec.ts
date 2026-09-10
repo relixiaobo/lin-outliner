@@ -13,7 +13,7 @@ for (const theme of ['light', 'dark'] as const) {
       target.__LIN_E2E__.emitAgentCoreNotification({ type: 'toolTask/changed', threadId, task: {
         taskId: 'task-isolation-proof', ownerThreadId: threadId, sourceTurnId: '01910000-0000-7000-8000-00000000ee01',
         sourceItemId: '01910000-0000-7000-8000-00000000ee02', producer: 'bash', description: 'Check project isolation',
-        state: 'succeeded', deliveryState: 'delivered', progress: null, exitCode: 0, signal: null, outcomeReason: 'exit_zero', error: null,
+        state: 'succeeded', deliveryState: 'delivered', continuation: { kind: 'result', revision: 0, handoff: null, watch: null, stop: null, event: null }, progress: null, exitCode: 0, signal: null, outcomeReason: 'exit_zero', error: null,
         detailState: 'available', artifacts: [], artifactWarnings: [], outputBytes: 10, detailBytes: 10, storagePressure: null,
         startedAt: Date.now() - 5000, completedAt: Date.now(), deliveryTurnId: null,
         executionContext: { addressRef: 'a'.repeat(64), policyRef: 'b'.repeat(64), snapshotRef: 'c'.repeat(64),

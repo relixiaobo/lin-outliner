@@ -1,3 +1,4 @@
+import { initialTaskContinuation } from '../../src/core/agent/taskContinuation';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { act, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -109,6 +110,27 @@ describe('Tool Task strip', () => {
     expect(document.querySelector('.thread-tool-task-context')?.textContent).not.toContain('Not yet observed');
   });
 
+  test('keeps a silent service issue visible and separates exit facts from responsibility', async () => {
+    const { document, root } = installDom();
+    const terminal: ToolTaskProjection = { ...task('service', 'failed', 1000, 2000), deliveryState: 'silent', exitCode: 7,
+      continuation: { ...initialTaskContinuation({ kind: 'service' }), revision: 1,
+        handoff: { by: { turnId: 'turn', itemId: 'handoff' }, readiness: [{ turnId: 'turn', itemId: 'check' }] },
+        event: { id: 'event', disposition: 'silent', reason: 'handed_off', handling: null } } };
+    const view = (current: ToolTaskProjection) => <ToolTaskStrip now={20_000} tasks={[current]} ownerThreadId={OWNER_ID}
+      onRead={async () => ({ task: terminal, output: null })} onStop={async () => {}} onClearDetails={async () => 0} />;
+    await render(root, view(terminal));
+    expect(document.querySelector('.thread-work-strip-pill')?.textContent).toContain('Task needs attention');
+    await act(async () => { document.querySelector<HTMLElement>('.thread-work-strip-pill')?.click(); });
+    await act(async () => { document.querySelector<HTMLElement>('.thread-work-strip-open')?.click(); });
+    const detail = document.querySelector('.thread-tool-task-context');
+    expect(detail?.textContent).toContain('Verified and handed over');
+    expect(detail?.textContent).toContain('MonitoringOff');
+    expect(detail?.textContent).toContain('7');
+    expect(detail?.textContent).toContain('None recorded; exit initiator unknown');
+    expect(document.querySelector('.thread-work-strip-stop')).toBeNull();
+    expect(taskStripRows([{ ...terminal, deliveryState: 'delivered' }], 20_000)).toHaveLength(0);
+  });
+
   test('removes the final terminal row when the injected clock leaves the linger window', async () => {
     const { document, root } = installDom();
     const clock = 20_000;
@@ -188,6 +210,7 @@ function task(
       dependency: 'not-required', network: 'unrestricted', writablePaths: [], protectedGitObjectStores: [],
       profileDigest: null, reason: null },
     taskId,
+    continuation: initialTaskContinuation(),
     executionContext: {
       addressRef: 'a'.repeat(64), policyRef: 'b'.repeat(64), snapshotRef: 'c'.repeat(64),
       address: { requestedCwd: null, cwd: '/actual/task-directory', targets: [], targetMode: 'follow', coverage: 'cwd-only', scopes: [] },

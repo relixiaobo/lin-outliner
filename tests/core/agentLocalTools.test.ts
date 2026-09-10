@@ -1438,7 +1438,7 @@ describe('agent local tools', () => {
     // Server readiness must not require terminal settlement or a finite lifetime.
     expect(bash.description).toContain('servers that must remain available for user testing');
     expect(JSON.stringify(bash.parameters)).toContain('Background default: no elapsed-time limit');
-    expect(JSON.stringify(bash.parameters)).toContain('keep a requested server running after verification');
+    expect(JSON.stringify(bash.parameters)).toContain('task_control handoff');
     expect(bash.description).toContain('use task_stop if a background task needs to be stopped');
     expect(tools.some((tool) => tool.name === 'bash_stop' || tool.name === 'task_stop')).toBe(false);
   });

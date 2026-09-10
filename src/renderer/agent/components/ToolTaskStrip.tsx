@@ -34,6 +34,7 @@ export function ToolTaskStrip({
   const clock = useTaskClock(tasks, now);
   const rows = useMemo(() => taskStripRows(tasks, clock), [tasks, clock]);
   const runningCount = rows.filter((task) => task.state === 'running' || task.state === 'settling').length;
+  const needsAttention = rows.some(taskNeedsAttention);
   const root = useRef<HTMLDivElement | null>(null);
   const dismiss = useCallback(() => setOpen(false), []);
   useDismissibleOverlay(root, dismiss, { disabled: !open });
@@ -84,13 +85,16 @@ export function ToolTaskStrip({
           : <TerminalIcon aria-hidden size={ICON_SIZE.tiny} />}
         <span>{runningCount > 0
           ? t.agent.thread.tasks.running({ count: runningCount })
-          : t.agent.thread.tasks.justFinished}</span>
+          : needsAttention ? t.agent.thread.tasks.needsAttention : t.agent.thread.tasks.justFinished}</span>
       </button>
       {open ? (
         <div className="thread-work-strip-list" role="group" aria-label={t.agent.thread.tasks.backgroundWork}>
           {rows.map((task) => {
             const running = task.state === 'running' || task.state === 'settling';
-            const status = running && task.progress?.message
+            const status = task.state === 'running' && task.continuation.kind === 'service'
+              ? task.continuation.watch?.revokedAt === null ? t.agent.thread.tasks.watching
+                : task.continuation.handoff ? t.agent.thread.tasks.available : t.agent.thread.tasks.verifyingLaunch
+              : running && task.progress?.message
               ? task.progress.message
               : t.agent.thread.tasks.states[task.state];
             return (
@@ -118,7 +122,7 @@ export function ToolTaskStrip({
                   />
                 ) : null}
                 {detail?.task.taskId === task.taskId ? (
-                  <TaskDetail detail={detail} isolation={task.isolation} onRequestClear={() => setConfirmingClear(true)} clearResult={clearResult} />
+                  <TaskDetail detail={{ ...detail, task }} isolation={task.isolation} onRequestClear={() => setConfirmingClear(true)} clearResult={clearResult} />
                 ) : null}
               </div>
             );
@@ -158,6 +162,21 @@ function TaskDetail({
   return (
     <div className="thread-tool-task-detail">
       <dl className="thread-tool-task-context">
+        <dt>{t.agent.thread.tasks.processState}</dt>
+        <dd>{t.agent.thread.tasks.states[detail.task.state]}</dd>
+        {detail.task.continuation.kind === 'service' ? <>
+          <dt>{t.agent.thread.tasks.launch}</dt>
+          <dd>{detail.task.continuation.handoff ? t.agent.thread.tasks.launchVerified : t.agent.thread.tasks.launchUnfinished}</dd>
+          <dt>{t.agent.thread.tasks.monitoring}</dt>
+          <dd>{detail.task.continuation.watch?.revokedAt === null ? t.agent.thread.tasks.watching : t.agent.thread.tasks.notWatching}</dd>
+        </> : null}
+        {detail.task.completedAt !== null ? <>
+          <dt>{t.agent.thread.tasks.exitCode}</dt>
+          <dd>{detail.task.exitCode ?? t.agent.thread.tasks.unknown}</dd>
+          {detail.task.signal ? <><dt>{t.agent.thread.tasks.signal}</dt><dd>{detail.task.signal}</dd></> : null}
+          <dt>{t.agent.thread.tasks.stopRequest}</dt>
+          <dd>{detail.task.continuation.stop ? t.agent.thread.tasks.stopSources[detail.task.continuation.stop.source] : t.agent.thread.tasks.noKnownStop}</dd>
+        </> : null}
         <dt>{t.agent.thread.tasks.directory}</dt>
         <dd>{detail.task.executionContext.address.cwd}</dd>
         <dt>{t.agent.thread.tasks.executionPolicy}</dt>
@@ -219,6 +238,7 @@ export function taskStripRows(
     .filter((task) => (
       task.state === 'running'
       || task.state === 'settling'
+      || taskNeedsAttention(task)
       || (task.completedAt !== null && now - task.completedAt < TOOL_TASK_STRIP_LINGER_MS)
     ))
     .sort((left, right) => {
@@ -228,6 +248,12 @@ export function taskStripRows(
         || left.startedAt - right.startedAt
         || left.taskId.localeCompare(right.taskId);
     });
+}
+
+function taskNeedsAttention(task: ToolTaskProjection): boolean {
+  return task.deliveryState === 'blocked' || (task.deliveryState === 'silent'
+    && task.continuation.kind === 'service' && task.continuation.stop === null
+    && (task.state === 'failed' || task.state === 'lost' || task.state === 'timed_out' || task.signal !== null));
 }
 
 function useTaskClock(tasks: readonly ToolTaskProjection[], injected: number | undefined): number {

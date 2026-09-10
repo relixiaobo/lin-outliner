@@ -271,7 +271,7 @@ reset Items select context state rather than becoming user prose. The assistant 
 so Host lifecycle markers and background-task activity contribute no provider
 content. An Item that contributes no content also does not create a message
 boundary. The model learns what it ran from the canonical Bash call and result,
-and learns terminal background transitions from Tool Task delivery. The one
+and learns terminal background transitions requiring continuation from Tool Task delivery. The one
 Host-authored line retained in this channel is the redacted-replay notice, which
 names argument paths a completed tool call no longer replays and stays atomic
 with that call.
@@ -631,7 +631,7 @@ Provider events are converted as follows:
 - patch activity becomes `fileChange`
 - MCP calls become `mcpToolCall`
 - configured extension tools become `dynamicToolCall`
-- background `bash`, `task_status`, and `task_stop` remain ordinary dynamic-tool Items
+- background `bash`, `task_status`, `task_control`, and `task_stop` remain ordinary dynamic-tool Items
 - web and image activity use their canonical Item kinds
 
 OpenAI Responses requests use the provider's detailed reasoning-summary mode.
@@ -667,7 +667,8 @@ non-Responses adapters do not use this wrapper.
 An execution or streamed Item is recorded with `item/started`, optional typed
 deltas, and one terminal `item/completed`. Initial evidence and user facts are
 complete inside the atomic `turn/started` event. Later steering evidence and
-input use `items/completed`. Background Tool Task delivery starts a separate
+input use `items/completed`. Background Tool Task delivery with an unhandled
+result, unfinished launch, or active watch starts a separate
 Host-authored root Turn and commits its delivery claim at that Turn's atomic
 start. Neither path synthesizes a streaming lifecycle.
 The recorder applies every delta to its current decoded Item before the next provider

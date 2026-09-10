@@ -3058,6 +3058,7 @@ test.describe('canonical agent Thread surface', () => {
         description: input.description,
         state: input.state,
         deliveryState: input.deliveryState ?? 'pending',
+        continuation: { kind: 'result', revision: 0, handoff: null, watch: null, stop: null, event: null },
         progress: input.progress ?? null,
         exitCode: input.exitCode ?? null,
         signal: null,
@@ -3090,7 +3091,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(runningRow).toContainText('Frame 12');
     await runningRow.locator('.thread-work-strip-open').click();
     await expect(runningRow.locator('.thread-tool-task-output')).toHaveText('Mock background output');
-    await expect(runningRow.locator('.thread-tool-task-context dd').first()).toHaveText(directory);
+    await expect(runningRow.locator('.thread-tool-task-context dt').filter({ hasText: /^Directory$/ }).locator('+ dd')).toHaveText(directory);
     for (const width of [280, 400]) {
       await page.locator('.app').evaluate((element, width) => {
         (element as HTMLElement).style.setProperty('--agent-width', `${width}px`);
@@ -3130,7 +3131,7 @@ test.describe('canonical agent Thread surface', () => {
         sourceItemId: 'task-e2e-reclaimable',
         description: 'Earlier export',
         state: 'succeeded',
-        deliveryState: 'delivered',
+        deliveryState: 'delivered', continuation: { kind: 'result', revision: 0, handoff: null, watch: null, stop: null, event: null },
         exitCode: 0,
         outcomeReason: 'exit_zero',
         error: null,
@@ -3146,7 +3147,7 @@ test.describe('canonical agent Thread surface', () => {
         sourceItemId: 'task-e2e-pressure',
         description: 'Large export',
         state: 'failed',
-        deliveryState: 'pending',
+        deliveryState: 'pending', continuation: { kind: 'result', revision: 0, handoff: null, watch: null, stop: null, event: null },
         exitCode: null,
         outcomeReason: 'storage_limit',
         error: 'Not enough managed task storage.',
@@ -3171,7 +3172,7 @@ test.describe('canonical agent Thread surface', () => {
     await pressureRow.locator('.thread-work-strip-open').click();
     await expect(pressureRow.locator('.thread-tool-task-pressure')).toContainText('512 B');
     await pressureRow.getByRole('button', { name: 'Clear eligible details' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Clear delivered task details?' });
+    const dialog = page.getByRole('dialog', { name: 'Clear settled task details?' });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: 'Clear eligible details' }).click();
     await expect(pressureRow.locator('.thread-tool-task-pressure')).toContainText('256 B cleared');

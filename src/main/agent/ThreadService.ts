@@ -565,6 +565,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
           currentRootIntentRevision,
         });
       },
+      runResponsibilityMutation: (threadId, operation) => this.core.threadMutex.run(threadId, operation),
+      authorizeControl: (threadId, caller) => this.authorizeTaskControl(threadId, caller),
+      validateReadiness: (task, references) => this.validateTaskReadiness(task, references),
+      validateWatchRequest: (threadId, reference, after) => this.validateTaskWatchRequest(threadId, reference, after),
+      currentReaderRequest: (threadId, turnId) => this.taskReaderRequest(threadId, turnId),
       startCompletionTurn: async (input) => Boolean(await this.turnLifecycle.tryStartTurnIfIdle({
         threadId: input.threadId,
         turnId: input.turnId,
@@ -576,7 +581,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         author: { kind: 'host' },
         trigger: { kind: 'feature', feature: 'tool-task-completion', ref: input.admission.batchId },
         toolTaskAdmission: input.admission,
-      })),
+      }, input.admissionGuard)),
       settleTask: async (task, producerContext, maxArtifactBytes) => {
         if (task.producer === 'delegate') {
           const bytes = await this.toolTasks.readPreparedResult(task.taskId, task.ownerThreadId);
@@ -1454,6 +1459,77 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return { task, output: await this.toolTasks.output(request.taskId, request.threadId) };
   }
   toolTaskService(): ToolTaskService { return this.toolTasks; }
+
+  private authorizeTaskControl(threadId: ThreadId, caller: import('../../core/agent/taskContinuation').TaskItemReference): void {
+    const record = this.core.requireThread(threadId);
+    const active = this.activeTurns.get(threadId);
+    const item = active?.recorder.item(caller.itemId);
+    if (record.archived || this.core.hiddenEphemeralThreads.has(threadId)
+      || record.thread.parentThreadId !== null || record.thread.threadSource === 'delegation'
+      || !active || active.turnId !== caller.turnId || active.finishing || active.controller.signal.aborted
+      || !item || (item.type !== 'dynamicToolCall' && item.type !== 'commandExecution') || item.status !== 'inProgress') {
+      throw new Error('Task responsibility changes require the owning root Thread and its active Tool Item');
+    }
+  }
+
+  private taskEvidenceItem(threadId: ThreadId, reference: import('../../core/agent/taskContinuation').TaskItemReference): ThreadItem | null {
+    const active = this.activeTurns.get(threadId);
+    const item = active?.turnId === reference.turnId ? active.recorder.item(reference.itemId)
+      : this.core.readTurn(threadId, reference.turnId)?.items.find((entry) => entry.id === reference.itemId);
+    if (!item || item.provenance.originThreadId !== threadId || item.provenance.originTurnId !== reference.turnId) return null;
+    return item;
+  }
+
+  private validateTaskReadiness(task: import('./tasks/toolTaskTypes').ToolTaskRecord,
+    references: readonly import('../../core/agent/taskContinuation').TaskItemReference[]): void {
+    for (const reference of references) {
+      const item = this.taskEvidenceItem(task.ownerThreadId, reference);
+      const check = this.toolTasks.store.listAll(task.ownerThreadId)
+        .find((candidate) => candidate.sourceTurnId === reference.turnId && candidate.sourceItemId === reference.itemId);
+      if (!item || item.id === task.sourceItemId
+        || (item.type !== 'dynamicToolCall' && item.type !== 'commandExecution') || item.status !== 'completed'
+        || (item.type === 'dynamicToolCall' && (item.success !== true || ['task_status', 'task_control'].includes(item.tool)))
+        || (item.type === 'commandExecution' && item.exitCode !== 0)
+        || (check && (check.state !== 'succeeded' || check.startedAt < task.startedAt || check.cwd !== task.cwd))) {
+        throw new Error('Handoff requires completed successful readiness checks from this service execution lineage; launch progress and Task status are insufficient');
+      }
+      // A successful native check must follow the launch, including within the same Turn.
+      if (!this.taskReferenceFollows(task.ownerThreadId, reference, { turnId: task.sourceTurnId, itemId: task.sourceItemId })) {
+        throw new Error('Readiness evidence predates the service launch');
+      }
+    }
+  }
+
+  private taskReferenceFollows(threadId: ThreadId, reference: import('../../core/agent/taskContinuation').TaskItemReference,
+    earlier: import('../../core/agent/taskContinuation').TaskItemReference): boolean {
+    const active = this.activeTurns.get(threadId);
+    const ordered = this.core.allTurns(threadId).flatMap((turn) =>
+      (turn.id === active?.turnId ? active.recorder.orderedItems() : turn.items).map((item) => ({ turnId: turn.id, itemId: item.id })));
+    const index = (ref: typeof reference) => ordered.findIndex((item) => item.turnId === ref.turnId && item.itemId === ref.itemId);
+    return index(earlier) >= 0 && index(reference) > index(earlier);
+  }
+
+  private validateTaskWatchRequest(threadId: ThreadId, reference: import('../../core/agent/taskContinuation').TaskItemReference,
+    after?: import('../../core/agent/taskContinuation').TaskItemReference): void {
+    const item = this.taskEvidenceItem(threadId, reference);
+    if (!item || item.type !== 'userMessage' || item.author.kind !== 'reader' || item.content.length === 0
+      || (after && !this.taskReferenceFollows(threadId, reference, after))) {
+      throw new Error('A service watch requires an explicit reader request in its owning root Thread');
+    }
+  }
+
+  taskReaderRequest(threadId: ThreadId, turnId: TurnId): import('../../core/agent/taskContinuation').TaskItemReference | null {
+    const turns = this.core.allTurns(threadId);
+    const index = turns.findIndex((turn) => turn.id === turnId);
+    for (let i = index; i >= 0; i -= 1) {
+      const turn = turns[i]!;
+      const active = this.activeTurns.get(threadId);
+      const items = turn.id === active?.turnId ? active.recorder.orderedItems() : turn.items;
+      const item = [...items].reverse().find((entry) => entry.type === 'userMessage' && entry.author.kind === 'reader');
+      if (item) return { turnId: turn.id, itemId: item.id };
+    }
+    return null;
+  }
   getThreadConfiguration(threadId: ThreadId): ThreadConfigurationResponse { return this.catalogOps.getThreadConfiguration(threadId); }
   async setThreadConfiguration(request: ThreadConfigurationSetRequest): Promise<ThreadConfigurationResponse> { return this.catalogOps.setThreadConfiguration(request); }
   async startThread(requestInput: AgentCoreRequestByMethod['thread/start']): Promise<ThreadStartResponse> {

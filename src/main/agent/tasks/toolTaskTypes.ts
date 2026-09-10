@@ -23,6 +23,7 @@ export type {
 };
 
 export interface ToolTaskRecord extends ToolTaskProjection {
+  readonly controlReceipts: readonly { readonly digest: string; readonly receipt: import('../../../core/agent/taskContinuation').TaskControlReceipt }[];
   readonly operationKind: 'process' | 'host';
   readonly parentTaskId: string | null;
   readonly backgroundEnabled: boolean;

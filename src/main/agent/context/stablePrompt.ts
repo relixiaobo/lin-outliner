@@ -187,6 +187,13 @@ function capabilityBlocks(
       text: [
         '# Background tasks',
         '- Use task_stop with the task ID to stop a running task.',
+        '- Stop also cancels that Task’s unhandled continuation; it does not rewrite an already admitted handling Turn.',
+        ...(has('task_control') ? [
+          '- Background execution only changes waiting. Finite jobs owe results; explicitly declare user-facing services with completion_agreement, verify usable startup, and commit task_control handoff before reporting availability.',
+          '- Watch a service only on an explicit reader request. Handoff preserves that watch; revoke_watch leaves the process running. A handed-over service without a watch exits silently.',
+          '- Before reporting a pending terminal result in an existing Turn, use task_control acknowledge with its exact event ID. Reading task_status or writing a final reply does not acknowledge it.',
+          '- Reconcile an uncertain control operation through task_status operation_id, then retry the identical operation. An exit or historical log alone never grants repair or restart authority.',
+        ] : []),
       ].join('\n'),
     });
   }

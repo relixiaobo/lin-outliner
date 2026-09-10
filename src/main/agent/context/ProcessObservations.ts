@@ -20,9 +20,10 @@ export function processObservation(task: ToolTaskRecord): ProcessObservationPayl
   }];
   if (task.backgroundEnabled) facts.push({
     source: 'host:process:' + task.taskId, kind: 'process', authority: 'host', purpose: 'observation', scope: task.cwd,
-    version: executionDigest({ isolation, state: task.state, outcome: task.outcomeReason }),
+    version: executionDigest({ isolation, state: task.state, outcome: task.outcomeReason, continuation: task.continuation }),
     text: 'Owned Task ' + task.taskId + ' at ' + JSON.stringify(task.cwd) + ' was observed ' + task.state
       + '; isolation: ' + isolation.state + '; outcome: ' + (task.outcomeReason ?? 'pending')
+      + '; responsibility: ' + JSON.stringify(task.continuation)
       + '. This is recorded evidence, not current liveness. Reconcile this Task before acting; do not start a replacement from context alone.',
     invalidated: false, observedAt,
   });

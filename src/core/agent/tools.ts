@@ -10,6 +10,7 @@ import {
   type ModelToolIdentity,
 } from './protocol';
 import { decodeRequestUserInputQuestions } from './codec';
+import { TASK_CONTINUATION_SCHEMA, TASK_CONTROL_RECEIPT_SCHEMA, TASK_CONTROL_INPUT_SCHEMA, TASK_ITEM_REFERENCE_SCHEMA } from './taskContinuation';
 import {
   AUTOMATION_STATUSES,
   AUTOMATION_IDENTIFIER_MAX_LENGTH,
@@ -93,6 +94,7 @@ export interface ModelToolSchemaContribution {
 export const AGENT_TASK_TOOL_NAMES = [
   'task_status',
   'task_stop',
+  'task_control',
 ] as const satisfies readonly AgentTaskToolName[];
 
 export const RETAINED_CAPABILITY_TOOL_NAMES = [
@@ -132,6 +134,7 @@ export const MODEL_TOOL_ACTION_KINDS = [
   'shell.stop',
   'task.inspect',
   'task.stop',
+  'task.control',
   'git.publish_remote',
   'deploy.publish_remote',
   'external.message.send',
@@ -175,6 +178,7 @@ export interface TaskStopToolInput {
 
 export interface TaskStatusToolInput {
   readonly task_id: string;
+  readonly operation_id?: string;
 }
 
 export type UpdatePlanToolStep = TurnPlanStep;
@@ -448,6 +452,8 @@ const retainedCapabilityOutputSchemas: Readonly<Record<typeof RETAINED_CAPABILIT
     exitCode: integerSchema(),
     isImage: booleanSchema(),
     backgroundTaskId: outputStringSchema(),
+    continuation: TASK_CONTINUATION_SCHEMA,
+    evidence: TASK_ITEM_REFERENCE_SCHEMA,
     taskStatus: enumSchema(BASH_TASK_STATUSES),
     persistedOutput: persistedOutputSchema,
     artifacts: outputArraySchema(artifactOutputSchema, 16),
@@ -631,14 +637,14 @@ const automationUpdateToolSchema: ObjectJsonSchema = objectSchema({
 }, ['mode']);
 
 export const TASK_STOP_TOOL_DESCRIPTION = `
-- Stops a running background task by its ID
+- Stops an owned background task and revokes its pending responsibilities, even after exit before delivery
 - Takes a task_id parameter identifying the task to stop
-- Returns a success or failure status
-- Use this tool when you need to terminate a long-running task
+- Returns factual process state and responsibility; an already committed handling Turn keeps its owner
+- Use for authorized process Stop, not to stop watching; task_control revoke_watch leaves the process running
 `;
 
 export const TASK_STATUS_TOOL_DESCRIPTION = `Read one background Tool Task owned by this Thread.
-Read bounded running logs to verify startup readiness without stopping the process. Running observations are separate from terminal results. Use for readiness, an explicit status request, or recovery; avoid repetitive polling. Completion is delivered automatically.`;
+Read bounded running logs and responsibility/event facts without changing them. Running observations are not readiness proof. Use for readiness, an explicit status request, or recovery; avoid repetitive polling. operation_id reconciles an exact Task control receipt. Finite unhandled results and unfinished service launches continue automatically; handed-over services do not unless watched.`;
 
 const JSON_SCHEMA_DRAFT_2020_12 = 'https://json-schema.org/draft/2020-12/schema';
 
@@ -660,6 +666,7 @@ export const TASK_STATUS_INPUT_SCHEMA: ObjectJsonSchema = {
   $schema: JSON_SCHEMA_DRAFT_2020_12,
   type: 'object',
   properties: {
+    operation_id: { type: 'string', minLength: 1, maxLength: 256, description: 'Inspect the receipt for this exact Task control operation without changing responsibility.' },
     task_id: {
       description: 'The Tool Task ID returned by a background-producing tool.',
       type: 'string',
@@ -672,6 +679,13 @@ export const TASK_STATUS_INPUT_SCHEMA: ObjectJsonSchema = {
 
 const agentTaskToolContracts: readonly StaticModelToolContract[] = [
   {
+    identity: { namespace: null, name: 'task_control' },
+    description: 'Change responsibility for an owned Task. handoff requires expected_revision and completed successful readiness references; launch progress/status alone is insufficient. acknowledge binds an exact terminal event_id to this Turn before reporting its result. start_watch requires expected_revision and an explicit reader request reference; revoke_watch requires expected_revision and the exact watch_id and keeps the process running. Handoff preserves a watch. All actions require operation_id; reconcile lost replies with task_status. A conflict or existing handler never transfers responsibility or grants repair/restart authority.',
+    scope: 'rootThread', schemaOwner: 'core', inputSchema: TASK_CONTROL_INPUT_SCHEMA,
+    outputSchema: objectSchema({ receipt: TASK_CONTROL_RECEIPT_SCHEMA, continuation: TASK_CONTINUATION_SCHEMA }, ['receipt', 'continuation']),
+    actionKinds: ['task.control'],
+  },
+  {
     identity: { namespace: null, name: 'task_status' },
     description: TASK_STATUS_TOOL_DESCRIPTION,
     scope: 'anyThread',
@@ -679,6 +693,9 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
     inputSchema: TASK_STATUS_INPUT_SCHEMA,
     outputSchema: objectSchema({
       taskId: stringSchema('Tool Task identity.'),
+      continuation: TASK_CONTINUATION_SCHEMA,
+      operation: TASK_CONTROL_RECEIPT_SCHEMA,
+      requestReference: nullableSchema(TASK_ITEM_REFERENCE_SCHEMA),
       state: enumSchema(['running', 'settling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'lost']),
       progress: nullableSchema(objectSchema({
         phase: nullableSchema(outputStringSchema()),
@@ -732,6 +749,7 @@ const agentTaskToolContracts: readonly StaticModelToolContract[] = [
       taskId: stringSchema('Stopped task identity.'),
       taskType: stringSchema('Task owner family.'),
       state: enumSchema(['running', 'settling', 'succeeded', 'failed', 'cancelled', 'timed_out', 'lost', 'stopped']),
+      continuation: TASK_CONTINUATION_SCHEMA,
     }, ['taskId', 'taskType', 'state']),
     actionKinds: ['task.stop'],
   },
@@ -1092,11 +1110,14 @@ export function normalizeTaskStopToolInput(value: unknown): TaskStopToolInput {
 
 export function normalizeTaskStatusToolInput(value: unknown): TaskStatusToolInput {
   if (!isRecord(value)) throw new Error('task_status input must be an object');
-  exactInputKeys(value, ['task_id'], 'task_status');
+  exactInputKeys(value, ['task_id', 'operation_id'], 'task_status');
   if (typeof value.task_id !== 'string' || !value.task_id.trim()) {
     throw new Error('Missing required parameter: task_id');
   }
-  return Object.freeze({ task_id: value.task_id.trim() });
+  if (value.operation_id !== undefined && (typeof value.operation_id !== 'string' || !value.operation_id.trim() || value.operation_id.length > 256)) {
+    throw new Error('Invalid Task operation identity');
+  }
+  return Object.freeze({ task_id: value.task_id.trim(), ...(typeof value.operation_id === 'string' ? { operation_id: value.operation_id } : {}) });
 }
 
 export function normalizeUpdatePlanToolInput(value: unknown): UpdatePlanToolInput {

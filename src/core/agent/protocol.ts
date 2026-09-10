@@ -173,7 +173,7 @@ export type ToolTaskExecutionState =
   | 'timed_out'
   | 'lost';
 
-export type ToolTaskDeliveryState = 'pending' | 'delivering' | 'delivered' | 'blocked';
+export type ToolTaskDeliveryState = 'pending' | 'delivering' | 'delivered' | 'blocked' | 'silent' | 'handled';
 export type ToolTaskDetailState = 'available' | 'expired' | 'cleared' | 'storage_pressure';
 
 export interface ToolTaskProgress {
@@ -199,6 +199,7 @@ export interface ToolTaskStoragePressure {
 }
 
 export interface ToolTaskProjection {
+  readonly continuation: import('./taskContinuation').TaskContinuation;
   readonly isolation: import('./processIsolation').ProcessIsolationEvidence;
   readonly taskId: string;
   readonly executionContext: import('./executionContext').TaskExecutionContext;
@@ -1335,7 +1336,7 @@ export interface DynamicToolCallThreadItem extends ThreadToolItemBase {
   readonly durationMs: number | null;
 }
 
-export type AgentTaskToolName = 'task_status' | 'task_stop';
+export type AgentTaskToolName = 'task_status' | 'task_stop' | 'task_control';
 
 export interface WebSearchResult {
   readonly title: string;

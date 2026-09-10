@@ -1,3 +1,4 @@
+import { decodeTaskControlInput } from '../../../core/agent/taskContinuation';
 import { decodeRequestUserInputResult } from '../../../core/agent/codec';
 import type { TSchema } from 'typebox';
 import type { JsonValue } from '../../../core/agent/protocol';
@@ -296,6 +297,12 @@ export class ToolRuntime {
         }
         return this.service.updateGoalForTurn(threadId, turnId, status);
       }),
+      coreResultTool('task_control', 'Task Control', async (itemId, params) => {
+        const input = decodeTaskControlInput(params);
+        const tasks = this.service.toolTaskService();
+        const receipt = await tasks.control(threadId, { turnId, itemId }, input);
+        return toolResult('task_control', { receipt, continuation: tasks.readOwned(input.task_id, threadId)!.continuation });
+      }, decodeTaskControlInput),
       coreResultTool('task_status', 'Task Status', async (_itemId, params) => {
         const input = normalizeTaskStatusToolInput(params);
         const toolTasks = typeof this.service.toolTaskService === 'function'
@@ -314,6 +321,9 @@ export class ToolRuntime {
         const combined = [output?.stdout, output?.stderr].filter(Boolean).join('\n');
         return toolResult('task_status', {
           taskId: task.taskId,
+          continuation: task.continuation,
+          requestReference: this.service.taskReaderRequest?.(threadId, turnId) ?? null,
+          operation: input.operation_id ? task.controlReceipts.find(({ receipt }) => receipt.operationId === input.operation_id)?.receipt ?? null : null,
           isolation: task.isolation,
           cwd: task.executionContext.address.cwd,
           capability: task.executionContext.policy.capability,
@@ -347,12 +357,13 @@ export class ToolRuntime {
         const toolTasks = typeof this.service.toolTaskService === 'function'
           ? this.service.toolTaskService()
           : null;
-        const toolTask = await toolTasks?.stop(taskId, threadId, turnId) ?? null;
+        const toolTask = await toolTasks?.stop(taskId, threadId, turnId, 'agent') ?? null;
         if (toolTask) {
           return toolResult('task_stop', {
             taskId: toolTask.taskId,
             taskType: toolTask.producer,
             state: toolTask.state,
+            continuation: toolTask.continuation,
           });
         }
         throw new AgentToolFailure(
@@ -620,12 +631,16 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
       taskId,
       taskType,
       state: typeof details.state === 'string' ? details.state : 'stopped',
+      ...(details.continuation ? { continuation: details.continuation } : {}),
     });
   }
   if (tool === 'task_status' && isRecord(details)) {
     const terminal = details.state !== 'running' && details.state !== 'settling';
     const visible = {
       taskId: details.taskId,
+      ...(details.continuation ? { continuation: details.continuation } : {}),
+      operation: details.operation ?? null,
+      requestReference: details.requestReference ?? null,
       state: details.state,
       progress: details.progress && isRecord(details.progress) ? {
         phase: details.progress.phase ?? null,
@@ -657,8 +672,8 @@ function toolResult(tool: string, value: unknown): AgentToolResult<unknown> {
     }
     return agentToolResult(successEnvelope(tool, details, {
       instructions: details.state === 'running' || details.state === 'settling'
-        ? 'The task is still active. This bounded log observation is not a terminal result or proof of readiness. Verify the requested service, keep it running for user testing, and use task_stop only when it should end. Avoid repetitive polling; completion is delivered automatically.'
-        : undefined,
+        ? 'This observation is not readiness proof. Verify a service with a completed endpoint, Runtime or application check, then commit task_control handoff before reporting it available. Handoff retains any explicit watch. Avoid repetitive polling.'
+        : 'Use task_control acknowledge with the exact pending event before reporting a result in this Turn. An existing handler or silent disposition grants no new work. Exit facts and logs do not establish who closed a process or authorize a restart.',
     }), visible);
   }
   return agentToolResult(successEnvelope(tool, details), details);

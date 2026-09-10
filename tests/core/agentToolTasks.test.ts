@@ -1312,6 +1312,170 @@ describe('ToolTaskService', () => {
   });
 });
 
+describe('Task continuation agreements', () => {
+  const caller = { turnId: SOURCE_TURN_ID, itemId: 'control-item' };
+  const readiness = [{ turnId: SOURCE_TURN_ID, itemId: 'readiness-check' }];
+  const handoff = (task: ToolTaskRecord, operation_id = 'handoff') => ({ task_id: task.taskId, operation_id,
+    action: 'handoff' as const, expected_revision: task.continuation.revision, readiness });
+  async function liveService(fixture: Awaited<ReturnType<typeof createFixture>>, id: string) {
+    const task = await seedRunningTask(fixture, id, 10, { producer: 'bash', backgroundEnabled: true, completionAgreement: { kind: 'service' } });
+    return fixture.store.setSupervisor(task.taskId, 2_000_000_001, 2_000_000_002, 10);
+  }
+  function finish(fixture: Awaited<ReturnType<typeof createFixture>>, task: ToolTaskRecord, state: 'succeeded' | 'failed' = 'succeeded') {
+    fixture.store.settleArtifacts(task.taskId, { artifacts: [], warnings: [] }, 20);
+    return fixture.store.commitTerminal(task.taskId, receiptFor(task, state, 20), 20);
+  }
+
+  test('handoff survives exit and restart, replays a lost reply, and never fabricates a delivery', async () => {
+    const fixture = await createFixture();
+    for (const outcome of ['succeeded', 'failed'] as const) {
+      const task = await liveService(fixture, outcome);
+      const request = handoff(task);
+      const accepted = fixture.store.control(request, caller, 11);
+      expect(accepted).toMatchObject({ status: 'accepted', revision: 1, event: null });
+      expect(finish(fixture, task, outcome)).toMatchObject({ deliveryState: 'silent', deliveryTurnId: null,
+        continuation: { event: { disposition: 'silent', reason: 'handed_off', handling: null }, stop: null } });
+      const reopened = new ToolTaskStore(fixture.database);
+      expect(reopened.control(request, caller, 30)).toEqual(accepted);
+      expect(reopened.pendingDelivery(OWNER_ID, 10)).toEqual([]);
+      expect(() => reopened.control({ ...request, readiness: [{ ...caller }] }, caller, 31)).toThrow('reused with different input');
+      expect(reopened.control({ ...request, operation_id: 'new', expected_revision: 1 }, caller, 31).status).toBe('conflict');
+      expect(reopened.read(task.taskId)?.continuation.handoff?.readiness).toEqual(readiness);
+    }
+    expect(fixture.store.hasBlockingWork(OWNER_ID)).toBe(false);
+    expect(fixture.store.clearableDetails(OWNER_ID)).toHaveLength(2);
+  });
+
+  test('finite success and failure and unhanded service exits still owe one result', async () => {
+    const fixture = await createFixture();
+    for (const state of ['succeeded', 'failed'] as const) {
+      const task = await seedRunningTask(fixture, `finite-${state}`, 10, { backgroundEnabled: true });
+      expect(finish(fixture, task, state).continuation.event?.disposition).toBe('pending');
+    }
+    const service = await liveService(fixture, 'unhanded');
+    const exited = finish(fixture, service, 'failed');
+    expect(exited.continuation.event?.disposition).toBe('pending');
+    expect(fixture.store.control(handoff(exited), caller, 21).status).toBe('conflict');
+    expect(fixture.store.pendingDelivery(OWNER_ID, 10)).toHaveLength(3);
+  });
+
+  test('handoff preserves a watch, revocation preserves launch, and old operations cannot restore or revoke a new watch', async () => {
+    const fixture = await createFixture();
+    const task = await liveService(fixture, 'watch');
+    const start = { task_id: task.taskId, operation_id: 'start', action: 'start_watch' as const,
+      expected_revision: 0, request: { turnId: SOURCE_TURN_ID, itemId: 'reader-watch' } };
+    const watch = fixture.store.control(start, caller, 11);
+    expect(watch.status).toBe('accepted');
+    expect(fixture.store.control(handoff(fixture.store.read(task.taskId)!), caller, 12).watchId).toBe(watch.watchId);
+    const revoke = { task_id: task.taskId, operation_id: 'revoke', action: 'revoke_watch' as const,
+      expected_revision: 2, watch_id: watch.watchId! };
+    const revoked = fixture.store.control(revoke, caller, 13);
+    expect(revoked.status).toBe('accepted');
+    const next = fixture.store.control({ ...start, operation_id: 'start-new', expected_revision: 3,
+      request: { ...start.request, itemId: 'reader-new-watch' } }, caller, 14);
+    expect(next.watchId).not.toBe(watch.watchId);
+    expect(fixture.store.control(start, caller, 15)).toEqual(watch);
+    expect(fixture.store.control(revoke, caller, 15)).toEqual(revoked);
+    expect(fixture.store.control({ ...revoke, operation_id: 'stale-watch', expected_revision: 4 }, caller, 16).status).toBe('conflict');
+    const exited = finish(fixture, task);
+    expect(exited.continuation.event?.disposition).toBe('pending');
+    const silent = fixture.store.control({ ...revoke, operation_id: 'revoke-new', expected_revision: 4, watch_id: next.watchId! }, caller, 21);
+    expect(silent.event).toMatchObject({ disposition: 'silent', reason: 'watch_revoked' });
+    const unhanded = await liveService(fixture, 'unhanded-watch');
+    const pendingWatch = fixture.store.control({ ...start, task_id: unhanded.taskId }, caller, 11);
+    finish(fixture, unhanded);
+    const stillOwed = fixture.store.control({ ...revoke, task_id: unhanded.taskId, expected_revision: 1, watch_id: pendingWatch.watchId! }, caller, 21);
+    expect(stillOwed.event?.disposition).toBe('pending');
+    expect(fixture.store.pendingDelivery(OWNER_ID, 10).map((entry) => entry.taskId)).toEqual([unhanded.taskId]);
+  });
+
+  test('Stop after exit silences pending work without changing outcome or stealing a committed handler', async () => {
+    const fixture = await createFixture();
+    const task = await seedTerminalTask(fixture, 'stop-after-exit', 10, 'failed');
+    const stopped = fixture.store.stopResponsibilities(task.taskId, { source: 'user', at: 20, turnId: null }, 20);
+    expect(stopped).toMatchObject({ state: 'failed', exitCode: 1, deliveryTurnId: null,
+      continuation: { stop: { source: 'user' }, event: { disposition: 'silent', reason: 'stopped' } } });
+    const other = await seedTerminalTask(fixture, 'ack', 10, 'succeeded');
+    const ack = { task_id: other.taskId, operation_id: 'ack', action: 'acknowledge' as const, event_id: other.terminalDigest! };
+    const accepted = fixture.store.control(ack, caller, 20);
+    expect(accepted.event).toMatchObject({ disposition: 'handled', handling: { kind: 'turn', ...caller } });
+    expect(fixture.store.control({ ...ack, operation_id: 'wrong', event_id: 'wrong-event' }, caller, 21).status).toBe('conflict');
+    expect(fixture.store.control({ ...ack, operation_id: 'second' }, { ...caller, itemId: 'another-item' }, 21))
+      .toMatchObject({ status: 'already_handled', event: accepted.event });
+    expect(fixture.store.stopResponsibilities(other.taskId, { source: 'agent', at: 22, turnId: SOURCE_TURN_ID }, 22).continuation.event).toEqual(accepted.event);
+    const reopened = new ToolTaskStore(fixture.database);
+    expect(reopened.control(ack, caller, 23)).toEqual(accepted);
+    expect(reopened.read(other.taskId)?.deliveryState).toBe('handled');
+    expect(reopened.clearableDetails(OWNER_ID)).toHaveLength(2);
+  });
+
+  test('a failed receipt write rolls back both responsibility and event disposition', async () => {
+    const fixture = await createFixture();
+    const task = await seedTerminalTask(fixture, 'write-failure', 10, 'failed');
+    const input = { task_id: task.taskId, operation_id: 'ack', action: 'acknowledge' as const, event_id: task.terminalDigest! };
+    fixture.database.exec(`CREATE TRIGGER reject_receipt BEFORE UPDATE OF control_receipts_json ON tool_tasks BEGIN SELECT RAISE(ABORT, 'disk failure'); END`);
+    expect(() => fixture.store.control(input, caller, 20)).toThrow('disk failure');
+    expect(fixture.store.read(task.taskId)?.continuation).toEqual(task.continuation);
+    expect(fixture.store.controlReceipt(input)).toBeNull();
+    fixture.database.exec('DROP TRIGGER reject_receipt');
+    expect(fixture.store.control(input, caller, 21).status).toBe('accepted');
+  });
+
+  test('admitted events keep the completion owner when acknowledgement or Stop arrives later', async () => {
+    const fixture = await createFixture();
+    const task = await seedTerminalTask(fixture, 'admitted', 10, 'succeeded');
+    const batch = fixture.store.prepareDelivery({ taskIds: [task.taskId], batchId: 'batch', ownerThreadId: OWNER_ID,
+      reservedTurnId: DELIVERY_TURN_ID, clientId: 'client', envelopeDigest: 'a'.repeat(64), now: 20 });
+    expect(fixture.store.deliveryIsCurrent(batch.batchId)).toBe(true);
+    fixture.store.linkDelivery(batch.batchId, DELIVERY_TURN_ID, batch.envelopeDigest, 21);
+    const ack = fixture.store.control({ task_id: task.taskId, operation_id: 'ack', action: 'acknowledge', event_id: task.terminalDigest! }, caller, 22);
+    expect(ack).toMatchObject({ status: 'already_handled', event: { disposition: 'admitted', handling: { kind: 'completion', turnId: DELIVERY_TURN_ID, batchId: 'batch' } } });
+    expect(fixture.store.stopResponsibilities(task.taskId, { source: 'user', at: 23, turnId: null }, 23).continuation.event).toEqual(ack.event);
+  });
+
+  test('real handed-over processes exit zero, nonzero or by signal without a continuation call', async () => {
+    const fixture = await createFixture();
+    let calls = 0;
+    const service = await createService(fixture, { ...passiveHost(), authorizeControl: () => {}, validateReadiness: () => {},
+      startCompletionTurn: async (input) => { input.admissionGuard(); calls += 1; return false; } });
+    for (const exit of ['exit 0', 'exit 7', 'kill -TERM $$']) {
+      const gate = path.join(fixture.root, `release-${exit.replaceAll(/[^a-z0-9]/g, "-")}`);
+      const task = await service.start(startInput(`while [ ! -f '${gate}' ]; do sleep 0.05; done; ${exit}`, { completionAgreement: { kind: 'service' } }));
+      await waitUntil(() => fixture.store.read(task.taskId)?.childPid !== null);
+      await service.control(OWNER_ID, caller, handoff(task, 'real-handoff'));
+      await writeFile(gate, 'exit');
+      const terminal = await waitForTerminal(service, task.taskId);
+      expect(terminal).toMatchObject({ deliveryState: 'silent', continuation: { stop: null, event: { disposition: 'silent', reason: 'handed_off' } } });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(calls).toBe(0);
+    expect(fixture.store.hasBlockingWork(OWNER_ID)).toBe(false);
+  });
+
+  test('Stop supersedes a prepared delivery at the final admission guard and leaves another event deliverable', async () => {
+    const fixture = await createFixture();
+    const first = await seedRunningTask(fixture, 'stop-race', 10, { backgroundEnabled: true });
+    const second = await seedRunningTask(fixture, 'keep-result', 10, { backgroundEnabled: true });
+    finish(fixture, first); finish(fixture, second);
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    let attempts = 0;
+    let calls = 0;
+    const service = await createService(fixture, { ...passiveHost(), startCompletionTurn: async (input) => {
+      attempts += 1;
+      if (attempts === 1) await waiting;
+      input.admissionGuard(); calls += 1; return true;
+    } });
+    await waitUntil(() => attempts === 1);
+    await service.stop(first.taskId, OWNER_ID);
+    release();
+    await waitUntil(() => fixture.store.read(second.taskId)?.deliveryState === 'delivered');
+    expect(calls).toBe(1);
+    expect(fixture.store.read(first.taskId)?.deliveryState).toBe('silent');
+    expect(fixture.store.read(second.taskId)?.continuation.event?.disposition).toBe('admitted');
+  });
+});
+
 async function createFixture(): Promise<{
   root: string;
   detailRoot: string;
@@ -1402,6 +1566,7 @@ async function seedRunningTask(
   fixture: Awaited<ReturnType<typeof createFixture>>,
   taskId: string,
   startedAt: number,
+  overrides: Partial<Parameters<ToolTaskStore['create']>[0]> = {},
 ): Promise<ToolTaskRecord> {
   const detailPath = path.join(fixture.detailRoot, taskId);
   await mkdir(detailPath, { recursive: true });
@@ -1429,6 +1594,7 @@ async function seedRunningTask(
     backgroundEnabled: false,
     timeoutMs: 5_000,
     startedAt,
+    ...overrides,
   });
 }
 

@@ -507,9 +507,9 @@ export class TurnLifecycle {
       this.scheduleAcceptedTurn(accepted);
       return accepted.response;
     }
-  async tryStartTurnIfIdle(request: PrivilegedTurnStartRequest): Promise<Turn | null> {
+  async tryStartTurnIfIdle(request: PrivilegedTurnStartRequest, admissionGuard?: () => void): Promise<Turn | null> {
       try {
-        const accepted = await this.acceptAndLaunch(decodePrivilegedTurnStartRequest(request), true);
+        const accepted = await this.acceptAndLaunch(decodePrivilegedTurnStartRequest(request), true, admissionGuard);
         return accepted.response.turn;
       } catch (error) {
         if (this.isThreadBusyError(error)) return null;
